@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { Providers } from "@/components/providers";
+import { PrivacyProvider } from "@/components/privacy-provider";
 import { AppShell } from "@/components/app-shell";
 
 export default async function AppLayout({
@@ -17,7 +18,9 @@ export default async function AppLayout({
 
   return (
     <Providers>
-      <AppShell user={session.user}>{children}</AppShell>
+      <PrivacyProvider>
+        <AppShell user={session.user}>{children}</AppShell>
+      </PrivacyProvider>
     </Providers>
   );
 }

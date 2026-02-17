@@ -16,6 +16,7 @@ import { CategoryIcon } from "@/components/ui/icon-map";
 import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TransactionForm } from "@/components/transactions/transaction-form";
+import { usePrivacy } from "@/components/privacy-provider";
 import type { TransactionInput } from "@/lib/validations";
 import type { TransactionWithCategory } from "@/types";
 
@@ -30,6 +31,7 @@ interface TransactionsResponse {
 }
 
 export default function TransactionsPage() {
+  const { hideAmounts } = usePrivacy();
   const [data, setData] = useState<TransactionsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"ALL" | "INCOME" | "EXPENSE">("ALL");
@@ -252,8 +254,9 @@ export default function TransactionsPage() {
                         tx.type === "INCOME" ? "text-income" : "text-expense"
                       )}
                     >
-                      {tx.type === "INCOME" ? "+" : "-"}
-                      {formatCurrency(tx.amount)}
+                      {hideAmounts
+                        ? "••••"
+                        : `${tx.type === "INCOME" ? "+" : "-"}${formatCurrency(tx.amount)}`}
                     </span>
 
                     {/* Actions (visible on hover) */}

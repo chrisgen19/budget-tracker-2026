@@ -21,6 +21,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Modal } from "@/components/ui/modal";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import { SpendingChart, TrendChart } from "@/components/dashboard/charts";
+import { usePrivacy } from "@/components/privacy-provider";
 import type { TransactionInput } from "@/lib/validations";
 import type { DashboardStats } from "@/types";
 
@@ -28,7 +29,7 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [hideAmounts, setHideAmounts] = useState(false);
+  const { hideAmounts, toggleHideAmounts } = usePrivacy();
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -45,26 +46,6 @@ export default function DashboardPage() {
   useEffect(() => {
     fetchStats();
   }, [fetchStats]);
-
-  // Fetch privacy preference on mount
-  useEffect(() => {
-    const fetchPreference = async () => {
-      const res = await fetch("/api/preferences");
-      const data = await res.json();
-      setHideAmounts(data.hideAmounts);
-    };
-    fetchPreference();
-  }, []);
-
-  const toggleHideAmounts = async () => {
-    const newValue = !hideAmounts;
-    setHideAmounts(newValue);
-    await fetch("/api/preferences", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ hideAmounts: newValue }),
-    });
-  };
 
   /** Display amount or censored placeholder */
   const displayAmount = (amount: number, colorClass?: string) =>
