@@ -112,22 +112,13 @@ export default function DashboardPage() {
     <div>
       {/* Page Header */}
       <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-3">
-          <div>
-            <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">
-              Dashboard
-            </h1>
-            <p className="text-warm-400 text-sm mt-1">
-              Your financial overview at a glance.
-            </p>
-          </div>
-          <button
-            onClick={toggleHideAmounts}
-            className="p-2 rounded-xl text-warm-300 hover:text-warm-600 hover:bg-cream-200/60 transition-colors"
-            title={hideAmounts ? "Show amounts" : "Hide amounts"}
-          >
-            {hideAmounts ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-          </button>
+        <div>
+          <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">
+            Dashboard
+          </h1>
+          <p className="text-warm-400 text-sm mt-1">
+            Your financial overview at a glance.
+          </p>
         </div>
 
         <div className="flex items-center gap-3">
@@ -168,31 +159,58 @@ export default function DashboardPage() {
           {/* Summary Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
             <motion.div variants={fadeUp} className="card p-5 grain-overlay">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 rounded-xl bg-income-light flex items-center justify-center">
-                  <TrendingUp className="w-5 h-5 text-income" />
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-income-light flex items-center justify-center">
+                    <TrendingUp className="w-5 h-5 text-income" />
+                  </div>
+                  <span className="text-sm text-warm-400">Income</span>
                 </div>
-                <span className="text-sm text-warm-400">Income</span>
+                <button
+                  onClick={toggleHideAmounts}
+                  className="p-1.5 rounded-lg text-warm-300 hover:text-warm-600 hover:bg-cream-200/60 transition-colors"
+                  title={hideAmounts ? "Show amounts" : "Hide amounts"}
+                >
+                  {hideAmounts ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
               {displayAmount(stats.totalIncome, "text-income")}
             </motion.div>
 
             <motion.div variants={fadeUp} className="card p-5 grain-overlay">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 rounded-xl bg-expense-light flex items-center justify-center">
-                  <TrendingDown className="w-5 h-5 text-expense" />
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-expense-light flex items-center justify-center">
+                    <TrendingDown className="w-5 h-5 text-expense" />
+                  </div>
+                  <span className="text-sm text-warm-400">Expenses</span>
                 </div>
-                <span className="text-sm text-warm-400">Expenses</span>
+                <button
+                  onClick={toggleHideAmounts}
+                  className="p-1.5 rounded-lg text-warm-300 hover:text-warm-600 hover:bg-cream-200/60 transition-colors"
+                  title={hideAmounts ? "Show amounts" : "Hide amounts"}
+                >
+                  {hideAmounts ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
               {displayAmount(stats.totalExpenses, "text-expense")}
             </motion.div>
 
             <motion.div variants={fadeUp} className="card p-5 grain-overlay">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center">
-                  <Wallet className="w-5 h-5 text-amber" />
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center">
+                    <Wallet className="w-5 h-5 text-amber" />
+                  </div>
+                  <span className="text-sm text-warm-400">Balance</span>
                 </div>
-                <span className="text-sm text-warm-400">Balance</span>
+                <button
+                  onClick={toggleHideAmounts}
+                  className="p-1.5 rounded-lg text-warm-300 hover:text-warm-600 hover:bg-cream-200/60 transition-colors"
+                  title={hideAmounts ? "Show amounts" : "Hide amounts"}
+                >
+                  {hideAmounts ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
               {displayAmount(stats.balance, stats.balance >= 0 ? "text-income" : "text-expense")}
             </motion.div>
