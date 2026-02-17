@@ -10,6 +10,8 @@ import {
   ChevronRight,
   BarChart3,
   Plus,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import Link from "next/link";
@@ -26,6 +28,7 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [hideAmounts, setHideAmounts] = useState(false);
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -42,6 +45,49 @@ export default function DashboardPage() {
   useEffect(() => {
     fetchStats();
   }, [fetchStats]);
+
+  // Fetch privacy preference on mount
+  useEffect(() => {
+    const fetchPreference = async () => {
+      const res = await fetch("/api/preferences");
+      const data = await res.json();
+      setHideAmounts(data.hideAmounts);
+    };
+    fetchPreference();
+  }, []);
+
+  const toggleHideAmounts = async () => {
+    const newValue = !hideAmounts;
+    setHideAmounts(newValue);
+    await fetch("/api/preferences", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hideAmounts: newValue }),
+    });
+  };
+
+  /** Display amount or censored placeholder */
+  const displayAmount = (amount: number, colorClass?: string) =>
+    hideAmounts ? (
+      <span className={cn("font-serif text-2xl", colorClass)}>₱ ••••••</span>
+    ) : (
+      <span className={cn("font-serif text-2xl", colorClass)}>
+        {formatCurrency(amount)}
+      </span>
+    );
+
+  /** Display inline amount or censored placeholder (for transaction rows) */
+  const displayInlineAmount = (amount: number, type: "INCOME" | "EXPENSE") => {
+    const colorClass = type === "INCOME" ? "text-income" : "text-expense";
+    const prefix = type === "INCOME" ? "+" : "-";
+    return hideAmounts ? (
+      <span className={cn("text-sm font-medium tabular-nums", colorClass)}>••••</span>
+    ) : (
+      <span className={cn("text-sm font-medium tabular-nums", colorClass)}>
+        {prefix}{formatCurrency(amount)}
+      </span>
+    );
+  };
 
   const handleCreate = async (input: TransactionInput) => {
     await fetch("/api/transactions", {
@@ -85,13 +131,22 @@ export default function DashboardPage() {
     <div>
       {/* Page Header */}
       <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">
-            Dashboard
-          </h1>
-          <p className="text-warm-400 text-sm mt-1">
-            Your financial overview at a glance.
-          </p>
+        <div className="flex items-center gap-3">
+          <div>
+            <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">
+              Dashboard
+            </h1>
+            <p className="text-warm-400 text-sm mt-1">
+              Your financial overview at a glance.
+            </p>
+          </div>
+          <button
+            onClick={toggleHideAmounts}
+            className="p-2 rounded-xl text-warm-300 hover:text-warm-600 hover:bg-cream-200/60 transition-colors"
+            title={hideAmounts ? "Show amounts" : "Hide amounts"}
+          >
+            {hideAmounts ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+          </button>
         </div>
 
         <div className="flex items-center gap-3">
@@ -138,9 +193,7 @@ export default function DashboardPage() {
                 </div>
                 <span className="text-sm text-warm-400">Income</span>
               </div>
-              <p className="font-serif text-2xl text-income">
-                {formatCurrency(stats.totalIncome)}
-              </p>
+              {displayAmount(stats.totalIncome, "text-income")}
             </motion.div>
 
             <motion.div variants={fadeUp} className="card p-5 grain-overlay">
@@ -150,9 +203,7 @@ export default function DashboardPage() {
                 </div>
                 <span className="text-sm text-warm-400">Expenses</span>
               </div>
-              <p className="font-serif text-2xl text-expense">
-                {formatCurrency(stats.totalExpenses)}
-              </p>
+              {displayAmount(stats.totalExpenses, "text-expense")}
             </motion.div>
 
             <motion.div variants={fadeUp} className="card p-5 grain-overlay">
@@ -162,14 +213,7 @@ export default function DashboardPage() {
                 </div>
                 <span className="text-sm text-warm-400">Balance</span>
               </div>
-              <p
-                className={cn(
-                  "font-serif text-2xl",
-                  stats.balance >= 0 ? "text-income" : "text-expense"
-                )}
-              >
-                {formatCurrency(stats.balance)}
-              </p>
+              {displayAmount(stats.balance, stats.balance >= 0 ? "text-income" : "text-expense")}
             </motion.div>
           </div>
 
@@ -242,15 +286,7 @@ export default function DashboardPage() {
                         {tx.category.name} &middot; {formatDate(tx.date)}
                       </p>
                     </div>
-                    <span
-                      className={cn(
-                        "text-sm font-medium tabular-nums",
-                        tx.type === "INCOME" ? "text-income" : "text-expense"
-                      )}
-                    >
-                      {tx.type === "INCOME" ? "+" : "-"}
-                      {formatCurrency(tx.amount)}
-                    </span>
+                    {displayInlineAmount(tx.amount, tx.type)}
                   </div>
                 ))}
               </div>

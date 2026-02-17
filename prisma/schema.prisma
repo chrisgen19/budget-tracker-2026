@@ -17,6 +17,7 @@ model User {
   name         String
   email        String        @unique
   password     String
+  hideAmounts  Boolean       @default(false) @map("hide_amounts")
   transactions Transaction[]
   categories   Category[]
   createdAt    DateTime      @default(now()) @map("created_at")
