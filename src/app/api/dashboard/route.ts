@@ -23,7 +23,7 @@ export async function GET(request: Request) {
   }
 
   // Fetch all data in parallel
-  const [transactions, recentTransactions, monthlyData] = await Promise.all([
+  const [transactions, recentTransactions, monthlyData, runningIncome, runningExpenses] = await Promise.all([
     // Current month transactions for stats
     prisma.transaction.findMany({
       where: {
@@ -52,9 +52,21 @@ export async function GET(request: Request) {
       },
       select: { amount: true, type: true, date: true },
     }),
+
+    // All-time income up to end of selected month (for running balance)
+    prisma.transaction.aggregate({
+      where: { userId, type: "INCOME", date: { lte: endDate } },
+      _sum: { amount: true },
+    }),
+
+    // All-time expenses up to end of selected month (for running balance)
+    prisma.transaction.aggregate({
+      where: { userId, type: "EXPENSE", date: { lte: endDate } },
+      _sum: { amount: true },
+    }),
   ]);
 
-  // Calculate totals
+  // Calculate monthly totals (selected month only)
   const totalIncome = transactions
     .filter((t) => t.type === "INCOME")
     .reduce((sum, t) => sum + t.amount, 0);
@@ -62,6 +74,10 @@ export async function GET(request: Request) {
   const totalExpenses = transactions
     .filter((t) => t.type === "EXPENSE")
     .reduce((sum, t) => sum + t.amount, 0);
+
+  // Running balance = all income ever − all expenses ever, up to end of selected month
+  const runningBalance =
+    (runningIncome._sum.amount ?? 0) - (runningExpenses._sum.amount ?? 0);
 
   // Category breakdown (expenses only)
   const categoryMap = new Map<string, { name: string; color: string; icon: string; amount: number }>();
@@ -115,7 +131,8 @@ export async function GET(request: Request) {
   return NextResponse.json({
     totalIncome,
     totalExpenses,
-    balance: totalIncome - totalExpenses,
+    balance: totalIncome - totalExpenses, // monthly net (income - expenses for selected month)
+    runningBalance,                        // cumulative: all-time net up to end of selected month
     transactionCount: transactions.length,
     recentTransactions,
     categoryBreakdown,

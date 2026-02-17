@@ -11,7 +11,8 @@ export type TransactionWithCategory = Transaction & {
 export interface DashboardStats {
   totalIncome: number;
   totalExpenses: number;
-  balance: number;
+  balance: number;        // monthly net (selected month only)
+  runningBalance: number; // cumulative all-time net up to end of selected month
   transactionCount: number;
   recentTransactions: TransactionWithCategory[];
   categoryBreakdown: CategoryBreakdownItem[];

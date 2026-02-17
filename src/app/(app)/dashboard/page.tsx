@@ -164,7 +164,10 @@ export default function DashboardPage() {
                   <div className="w-10 h-10 rounded-xl bg-income-light flex items-center justify-center">
                     <TrendingUp className="w-5 h-5 text-income" />
                   </div>
-                  <span className="text-sm text-warm-400">Income</span>
+                  <div>
+                    <span className="text-sm text-warm-400">Income</span>
+                    <p className="text-xs text-warm-300">This month</p>
+                  </div>
                 </div>
                 <button
                   onClick={toggleHideAmounts}
@@ -183,7 +186,10 @@ export default function DashboardPage() {
                   <div className="w-10 h-10 rounded-xl bg-expense-light flex items-center justify-center">
                     <TrendingDown className="w-5 h-5 text-expense" />
                   </div>
-                  <span className="text-sm text-warm-400">Expenses</span>
+                  <div>
+                    <span className="text-sm text-warm-400">Expenses</span>
+                    <p className="text-xs text-warm-300">This month</p>
+                  </div>
                 </div>
                 <button
                   onClick={toggleHideAmounts}
@@ -202,7 +208,10 @@ export default function DashboardPage() {
                   <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center">
                     <Wallet className="w-5 h-5 text-amber" />
                   </div>
-                  <span className="text-sm text-warm-400">Balance</span>
+                  <div>
+                    <span className="text-sm text-warm-400">Running Balance</span>
+                    <p className="text-xs text-warm-300">Cumulative</p>
+                  </div>
                 </div>
                 <button
                   onClick={toggleHideAmounts}
@@ -212,7 +221,7 @@ export default function DashboardPage() {
                   {hideAmounts ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-              {displayAmount(stats.balance, stats.balance >= 0 ? "text-income" : "text-expense")}
+              {displayAmount(stats.runningBalance, stats.runningBalance >= 0 ? "text-income" : "text-expense")}
             </motion.div>
           </div>
 
