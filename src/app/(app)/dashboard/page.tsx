@@ -9,18 +9,23 @@ import {
   ChevronLeft,
   ChevronRight,
   BarChart3,
+  Plus,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Modal } from "@/components/ui/modal";
+import { TransactionForm } from "@/components/transactions/transaction-form";
 import { SpendingChart, TrendChart } from "@/components/dashboard/charts";
+import type { TransactionInput } from "@/lib/validations";
 import type { DashboardStats } from "@/types";
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -37,6 +42,16 @@ export default function DashboardPage() {
   useEffect(() => {
     fetchStats();
   }, [fetchStats]);
+
+  const handleCreate = async (input: TransactionInput) => {
+    await fetch("/api/transactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    setShowForm(false);
+    fetchStats();
+  };
 
   const navigateMonth = (direction: -1 | 1) => {
     const [year, month] = currentMonth.split("-").map(Number);
@@ -79,8 +94,18 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        {/* Month Navigator */}
-        <div className="flex items-center gap-2 bg-white rounded-xl border border-cream-300/60 shadow-warm px-2 py-1.5">
+        <div className="flex items-center gap-3">
+          {/* Add Transaction Button */}
+          <button
+            onClick={() => setShowForm(true)}
+            className="inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-4 py-2 rounded-xl transition-colors shadow-soft hover:shadow-soft-md"
+          >
+            <Plus className="w-4 h-4" />
+            <span className="hidden sm:inline">Add Transaction</span>
+          </button>
+
+          {/* Month Navigator */}
+          <div className="flex items-center gap-2 bg-white rounded-xl border border-cream-300/60 shadow-warm px-2 py-1.5">
           <button
             onClick={() => navigateMonth(-1)}
             className="p-1.5 rounded-lg text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors"
@@ -96,6 +121,7 @@ export default function DashboardPage() {
           >
             <ChevronRight className="w-4 h-4" />
           </button>
+        </div>
         </div>
       </div>
 
@@ -234,19 +260,31 @@ export default function DashboardPage() {
                 title="No transactions yet"
                 description="Add your first transaction to see your financial overview."
                 action={
-                  <Link
-                    href="/transactions"
+                  <button
+                    onClick={() => setShowForm(true)}
                     className="inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white text-sm font-medium px-4 py-2.5 rounded-xl transition-colors shadow-soft"
                   >
+                    <Plus className="w-4 h-4" />
                     Add Transaction
-                    <ArrowRight className="w-4 h-4" />
-                  </Link>
+                  </button>
                 }
               />
             )}
           </motion.div>
         </motion.div>
       ) : null}
+
+      {/* Add Transaction Modal */}
+      <Modal
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        title="New Transaction"
+      >
+        <TransactionForm
+          onSubmit={handleCreate}
+          onCancel={() => setShowForm(false)}
+        />
+      </Modal>
     </div>
   );
 }
