@@ -146,6 +146,10 @@ User ──< Transaction >── Category
 - **Category** — id, name, type (INCOME/EXPENSE), icon, color, isDefault, userId (null for defaults)
 - **Transaction** — id, amount, description, type, date, categoryId, userId
 
+## Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md) for the full development history and feature log.
+
 ## License
 
 MIT

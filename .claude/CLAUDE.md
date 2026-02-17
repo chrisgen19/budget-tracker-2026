@@ -44,7 +44,15 @@ src/
 - Default categories are seeded (15 total: 10 expense, 5 income)
 - Users can create custom categories on top of defaults
 
+## Key Patterns
+- **PrivacyProvider** context in `src/components/privacy-provider.tsx` — shared hide-amounts state across all app pages, persisted in DB via `/api/preferences`
+- **App layout** (`src/app/(app)/layout.tsx`) wraps pages with `Providers > PrivacyProvider > AppShell`
+- **Mobile FAB** on dashboard for quick-add transaction (hidden on desktop, which uses inline button)
+
 ## Design
 - "Light & Warm" aesthetic with cream/paper-like backgrounds
 - Fonts: Young Serif (headings) + Outfit (body)
 - Color palette: warm browns, amber accents, green for income, red for expenses
+
+## Changelog
+See [CHANGELOG.md](../../CHANGELOG.md) for full development history and feature log.
