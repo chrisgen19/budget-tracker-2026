@@ -95,13 +95,13 @@ export default function DashboardPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Add Transaction Button */}
+          {/* Add Transaction Button — desktop only */}
           <button
             onClick={() => setShowForm(true)}
-            className="inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-4 py-2 rounded-xl transition-colors shadow-soft hover:shadow-soft-md"
+            className="hidden sm:inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-4 py-2 rounded-xl transition-colors shadow-soft hover:shadow-soft-md"
           >
             <Plus className="w-4 h-4" />
-            <span className="hidden sm:inline">Add Transaction</span>
+            Add Transaction
           </button>
 
           {/* Month Navigator */}
@@ -273,6 +273,14 @@ export default function DashboardPage() {
           </motion.div>
         </motion.div>
       ) : null}
+
+      {/* Mobile FAB — sits above bottom nav */}
+      <button
+        onClick={() => setShowForm(true)}
+        className="sm:hidden fixed bottom-20 right-4 z-20 w-14 h-14 rounded-full bg-amber hover:bg-amber-dark text-white shadow-soft-lg active:scale-95 transition-all flex items-center justify-center"
+      >
+        <Plus className="w-6 h-6" />
+      </button>
 
       {/* Add Transaction Modal */}
       <Modal
