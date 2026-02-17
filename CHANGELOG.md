@@ -79,3 +79,18 @@ All notable development history for the Budget Tracker app.
 - Created shared `PrivacyProvider` context wrapping the app layout
 - Both Dashboard and Transactions pages respect the toggle consistently
 - Preference persists across logout, login, and different devices
+
+---
+
+## 2026-02-17 — Build Fixes & Deploy Prep
+
+### Bug Fixes
+- Fixed parsing error caused by stray character in `dashboard/page.tsx` (`return (a` → `return (`)
+- Added `outputFileTracingRoot` to `next.config.ts` to fix workspace root detection issue (Next.js was inferring the wrong root due to a lockfile in the home directory, causing module-not-found errors for API routes)
+
+### Deployment Configuration
+- Set `output: "standalone"` in `next.config.ts` for Coolify/Docker deployments
+- Added `engines.node >= 20` to `package.json`
+
+### UI Improvement
+- Moved privacy toggle (Eye/EyeOff) from the page header to the top-right corner of each summary card (Income, Expenses, Balance) for better contextual placement
