@@ -157,16 +157,17 @@ export default function DashboardPage() {
       ) : stats ? (
         <motion.div variants={stagger} initial="hidden" animate="show">
           {/* Summary Cards — horizontal scroll on mobile, grid on desktop */}
+          {/* Order: Running Balance (most important) → Expenses → Income */}
           <div className="flex gap-4 overflow-x-auto snap-x snap-mandatory scrollbar-hide pb-2 mb-8 sm:grid sm:grid-cols-3 sm:overflow-visible sm:pb-0">
             <motion.div variants={fadeUp} className="card p-5 grain-overlay min-w-[260px] shrink-0 snap-start sm:min-w-0">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-income-light flex items-center justify-center">
-                    <TrendingUp className="w-5 h-5 text-income" />
+                  <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center">
+                    <Wallet className="w-5 h-5 text-amber" />
                   </div>
                   <div>
-                    <span className="text-sm text-warm-400">Income</span>
-                    <p className="text-xs text-warm-300">This month</p>
+                    <span className="text-sm text-warm-400">Running Balance</span>
+                    <p className="text-xs text-warm-300">Cumulative</p>
                   </div>
                 </div>
                 <button
@@ -177,7 +178,7 @@ export default function DashboardPage() {
                   {hideAmounts ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-              {displayAmount(stats.totalIncome, "text-income")}
+              {displayAmount(stats.runningBalance, stats.runningBalance >= 0 ? "text-income" : "text-expense")}
             </motion.div>
 
             <motion.div variants={fadeUp} className="card p-5 grain-overlay min-w-[260px] shrink-0 snap-start sm:min-w-0">
@@ -205,12 +206,12 @@ export default function DashboardPage() {
             <motion.div variants={fadeUp} className="card p-5 grain-overlay min-w-[260px] shrink-0 snap-start sm:min-w-0">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center">
-                    <Wallet className="w-5 h-5 text-amber" />
+                  <div className="w-10 h-10 rounded-xl bg-income-light flex items-center justify-center">
+                    <TrendingUp className="w-5 h-5 text-income" />
                   </div>
                   <div>
-                    <span className="text-sm text-warm-400">Running Balance</span>
-                    <p className="text-xs text-warm-300">Cumulative</p>
+                    <span className="text-sm text-warm-400">Income</span>
+                    <p className="text-xs text-warm-300">This month</p>
                   </div>
                 </div>
                 <button
@@ -221,7 +222,7 @@ export default function DashboardPage() {
                   {hideAmounts ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-              {displayAmount(stats.runningBalance, stats.runningBalance >= 0 ? "text-income" : "text-expense")}
+              {displayAmount(stats.totalIncome, "text-income")}
             </motion.div>
           </div>
 
