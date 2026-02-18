@@ -156,9 +156,9 @@ export default function DashboardPage() {
         <DashboardSkeleton />
       ) : stats ? (
         <motion.div variants={stagger} initial="hidden" animate="show">
-          {/* Summary Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-            <motion.div variants={fadeUp} className="card p-5 grain-overlay">
+          {/* Summary Cards — horizontal scroll on mobile, grid on desktop */}
+          <div className="flex gap-4 overflow-x-auto snap-x snap-mandatory scrollbar-hide pb-2 mb-8 sm:grid sm:grid-cols-3 sm:overflow-visible sm:pb-0">
+            <motion.div variants={fadeUp} className="card p-5 grain-overlay min-w-[260px] shrink-0 snap-start sm:min-w-0">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-income-light flex items-center justify-center">
@@ -180,7 +180,7 @@ export default function DashboardPage() {
               {displayAmount(stats.totalIncome, "text-income")}
             </motion.div>
 
-            <motion.div variants={fadeUp} className="card p-5 grain-overlay">
+            <motion.div variants={fadeUp} className="card p-5 grain-overlay min-w-[260px] shrink-0 snap-start sm:min-w-0">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-expense-light flex items-center justify-center">
@@ -202,7 +202,7 @@ export default function DashboardPage() {
               {displayAmount(stats.totalExpenses, "text-expense")}
             </motion.div>
 
-            <motion.div variants={fadeUp} className="card p-5 grain-overlay">
+            <motion.div variants={fadeUp} className="card p-5 grain-overlay min-w-[260px] shrink-0 snap-start sm:min-w-0">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center">
