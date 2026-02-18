@@ -16,12 +16,19 @@ export const formatDate = (date: Date | string): string =>
     year: "numeric",
     month: "short",
     day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
   }).format(new Date(date));
 
-/** Format a date for input[type=date] */
+/** Format a date for input[type=datetime-local] */
 export const formatDateInput = (date: Date | string): string => {
   const d = new Date(date);
-  return d.toISOString().split("T")[0];
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const hours = String(d.getHours()).padStart(2, "0");
+  const minutes = String(d.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
 };
 
 /** Get month name from date */

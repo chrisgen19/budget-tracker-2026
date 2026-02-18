@@ -159,7 +159,7 @@ export function TransactionForm({ transaction, onSubmit, onCancel }: Transaction
           Date
         </label>
         <input
-          type="date"
+          type="datetime-local"
           {...register("date")}
           className="w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all"
         />
