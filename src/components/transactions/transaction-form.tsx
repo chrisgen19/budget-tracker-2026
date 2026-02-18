@@ -160,7 +160,7 @@ export function TransactionForm({ transaction, onSubmit, onCancel }: Transaction
         <input
           type="datetime-local"
           {...register("date")}
-          className="w-full min-w-0 px-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all [&::-webkit-calendar-picker-indicator]:mr-0 [&::-webkit-calendar-picker-indicator]:opacity-60"
+          className="w-full min-w-0 px-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all appearance-none overflow-hidden [&::-webkit-calendar-picker-indicator]:opacity-60 [&::-webkit-datetime-edit]:overflow-hidden [&::-webkit-datetime-edit-fields-wrapper]:overflow-hidden"
         />
         {errors.date && (
           <p className="text-expense text-sm mt-1">{errors.date.message}</p>
