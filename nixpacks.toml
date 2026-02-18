@@ -10,4 +10,4 @@ cmds = ["pnpm build"]
 cacheDirectories = [".next/cache"]
 
 [start]
-cmd = "node .next/standalone/server.js"
+cmd = "HOSTNAME=0.0.0.0 PORT=3000 node .next/standalone/server.js"
