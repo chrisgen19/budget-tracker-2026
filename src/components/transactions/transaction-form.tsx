@@ -63,7 +63,7 @@ export function TransactionForm({ transaction, onSubmit, onCancel }: Transaction
   }, [selectedType, setValue, transaction]);
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-5 overflow-hidden">
       {/* Type Toggle */}
       <div className="flex gap-2 p-1 bg-cream-100 rounded-xl">
         <button
@@ -127,7 +127,7 @@ export function TransactionForm({ transaction, onSubmit, onCancel }: Transaction
                 setValue("amount", numeric, { shouldValidate: true });
               }
             }}
-            className="w-full pl-8 pr-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 placeholder:text-warm-300 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all"
+            className="w-full min-w-0 pl-8 pr-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 placeholder:text-warm-300 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all"
             placeholder="0.00"
           />
         </div>
@@ -144,7 +144,7 @@ export function TransactionForm({ transaction, onSubmit, onCancel }: Transaction
         <input
           type="text"
           {...register("description")}
-          className="w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 placeholder:text-warm-300 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all"
+          className="w-full min-w-0 px-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 placeholder:text-warm-300 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all"
           placeholder="What was this for?"
         />
         {errors.description && (
@@ -160,7 +160,7 @@ export function TransactionForm({ transaction, onSubmit, onCancel }: Transaction
         <input
           type="datetime-local"
           {...register("date")}
-          className="w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all"
+          className="w-full min-w-0 px-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all"
         />
         {errors.date && (
           <p className="text-expense text-sm mt-1">{errors.date.message}</p>
