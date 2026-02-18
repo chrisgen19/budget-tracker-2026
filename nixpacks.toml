@@ -2,7 +2,7 @@
 nixPkgs = ["nodejs_20", "openssl"]
 
 [phases.install]
-cmds = ["npm i -g pnpm && pnpm install --frozen-lockfile"]
+cmds = ["corepack enable && pnpm install --frozen-lockfile"]
 cacheDirectories = ["/root/.local/share/pnpm/store", "node_modules/.cache"]
 
 [phases.build]
