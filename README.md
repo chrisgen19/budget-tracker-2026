@@ -10,11 +10,15 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 
 ## Features
 
+- **Landing Page** — Marketing homepage for non-authenticated users with dashboard preview, feature highlights, and sign-up CTAs
 - **Authentication** — Register and login with email/password (NextAuth.js with JWT sessions)
-- **Dashboard** — Summary cards (income, expenses, balance), monthly trend bar chart, spending by category donut chart, recent transactions
+- **Dashboard** — Summary cards (income, expenses, running balance), monthly trend bar chart, spending by category donut chart, balance trend area chart, recent transactions
+- **Running Balance** — Cumulative all-time balance that carries over across months, not just monthly snapshots
+- **Balance Trend** — 30-day area chart showing daily running balance with percentage change indicator
 - **Transactions** — Full CRUD with search, type filtering (income/expense), month navigation, and pagination
 - **Categories** — 15 pre-seeded defaults (10 expense, 5 income) + create/edit/delete custom categories with color and icon pickers
-- **Responsive** — Sidebar navigation on desktop, bottom navigation on mobile
+- **Privacy Mode** — One-tap toggle to hide all financial amounts across the app, persisted per-user in the database
+- **Responsive** — Sidebar navigation on desktop, bottom navigation on mobile; horizontal scroll summary cards with snap points on mobile
 - **Design** — Warm paper-ledger aesthetic with Young Serif + Outfit fonts, amber accents, and Framer Motion animations
 
 ## Tech Stack
@@ -107,6 +111,7 @@ Open [http://localhost:3000](http://localhost:3000), register an account, and st
 ```
 src/
 ├── app/
+│   ├── page.tsx             # Root — landing page (guest) or redirect (auth)
 │   ├── (auth)/              # Login & Register pages
 │   │   ├── login/
 │   │   └── register/
@@ -119,12 +124,15 @@ src/
 │       ├── register/        # User registration
 │       ├── transactions/    # Transaction CRUD
 │       ├── categories/      # Category CRUD
-│       └── dashboard/       # Dashboard stats
+│       ├── dashboard/       # Dashboard stats + balance trend
+│       └── preferences/     # User preferences (privacy toggle)
 ├── components/
 │   ├── ui/                  # Shared UI (Modal, EmptyState, IconMap)
-│   ├── dashboard/           # Chart components
+│   ├── dashboard/           # Chart components (Trend, Spending, BalanceTrend)
 │   ├── transactions/        # Transaction form
-│   └── categories/          # Category form
+│   ├── categories/          # Category form
+│   ├── landing-page.tsx     # Marketing homepage for guests
+│   └── privacy-provider.tsx # Hide-amounts context (persisted in DB)
 ├── lib/                     # Prisma client, auth, utils, validations
 └── types/                   # TypeScript type definitions
 
@@ -142,7 +150,7 @@ User ──< Transaction >── Category
  └────────< Category (custom, per-user)
 ```
 
-- **User** — id, name, email, password
+- **User** — id, name, email, password, hide_amounts (privacy toggle preference)
 - **Category** — id, name, type (INCOME/EXPENSE), icon, color, isDefault, userId (null for defaults)
 - **Transaction** — id, amount, description, type, date, categoryId, userId
 
