@@ -103,7 +103,6 @@ export function TransactionForm({ transaction, onSubmit, onCancel }: Transaction
           <input
             type="text"
             inputMode="decimal"
-            pattern="[0-9]*"
             value={displayAmount}
             onChange={(e) => {
               const raw = e.target.value.replace(/[^0-9.]/g, "");
