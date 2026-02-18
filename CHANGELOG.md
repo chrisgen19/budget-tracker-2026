@@ -94,3 +94,51 @@ All notable development history for the Budget Tracker app.
 
 ### UI Improvement
 - Moved privacy toggle (Eye/EyeOff) from the page header to the top-right corner of each summary card (Income, Expenses, Balance) for better contextual placement
+
+---
+
+## 2026-02-18 — Dashboard Enhancements & Landing Page
+
+### Cumulative Running Balance
+- Balance card now shows **cumulative running balance** (all-time income − all-time expenses up to end of selected month) instead of monthly-only balance
+- Added two `aggregate` queries to the dashboard API, running in parallel with existing queries for zero added latency
+- Added `runningBalance` field to `DashboardStats` type
+- Income and Expenses cards now show "This month" sublabel; Balance card shows "Running Balance" with "Cumulative" sublabel
+- Navigating to future months correctly carries over the balance
+
+### Horizontal Scroll Summary Cards
+- Converted summary cards from static grid to **horizontal scroll with snap points** on mobile
+- Desktop remains a clean grid layout (`sm:grid-cols-3`)
+- Each card snaps into place while swiping — peek of the next card hints at scrollability
+- Added `.scrollbar-hide` utility to `globals.css` for clean mobile UX
+- Layout is ready to accommodate a 4th card in the future (just add a card and bump to `sm:grid-cols-4`)
+
+### Balance Trend Widget
+- New **Balance Trend** area chart showing daily running balance over a 30-day window
+- API computes daily balances by deriving prior balance from existing aggregates + walking through window transactions day by day (1 new query added to `Promise.all`)
+- Chart component (`BalanceTrendChart`) built with Recharts `AreaChart`:
+  - Blue gradient fill (`#3b82f6` → transparent)
+  - Dashed horizontal grid lines
+  - Abbreviated Y-axis labels (e.g., "193.4K")
+  - Date-formatted X-axis ticks (e.g., "2/14")
+- Key metrics row above chart:
+  - **TODAY** — current balance (last data point)
+  - **LAST 30 DAYS** — percentage change badge (green/red/gray)
+- Tooltip and amounts respect privacy mode (`hideAmounts`)
+- Full-width card placed below the existing 2-column charts row
+- Added `BalanceTrendItem` type and `balanceTrend` to `DashboardStats`
+
+### Landing Page (Homepage)
+- Built a full **landing page** for non-authenticated users at `/`
+- Root page (`page.tsx`) now renders the landing page instead of redirecting to `/login`; authenticated users still redirect to `/dashboard`
+- Sections:
+  - **Navigation** — fixed frosted glass navbar with logo, Sign In, and Get Started CTA
+  - **Hero** — "Your Money, Beautifully Organized" headline with amber accent, dual CTAs, badge pill
+  - **Dashboard Preview** — realistic browser-frame mockup with summary cards, bar chart, and transaction rows using real design tokens
+  - **Features** — 6-card grid: Smart Dashboard, Category Tracking, Balance Trend, Privacy Mode, Monthly Navigation, Quick Transactions
+  - **How It Works** — 3-step numbered flow (Create account → Log transactions → See the bigger picture)
+  - **CTA** — final sign-up push with large button
+  - **Footer** — copyright and navigation links
+- Framer Motion `whileInView` scroll-triggered animations with staggered reveals
+- Decorative blur circles in background (consistent with auth layout style)
+- Fully responsive: single column on mobile, full grid on desktop
