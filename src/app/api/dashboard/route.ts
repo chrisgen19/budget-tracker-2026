@@ -45,11 +45,11 @@ export async function GET(request: Request) {
       include: { category: true },
     }),
 
-    // Recent 5 transactions (any month)
+    // Recent 5 transactions (any month) — ordered by date then creation time
     prisma.transaction.findMany({
       where: { userId },
       include: { category: true },
-      orderBy: { date: "desc" },
+      orderBy: [{ date: "desc" }, { createdAt: "desc" }],
       take: 5,
     }),
 
