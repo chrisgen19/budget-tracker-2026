@@ -63,7 +63,7 @@ export function TransactionForm({ transaction, onSubmit, onCancel }: Transaction
   }, [selectedType, setValue, transaction]);
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-5 overflow-hidden">
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
       {/* Type Toggle */}
       <div className="flex gap-2 p-1 bg-cream-100 rounded-xl">
         <button
@@ -160,7 +160,7 @@ export function TransactionForm({ transaction, onSubmit, onCancel }: Transaction
         <input
           type="datetime-local"
           {...register("date")}
-          className="w-full min-w-0 px-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all"
+          className="w-full min-w-0 px-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all [&::-webkit-calendar-picker-indicator]:mr-0 [&::-webkit-calendar-picker-indicator]:opacity-60"
         />
         {errors.date && (
           <p className="text-expense text-sm mt-1">{errors.date.message}</p>
