@@ -314,19 +314,22 @@ export default function CategoriesPage() {
         <div className="flex gap-3">
           <button
             onClick={() => setDeletingCategory(null)}
-            className="flex-1 py-2.5 rounded-xl border border-cream-300 text-warm-500 font-medium text-sm hover:bg-cream-100 transition-colors"
+            className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl border border-cream-300 text-warm-500 font-medium text-sm hover:bg-cream-100 transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={handleDelete}
             disabled={deleteLoading}
-            className="flex-1 py-2.5 rounded-xl bg-expense hover:bg-expense-dark text-white font-medium text-sm transition-colors disabled:opacity-50"
+            className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl bg-expense hover:bg-expense-dark text-white font-medium text-sm transition-colors disabled:opacity-50"
           >
             {deleteLoading ? (
-              <div className="w-5 h-5 mx-auto border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
             ) : (
-              "Delete"
+              <>
+                <Trash2 className="w-4 h-4" />
+                Delete
+              </>
             )}
           </button>
         </div>

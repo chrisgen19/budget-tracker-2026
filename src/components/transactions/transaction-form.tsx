@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft, ChevronRight, Trash2 } from "lucide-react";
 import { transactionSchema, type TransactionInput } from "@/lib/validations";
 import { formatDateInput } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
@@ -14,6 +14,7 @@ interface TransactionFormProps {
   transaction?: TransactionWithCategory | null;
   onSubmit: (data: TransactionInput) => Promise<void>;
   onCancel: () => void;
+  onDelete?: () => void;
 }
 
 const formatAmountDisplay = (value: number) =>
@@ -30,7 +31,7 @@ const slideVariants = {
   exitToRight: { x: 80, opacity: 0 },
 };
 
-export function TransactionForm({ transaction, onSubmit, onCancel }: TransactionFormProps) {
+export function TransactionForm({ transaction, onSubmit, onCancel, onDelete }: TransactionFormProps) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(true);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
@@ -299,17 +300,27 @@ export function TransactionForm({ transaction, onSubmit, onCancel }: Transaction
               <button
                 type="button"
                 onClick={onCancel}
-                className="flex-1 py-3 rounded-xl border border-cream-300 text-warm-500 font-medium text-sm hover:bg-cream-100 transition-colors"
+                className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl border border-cream-300 text-warm-500 font-medium text-sm hover:bg-cream-100 transition-colors"
               >
                 Cancel
               </button>
+              {onDelete && (
+                <button
+                  type="button"
+                  onClick={onDelete}
+                  className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl border border-expense/30 text-expense font-medium text-sm hover:bg-expense-light transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete
+                </button>
+              )}
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="flex-1 py-3 rounded-xl bg-amber hover:bg-amber-dark text-white font-medium text-sm transition-colors shadow-soft disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl bg-amber hover:bg-amber-dark text-white font-medium text-sm transition-colors shadow-soft disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isSubmitting ? (
-                  <div className="w-5 h-5 mx-auto border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                 ) : transaction ? (
                   "Update"
                 ) : (
