@@ -168,3 +168,14 @@ All notable development history for the Budget Tracker app.
   - **Pre-commit**: runs ESLint on staged `.ts`/`.tsx` files only (fast)
   - **Pre-push**: runs `pnpm type-check` on full codebase (blocks push on type errors)
 - Lint and type-check no longer duplicate during deploy — caught earlier in the dev workflow
+
+### Deployment Bug Fixes
+- Fixed **Bad Gateway** after deploy — standalone server defaulted to `127.0.0.1` inside Docker; added `HOSTNAME=0.0.0.0 PORT=3000` to nixpacks start command
+- Fixed **broken styles** (404 on all `_next/static/*` assets) — standalone output doesn't include static files; added `cp -r .next/static .next/standalone/.next/static` to build phase
+- Removed `cp -r public .next/standalone/public` — project has no `public` folder, causing build failure
+
+### UI Enhancements
+- Added **dynamic favicon** matching the app logo (generated via Next.js `icon` route)
+- **Reordered summary cards** — Balance first, then Expenses, then Income (previously Income first)
+- Fixed **recent transactions** ordering — now sorted by date descending, then creation time descending
+- Fixed **datetime-local input** cutout/clipping on mobile Safari
