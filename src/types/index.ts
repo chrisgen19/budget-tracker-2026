@@ -17,6 +17,7 @@ export interface DashboardStats {
   recentTransactions: TransactionWithCategory[];
   categoryBreakdown: CategoryBreakdownItem[];
   monthlyTrend: MonthlyTrendItem[];
+  balanceTrend: BalanceTrendItem[];
 }
 
 export interface CategoryBreakdownItem {
@@ -31,6 +32,11 @@ export interface MonthlyTrendItem {
   month: string;
   income: number;
   expenses: number;
+}
+
+export interface BalanceTrendItem {
+  date: string;   // YYYY-MM-DD
+  balance: number;
 }
 
 /** Extend next-auth types */

@@ -20,7 +20,7 @@ import { CategoryIcon } from "@/components/ui/icon-map";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Modal } from "@/components/ui/modal";
 import { TransactionForm } from "@/components/transactions/transaction-form";
-import { SpendingChart, TrendChart } from "@/components/dashboard/charts";
+import { SpendingChart, TrendChart, BalanceTrendChart } from "@/components/dashboard/charts";
 import { usePrivacy } from "@/components/privacy-provider";
 import type { TransactionInput } from "@/lib/validations";
 import type { DashboardStats } from "@/types";
@@ -253,6 +253,23 @@ export default function DashboardPage() {
               )}
             </motion.div>
           </div>
+
+          {/* Balance Trend */}
+          <motion.div variants={fadeUp} className="card p-5 mb-8">
+            {stats.balanceTrend.length > 0 ? (
+              <BalanceTrendChart
+                data={stats.balanceTrend}
+                hideAmounts={hideAmounts}
+              />
+            ) : (
+              <div>
+                <h2 className="font-serif text-lg text-warm-700">Balance Trend</h2>
+                <div className="h-[220px] flex items-center justify-center">
+                  <p className="text-warm-300 text-sm">No data yet</p>
+                </div>
+              </div>
+            )}
+          </motion.div>
 
           {/* Recent Transactions */}
           <motion.div variants={fadeUp} className="card">

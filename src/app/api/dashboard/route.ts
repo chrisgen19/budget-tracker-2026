@@ -22,8 +22,20 @@ export async function GET(request: Request) {
     endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
   }
 
+  // 30-day window for balance trend (ends at end of selected month)
+  const trendStart = new Date(endDate);
+  trendStart.setDate(trendStart.getDate() - 29);
+  trendStart.setHours(0, 0, 0, 0);
+
   // Fetch all data in parallel
-  const [transactions, recentTransactions, monthlyData, runningIncome, runningExpenses] = await Promise.all([
+  const [
+    transactions,
+    recentTransactions,
+    monthlyData,
+    runningIncome,
+    runningExpenses,
+    trendWindowTx,
+  ] = await Promise.all([
     // Current month transactions for stats
     prisma.transaction.findMany({
       where: {
@@ -63,6 +75,16 @@ export async function GET(request: Request) {
     prisma.transaction.aggregate({
       where: { userId, type: "EXPENSE", date: { lte: endDate } },
       _sum: { amount: true },
+    }),
+
+    // Transactions within the 30-day trend window (for balance trend chart)
+    prisma.transaction.findMany({
+      where: {
+        userId,
+        date: { gte: trendStart, lte: endDate },
+      },
+      select: { amount: true, type: true, date: true },
+      orderBy: { date: "asc" },
     }),
   ]);
 
@@ -128,6 +150,34 @@ export async function GET(request: Request) {
     });
   }
 
+  // Balance trend: daily running balance over the 30-day window
+  // Derive prior balance from all-time totals minus window transactions
+  const windowNet = trendWindowTx.reduce(
+    (sum, t) => sum + (t.type === "INCOME" ? t.amount : -t.amount),
+    0
+  );
+  const priorBalance = runningBalance - windowNet;
+
+  // Group window transactions by day
+  const txByDay = new Map<string, number>();
+  for (const t of trendWindowTx) {
+    const d = new Date(t.date);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const delta = t.type === "INCOME" ? t.amount : -t.amount;
+    txByDay.set(key, (txByDay.get(key) ?? 0) + delta);
+  }
+
+  // Walk 30 days, accumulating from priorBalance
+  const balanceTrend = [];
+  let bal = priorBalance;
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(trendStart);
+    d.setDate(d.getDate() + i);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    bal += txByDay.get(key) ?? 0;
+    balanceTrend.push({ date: key, balance: bal });
+  }
+
   return NextResponse.json({
     totalIncome,
     totalExpenses,
@@ -137,5 +187,6 @@ export async function GET(request: Request) {
     recentTransactions,
     categoryBreakdown,
     monthlyTrend,
+    balanceTrend,
   });
 }
