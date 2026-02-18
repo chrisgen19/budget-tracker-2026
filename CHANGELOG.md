@@ -179,3 +179,19 @@ All notable development history for the Budget Tracker app.
 - **Reordered summary cards** — Balance first, then Expenses, then Income (previously Income first)
 - Fixed **recent transactions** ordering — now sorted by date descending, then creation time descending
 - Fixed **datetime-local input** cutout/clipping on mobile Safari
+
+---
+
+## 2026-02-18 — Category Picker & Modal UX Overhaul
+
+### Slide-In Category Picker
+- Replaced inline category grid in the transaction form with a **slide-in category picker view**
+- Selecting a category type or tapping the category field slides to a dedicated picker screen
+- Picker shows all categories for the selected type with icon, color swatch, and name
+- Back button slides back to the main form — smooth left/right transition
+
+### Transaction Modal Improvements
+- Moved **delete action into the edit transaction modal** — no more hover-reveal delete buttons on transaction rows
+- Delete button appears alongside Cancel and Update when editing an existing transaction
+- Standardized all modal action buttons with **equal sizing and icon + text labels** for consistency
+- Added icons to all modal action buttons across the app (Cancel, Delete, Update, Add, etc.)

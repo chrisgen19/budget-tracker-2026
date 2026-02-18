@@ -15,7 +15,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **Dashboard** — Summary cards (balance, expenses, income), monthly trend bar chart, spending by category donut chart, balance trend area chart, recent transactions
 - **Running Balance** — Cumulative all-time balance that carries over across months, not just monthly snapshots
 - **Balance Trend** — 30-day area chart showing daily running balance with percentage change indicator
-- **Transactions** — Full CRUD with search, type filtering (income/expense), month navigation, pagination, auto-comma amount formatting, and datetime picker
+- **Transactions** — Full CRUD with search, type filtering (income/expense), month navigation, pagination, auto-comma amount formatting, datetime picker, and slide-in category picker
 - **Categories** — 15 pre-seeded defaults (10 expense, 5 income) + create/edit/delete custom categories with color and icon pickers
 - **Privacy Mode** — One-tap toggle to hide all financial amounts across the app, persisted per-user in the database
 - **Responsive** — Sidebar navigation on desktop, bottom navigation on mobile; horizontal scroll summary cards with snap points on mobile
