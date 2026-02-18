@@ -2,6 +2,7 @@
 
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { Plus, X } from "lucide-react";
 import { categorySchema, type CategoryInput } from "@/lib/validations";
 import { CategoryIcon, AVAILABLE_ICONS } from "@/components/ui/icon-map";
 import type { Category } from "@/types";
@@ -178,6 +179,7 @@ export function CategoryForm({ category, onSubmit, onCancel }: CategoryFormProps
           onClick={onCancel}
           className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl border border-cream-300 text-warm-500 font-medium text-sm hover:bg-cream-100 transition-colors"
         >
+          <X className="w-4 h-4" />
           Cancel
         </button>
         <button
@@ -190,7 +192,10 @@ export function CategoryForm({ category, onSubmit, onCancel }: CategoryFormProps
           ) : category ? (
             "Update"
           ) : (
-            "Create Category"
+            <>
+              <Plus className="w-4 h-4" />
+              Create Category
+            </>
           )}
         </button>
       </div>

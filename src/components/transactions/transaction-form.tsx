@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, ChevronRight, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronRight, Plus, Trash2, X } from "lucide-react";
 import { transactionSchema, type TransactionInput } from "@/lib/validations";
 import { formatDateInput } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
@@ -302,6 +302,7 @@ export function TransactionForm({ transaction, onSubmit, onCancel, onDelete }: T
                 onClick={onCancel}
                 className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl border border-cream-300 text-warm-500 font-medium text-sm hover:bg-cream-100 transition-colors"
               >
+                <X className="w-4 h-4" />
                 Cancel
               </button>
               {onDelete && (
@@ -324,7 +325,10 @@ export function TransactionForm({ transaction, onSubmit, onCancel, onDelete }: T
                 ) : transaction ? (
                   "Update"
                 ) : (
-                  "Add Transaction"
+                  <>
+                    <Plus className="w-4 h-4" />
+                    Add Transaction
+                  </>
                 )}
               </button>
             </div>

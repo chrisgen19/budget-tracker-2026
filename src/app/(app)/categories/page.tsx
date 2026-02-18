@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Pencil, Trash2, Tags, Lock } from "lucide-react";
+import { Plus, Pencil, Trash2, Tags, Lock, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
@@ -316,6 +316,7 @@ export default function CategoriesPage() {
             onClick={() => setDeletingCategory(null)}
             className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl border border-cream-300 text-warm-500 font-medium text-sm hover:bg-cream-100 transition-colors"
           >
+            <X className="w-4 h-4" />
             Cancel
           </button>
           <button

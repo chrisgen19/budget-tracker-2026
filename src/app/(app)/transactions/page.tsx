@@ -623,6 +623,7 @@ export default function TransactionsPage() {
             onClick={() => setDeletingTransaction(null)}
             className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl border border-cream-300 text-warm-500 font-medium text-sm hover:bg-cream-100 transition-colors"
           >
+            <X className="w-4 h-4" />
             Cancel
           </button>
           <button
@@ -660,6 +661,7 @@ export default function TransactionsPage() {
             onClick={() => setShowBulkDelete(false)}
             className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl border border-cream-300 text-warm-500 font-medium text-sm hover:bg-cream-100 transition-colors"
           >
+            <X className="w-4 h-4" />
             Cancel
           </button>
           <button
