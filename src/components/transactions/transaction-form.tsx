@@ -14,9 +14,18 @@ interface TransactionFormProps {
   onCancel: () => void;
 }
 
+const formatAmountDisplay = (value: number) =>
+  new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+
 export function TransactionForm({ transaction, onSubmit, onCancel }: TransactionFormProps) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(true);
+  const [displayAmount, setDisplayAmount] = useState<string>(() =>
+    transaction?.amount != null ? formatAmountDisplay(transaction.amount) : ""
+  );
 
   const {
     register,
@@ -90,10 +99,35 @@ export function TransactionForm({ transaction, onSubmit, onCancel }: Transaction
           <span className="absolute left-4 top-1/2 -translate-y-1/2 text-warm-400 text-sm">
             ₱
           </span>
+          <input type="hidden" {...register("amount", { valueAsNumber: true })} />
           <input
-            type="number"
-            step="0.01"
-            {...register("amount", { valueAsNumber: true })}
+            type="text"
+            inputMode="decimal"
+            pattern="[0-9]*"
+            value={displayAmount}
+            onChange={(e) => {
+              const raw = e.target.value.replace(/[^0-9.]/g, "");
+              // Prevent multiple decimals or more than 2 decimal places
+              const parts = raw.split(".");
+              if (parts.length > 2) return;
+              if (parts[1]?.length > 2) return;
+              // Format integer part with commas
+              const intPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+              const formatted = parts.length > 1 ? `${intPart}.${parts[1]}` : intPart;
+              setDisplayAmount(formatted);
+              const numeric = parseFloat(raw);
+              setValue("amount", isNaN(numeric) ? (undefined as unknown as number) : numeric, {
+                shouldValidate: true,
+              });
+            }}
+            onBlur={() => {
+              if (!displayAmount) return;
+              const numeric = parseFloat(displayAmount.replace(/,/g, ""));
+              if (!isNaN(numeric)) {
+                setDisplayAmount(formatAmountDisplay(numeric));
+                setValue("amount", numeric, { shouldValidate: true });
+              }
+            }}
             className="w-full pl-8 pr-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 placeholder:text-warm-300 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all"
             placeholder="0.00"
           />
