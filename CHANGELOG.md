@@ -142,3 +142,29 @@ All notable development history for the Budget Tracker app.
 - Framer Motion `whileInView` scroll-triggered animations with staggered reveals
 - Decorative blur circles in background (consistent with auth layout style)
 - Fully responsive: single column on mobile, full grid on desktop
+
+---
+
+## 2026-02-18 — Transaction Form UX & Deploy Optimization
+
+### Transaction Form Improvements
+- Amount input now **auto-formats with commas** while typing (e.g., `122000` → `122,000.00`) and formats to 2 decimal places on blur
+- Switched amount input to `type="text"` with `inputMode="decimal"` for numeric keyboard on mobile (no alphanumeric keys)
+- Changed date picker from `type="date"` to `type="datetime-local"` — users can now pick both date and time
+- Updated `formatDateInput` utility to output `YYYY-MM-DDTHH:mm` format (local time)
+- Updated `formatDate` display utility to include hour and minute (e.g., "Feb 18, 2026, 2:30 PM")
+- Fixed `pattern="[0-9]*"` attribute causing browser validation error ("please match the requested format") on decimal values
+- Added `min-w-0` to all form inputs and `overflow-hidden` on the form to prevent horizontal scroll on narrow mobile screens
+
+### Deployment Optimization (Coolify / Nixpacks)
+- Added `.dockerignore` to exclude `node_modules`, `.next`, `.git`, and other unnecessary files from build context
+- Added `nixpacks.toml` with custom build phases — caches pnpm store, `node_modules/.cache`, and `.next/cache` between deploys
+- Start command uses `node .next/standalone/server.js` for lightweight standalone output
+- Fixed `pnpm: command not found` error during Nixpacks build — replaced `npm i -g pnpm` with `corepack enable` (built into Node 20)
+- Disabled ESLint and TypeScript checking during `next build` (`eslint.ignoreDuringBuilds`, `typescript.ignoreBuildErrors`) — now handled by git hooks instead
+
+### Developer Experience
+- Added **husky** git hooks with **lint-staged**:
+  - **Pre-commit**: runs ESLint on staged `.ts`/`.tsx` files only (fast)
+  - **Pre-push**: runs `pnpm type-check` on full codebase (blocks push on type errors)
+- Lint and type-check no longer duplicate during deploy — caught earlier in the dev workflow

@@ -15,7 +15,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **Dashboard** — Summary cards (income, expenses, running balance), monthly trend bar chart, spending by category donut chart, balance trend area chart, recent transactions
 - **Running Balance** — Cumulative all-time balance that carries over across months, not just monthly snapshots
 - **Balance Trend** — 30-day area chart showing daily running balance with percentage change indicator
-- **Transactions** — Full CRUD with search, type filtering (income/expense), month navigation, and pagination
+- **Transactions** — Full CRUD with search, type filtering (income/expense), month navigation, pagination, auto-comma amount formatting, and datetime picker
 - **Categories** — 15 pre-seeded defaults (10 expense, 5 income) + create/edit/delete custom categories with color and icon pickers
 - **Privacy Mode** — One-tap toggle to hide all financial amounts across the app, persisted per-user in the database
 - **Responsive** — Sidebar navigation on desktop, bottom navigation on mobile; horizontal scroll summary cards with snap points on mobile
@@ -105,6 +105,17 @@ Open [http://localhost:3000](http://localhost:3000), register an account, and st
 | `pnpm db:migrate` | Run Prisma migrations |
 | `pnpm db:seed` | Seed default categories |
 | `pnpm db:studio` | Open Prisma Studio (database GUI) |
+
+## Git Hooks
+
+This project uses **husky** + **lint-staged** to enforce code quality before code reaches the repository:
+
+| Hook | What runs | Purpose |
+|---|---|---|
+| Pre-commit | `lint-staged` (ESLint on staged `.ts`/`.tsx` files) | Catch lint issues immediately |
+| Pre-push | `pnpm type-check` (full codebase) | Block push on type errors |
+
+Hooks are installed automatically via the `prepare` script when you run `pnpm install`.
 
 ## Project Structure
 
