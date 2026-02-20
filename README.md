@@ -17,6 +17,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **Balance Trend** — 30-day area chart showing daily running balance with percentage change indicator
 - **Transactions** — Full CRUD with search, type filtering (income/expense), month navigation, pagination, auto-comma amount formatting, datetime picker, and slide-in category picker
 - **Categories** — 15 pre-seeded defaults (10 expense, 5 income) + create/edit/delete custom categories with color and icon pickers
+- **Profile Settings** — Edit name, email, and preferred currency; change password with current-password verification; sidebar updates instantly via shared context
 - **Privacy Mode** — One-tap toggle to hide all financial amounts across the app, persisted per-user in the database
 - **Responsive** — Sidebar navigation on desktop, bottom navigation on mobile; horizontal scroll summary cards with snap points on mobile
 - **Dynamic Favicon** — Auto-generated favicon matching the app logo
@@ -130,21 +131,24 @@ src/
 │   ├── (app)/               # Protected pages (requires auth)
 │   │   ├── dashboard/       # Dashboard with charts & summaries
 │   │   ├── transactions/    # Transaction list with CRUD
-│   │   └── categories/      # Category management
+│   │   ├── categories/      # Category management
+│   │   └── profile/         # Profile settings (name, email, currency, password)
 │   └── api/                 # REST API routes
 │       ├── auth/            # NextAuth handler
 │       ├── register/        # User registration
 │       ├── transactions/    # Transaction CRUD
 │       ├── categories/      # Category CRUD
 │       ├── dashboard/       # Dashboard stats + balance trend
-│       └── preferences/     # User preferences (privacy toggle)
+│       ├── preferences/     # User preferences (privacy toggle)
+│       └── profile/         # Profile & password update
 ├── components/
 │   ├── ui/                  # Shared UI (Modal, EmptyState, IconMap)
 │   ├── dashboard/           # Chart components (Trend, Spending, BalanceTrend)
 │   ├── transactions/        # Transaction form
 │   ├── categories/          # Category form
 │   ├── landing-page.tsx     # Marketing homepage for guests
-│   └── privacy-provider.tsx # Hide-amounts context (persisted in DB)
+│   ├── privacy-provider.tsx # Hide-amounts context (persisted in DB)
+│   └── user-provider.tsx    # Reactive user info context (name, email)
 ├── lib/                     # Prisma client, auth, utils, validations
 └── types/                   # TypeScript type definitions
 
@@ -162,7 +166,7 @@ User ──< Transaction >── Category
  └────────< Category (custom, per-user)
 ```
 
-- **User** — id, name, email, password, hide_amounts (privacy toggle preference)
+- **User** — id, name, email, password, currency, hide_amounts (privacy toggle preference)
 - **Category** — id, name, type (INCOME/EXPENSE), icon, color, isDefault, userId (null for defaults)
 - **Transaction** — id, amount, description, type, date, categoryId, userId
 

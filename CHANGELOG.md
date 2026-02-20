@@ -195,3 +195,32 @@ All notable development history for the Budget Tracker app.
 - Delete button appears alongside Cancel and Update when editing an existing transaction
 - Standardized all modal action buttons with **equal sizing and icon + text labels** for consistency
 - Added icons to all modal action buttons across the app (Cancel, Delete, Update, Add, etc.)
+
+---
+
+## 2026-02-20 — Profile Settings Page
+
+### Profile Settings (`/profile`)
+- New **Profile Settings** page with two sections: Personal Information and Change Password
+- **Desktop layout:** left sidebar tab navigation + right content area with tab switching
+- **Mobile layout:** both sections stacked vertically, no tab switching needed
+- Personal Information form: edit name, email, and preferred currency (dropdown with 10 common currencies)
+- Change Password form: current password verification via bcrypt, new password with confirmation
+- Sidebar user info (name + email) updates **instantly** after saving — no page refresh needed
+
+### User Provider Context
+- Created `UserProvider` context (same pattern as `PrivacyProvider`) to share reactive user info across components
+- `AppShell` reads from `useUser()` context instead of static server props
+- Profile page calls `setUser()` after successful save — sidebar re-renders immediately
+
+### Database
+- Added `currency` column to `users` table (defaults to `"PHP"`, applied via Prisma migration)
+
+### API Routes
+- `GET /api/profile` — returns current user's name, email, currency
+- `PATCH /api/profile` — updates name, email, currency with Zod validation and email uniqueness check
+- `POST /api/profile/password` — verifies current password, hashes and saves new password
+
+### Navigation
+- Sidebar user info block (avatar + name + email) is now clickable — navigates to `/profile`
+- Mobile header: added user icon (top-right) linking to `/profile`
