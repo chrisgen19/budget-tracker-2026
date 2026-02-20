@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { Providers } from "@/components/providers";
 import { PrivacyProvider } from "@/components/privacy-provider";
+import { UserProvider } from "@/components/user-provider";
 import { AppShell } from "@/components/app-shell";
 
 export default async function AppLayout({
@@ -18,9 +19,11 @@ export default async function AppLayout({
 
   return (
     <Providers>
-      <PrivacyProvider>
-        <AppShell user={session.user}>{children}</AppShell>
-      </PrivacyProvider>
+      <UserProvider initialUser={session.user}>
+        <PrivacyProvider>
+          <AppShell>{children}</AppShell>
+        </PrivacyProvider>
+      </UserProvider>
     </Providers>
   );
 }

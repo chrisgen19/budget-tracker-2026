@@ -13,9 +13,9 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
+import { useUser } from "@/components/user-provider";
 
 interface AppShellProps {
-  user: { name: string; email: string };
   children: React.ReactNode;
 }
 
@@ -25,8 +25,9 @@ const NAV_ITEMS = [
   { href: "/categories", label: "Categories", icon: Tags },
 ];
 
-export function AppShell({ user, children }: AppShellProps) {
+export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
+  const { user } = useUser();
 
   return (
     <div className="min-h-screen bg-cream-100">
@@ -78,7 +79,10 @@ export function AppShell({ user, children }: AppShellProps) {
 
         {/* User section */}
         <div className="border-t border-cream-200 p-4">
-          <div className="flex items-center gap-3 px-2 mb-3">
+          <Link
+            href="/profile"
+            className="flex items-center gap-3 px-2 mb-3 rounded-xl py-1 -mx-0 hover:bg-cream-100 transition-colors"
+          >
             <div className="w-9 h-9 rounded-full bg-cream-200 flex items-center justify-center">
               <User className="w-4 h-4 text-warm-400" />
             </div>
@@ -88,7 +92,7 @@ export function AppShell({ user, children }: AppShellProps) {
               </p>
               <p className="text-xs text-warm-400 truncate">{user.email}</p>
             </div>
-          </div>
+          </Link>
           <button
             onClick={() => signOut({ callbackUrl: "/login" })}
             className="flex items-center gap-2 w-full px-4 py-2.5 rounded-xl text-sm text-warm-400 hover:text-expense hover:bg-expense-light transition-all duration-200"
@@ -108,12 +112,12 @@ export function AppShell({ user, children }: AppShellProps) {
             </div>
             <h1 className="font-serif text-lg text-warm-700">Budget Tracker</h1>
           </div>
-          <button
-            onClick={() => signOut({ callbackUrl: "/login" })}
-            className="p-2 rounded-xl text-warm-400 hover:text-expense hover:bg-expense-light transition-colors"
+          <Link
+            href="/profile"
+            className="p-2 rounded-xl text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors"
           >
-            <LogOut className="w-5 h-5" />
-          </button>
+            <User className="w-5 h-5" />
+          </Link>
         </div>
       </header>
 
