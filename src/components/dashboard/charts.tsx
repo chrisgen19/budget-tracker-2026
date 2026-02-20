@@ -251,6 +251,7 @@ export function BalanceTrendChart({ data, hideAmounts }: BalanceTrendChartProps)
             tick={{ fill: "#B5A898", fontSize: 11 }}
             tickFormatter={formatAbbreviated}
             width={50}
+            domain={["dataMin", "dataMax"]}
           />
           <Tooltip
             content={({ active, payload, label }) => {
