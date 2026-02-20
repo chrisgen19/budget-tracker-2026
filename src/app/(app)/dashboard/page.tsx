@@ -373,6 +373,21 @@ function DashboardSkeleton() {
           </div>
         ))}
       </div>
+      <div className="card p-5 mb-8">
+        <div className="w-32 h-5 rounded animate-shimmer mb-2" />
+        <div className="w-48 h-3 rounded animate-shimmer mb-4" />
+        <div className="flex items-start justify-between mb-4">
+          <div className="space-y-1">
+            <div className="w-12 h-3 rounded animate-shimmer" />
+            <div className="w-28 h-6 rounded animate-shimmer" />
+          </div>
+          <div className="space-y-1">
+            <div className="w-16 h-3 rounded animate-shimmer" />
+            <div className="w-16 h-6 rounded-full animate-shimmer" />
+          </div>
+        </div>
+        <div className="h-[180px] rounded-xl animate-shimmer" />
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
         {[1, 2].map((i) => (
           <div key={i} className="card p-5">
