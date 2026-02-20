@@ -17,11 +17,26 @@ import {
 import type { BalanceTrendItem, CategoryBreakdownItem, MonthlyTrendItem } from "@/types";
 import { formatCurrency, cn } from "@/lib/utils";
 
+/** Abbreviate large numbers for Y-axis: 193400 → "193.4K" */
+const formatAbbreviated = (v: number) => {
+  if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(v) >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
+  return v.toFixed(0);
+};
+
+/** Format date key for X-axis ticks: "2026-02-14" → "2/14" */
+const formatDateTick = (dateStr: string) => {
+  const [, m, d] = dateStr.split("-");
+  return `${parseInt(m)}/${parseInt(d)}`;
+};
+
 interface TrendChartProps {
   data: MonthlyTrendItem[];
 }
 
 export function TrendChart({ data }: TrendChartProps) {
+  if (data.length === 0) return null;
+
   // Shorten month labels for display
   const chartData = data.map((item) => ({
     ...item,
@@ -41,7 +56,7 @@ export function TrendChart({ data }: TrendChartProps) {
           axisLine={false}
           tickLine={false}
           tick={{ fill: "#B5A898", fontSize: 11 }}
-          tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`}
+          tickFormatter={formatAbbreviated}
           width={40}
         />
         <Tooltip
@@ -83,6 +98,8 @@ interface SpendingChartProps {
 }
 
 export function SpendingChart({ data }: SpendingChartProps) {
+  if (data.length === 0) return null;
+
   return (
     <div className="flex items-center gap-4">
       <div className="w-[160px] h-[160px] shrink-0">
@@ -145,19 +162,6 @@ export function SpendingChart({ data }: SpendingChartProps) {
   );
 }
 
-/** Abbreviate large numbers for Y-axis: 193400 → "193.4K" */
-const formatAbbreviated = (v: number) => {
-  if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (Math.abs(v) >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
-  return v.toFixed(0);
-};
-
-/** Format date key for X-axis ticks: "2026-02-14" → "2/14" */
-const formatDateTick = (dateStr: string) => {
-  const [, m, d] = dateStr.split("-");
-  return `${parseInt(m)}/${parseInt(d)}`;
-};
-
 interface BalanceTrendChartProps {
   data: BalanceTrendItem[];
   hideAmounts: boolean;
@@ -173,7 +177,9 @@ export function BalanceTrendChart({ data, hideAmounts }: BalanceTrendChartProps)
       ? ((currentBalance - startBalance) / Math.abs(startBalance)) * 100
       : currentBalance > 0
         ? 100
-        : 0;
+        : currentBalance < 0
+          ? -100
+          : 0;
 
   return (
     <div>
