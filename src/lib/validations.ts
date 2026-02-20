@@ -17,7 +17,7 @@ export const registerSchema = z.object({
 
 export const transactionSchema = z.object({
   amount: z.number().positive("Amount must be greater than 0"),
-  description: z.string().min(1, "Description is required").max(255),
+  description: z.string().max(255).default(""),
   type: z.enum(["INCOME", "EXPENSE"]),
   date: z.string().min(1, "Date is required"),
   categoryId: z.string().min(1, "Category is required"),
