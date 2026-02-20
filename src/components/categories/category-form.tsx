@@ -2,8 +2,9 @@
 
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, X } from "lucide-react";
+import { Check, Plus, X } from "lucide-react";
 import { categorySchema, type CategoryInput } from "@/lib/validations";
+import { cn } from "@/lib/utils";
 import { CategoryIcon, AVAILABLE_ICONS } from "@/components/ui/icon-map";
 import type { Category } from "@/types";
 
@@ -89,29 +90,34 @@ export function CategoryForm({ category, onSubmit, onCancel }: CategoryFormProps
         <label className="block text-sm font-medium text-warm-600 mb-2">
           Color
         </label>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2.5">
           {PRESET_COLORS.map((color) => (
             <button
               key={color}
               type="button"
               onClick={() => setValue("color", color)}
-              className={`w-8 h-8 rounded-lg transition-all duration-150 ${
+              className={cn(
+                "w-10 h-10 rounded-xl transition-all duration-150 flex items-center justify-center",
                 selectedColor === color
                   ? "ring-2 ring-offset-2 ring-warm-400 scale-110"
                   : "hover:scale-105"
-              }`}
+              )}
               style={{ backgroundColor: color }}
-            />
+            >
+              {selectedColor === color && (
+                <Check className="w-4 h-4 text-white drop-shadow-sm" />
+              )}
+            </button>
           ))}
           {/* Custom color input */}
-          <label className="w-8 h-8 rounded-lg border-2 border-dashed border-cream-300 flex items-center justify-center cursor-pointer hover:border-warm-400 transition-colors overflow-hidden relative">
+          <label className="w-10 h-10 rounded-xl border-2 border-dashed border-cream-300 flex items-center justify-center cursor-pointer hover:border-warm-400 transition-colors overflow-hidden relative">
             <input
               type="color"
               value={selectedColor}
               onChange={(e) => setValue("color", e.target.value)}
               className="absolute inset-0 opacity-0 cursor-pointer"
             />
-            <span className="text-warm-300 text-xs font-bold">+</span>
+            <Plus className="w-4 h-4 text-warm-300" />
           </label>
         </div>
         {errors.color && (
@@ -124,17 +130,18 @@ export function CategoryForm({ category, onSubmit, onCancel }: CategoryFormProps
         <label className="block text-sm font-medium text-warm-600 mb-2">
           Icon
         </label>
-        <div className="grid grid-cols-5 gap-2 max-h-40 overflow-y-auto">
+        <div className="grid grid-cols-5 sm:grid-cols-6 gap-2 max-h-48 overflow-y-auto scrollbar-hide py-1 px-0.5">
           {AVAILABLE_ICONS.map((icon) => (
             <button
               key={icon}
               type="button"
               onClick={() => setValue("icon", icon)}
-              className={`flex flex-col items-center gap-1 p-2.5 rounded-xl border-2 transition-all duration-150 ${
+              className={cn(
+                "flex items-center justify-center p-3 rounded-xl border-2 transition-all duration-150",
                 selectedIcon === icon
-                  ? "border-amber bg-amber-light/50"
-                  : "border-cream-200 hover:border-cream-400"
-              }`}
+                  ? "border-amber bg-amber-light/50 shadow-warm"
+                  : "border-cream-200 hover:border-cream-400 hover:bg-cream-50"
+              )}
             >
               <CategoryIcon
                 name={icon}
@@ -151,24 +158,35 @@ export function CategoryForm({ category, onSubmit, onCancel }: CategoryFormProps
       </div>
 
       {/* Preview */}
-      <div className="bg-cream-50 rounded-xl p-4 flex items-center gap-3">
-        <div
-          className="w-10 h-10 rounded-xl flex items-center justify-center"
-          style={{ backgroundColor: selectedColor + "18" }}
-        >
-          <CategoryIcon
-            name={selectedIcon}
-            className="w-5 h-5"
-            style={{ color: selectedColor }}
-          />
-        </div>
-        <div>
-          <p className="text-sm font-medium text-warm-600">
-            {watch("name") || "Category Preview"}
-          </p>
-          <p className="text-xs text-warm-400">
-            {selectedType === "INCOME" ? "Income" : "Expense"}
-          </p>
+      <div>
+        <label className="block text-sm font-medium text-warm-600 mb-2">
+          Preview
+        </label>
+        <div className="bg-cream-50 rounded-xl p-4 flex items-center gap-3 border border-cream-200/60">
+          <div
+            className="w-12 h-12 rounded-xl flex items-center justify-center"
+            style={{ backgroundColor: selectedColor + "18" }}
+          >
+            <CategoryIcon
+              name={selectedIcon}
+              className="w-6 h-6"
+              style={{ color: selectedColor }}
+            />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-warm-700">
+              {watch("name") || "Category Name"}
+            </p>
+            <p className="text-xs text-warm-400 flex items-center gap-1">
+              <span
+                className={cn(
+                  "inline-block w-1.5 h-1.5 rounded-full",
+                  selectedType === "INCOME" ? "bg-income" : "bg-expense"
+                )}
+              />
+              {selectedType === "INCOME" ? "Income" : "Expense"}
+            </p>
+          </div>
         </div>
       </div>
 
