@@ -226,6 +226,23 @@ export default function DashboardPage() {
             </motion.div>
           </div>
 
+          {/* Balance Trend */}
+          <motion.div variants={fadeUp} className="card p-5 mb-8">
+            {stats.balanceTrend.length > 0 ? (
+              <BalanceTrendChart
+                data={stats.balanceTrend}
+                hideAmounts={hideAmounts}
+              />
+            ) : (
+              <div>
+                <h2 className="font-serif text-lg text-warm-700">Balance Trend</h2>
+                <div className="h-[220px] flex items-center justify-center">
+                  <p className="text-warm-300 text-sm">No data yet</p>
+                </div>
+              </div>
+            )}
+          </motion.div>
+
           {/* Charts Row */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
             <motion.div variants={fadeUp} className="card p-5">
@@ -254,23 +271,6 @@ export default function DashboardPage() {
               )}
             </motion.div>
           </div>
-
-          {/* Balance Trend */}
-          <motion.div variants={fadeUp} className="card p-5 mb-8">
-            {stats.balanceTrend.length > 0 ? (
-              <BalanceTrendChart
-                data={stats.balanceTrend}
-                hideAmounts={hideAmounts}
-              />
-            ) : (
-              <div>
-                <h2 className="font-serif text-lg text-warm-700">Balance Trend</h2>
-                <div className="h-[220px] flex items-center justify-center">
-                  <p className="text-warm-300 text-sm">No data yet</p>
-                </div>
-              </div>
-            )}
-          </motion.div>
 
           {/* Recent Transactions */}
           <motion.div variants={fadeUp} className="card">
