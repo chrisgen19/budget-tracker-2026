@@ -144,10 +144,15 @@ export function SpendingChart({ data }: SpendingChartProps) {
               className="w-2.5 h-2.5 rounded-full shrink-0"
               style={{ backgroundColor: item.color }}
             />
-            <span className="text-xs text-warm-500 truncate flex-1">
-              {item.name}
-            </span>
-            <span className="text-xs font-medium text-warm-600 tabular-nums">
+            <div className="flex-1 min-w-0">
+              <span className="text-xs text-warm-500 truncate block">
+                {item.name}
+              </span>
+              <span className="text-[10px] text-warm-400 tabular-nums">
+                {formatCurrency(item.amount)}
+              </span>
+            </div>
+            <span className="text-xs font-medium text-warm-600 tabular-nums shrink-0">
               {item.percentage}%
             </span>
           </div>
