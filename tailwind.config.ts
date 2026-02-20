@@ -57,6 +57,7 @@ const config: Config = {
       fontFamily: {
         serif: ["var(--font-young-serif)", "Georgia", "serif"],
         sans: ["var(--font-outfit)", "system-ui", "sans-serif"],
+        display: ["var(--font-plus-jakarta)", "system-ui", "sans-serif"],
       },
       borderRadius: {
         "2xl": "1rem",

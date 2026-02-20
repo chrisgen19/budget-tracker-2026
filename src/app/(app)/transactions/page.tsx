@@ -447,7 +447,7 @@ export default function TransactionsPage() {
                   {!hideAmounts && (
                     <span
                       className={cn(
-                        "text-xs font-medium tabular-nums",
+                        "text-xs font-display font-semibold tabular-nums",
                         group.subtotal >= 0 ? "text-income" : "text-expense"
                       )}
                     >
@@ -512,7 +512,7 @@ export default function TransactionsPage() {
                         <div className="text-right shrink-0">
                           <p
                             className={cn(
-                              "text-sm font-medium tabular-nums",
+                              "text-sm font-display font-semibold tabular-nums",
                               tx.type === "INCOME" ? "text-income" : "text-expense"
                             )}
                           >
