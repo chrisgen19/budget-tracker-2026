@@ -149,7 +149,7 @@ export function TransactionForm({ transaction, onSubmit, onCancel, onDelete }: T
           exit="exitToLeft"
           transition={{ type: "spring", stiffness: 300, damping: 30 }}
         >
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+          <form onSubmit={handleSubmit((data) => onSubmit({ ...data, date: new Date(data.date).toISOString() }))} className="space-y-5">
             {/* Type Toggle */}
             <div className="flex gap-2 p-1 bg-cream-100 rounded-xl">
               <button
