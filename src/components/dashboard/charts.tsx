@@ -170,7 +170,24 @@ interface BalanceTrendChartProps {
 export function BalanceTrendChart({ data, hideAmounts }: BalanceTrendChartProps) {
   if (data.length === 0) return null;
 
-  const currentBalance = data[data.length - 1].balance;
+  // Split data into actual (up to today) and projected (today onward)
+  const todayKey = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+  const chartData = data.map((item) => {
+    const isActual = item.date <= todayKey;
+    const isToday = item.date === todayKey;
+    return {
+      date: item.date,
+      // Actual line: value up to and including today
+      balance: isActual ? item.balance : undefined,
+      // Projected line: value from today onward (overlaps on today to connect)
+      projected: isActual && !isToday ? undefined : item.balance,
+    };
+  });
+
+  // Use last actual data point for metrics (not projected future)
+  const lastActualIdx = data.findIndex((item) => item.date > todayKey) - 1;
+  const actualEndIdx = lastActualIdx >= 0 ? lastActualIdx : data.length - 1;
+  const currentBalance = data[actualEndIdx].balance;
   const startBalance = data[0].balance;
   const pctChange =
     startBalance !== 0
@@ -224,10 +241,14 @@ export function BalanceTrendChart({ data, hideAmounts }: BalanceTrendChartProps)
 
       {/* Area Chart */}
       <ResponsiveContainer width="100%" height={180}>
-        <AreaChart data={data}>
+        <AreaChart data={chartData}>
           <defs>
             <linearGradient id="balanceGradient" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.2} />
+              <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
+            </linearGradient>
+            <linearGradient id="projectedGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.08} />
               <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
             </linearGradient>
           </defs>
@@ -256,25 +277,41 @@ export function BalanceTrendChart({ data, hideAmounts }: BalanceTrendChartProps)
           <Tooltip
             content={({ active, payload, label }) => {
               if (!active || !payload?.length) return null;
-              const balance = payload[0].value as number;
+              // Pick the first non-null value from either series
+              const value = (payload.find((p) => p.value != null)?.value ?? 0) as number;
+              const isFuture = (label as string) > todayKey;
               return (
                 <div className="bg-white rounded-xl shadow-soft-md border border-cream-200 px-3 py-2">
                   <p className="text-xs text-warm-400 mb-1">
                     {formatDateTick(label as string)}
+                    {isFuture && " (projected)"}
                   </p>
                   <p className="text-sm font-medium text-warm-700">
-                    {hideAmounts ? "₱ ••••••" : formatCurrency(balance)}
+                    {hideAmounts ? "₱ ••••••" : formatCurrency(value)}
                   </p>
                 </div>
               );
             }}
           />
+          {/* Actual balance line (solid) */}
           <Area
             type="monotone"
             dataKey="balance"
             stroke="#3b82f6"
             strokeWidth={2}
             fill="url(#balanceGradient)"
+            connectNulls={false}
+          />
+          {/* Projected balance line (dashed) */}
+          <Area
+            type="monotone"
+            dataKey="projected"
+            stroke="#3b82f6"
+            strokeWidth={1.5}
+            strokeDasharray="6 4"
+            strokeOpacity={0.5}
+            fill="url(#projectedGradient)"
+            connectNulls={false}
           />
         </AreaChart>
       </ResponsiveContainer>
