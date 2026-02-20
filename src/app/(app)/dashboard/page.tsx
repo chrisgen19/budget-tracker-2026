@@ -53,9 +53,9 @@ export default function DashboardPage() {
   /** Display amount or censored placeholder */
   const displayAmount = (amount: number, colorClass?: string) =>
     hideAmounts ? (
-      <span className={cn("font-serif text-2xl", colorClass)}>{getCurrencySymbol(currency)} ••••••</span>
+      <span className={cn("font-display font-bold text-2xl tabular-nums", colorClass)}>{getCurrencySymbol(currency)} ••••••</span>
     ) : (
-      <span className={cn("font-serif text-2xl", colorClass)}>
+      <span className={cn("font-display font-bold text-2xl tabular-nums", colorClass)}>
         {formatCurrency(amount, currency)}
       </span>
     );
@@ -65,9 +65,9 @@ export default function DashboardPage() {
     const colorClass = type === "INCOME" ? "text-income" : "text-expense";
     const prefix = type === "INCOME" ? "+" : "-";
     return hideAmounts ? (
-      <span className={cn("text-sm font-medium tabular-nums", colorClass)}>••••</span>
+      <span className={cn("text-sm font-display font-semibold tabular-nums", colorClass)}>••••</span>
     ) : (
-      <span className={cn("text-sm font-medium tabular-nums", colorClass)}>
+      <span className={cn("text-sm font-display font-semibold tabular-nums", colorClass)}>
         {prefix}{formatCurrency(amount, currency)}
       </span>
     );
