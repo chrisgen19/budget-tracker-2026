@@ -6,7 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, ChevronRight, Plus, Trash2, X } from "lucide-react";
 import { transactionSchema, type TransactionInput } from "@/lib/validations";
-import { formatDateInput, getCurrencySymbol } from "@/lib/utils";
+import { formatDateInput, getCurrencySymbol, cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { useUser } from "@/components/user-provider";
 import type { Category, TransactionWithCategory } from "@/types";
@@ -178,13 +178,13 @@ export function TransactionForm({ transaction, onSubmit, onCancel, onDelete }: T
               </button>
             </div>
 
-            {/* Amount */}
+            {/* Amount — hero field */}
             <div>
-              <label className="block text-sm font-medium text-warm-600 mb-1.5">
+              <label className="block text-sm font-medium text-warm-600 mb-2">
                 Amount
               </label>
               <div className="relative">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-warm-400 text-sm">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-warm-300 text-lg font-serif">
                   {getCurrencySymbol(user.currency)}
                 </span>
                 <input type="hidden" {...register("amount", { valueAsNumber: true })} />
@@ -215,7 +215,13 @@ export function TransactionForm({ transaction, onSubmit, onCancel, onDelete }: T
                       setValue("amount", numeric, { shouldValidate: true });
                     }
                   }}
-                  className="w-full min-w-0 pl-8 pr-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 placeholder:text-warm-300 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all"
+                  className={cn(
+                    "w-full min-w-0 pl-10 pr-4 py-4 rounded-xl border bg-cream-50/50 placeholder:text-warm-200 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all",
+                    "text-2xl font-serif tabular-nums tracking-tight",
+                    selectedType === "EXPENSE"
+                      ? "text-expense border-cream-300"
+                      : "text-income border-cream-300"
+                  )}
                   placeholder="0.00"
                 />
               </div>
@@ -224,77 +230,81 @@ export function TransactionForm({ transaction, onSubmit, onCancel, onDelete }: T
               )}
             </div>
 
-            {/* Description */}
-            <div>
-              <label className="block text-sm font-medium text-warm-600 mb-1.5">
-                Description
-              </label>
-              <input
-                type="text"
-                {...register("description")}
-                className="w-full min-w-0 px-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 placeholder:text-warm-300 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all"
-                placeholder="What was this for?"
-              />
-              {errors.description && (
-                <p className="text-expense text-sm mt-1">{errors.description.message}</p>
-              )}
-            </div>
-
-            {/* Date */}
-            <div>
-              <label className="block text-sm font-medium text-warm-600 mb-1.5">
-                Date
-              </label>
-              <input
-                type="datetime-local"
-                {...register("date")}
-                className="w-full min-w-0 px-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all appearance-none overflow-hidden [&::-webkit-calendar-picker-indicator]:opacity-60 [&::-webkit-datetime-edit]:overflow-hidden [&::-webkit-datetime-edit-fields-wrapper]:overflow-hidden"
-              />
-              {errors.date && (
-                <p className="text-expense text-sm mt-1">{errors.date.message}</p>
-              )}
-            </div>
-
-            {/* Category Button */}
-            <div>
-              <label className="block text-sm font-medium text-warm-600 mb-1.5">
-                Category
-              </label>
-              <button
-                type="button"
-                onClick={() => setShowCategoryPicker(true)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all ${
-                  errors.categoryId
-                    ? "border-expense/50 bg-expense/5"
-                    : "border-cream-300 bg-cream-50/50 hover:border-cream-400"
-                }`}
-              >
-                {selectedCategory ? (
-                  <>
-                    <div
-                      className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-                      style={{ backgroundColor: selectedCategory.color + "18" }}
-                    >
-                      <CategoryIcon
-                        name={selectedCategory.icon}
-                        className="w-4 h-4"
-                        style={{ color: selectedCategory.color }}
-                      />
-                    </div>
-                    <span className="text-sm text-warm-700 font-medium flex-1 text-left">
-                      {selectedCategory.name}
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-sm text-warm-300 flex-1 text-left">
-                    Select a category
-                  </span>
+            {/* Secondary Fields */}
+            <div className="space-y-4 bg-cream-50/30 -mx-1 px-1 py-4 rounded-xl">
+              {/* Description */}
+              <div>
+                <label className="block text-sm font-medium text-warm-600 mb-1.5">
+                  Description
+                </label>
+                <input
+                  type="text"
+                  {...register("description")}
+                  className="w-full min-w-0 px-4 py-3 rounded-xl border border-cream-300 bg-white text-warm-700 placeholder:text-warm-300 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all"
+                  placeholder="What was this for?"
+                />
+                {errors.description && (
+                  <p className="text-expense text-sm mt-1">{errors.description.message}</p>
                 )}
-                <ChevronRight className="w-4 h-4 text-warm-300 shrink-0" />
-              </button>
-              {errors.categoryId && (
-                <p className="text-expense text-sm mt-1">{errors.categoryId.message}</p>
-              )}
+              </div>
+
+              {/* Date */}
+              <div>
+                <label className="block text-sm font-medium text-warm-600 mb-1.5">
+                  Date
+                </label>
+                <input
+                  type="datetime-local"
+                  {...register("date")}
+                  className="w-full min-w-0 px-4 py-3 rounded-xl border border-cream-300 bg-white text-warm-700 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all appearance-none overflow-hidden [&::-webkit-calendar-picker-indicator]:opacity-60 [&::-webkit-datetime-edit]:overflow-hidden [&::-webkit-datetime-edit-fields-wrapper]:overflow-hidden"
+                />
+                {errors.date && (
+                  <p className="text-expense text-sm mt-1">{errors.date.message}</p>
+                )}
+              </div>
+
+              {/* Category Button */}
+              <div>
+                <label className="block text-sm font-medium text-warm-600 mb-1.5">
+                  Category
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowCategoryPicker(true)}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all",
+                    errors.categoryId
+                      ? "border-expense/50 bg-expense/5"
+                      : "border-cream-300 bg-white hover:border-cream-400"
+                  )}
+                >
+                  {selectedCategory ? (
+                    <>
+                      <div
+                        className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                        style={{ backgroundColor: selectedCategory.color + "18" }}
+                      >
+                        <CategoryIcon
+                          name={selectedCategory.icon}
+                          className="w-4 h-4"
+                          style={{ color: selectedCategory.color }}
+                        />
+                      </div>
+                      <span className="text-sm text-warm-700 font-medium flex-1 text-left">
+                        {selectedCategory.name}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-sm text-warm-300 flex-1 text-left">
+                      Select a category
+                    </span>
+                  )}
+                  <ChevronRight className="w-4 h-4 text-warm-300 shrink-0" />
+                </button>
+                {errors.categoryId && (
+                  <p className="text-expense text-sm mt-1">{errors.categoryId.message}</p>
+                )}
+              </div>
             </div>
 
             {/* Actions */}
