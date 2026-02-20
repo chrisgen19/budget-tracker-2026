@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { Providers } from "@/components/providers";
 import { PrivacyProvider } from "@/components/privacy-provider";
 import { UserProvider } from "@/components/user-provider";
@@ -17,9 +18,20 @@ export default async function AppLayout({
     redirect("/login");
   }
 
+  // Fetch currency preference from DB so it's available on first render
+  const dbUser = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { currency: true },
+  });
+
   return (
     <Providers>
-      <UserProvider initialUser={session.user}>
+      <UserProvider
+        initialUser={{
+          ...session.user,
+          currency: dbUser?.currency ?? "PHP",
+        }}
+      >
         <PrivacyProvider>
           <AppShell>{children}</AppShell>
         </PrivacyProvider>

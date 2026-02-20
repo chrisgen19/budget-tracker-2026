@@ -15,7 +15,7 @@ import {
   Pie,
 } from "recharts";
 import type { BalanceTrendItem, CategoryBreakdownItem, MonthlyTrendItem } from "@/types";
-import { formatCurrency, cn } from "@/lib/utils";
+import { formatCurrency, getCurrencySymbol, cn } from "@/lib/utils";
 
 /** Abbreviate large numbers for Y-axis: 193400 → "193.4K" */
 const formatAbbreviated = (v: number) => {
@@ -32,9 +32,10 @@ const formatDateTick = (dateStr: string) => {
 
 interface TrendChartProps {
   data: MonthlyTrendItem[];
+  currency?: string;
 }
 
-export function TrendChart({ data }: TrendChartProps) {
+export function TrendChart({ data, currency = "PHP" }: TrendChartProps) {
   if (data.length === 0) return null;
 
   // Shorten month labels for display
@@ -67,7 +68,7 @@ export function TrendChart({ data }: TrendChartProps) {
                 <p className="text-xs text-warm-400 mb-1.5">{label}</p>
                 {payload.map((entry) => (
                   <p key={entry.dataKey as string} className="text-sm font-medium" style={{ color: entry.color }}>
-                    {entry.name}: {formatCurrency(entry.value as number)}
+                    {entry.name}: {formatCurrency(entry.value as number, currency)}
                   </p>
                 ))}
               </div>
@@ -95,9 +96,10 @@ export function TrendChart({ data }: TrendChartProps) {
 
 interface SpendingChartProps {
   data: CategoryBreakdownItem[];
+  currency?: string;
 }
 
-export function SpendingChart({ data }: SpendingChartProps) {
+export function SpendingChart({ data, currency = "PHP" }: SpendingChartProps) {
   if (data.length === 0) return null;
 
   return (
@@ -128,7 +130,7 @@ export function SpendingChart({ data }: SpendingChartProps) {
                   <div className="bg-white rounded-xl shadow-soft-md border border-cream-200 px-3 py-2">
                     <p className="text-sm font-medium text-warm-600">{item.name}</p>
                     <p className="text-xs text-warm-400">
-                      {formatCurrency(item.amount)} ({item.percentage}%)
+                      {formatCurrency(item.amount, currency)} ({item.percentage}%)
                     </p>
                   </div>
                 );
@@ -149,7 +151,7 @@ export function SpendingChart({ data }: SpendingChartProps) {
                 {item.name}
               </span>
               <span className="text-[10px] text-warm-400 tabular-nums">
-                {formatCurrency(item.amount)}
+                {formatCurrency(item.amount, currency)}
               </span>
             </div>
             <span className="text-xs font-medium text-warm-600 tabular-nums shrink-0">
@@ -170,9 +172,10 @@ export function SpendingChart({ data }: SpendingChartProps) {
 interface BalanceTrendChartProps {
   data: BalanceTrendItem[];
   hideAmounts: boolean;
+  currency?: string;
 }
 
-export function BalanceTrendChart({ data, hideAmounts }: BalanceTrendChartProps) {
+export function BalanceTrendChart({ data, hideAmounts, currency = "PHP" }: BalanceTrendChartProps) {
   if (data.length === 0) return null;
 
   // Split data into actual (up to today) and projected (today onward)
@@ -218,10 +221,10 @@ export function BalanceTrendChart({ data, hideAmounts }: BalanceTrendChartProps)
             Today
           </p>
           {hideAmounts ? (
-            <span className="font-serif text-xl text-warm-700">₱ ••••••</span>
+            <span className="font-serif text-xl text-warm-700">{getCurrencySymbol(currency)} ••••••</span>
           ) : (
             <span className="font-serif text-xl text-warm-700">
-              {formatCurrency(currentBalance)}
+              {formatCurrency(currentBalance, currency)}
             </span>
           )}
         </div>
@@ -292,7 +295,7 @@ export function BalanceTrendChart({ data, hideAmounts }: BalanceTrendChartProps)
                     {isFuture && " (projected)"}
                   </p>
                   <p className="text-sm font-medium text-warm-700">
-                    {hideAmounts ? "₱ ••••••" : formatCurrency(value)}
+                    {hideAmounts ? `${getCurrencySymbol(currency)} ••••••` : formatCurrency(value, currency)}
                   </p>
                 </div>
               );

@@ -84,8 +84,8 @@ export default function ProfilePage() {
         throw new Error(err.error || "Failed to update profile");
       }
 
-      // Update the shared user context so sidebar reflects the change immediately
-      setUser({ name: data.name, email: data.email });
+      // Update the shared user context so sidebar + currency reflect immediately
+      setUser({ name: data.name, email: data.email, currency: data.currency });
 
       setProfileSuccess("Profile updated successfully");
       setTimeout(() => setProfileSuccess(""), 3000);

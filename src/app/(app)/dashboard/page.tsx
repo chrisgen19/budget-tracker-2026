@@ -15,13 +15,14 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { formatCurrency, formatDate, cn } from "@/lib/utils";
+import { formatCurrency, formatDate, getCurrencySymbol, cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Modal } from "@/components/ui/modal";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import { SpendingChart, TrendChart, BalanceTrendChart } from "@/components/dashboard/charts";
 import { usePrivacy } from "@/components/privacy-provider";
+import { useUser } from "@/components/user-provider";
 import type { TransactionInput } from "@/lib/validations";
 import type { DashboardStats } from "@/types";
 
@@ -30,6 +31,8 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const { hideAmounts, toggleHideAmounts } = usePrivacy();
+  const { user } = useUser();
+  const currency = user.currency;
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -50,10 +53,10 @@ export default function DashboardPage() {
   /** Display amount or censored placeholder */
   const displayAmount = (amount: number, colorClass?: string) =>
     hideAmounts ? (
-      <span className={cn("font-serif text-2xl", colorClass)}>₱ ••••••</span>
+      <span className={cn("font-serif text-2xl", colorClass)}>{getCurrencySymbol(currency)} ••••••</span>
     ) : (
       <span className={cn("font-serif text-2xl", colorClass)}>
-        {formatCurrency(amount)}
+        {formatCurrency(amount, currency)}
       </span>
     );
 
@@ -65,7 +68,7 @@ export default function DashboardPage() {
       <span className={cn("text-sm font-medium tabular-nums", colorClass)}>••••</span>
     ) : (
       <span className={cn("text-sm font-medium tabular-nums", colorClass)}>
-        {prefix}{formatCurrency(amount)}
+        {prefix}{formatCurrency(amount, currency)}
       </span>
     );
   };
@@ -232,6 +235,7 @@ export default function DashboardPage() {
               <BalanceTrendChart
                 data={stats.balanceTrend}
                 hideAmounts={hideAmounts}
+                currency={currency}
               />
             ) : (
               <div>
@@ -250,7 +254,7 @@ export default function DashboardPage() {
                 Monthly Trend
               </h2>
               {stats.monthlyTrend.some((m) => m.income > 0 || m.expenses > 0) ? (
-                <TrendChart data={stats.monthlyTrend} />
+                <TrendChart data={stats.monthlyTrend} currency={currency} />
               ) : (
                 <div className="h-[220px] flex items-center justify-center">
                   <p className="text-warm-300 text-sm">No data yet</p>
@@ -263,7 +267,7 @@ export default function DashboardPage() {
                 Spending by Category
               </h2>
               {stats.categoryBreakdown.length > 0 ? (
-                <SpendingChart data={stats.categoryBreakdown} />
+                <SpendingChart data={stats.categoryBreakdown} currency={currency} />
               ) : (
                 <div className="h-[220px] flex items-center justify-center">
                   <p className="text-warm-300 text-sm">No expenses this month</p>

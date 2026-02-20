@@ -20,6 +20,7 @@ import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import { usePrivacy } from "@/components/privacy-provider";
+import { useUser } from "@/components/user-provider";
 import type { TransactionInput } from "@/lib/validations";
 import type { TransactionWithCategory } from "@/types";
 
@@ -110,6 +111,8 @@ const generateCsv = (transactions: TransactionWithCategory[]) => {
 
 export default function TransactionsPage() {
   const { hideAmounts } = usePrivacy();
+  const { user } = useUser();
+  const currency = user.currency;
   const [data, setData] = useState<TransactionsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"ALL" | "INCOME" | "EXPENSE">("ALL");
@@ -449,7 +452,7 @@ export default function TransactionsPage() {
                       )}
                     >
                       {group.subtotal >= 0 ? "+" : ""}
-                      {formatCurrency(Math.abs(group.subtotal))}
+                      {formatCurrency(Math.abs(group.subtotal), currency)}
                     </span>
                   )}
                 </div>
@@ -515,7 +518,7 @@ export default function TransactionsPage() {
                           >
                             {hideAmounts
                               ? "••••"
-                              : `${tx.type === "INCOME" ? "+" : "-"}${formatCurrency(tx.amount)}`}
+                              : `${tx.type === "INCOME" ? "+" : "-"}${formatCurrency(tx.amount, currency)}`}
                           </p>
                           <p className="text-[11px] text-warm-300 tabular-nums">
                             {formatTime(tx.date)}

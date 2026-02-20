@@ -2,13 +2,18 @@
 export const cn = (...classes: (string | boolean | undefined | null)[]) =>
   classes.filter(Boolean).join(" ");
 
-/** Format a number as currency */
-export const formatCurrency = (amount: number): string =>
-  new Intl.NumberFormat("en-PH", {
+/** Format a number as currency (uses Intl defaults per currency, e.g. 0 decimals for JPY/KRW) */
+export const formatCurrency = (amount: number, currency = "PHP"): string =>
+  new Intl.NumberFormat("en", {
     style: "currency",
-    currency: "PHP",
-    minimumFractionDigits: 2,
+    currency,
   }).format(amount);
+
+/** Get the symbol for a currency code: "PHP" → "₱", "USD" → "$" */
+export const getCurrencySymbol = (currency = "PHP"): string =>
+  new Intl.NumberFormat("en", { style: "currency", currency })
+    .formatToParts(0)
+    .find((p) => p.type === "currency")?.value ?? currency;
 
 /** Format a date for display */
 export const formatDate = (date: Date | string): string =>

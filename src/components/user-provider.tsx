@@ -5,15 +5,16 @@ import { createContext, useContext, useState, useCallback } from "react";
 interface UserInfo {
   name: string;
   email: string;
+  currency: string;
 }
 
 interface UserContextValue {
   user: UserInfo;
-  setUser: (user: UserInfo) => void;
+  setUser: (user: Partial<UserInfo>) => void;
 }
 
 const UserContext = createContext<UserContextValue>({
-  user: { name: "", email: "" },
+  user: { name: "", email: "", currency: "PHP" },
   setUser: () => {},
 });
 
@@ -28,8 +29,8 @@ export function UserProvider({
 }) {
   const [user, setUserState] = useState<UserInfo>(initialUser);
 
-  const setUser = useCallback((updated: UserInfo) => {
-    setUserState(updated);
+  const setUser = useCallback((updated: Partial<UserInfo>) => {
+    setUserState((prev) => ({ ...prev, ...updated }));
   }, []);
 
   return (

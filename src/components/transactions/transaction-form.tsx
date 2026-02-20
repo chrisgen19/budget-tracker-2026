@@ -6,8 +6,9 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, ChevronRight, Plus, Trash2, X } from "lucide-react";
 import { transactionSchema, type TransactionInput } from "@/lib/validations";
-import { formatDateInput } from "@/lib/utils";
+import { formatDateInput, getCurrencySymbol } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
+import { useUser } from "@/components/user-provider";
 import type { Category, TransactionWithCategory } from "@/types";
 
 interface TransactionFormProps {
@@ -32,6 +33,7 @@ const slideVariants = {
 };
 
 export function TransactionForm({ transaction, onSubmit, onCancel, onDelete }: TransactionFormProps) {
+  const { user } = useUser();
   const [categories, setCategories] = useState<Category[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(true);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
@@ -183,7 +185,7 @@ export function TransactionForm({ transaction, onSubmit, onCancel, onDelete }: T
               </label>
               <div className="relative">
                 <span className="absolute left-4 top-1/2 -translate-y-1/2 text-warm-400 text-sm">
-                  ₱
+                  {getCurrencySymbol(user.currency)}
                 </span>
                 <input type="hidden" {...register("amount", { valueAsNumber: true })} />
                 <input
