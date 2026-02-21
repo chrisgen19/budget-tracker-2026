@@ -84,6 +84,7 @@ interface ModalProps {
 
 export function Modal({ open, onClose, title, children }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   const isMobile = useIsMobile();
   const viewport = useVisualViewport(isMobile && open);
@@ -110,6 +111,32 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
       document.body.style.overflow = originalOverflow;
     };
   }, [open]);
+
+  // On mobile, scroll the focused input into view within the modal's
+  // scroll container after the keyboard finishes animating
+  useEffect(() => {
+    if (!open || !isMobile) return;
+
+    const content = contentRef.current;
+    if (!content) return;
+
+    const handleFocusIn = (e: FocusEvent) => {
+      const target = e.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement
+      ) {
+        // Delay to let the keyboard animation and viewport resize settle
+        setTimeout(() => {
+          target.scrollIntoView({ block: "center", behavior: "smooth" });
+        }, 350);
+      }
+    };
+
+    content.addEventListener("focusin", handleFocusIn);
+    return () => content.removeEventListener("focusin", handleFocusIn);
+  }, [open, isMobile]);
 
   // On mobile, pin the container to the visual viewport so Safari's
   // scroll-to-focused-input doesn't push the modal off-screen
@@ -190,7 +217,7 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
             </div>
 
             {/* Scrollable Content */}
-            <div className="p-6 overflow-y-auto flex-1">{children}</div>
+            <div ref={contentRef} className="p-6 overflow-y-auto flex-1">{children}</div>
           </motion.div>
         </div>
       )}
