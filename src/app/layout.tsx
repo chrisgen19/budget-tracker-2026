@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Young_Serif, Outfit, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 
@@ -24,6 +24,12 @@ const plusJakarta = Plus_Jakarta_Sans({
 export const metadata: Metadata = {
   title: "Budget Tracker",
   description: "Track your income and expenses with ease",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
 };
 
 export default function RootLayout({
