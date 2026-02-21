@@ -224,3 +224,53 @@ All notable development history for the Budget Tracker app.
 ### Navigation
 - Sidebar user info block (avatar + name + email) is now clickable — navigates to `/profile`
 - Mobile header: added user icon (top-right) linking to `/profile`
+
+---
+
+## 2026-02-20 — Currency & Deployment
+
+### Dynamic Currency Across App
+- Currency selected in profile settings now **reflects across all app pages** (dashboard, transactions, charts, forms)
+- Added `currency` to `UserProvider` context — fetched from DB in the app layout
+- Updated `formatCurrency` utility to accept a dynamic currency code
+- Added `getCurrencySymbol` helper for input prefixes and privacy-mode placeholders
+- Dashboard summary cards, transaction rows, chart tooltips, and the transaction form all use the user's chosen currency
+
+### Deployment
+- Build script now auto-runs `prisma migrate deploy` before `next build` — no manual migration step needed on deploy
+
+---
+
+## 2026-02-21 — Transaction Form Redesign & Quick Categories
+
+### Modal Overhaul
+- **Mobile:** modals now render as **bottom sheets** that slide up from the screen edge with a drag handle
+- **Drag-to-dismiss:** swipe down >100px or with >300px/s velocity to close
+- **Desktop:** centered card with spring scale-up animation and rounded corners
+- **Sticky header** with title and close button that stays fixed while content scrolls
+- **Grain texture overlay** and backdrop blur on the overlay
+
+### Transaction Form Redesign
+- **Hero amount input** — large centered numeric input (48px, Plus Jakarta Sans) with dynamic color coding: green for income, red for expenses
+- **Quick category tiles** — top 4 personalized categories shown as a grid above the form; swaps between expense and income sets
+- **"More categories..." panel** — slide-in picker for the full category list, with smooth left/right spring animation
+- **Date quick-picks** — "Today", "Yesterday", and "Custom" buttons replace the raw datetime input
+- **Optional note field** — description marked as "(Optional)" to reduce friction
+- **Sticky footer** — Cancel, Delete (edit mode only), and Add/Update buttons pinned to the bottom
+- **Plus Jakarta Sans** (`font-display`) used for all currency amounts across the app — dashboard summary cards, transaction rows, date group subtotals, and chart values
+
+### Category Form Improvements
+- **Color swatches:** larger presets with checkmark indicator and scale-up on selection
+- **Icon grid:** improved layout with live color preview on each icon
+- **Live preview box:** real-time mockup showing icon + name + type badge, updates as user edits
+
+### Customizable Quick Category Tiles
+- Users can **choose their top 4 quick-access categories** per type (expense and income) from the Categories page
+- Preferences saved to `quickExpenseCategories` / `quickIncomeCategories` columns on the User model
+- **Order badges** (1–4) show selection order; max 4 enforced with disabled state on overflow
+- **Quick Access section** on the Categories page: 4 slots per type with `+` placeholders and an "Edit" button to open the picker
+- Transaction form reads quick preferences from `/api/preferences` with fallback to first 4 defaults
+- Extended `/api/preferences` route to handle GET/PATCH for quick category prefs
+
+### Database
+- Added `quick_expense_categories` and `quick_income_categories` JSON columns to `users` table (Prisma migration)

@@ -15,13 +15,15 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **Dashboard** — Summary cards (balance, expenses, income), monthly trend bar chart, spending by category donut chart, balance trend area chart, recent transactions
 - **Running Balance** — Cumulative all-time balance that carries over across months, not just monthly snapshots
 - **Balance Trend** — 30-day area chart showing daily running balance with percentage change indicator
-- **Transactions** — Full CRUD with search, type filtering (income/expense), month navigation, pagination, auto-comma amount formatting, datetime picker, and slide-in category picker
-- **Categories** — 15 pre-seeded defaults (10 expense, 5 income) + create/edit/delete custom categories with color and icon pickers
+- **Transactions** — Full CRUD with search, type filtering (income/expense), month navigation, pagination, hero amount input with dynamic type coloring, date quick-picks (Today/Yesterday/Custom), and slide-in category picker
+- **Quick Category Tiles** — Personalized top-4 quick-access categories per type (expense/income) with customizable order; shown in the transaction form and editable from the Categories page
+- **Categories** — 15 pre-seeded defaults (10 expense, 5 income) + create/edit/delete custom categories with color swatches, icon grid, and live preview
 - **Profile Settings** — Edit name, email, and preferred currency; change password with current-password verification; sidebar updates instantly via shared context
+- **Dynamic Currency** — Currency selected in profile settings reflects across all pages — dashboard, transactions, charts, and forms
 - **Privacy Mode** — One-tap toggle to hide all financial amounts across the app, persisted per-user in the database
-- **Responsive** — Sidebar navigation on desktop, bottom navigation on mobile; horizontal scroll summary cards with snap points on mobile
+- **Responsive** — Sidebar navigation on desktop, bottom navigation on mobile; modal bottom sheets with drag-to-dismiss on mobile, centered cards on desktop
 - **Dynamic Favicon** — Auto-generated favicon matching the app logo
-- **Design** — Warm paper-ledger aesthetic with Young Serif + Outfit fonts, amber accents, and Framer Motion animations
+- **Design** — Warm paper-ledger aesthetic with Young Serif + Outfit fonts, Plus Jakarta Sans for currency amounts, amber accents, and Framer Motion animations
 
 ## Tech Stack
 
@@ -139,13 +141,13 @@ src/
 │       ├── transactions/    # Transaction CRUD
 │       ├── categories/      # Category CRUD
 │       ├── dashboard/       # Dashboard stats + balance trend
-│       ├── preferences/     # User preferences (privacy toggle)
+│       ├── preferences/     # User preferences (privacy, quick categories)
 │       └── profile/         # Profile & password update
 ├── components/
 │   ├── ui/                  # Shared UI (Modal, EmptyState, IconMap)
 │   ├── dashboard/           # Chart components (Trend, Spending, BalanceTrend)
 │   ├── transactions/        # Transaction form
-│   ├── categories/          # Category form
+│   ├── categories/          # Category form + quick category picker
 │   ├── landing-page.tsx     # Marketing homepage for guests
 │   ├── privacy-provider.tsx # Hide-amounts context (persisted in DB)
 │   └── user-provider.tsx    # Reactive user info context (name, email)
@@ -166,7 +168,7 @@ User ──< Transaction >── Category
  └────────< Category (custom, per-user)
 ```
 
-- **User** — id, name, email, password, currency, hide_amounts (privacy toggle preference)
+- **User** — id, name, email, password, currency, hide_amounts, quickExpenseCategories, quickIncomeCategories
 - **Category** — id, name, type (INCOME/EXPENSE), icon, color, isDefault, userId (null for defaults)
 - **Transaction** — id, amount, description, type, date, categoryId, userId
 
