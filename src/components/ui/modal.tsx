@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -19,6 +19,48 @@ const useIsMobile = () => {
   }, []);
 
   return isMobile;
+};
+
+/**
+ * Tracks the visual viewport on iOS Safari so the modal can resize
+ * and reposition when the virtual keyboard opens/closes.
+ * offsetTop accounts for Safari scrolling the page when an input is focused.
+ */
+interface VisualViewport {
+  height: number;
+  offsetTop: number;
+}
+
+const useVisualViewport = (enabled: boolean) => {
+  const [viewport, setViewport] = useState<VisualViewport | null>(null);
+
+  const update = useCallback(() => {
+    const vv = window.visualViewport;
+    if (vv) {
+      setViewport({ height: vv.height, offsetTop: vv.offsetTop });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!enabled) {
+      setViewport(null);
+      return;
+    }
+
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, [enabled, update]);
+
+  return viewport;
 };
 
 const desktopVariants = {
@@ -42,28 +84,77 @@ interface ModalProps {
 
 export function Modal({ open, onClose, title, children }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
   const isMobile = useIsMobile();
+  const viewport = useVisualViewport(isMobile && open);
+
+  // Keep ref in sync so the effect doesn't re-run on every render
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
+    if (!open) return;
+
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") onCloseRef.current();
     };
 
-    if (open) {
-      document.addEventListener("keydown", handleEscape);
-      document.body.style.overflow = "hidden";
-    }
+    document.addEventListener("keydown", handleEscape);
 
     return () => {
       document.removeEventListener("keydown", handleEscape);
-      document.body.style.overflow = "";
+      document.body.style.overflow = originalOverflow;
     };
-  }, [open, onClose]);
+  }, [open]);
+
+  // On mobile, scroll the focused input into view within the modal's
+  // scroll container after the keyboard finishes animating
+  useEffect(() => {
+    if (!open || !isMobile) return;
+
+    const content = contentRef.current;
+    if (!content) return;
+
+    const handleFocusIn = (e: FocusEvent) => {
+      const target = e.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement
+      ) {
+        // Delay to let the keyboard animation and viewport resize settle
+        setTimeout(() => {
+          target.scrollIntoView({ block: "center", behavior: "smooth" });
+        }, 350);
+      }
+    };
+
+    content.addEventListener("focusin", handleFocusIn);
+    return () => content.removeEventListener("focusin", handleFocusIn);
+  }, [open, isMobile]);
+
+  // On mobile, pin the container to the visual viewport so Safari's
+  // scroll-to-focused-input doesn't push the modal off-screen
+  const containerStyle = viewport
+    ? { top: `${viewport.offsetTop}px`, height: `${viewport.height}px`, bottom: "auto" as const }
+    : undefined;
+
+  const mobileMaxHeight = viewport
+    ? `${viewport.height * 0.9}px`
+    : "90vh";
 
   return (
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4"
+          style={containerStyle}
+        >
           {/* Overlay */}
           <motion.div
             ref={overlayRef}
@@ -79,9 +170,10 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
             className={cn(
               "relative bg-white shadow-soft-lg w-full grain-overlay flex flex-col",
               isMobile
-                ? "rounded-t-2xl max-h-[90vh]"
+                ? "rounded-t-2xl"
                 : "rounded-2xl max-w-lg max-h-[85vh]"
             )}
+            style={isMobile ? { maxHeight: mobileMaxHeight } : undefined}
             variants={isMobile ? mobileVariants : desktopVariants}
             initial="initial"
             animate="animate"
@@ -125,7 +217,7 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
             </div>
 
             {/* Scrollable Content */}
-            <div className="p-6 overflow-y-auto flex-1">{children}</div>
+            <div ref={contentRef} className="p-6 overflow-y-auto flex-1">{children}</div>
           </motion.div>
         </div>
       )}
