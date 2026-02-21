@@ -47,11 +47,17 @@ const slideVariants = {
 
 const QUICK_CATEGORY_COUNT = 4;
 
+interface QuickPrefs {
+  quickExpenseCategories: string[];
+  quickIncomeCategories: string[];
+}
+
 export function TransactionForm({ transaction, onSubmit, onCancel, onDelete }: TransactionFormProps) {
   const { user } = useUser();
   const [categories, setCategories] = useState<Category[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(true);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [quickPrefs, setQuickPrefs] = useState<QuickPrefs | null>(null);
   const [displayAmount, setDisplayAmount] = useState<string>(() =>
     transaction?.amount != null ? formatAmountDisplay(transaction.amount) : ""
   );
@@ -81,8 +87,34 @@ export function TransactionForm({ transaction, onSubmit, onCancel, onDelete }: T
   const watchedCategoryId = watch("categoryId");
   const watchedDate = watch("date");
   const selectedCategory = categories.find((c) => c.id === watchedCategoryId);
-  const quickCategories = categories.slice(0, QUICK_CATEGORY_COUNT);
+
+  // Resolve personalized quick categories from prefs
+  const quickCategories = (() => {
+    if (!quickPrefs) return categories.slice(0, QUICK_CATEGORY_COUNT);
+    const prefIds = selectedType === "EXPENSE"
+      ? quickPrefs.quickExpenseCategories
+      : quickPrefs.quickIncomeCategories;
+    if (prefIds.length === 0) return categories.slice(0, QUICK_CATEGORY_COUNT);
+    const resolved = prefIds
+      .map((id) => categories.find((c) => c.id === id))
+      .filter((c): c is Category => c != null);
+    return resolved.length > 0 ? resolved : categories.slice(0, QUICK_CATEGORY_COUNT);
+  })();
+
   const isSelectedInQuick = quickCategories.some((c) => c.id === watchedCategoryId);
+
+  // Fetch quick category preferences once
+  useEffect(() => {
+    const fetchPrefs = async () => {
+      const res = await fetch("/api/preferences");
+      const data = await res.json();
+      setQuickPrefs({
+        quickExpenseCategories: data.quickExpenseCategories ?? [],
+        quickIncomeCategories: data.quickIncomeCategories ?? [],
+      });
+    };
+    fetchPrefs();
+  }, []);
 
   useEffect(() => {
     const fetchCategories = async () => {

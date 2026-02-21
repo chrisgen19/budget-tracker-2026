@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Pencil, Trash2, Tags, Lock, X } from "lucide-react";
+import { Plus, Pencil, Trash2, Tags, Lock, X, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CategoryForm } from "@/components/categories/category-form";
+import { QuickCategoryPicker } from "@/components/categories/quick-category-picker";
 import type { CategoryInput } from "@/lib/validations";
 import type { Category } from "@/types";
 
@@ -20,6 +21,68 @@ export default function CategoriesPage() {
   const [deletingCategory, setDeletingCategory] = useState<Category | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+
+  // Quick Access state
+  const [allExpenseCategories, setAllExpenseCategories] = useState<Category[]>([]);
+  const [allIncomeCategories, setAllIncomeCategories] = useState<Category[]>([]);
+  const [quickExpenseIds, setQuickExpenseIds] = useState<string[]>([]);
+  const [quickIncomeIds, setQuickIncomeIds] = useState<string[]>([]);
+  const [quickPickerType, setQuickPickerType] = useState<"EXPENSE" | "INCOME" | null>(null);
+  const [quickSaving, setQuickSaving] = useState(false);
+
+  // Fetch quick access preferences and all categories by type
+  useEffect(() => {
+    const fetchQuickData = async () => {
+      const [prefsRes, expenseRes, incomeRes] = await Promise.all([
+        fetch("/api/preferences"),
+        fetch("/api/categories?type=EXPENSE"),
+        fetch("/api/categories?type=INCOME"),
+      ]);
+      const prefs = await prefsRes.json();
+      const expenses: Category[] = await expenseRes.json();
+      const incomes: Category[] = await incomeRes.json();
+
+      setAllExpenseCategories(expenses);
+      setAllIncomeCategories(incomes);
+      setQuickExpenseIds(prefs.quickExpenseCategories ?? []);
+      setQuickIncomeIds(prefs.quickIncomeCategories ?? []);
+    };
+    fetchQuickData();
+  }, []);
+
+  /** Resolve quick IDs to category objects, falling back to first 4 */
+  const resolveQuickCategories = (ids: string[], allCats: Category[]): Category[] => {
+    if (ids.length === 0) return allCats.slice(0, 4);
+    const resolved = ids
+      .map((id) => allCats.find((c) => c.id === id))
+      .filter((c): c is Category => c != null);
+    return resolved.length > 0 ? resolved : allCats.slice(0, 4);
+  };
+
+  const quickExpenseCategories = resolveQuickCategories(quickExpenseIds, allExpenseCategories);
+  const quickIncomeCategories = resolveQuickCategories(quickIncomeIds, allIncomeCategories);
+
+  const handleQuickSave = async (ids: string[]) => {
+    if (!quickPickerType) return;
+    setQuickSaving(true);
+
+    const field = quickPickerType === "EXPENSE" ? "quickExpenseCategories" : "quickIncomeCategories";
+    const res = await fetch("/api/preferences", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [field]: ids }),
+    });
+
+    if (res.ok) {
+      if (quickPickerType === "EXPENSE") {
+        setQuickExpenseIds(ids);
+      } else {
+        setQuickIncomeIds(ids);
+      }
+      setQuickPickerType(null);
+    }
+    setQuickSaving(false);
+  };
 
   const fetchCategories = useCallback(async () => {
     setLoading(true);
@@ -129,6 +192,123 @@ export default function CategoriesPage() {
             {type === "ALL" ? "All" : type === "INCOME" ? "Income" : "Expenses"}
           </button>
         ))}
+      </div>
+
+      {/* Quick Access Section */}
+      <div className="card p-5 mb-6">
+        <div className="flex items-center gap-2 mb-1">
+          <Zap className="w-4 h-4 text-amber" />
+          <h2 className="font-serif text-lg text-warm-700">Quick Access</h2>
+        </div>
+        <p className="text-xs text-warm-400 mb-4">
+          Categories that appear as quick tiles when adding transactions.
+        </p>
+
+        {/* Expenses Row */}
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-warm-500 uppercase tracking-wider">
+              Expenses
+            </span>
+            <button
+              onClick={() => setQuickPickerType("EXPENSE")}
+              className="text-xs text-amber hover:text-amber-dark font-medium transition-colors"
+            >
+              Edit
+            </button>
+          </div>
+          <div className="grid grid-cols-4 gap-2">
+            {Array.from({ length: 4 }).map((_, i) => {
+              const cat = quickExpenseCategories[i];
+              if (!cat) {
+                return (
+                  <button
+                    key={`empty-exp-${i}`}
+                    onClick={() => setQuickPickerType("EXPENSE")}
+                    className="flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 border-dashed border-cream-300 hover:border-amber/40 transition-colors cursor-pointer"
+                  >
+                    <div className="w-10 h-10 rounded-full bg-cream-100 flex items-center justify-center">
+                      <Plus className="w-4 h-4 text-warm-300" />
+                    </div>
+                    <span className="text-[10px] text-warm-300">Add</span>
+                  </button>
+                );
+              }
+              return (
+                <div
+                  key={cat.id}
+                  className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-cream-100"
+                >
+                  <div
+                    className="w-10 h-10 rounded-full bg-white flex items-center justify-center shadow-warm"
+                  >
+                    <CategoryIcon
+                      name={cat.icon}
+                      className="w-5 h-5"
+                      style={{ color: cat.color }}
+                    />
+                  </div>
+                  <span className="text-[11px] text-warm-500 text-center leading-tight truncate w-full">
+                    {cat.name}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Income Row */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-warm-500 uppercase tracking-wider">
+              Income
+            </span>
+            <button
+              onClick={() => setQuickPickerType("INCOME")}
+              className="text-xs text-amber hover:text-amber-dark font-medium transition-colors"
+            >
+              Edit
+            </button>
+          </div>
+          <div className="grid grid-cols-4 gap-2">
+            {Array.from({ length: 4 }).map((_, i) => {
+              const cat = quickIncomeCategories[i];
+              if (!cat) {
+                return (
+                  <button
+                    key={`empty-inc-${i}`}
+                    onClick={() => setQuickPickerType("INCOME")}
+                    className="flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 border-dashed border-cream-300 hover:border-amber/40 transition-colors cursor-pointer"
+                  >
+                    <div className="w-10 h-10 rounded-full bg-cream-100 flex items-center justify-center">
+                      <Plus className="w-4 h-4 text-warm-300" />
+                    </div>
+                    <span className="text-[10px] text-warm-300">Add</span>
+                  </button>
+                );
+              }
+              return (
+                <div
+                  key={cat.id}
+                  className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-cream-100"
+                >
+                  <div
+                    className="w-10 h-10 rounded-full bg-white flex items-center justify-center shadow-warm"
+                  >
+                    <CategoryIcon
+                      name={cat.icon}
+                      className="w-5 h-5"
+                      style={{ color: cat.color }}
+                    />
+                  </div>
+                  <span className="text-[11px] text-warm-500 text-center leading-tight truncate w-full">
+                    {cat.name}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       {loading ? (
@@ -286,6 +466,23 @@ export default function CategoriesPage() {
             category={editingCategory}
             onSubmit={handleUpdate}
             onCancel={() => setEditingCategory(null)}
+          />
+        )}
+      </Modal>
+
+      {/* Quick Category Picker Modal */}
+      <Modal
+        open={!!quickPickerType}
+        onClose={() => setQuickPickerType(null)}
+        title={`Quick ${quickPickerType === "INCOME" ? "Income" : "Expense"} Categories`}
+      >
+        {quickPickerType && (
+          <QuickCategoryPicker
+            selectedIds={quickPickerType === "EXPENSE" ? quickExpenseIds : quickIncomeIds}
+            allCategories={quickPickerType === "EXPENSE" ? allExpenseCategories : allIncomeCategories}
+            onSave={handleQuickSave}
+            onCancel={() => setQuickPickerType(null)}
+            saving={quickSaving}
           />
         )}
       </Modal>

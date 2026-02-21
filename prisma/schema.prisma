@@ -17,10 +17,12 @@ model User {
   name         String
   email        String        @unique
   password     String
-  hideAmounts  Boolean       @default(false) @map("hide_amounts")
-  currency     String        @default("PHP")
-  transactions Transaction[]
-  categories   Category[]
+  hideAmounts             Boolean       @default(false) @map("hide_amounts")
+  currency                String        @default("PHP")
+  quickExpenseCategories  String[]      @default([]) @map("quick_expense_categories")
+  quickIncomeCategories   String[]      @default([]) @map("quick_income_categories")
+  transactions            Transaction[]
+  categories              Category[]
   createdAt    DateTime      @default(now()) @map("created_at")
   updatedAt    DateTime      @updatedAt @map("updated_at")
 
