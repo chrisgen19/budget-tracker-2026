@@ -29,6 +29,7 @@ export default function CategoriesPage() {
   const [quickIncomeIds, setQuickIncomeIds] = useState<string[]>([]);
   const [quickPickerType, setQuickPickerType] = useState<"EXPENSE" | "INCOME" | null>(null);
   const [quickSaving, setQuickSaving] = useState(false);
+  const [quickLoading, setQuickLoading] = useState(true);
 
   // Fetch quick access preferences and all categories by type
   useEffect(() => {
@@ -46,6 +47,7 @@ export default function CategoriesPage() {
       setAllIncomeCategories(incomes);
       setQuickExpenseIds(prefs.quickExpenseCategories ?? []);
       setQuickIncomeIds(prefs.quickIncomeCategories ?? []);
+      setQuickLoading(false);
     };
     fetchQuickData();
   }, []);
@@ -204,111 +206,138 @@ export default function CategoriesPage() {
           Categories that appear as quick tiles when adding transactions.
         </p>
 
-        {/* Expenses Row */}
-        <div className="mb-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-medium text-warm-500 uppercase tracking-wider">
-              Expenses
-            </span>
-            <button
-              onClick={() => setQuickPickerType("EXPENSE")}
-              className="text-xs text-amber hover:text-amber-dark font-medium transition-colors"
-            >
-              Edit
-            </button>
-          </div>
-          <div className="grid grid-cols-4 gap-2">
-            {Array.from({ length: 4 }).map((_, i) => {
-              const cat = quickExpenseCategories[i];
-              if (!cat) {
-                return (
-                  <button
-                    key={`empty-exp-${i}`}
-                    onClick={() => setQuickPickerType("EXPENSE")}
-                    className="flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 border-dashed border-cream-300 hover:border-amber/40 transition-colors cursor-pointer"
-                  >
-                    <div className="w-10 h-10 rounded-full bg-cream-100 flex items-center justify-center">
-                      <Plus className="w-4 h-4 text-warm-300" />
-                    </div>
-                    <span className="text-[10px] text-warm-300">Add</span>
-                  </button>
-                );
-              }
-              return (
-                <div
-                  key={cat.id}
-                  className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-cream-100"
-                >
-                  <div
-                    className="w-10 h-10 rounded-full bg-white flex items-center justify-center shadow-warm"
-                  >
-                    <CategoryIcon
-                      name={cat.icon}
-                      className="w-5 h-5"
-                      style={{ color: cat.color }}
-                    />
-                  </div>
-                  <span className="text-[11px] text-warm-500 text-center leading-tight truncate w-full">
-                    {cat.name}
-                  </span>
+        {quickLoading ? (
+          /* Skeleton for Quick Access */
+          <div className="space-y-4">
+            {["Expenses", "Income"].map((label) => (
+              <div key={label}>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="w-16 h-3 rounded animate-shimmer" />
+                  <div className="w-8 h-3 rounded animate-shimmer" />
                 </div>
-              );
-            })}
+                <div className="grid grid-cols-4 gap-2">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <div
+                      key={i}
+                      className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-cream-100"
+                    >
+                      <div className="w-10 h-10 rounded-full animate-shimmer" />
+                      <div className="w-12 h-3 rounded animate-shimmer" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
-        </div>
+        ) : (
+          <>
+            {/* Expenses Row */}
+            <div className="mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-warm-500 uppercase tracking-wider">
+                  Expenses
+                </span>
+                <button
+                  onClick={() => setQuickPickerType("EXPENSE")}
+                  className="text-xs text-amber hover:text-amber-dark font-medium transition-colors"
+                >
+                  Edit
+                </button>
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                {Array.from({ length: 4 }).map((_, i) => {
+                  const cat = quickExpenseCategories[i];
+                  if (!cat) {
+                    return (
+                      <button
+                        key={`empty-exp-${i}`}
+                        onClick={() => setQuickPickerType("EXPENSE")}
+                        className="flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 border-dashed border-cream-300 hover:border-amber/40 transition-colors cursor-pointer"
+                      >
+                        <div className="w-10 h-10 rounded-full bg-cream-100 flex items-center justify-center">
+                          <Plus className="w-4 h-4 text-warm-300" />
+                        </div>
+                        <span className="text-[10px] text-warm-300">Add</span>
+                      </button>
+                    );
+                  }
+                  return (
+                    <div
+                      key={cat.id}
+                      className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-cream-100"
+                    >
+                      <div
+                        className="w-10 h-10 rounded-full bg-white flex items-center justify-center shadow-warm"
+                      >
+                        <CategoryIcon
+                          name={cat.icon}
+                          className="w-5 h-5"
+                          style={{ color: cat.color }}
+                        />
+                      </div>
+                      <span className="text-[11px] text-warm-500 text-center leading-tight truncate w-full">
+                        {cat.name}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
 
-        {/* Income Row */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-medium text-warm-500 uppercase tracking-wider">
-              Income
-            </span>
-            <button
-              onClick={() => setQuickPickerType("INCOME")}
-              className="text-xs text-amber hover:text-amber-dark font-medium transition-colors"
-            >
-              Edit
-            </button>
-          </div>
-          <div className="grid grid-cols-4 gap-2">
-            {Array.from({ length: 4 }).map((_, i) => {
-              const cat = quickIncomeCategories[i];
-              if (!cat) {
-                return (
-                  <button
-                    key={`empty-inc-${i}`}
-                    onClick={() => setQuickPickerType("INCOME")}
-                    className="flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 border-dashed border-cream-300 hover:border-amber/40 transition-colors cursor-pointer"
-                  >
-                    <div className="w-10 h-10 rounded-full bg-cream-100 flex items-center justify-center">
-                      <Plus className="w-4 h-4 text-warm-300" />
-                    </div>
-                    <span className="text-[10px] text-warm-300">Add</span>
-                  </button>
-                );
-              }
-              return (
-                <div
-                  key={cat.id}
-                  className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-cream-100"
+            {/* Income Row */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-warm-500 uppercase tracking-wider">
+                  Income
+                </span>
+                <button
+                  onClick={() => setQuickPickerType("INCOME")}
+                  className="text-xs text-amber hover:text-amber-dark font-medium transition-colors"
                 >
-                  <div
-                    className="w-10 h-10 rounded-full bg-white flex items-center justify-center shadow-warm"
-                  >
-                    <CategoryIcon
-                      name={cat.icon}
-                      className="w-5 h-5"
-                      style={{ color: cat.color }}
-                    />
-                  </div>
-                  <span className="text-[11px] text-warm-500 text-center leading-tight truncate w-full">
-                    {cat.name}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+                  Edit
+                </button>
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                {Array.from({ length: 4 }).map((_, i) => {
+                  const cat = quickIncomeCategories[i];
+                  if (!cat) {
+                    return (
+                      <button
+                        key={`empty-inc-${i}`}
+                        onClick={() => setQuickPickerType("INCOME")}
+                        className="flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 border-dashed border-cream-300 hover:border-amber/40 transition-colors cursor-pointer"
+                      >
+                        <div className="w-10 h-10 rounded-full bg-cream-100 flex items-center justify-center">
+                          <Plus className="w-4 h-4 text-warm-300" />
+                        </div>
+                        <span className="text-[10px] text-warm-300">Add</span>
+                      </button>
+                    );
+                  }
+                  return (
+                    <div
+                      key={cat.id}
+                      className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-cream-100"
+                    >
+                      <div
+                        className="w-10 h-10 rounded-full bg-white flex items-center justify-center shadow-warm"
+                      >
+                        <CategoryIcon
+                          name={cat.icon}
+                          className="w-5 h-5"
+                          style={{ color: cat.color }}
+                        />
+                      </div>
+                      <span className="text-[11px] text-warm-500 text-center leading-tight truncate w-full">
+                        {cat.name}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {loading ? (
