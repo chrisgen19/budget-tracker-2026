@@ -84,24 +84,32 @@ interface ModalProps {
 
 export function Modal({ open, onClose, title, children }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
   const isMobile = useIsMobile();
   const viewport = useVisualViewport(isMobile && open);
 
+  // Keep ref in sync so the effect doesn't re-run on every render
   useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") onCloseRef.current();
     };
 
-    if (open) {
-      document.addEventListener("keydown", handleEscape);
-      document.body.style.overflow = "hidden";
-    }
+    document.addEventListener("keydown", handleEscape);
 
     return () => {
       document.removeEventListener("keydown", handleEscape);
-      document.body.style.overflow = "";
+      document.body.style.overflow = originalOverflow;
     };
-  }, [open, onClose]);
+  }, [open]);
 
   // On mobile, pin the container to the visual viewport so Safari's
   // scroll-to-focused-input doesn't push the modal off-screen
