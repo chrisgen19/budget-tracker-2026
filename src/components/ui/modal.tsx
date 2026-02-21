@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -19,6 +19,42 @@ const useIsMobile = () => {
   }, []);
 
   return isMobile;
+};
+
+/**
+ * Tracks the visual viewport height on iOS Safari so the modal
+ * can resize when the virtual keyboard opens/closes.
+ * Returns null on desktop or when the API is unavailable.
+ */
+const useVisualViewportHeight = (enabled: boolean) => {
+  const [height, setHeight] = useState<number | null>(null);
+
+  const update = useCallback(() => {
+    if (window.visualViewport) {
+      setHeight(window.visualViewport.height);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!enabled) {
+      setHeight(null);
+      return;
+    }
+
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, [enabled, update]);
+
+  return height;
 };
 
 const desktopVariants = {
@@ -43,6 +79,7 @@ interface ModalProps {
 export function Modal({ open, onClose, title, children }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
+  const viewportHeight = useVisualViewportHeight(isMobile && open);
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -59,6 +96,11 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
       document.body.style.overflow = "";
     };
   }, [open, onClose]);
+
+  // On mobile, use visual viewport height (keyboard-aware) instead of vh
+  const mobileMaxHeight = viewportHeight
+    ? `${viewportHeight * 0.9}px`
+    : "90vh";
 
   return (
     <AnimatePresence>
@@ -79,9 +121,10 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
             className={cn(
               "relative bg-white shadow-soft-lg w-full grain-overlay flex flex-col",
               isMobile
-                ? "rounded-t-2xl max-h-[90vh]"
+                ? "rounded-t-2xl"
                 : "rounded-2xl max-w-lg max-h-[85vh]"
             )}
+            style={isMobile ? { maxHeight: mobileMaxHeight } : undefined}
             variants={isMobile ? mobileVariants : desktopVariants}
             initial="initial"
             animate="animate"
