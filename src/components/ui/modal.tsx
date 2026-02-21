@@ -22,22 +22,28 @@ const useIsMobile = () => {
 };
 
 /**
- * Tracks the visual viewport height on iOS Safari so the modal
- * can resize when the virtual keyboard opens/closes.
- * Returns null on desktop or when the API is unavailable.
+ * Tracks the visual viewport on iOS Safari so the modal can resize
+ * and reposition when the virtual keyboard opens/closes.
+ * offsetTop accounts for Safari scrolling the page when an input is focused.
  */
-const useVisualViewportHeight = (enabled: boolean) => {
-  const [height, setHeight] = useState<number | null>(null);
+interface VisualViewport {
+  height: number;
+  offsetTop: number;
+}
+
+const useVisualViewport = (enabled: boolean) => {
+  const [viewport, setViewport] = useState<VisualViewport | null>(null);
 
   const update = useCallback(() => {
-    if (window.visualViewport) {
-      setHeight(window.visualViewport.height);
+    const vv = window.visualViewport;
+    if (vv) {
+      setViewport({ height: vv.height, offsetTop: vv.offsetTop });
     }
   }, []);
 
   useEffect(() => {
     if (!enabled) {
-      setHeight(null);
+      setViewport(null);
       return;
     }
 
@@ -54,7 +60,7 @@ const useVisualViewportHeight = (enabled: boolean) => {
     };
   }, [enabled, update]);
 
-  return height;
+  return viewport;
 };
 
 const desktopVariants = {
@@ -79,7 +85,7 @@ interface ModalProps {
 export function Modal({ open, onClose, title, children }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
-  const viewportHeight = useVisualViewportHeight(isMobile && open);
+  const viewport = useVisualViewport(isMobile && open);
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -97,15 +103,23 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
     };
   }, [open, onClose]);
 
-  // On mobile, use visual viewport height (keyboard-aware) instead of vh
-  const mobileMaxHeight = viewportHeight
-    ? `${viewportHeight * 0.9}px`
+  // On mobile, pin the container to the visual viewport so Safari's
+  // scroll-to-focused-input doesn't push the modal off-screen
+  const containerStyle = viewport
+    ? { top: `${viewport.offsetTop}px`, height: `${viewport.height}px`, bottom: "auto" as const }
+    : undefined;
+
+  const mobileMaxHeight = viewport
+    ? `${viewport.height * 0.9}px`
     : "90vh";
 
   return (
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4"
+          style={containerStyle}
+        >
           {/* Overlay */}
           <motion.div
             ref={overlayRef}
