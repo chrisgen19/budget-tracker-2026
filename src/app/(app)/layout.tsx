@@ -21,7 +21,7 @@ export default async function AppLayout({
   // Fetch currency preference from DB so it's available on first render
   const dbUser = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { currency: true },
+    select: { currency: true, receiptScanEnabled: true },
   });
 
   return (
@@ -30,6 +30,7 @@ export default async function AppLayout({
         initialUser={{
           ...session.user,
           currency: dbUser?.currency ?? "PHP",
+          receiptScanEnabled: dbUser?.receiptScanEnabled ?? false,
         }}
       >
         <PrivacyProvider>

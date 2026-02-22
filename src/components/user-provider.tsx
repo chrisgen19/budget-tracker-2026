@@ -6,6 +6,7 @@ interface UserInfo {
   name: string;
   email: string;
   currency: string;
+  receiptScanEnabled: boolean;
 }
 
 interface UserContextValue {
@@ -14,7 +15,7 @@ interface UserContextValue {
 }
 
 const UserContext = createContext<UserContextValue>({
-  user: { name: "", email: "", currency: "PHP" },
+  user: { name: "", email: "", currency: "PHP", receiptScanEnabled: false },
   setUser: () => {},
 });
 

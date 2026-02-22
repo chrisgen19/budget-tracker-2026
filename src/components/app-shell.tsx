@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { signOut } from "next-auth/react";
@@ -10,10 +11,12 @@ import {
   LogOut,
   Wallet,
   User,
+  ScanLine,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { useUser } from "@/components/user-provider";
+import { ScanReceiptSheet } from "@/components/scan-receipt-sheet";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -28,6 +31,7 @@ const NAV_ITEMS = [
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const { user } = useUser();
+  const [scanOpen, setScanOpen] = useState(false);
 
   return (
     <div className="min-h-screen bg-cream-100">
@@ -149,6 +153,16 @@ export function AppShell({ children }: AppShellProps) {
               </Link>
             );
           })}
+          {user.receiptScanEnabled && (
+            <button
+              type="button"
+              onClick={() => setScanOpen(true)}
+              className="flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all duration-200 min-w-[72px] text-warm-300"
+            >
+              <ScanLine className="w-5 h-5" />
+              <span className="text-[10px] font-medium">Scan</span>
+            </button>
+          )}
         </div>
       </nav>
 
@@ -158,6 +172,15 @@ export function AppShell({ children }: AppShellProps) {
           {children}
         </div>
       </main>
+
+      {/* Scan Receipt Sheet (mobile only) */}
+      <ScanReceiptSheet
+        open={scanOpen}
+        onClose={() => setScanOpen(false)}
+        onFileSelected={() => {
+          // TODO: handle receipt file for OCR processing
+        }}
+      />
     </div>
   );
 }

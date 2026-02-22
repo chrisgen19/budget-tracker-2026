@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { User, Lock, Check, Loader2 } from "lucide-react";
+import { User, Lock, Check, Loader2, Sparkles, ScanLine } from "lucide-react";
 import {
   updateProfileSchema,
   changePasswordSchema,
@@ -26,7 +26,7 @@ const CURRENCIES = [
   { value: "INR", label: "INR - Indian Rupee" },
 ];
 
-type Tab = "personal" | "password";
+type Tab = "personal" | "password" | "features";
 
 export default function ProfilePage() {
   const { setUser } = useUser();
@@ -125,6 +125,7 @@ export default function ProfilePage() {
   const TABS: { id: Tab; label: string; icon: typeof User }[] = [
     { id: "personal", label: "Personal Information", icon: User },
     { id: "password", label: "Change Password", icon: Lock },
+    { id: "features", label: "Features", icon: Sparkles },
   ];
 
   if (loading) {
@@ -199,6 +200,12 @@ export default function ProfilePage() {
               success={passwordSuccess}
               error={passwordError}
             />
+          </div>
+
+          <div className={cn(
+            activeTab !== "features" && "lg:hidden"
+          )}>
+            <FeaturesForm />
           </div>
         </div>
       </div>
@@ -415,6 +422,85 @@ function PasswordForm({ form, onSubmit, success, error }: PasswordFormProps) {
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+function FeaturesForm() {
+  const { user, setUser } = useUser();
+  const [saving, setSaving] = useState(false);
+
+  const handleToggle = async () => {
+    const newValue = !user.receiptScanEnabled;
+
+    // Optimistic update for instant nav response
+    setUser({ receiptScanEnabled: newValue });
+    setSaving(true);
+
+    try {
+      const res = await fetch("/api/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ receiptScanEnabled: newValue }),
+      });
+
+      if (!res.ok) {
+        // Revert on failure
+        setUser({ receiptScanEnabled: !newValue });
+      }
+    } catch {
+      // Revert on network error
+      setUser({ receiptScanEnabled: !newValue });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card p-6">
+      <div className="mb-5">
+        <h2 className="font-serif text-lg text-warm-700">Features</h2>
+        <p className="text-sm text-warm-400 mt-0.5">
+          Enable or disable optional features
+        </p>
+      </div>
+
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-4 p-4 rounded-xl border border-cream-300 bg-cream-50/50">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center">
+              <ScanLine className="w-5 h-5 text-amber-dark" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-warm-600">
+                Receipt Scanning
+              </p>
+              <p className="text-xs text-warm-400">
+                Add a Scan button to mobile navigation for capturing receipts
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            role="switch"
+            aria-checked={user.receiptScanEnabled}
+            disabled={saving}
+            onClick={handleToggle}
+            className={cn(
+              "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/30 disabled:opacity-50 disabled:cursor-not-allowed",
+              user.receiptScanEnabled ? "bg-amber" : "bg-cream-300"
+            )}
+          >
+            <span
+              className={cn(
+                "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200",
+                user.receiptScanEnabled ? "translate-x-5" : "translate-x-0"
+              )}
+            />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
