@@ -13,7 +13,7 @@ import {
   User,
   ScanLine,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, compressImage } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { useUser } from "@/components/user-provider";
 import { ScanReceiptSheet } from "@/components/scan-receipt-sheet";
@@ -51,8 +51,9 @@ export function AppShell({ children }: AppShellProps) {
     setScanError(null);
 
     try {
+      const compressed = await compressImage(file);
       const formData = new FormData();
-      formData.append("receipt", file);
+      formData.append("receipt", compressed);
 
       const res = await fetch("/api/receipts/scan", {
         method: "POST",
