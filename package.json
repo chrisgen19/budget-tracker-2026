@@ -19,6 +19,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@google/genai": "^1.42.0",
     "@hookform/resolvers": "^3.9.0",
     "@prisma/client": "^6.2.0",
     "bcryptjs": "^2.4.3",
