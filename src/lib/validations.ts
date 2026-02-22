@@ -50,4 +50,13 @@ export type RegisterInput = z.infer<typeof registerSchema>;
 export type TransactionInput = z.infer<typeof transactionSchema>;
 export type CategoryInput = z.infer<typeof categorySchema>;
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
+export const receiptScanResultSchema = z.object({
+  amount: z.number().positive(),
+  categoryId: z.string().min(1),
+  date: z.string().min(1),
+  description: z.string().max(255),
+  type: z.literal("EXPENSE"),
+});
+
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+export type ReceiptScanResult = z.infer<typeof receiptScanResultSchema>;

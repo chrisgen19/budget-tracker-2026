@@ -1,6 +1,7 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { signOut } from "next-auth/react";
 import {
@@ -10,10 +11,18 @@ import {
   LogOut,
   Wallet,
   User,
+  ScanLine,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, compressImage } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { useUser } from "@/components/user-provider";
+import { ScanReceiptSheet } from "@/components/scan-receipt-sheet";
+import { Modal } from "@/components/ui/modal";
+import {
+  TransactionForm,
+  type InitialTransactionData,
+} from "@/components/transactions/transaction-form";
+import type { TransactionInput } from "@/lib/validations";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -27,7 +36,82 @@ const NAV_ITEMS = [
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const { user } = useUser();
+  const [scanOpen, setScanOpen] = useState(false);
+
+  // OCR scanning state
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [scanData, setScanData] = useState<InitialTransactionData | null>(null);
+  const [showScanForm, setShowScanForm] = useState(false);
+
+  const handleReceiptFileSelected = async (file: File) => {
+    setIsScanning(true);
+    setScanError(null);
+
+    try {
+      const compressed = await compressImage(file);
+      const formData = new FormData();
+      formData.append("receipt", compressed);
+
+      const res = await fetch("/api/receipts/scan", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setScanError(data.error ?? "Failed to scan receipt.");
+        setIsScanning(false);
+        return;
+      }
+
+      // Success — close scan sheet, open transaction form
+      setScanData({
+        amount: data.amount,
+        description: data.description,
+        type: data.type,
+        date: data.date,
+        categoryId: data.categoryId,
+      });
+      setIsScanning(false);
+      setScanOpen(false);
+      setShowScanForm(true);
+    } catch {
+      setScanError("Network error. Please check your connection and try again.");
+      setIsScanning(false);
+    }
+  };
+
+  const handleScanFormSubmit = async (input: TransactionInput) => {
+    const res = await fetch("/api/transactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+
+    if (!res.ok) {
+      throw new Error("Failed to save transaction");
+    }
+
+    setShowScanForm(false);
+    setScanData(null);
+    router.refresh();
+  };
+
+  const handleScanFormCancel = () => {
+    setShowScanForm(false);
+    setScanData(null);
+  };
+
+  const handleScanSheetClose = () => {
+    // Prevent closing while scanning
+    if (isScanning) return;
+    setScanOpen(false);
+    setScanError(null);
+  };
 
   return (
     <div className="min-h-screen bg-cream-100">
@@ -149,6 +233,16 @@ export function AppShell({ children }: AppShellProps) {
               </Link>
             );
           })}
+          {user.receiptScanEnabled && (
+            <button
+              type="button"
+              onClick={() => setScanOpen(true)}
+              className="flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all duration-200 min-w-[72px] text-warm-300"
+            >
+              <ScanLine className="w-5 h-5" />
+              <span className="text-[10px] font-medium">Scan</span>
+            </button>
+          )}
         </div>
       </nav>
 
@@ -158,6 +252,30 @@ export function AppShell({ children }: AppShellProps) {
           {children}
         </div>
       </main>
+
+      {/* Scan Receipt Sheet */}
+      <ScanReceiptSheet
+        open={scanOpen}
+        onClose={handleScanSheetClose}
+        onFileSelected={handleReceiptFileSelected}
+        isScanning={isScanning}
+        error={scanError}
+      />
+
+      {/* Scanned Transaction Form Modal */}
+      <Modal
+        open={showScanForm}
+        onClose={handleScanFormCancel}
+        title="Add Transaction"
+      >
+        {showScanForm && scanData && (
+          <TransactionForm
+            initialData={scanData}
+            onSubmit={handleScanFormSubmit}
+            onCancel={handleScanFormCancel}
+          />
+        )}
+      </Modal>
     </div>
   );
 }

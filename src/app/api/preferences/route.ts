@@ -12,6 +12,7 @@ export async function GET() {
       hideAmounts: true,
       quickExpenseCategories: true,
       quickIncomeCategories: true,
+      receiptScanEnabled: true,
     },
   });
 
@@ -19,6 +20,7 @@ export async function GET() {
     hideAmounts: user?.hideAmounts ?? false,
     quickExpenseCategories: user?.quickExpenseCategories ?? [],
     quickIncomeCategories: user?.quickIncomeCategories ?? [],
+    receiptScanEnabled: user?.receiptScanEnabled ?? false,
   });
 }
 
@@ -32,6 +34,11 @@ export async function PATCH(request: Request) {
   // Handle hideAmounts (existing)
   if ("hideAmounts" in body) {
     data.hideAmounts = Boolean(body.hideAmounts);
+  }
+
+  // Handle receiptScanEnabled
+  if ("receiptScanEnabled" in body) {
+    data.receiptScanEnabled = Boolean(body.receiptScanEnabled);
   }
 
   // Handle quick category preferences
@@ -64,6 +71,7 @@ export async function PATCH(request: Request) {
       hideAmounts: true,
       quickExpenseCategories: true,
       quickIncomeCategories: true,
+      receiptScanEnabled: true,
     },
   });
 
@@ -71,5 +79,6 @@ export async function PATCH(request: Request) {
     hideAmounts: user.hideAmounts,
     quickExpenseCategories: user.quickExpenseCategories,
     quickIncomeCategories: user.quickIncomeCategories,
+    receiptScanEnabled: user.receiptScanEnabled,
   });
 }

@@ -11,8 +11,17 @@ import { CategoryIcon } from "@/components/ui/icon-map";
 import { useUser } from "@/components/user-provider";
 import type { Category, TransactionWithCategory } from "@/types";
 
+export interface InitialTransactionData {
+  amount?: number;
+  description?: string;
+  type?: "INCOME" | "EXPENSE";
+  date?: string;
+  categoryId?: string;
+}
+
 interface TransactionFormProps {
   transaction?: TransactionWithCategory | null;
+  initialData?: InitialTransactionData;
   onSubmit: (data: TransactionInput) => Promise<void>;
   onCancel: () => void;
   onDelete?: () => void;
@@ -52,19 +61,24 @@ interface QuickPrefs {
   quickIncomeCategories: string[];
 }
 
-export function TransactionForm({ transaction, onSubmit, onCancel, onDelete }: TransactionFormProps) {
+export function TransactionForm({ transaction, initialData, onSubmit, onCancel, onDelete }: TransactionFormProps) {
   const { user } = useUser();
   const [categories, setCategories] = useState<Category[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(true);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [quickPrefs, setQuickPrefs] = useState<QuickPrefs | null>(null);
-  const [displayAmount, setDisplayAmount] = useState<string>(() =>
-    transaction?.amount != null ? formatAmountDisplay(transaction.amount) : ""
-  );
-  const [dateMode, setDateMode] = useState<DateMode>(() =>
-    transaction ? getDateMode(formatDateInput(transaction.date)) : "today"
-  );
+  const [displayAmount, setDisplayAmount] = useState<string>(() => {
+    if (transaction?.amount != null) return formatAmountDisplay(transaction.amount);
+    if (initialData?.amount != null) return formatAmountDisplay(initialData.amount);
+    return "";
+  });
+  const [dateMode, setDateMode] = useState<DateMode>(() => {
+    if (transaction) return getDateMode(formatDateInput(transaction.date));
+    if (initialData?.date) return getDateMode(initialData.date);
+    return "today";
+  });
   const dateInputRef = useRef<HTMLInputElement>(null);
+  const initialCategoryApplied = useRef(false);
 
   const {
     register,
@@ -75,10 +89,12 @@ export function TransactionForm({ transaction, onSubmit, onCancel, onDelete }: T
   } = useForm<TransactionInput>({
     resolver: zodResolver(transactionSchema),
     defaultValues: {
-      type: transaction?.type ?? "EXPENSE",
-      amount: transaction?.amount ?? undefined,
-      description: transaction?.description ?? "",
-      date: transaction ? formatDateInput(transaction.date) : formatDateInput(new Date()),
+      type: transaction?.type ?? initialData?.type ?? "EXPENSE",
+      amount: transaction?.amount ?? initialData?.amount ?? undefined,
+      description: transaction?.description ?? initialData?.description ?? "",
+      date: transaction
+        ? formatDateInput(transaction.date)
+        : initialData?.date ?? formatDateInput(new Date()),
       categoryId: transaction?.categoryId ?? "",
     },
   });
@@ -124,13 +140,23 @@ export function TransactionForm({ transaction, onSubmit, onCancel, onDelete }: T
       setCategories(data);
       setLoadingCategories(false);
 
+      // Apply initialData categoryId once after categories load
+      if (initialData?.categoryId && !initialCategoryApplied.current) {
+        const match = (data as Category[]).find((c) => c.id === initialData.categoryId);
+        if (match) {
+          setValue("categoryId", match.id, { shouldValidate: true });
+          initialCategoryApplied.current = true;
+          return;
+        }
+      }
+
       // Reset category when type changes (unless editing)
       if (!transaction) {
         setValue("categoryId", "");
       }
     };
     fetchCategories();
-  }, [selectedType, setValue, transaction]);
+  }, [selectedType, setValue, transaction, initialData]);
 
   const setDateToToday = () => {
     setDateMode("today");
