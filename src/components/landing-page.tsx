@@ -646,7 +646,7 @@ function DashboardMockup() {
               { income: 65, expense: 45 },
               { income: 75, expense: 50 },
             ].map((bar, i) => (
-              <div key={i} className="flex-1 flex items-end gap-0.5">
+              <div key={i} className="flex-1 flex items-end gap-0.5 h-full">
                 <div
                   className="flex-1 rounded-t bg-income/70"
                   style={{ height: `${bar.income}%` }}
