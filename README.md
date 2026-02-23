@@ -18,10 +18,11 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **Transactions** — Full CRUD with search, type filtering (income/expense), month navigation, pagination, hero amount input with dynamic type coloring, date quick-picks (Today/Yesterday/Custom), and slide-in category picker
 - **Quick Category Tiles** — Personalized top-4 quick-access categories per type (expense/income) with customizable order; shown in the transaction form and editable from the Categories page
 - **Categories** — 15 pre-seeded defaults (10 expense, 5 income) + create/edit/delete custom categories with color swatches, icon grid, and live preview
-- **Profile Settings** — Edit name, email, and preferred currency; change password with current-password verification; sidebar updates instantly via shared context
+- **Receipt Scanning** — Snap a photo of a receipt on mobile and AI (Google Gemini) extracts the amount, date, category, and merchant to pre-fill a transaction; images compressed client-side before upload; opt-in feature toggle in profile settings
+- **Profile Settings** — Edit name, email, and preferred currency; change password with current-password verification; enable/disable receipt scanning; sidebar updates instantly via shared context
 - **Dynamic Currency** — Currency selected in profile settings reflects across all pages — dashboard, transactions, charts, and forms
 - **Privacy Mode** — One-tap toggle to hide all financial amounts across the app, persisted per-user in the database
-- **Responsive** — Sidebar navigation on desktop, bottom navigation on mobile; modal bottom sheets with drag-to-dismiss on mobile, centered cards on desktop
+- **Responsive** — Sidebar navigation on desktop, bottom navigation on mobile; modal bottom sheets with drag-to-dismiss on mobile, centered cards on desktop; keyboard-aware modals on iOS Safari
 - **Dynamic Favicon** — Auto-generated favicon matching the app logo
 - **Design** — Warm paper-ledger aesthetic with Young Serif + Outfit fonts, Plus Jakarta Sans for currency amounts, amber accents, and Framer Motion animations
 
@@ -36,6 +37,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 | Auth | NextAuth.js v4 (Credentials) |
 | Forms | React Hook Form + Zod |
 | Charts | Recharts |
+| OCR / AI | Google Gemini |
 | Icons | Lucide React |
 | Animation | Framer Motion |
 
@@ -72,9 +74,15 @@ cp .env.example .env
 DATABASE_URL="postgres://myuser:mypassword@localhost:5432/budgettracker-nextjs"
 NEXTAUTH_SECRET="change-this-to-a-random-secret-in-production"
 NEXTAUTH_URL="http://localhost:3000"
+
+# Google Gemini (optional — enables receipt scanning)
+GEMINI_API_KEY=""
+GEMINI_MODEL="gemini-2.5-flash"
 ```
 
 > **Note:** Generate a secure `NEXTAUTH_SECRET` for production with `openssl rand -base64 32`
+>
+> **Receipt Scanning:** The `GEMINI_API_KEY` is only required if you enable the receipt scanning feature. Get one from [Google AI Studio](https://aistudio.google.com/apikey).
 
 ### 4. Create the database and run migrations
 
@@ -141,17 +149,19 @@ src/
 │       ├── transactions/    # Transaction CRUD
 │       ├── categories/      # Category CRUD
 │       ├── dashboard/       # Dashboard stats + balance trend
-│       ├── preferences/     # User preferences (privacy, quick categories)
-│       └── profile/         # Profile & password update
+│       ├── preferences/     # User preferences (privacy, quick categories, features)
+│       ├── profile/         # Profile & password update
+│       └── receipts/scan/   # Receipt OCR via Gemini AI
 ├── components/
 │   ├── ui/                  # Shared UI (Modal, EmptyState, IconMap)
 │   ├── dashboard/           # Chart components (Trend, Spending, BalanceTrend)
 │   ├── transactions/        # Transaction form
 │   ├── categories/          # Category form + quick category picker
 │   ├── landing-page.tsx     # Marketing homepage for guests
+│   ├── scan-receipt-sheet.tsx # Receipt capture modal (camera/upload)
 │   ├── privacy-provider.tsx # Hide-amounts context (persisted in DB)
-│   └── user-provider.tsx    # Reactive user info context (name, email)
-├── lib/                     # Prisma client, auth, utils, validations
+│   └── user-provider.tsx    # Reactive user info context (name, email, currency)
+├── lib/                     # Prisma client, auth, Gemini client, utils, validations
 └── types/                   # TypeScript type definitions
 
 prisma/
@@ -168,7 +178,7 @@ User ──< Transaction >── Category
  └────────< Category (custom, per-user)
 ```
 
-- **User** — id, name, email, password, currency, hide_amounts, quickExpenseCategories, quickIncomeCategories
+- **User** — id, name, email, password, currency, hide_amounts, quickExpenseCategories, quickIncomeCategories, receiptScanEnabled
 - **Category** — id, name, type (INCOME/EXPENSE), icon, color, isDefault, userId (null for defaults)
 - **Transaction** — id, amount, description, type, date, categoryId, userId
 

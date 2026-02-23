@@ -11,6 +11,7 @@ Personal budget tracker app for managing income and expenses with dashboard anal
 - **Auth:** NextAuth.js v4 (credentials provider)
 - **Forms:** React Hook Form + Zod
 - **Charts:** Recharts
+- **OCR / AI:** Google Gemini (receipt scanning)
 - **Icons:** Lucide React
 - **Animation:** Framer Motion
 
@@ -19,14 +20,15 @@ Personal budget tracker app for managing income and expenses with dashboard anal
 src/
 ├── app/
 │   ├── (auth)/         # Login + Register pages
-│   ├── (app)/          # Protected: Dashboard, Transactions, Categories
-│   └── api/            # REST API routes
+│   ├── (app)/          # Protected: Dashboard, Transactions, Categories, Profile
+│   └── api/            # REST API routes (incl. /receipts/scan)
 ├── components/
 │   ├── ui/             # Shared UI (Modal, EmptyState, IconMap)
 │   ├── dashboard/      # Chart components
 │   ├── transactions/   # Transaction form
-│   └── categories/     # Category form
-├── lib/                # Prisma client, auth config, utils, validations
+│   ├── categories/     # Category form
+│   └── scan-receipt-sheet.tsx  # Receipt capture modal
+├── lib/                # Prisma client, auth config, Gemini client, utils, validations
 └── types/              # TypeScript type definitions
 ```
 
@@ -46,8 +48,11 @@ src/
 
 ## Key Patterns
 - **PrivacyProvider** context in `src/components/privacy-provider.tsx` — shared hide-amounts state across all app pages, persisted in DB via `/api/preferences`
+- **UserProvider** context in `src/components/user-provider.tsx` — reactive user info (name, email, currency, receiptScanEnabled) shared across components
 - **App layout** (`src/app/(app)/layout.tsx`) wraps pages with `Providers > PrivacyProvider > AppShell`
 - **Mobile FAB** on dashboard for quick-add transaction (hidden on desktop, which uses inline button)
+- **Receipt scanning** is opt-in per user — toggled in Profile Settings > Features, uses Gemini AI for OCR
+- **Modal** component (`src/components/ui/modal.tsx`) uses `visualViewport` API for keyboard-aware positioning on iOS Safari
 
 ## Design
 - "Light & Warm" aesthetic with cream/paper-like backgrounds

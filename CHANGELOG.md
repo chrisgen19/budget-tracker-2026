@@ -274,3 +274,63 @@ All notable development history for the Budget Tracker app.
 
 ### Database
 - Added `quick_expense_categories` and `quick_income_categories` JSON columns to `users` table (Prisma migration)
+
+---
+
+## 2026-02-21 — iOS Safari Modal & Keyboard Fixes
+
+### Modal Keyboard Handling
+- Fixed **keyboard pushing modal off-screen** on iOS Safari — modal now tracks the visual viewport and repositions dynamically when the keyboard opens
+- Created `useVisualViewport` hook that monitors `window.visualViewport` resize and scroll events in real-time
+- **Container pinning** — modal container uses `top: offsetTop` and `height: viewport.height` to stay within the visible area above the keyboard
+- **Dynamic max-height** — modal card calculates pixel-based max-height from actual viewport height instead of CSS `90vh` (which doesn't account for the keyboard on iOS)
+- **Auto-scroll focused inputs** — when a user taps an input inside a scrollable modal, the input smoothly scrolls into view after a 350ms delay (allows keyboard animation to settle)
+- Used `useRef` for `onClose` callback to prevent effect re-runs and preserve original `body.overflow` value on cleanup
+
+### iOS Safari Auto-Zoom Fix
+- Disabled iOS Safari's automatic zoom on input focus by setting `maximumScale: 1` in the Next.js viewport config
+- Prevents the jarring 100% → 200% zoom that occurs when tapping inputs with font-size < 16px
+
+---
+
+## 2026-02-22 — Receipt Scanning with AI
+
+### Receipt Scanner
+- New **Receipt Scanning** feature — capture or upload photos of receipts on mobile, and AI automatically extracts transaction details (amount, date, category, merchant)
+- Uses **Google Gemini AI** (`gemini-2.5-flash`) for OCR processing with a structured prompt that returns JSON
+- **Mobile bottom nav** gains a "Scan" button (conditional — only visible when the feature is enabled)
+- Flow: select photo → compress → upload to API → Gemini extracts data → pre-fills transaction form → user reviews and saves
+- All scanned fields (amount, date, category, description) remain fully editable before submission
+
+### Image Compression
+- Client-side image compression via **Canvas API** before upload
+- Resizes to max 1500px dimension, re-encodes as JPEG at 75% quality
+- Reduces typical 4 MB phone photos to ~200–400 KB for faster upload
+- Graceful fallback to original file if Canvas API is unavailable
+
+### Feature Toggle
+- Receipt scanning is an **opt-in feature** — disabled by default
+- New "Features" tab in Profile Settings with a toggle switch for receipt scanning
+- Toggle uses optimistic UI (updates instantly, reverts on error)
+- Setting persisted per-user in the database (`receipt_scan_enabled` column)
+
+### Scan Receipt Sheet (UI)
+- Bottom sheet modal with two options: "Take Photo" (rear camera) and "Upload Image" (gallery)
+- Shows scanning spinner while processing
+- Displays user-friendly error messages with retry guidance on failure
+- Accepted file types: JPEG, PNG, WebP, HEIC/HEIF (max 4 MB)
+
+### API & Integration
+- `POST /api/receipts/scan` — accepts receipt image via FormData, validates file type/size, sends to Gemini, returns extracted transaction data
+- Gemini prompt dynamically includes user's expense categories for accurate category matching
+- Zod validation (`receiptScanResultSchema`) ensures AI response conforms to expected shape
+- Falls back to "Other" or first available category if extracted category is invalid
+- Extended `/api/preferences` to support `receiptScanEnabled` field (GET/PATCH)
+- Added `receiptScanEnabled` to `UserProvider` context and app layout
+
+### Database
+- Added `receipt_scan_enabled` boolean column to `users` table (defaults to `false`, Prisma migration)
+
+### Environment Variables
+- `GEMINI_API_KEY` — required for Gemini API calls
+- `GEMINI_MODEL` — optional, defaults to `gemini-2.5-flash`
