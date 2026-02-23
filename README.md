@@ -10,21 +10,21 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 
 ## Features
 
-- **Landing Page** — Marketing homepage for non-authenticated users with dashboard preview, feature highlights, and sign-up CTAs
+- **Landing Page** — Redesigned marketing homepage with 3D dashboard mockup preview, AI receipt scanning showcase with phone mockup, 8-feature grid, and scroll-triggered animations
 - **Authentication** — Register and login with email/password (NextAuth.js with JWT sessions); role-based access control (ADMIN, FREE, PAID)
 - **Dashboard** — Summary cards (balance, expenses, income), monthly trend bar chart, spending by category donut chart, balance trend area chart, recent transactions
 - **Running Balance** — Cumulative all-time balance that carries over across months, not just monthly snapshots
 - **Balance Trend** — 30-day area chart showing daily running balance with percentage change indicator
-- **Transactions** — Full CRUD with search, type filtering (income/expense), month navigation, pagination, hero amount input with dynamic type coloring, date quick-picks (Today/Yesterday/Custom), and slide-in category picker
+- **Transactions** — Full CRUD with search, type filtering (income/expense), month navigation, infinite scroll (with pagination toggle), hero amount input with dynamic type coloring, date quick-picks (Today/Yesterday/Custom), and slide-in category picker
 - **Quick Category Tiles** — Personalized top-4 quick-access categories per type (expense/income) with customizable order; shown in the transaction form and editable from the Categories page
 - **Categories** — 15 pre-seeded defaults (10 expense, 5 income) + create/edit/delete custom categories with color swatches, icon grid, and live preview
 - **User Roles** — Three-tier role system (ADMIN, FREE, PAID); new users default to FREE; admin can manually promote users to PAID via an admin panel; receipt scanning gated to PAID/ADMIN users
 - **Admin Panel** — Admin-only user management page (`/admin`) with user list, role badges, transaction counts, and one-click FREE/PAID role toggle; protected by middleware and API-level guards
-- **Receipt Scanning** — Snap a photo of a receipt on mobile and AI (Google Gemini) extracts the amount, date, category, and merchant to pre-fill a transaction; images compressed client-side before upload; available to PAID/ADMIN users
+- **Receipt Scanning** — Snap a photo of a receipt on mobile and AI (Google Gemini) extracts the amount, date, category, and merchant to pre-fill a transaction; smart category matching with merchant-aware rules; non-receipt image detection; images compressed client-side before upload; available to PAID/ADMIN users
 - **Profile Settings** — Edit name, email, and preferred currency; change password with current-password verification; role badge displayed in header; feature toggles gated by role; sidebar updates instantly via shared context
 - **Dynamic Currency** — Currency selected in profile settings reflects across all pages — dashboard, transactions, charts, and forms
 - **Privacy Mode** — One-tap toggle to hide all financial amounts across the app, persisted per-user in the database
-- **Responsive** — Sidebar navigation on desktop, bottom navigation on mobile; modal bottom sheets with drag-to-dismiss on mobile, centered cards on desktop; keyboard-aware modals on iOS Safari
+- **Responsive** — Sidebar navigation on desktop, bottom navigation on mobile; labeled floating action buttons on mobile; modal bottom sheets with drag-to-dismiss on mobile, centered cards on desktop; keyboard-aware modals on iOS Safari
 - **Dynamic Favicon** — Auto-generated favicon matching the app logo
 - **Design** — Warm paper-ledger aesthetic with Young Serif + Outfit fonts, Plus Jakarta Sans for currency amounts, amber accents, and Framer Motion animations
 
@@ -182,7 +182,7 @@ User ──< Transaction >── Category
  └────────< Category (custom, per-user)
 ```
 
-- **User** — id, name, email, password, role (ADMIN/FREE/PAID), currency, hide_amounts, quickExpenseCategories, quickIncomeCategories, receiptScanEnabled
+- **User** — id, name, email, password, role (ADMIN/FREE/PAID), currency, hide_amounts, quickExpenseCategories, quickIncomeCategories, receiptScanEnabled, transactionLayout
 - **Category** — id, name, type (INCOME/EXPENSE), icon, color, isDefault, userId (null for defaults)
 - **Transaction** — id, amount, description, type, date, categoryId, userId
 

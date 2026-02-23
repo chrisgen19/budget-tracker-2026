@@ -337,6 +337,42 @@ All notable development history for the Budget Tracker app.
 
 ---
 
+## 2026-02-23 — Infinite Scroll, Landing Page Redesign & Mobile FABs
+
+### Infinite Scroll with Layout Toggle
+- Transaction list now supports **infinite scroll** — auto-loads the next 15 transactions as you scroll down, using an `IntersectionObserver` sentinel
+- **Layout preference toggle** in Profile Settings — switch between infinite scroll (default) and traditional pagination
+- Preference persisted per-user in database (`transactionLayout` column)
+- "Loading more..." spinner during fetch; "All transactions loaded" message when list is exhausted
+- Both modes fully support search, type filtering, month navigation, and bulk operations
+
+### Landing Page Redesign
+- Completely redesigned the landing page with a modern, elevated aesthetic
+- **Dashboard mockup preview** — floating 3D perspective preview with mock summary cards, bar chart, and recent transactions; animated floating category pills on desktop
+- **Receipt Scanning showcase** — dedicated section with a phone mockup displaying AI-extracted transaction fields (amount, category, date, merchant) and a 3-step visual flow
+- Expanded to an **8-card feature grid** — Smart Dashboard, Receipt Scanning, Category Tracking, Balance Trend, Privacy Mode, Quick Transactions, Monthly Navigation, and Multi-Currency
+- Refreshed hero section with animated "Now with AI Receipt Scanning" badge
+
+### Labeled Mobile FABs
+- Mobile floating action buttons now display **text labels alongside icons** (e.g., `+ Transaction`, `+ Category`) instead of a plain `+` icon
+- Added FABs to **Transactions** and **Categories** pages (previously only on Dashboard)
+- Desktop "Add" buttons hidden on mobile (`hidden sm:inline-flex`), replaced by the FAB for a cleaner mobile layout
+
+### Receipt Scanning Improvements
+- **Smart category matching** — AI uses explicit rules for common categories (Food & Dining, Transportation, Shopping, Bills, Entertainment, Healthcare) with merchant-aware fallbacks
+- **Non-receipt detection** — AI detects non-receipt images (random photos, screenshots) and returns a user-friendly error instead of hallucinated data
+- Amount extraction now explicitly includes tax, tips, and service charges (grand total)
+- Category fallback to "Other" if the AI-extracted category doesn't match any user category
+
+### Bug Fixes
+- Transaction list now **refreshes automatically** when navigating back from receipt scan or dashboard quick-add (timestamp query param triggers re-fetch)
+- Fixed chart bar wrapper in landing page requiring explicit height for percentage-based child heights
+
+### Database
+- Added `transaction_layout` column to `users` table (defaults to `"infinite"`, Prisma migration)
+
+---
+
 ## 2026-02-23 — User Roles & Admin Panel
 
 ### User Role System
