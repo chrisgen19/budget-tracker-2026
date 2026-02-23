@@ -12,11 +12,18 @@ enum TransactionType {
   EXPENSE
 }
 
+enum UserRole {
+  ADMIN
+  FREE
+  PAID
+}
+
 model User {
   id           String        @id @default(cuid())
   name         String
   email        String        @unique
   password     String
+  role         UserRole      @default(FREE)
   hideAmounts             Boolean       @default(false) @map("hide_amounts")
   currency                String        @default("PHP")
   quickExpenseCategories  String[]      @default([]) @map("quick_expense_categories")
