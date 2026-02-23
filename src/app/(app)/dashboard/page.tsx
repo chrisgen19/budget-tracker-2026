@@ -82,7 +82,7 @@ export default function DashboardPage() {
       body: JSON.stringify(input),
     });
     setShowForm(false);
-    router.push("/transactions");
+    router.push(`/transactions?t=${Date.now()}`);
   };
 
   const navigateMonth = (direction: -1 | 1) => {

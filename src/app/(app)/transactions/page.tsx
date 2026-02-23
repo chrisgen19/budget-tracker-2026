@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Plus,
   Search,
@@ -111,6 +112,8 @@ const generateCsv = (transactions: TransactionWithCategory[]) => {
 /* ------------------------------------------------------------------ */
 
 export default function TransactionsPage() {
+  const searchParams = useSearchParams();
+  const refreshKey = searchParams.get("t") ?? "";
   const { hideAmounts } = usePrivacy();
   const { user } = useUser();
   const currency = user.currency;
@@ -172,12 +175,12 @@ export default function TransactionsPage() {
     }
   }, [month, filter, isInfinite]);
 
-  // Initial fetch + reset on filter/month change
+  // Initial fetch + reset on filter/month change (refreshKey triggers re-fetch after receipt scan)
   useEffect(() => {
     setPage(1);
     setSelectedIds(new Set());
     fetchTransactions(1, false);
-  }, [filter, month, fetchTransactions]);
+  }, [filter, month, fetchTransactions, refreshKey]);
 
   // Pagination mode: fetch when page changes (page > 1)
   useEffect(() => {

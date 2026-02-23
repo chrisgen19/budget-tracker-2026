@@ -100,8 +100,7 @@ export function AppShell({ children }: AppShellProps) {
 
     setShowScanForm(false);
     setScanData(null);
-    router.push("/transactions");
-    router.refresh();
+    router.push(`/transactions?t=${Date.now()}`);
   };
 
   const handleScanFormCancel = () => {
