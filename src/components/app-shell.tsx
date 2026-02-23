@@ -12,6 +12,7 @@ import {
   Wallet,
   User,
   ScanLine,
+  Shield,
 } from "lucide-react";
 import { cn, compressImage } from "@/lib/utils";
 import { motion } from "framer-motion";
@@ -38,6 +39,7 @@ export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { user } = useUser();
+  const canUsePaidFeatures = user.role === "PAID" || user.role === "ADMIN";
   const [scanOpen, setScanOpen] = useState(false);
 
   // OCR scanning state
@@ -159,6 +161,27 @@ export function AppShell({ children }: AppShellProps) {
               </Link>
             );
           })}
+          {user.role === "ADMIN" && (
+            <Link
+              href="/admin"
+              className={cn(
+                "flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 relative",
+                pathname === "/admin"
+                  ? "bg-amber-light text-amber-dark"
+                  : "text-warm-400 hover:text-warm-600 hover:bg-cream-100"
+              )}
+            >
+              {pathname === "/admin" && (
+                <motion.div
+                  layoutId="sidebar-active"
+                  className="absolute inset-0 bg-amber-light rounded-xl"
+                  transition={{ type: "spring", duration: 0.4, bounce: 0.15 }}
+                />
+              )}
+              <Shield className="w-5 h-5 relative z-10" />
+              <span className="relative z-10">Admin</span>
+            </Link>
+          )}
         </nav>
 
         {/* User section */}
@@ -233,7 +256,7 @@ export function AppShell({ children }: AppShellProps) {
               </Link>
             );
           })}
-          {user.receiptScanEnabled && (
+          {user.receiptScanEnabled && canUsePaidFeatures && (
             <button
               type="button"
               onClick={() => setScanOpen(true)}

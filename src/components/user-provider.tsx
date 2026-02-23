@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useState, useCallback } from "react";
+import type { UserRole } from "@prisma/client";
 
 interface UserInfo {
   name: string;
@@ -8,6 +9,7 @@ interface UserInfo {
   currency: string;
   receiptScanEnabled: boolean;
   transactionLayout: "infinite" | "pagination";
+  role: UserRole;
 }
 
 interface UserContextValue {
@@ -16,7 +18,7 @@ interface UserContextValue {
 }
 
 const UserContext = createContext<UserContextValue>({
-  user: { name: "", email: "", currency: "PHP", receiptScanEnabled: false, transactionLayout: "infinite" },
+  user: { name: "", email: "", currency: "PHP", receiptScanEnabled: false, transactionLayout: "infinite", role: "FREE" },
   setUser: () => {},
 });
 

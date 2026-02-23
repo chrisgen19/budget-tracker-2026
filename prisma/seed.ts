@@ -30,24 +30,31 @@ const main = async () => {
   });
 
   if (existingCount > 0) {
-    // eslint-disable-next-line no-console
     console.log(`Default categories already seeded (${existingCount} found). Skipping.`);
-    return;
+  } else {
+    await prisma.category.createMany({
+      data: DEFAULT_CATEGORIES.map((cat) => ({
+        name: cat.name,
+        type: cat.type,
+        icon: cat.icon,
+        color: cat.color,
+        isDefault: true,
+        userId: null,
+      })),
+    });
+
+    console.log(`Seeded ${DEFAULT_CATEGORIES.length} default categories`);
   }
 
-  await prisma.category.createMany({
-    data: DEFAULT_CATEGORIES.map((cat) => ({
-      name: cat.name,
-      type: cat.type,
-      icon: cat.icon,
-      color: cat.color,
-      isDefault: true,
-      userId: null,
-    })),
+  // Set admin role for the primary admin account (always runs)
+  const adminResult = await prisma.user.updateMany({
+    where: { email: "chrisgen19@gmail.com" },
+    data: { role: "ADMIN" },
   });
 
-  // eslint-disable-next-line no-console
-  console.log(`Seeded ${DEFAULT_CATEGORIES.length} default categories`);
+  if (adminResult.count > 0) {
+    console.log("Set admin role for chrisgen19@gmail.com");
+  }
 };
 
 main()

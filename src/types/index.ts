@@ -1,6 +1,6 @@
-import type { Category, Transaction, TransactionType } from "@prisma/client";
+import type { Category, Transaction, TransactionType, UserRole } from "@prisma/client";
 
-export type { Category, Transaction, TransactionType };
+export type { Category, Transaction, TransactionType, UserRole };
 
 /** Transaction with its category relation */
 export type TransactionWithCategory = Transaction & {
@@ -46,6 +46,7 @@ declare module "next-auth" {
       id: string;
       name: string;
       email: string;
+      role: UserRole;
     };
   }
 }
@@ -53,5 +54,6 @@ declare module "next-auth" {
 declare module "next-auth/jwt" {
   interface JWT {
     id: string;
+    role: UserRole;
   }
 }

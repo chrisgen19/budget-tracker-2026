@@ -28,8 +28,14 @@ const CURRENCIES = [
 
 type Tab = "personal" | "password" | "features";
 
+const ROLE_BADGE_STYLES: Record<string, string> = {
+  ADMIN: "bg-purple-100 text-purple-700",
+  PAID: "bg-amber-light text-amber-dark",
+  FREE: "bg-cream-200 text-warm-500",
+};
+
 export default function ProfilePage() {
-  const { setUser } = useUser();
+  const { user, setUser } = useUser();
   const [activeTab, setActiveTab] = useState<Tab>("personal");
   const [loading, setLoading] = useState(true);
   const [profileSuccess, setProfileSuccess] = useState("");
@@ -150,9 +156,19 @@ export default function ProfilePage() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">
-          Profile Settings
-        </h1>
+        <div className="flex items-center gap-3">
+          <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">
+            Profile Settings
+          </h1>
+          <span
+            className={cn(
+              "text-[10px] font-semibold px-2.5 py-0.5 rounded-full uppercase tracking-wide",
+              ROLE_BADGE_STYLES[user.role]
+            )}
+          >
+            {user.role}
+          </span>
+        </div>
         <p className="text-warm-400 mt-1">Manage your account settings</p>
       </div>
 
@@ -428,6 +444,7 @@ function PasswordForm({ form, onSubmit, success, error }: PasswordFormProps) {
 
 function FeaturesForm() {
   const { user, setUser } = useUser();
+  const canUsePaidFeatures = user.role === "PAID" || user.role === "ADMIN";
   const [saving, setSaving] = useState(false);
   const [savingLayout, setSavingLayout] = useState(false);
 
@@ -506,24 +523,30 @@ function FeaturesForm() {
             </div>
           </div>
 
-          <button
-            type="button"
-            role="switch"
-            aria-checked={user.receiptScanEnabled}
-            disabled={saving}
-            onClick={handleToggle}
-            className={cn(
-              "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/30 disabled:opacity-50 disabled:cursor-not-allowed",
-              user.receiptScanEnabled ? "bg-amber" : "bg-cream-300"
-            )}
-          >
-            <span
+          {canUsePaidFeatures ? (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={user.receiptScanEnabled}
+              disabled={saving}
+              onClick={handleToggle}
               className={cn(
-                "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200",
-                user.receiptScanEnabled ? "translate-x-5" : "translate-x-0"
+                "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/30 disabled:opacity-50 disabled:cursor-not-allowed",
+                user.receiptScanEnabled ? "bg-amber" : "bg-cream-300"
               )}
-            />
-          </button>
+            >
+              <span
+                className={cn(
+                  "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200",
+                  user.receiptScanEnabled ? "translate-x-5" : "translate-x-0"
+                )}
+              />
+            </button>
+          ) : (
+            <span className="text-xs text-warm-400 bg-cream-200 px-3 py-1 rounded-full">
+              Paid only
+            </span>
+          )}
         </div>
 
         <div className="flex items-center justify-between gap-4 p-4 rounded-xl border border-cream-300 bg-cream-50/50">
