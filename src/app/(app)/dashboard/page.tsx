@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { formatCurrency, formatDate, getCurrencySymbol, cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -27,6 +28,7 @@ import type { TransactionInput } from "@/lib/validations";
 import type { DashboardStats } from "@/types";
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -80,7 +82,7 @@ export default function DashboardPage() {
       body: JSON.stringify(input),
     });
     setShowForm(false);
-    fetchStats();
+    router.push("/transactions");
   };
 
   const navigateMonth = (direction: -1 | 1) => {
