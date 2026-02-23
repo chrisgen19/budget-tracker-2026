@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Plus,
   Search,
@@ -12,6 +12,7 @@ import {
   Download,
   Check,
   X,
+  Loader2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatCurrency, cn } from "@/lib/utils";
@@ -113,6 +114,7 @@ export default function TransactionsPage() {
   const { hideAmounts } = usePrivacy();
   const { user } = useUser();
   const currency = user.currency;
+  const isInfinite = user.transactionLayout === "infinite";
   const [data, setData] = useState<TransactionsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"ALL" | "INCOME" | "EXPENSE">("ALL");
@@ -122,6 +124,12 @@ export default function TransactionsPage() {
   });
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
+
+  // Infinite scroll state
+  const [allTransactions, setAllTransactions] = useState<TransactionWithCategory[]>([]);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   // Selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -137,36 +145,89 @@ export default function TransactionsPage() {
 
   /* ---- Data fetching ---- */
 
-  const fetchTransactions = useCallback(async () => {
-    setLoading(true);
-    const params = new URLSearchParams({ page: String(page), limit: "15", month });
+  const fetchTransactions = useCallback(async (pageToFetch: number, append: boolean) => {
+    if (append) {
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+    }
+
+    const params = new URLSearchParams({ page: String(pageToFetch), limit: "15", month });
     if (filter !== "ALL") params.set("type", filter);
     const res = await fetch(`/api/transactions?${params}`);
-    const json = await res.json();
-    setData(json);
-    setLoading(false);
-  }, [page, month, filter]);
+    const json: TransactionsResponse = await res.json();
 
-  useEffect(() => {
-    fetchTransactions();
-  }, [fetchTransactions]);
+    if (append) {
+      setAllTransactions((prev) => [...prev, ...json.transactions]);
+      setHasMore(pageToFetch < json.pagination.totalPages);
+      setLoadingMore(false);
+      setData(json);
+    } else {
+      setData(json);
+      if (isInfinite) {
+        setAllTransactions(json.transactions);
+        setHasMore(1 < json.pagination.totalPages);
+      }
+      setLoading(false);
+    }
+  }, [month, filter, isInfinite]);
 
-  // Reset page & selection when filters change
+  // Initial fetch + reset on filter/month change
   useEffect(() => {
     setPage(1);
     setSelectedIds(new Set());
-  }, [filter, month]);
+    fetchTransactions(1, false);
+  }, [filter, month, fetchTransactions]);
+
+  // Pagination mode: fetch when page changes (page > 1)
+  useEffect(() => {
+    if (isInfinite || page === 1) return;
+    fetchTransactions(page, false);
+  }, [page, isInfinite, fetchTransactions]);
+
+  // Infinite scroll: IntersectionObserver on sentinel
+  useEffect(() => {
+    if (!isInfinite) return;
+
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry.isIntersecting && hasMore && !loadingMore && !loading) {
+          setPage((prev) => {
+            const nextPage = prev + 1;
+            fetchTransactions(nextPage, true);
+            return nextPage;
+          });
+        }
+      },
+      { rootMargin: "200px" }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [isInfinite, hasMore, loadingMore, loading, fetchTransactions]);
+
+  const refreshAfterMutation = useCallback(() => {
+    setPage(1);
+    setAllTransactions([]);
+    fetchTransactions(1, false);
+  }, [fetchTransactions]);
 
   /* ---- Filtered & grouped data ---- */
 
-  const filteredTransactions = data?.transactions.filter((tx) =>
+  const sourceTransactions = isInfinite ? allTransactions : (data?.transactions ?? []);
+
+  const filteredTransactions = sourceTransactions.filter((tx) =>
     search
       ? tx.description.toLowerCase().includes(search.toLowerCase()) ||
         tx.category.name.toLowerCase().includes(search.toLowerCase())
       : true
   );
 
-  const dateGroups = filteredTransactions ? groupByDate(filteredTransactions) : [];
+  const dateGroups = groupByDate(filteredTransactions);
 
   /* ---- Selection handlers ---- */
 
@@ -180,7 +241,7 @@ export default function TransactionsPage() {
   };
 
   const toggleSelectAll = () => {
-    if (!filteredTransactions) return;
+    if (filteredTransactions.length === 0) return;
     const allIds = filteredTransactions.map((tx) => tx.id);
     const allSelected = allIds.every((id) => selectedIds.has(id));
     setSelectedIds(allSelected ? new Set() : new Set(allIds));
@@ -189,7 +250,6 @@ export default function TransactionsPage() {
   const clearSelection = () => setSelectedIds(new Set());
 
   const allSelected =
-    filteredTransactions &&
     filteredTransactions.length > 0 &&
     filteredTransactions.every((tx) => selectedIds.has(tx.id));
 
@@ -202,7 +262,7 @@ export default function TransactionsPage() {
       body: JSON.stringify(input),
     });
     setShowForm(false);
-    fetchTransactions();
+    refreshAfterMutation();
   };
 
   const handleUpdate = async (input: TransactionInput) => {
@@ -213,7 +273,7 @@ export default function TransactionsPage() {
       body: JSON.stringify(input),
     });
     setEditingTransaction(null);
-    fetchTransactions();
+    refreshAfterMutation();
   };
 
   const handleDelete = async () => {
@@ -222,7 +282,7 @@ export default function TransactionsPage() {
     await fetch(`/api/transactions/${deletingTransaction.id}`, { method: "DELETE" });
     setDeleteLoading(false);
     setDeletingTransaction(null);
-    fetchTransactions();
+    refreshAfterMutation();
   };
 
   const handleBulkDelete = async () => {
@@ -235,11 +295,11 @@ export default function TransactionsPage() {
     setDeleteLoading(false);
     setShowBulkDelete(false);
     setSelectedIds(new Set());
-    fetchTransactions();
+    refreshAfterMutation();
   };
 
   const handleExport = () => {
-    if (!filteredTransactions || selectedIds.size === 0) return;
+    if (filteredTransactions.length === 0 || selectedIds.size === 0) return;
     const selected = filteredTransactions.filter((tx) => selectedIds.has(tx.id));
     const csv = generateCsv(selected);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -252,7 +312,7 @@ export default function TransactionsPage() {
   };
 
   const handleBulkEdit = () => {
-    if (selectedIds.size !== 1 || !filteredTransactions) return;
+    if (selectedIds.size !== 1 || filteredTransactions.length === 0) return;
     const tx = filteredTransactions.find((t) => selectedIds.has(t.id));
     if (tx) {
       setEditingTransaction(tx);
@@ -284,7 +344,11 @@ export default function TransactionsPage() {
         <div>
           <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">Transactions</h1>
           <p className="text-warm-400 text-sm mt-1">
-            {data ? `${data.pagination.total} total` : "Loading..."}
+            {data
+              ? isInfinite
+                ? `${allTransactions.length} of ${data.pagination.total} loaded`
+                : `${data.pagination.total} total`
+              : "Loading..."}
           </p>
         </div>
         <button
@@ -532,8 +596,26 @@ export default function TransactionsPage() {
               </div>
             ))}
 
-            {/* Pagination */}
-            {data && data.pagination.totalPages > 1 && (
+            {/* Infinite scroll: loading + sentinel */}
+            {isInfinite && (
+              <>
+                {loadingMore && (
+                  <div className="flex items-center justify-center py-6 border-t border-cream-200">
+                    <Loader2 className="w-5 h-5 text-warm-300 animate-spin" />
+                    <span className="ml-2 text-sm text-warm-400">Loading more...</span>
+                  </div>
+                )}
+                {!hasMore && allTransactions.length > 0 && (
+                  <div className="text-center py-4 border-t border-cream-200">
+                    <p className="text-xs text-warm-300">All transactions loaded</p>
+                  </div>
+                )}
+                <div ref={sentinelRef} className="h-1" />
+              </>
+            )}
+
+            {/* Pagination (non-infinite mode) */}
+            {!isInfinite && data && data.pagination.totalPages > 1 && (
               <div className="flex items-center justify-between px-5 py-3 border-t border-cream-200">
                 <p className="text-xs text-warm-400">
                   Page {data.pagination.page} of {data.pagination.totalPages}
