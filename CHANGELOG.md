@@ -334,3 +334,46 @@ All notable development history for the Budget Tracker app.
 ### Environment Variables
 - `GEMINI_API_KEY` — required for Gemini API calls
 - `GEMINI_MODEL` — optional, defaults to `gemini-2.5-flash`
+
+---
+
+## 2026-02-23 — User Roles & Admin Panel
+
+### User Role System
+- Added `UserRole` enum with three tiers: **ADMIN**, **FREE**, **PAID**
+- New users default to `FREE` on registration (via Prisma `@default(FREE)`)
+- Role flows through the full auth chain: `authorize()` → JWT callback → session callback → `UserProvider` context
+- Role available everywhere via `useUser()` hook (`user.role`) and server-side via `getAuthUser()` helper
+
+### Admin Panel (`/admin`)
+- New admin-only page for user management — lists all users with name, email, role badge, transaction count, and join date
+- One-click **FREE ↔ PAID** role toggle per user (admin cannot change own role or other admins)
+- Stats cards showing total, paid, and free user counts
+- Note displayed: "Role changes take effect on the user's next login"
+
+### Middleware & Route Protection
+- Replaced default `next-auth/middleware` re-export with **custom middleware** using `getToken()` from `next-auth/jwt`
+- Unauthenticated users redirected to `/login` with `callbackUrl` preserved
+- Non-admin users accessing `/admin` routes silently redirected to `/dashboard`
+- Added `/profile/:path*` and `/admin/:path*` to middleware matcher
+
+### Session Helpers
+- Added `getAuthUser()` — returns `{ id, role }` or 401 response (existing `getAuthUserId()` unchanged)
+- Added `requireAdmin()` — returns `{ id, role }` or 403 if not ADMIN; used by all admin API routes
+
+### Feature Gating
+- Receipt scanning toggle in Profile > Features now shows **"Paid only"** label for FREE users (toggle disabled)
+- PAID and ADMIN users see the toggle as before
+- Mobile scan button in bottom nav gated to `receiptScanEnabled && (PAID || ADMIN)`
+
+### UI Changes
+- **Sidebar:** "Admin" nav link with Shield icon — conditionally rendered for ADMIN users only
+- **Profile header:** role badge (purple for ADMIN, amber for PAID, neutral for FREE)
+
+### API Routes
+- `GET /api/admin/users` — list all users with role, transaction count, and join date (admin only)
+- `PATCH /api/admin/users/[id]` — update user role (FREE/PAID only, Zod validated, prevents self-modification and admin-to-admin changes)
+
+### Database
+- Added `UserRole` enum (`ADMIN`, `FREE`, `PAID`) and `role` column to `users` table (defaults to `FREE`, Prisma migration)
+- Seed script updated to always set `chrisgen19@gmail.com` as ADMIN (idempotent, runs regardless of category seed state)
