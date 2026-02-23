@@ -13,6 +13,7 @@ export async function GET() {
       quickExpenseCategories: true,
       quickIncomeCategories: true,
       receiptScanEnabled: true,
+      transactionLayout: true,
     },
   });
 
@@ -21,6 +22,7 @@ export async function GET() {
     quickExpenseCategories: user?.quickExpenseCategories ?? [],
     quickIncomeCategories: user?.quickIncomeCategories ?? [],
     receiptScanEnabled: user?.receiptScanEnabled ?? false,
+    transactionLayout: user?.transactionLayout ?? "infinite",
   });
 }
 
@@ -64,6 +66,17 @@ export async function PATCH(request: Request) {
     data.quickIncomeCategories = ids;
   }
 
+  if ("transactionLayout" in body) {
+    const layout = body.transactionLayout;
+    if (layout !== "infinite" && layout !== "pagination") {
+      return NextResponse.json(
+        { error: "transactionLayout must be 'infinite' or 'pagination'" },
+        { status: 400 }
+      );
+    }
+    data.transactionLayout = layout;
+  }
+
   const user = await prisma.user.update({
     where: { id: userId },
     data,
@@ -72,6 +85,7 @@ export async function PATCH(request: Request) {
       quickExpenseCategories: true,
       quickIncomeCategories: true,
       receiptScanEnabled: true,
+      transactionLayout: true,
     },
   });
 
@@ -80,5 +94,6 @@ export async function PATCH(request: Request) {
     quickExpenseCategories: user.quickExpenseCategories,
     quickIncomeCategories: user.quickIncomeCategories,
     receiptScanEnabled: user.receiptScanEnabled,
+    transactionLayout: user.transactionLayout,
   });
 }

@@ -22,6 +22,7 @@ model User {
   quickExpenseCategories  String[]      @default([]) @map("quick_expense_categories")
   quickIncomeCategories   String[]      @default([]) @map("quick_income_categories")
   receiptScanEnabled      Boolean       @default(false) @map("receipt_scan_enabled")
+  transactionLayout       String        @default("infinite") @map("transaction_layout")
   transactions            Transaction[]
   categories              Category[]
   createdAt    DateTime      @default(now()) @map("created_at")
