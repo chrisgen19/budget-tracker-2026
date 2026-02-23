@@ -171,7 +171,7 @@ export default function CategoriesPage() {
         </div>
         <button
           onClick={() => setShowForm(true)}
-          className="inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-5 py-2.5 rounded-xl transition-colors shadow-soft hover:shadow-soft-md"
+          className="hidden sm:inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-5 py-2.5 rounded-xl transition-colors shadow-soft hover:shadow-soft-md"
         >
           <Plus className="w-4 h-4" />
           New Category
@@ -561,6 +561,15 @@ export default function CategoriesPage() {
           </button>
         </div>
       </Modal>
+
+      {/* Mobile FAB */}
+      <button
+        onClick={() => setShowForm(true)}
+        className="sm:hidden fixed bottom-20 right-4 z-20 inline-flex items-center gap-1.5 px-4 py-3 rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all"
+      >
+        <Plus className="w-4 h-4" />
+        Category
+      </button>
     </div>
   );
 }

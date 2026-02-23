@@ -345,9 +345,10 @@ export default function DashboardPage() {
       {/* Mobile FAB — sits above bottom nav */}
       <button
         onClick={() => setShowForm(true)}
-        className="sm:hidden fixed bottom-20 right-4 z-20 w-14 h-14 rounded-full bg-amber hover:bg-amber-dark text-white shadow-soft-lg active:scale-95 transition-all flex items-center justify-center"
+        className="sm:hidden fixed bottom-20 right-4 z-20 inline-flex items-center gap-1.5 px-4 py-3 rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all"
       >
-        <Plus className="w-6 h-6" />
+        <Plus className="w-4 h-4" />
+        Transaction
       </button>
 
       {/* Add Transaction Modal */}
