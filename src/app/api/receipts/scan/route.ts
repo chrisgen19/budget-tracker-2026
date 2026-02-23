@@ -72,12 +72,22 @@ export async function POST(request: Request) {
 
 Analyze this receipt image and extract the following information:
 - **amount**: The total amount paid (number, e.g. 125.50). Use the final/total amount, not subtotals.
-- **categoryId**: The best matching category ID from the list below.
+- **categoryId**: The best matching category ID from the list below. Use the category matching rules to help decide.
 - **date**: The transaction date from the receipt in "YYYY-MM-DDTHH:mm" format. If not readable, use "${todayStr}".
 - **description**: A brief description — merchant/store name and a short summary of what was purchased (max 100 chars).
 
 Available expense categories:
 ${categoryList}
+
+Category matching rules:
+- Restaurants, cafes, hawker stalls, food courts, bakeries, fast food, coffee shops, bubble tea, food delivery → Food & Dining
+- Supermarkets, grocery stores, wet markets, seafood markets, butchers, convenience stores (e.g. 7-Eleven, FairPrice, Cold Storage) → Food & Dining
+- Grab/Gojek rides, taxis, MRT/bus top-ups, parking, fuel/petrol, tolls → Transportation
+- Clothing, electronics, department stores, online shopping (Shopee, Lazada, Amazon) → Shopping
+- Electricity, water, gas, internet, phone bills, subscriptions (Netflix, Spotify) → Bills & Utilities
+- Movies, concerts, theme parks, games, sports, streaming services → Entertainment
+- Doctors, clinics, pharmacies, dental, hospital, health supplements → Healthcare
+- If uncertain, prefer "Food & Dining" for any store that sells food or beverages.
 
 Respond with ONLY a JSON object (no markdown, no explanation):
 {"amount": <number>, "categoryId": "<id>", "date": "<datetime>", "description": "<text>"}`;
