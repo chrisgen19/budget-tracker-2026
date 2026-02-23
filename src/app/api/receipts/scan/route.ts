@@ -68,28 +68,30 @@ export async function POST(request: Request) {
     const arrayBuffer = await file.arrayBuffer();
     const base64 = Buffer.from(arrayBuffer).toString("base64");
 
-    const prompt = `You are an OCR assistant that extracts transaction data from receipt images.
+    const prompt = `Extract transaction data from this receipt image.
 
-Analyze this receipt image and extract the following information:
-- **amount**: The total amount paid (number, e.g. 125.50). Use the final/total amount, not subtotals.
-- **categoryId**: The best matching category ID from the list below. Use the category matching rules to help decide.
-- **date**: The transaction date from the receipt in "YYYY-MM-DDTHH:mm" format. If not readable, use "${todayStr}".
-- **description**: A brief description — merchant/store name and a short summary of what was purchased (max 100 chars).
+If the image is NOT a receipt (e.g. a random photo, screenshot, or document), respond with exactly: {"error": "NOT_A_RECEIPT"}
 
-Available expense categories:
+Return a JSON object with these fields:
+- "amount": the grand total / total due including tax, tips, and service charges (number). Use the largest final amount on the receipt.
+- "categoryId": pick the best category ID using the rules below.
+- "date": transaction date as "YYYY-MM-DDTHH:mm". If unreadable, use "${todayStr}".
+- "description": merchant name + short summary of purchase (max 100 chars).
+
+CATEGORIES:
 ${categoryList}
 
-Category matching rules:
-- Restaurants, cafes, hawker stalls, food courts, bakeries, fast food, coffee shops, bubble tea, food delivery → Food & Dining
-- Supermarkets, grocery stores, wet markets, seafood markets, butchers, convenience stores (e.g. 7-Eleven, FairPrice, Cold Storage) → Food & Dining
-- Grab/Gojek rides, taxis, MRT/bus top-ups, parking, fuel/petrol, tolls → Transportation
-- Clothing, electronics, department stores, online shopping (Shopee, Lazada, Amazon) → Shopping
-- Electricity, water, gas, internet, phone bills, subscriptions (Netflix, Spotify) → Bills & Utilities
-- Movies, concerts, theme parks, games, sports, streaming services → Entertainment
-- Doctors, clinics, pharmacies, dental, hospital, health supplements → Healthcare
-- If uncertain, prefer "Food & Dining" for any store that sells food or beverages.
+CATEGORY RULES (pick categoryId by matching the merchant/items to these rules):
+1. Food & Dining: restaurants, cafes, hawker stalls, food courts, bakeries, fast food, coffee shops, bubble tea, food delivery, supermarkets, grocery stores, wet markets, seafood markets, butchers, convenience stores (7-Eleven, FairPrice, Cold Storage)
+2. Transportation: ride-hailing (Grab, Gojek), taxis, MRT/bus top-ups, parking, fuel/petrol, tolls
+3. Shopping: clothing, electronics, department stores, online shopping (Shopee, Lazada, Amazon)
+4. Bills & Utilities: electricity, water, gas, internet, phone bills, subscriptions (Netflix, Spotify)
+5. Entertainment: movies, concerts, theme parks, games, sports, streaming services
+6. Healthcare: doctors, clinics, pharmacies, dental, hospital, health supplements
+7. For any category not listed above, match by comparing the merchant/items to the category name.
+8. When in doubt, prefer "Food & Dining" if the merchant sells any food or beverages.
 
-Respond with ONLY a JSON object (no markdown, no explanation):
+Respond with ONLY valid JSON, no markdown or explanation:
 {"amount": <number>, "categoryId": "<id>", "date": "<datetime>", "description": "<text>"}`;
 
     const response = await gemini.models.generateContent({
@@ -125,6 +127,19 @@ Respond with ONLY a JSON object (no markdown, no explanation):
     } catch {
       return NextResponse.json(
         { error: "Could not read the receipt. Please try a clearer photo." },
+        { status: 422 }
+      );
+    }
+
+    // Handle non-receipt images
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      "error" in parsed &&
+      (parsed as Record<string, unknown>).error === "NOT_A_RECEIPT"
+    ) {
+      return NextResponse.json(
+        { error: "This doesn't look like a receipt. Please upload a receipt image." },
         { status: 422 }
       );
     }
