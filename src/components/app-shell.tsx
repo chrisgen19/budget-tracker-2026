@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { signOut } from "next-auth/react";
@@ -23,6 +23,8 @@ import {
   TransactionForm,
   type InitialTransactionData,
 } from "@/components/transactions/transaction-form";
+import { MultiScanReview } from "@/components/multi-scan-review";
+import type { MultiScanItem } from "@/types";
 import type { TransactionInput } from "@/lib/validations";
 
 interface AppShellProps {
@@ -42,11 +44,17 @@ export function AppShell({ children }: AppShellProps) {
   const canUsePaidFeatures = user.role === "PAID" || user.role === "ADMIN";
   const [scanOpen, setScanOpen] = useState(false);
 
-  // OCR scanning state
+  // Single-scan OCR state
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanData, setScanData] = useState<InitialTransactionData | null>(null);
   const [showScanForm, setShowScanForm] = useState(false);
+
+  // Multi-scan state
+  const [multiScanItems, setMultiScanItems] = useState<MultiScanItem[]>([]);
+  const [showMultiScanReview, setShowMultiScanReview] = useState(false);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [isSavingAll, setIsSavingAll] = useState(false);
 
   const handleReceiptFileSelected = async (file: File) => {
     setIsScanning(true);
@@ -113,6 +121,170 @@ export function AppShell({ children }: AppShellProps) {
     if (isScanning) return;
     setScanOpen(false);
     setScanError(null);
+  };
+
+  // -- Multi-scan handlers --
+
+  const handleMultipleFilesSelected = useCallback(
+    async (files: File[]) => {
+      // Close the scan sheet, init items, open review modal
+      setScanOpen(false);
+      setScanError(null);
+
+      const initialItems: MultiScanItem[] = files.map((f, i) => ({
+        id: `${Date.now()}-${i}`,
+        fileName: f.name,
+        status: "scanning" as const,
+      }));
+
+      setMultiScanItems(initialItems);
+      setShowMultiScanReview(true);
+
+      // Scan sequentially so we don't overwhelm the API
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const itemId = initialItems[i].id;
+
+        try {
+          const compressed = await compressImage(file);
+          const formData = new FormData();
+          formData.append("receipt", compressed);
+
+          const res = await fetch("/api/receipts/scan", {
+            method: "POST",
+            body: formData,
+          });
+
+          const data = await res.json();
+
+          if (!res.ok) {
+            setMultiScanItems((prev) =>
+              prev.map((item) =>
+                item.id === itemId
+                  ? { ...item, status: "error" as const, error: data.error ?? "Failed to scan receipt." }
+                  : item
+              )
+            );
+            continue;
+          }
+
+          setMultiScanItems((prev) =>
+            prev.map((item) =>
+              item.id === itemId
+                ? {
+                    ...item,
+                    status: "success" as const,
+                    data: {
+                      amount: data.amount,
+                      description: data.description,
+                      type: data.type,
+                      date: data.date,
+                      categoryId: data.categoryId,
+                    },
+                  }
+                : item
+            )
+          );
+        } catch {
+          setMultiScanItems((prev) =>
+            prev.map((item) =>
+              item.id === itemId
+                ? { ...item, status: "error" as const, error: "Network error. Please try again." }
+                : item
+            )
+          );
+        }
+      }
+    },
+    []
+  );
+
+  const handleMultiScanEdit = (id: string) => {
+    setEditingItemId(id);
+  };
+
+  const handleMultiScanEditSubmit = async (input: TransactionInput) => {
+    if (!editingItemId) return;
+
+    // Update item data in state — no API call yet
+    setMultiScanItems((prev) =>
+      prev.map((item) =>
+        item.id === editingItemId
+          ? {
+              ...item,
+              data: {
+                amount: input.amount,
+                description: input.description,
+                type: input.type,
+                date: input.date,
+                categoryId: input.categoryId,
+              },
+            }
+          : item
+      )
+    );
+    setEditingItemId(null);
+  };
+
+  const handleMultiScanRemove = (id: string) => {
+    setMultiScanItems((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const handleMultiScanSaveAll = async () => {
+    setIsSavingAll(true);
+
+    const successItems = multiScanItems.filter((i) => i.status === "success" && i.data);
+
+    for (const item of successItems) {
+      try {
+        const res = await fetch("/api/transactions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            amount: item.data!.amount,
+            description: item.data!.description,
+            type: item.data!.type,
+            date: item.data!.date ? new Date(item.data!.date).toISOString() : new Date().toISOString(),
+            categoryId: item.data!.categoryId,
+          }),
+        });
+
+        if (!res.ok) {
+          // Mark individual item as failed, continue with others
+          setMultiScanItems((prev) =>
+            prev.map((i) =>
+              i.id === item.id
+                ? { ...i, status: "error" as const, error: "Failed to save." }
+                : i
+            )
+          );
+        }
+      } catch {
+        setMultiScanItems((prev) =>
+          prev.map((i) =>
+            i.id === item.id
+              ? { ...i, status: "error" as const, error: "Network error." }
+              : i
+          )
+        );
+      }
+    }
+
+    setIsSavingAll(false);
+    setShowMultiScanReview(false);
+    setMultiScanItems([]);
+    setEditingItemId(null);
+    router.push(`/transactions?t=${Date.now()}`);
+  };
+
+  const handleMultiScanClose = () => {
+    // Block closing while scanning or saving
+    const isStillScanning = multiScanItems.some((i) => i.status === "scanning");
+    if (isStillScanning || isSavingAll) return;
+
+    setShowMultiScanReview(false);
+    setMultiScanItems([]);
+    setEditingItemId(null);
   };
 
   return (
@@ -281,6 +453,7 @@ export function AppShell({ children }: AppShellProps) {
         open={scanOpen}
         onClose={handleScanSheetClose}
         onFileSelected={handleReceiptFileSelected}
+        onMultipleFilesSelected={handleMultipleFilesSelected}
         isScanning={isScanning}
         error={scanError}
       />
@@ -298,6 +471,50 @@ export function AppShell({ children }: AppShellProps) {
             onCancel={handleScanFormCancel}
           />
         )}
+      </Modal>
+
+      {/* Multi-Scan Review Modal */}
+      <Modal
+        open={showMultiScanReview && editingItemId === null}
+        onClose={handleMultiScanClose}
+        title="Review Scanned Receipts"
+      >
+        {showMultiScanReview && editingItemId === null && (
+          <MultiScanReview
+            items={multiScanItems}
+            onEdit={handleMultiScanEdit}
+            onRemove={handleMultiScanRemove}
+            onSaveAll={handleMultiScanSaveAll}
+            onClose={handleMultiScanClose}
+            isSaving={isSavingAll}
+          />
+        )}
+      </Modal>
+
+      {/* Multi-Scan Edit Modal */}
+      <Modal
+        open={editingItemId !== null}
+        onClose={() => setEditingItemId(null)}
+        title="Edit Transaction"
+      >
+        {editingItemId !== null &&
+          (() => {
+            const editItem = multiScanItems.find((i) => i.id === editingItemId);
+            if (!editItem?.data) return null;
+            return (
+              <TransactionForm
+                initialData={{
+                  amount: editItem.data.amount,
+                  description: editItem.data.description,
+                  type: editItem.data.type,
+                  date: editItem.data.date,
+                  categoryId: editItem.data.categoryId,
+                }}
+                onSubmit={handleMultiScanEditSubmit}
+                onCancel={() => setEditingItemId(null)}
+              />
+            );
+          })()}
       </Modal>
     </div>
   );

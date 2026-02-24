@@ -1,13 +1,16 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { Camera, ImagePlus, AlertCircle } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
+
+const MAX_UPLOAD_FILES = 10;
 
 interface ScanReceiptSheetProps {
   open: boolean;
   onClose: () => void;
   onFileSelected: (file: File) => void;
+  onMultipleFilesSelected: (files: File[]) => void;
   isScanning?: boolean;
   error?: string | null;
 }
@@ -16,19 +19,34 @@ export function ScanReceiptSheet({
   open,
   onClose,
   onFileSelected,
+  onMultipleFilesSelected,
   isScanning,
   error,
 }: ScanReceiptSheetProps) {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleCameraChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       onFileSelected(file);
-      // Parent controls sheet lifecycle now — don't close here
     }
-    // Reset so the same file can be re-selected
+    e.target.value = "";
+  };
+
+  const handleUploadChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    if (files.length > MAX_UPLOAD_FILES) {
+      setUploadError(`You can upload up to ${MAX_UPLOAD_FILES} images at a time.`);
+      e.target.value = "";
+      return;
+    }
+
+    setUploadError(null);
+    onMultipleFilesSelected(Array.from(files));
     e.target.value = "";
   };
 
@@ -50,13 +68,13 @@ export function ScanReceiptSheet({
       ) : (
         <>
           {/* Error message */}
-          {error && (
+          {(error || uploadError) && (
             <div className="flex items-start gap-3 mb-4 p-3 rounded-xl bg-expense-light/50 border border-expense/20">
               <AlertCircle className="w-5 h-5 text-expense shrink-0 mt-0.5" />
               <div>
-                <p className="text-sm text-expense font-medium">{error}</p>
+                <p className="text-sm text-expense font-medium">{error || uploadError}</p>
                 <p className="text-xs text-warm-400 mt-1">
-                  Try again with a clearer photo
+                  {uploadError ? "Please select fewer images" : "Try again with a clearer photo"}
                 </p>
               </div>
             </div>
@@ -91,7 +109,7 @@ export function ScanReceiptSheet({
               <div className="text-left">
                 <p className="text-sm font-medium">Upload Image</p>
                 <p className="text-xs text-warm-400">
-                  Choose a receipt photo from your gallery
+                  Choose one or more receipt photos
                 </p>
               </div>
             </button>
@@ -105,14 +123,15 @@ export function ScanReceiptSheet({
         type="file"
         accept="image/*"
         capture="environment"
-        onChange={handleFileChange}
+        onChange={handleCameraChange}
         className="hidden"
       />
       <input
         ref={uploadInputRef}
         type="file"
         accept="image/*"
-        onChange={handleFileChange}
+        multiple
+        onChange={handleUploadChange}
         className="hidden"
       />
     </Modal>
