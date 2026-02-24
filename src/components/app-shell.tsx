@@ -41,7 +41,6 @@ export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { user } = useUser();
-  const canUsePaidFeatures = user.role === "PAID" || user.role === "ADMIN";
   const [scanOpen, setScanOpen] = useState(false);
 
   // Single-scan OCR state
@@ -338,12 +337,12 @@ export function AppShell({ children }: AppShellProps) {
               href="/admin"
               className={cn(
                 "flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 relative",
-                pathname === "/admin"
+                pathname.startsWith("/admin")
                   ? "bg-amber-light text-amber-dark"
                   : "text-warm-400 hover:text-warm-600 hover:bg-cream-100"
               )}
             >
-              {pathname === "/admin" && (
+              {pathname.startsWith("/admin") && (
                 <motion.div
                   layoutId="sidebar-active"
                   className="absolute inset-0 bg-amber-light rounded-xl"
@@ -428,7 +427,7 @@ export function AppShell({ children }: AppShellProps) {
               </Link>
             );
           })}
-          {user.receiptScanEnabled && canUsePaidFeatures && (
+          {user.receiptScanEnabled && user.roleScanEnabled && (
             <button
               type="button"
               onClick={() => setScanOpen(true)}
@@ -456,6 +455,7 @@ export function AppShell({ children }: AppShellProps) {
         onMultipleFilesSelected={handleMultipleFilesSelected}
         isScanning={isScanning}
         error={scanError}
+        maxUploadFiles={user.maxUploadFiles}
       />
 
       {/* Scanned Transaction Form Modal */}

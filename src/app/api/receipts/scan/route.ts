@@ -24,6 +24,23 @@ export async function POST(request: Request) {
   if (userId instanceof NextResponse) return userId;
 
   try {
+    // Check role-based scan permission
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
+    });
+
+    if (user && user.role !== "ADMIN") {
+      const roleSettings = await prisma.appSettings.findUnique({
+        where: { role: user.role },
+      });
+      if (!roleSettings?.receiptScanEnabled) {
+        return NextResponse.json(
+          { error: "Receipt scanning is not available for your account." },
+          { status: 403 }
+        );
+      }
+    }
     const formData = await request.formData();
     const file = formData.get("receipt");
 

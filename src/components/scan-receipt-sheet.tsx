@@ -4,8 +4,6 @@ import { useRef, useState } from "react";
 import { Camera, ImagePlus, AlertCircle } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 
-const MAX_UPLOAD_FILES = 10;
-
 interface ScanReceiptSheetProps {
   open: boolean;
   onClose: () => void;
@@ -13,6 +11,7 @@ interface ScanReceiptSheetProps {
   onMultipleFilesSelected: (files: File[]) => void;
   isScanning?: boolean;
   error?: string | null;
+  maxUploadFiles: number;
 }
 
 export function ScanReceiptSheet({
@@ -22,6 +21,7 @@ export function ScanReceiptSheet({
   onMultipleFilesSelected,
   isScanning,
   error,
+  maxUploadFiles,
 }: ScanReceiptSheetProps) {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
@@ -39,8 +39,8 @@ export function ScanReceiptSheet({
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    if (files.length > MAX_UPLOAD_FILES) {
-      setUploadError(`You can upload up to ${MAX_UPLOAD_FILES} images at a time.`);
+    if (files.length > maxUploadFiles) {
+      setUploadError(`You can upload up to ${maxUploadFiles} images at a time.`);
       e.target.value = "";
       return;
     }

@@ -10,6 +10,8 @@ interface UserInfo {
   receiptScanEnabled: boolean;
   transactionLayout: "infinite" | "pagination";
   role: UserRole;
+  roleScanEnabled: boolean;
+  maxUploadFiles: number;
 }
 
 interface UserContextValue {
@@ -18,7 +20,7 @@ interface UserContextValue {
 }
 
 const UserContext = createContext<UserContextValue>({
-  user: { name: "", email: "", currency: "PHP", receiptScanEnabled: false, transactionLayout: "infinite", role: "FREE" },
+  user: { name: "", email: "", currency: "PHP", receiptScanEnabled: false, transactionLayout: "infinite", role: "FREE", roleScanEnabled: false, maxUploadFiles: 10 },
   setUser: () => {},
 });
 

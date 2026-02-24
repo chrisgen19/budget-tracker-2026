@@ -58,5 +58,12 @@ export const receiptScanResultSchema = z.object({
   type: z.literal("EXPENSE"),
 });
 
+export const updateAppSettingsSchema = z.object({
+  role: z.enum(["FREE", "PAID"]),
+  receiptScanEnabled: z.boolean().optional(),
+  maxUploadFiles: z.number().int().min(1).max(50).optional(),
+});
+
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export type ReceiptScanResult = z.infer<typeof receiptScanResultSchema>;
+export type UpdateAppSettingsInput = z.infer<typeof updateAppSettingsSchema>;

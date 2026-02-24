@@ -444,7 +444,6 @@ function PasswordForm({ form, onSubmit, success, error }: PasswordFormProps) {
 
 function FeaturesForm() {
   const { user, setUser } = useUser();
-  const canUsePaidFeatures = user.role === "PAID" || user.role === "ADMIN";
   const [saving, setSaving] = useState(false);
   const [savingLayout, setSavingLayout] = useState(false);
 
@@ -523,7 +522,7 @@ function FeaturesForm() {
             </div>
           </div>
 
-          {canUsePaidFeatures ? (
+          {user.roleScanEnabled ? (
             <button
               type="button"
               role="switch"
@@ -544,7 +543,7 @@ function FeaturesForm() {
             </button>
           ) : (
             <span className="text-xs text-warm-400 bg-cream-200 px-3 py-1 rounded-full">
-              Paid only
+              Not available
             </span>
           )}
         </div>
