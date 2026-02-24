@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Camera, ImagePlus, AlertCircle } from "lucide-react";
+import { Camera, ImagePlus, AlertCircle, Info } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 
 interface ScanReceiptSheetProps {
@@ -12,6 +12,8 @@ interface ScanReceiptSheetProps {
   isScanning?: boolean;
   error?: string | null;
   maxUploadFiles: number;
+  /** null = unlimited, 0 = none remaining, positive = remaining count */
+  scansRemaining: number | null;
 }
 
 export function ScanReceiptSheet({
@@ -22,6 +24,7 @@ export function ScanReceiptSheet({
   isScanning,
   error,
   maxUploadFiles,
+  scansRemaining,
 }: ScanReceiptSheetProps) {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
@@ -35,12 +38,22 @@ export function ScanReceiptSheet({
     e.target.value = "";
   };
 
+  // Cap upload count by both maxUploadFiles and remaining scans
+  const effectiveMaxFiles =
+    scansRemaining !== null
+      ? Math.min(maxUploadFiles, scansRemaining)
+      : maxUploadFiles;
+
   const handleUploadChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    if (files.length > maxUploadFiles) {
-      setUploadError(`You can upload up to ${maxUploadFiles} images at a time.`);
+    if (files.length > effectiveMaxFiles) {
+      const reason =
+        scansRemaining !== null && scansRemaining < maxUploadFiles
+          ? `You have ${scansRemaining} scan${scansRemaining === 1 ? "" : "s"} remaining this month.`
+          : `You can upload up to ${maxUploadFiles} images at a time.`;
+      setUploadError(reason);
       e.target.value = "";
       return;
     }
@@ -77,6 +90,18 @@ export function ScanReceiptSheet({
                   {uploadError ? "Please select fewer images" : "Try again with a clearer photo"}
                 </p>
               </div>
+            </div>
+          )}
+
+          {/* Scan limit info */}
+          {scansRemaining !== null && (
+            <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-xl bg-cream-100 border border-cream-200">
+              <Info className="w-4 h-4 text-warm-400 shrink-0" />
+              <p className="text-xs text-warm-500">
+                {scansRemaining === 0
+                  ? "No scans remaining this month"
+                  : `${scansRemaining} scan${scansRemaining === 1 ? "" : "s"} remaining this month`}
+              </p>
             </div>
           )}
 

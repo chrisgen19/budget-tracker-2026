@@ -40,7 +40,7 @@ const NAV_ITEMS = [
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user } = useUser();
+  const { user, setUser } = useUser();
   const [scanOpen, setScanOpen] = useState(false);
 
   // Single-scan OCR state
@@ -54,6 +54,13 @@ export function AppShell({ children }: AppShellProps) {
   const [showMultiScanReview, setShowMultiScanReview] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [isSavingAll, setIsSavingAll] = useState(false);
+
+  // Scan limit calculations
+  const hasLimit = user.monthlyScanLimit > 0;
+  const scansRemaining = hasLimit
+    ? Math.max(0, user.monthlyScanLimit - user.scansUsedThisMonth)
+    : null; // null = unlimited
+  const scanLimitReached = hasLimit && scansRemaining === 0;
 
   const handleReceiptFileSelected = async (file: File) => {
     setIsScanning(true);
@@ -88,6 +95,9 @@ export function AppShell({ children }: AppShellProps) {
       setIsScanning(false);
       setScanOpen(false);
       setShowScanForm(true);
+
+      // Increment local scan count
+      setUser((prev) => ({ scansUsedThisMonth: prev.scansUsedThisMonth + 1 }));
     } catch {
       setScanError("Network error. Please check your connection and try again.");
       setIsScanning(false);
@@ -184,6 +194,9 @@ export function AppShell({ children }: AppShellProps) {
                 : item
             )
           );
+
+          // Increment local scan count
+          setUser((prev) => ({ scansUsedThisMonth: prev.scansUsedThisMonth + 1 }));
         } catch {
           setMultiScanItems((prev) =>
             prev.map((item) =>
@@ -195,7 +208,7 @@ export function AppShell({ children }: AppShellProps) {
         }
       }
     },
-    []
+    [setUser]
   );
 
   const handleMultiScanEdit = (id: string) => {
@@ -431,10 +444,22 @@ export function AppShell({ children }: AppShellProps) {
             <button
               type="button"
               onClick={() => setScanOpen(true)}
-              className="flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all duration-200 min-w-[72px] text-warm-300"
+              disabled={scanLimitReached}
+              className={cn(
+                "flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all duration-200 min-w-[72px] relative",
+                scanLimitReached ? "text-warm-200 cursor-not-allowed" : "text-warm-300"
+              )}
             >
               <ScanLine className="w-5 h-5" />
               <span className="text-[10px] font-medium">Scan</span>
+              {hasLimit && (
+                <span className={cn(
+                  "text-[9px] font-medium",
+                  scanLimitReached ? "text-expense" : "text-warm-400"
+                )}>
+                  {user.scansUsedThisMonth}/{user.monthlyScanLimit}
+                </span>
+              )}
             </button>
           )}
         </div>
@@ -456,6 +481,7 @@ export function AppShell({ children }: AppShellProps) {
         isScanning={isScanning}
         error={scanError}
         maxUploadFiles={user.maxUploadFiles}
+        scansRemaining={scansRemaining}
       />
 
       {/* Scanned Transaction Form Modal */}

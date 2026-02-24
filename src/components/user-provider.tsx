@@ -12,15 +12,19 @@ interface UserInfo {
   role: UserRole;
   roleScanEnabled: boolean;
   maxUploadFiles: number;
+  monthlyScanLimit: number;
+  scansUsedThisMonth: number;
 }
+
+type UserUpdater = Partial<UserInfo> | ((prev: UserInfo) => Partial<UserInfo>);
 
 interface UserContextValue {
   user: UserInfo;
-  setUser: (user: Partial<UserInfo>) => void;
+  setUser: (updater: UserUpdater) => void;
 }
 
 const UserContext = createContext<UserContextValue>({
-  user: { name: "", email: "", currency: "PHP", receiptScanEnabled: false, transactionLayout: "infinite", role: "FREE", roleScanEnabled: false, maxUploadFiles: 10 },
+  user: { name: "", email: "", currency: "PHP", receiptScanEnabled: false, transactionLayout: "infinite", role: "FREE", roleScanEnabled: false, maxUploadFiles: 10, monthlyScanLimit: 0, scansUsedThisMonth: 0 },
   setUser: () => {},
 });
 
@@ -35,8 +39,11 @@ export function UserProvider({
 }) {
   const [user, setUserState] = useState<UserInfo>(initialUser);
 
-  const setUser = useCallback((updated: Partial<UserInfo>) => {
-    setUserState((prev) => ({ ...prev, ...updated }));
+  const setUser = useCallback((updater: UserUpdater) => {
+    setUserState((prev) => {
+      const partial = typeof updater === "function" ? updater(prev) : updater;
+      return { ...prev, ...partial };
+    });
   }, []);
 
   return (

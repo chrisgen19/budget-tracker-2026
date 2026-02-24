@@ -12,11 +12,12 @@ export async function GET() {
   });
 
   // Build a keyed object { FREE: {...}, PAID: {...} }
-  const result: Record<string, { receiptScanEnabled: boolean; maxUploadFiles: number }> = {};
+  const result: Record<string, { receiptScanEnabled: boolean; maxUploadFiles: number; monthlyScanLimit: number }> = {};
   for (const s of settings) {
     result[s.role] = {
       receiptScanEnabled: s.receiptScanEnabled,
       maxUploadFiles: s.maxUploadFiles,
+      monthlyScanLimit: s.monthlyScanLimit,
     };
   }
 
@@ -49,6 +50,7 @@ export async function PATCH(request: Request) {
     return NextResponse.json({
       receiptScanEnabled: updated.receiptScanEnabled,
       maxUploadFiles: updated.maxUploadFiles,
+      monthlyScanLimit: updated.monthlyScanLimit,
     });
   } catch {
     return NextResponse.json(

@@ -60,13 +60,13 @@ const main = async () => {
   await prisma.appSettings.upsert({
     where: { role: "FREE" },
     update: {},
-    create: { role: "FREE", receiptScanEnabled: false, maxUploadFiles: 5 },
+    create: { role: "FREE", receiptScanEnabled: false, maxUploadFiles: 5, monthlyScanLimit: 5 },
   });
 
   await prisma.appSettings.upsert({
     where: { role: "PAID" },
     update: {},
-    create: { role: "PAID", receiptScanEnabled: true, maxUploadFiles: 10 },
+    create: { role: "PAID", receiptScanEnabled: true, maxUploadFiles: 10, monthlyScanLimit: 0 },
   });
 
   console.log("Seeded default app settings for FREE and PAID roles");

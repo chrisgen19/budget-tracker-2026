@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ScanLine, ImagePlus, Loader2 } from "lucide-react";
+import { ScanLine, ImagePlus, CalendarClock, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UserRole } from "@prisma/client";
 
 interface RoleSettings {
   receiptScanEnabled: boolean;
   maxUploadFiles: number;
+  monthlyScanLimit: number;
 }
 
 type SettingsMap = Partial<Record<UserRole, RoleSettings>>;
@@ -210,6 +211,42 @@ export default function AdminSettingsPage() {
                       const val = parseInt(e.target.value, 10);
                       if (!isNaN(val) && val >= 1 && val <= 50) {
                         updateSetting(role, "maxUploadFiles", val);
+                      }
+                    }}
+                    className="w-20 px-3 py-2 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 text-center text-sm focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Monthly Scan Limit */}
+              <div className="flex items-center justify-between gap-4 p-4 rounded-xl border border-cream-300 bg-cream-50/50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center">
+                    <CalendarClock className="w-5 h-5 text-amber-dark" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-warm-600">
+                      Monthly Scan Limit
+                    </p>
+                    <p className="text-xs text-warm-400">
+                      Maximum scans per month (0 = unlimited)
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {savingKey === `${role}-monthlyScanLimit` && (
+                    <Loader2 className="w-4 h-4 text-warm-300 animate-spin" />
+                  )}
+                  <input
+                    type="number"
+                    min={0}
+                    max={1000}
+                    value={roleSettings.monthlyScanLimit}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value, 10);
+                      if (!isNaN(val) && val >= 0 && val <= 1000) {
+                        updateSetting(role, "monthlyScanLimit", val);
                       }
                     }}
                     className="w-20 px-3 py-2 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 text-center text-sm focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all"

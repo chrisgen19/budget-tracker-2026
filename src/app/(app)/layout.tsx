@@ -29,6 +29,8 @@ export default async function AppLayout({
   // ADMIN users are always unrestricted; others follow their role's AppSettings
   let roleScanEnabled = true;
   let maxUploadFiles = 50;
+  let monthlyScanLimit = 0;
+  let scansUsedThisMonth = 0;
 
   if (userRole !== "ADMIN") {
     const roleSettings = await prisma.appSettings.findUnique({
@@ -36,6 +38,19 @@ export default async function AppLayout({
     });
     roleScanEnabled = roleSettings?.receiptScanEnabled ?? false;
     maxUploadFiles = roleSettings?.maxUploadFiles ?? 10;
+    monthlyScanLimit = roleSettings?.monthlyScanLimit ?? 0;
+
+    // Count scans used this month (only when there's a limit)
+    if (monthlyScanLimit > 0) {
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      scansUsedThisMonth = await prisma.scanLog.count({
+        where: {
+          userId: session.user.id,
+          createdAt: { gte: monthStart },
+        },
+      });
+    }
   }
 
   return (
@@ -49,6 +64,8 @@ export default async function AppLayout({
           role: userRole,
           roleScanEnabled,
           maxUploadFiles,
+          monthlyScanLimit,
+          scansUsedThisMonth,
         }}
       >
         <PrivacyProvider>

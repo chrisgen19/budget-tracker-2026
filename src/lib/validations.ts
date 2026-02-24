@@ -62,6 +62,7 @@ export const updateAppSettingsSchema = z.object({
   role: z.enum(["FREE", "PAID"]),
   receiptScanEnabled: z.boolean().optional(),
   maxUploadFiles: z.number().int().min(1).max(50).optional(),
+  monthlyScanLimit: z.number().int().min(0).max(1000).optional(),
 });
 
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;

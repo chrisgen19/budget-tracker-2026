@@ -40,6 +40,27 @@ export async function POST(request: Request) {
           { status: 403 }
         );
       }
+
+      // Enforce monthly scan limit (0 = unlimited)
+      if (roleSettings.monthlyScanLimit > 0) {
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const scansThisMonth = await prisma.scanLog.count({
+          where: {
+            userId,
+            createdAt: { gte: monthStart },
+          },
+        });
+
+        if (scansThisMonth >= roleSettings.monthlyScanLimit) {
+          return NextResponse.json(
+            {
+              error: `Monthly scan limit reached (${scansThisMonth}/${roleSettings.monthlyScanLimit}). Limit resets next month.`,
+            },
+            { status: 403 }
+          );
+        }
+      }
     }
     const formData = await request.formData();
     const file = formData.get("receipt");
@@ -183,6 +204,9 @@ Respond with ONLY valid JSON, no markdown or explanation:
         result.data.categoryId = fallback.id;
       }
     }
+
+    // Log successful scan for monthly limit tracking
+    await prisma.scanLog.create({ data: { userId } });
 
     return NextResponse.json(result.data);
   } catch {

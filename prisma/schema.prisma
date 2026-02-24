@@ -32,6 +32,7 @@ model User {
   transactionLayout       String        @default("infinite") @map("transaction_layout")
   transactions            Transaction[]
   categories              Category[]
+  scanLogs                ScanLog[]
   createdAt    DateTime      @default(now()) @map("created_at")
   updatedAt    DateTime      @updatedAt @map("updated_at")
 
@@ -77,8 +78,19 @@ model AppSettings {
   role               UserRole @unique
   receiptScanEnabled Boolean  @default(false) @map("receipt_scan_enabled")
   maxUploadFiles     Int      @default(10) @map("max_upload_files")
+  monthlyScanLimit   Int      @default(0) @map("monthly_scan_limit")
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 
   @@map("app_settings")
+}
+
+model ScanLog {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, createdAt])
+  @@map("scan_logs")
 }
