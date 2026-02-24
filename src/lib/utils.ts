@@ -51,12 +51,24 @@ export const getCurrentMonthRange = () => {
 const MAX_IMAGE_DIMENSION = 1500;
 const JPEG_QUALITY = 0.75;
 
+/** Check if a file is HEIC/HEIF by MIME type or extension (browsers often report "" or "application/octet-stream" for HEIC) */
+const isHeicFile = (file: File): boolean => {
+  const type = file.type.toLowerCase();
+  if (type === "image/heic" || type === "image/heif") return true;
+  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+  return ext === "heic" || ext === "heif";
+};
+
 /**
  * Compress an image file by resizing to max 1500px and re-encoding as JPEG.
  * Reduces ~4 MB camera photos to ~200-400 KB for faster uploads.
+ * HEIC/HEIF files are returned as-is since canvas can't decode them — Gemini handles HEIC natively.
  */
-export const compressImage = (file: File): Promise<File> =>
-  new Promise((resolve, reject) => {
+export const compressImage = (file: File): Promise<File> => {
+  // HEIC/HEIF can't be decoded by canvas in most browsers — skip compression
+  if (isHeicFile(file)) return Promise.resolve(file);
+
+  return new Promise((resolve, reject) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
 
@@ -102,3 +114,4 @@ export const compressImage = (file: File): Promise<File> =>
 
     img.src = url;
   });
+};

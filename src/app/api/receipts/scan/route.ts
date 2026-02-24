@@ -13,6 +13,23 @@ const ALLOWED_TYPES = new Set([
   "image/heif",
 ]);
 
+/** Fallback map for when browsers report "" or "application/octet-stream" for HEIC and other formats */
+const EXTENSION_MIME_MAP: Record<string, string> = {
+  heic: "image/heic",
+  heif: "image/heif",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+};
+
+/** Resolve a reliable MIME type — uses file.type when valid, otherwise falls back to extension lookup */
+const resolveMimeType = (file: File): string => {
+  if (file.type && file.type !== "application/octet-stream") return file.type;
+  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+  return EXTENSION_MIME_MAP[ext] ?? file.type;
+};
+
 const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB
 
 /** Strip markdown code fences that Gemini sometimes wraps around JSON */
@@ -72,9 +89,10 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!ALLOWED_TYPES.has(file.type)) {
+    const mimeType = resolveMimeType(file);
+    if (!ALLOWED_TYPES.has(mimeType)) {
       return NextResponse.json(
-        { error: "Invalid file type. Please upload a JPEG, PNG, or WebP image." },
+        { error: "Invalid file type. Please upload a JPEG, PNG, WebP, or HEIC image." },
         { status: 400 }
       );
     }
@@ -140,7 +158,7 @@ Respond with ONLY valid JSON, no markdown or explanation:
           parts: [
             {
               inlineData: {
-                mimeType: file.type,
+                mimeType,
                 data: base64,
               },
             },
