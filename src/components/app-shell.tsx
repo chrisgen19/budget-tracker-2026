@@ -18,6 +18,7 @@ import {
 import { cn, compressImage } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { useUser } from "@/components/user-provider";
+import { ScanProvider } from "@/components/scan-provider";
 import { ScanReceiptSheet } from "@/components/scan-receipt-sheet";
 import { Modal } from "@/components/ui/modal";
 import {
@@ -486,7 +487,17 @@ export function AppShell({ children }: AppShellProps) {
       {/* Main Content */}
       <main className="lg:pl-64 pt-16 lg:pt-0 pb-24 lg:pb-0 min-h-screen">
         <div className="max-w-6xl mx-auto p-4 lg:p-8">
-          {children}
+          <ScanProvider
+            value={{
+              openScan: () => setScanOpen(true),
+              canScan: user.receiptScanEnabled && user.roleScanEnabled,
+              scanLimitReached: !!scanLimitReached,
+              scansRemaining,
+              hasLimit,
+            }}
+          >
+            {children}
+          </ScanProvider>
         </div>
       </main>
 

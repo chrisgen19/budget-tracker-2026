@@ -12,6 +12,7 @@ import {
   Plus,
   Eye,
   EyeOff,
+  ScanLine,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import Link from "next/link";
@@ -22,8 +23,10 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Modal } from "@/components/ui/modal";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import { SpendingChart, TrendChart, BalanceTrendChart } from "@/components/dashboard/charts";
+import { DropdownButton, type DropdownItem } from "@/components/ui/dropdown-button";
 import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
+import { useScan } from "@/components/scan-provider";
 import type { TransactionInput } from "@/lib/validations";
 import type { DashboardStats } from "@/types";
 
@@ -34,6 +37,7 @@ export default function DashboardPage() {
   const [showForm, setShowForm] = useState(false);
   const { hideAmounts, toggleHideAmounts } = usePrivacy();
   const { user } = useUser();
+  const { canScan, openScan, scanLimitReached, scansRemaining, hasLimit } = useScan();
   const currency = user.currency;
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date();
@@ -128,13 +132,39 @@ export default function DashboardPage() {
 
         <div className="flex items-center gap-3">
           {/* Add Transaction Button — desktop only */}
-          <button
-            onClick={() => setShowForm(true)}
-            className="hidden sm:inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-4 py-2 rounded-xl transition-colors shadow-soft hover:shadow-soft-md"
-          >
-            <Plus className="w-4 h-4" />
-            Add Transaction
-          </button>
+          {canScan ? (
+            <DropdownButton
+              label="Add Transaction"
+              icon={Plus}
+              className="hidden sm:inline-flex"
+              items={[
+                {
+                  label: "Add Transaction",
+                  icon: Plus,
+                  onClick: () => setShowForm(true),
+                },
+                {
+                  label: "Scan Receipt",
+                  icon: ScanLine,
+                  onClick: openScan,
+                  disabled: scanLimitReached,
+                  sublabel: scanLimitReached
+                    ? "Monthly limit reached"
+                    : hasLimit
+                      ? `${scansRemaining} scan${scansRemaining === 1 ? "" : "s"} left`
+                      : undefined,
+                },
+              ] satisfies DropdownItem[]}
+            />
+          ) : (
+            <button
+              onClick={() => setShowForm(true)}
+              className="hidden sm:inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-4 py-2 rounded-xl transition-colors shadow-soft hover:shadow-soft-md"
+            >
+              <Plus className="w-4 h-4" />
+              Add Transaction
+            </button>
+          )}
 
           {/* Month Navigator */}
           <div className="flex items-center gap-2 bg-white rounded-xl border border-cream-300/60 shadow-warm px-2 py-1.5">
