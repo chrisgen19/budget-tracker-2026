@@ -7,6 +7,22 @@ export async function GET() {
   const admin = await requireAdmin();
   if (admin instanceof NextResponse) return admin;
 
+  // Ensure default rows exist (self-healing for fresh deploys where seed hasn't run)
+  const DEFAULTS = {
+    FREE: { receiptScanEnabled: false, maxUploadFiles: 5, monthlyScanLimit: 5 },
+    PAID: { receiptScanEnabled: true, maxUploadFiles: 10, monthlyScanLimit: 0 },
+  } as const;
+
+  await Promise.all(
+    (["FREE", "PAID"] as const).map((role) =>
+      prisma.appSettings.upsert({
+        where: { role },
+        update: {},
+        create: { role, ...DEFAULTS[role] },
+      })
+    )
+  );
+
   const settings = await prisma.appSettings.findMany({
     where: { role: { in: ["FREE", "PAID"] } },
   });
