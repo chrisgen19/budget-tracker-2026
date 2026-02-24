@@ -13,6 +13,7 @@ import {
   User,
   ScanLine,
   Shield,
+  AlertTriangle,
 } from "lucide-react";
 import { cn, compressImage } from "@/lib/utils";
 import { motion } from "framer-motion";
@@ -61,6 +62,8 @@ export function AppShell({ children }: AppShellProps) {
     ? Math.max(0, user.monthlyScanLimit - user.scansUsedThisMonth)
     : null; // null = unlimited
   const scanLimitReached = hasLimit && scansRemaining === 0;
+  const scansRunningLow = hasLimit && !scanLimitReached && scansRemaining !== null && scansRemaining <= 10;
+  const showScanNotice = user.receiptScanEnabled && user.roleScanEnabled && (scanLimitReached || scansRunningLow);
 
   const handleReceiptFileSelected = async (file: File) => {
     setIsScanning(true);
@@ -370,6 +373,21 @@ export function AppShell({ children }: AppShellProps) {
 
         {/* User section */}
         <div className="border-t border-cream-200 p-4">
+          {showScanNotice && (
+            <div className={cn(
+              "flex items-center gap-2.5 px-3 py-2.5 mb-3 rounded-xl text-xs",
+              scanLimitReached
+                ? "bg-expense-light/50 border border-expense/20 text-expense"
+                : "bg-amber-light/50 border border-amber/20 text-amber-dark"
+            )}>
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span className="font-medium">
+                {scanLimitReached
+                  ? "Monthly scan limit reached"
+                  : `${scansRemaining} scan${scansRemaining === 1 ? "" : "s"} remaining this month`}
+              </span>
+            </div>
+          )}
           <Link
             href="/profile"
             className="flex items-center gap-3 px-2 mb-3 rounded-xl py-1 -mx-0 hover:bg-cream-100 transition-colors"

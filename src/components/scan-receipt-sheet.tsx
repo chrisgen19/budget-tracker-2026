@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { Camera, ImagePlus, AlertCircle, Info } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Modal } from "@/components/ui/modal";
 
 interface ScanReceiptSheetProps {
@@ -109,8 +110,14 @@ export function ScanReceiptSheet({
           <div className="space-y-3">
             <button
               type="button"
+              disabled={scansRemaining === 0}
               onClick={() => cameraInputRef.current?.click()}
-              className="flex items-center gap-4 w-full px-4 py-4 rounded-xl border border-cream-300 bg-cream-50/50 hover:bg-cream-100 text-warm-600 transition-colors"
+              className={cn(
+                "flex items-center gap-4 w-full px-4 py-4 rounded-xl border border-cream-300 transition-colors",
+                scansRemaining === 0
+                  ? "bg-cream-100 opacity-50 cursor-not-allowed"
+                  : "bg-cream-50/50 hover:bg-cream-100 text-warm-600"
+              )}
             >
               <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center">
                 <Camera className="w-5 h-5 text-amber-dark" />
@@ -125,8 +132,14 @@ export function ScanReceiptSheet({
 
             <button
               type="button"
+              disabled={scansRemaining === 0}
               onClick={() => uploadInputRef.current?.click()}
-              className="flex items-center gap-4 w-full px-4 py-4 rounded-xl border border-cream-300 bg-cream-50/50 hover:bg-cream-100 text-warm-600 transition-colors"
+              className={cn(
+                "flex items-center gap-4 w-full px-4 py-4 rounded-xl border border-cream-300 transition-colors",
+                scansRemaining === 0
+                  ? "bg-cream-100 opacity-50 cursor-not-allowed"
+                  : "bg-cream-50/50 hover:bg-cream-100 text-warm-600"
+              )}
             >
               <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center">
                 <ImagePlus className="w-5 h-5 text-amber-dark" />
