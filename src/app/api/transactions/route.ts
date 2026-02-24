@@ -31,7 +31,7 @@ export async function GET(request: Request) {
     prisma.transaction.findMany({
       where,
       include: { category: true },
-      orderBy: { date: "desc" },
+      orderBy: [{ date: "desc" }, { createdAt: "desc" }],
       skip: (page - 1) * limit,
       take: limit,
     }),
