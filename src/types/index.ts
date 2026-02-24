@@ -39,6 +39,21 @@ export interface BalanceTrendItem {
   balance: number;
 }
 
+/** Single item in a multi-receipt scan batch */
+export interface MultiScanItem {
+  id: string;
+  fileName: string;
+  status: "scanning" | "success" | "error";
+  data?: {
+    amount?: number;
+    description?: string;
+    type?: "INCOME" | "EXPENSE";
+    date?: string;
+    categoryId?: string;
+  };
+  error?: string;
+}
+
 /** Extend next-auth types */
 declare module "next-auth" {
   interface Session {

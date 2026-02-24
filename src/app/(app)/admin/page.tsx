@@ -83,12 +83,6 @@ export default function AdminPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="font-serif text-2xl text-warm-700">Admin</h1>
-        <p className="text-warm-400 text-sm mt-1">Manage users and roles</p>
-      </div>
-
       {/* Stats */}
       <div className="grid grid-cols-3 gap-3">
         <div className="bg-white rounded-2xl border border-cream-300/60 p-4 shadow-soft">

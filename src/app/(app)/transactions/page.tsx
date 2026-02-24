@@ -161,7 +161,11 @@ export default function TransactionsPage() {
     const json: TransactionsResponse = await res.json();
 
     if (append) {
-      setAllTransactions((prev) => [...prev, ...json.transactions]);
+      setAllTransactions((prev) => {
+        const existingIds = new Set(prev.map((tx) => tx.id));
+        const newTxs = json.transactions.filter((tx: TransactionWithCategory) => !existingIds.has(tx.id));
+        return [...prev, ...newTxs];
+      });
       setHasMore(pageToFetch < json.pagination.totalPages);
       setLoadingMore(false);
       setData(json);

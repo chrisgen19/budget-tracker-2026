@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { signOut } from "next-auth/react";
@@ -13,6 +13,7 @@ import {
   User,
   ScanLine,
   Shield,
+  AlertTriangle,
 } from "lucide-react";
 import { cn, compressImage } from "@/lib/utils";
 import { motion } from "framer-motion";
@@ -23,6 +24,8 @@ import {
   TransactionForm,
   type InitialTransactionData,
 } from "@/components/transactions/transaction-form";
+import { MultiScanReview } from "@/components/multi-scan-review";
+import type { MultiScanItem } from "@/types";
 import type { TransactionInput } from "@/lib/validations";
 
 interface AppShellProps {
@@ -38,15 +41,29 @@ const NAV_ITEMS = [
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user } = useUser();
-  const canUsePaidFeatures = user.role === "PAID" || user.role === "ADMIN";
+  const { user, setUser } = useUser();
   const [scanOpen, setScanOpen] = useState(false);
 
-  // OCR scanning state
+  // Single-scan OCR state
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanData, setScanData] = useState<InitialTransactionData | null>(null);
   const [showScanForm, setShowScanForm] = useState(false);
+
+  // Multi-scan state
+  const [multiScanItems, setMultiScanItems] = useState<MultiScanItem[]>([]);
+  const [showMultiScanReview, setShowMultiScanReview] = useState(false);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [isSavingAll, setIsSavingAll] = useState(false);
+
+  // Scan limit calculations
+  const hasLimit = user.monthlyScanLimit > 0;
+  const scansRemaining = hasLimit
+    ? Math.max(0, user.monthlyScanLimit - user.scansUsedThisMonth)
+    : null; // null = unlimited
+  const scanLimitReached = hasLimit && scansRemaining === 0;
+  const scansRunningLow = hasLimit && !scanLimitReached && scansRemaining !== null && scansRemaining <= 10;
+  const showScanNotice = user.receiptScanEnabled && user.roleScanEnabled && (scanLimitReached || scansRunningLow);
 
   const handleReceiptFileSelected = async (file: File) => {
     setIsScanning(true);
@@ -81,6 +98,9 @@ export function AppShell({ children }: AppShellProps) {
       setIsScanning(false);
       setScanOpen(false);
       setShowScanForm(true);
+
+      // Increment local scan count
+      setUser((prev) => ({ scansUsedThisMonth: prev.scansUsedThisMonth + 1 }));
     } catch {
       setScanError("Network error. Please check your connection and try again.");
       setIsScanning(false);
@@ -113,6 +133,173 @@ export function AppShell({ children }: AppShellProps) {
     if (isScanning) return;
     setScanOpen(false);
     setScanError(null);
+  };
+
+  // -- Multi-scan handlers --
+
+  const handleMultipleFilesSelected = useCallback(
+    async (files: File[]) => {
+      // Close the scan sheet, init items, open review modal
+      setScanOpen(false);
+      setScanError(null);
+
+      const initialItems: MultiScanItem[] = files.map((f, i) => ({
+        id: `${Date.now()}-${i}`,
+        fileName: f.name,
+        status: "scanning" as const,
+      }));
+
+      setMultiScanItems(initialItems);
+      setShowMultiScanReview(true);
+
+      // Scan sequentially so we don't overwhelm the API
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const itemId = initialItems[i].id;
+
+        try {
+          const compressed = await compressImage(file);
+          const formData = new FormData();
+          formData.append("receipt", compressed);
+
+          const res = await fetch("/api/receipts/scan", {
+            method: "POST",
+            body: formData,
+          });
+
+          const data = await res.json();
+
+          if (!res.ok) {
+            setMultiScanItems((prev) =>
+              prev.map((item) =>
+                item.id === itemId
+                  ? { ...item, status: "error" as const, error: data.error ?? "Failed to scan receipt." }
+                  : item
+              )
+            );
+            continue;
+          }
+
+          setMultiScanItems((prev) =>
+            prev.map((item) =>
+              item.id === itemId
+                ? {
+                    ...item,
+                    status: "success" as const,
+                    data: {
+                      amount: data.amount,
+                      description: data.description,
+                      type: data.type,
+                      date: data.date,
+                      categoryId: data.categoryId,
+                    },
+                  }
+                : item
+            )
+          );
+
+          // Increment local scan count
+          setUser((prev) => ({ scansUsedThisMonth: prev.scansUsedThisMonth + 1 }));
+        } catch {
+          setMultiScanItems((prev) =>
+            prev.map((item) =>
+              item.id === itemId
+                ? { ...item, status: "error" as const, error: "Network error. Please try again." }
+                : item
+            )
+          );
+        }
+      }
+    },
+    [setUser]
+  );
+
+  const handleMultiScanEdit = (id: string) => {
+    setEditingItemId(id);
+  };
+
+  const handleMultiScanEditSubmit = async (input: TransactionInput) => {
+    if (!editingItemId) return;
+
+    // Update item data in state — no API call yet
+    setMultiScanItems((prev) =>
+      prev.map((item) =>
+        item.id === editingItemId
+          ? {
+              ...item,
+              data: {
+                amount: input.amount,
+                description: input.description,
+                type: input.type,
+                date: input.date,
+                categoryId: input.categoryId,
+              },
+            }
+          : item
+      )
+    );
+    setEditingItemId(null);
+  };
+
+  const handleMultiScanRemove = (id: string) => {
+    setMultiScanItems((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const handleMultiScanSaveAll = async () => {
+    setIsSavingAll(true);
+
+    const successItems = multiScanItems.filter((i) => i.status === "success" && i.data);
+
+    for (const item of successItems) {
+      try {
+        const res = await fetch("/api/transactions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            amount: item.data!.amount,
+            description: item.data!.description,
+            type: item.data!.type,
+            date: item.data!.date ? new Date(item.data!.date).toISOString() : new Date().toISOString(),
+            categoryId: item.data!.categoryId,
+          }),
+        });
+
+        if (!res.ok) {
+          // Mark individual item as failed, continue with others
+          setMultiScanItems((prev) =>
+            prev.map((i) =>
+              i.id === item.id
+                ? { ...i, status: "error" as const, error: "Failed to save." }
+                : i
+            )
+          );
+        }
+      } catch {
+        setMultiScanItems((prev) =>
+          prev.map((i) =>
+            i.id === item.id
+              ? { ...i, status: "error" as const, error: "Network error." }
+              : i
+          )
+        );
+      }
+    }
+
+    setIsSavingAll(false);
+    setShowMultiScanReview(false);
+    setMultiScanItems([]);
+    setEditingItemId(null);
+    router.push(`/transactions?t=${Date.now()}`);
+  };
+
+  const handleMultiScanClose = () => {
+    // Block closing while scanning or saving
+    const isStillScanning = multiScanItems.some((i) => i.status === "scanning");
+    if (isStillScanning || isSavingAll) return;
+
+    setShowMultiScanReview(false);
+    setMultiScanItems([]);
+    setEditingItemId(null);
   };
 
   return (
@@ -166,12 +353,12 @@ export function AppShell({ children }: AppShellProps) {
               href="/admin"
               className={cn(
                 "flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 relative",
-                pathname === "/admin"
+                pathname.startsWith("/admin")
                   ? "bg-amber-light text-amber-dark"
                   : "text-warm-400 hover:text-warm-600 hover:bg-cream-100"
               )}
             >
-              {pathname === "/admin" && (
+              {pathname.startsWith("/admin") && (
                 <motion.div
                   layoutId="sidebar-active"
                   className="absolute inset-0 bg-amber-light rounded-xl"
@@ -186,6 +373,21 @@ export function AppShell({ children }: AppShellProps) {
 
         {/* User section */}
         <div className="border-t border-cream-200 p-4">
+          {showScanNotice && (
+            <div className={cn(
+              "flex items-center gap-2.5 px-3 py-2.5 mb-3 rounded-xl text-xs",
+              scanLimitReached
+                ? "bg-expense-light/50 border border-expense/20 text-expense"
+                : "bg-amber-light/50 border border-amber/20 text-amber-dark"
+            )}>
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span className="font-medium">
+                {scanLimitReached
+                  ? "Monthly scan limit reached"
+                  : `${scansRemaining} scan${scansRemaining === 1 ? "" : "s"} remaining this month`}
+              </span>
+            </div>
+          )}
           <Link
             href="/profile"
             className="flex items-center gap-3 px-2 mb-3 rounded-xl py-1 -mx-0 hover:bg-cream-100 transition-colors"
@@ -256,14 +458,26 @@ export function AppShell({ children }: AppShellProps) {
               </Link>
             );
           })}
-          {user.receiptScanEnabled && canUsePaidFeatures && (
+          {user.receiptScanEnabled && user.roleScanEnabled && (
             <button
               type="button"
               onClick={() => setScanOpen(true)}
-              className="flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all duration-200 min-w-[72px] text-warm-300"
+              disabled={scanLimitReached}
+              className={cn(
+                "flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all duration-200 min-w-[72px] relative",
+                scanLimitReached ? "text-warm-200 cursor-not-allowed" : "text-warm-300"
+              )}
             >
               <ScanLine className="w-5 h-5" />
               <span className="text-[10px] font-medium">Scan</span>
+              {hasLimit && (
+                <span className={cn(
+                  "text-[9px] font-medium",
+                  scanLimitReached ? "text-expense" : "text-warm-400"
+                )}>
+                  {user.scansUsedThisMonth}/{user.monthlyScanLimit}
+                </span>
+              )}
             </button>
           )}
         </div>
@@ -281,8 +495,11 @@ export function AppShell({ children }: AppShellProps) {
         open={scanOpen}
         onClose={handleScanSheetClose}
         onFileSelected={handleReceiptFileSelected}
+        onMultipleFilesSelected={handleMultipleFilesSelected}
         isScanning={isScanning}
         error={scanError}
+        maxUploadFiles={user.maxUploadFiles}
+        scansRemaining={scansRemaining}
       />
 
       {/* Scanned Transaction Form Modal */}
@@ -298,6 +515,50 @@ export function AppShell({ children }: AppShellProps) {
             onCancel={handleScanFormCancel}
           />
         )}
+      </Modal>
+
+      {/* Multi-Scan Review Modal */}
+      <Modal
+        open={showMultiScanReview && editingItemId === null}
+        onClose={handleMultiScanClose}
+        title="Review Scanned Receipts"
+      >
+        {showMultiScanReview && editingItemId === null && (
+          <MultiScanReview
+            items={multiScanItems}
+            onEdit={handleMultiScanEdit}
+            onRemove={handleMultiScanRemove}
+            onSaveAll={handleMultiScanSaveAll}
+            onClose={handleMultiScanClose}
+            isSaving={isSavingAll}
+          />
+        )}
+      </Modal>
+
+      {/* Multi-Scan Edit Modal */}
+      <Modal
+        open={editingItemId !== null}
+        onClose={() => setEditingItemId(null)}
+        title="Edit Transaction"
+      >
+        {editingItemId !== null &&
+          (() => {
+            const editItem = multiScanItems.find((i) => i.id === editingItemId);
+            if (!editItem?.data) return null;
+            return (
+              <TransactionForm
+                initialData={{
+                  amount: editItem.data.amount,
+                  description: editItem.data.description,
+                  type: editItem.data.type,
+                  date: editItem.data.date,
+                  categoryId: editItem.data.categoryId,
+                }}
+                onSubmit={handleMultiScanEditSubmit}
+                onCancel={() => setEditingItemId(null)}
+              />
+            );
+          })()}
       </Modal>
     </div>
   );
