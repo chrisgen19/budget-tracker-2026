@@ -413,3 +413,49 @@ All notable development history for the Budget Tracker app.
 ### Database
 - Added `UserRole` enum (`ADMIN`, `FREE`, `PAID`) and `role` column to `users` table (defaults to `FREE`, Prisma migration)
 - Seed script updated to always set `chrisgen19@gmail.com` as ADMIN (idempotent, runs regardless of category seed state)
+
+---
+
+## 2026-02-24 — Admin Scan Settings, Multi-Scan & Monthly Limits
+
+### Admin Scan Settings (`/admin/settings`)
+- New **Scan Settings** page under the admin panel with per-role configuration cards (FREE and PAID)
+- **Receipt Scanning** toggle — enable/disable receipt scanning per role
+- **Max Files Per Upload** — configurable limit (1–50) for batch scan uploads per role
+- Optimistic UI updates with inline saving indicators
+- Admin layout with sidebar navigation between Users and Scan Settings sub-pages
+
+### Multiple Receipt Scanning (Batch Mode)
+- Users can now **select multiple receipt images** at once from the upload picker
+- Receipts are scanned **sequentially** via the Gemini API — each result streams into a live **review modal**
+- Review modal shows all scanned items with status indicators (scanning spinner, success checkmark, error X)
+- Each scanned item displays extracted amount, category, date, and description
+- **Edit individual items** — tap any scanned receipt to open it in the transaction form for adjustments
+- **Remove items** — delete unwanted receipts from the batch before saving
+- **Save All** — batch-saves all successful items as transactions in one action, then redirects to transactions list
+- Error handling per item — failed scans show error messages without blocking other items
+- Modal blocks closing while scans are in progress or batch save is running
+
+### Monthly Scan Limit
+- New `ScanLog` table tracks every successful receipt scan per user with timestamp
+- New `monthlyScanLimit` field on `AppSettings` — configurable per role (0 = unlimited)
+- **API enforcement** — scan API counts `ScanLog` rows for the current calendar month; returns 403 with usage message when limit is reached
+- **Admin settings UI** — new "Monthly Scan Limit" number input (0–1000) per role card alongside existing settings
+- **Mobile scan button** — shows usage badge (e.g., "3/10") when a limit is active; button disabled when exhausted
+- **Scan sheet** — displays "X scans remaining this month" info line; buttons disabled when no scans remain; multi-upload file count capped to remaining scans
+- **Desktop sidebar notices** — amber warning when scans are running low (≤10 remaining); red alert when limit is reached
+- ADMIN users are always unlimited regardless of role settings
+- Scan count resets naturally at the start of each calendar month (no cron needed)
+- `UserProvider` updated to support functional updater pattern for real-time scan count increments
+
+### Bug Fixes
+- Fixed duplicate React keys in infinite scroll transaction list when transactions from different months shared the same date group header
+
+### Database
+- Added `AppSettings` model with `role` (unique), `receiptScanEnabled`, `maxUploadFiles`, `monthlyScanLimit` fields
+- Added `ScanLog` model with `userId` and `createdAt` (indexed on `[userId, createdAt]`)
+- Seed script updated with default app settings: FREE (scan disabled, 5 uploads, 5 scans/month), PAID (scan enabled, 10 uploads, unlimited)
+
+### API Routes
+- `GET /api/admin/settings` — returns per-role scan settings (admin only)
+- `PATCH /api/admin/settings` — update individual role settings with Zod validation (admin only)
