@@ -148,14 +148,15 @@ CATEGORY RULES:
 RESPONSE FORMAT — return ONLY valid JSON, no markdown or explanation:
 {
   "date": "<YYYY-MM-DDTHH:mm — receipt date, or ${todayStr} if unreadable>",
+  "storeName": "<store or merchant name from the receipt header, e.g. 'South Supermarket'>",
   "items": [
-    { "amount": <sum of items in this category>, "categoryId": "<id>", "description": "<category name>: <comma-separated list of items>" }
+    { "amount": <sum of items in this category>, "categoryId": "<id>", "description": "<store name> - <category name>: <1-2 sample items>" }
   ]
 }
 
 RULES:
 - The sum of all item amounts should approximately equal the receipt total (small rounding differences are OK)
-- Each description should list the actual items grouped under that category (max 100 chars)
+- Each description MUST be short: "<store name> - <category>: <1 or 2 sample items>". Example: "South Supermarket - Food & Dining: Pork Tenderloin, Chicken". Max 80 chars.
 - Minimum 1 item, maximum 20 items
 - All amounts must be positive numbers
 - Do NOT include tax/service charge as a separate item — distribute proportionally or include in the largest group`;
