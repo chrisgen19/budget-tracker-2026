@@ -159,7 +159,7 @@ export function AppShell({ children }: AppShellProps) {
       );
 
       // Process API calls with max 2 concurrent requests
-      const CONCURRENCY = 2;
+      const CONCURRENCY = 3;
       let nextIndex = 0;
 
       const processNext = async (): Promise<void> => {
