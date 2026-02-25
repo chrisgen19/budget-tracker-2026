@@ -4,12 +4,9 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Plus,
-  Search,
   Trash2,
   Pencil,
   ArrowLeftRight,
-  ChevronLeft,
-  ChevronRight,
   Download,
   Check,
   X,
@@ -23,6 +20,10 @@ import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { DropdownButton, type DropdownItem } from "@/components/ui/dropdown-button";
 import { TransactionForm } from "@/components/transactions/transaction-form";
+import {
+  TransactionFiltersBar,
+  type TransactionFilters,
+} from "@/components/transactions/transaction-filters";
 import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import { useScan } from "@/components/scan-provider";
@@ -110,6 +111,21 @@ const generateCsv = (transactions: TransactionWithCategory[]) => {
   return [header.join(","), ...rows.map((r) => r.join(","))].join("\n");
 };
 
+/** Build initial filters with current month */
+const createInitialFilters = (): TransactionFilters => {
+  const now = new Date();
+  return {
+    search: "",
+    type: "ALL",
+    month: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`,
+    categoryId: null,
+    amountMin: null,
+    amountMax: null,
+    sortBy: "date",
+    sortDir: "desc",
+  };
+};
+
 /* ------------------------------------------------------------------ */
 /*  Page component                                                     */
 /* ------------------------------------------------------------------ */
@@ -124,13 +140,8 @@ export default function TransactionsPage() {
   const isInfinite = user.transactionLayout === "infinite";
   const [data, setData] = useState<TransactionsResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<"ALL" | "INCOME" | "EXPENSE">("ALL");
-  const [month, setMonth] = useState(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  });
+  const [filters, setFilters] = useState<TransactionFilters>(createInitialFilters);
   const [page, setPage] = useState(1);
-  const [search, setSearch] = useState("");
 
   // Infinite scroll state
   const [allTransactions, setAllTransactions] = useState<TransactionWithCategory[]>([]);
@@ -159,8 +170,19 @@ export default function TransactionsPage() {
       setLoading(true);
     }
 
-    const params = new URLSearchParams({ page: String(pageToFetch), limit: "15", month });
-    if (filter !== "ALL") params.set("type", filter);
+    const params = new URLSearchParams({
+      page: String(pageToFetch),
+      limit: "15",
+      month: filters.month,
+    });
+    if (filters.type !== "ALL") params.set("type", filters.type);
+    if (filters.search) params.set("search", filters.search);
+    if (filters.categoryId) params.set("categoryId", filters.categoryId);
+    if (filters.amountMin !== null) params.set("amountMin", String(filters.amountMin));
+    if (filters.amountMax !== null) params.set("amountMax", String(filters.amountMax));
+    if (filters.sortBy !== "date") params.set("sortBy", filters.sortBy);
+    if (filters.sortDir !== "desc") params.set("sortDir", filters.sortDir);
+
     const res = await fetch(`/api/transactions?${params}`);
     const json: TransactionsResponse = await res.json();
 
@@ -181,14 +203,14 @@ export default function TransactionsPage() {
       }
       setLoading(false);
     }
-  }, [month, filter, isInfinite]);
+  }, [filters, isInfinite]);
 
-  // Initial fetch + reset on filter/month change (refreshKey triggers re-fetch after receipt scan)
+  // Initial fetch + reset on filter change (refreshKey triggers re-fetch after receipt scan)
   useEffect(() => {
     setPage(1);
     setSelectedIds(new Set());
     fetchTransactions(1, false);
-  }, [filter, month, fetchTransactions, refreshKey]);
+  }, [fetchTransactions, refreshKey]);
 
   // Pagination mode: fetch when page changes (page > 1)
   useEffect(() => {
@@ -227,18 +249,11 @@ export default function TransactionsPage() {
     fetchTransactions(1, false);
   }, [fetchTransactions]);
 
-  /* ---- Filtered & grouped data ---- */
+  /* ---- Grouped data (no client-side search filtering — search is server-side) ---- */
 
   const sourceTransactions = isInfinite ? allTransactions : (data?.transactions ?? []);
 
-  const filteredTransactions = sourceTransactions.filter((tx) =>
-    search
-      ? tx.description.toLowerCase().includes(search.toLowerCase()) ||
-        tx.category.name.toLowerCase().includes(search.toLowerCase())
-      : true
-  );
-
-  const dateGroups = groupByDate(filteredTransactions);
+  const dateGroups = groupByDate(sourceTransactions);
 
   /* ---- Selection handlers ---- */
 
@@ -252,8 +267,8 @@ export default function TransactionsPage() {
   };
 
   const toggleSelectAll = () => {
-    if (filteredTransactions.length === 0) return;
-    const allIds = filteredTransactions.map((tx) => tx.id);
+    if (sourceTransactions.length === 0) return;
+    const allIds = sourceTransactions.map((tx) => tx.id);
     const allSelected = allIds.every((id) => selectedIds.has(id));
     setSelectedIds(allSelected ? new Set() : new Set(allIds));
   };
@@ -261,8 +276,8 @@ export default function TransactionsPage() {
   const clearSelection = () => setSelectedIds(new Set());
 
   const allSelected =
-    filteredTransactions.length > 0 &&
-    filteredTransactions.every((tx) => selectedIds.has(tx.id));
+    sourceTransactions.length > 0 &&
+    sourceTransactions.every((tx) => selectedIds.has(tx.id));
 
   /* ---- CRUD handlers ---- */
 
@@ -310,43 +325,30 @@ export default function TransactionsPage() {
   };
 
   const handleExport = () => {
-    if (filteredTransactions.length === 0 || selectedIds.size === 0) return;
-    const selected = filteredTransactions.filter((tx) => selectedIds.has(tx.id));
+    if (sourceTransactions.length === 0 || selectedIds.size === 0) return;
+    const selected = sourceTransactions.filter((tx) => selectedIds.has(tx.id));
     const csv = generateCsv(selected);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `transactions-${month}.csv`;
+    a.download = `transactions-${filters.month}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
   const handleBulkEdit = () => {
-    if (selectedIds.size !== 1 || filteredTransactions.length === 0) return;
-    const tx = filteredTransactions.find((t) => selectedIds.has(t.id));
+    if (selectedIds.size !== 1 || sourceTransactions.length === 0) return;
+    const tx = sourceTransactions.find((t) => selectedIds.has(t.id));
     if (tx) {
       setEditingTransaction(tx);
       clearSelection();
     }
   };
 
-  /* ---- Month navigation ---- */
-
-  const navigateMonth = (direction: -1 | 1) => {
-    const [year, m] = month.split("-").map(Number);
-    const d = new Date(year, m - 1 + direction, 1);
-    setMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
-  };
-
-  const monthLabel = (() => {
-    const [year, m] = month.split("-").map(Number);
-    return new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(
-      new Date(year, m - 1)
-    );
-  })();
-
   /* ---- Render ---- */
+
+  const hasActiveSearch = filters.search !== "";
 
   return (
     <div>
@@ -398,58 +400,11 @@ export default function TransactionsPage() {
       </div>
 
       {/* Filters Bar */}
-      <div className="card p-3 mb-4">
-        <div className="flex flex-col sm:flex-row gap-3">
-          {/* Search */}
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-warm-300" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search transactions..."
-              className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-cream-200 bg-cream-50/50 text-sm text-warm-700 placeholder:text-warm-300 focus:outline-none focus:ring-2 focus:ring-amber/20 focus:border-amber transition-all"
-            />
-          </div>
-
-          {/* Type Filter */}
-          <div className="flex gap-1 p-0.5 bg-cream-100 rounded-lg">
-            {(["ALL", "INCOME", "EXPENSE"] as const).map((type) => (
-              <button
-                key={type}
-                onClick={() => setFilter(type)}
-                className={cn(
-                  "px-4 py-2 rounded-md text-xs font-medium transition-all duration-150",
-                  filter === type
-                    ? "bg-white text-warm-700 shadow-warm"
-                    : "text-warm-400 hover:text-warm-600"
-                )}
-              >
-                {type === "ALL" ? "All" : type === "INCOME" ? "Income" : "Expenses"}
-              </button>
-            ))}
-          </div>
-
-          {/* Month Navigator */}
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => navigateMonth(-1)}
-              className="p-2 rounded-lg text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="text-sm font-medium text-warm-600 min-w-[110px] text-center">
-              {monthLabel}
-            </span>
-            <button
-              onClick={() => navigateMonth(1)}
-              className="p-2 rounded-lg text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </div>
+      <TransactionFiltersBar
+        filters={filters}
+        onChange={setFilters}
+        totalCount={data?.pagination.total ?? null}
+      />
 
       {/* Bulk Actions Bar */}
       <AnimatePresence>
@@ -679,14 +634,14 @@ export default function TransactionsPage() {
         ) : (
           <EmptyState
             icon={ArrowLeftRight}
-            title={search ? "No matches found" : "No transactions yet"}
+            title={hasActiveSearch ? "No matches found" : "No transactions yet"}
             description={
-              search
+              hasActiveSearch
                 ? "Try adjusting your search terms."
                 : "Add your first transaction to start tracking."
             }
             action={
-              !search ? (
+              !hasActiveSearch ? (
                 <button
                   onClick={() => setShowForm(true)}
                   className="inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white text-sm font-medium px-4 py-2.5 rounded-xl transition-colors shadow-soft"
