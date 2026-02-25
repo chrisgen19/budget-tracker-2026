@@ -58,6 +58,8 @@ export interface MultiScanItem {
     categoryId?: string;
     receiptGroupId?: string;
     receiptBreakdown?: ReceiptBreakdownMeta;
+    /** Whether the receipt has items spanning 2+ spending categories */
+    multiCategory?: boolean;
   };
   error?: string;
   /** Compressed image kept in memory for breakdown requests */

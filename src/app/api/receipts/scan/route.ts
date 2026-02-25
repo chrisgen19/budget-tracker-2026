@@ -142,6 +142,7 @@ Return a JSON object with these fields:
 - "categoryId": pick the best category ID using the rules below.
 - "date": transaction date as "YYYY-MM-DDTHH:mm". If unreadable, use "${todayStr}".
 - "description": merchant name + short summary of purchase (max 100 chars).
+- "multiCategory": true if the receipt contains items that span 2 or more DIFFERENT categories from the list below, false if all items belong to a single category. For example, a grocery receipt with food AND cleaning supplies = true, a restaurant bill with only food = false, a single ride receipt = false.
 
 CATEGORIES:
 ${categoryList}
@@ -157,7 +158,7 @@ CATEGORY RULES (pick categoryId by matching the merchant/items to these rules):
 8. When in doubt, prefer "Food & Dining" if the merchant sells any food or beverages.
 
 Respond with ONLY valid JSON, no markdown or explanation:
-{"amount": <number>, "categoryId": "<id>", "date": "<datetime>", "description": "<text>"}`;
+{"amount": <number>, "categoryId": "<id>", "date": "<datetime>", "description": "<text>", "multiCategory": <boolean>}`;
 
     const response = await gemini.models.generateContent({
       model: GEMINI_MODEL,

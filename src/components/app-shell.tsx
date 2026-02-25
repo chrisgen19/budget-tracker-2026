@@ -97,6 +97,7 @@ export function AppShell({ children }: AppShellProps) {
             type: data.type,
             date: data.date,
             categoryId: data.categoryId,
+            multiCategory: data.multiCategory,
           },
           imageFile: compressed,
         },
@@ -186,6 +187,7 @@ export function AppShell({ children }: AppShellProps) {
                         type: data.type,
                         date: data.date,
                         categoryId: data.categoryId,
+                        multiCategory: data.multiCategory,
                       },
                       imageFile: file instanceof File ? file : undefined,
                     }

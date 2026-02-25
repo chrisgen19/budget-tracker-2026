@@ -61,6 +61,7 @@ export const receiptScanResultSchema = z.object({
   date: z.string().min(1),
   description: z.string().max(255),
   type: z.literal("EXPENSE"),
+  multiCategory: z.boolean(),
 });
 
 export const updateAppSettingsSchema = z.object({

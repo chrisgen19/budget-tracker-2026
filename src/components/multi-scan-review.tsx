@@ -145,7 +145,7 @@ export function MultiScanReview({
                 day: "numeric",
               })
             : "";
-          const canItemize = !!item.imageFile && !item.parentId;
+          const canItemize = !!item.imageFile && !item.parentId && !!item.data?.multiCategory;
           const isItemizedChild = !!item.parentId;
 
           return (
