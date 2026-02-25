@@ -95,7 +95,7 @@ export function TransactionForm({ transaction, initialData, onSubmit, onCancel, 
       date: transaction
         ? formatDateInput(transaction.date)
         : initialData?.date ?? formatDateInput(new Date()),
-      categoryId: transaction?.categoryId ?? "",
+      categoryId: transaction?.categoryId ?? initialData?.categoryId ?? "",
     },
   });
 
@@ -150,8 +150,8 @@ export function TransactionForm({ transaction, initialData, onSubmit, onCancel, 
         }
       }
 
-      // Reset category when type changes (unless editing)
-      if (!transaction) {
+      // Reset category when type changes (unless editing an existing transaction or applying initialData)
+      if (!transaction && !initialData?.categoryId) {
         setValue("categoryId", "");
       }
     };
