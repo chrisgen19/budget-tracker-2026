@@ -47,38 +47,7 @@ export async function POST(request: Request) {
       select: { role: true },
     });
 
-    if (user && user.role !== "ADMIN") {
-      const roleSettings = await prisma.appSettings.findUnique({
-        where: { role: user.role },
-      });
-      if (!roleSettings?.receiptScanEnabled) {
-        return NextResponse.json(
-          { error: "Receipt scanning is not available for your account." },
-          { status: 403 }
-        );
-      }
-
-      // Enforce monthly scan limit (0 = unlimited)
-      if (roleSettings.monthlyScanLimit > 0) {
-        const now = new Date();
-        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-        const scansThisMonth = await prisma.scanLog.count({
-          where: {
-            userId,
-            createdAt: { gte: monthStart },
-          },
-        });
-
-        if (scansThisMonth >= roleSettings.monthlyScanLimit) {
-          return NextResponse.json(
-            {
-              error: `Monthly scan limit reached (${scansThisMonth}/${roleSettings.monthlyScanLimit}). Limit resets next month.`,
-            },
-            { status: 403 }
-          );
-        }
-      }
-    }
+    // Parse form data while role check runs its course
     const formData = await request.formData();
     const file = formData.get("receipt");
 
@@ -104,15 +73,55 @@ export async function POST(request: Request) {
       );
     }
 
-    // Fetch user's expense categories (default + custom)
-    const categories = await prisma.category.findMany({
-      where: {
-        type: "EXPENSE",
-        OR: [{ isDefault: true }, { userId }],
-      },
-      orderBy: [{ isDefault: "desc" }, { name: "asc" }],
-      select: { id: true, name: true },
-    });
+    // Run permission checks + category fetch in parallel
+    const isAdmin = user?.role === "ADMIN";
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const [roleSettings, scansThisMonth, categories] = await Promise.all([
+      // Only fetch settings for non-admins
+      !isAdmin && user
+        ? prisma.appSettings.findUnique({ where: { role: user.role } })
+        : null,
+      // Only count scans for non-admins
+      !isAdmin
+        ? prisma.scanLog.count({
+            where: { userId, createdAt: { gte: monthStart } },
+          })
+        : 0,
+      // Always fetch categories (needed for Gemini prompt)
+      prisma.category.findMany({
+        where: {
+          type: "EXPENSE",
+          OR: [{ isDefault: true }, { userId }],
+        },
+        orderBy: [{ isDefault: "desc" }, { name: "asc" }],
+        select: { id: true, name: true },
+      }),
+    ]);
+
+    // Enforce role-based scan permissions for non-admins
+    if (!isAdmin && user) {
+      if (!roleSettings?.receiptScanEnabled) {
+        return NextResponse.json(
+          { error: "Receipt scanning is not available for your account." },
+          { status: 403 }
+        );
+      }
+
+      // Enforce monthly scan limit (0 = unlimited)
+      if (
+        roleSettings.monthlyScanLimit > 0 &&
+        scansThisMonth >= roleSettings.monthlyScanLimit
+      ) {
+        return NextResponse.json(
+          {
+            error: `Monthly scan limit reached (${scansThisMonth}/${roleSettings.monthlyScanLimit}). Limit resets next month.`,
+          },
+          { status: 403 }
+        );
+      }
+    }
 
     const categoryList = categories
       .map((c) => `- "${c.name}" (id: "${c.id}")`)

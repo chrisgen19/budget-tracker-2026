@@ -153,64 +153,81 @@ export function AppShell({ children }: AppShellProps) {
       setMultiScanItems(initialItems);
       setShowMultiScanReview(true);
 
-      // Scan sequentially so we don't overwhelm the API
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const itemId = initialItems[i].id;
+      // Compress all files in parallel (client-side only, no API cost)
+      const compressed = await Promise.all(
+        files.map((f) => compressImage(f).catch(() => f))
+      );
 
-        try {
-          const compressed = await compressImage(file);
-          const formData = new FormData();
-          formData.append("receipt", compressed);
+      // Process API calls with max 2 concurrent requests
+      const CONCURRENCY = 2;
+      let nextIndex = 0;
 
-          const res = await fetch("/api/receipts/scan", {
-            method: "POST",
-            body: formData,
-          });
+      const processNext = async (): Promise<void> => {
+        while (nextIndex < compressed.length) {
+          const i = nextIndex++;
+          const file = compressed[i];
+          const itemId = initialItems[i].id;
 
-          const data = await res.json();
+          try {
+            const formData = new FormData();
+            formData.append("receipt", file);
 
-          if (!res.ok) {
+            const res = await fetch("/api/receipts/scan", {
+              method: "POST",
+              body: formData,
+            });
+
+            const data = await res.json();
+
+            if (!res.ok) {
+              setMultiScanItems((prev) =>
+                prev.map((item) =>
+                  item.id === itemId
+                    ? { ...item, status: "error" as const, error: data.error ?? "Failed to scan receipt." }
+                    : item
+                )
+              );
+              continue;
+            }
+
             setMultiScanItems((prev) =>
               prev.map((item) =>
                 item.id === itemId
-                  ? { ...item, status: "error" as const, error: data.error ?? "Failed to scan receipt." }
+                  ? {
+                      ...item,
+                      status: "success" as const,
+                      data: {
+                        amount: data.amount,
+                        description: data.description,
+                        type: data.type,
+                        date: data.date,
+                        categoryId: data.categoryId,
+                      },
+                    }
                   : item
               )
             );
-            continue;
+
+            // Increment local scan count
+            setUser((prev) => ({ scansUsedThisMonth: prev.scansUsedThisMonth + 1 }));
+          } catch {
+            setMultiScanItems((prev) =>
+              prev.map((item) =>
+                item.id === itemId
+                  ? { ...item, status: "error" as const, error: "Network error. Please try again." }
+                  : item
+              )
+            );
           }
-
-          setMultiScanItems((prev) =>
-            prev.map((item) =>
-              item.id === itemId
-                ? {
-                    ...item,
-                    status: "success" as const,
-                    data: {
-                      amount: data.amount,
-                      description: data.description,
-                      type: data.type,
-                      date: data.date,
-                      categoryId: data.categoryId,
-                    },
-                  }
-                : item
-            )
-          );
-
-          // Increment local scan count
-          setUser((prev) => ({ scansUsedThisMonth: prev.scansUsedThisMonth + 1 }));
-        } catch {
-          setMultiScanItems((prev) =>
-            prev.map((item) =>
-              item.id === itemId
-                ? { ...item, status: "error" as const, error: "Network error. Please try again." }
-                : item
-            )
-          );
         }
-      }
+      };
+
+      // Start concurrent workers
+      await Promise.all(
+        Array.from({ length: Math.min(CONCURRENCY, compressed.length) }, () =>
+          processNext()
+        )
+      );
     },
     [setUser]
   );
@@ -251,39 +268,45 @@ export function AppShell({ children }: AppShellProps) {
 
     const successItems = multiScanItems.filter((i) => i.status === "success" && i.data);
 
-    for (const item of successItems) {
-      try {
-        const res = await fetch("/api/transactions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+    try {
+      const res = await fetch("/api/transactions/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transactions: successItems.map((item) => ({
             amount: item.data!.amount,
             description: item.data!.description,
             type: item.data!.type,
             date: item.data!.date ? new Date(item.data!.date).toISOString() : new Date().toISOString(),
             categoryId: item.data!.categoryId,
-          }),
-        });
+          })),
+        }),
+      });
 
-        if (!res.ok) {
-          // Mark individual item as failed, continue with others
-          setMultiScanItems((prev) =>
-            prev.map((i) =>
-              i.id === item.id
-                ? { ...i, status: "error" as const, error: "Failed to save." }
-                : i
-            )
-          );
-        }
-      } catch {
+      if (!res.ok) {
+        // Mark all items as failed
+        const failedIds = new Set(successItems.map((i) => i.id));
         setMultiScanItems((prev) =>
           prev.map((i) =>
-            i.id === item.id
-              ? { ...i, status: "error" as const, error: "Network error." }
+            failedIds.has(i.id)
+              ? { ...i, status: "error" as const, error: "Failed to save." }
               : i
           )
         );
+        setIsSavingAll(false);
+        return;
       }
+    } catch {
+      const failedIds = new Set(successItems.map((i) => i.id));
+      setMultiScanItems((prev) =>
+        prev.map((i) =>
+          failedIds.has(i.id)
+            ? { ...i, status: "error" as const, error: "Network error." }
+            : i
+        )
+      );
+      setIsSavingAll(false);
+      return;
     }
 
     setIsSavingAll(false);
