@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { signOut } from "next-auth/react";
 import {
@@ -26,6 +26,7 @@ import {
   type InitialTransactionData,
 } from "@/components/transactions/transaction-form";
 import { MultiScanReview } from "@/components/multi-scan-review";
+import { useCreateTransaction, useBatchCreateTransactions } from "@/hooks/use-transactions";
 import type { MultiScanItem } from "@/types";
 import type { TransactionInput } from "@/lib/validations";
 
@@ -41,8 +42,9 @@ const NAV_ITEMS = [
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
-  const router = useRouter();
   const { user, setUser } = useUser();
+  const createMutation = useCreateTransaction();
+  const batchCreateMutation = useBatchCreateTransactions();
   const [scanOpen, setScanOpen] = useState(false);
 
   // Single-scan OCR state
@@ -109,19 +111,9 @@ export function AppShell({ children }: AppShellProps) {
   };
 
   const handleScanFormSubmit = async (input: TransactionInput) => {
-    const res = await fetch("/api/transactions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input),
-    });
-
-    if (!res.ok) {
-      throw new Error("Failed to save transaction");
-    }
-
+    await createMutation.mutateAsync(input);
     setShowScanForm(false);
     setScanData(null);
-    router.push(`/transactions?t=${Date.now()}`);
   };
 
   const handleScanFormCancel = () => {
@@ -269,39 +261,21 @@ export function AppShell({ children }: AppShellProps) {
     const successItems = multiScanItems.filter((i) => i.status === "success" && i.data);
 
     try {
-      const res = await fetch("/api/transactions/batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          transactions: successItems.map((item) => ({
-            amount: item.data!.amount,
-            description: item.data!.description,
-            type: item.data!.type,
-            date: item.data!.date ? new Date(item.data!.date).toISOString() : new Date().toISOString(),
-            categoryId: item.data!.categoryId,
-          })),
-        }),
-      });
-
-      if (!res.ok) {
-        // Mark all items as failed
-        const failedIds = new Set(successItems.map((i) => i.id));
-        setMultiScanItems((prev) =>
-          prev.map((i) =>
-            failedIds.has(i.id)
-              ? { ...i, status: "error" as const, error: "Failed to save." }
-              : i
-          )
-        );
-        setIsSavingAll(false);
-        return;
-      }
+      await batchCreateMutation.mutateAsync(
+        successItems.map((item) => ({
+          amount: item.data!.amount!,
+          description: item.data!.description!,
+          type: item.data!.type!,
+          date: item.data!.date ? new Date(item.data!.date).toISOString() : new Date().toISOString(),
+          categoryId: item.data!.categoryId!,
+        }))
+      );
     } catch {
       const failedIds = new Set(successItems.map((i) => i.id));
       setMultiScanItems((prev) =>
         prev.map((i) =>
           failedIds.has(i.id)
-            ? { ...i, status: "error" as const, error: "Network error." }
+            ? { ...i, status: "error" as const, error: "Failed to save." }
             : i
         )
       );
@@ -313,7 +287,6 @@ export function AppShell({ children }: AppShellProps) {
     setShowMultiScanReview(false);
     setMultiScanItems([]);
     setEditingItemId(null);
-    router.push(`/transactions?t=${Date.now()}`);
   };
 
   const handleMultiScanClose = () => {

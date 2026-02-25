@@ -9,6 +9,7 @@ import { transactionSchema, type TransactionInput } from "@/lib/validations";
 import { formatDateInput, getCurrencySymbol, cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { useUser } from "@/components/user-provider";
+import { useCategoriesQuery, useQuickPreferencesQuery } from "@/hooks/use-categories";
 import type { Category, TransactionWithCategory } from "@/types";
 
 export interface InitialTransactionData {
@@ -56,17 +57,9 @@ const slideVariants = {
 
 const QUICK_CATEGORY_COUNT = 4;
 
-interface QuickPrefs {
-  quickExpenseCategories: string[];
-  quickIncomeCategories: string[];
-}
-
 export function TransactionForm({ transaction, initialData, onSubmit, onCancel, onDelete }: TransactionFormProps) {
   const { user } = useUser();
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [loadingCategories, setLoadingCategories] = useState(true);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
-  const [quickPrefs, setQuickPrefs] = useState<QuickPrefs | null>(null);
   const [displayAmount, setDisplayAmount] = useState<string>(() => {
     if (transaction?.amount != null) return formatAmountDisplay(transaction.amount);
     if (initialData?.amount != null) return formatAmountDisplay(initialData.amount);
@@ -102,6 +95,11 @@ export function TransactionForm({ transaction, initialData, onSubmit, onCancel, 
   const selectedType = watch("type");
   const watchedCategoryId = watch("categoryId");
   const watchedDate = watch("date");
+
+  // TanStack Query hooks — cached across mounts
+  const { data: categories = [], isLoading: loadingCategories } = useCategoriesQuery(selectedType);
+  const { data: quickPrefs } = useQuickPreferencesQuery();
+
   const selectedCategory = categories.find((c) => c.id === watchedCategoryId);
 
   // Resolve personalized quick categories from prefs
@@ -119,44 +117,24 @@ export function TransactionForm({ transaction, initialData, onSubmit, onCancel, 
 
   const isSelectedInQuick = quickCategories.some((c) => c.id === watchedCategoryId);
 
-  // Fetch quick category preferences once
+  // Apply initialData categoryId once after categories load
   useEffect(() => {
-    const fetchPrefs = async () => {
-      const res = await fetch("/api/preferences");
-      const data = await res.json();
-      setQuickPrefs({
-        quickExpenseCategories: data.quickExpenseCategories ?? [],
-        quickIncomeCategories: data.quickIncomeCategories ?? [],
-      });
-    };
-    fetchPrefs();
-  }, []);
+    if (categories.length === 0) return;
 
-  useEffect(() => {
-    const fetchCategories = async () => {
-      setLoadingCategories(true);
-      const res = await fetch(`/api/categories?type=${selectedType}`);
-      const data = await res.json();
-      setCategories(data);
-      setLoadingCategories(false);
-
-      // Apply initialData categoryId once after categories load
-      if (initialData?.categoryId && !initialCategoryApplied.current) {
-        const match = (data as Category[]).find((c) => c.id === initialData.categoryId);
-        if (match) {
-          setValue("categoryId", match.id, { shouldValidate: true });
-          initialCategoryApplied.current = true;
-          return;
-        }
+    if (initialData?.categoryId && !initialCategoryApplied.current) {
+      const match = categories.find((c) => c.id === initialData.categoryId);
+      if (match) {
+        setValue("categoryId", match.id, { shouldValidate: true });
+        initialCategoryApplied.current = true;
+        return;
       }
+    }
 
-      // Reset category when type changes (unless editing an existing transaction or applying initialData)
-      if (!transaction && !initialData?.categoryId) {
-        setValue("categoryId", "");
-      }
-    };
-    fetchCategories();
-  }, [selectedType, setValue, transaction, initialData]);
+    // Reset category when type changes (unless editing an existing transaction or applying initialData)
+    if (!transaction && !initialData?.categoryId) {
+      setValue("categoryId", "");
+    }
+  }, [categories, selectedType, setValue, transaction, initialData]);
 
   const setDateToToday = () => {
     setDateMode("today");
