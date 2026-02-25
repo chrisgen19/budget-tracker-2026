@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useState } from "react";
 import { Plus, Pencil, Trash2, Tags, Lock, X, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -9,48 +9,37 @@ import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CategoryForm } from "@/components/categories/category-form";
 import { QuickCategoryPicker } from "@/components/categories/quick-category-picker";
+import {
+  useCategoriesQuery,
+  useQuickPreferencesQuery,
+  useCreateCategory,
+  useUpdateCategory,
+  useDeleteCategory,
+  useSaveQuickPreferences,
+} from "@/hooks/use-categories";
 import type { CategoryInput } from "@/lib/validations";
 import type { Category } from "@/types";
 
 export default function CategoriesPage() {
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"ALL" | "INCOME" | "EXPENSE">("ALL");
   const [showForm, setShowForm] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [deletingCategory, setDeletingCategory] = useState<Category | null>(null);
-  const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState("");
-
-  // Quick Access state
-  const [allExpenseCategories, setAllExpenseCategories] = useState<Category[]>([]);
-  const [allIncomeCategories, setAllIncomeCategories] = useState<Category[]>([]);
-  const [quickExpenseIds, setQuickExpenseIds] = useState<string[]>([]);
-  const [quickIncomeIds, setQuickIncomeIds] = useState<string[]>([]);
   const [quickPickerType, setQuickPickerType] = useState<"EXPENSE" | "INCOME" | null>(null);
-  const [quickSaving, setQuickSaving] = useState(false);
-  const [quickLoading, setQuickLoading] = useState(true);
 
-  // Fetch quick access preferences and all categories by type
-  useEffect(() => {
-    const fetchQuickData = async () => {
-      const [prefsRes, expenseRes, incomeRes] = await Promise.all([
-        fetch("/api/preferences"),
-        fetch("/api/categories?type=EXPENSE"),
-        fetch("/api/categories?type=INCOME"),
-      ]);
-      const prefs = await prefsRes.json();
-      const expenses: Category[] = await expenseRes.json();
-      const incomes: Category[] = await incomeRes.json();
+  // TanStack Query hooks
+  const listType = filter === "ALL" ? undefined : filter;
+  const { data: categories = [], isLoading: loading } = useCategoriesQuery(listType);
+  const { data: expenseCategories = [] } = useCategoriesQuery("EXPENSE");
+  const { data: incomeCategories = [] } = useCategoriesQuery("INCOME");
+  const { data: quickPrefs, isLoading: quickLoading } = useQuickPreferencesQuery();
 
-      setAllExpenseCategories(expenses);
-      setAllIncomeCategories(incomes);
-      setQuickExpenseIds(prefs.quickExpenseCategories ?? []);
-      setQuickIncomeIds(prefs.quickIncomeCategories ?? []);
-      setQuickLoading(false);
-    };
-    fetchQuickData();
-  }, []);
+  // Mutation hooks
+  const createCategory = useCreateCategory();
+  const updateCategory = useUpdateCategory();
+  const deleteCategory = useDeleteCategory();
+  const saveQuickPrefs = useSaveQuickPreferences();
 
   /** Resolve quick IDs to category objects, falling back to first 4 */
   const resolveQuickCategories = (ids: string[], allCats: Category[]): Category[] => {
@@ -61,97 +50,37 @@ export default function CategoriesPage() {
     return resolved.length > 0 ? resolved : allCats.slice(0, 4);
   };
 
-  const quickExpenseCategories = resolveQuickCategories(quickExpenseIds, allExpenseCategories);
-  const quickIncomeCategories = resolveQuickCategories(quickIncomeIds, allIncomeCategories);
+  const quickExpenseIds = quickPrefs?.quickExpenseCategories ?? [];
+  const quickIncomeIds = quickPrefs?.quickIncomeCategories ?? [];
+  const quickExpenseCategories = resolveQuickCategories(quickExpenseIds, expenseCategories);
+  const quickIncomeCategories = resolveQuickCategories(quickIncomeIds, incomeCategories);
 
-  const handleQuickSave = async (ids: string[]) => {
+  const handleQuickSave = (ids: string[]) => {
     if (!quickPickerType) return;
-    setQuickSaving(true);
-
-    const field = quickPickerType === "EXPENSE" ? "quickExpenseCategories" : "quickIncomeCategories";
-    const res = await fetch("/api/preferences", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ [field]: ids }),
-    });
-
-    if (res.ok) {
-      if (quickPickerType === "EXPENSE") {
-        setQuickExpenseIds(ids);
-      } else {
-        setQuickIncomeIds(ids);
-      }
-      setQuickPickerType(null);
-    }
-    setQuickSaving(false);
+    saveQuickPrefs.mutate(
+      { type: quickPickerType, ids },
+      { onSuccess: () => setQuickPickerType(null) }
+    );
   };
 
-  const fetchCategories = useCallback(async () => {
-    setLoading(true);
-    const params = filter !== "ALL" ? `?type=${filter}` : "";
-    const res = await fetch(`/api/categories${params}`);
-    const data = await res.json();
-    setCategories(data);
-    setLoading(false);
-  }, [filter]);
-
-  useEffect(() => {
-    fetchCategories();
-  }, [fetchCategories]);
-
   const handleCreate = async (input: CategoryInput) => {
-    const res = await fetch("/api/categories", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input),
-    });
-
-    if (!res.ok) {
-      const body = await res.json();
-      throw new Error(body.error || "Failed to create category");
-    }
-
+    await createCategory.mutateAsync(input);
     setShowForm(false);
-    fetchCategories();
   };
 
   const handleUpdate = async (input: CategoryInput) => {
     if (!editingCategory) return;
-
-    const res = await fetch(`/api/categories/${editingCategory.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input),
-    });
-
-    if (!res.ok) {
-      const body = await res.json();
-      throw new Error(body.error || "Failed to update category");
-    }
-
+    await updateCategory.mutateAsync({ id: editingCategory.id, input });
     setEditingCategory(null);
-    fetchCategories();
   };
 
-  const handleDelete = async () => {
+  const handleDelete = () => {
     if (!deletingCategory) return;
-    setDeleteLoading(true);
     setDeleteError("");
-
-    const res = await fetch(`/api/categories/${deletingCategory.id}`, {
-      method: "DELETE",
+    deleteCategory.mutate(deletingCategory.id, {
+      onSuccess: () => setDeletingCategory(null),
+      onError: (error) => setDeleteError(error.message),
     });
-
-    if (!res.ok) {
-      const body = await res.json();
-      setDeleteError(body.error || "Failed to delete category");
-      setDeleteLoading(false);
-      return;
-    }
-
-    setDeleteLoading(false);
-    setDeletingCategory(null);
-    fetchCategories();
   };
 
   const defaultCategories = categories.filter((c) => c.isDefault);
@@ -508,10 +437,10 @@ export default function CategoriesPage() {
         {quickPickerType && (
           <QuickCategoryPicker
             selectedIds={quickPickerType === "EXPENSE" ? quickExpenseIds : quickIncomeIds}
-            allCategories={quickPickerType === "EXPENSE" ? allExpenseCategories : allIncomeCategories}
+            allCategories={quickPickerType === "EXPENSE" ? expenseCategories : incomeCategories}
             onSave={handleQuickSave}
             onCancel={() => setQuickPickerType(null)}
-            saving={quickSaving}
+            saving={saveQuickPrefs.isPending}
           />
         )}
       </Modal>
@@ -547,10 +476,10 @@ export default function CategoriesPage() {
           </button>
           <button
             onClick={handleDelete}
-            disabled={deleteLoading}
+            disabled={deleteCategory.isPending}
             className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl bg-expense hover:bg-expense-dark text-white font-medium text-sm transition-colors disabled:opacity-50"
           >
-            {deleteLoading ? (
+            {deleteCategory.isPending ? (
               <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
             ) : (
               <>
