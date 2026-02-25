@@ -12,6 +12,12 @@ export async function GET(request: Request) {
   const month = searchParams.get("month"); // format: YYYY-MM
   const page = parseInt(searchParams.get("page") || "1");
   const limit = parseInt(searchParams.get("limit") || "20");
+  const categoryId = searchParams.get("categoryId");
+  const amountMin = searchParams.get("amountMin");
+  const amountMax = searchParams.get("amountMax");
+  const sortBy = searchParams.get("sortBy") || "date"; // "date" | "amount"
+  const sortDir = searchParams.get("sortDir") || "desc"; // "asc" | "desc"
+  const search = searchParams.get("search");
 
   const where: Record<string, unknown> = { userId };
 
@@ -27,11 +33,35 @@ export async function GET(request: Request) {
     };
   }
 
+  if (categoryId) {
+    where.categoryId = categoryId;
+  }
+
+  // Amount range filter
+  if (amountMin || amountMax) {
+    const amountFilter: Record<string, number> = {};
+    if (amountMin) amountFilter.gte = parseFloat(amountMin);
+    if (amountMax) amountFilter.lte = parseFloat(amountMax);
+    where.amount = amountFilter;
+  }
+
+  // Server-side search (case-insensitive on description)
+  if (search) {
+    where.description = { contains: search, mode: "insensitive" };
+  }
+
+  // Dynamic sort
+  const direction = sortDir === "asc" ? "asc" : "desc";
+  const orderBy =
+    sortBy === "amount"
+      ? [{ amount: direction as "asc" | "desc" }, { date: "desc" as const }]
+      : [{ date: direction as "asc" | "desc" }, { createdAt: "desc" as const }];
+
   const [transactions, total] = await Promise.all([
     prisma.transaction.findMany({
       where,
       include: { category: true },
-      orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+      orderBy,
       skip: (page - 1) * limit,
       take: limit,
     }),
