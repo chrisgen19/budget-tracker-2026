@@ -276,6 +276,11 @@ export function AppShell({ children }: AppShellProps) {
         return;
       }
 
+      // Fetch categories to resolve IDs → names for breakdown metadata
+      const catRes = await fetch("/api/categories");
+      const cats: Array<{ id: string; name: string }> = await catRes.json();
+      const catMap = new Map(cats.map((c) => [c.id, c.name]));
+
       // Build shared metadata for all breakdown children
       const receiptGroupId = crypto.randomUUID();
       const receiptBreakdown = {
@@ -285,7 +290,7 @@ export function AppShell({ children }: AppShellProps) {
         ),
         items: data.items.map(
           (bi: { amount: number; categoryId: string; description: string }) => ({
-            category: bi.categoryId,
+            category: catMap.get(bi.categoryId) ?? bi.categoryId,
             amount: bi.amount,
             description: bi.description,
           })
