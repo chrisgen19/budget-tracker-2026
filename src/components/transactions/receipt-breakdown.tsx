@@ -46,7 +46,7 @@ export function ReceiptBreakdown({ breakdown, currency }: ReceiptBreakdownProps)
                 className="flex items-start justify-between gap-3 px-4 py-2.5"
               >
                 <p className="text-sm text-warm-500 leading-snug min-w-0">
-                  {item.description}
+                  {item.name}
                 </p>
                 <span className="text-sm font-medium text-warm-600 tabular-nums shrink-0">
                   {formatCurrency(item.amount, currency)}

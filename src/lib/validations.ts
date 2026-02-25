@@ -70,10 +70,16 @@ export const updateAppSettingsSchema = z.object({
   monthlyScanLimit: z.number().int().min(0).max(1000).optional(),
 });
 
+export const receiptBreakdownLineItemSchema = z.object({
+  name: z.string().max(255),
+  amount: z.number().positive(),
+});
+
 export const receiptBreakdownItemSchema = z.object({
   amount: z.number().positive(),
   categoryId: z.string().min(1),
   description: z.string().max(255),
+  lineItems: z.array(receiptBreakdownLineItemSchema).min(1).max(50),
 });
 
 export const receiptBreakdownResultSchema = z.object({

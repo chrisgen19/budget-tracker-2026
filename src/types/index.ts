@@ -42,7 +42,7 @@ export interface BalanceTrendItem {
 /** Metadata stored on each itemized transaction for future display */
 export interface ReceiptBreakdownMeta {
   total: number;
-  items: Array<{ category: string; amount: number; description: string }>;
+  items: Array<{ name: string; amount: number }>;
 }
 
 /** Single item in a multi-receipt scan batch */

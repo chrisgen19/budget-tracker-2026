@@ -276,30 +276,19 @@ export function AppShell({ children }: AppShellProps) {
         return;
       }
 
-      // Fetch categories to resolve IDs → names for breakdown metadata
-      const catRes = await fetch("/api/categories");
-      const cats: Array<{ id: string; name: string }> = await catRes.json();
-      const catMap = new Map(cats.map((c) => [c.id, c.name]));
-
-      // Build shared metadata for all breakdown children
+      // Build per-transaction breakdown metadata with individual line items
       const receiptGroupId = crypto.randomUUID();
-      const receiptBreakdown = {
-        total: data.items.reduce(
-          (sum: number, bi: { amount: number }) => sum + bi.amount,
-          0
-        ),
-        items: data.items.map(
-          (bi: { amount: number; categoryId: string; description: string }) => ({
-            category: catMap.get(bi.categoryId) ?? bi.categoryId,
-            amount: bi.amount,
-            description: bi.description,
-          })
-        ),
-      };
 
-      // Replace the single item with N breakdown items
+      interface BreakdownItem {
+        amount: number;
+        categoryId: string;
+        description: string;
+        lineItems: Array<{ name: string; amount: number }>;
+      }
+
+      // Replace the single item with N breakdown items (one per category group)
       const breakdownItems: MultiScanItem[] = data.items.map(
-        (bi: { amount: number; categoryId: string; description: string }, idx: number) => ({
+        (bi: BreakdownItem, idx: number) => ({
           id: `${id}-breakdown-${idx}`,
           fileName: item.fileName,
           status: "success" as const,
@@ -310,7 +299,14 @@ export function AppShell({ children }: AppShellProps) {
             date: data.date,
             categoryId: bi.categoryId,
             receiptGroupId,
-            receiptBreakdown,
+            // Per-transaction breakdown: line items within this category
+            receiptBreakdown: {
+              total: bi.amount,
+              items: bi.lineItems.map((li) => ({
+                name: li.name,
+                amount: li.amount,
+              })),
+            },
           },
           parentId: id,
         })
