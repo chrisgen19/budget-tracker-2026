@@ -19,7 +19,6 @@ import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { DropdownButton, type DropdownItem } from "@/components/ui/dropdown-button";
 import { TransactionForm } from "@/components/transactions/transaction-form";
-import { ReceiptBreakdown } from "@/components/transactions/receipt-breakdown";
 import {
   TransactionFiltersBar,
   type TransactionFilters,
@@ -36,7 +35,7 @@ import {
   useBulkDeleteTransactions,
 } from "@/hooks/use-transactions";
 import type { TransactionInput } from "@/lib/validations";
-import type { TransactionWithCategory, ReceiptBreakdownMeta } from "@/types";
+import type { TransactionWithCategory } from "@/types";
 
 /* ------------------------------------------------------------------ */
 /*  Types & helpers                                                    */
@@ -622,24 +621,16 @@ export default function TransactionsPage() {
         title="Edit Transaction"
       >
         {editingTransaction && (
-          <>
-            {editingTransaction.receiptBreakdown && (
-              <ReceiptBreakdown
-                breakdown={editingTransaction.receiptBreakdown as unknown as ReceiptBreakdownMeta}
-                currency={currency}
-              />
-            )}
-            <TransactionForm
-              transaction={editingTransaction}
-              onSubmit={handleUpdate}
-              onCancel={() => setEditingTransaction(null)}
-              onDelete={() => {
-                const tx = editingTransaction;
-                setEditingTransaction(null);
-                setDeletingTransaction(tx);
-              }}
-            />
-          </>
+          <TransactionForm
+            transaction={editingTransaction}
+            onSubmit={handleUpdate}
+            onCancel={() => setEditingTransaction(null)}
+            onDelete={() => {
+              const tx = editingTransaction;
+              setEditingTransaction(null);
+              setDeletingTransaction(tx);
+            }}
+          />
         )}
       </Modal>
 

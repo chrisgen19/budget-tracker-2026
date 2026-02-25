@@ -8,9 +8,10 @@ import { ArrowLeft, CalendarDays, ChevronRight, Plus, Trash2 } from "lucide-reac
 import { transactionSchema, type TransactionInput } from "@/lib/validations";
 import { formatDateInput, getCurrencySymbol, cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
+import { ReceiptBreakdown } from "@/components/transactions/receipt-breakdown";
 import { useUser } from "@/components/user-provider";
 import { useCategoriesQuery, useQuickPreferencesQuery } from "@/hooks/use-categories";
-import type { Category, TransactionWithCategory } from "@/types";
+import type { Category, TransactionWithCategory, ReceiptBreakdownMeta } from "@/types";
 
 export interface InitialTransactionData {
   amount?: number;
@@ -261,6 +262,14 @@ export function TransactionForm({ transaction, initialData, onSubmit, onCancel, 
                 Income
               </button>
             </div>
+
+            {/* Receipt Breakdown — only for itemized expenses */}
+            {selectedType === "EXPENSE" && transaction?.receiptBreakdown && (
+              <ReceiptBreakdown
+                breakdown={transaction.receiptBreakdown as unknown as ReceiptBreakdownMeta}
+                currency={user.currency}
+              />
+            )}
 
             {/* Amount — hero centerpiece */}
             <div className="text-center py-4">

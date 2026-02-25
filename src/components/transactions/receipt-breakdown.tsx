@@ -14,7 +14,7 @@ export function ReceiptBreakdown({ breakdown, currency }: ReceiptBreakdownProps)
   const [expanded, setExpanded] = useState(true);
 
   return (
-    <div className="rounded-xl border border-cream-200 bg-cream-50/60 mb-5">
+    <div className="rounded-xl border border-cream-200 bg-cream-50/60">
       {/* Header */}
       <button
         type="button"
