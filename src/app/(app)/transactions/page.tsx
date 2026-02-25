@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
-import { useSearchParams } from "next/navigation";
+import { useEffect, useState, useRef } from "react";
 import {
   Plus,
   Trash2,
@@ -27,22 +26,20 @@ import {
 import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import { useScan } from "@/components/scan-provider";
+import {
+  useTransactionsQuery,
+  useTransactionsInfiniteQuery,
+  useCreateTransaction,
+  useUpdateTransaction,
+  useDeleteTransaction,
+  useBulkDeleteTransactions,
+} from "@/hooks/use-transactions";
 import type { TransactionInput } from "@/lib/validations";
 import type { TransactionWithCategory } from "@/types";
 
 /* ------------------------------------------------------------------ */
 /*  Types & helpers                                                    */
 /* ------------------------------------------------------------------ */
-
-interface TransactionsResponse {
-  transactions: TransactionWithCategory[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
-}
 
 interface DateGroup {
   dateKey: string;
@@ -131,22 +128,13 @@ const createInitialFilters = (): TransactionFilters => {
 /* ------------------------------------------------------------------ */
 
 export default function TransactionsPage() {
-  const searchParams = useSearchParams();
-  const refreshKey = searchParams.get("t") ?? "";
   const { hideAmounts } = usePrivacy();
   const { user } = useUser();
   const { canScan, openScan, scanLimitReached, scansRemaining, hasLimit } = useScan();
   const currency = user.currency;
   const isInfinite = user.transactionLayout === "infinite";
-  const [data, setData] = useState<TransactionsResponse | null>(null);
-  const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<TransactionFilters>(createInitialFilters);
   const [page, setPage] = useState(1);
-
-  // Infinite scroll state
-  const [allTransactions, setAllTransactions] = useState<TransactionWithCategory[]>([]);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   // Selection
@@ -158,65 +146,31 @@ export default function TransactionsPage() {
     useState<TransactionWithCategory | null>(null);
   const [deletingTransaction, setDeletingTransaction] =
     useState<TransactionWithCategory | null>(null);
-  const [deleteLoading, setDeleteLoading] = useState(false);
   const [showBulkDelete, setShowBulkDelete] = useState(false);
 
-  /* ---- Data fetching ---- */
+  /* ---- TanStack Query hooks ---- */
 
-  const fetchTransactions = useCallback(async (pageToFetch: number, append: boolean) => {
-    if (append) {
-      setLoadingMore(true);
-    } else {
-      setLoading(true);
-    }
+  const infiniteQuery = useTransactionsInfiniteQuery(filters);
+  const paginatedQuery = useTransactionsQuery(filters, page);
 
-    const params = new URLSearchParams({
-      page: String(pageToFetch),
-      limit: "15",
-      month: filters.month,
-    });
-    if (filters.type !== "ALL") params.set("type", filters.type);
-    if (filters.search) params.set("search", filters.search);
-    if (filters.categoryId) params.set("categoryId", filters.categoryId);
-    if (filters.amountMin !== null) params.set("amountMin", String(filters.amountMin));
-    if (filters.amountMax !== null) params.set("amountMax", String(filters.amountMax));
-    if (filters.sortBy !== "date") params.set("sortBy", filters.sortBy);
-    if (filters.sortDir !== "desc") params.set("sortDir", filters.sortDir);
+  const createMutation = useCreateTransaction();
+  const updateMutation = useUpdateTransaction();
+  const deleteMutation = useDeleteTransaction();
+  const bulkDeleteMutation = useBulkDeleteTransactions();
 
-    const res = await fetch(`/api/transactions?${params}`);
-    const json: TransactionsResponse = await res.json();
-
-    if (append) {
-      setAllTransactions((prev) => {
-        const existingIds = new Set(prev.map((tx) => tx.id));
-        const newTxs = json.transactions.filter((tx: TransactionWithCategory) => !existingIds.has(tx.id));
-        return [...prev, ...newTxs];
-      });
-      setHasMore(pageToFetch < json.pagination.totalPages);
-      setLoadingMore(false);
-      setData(json);
-    } else {
-      setData(json);
-      if (isInfinite) {
-        setAllTransactions(json.transactions);
-        setHasMore(1 < json.pagination.totalPages);
-      }
-      setLoading(false);
-    }
-  }, [filters, isInfinite]);
-
-  // Initial fetch + reset on filter change (refreshKey triggers re-fetch after receipt scan)
+  // Reset page & selection when filters change
   useEffect(() => {
     setPage(1);
     setSelectedIds(new Set());
-    fetchTransactions(1, false);
-  }, [fetchTransactions, refreshKey]);
+  }, [filters]);
 
-  // Pagination mode: fetch when page changes (page > 1)
-  useEffect(() => {
-    if (isInfinite || page === 1) return;
-    fetchTransactions(page, false);
-  }, [page, isInfinite, fetchTransactions]);
+  // Destructure for stable references in useEffect deps
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading: infiniteIsLoading,
+    fetchNextPage,
+  } = infiniteQuery;
 
   // Infinite scroll: IntersectionObserver on sentinel
   useEffect(() => {
@@ -228,12 +182,13 @@ export default function TransactionsPage() {
     const observer = new IntersectionObserver(
       (entries) => {
         const entry = entries[0];
-        if (entry.isIntersecting && hasMore && !loadingMore && !loading) {
-          setPage((prev) => {
-            const nextPage = prev + 1;
-            fetchTransactions(nextPage, true);
-            return nextPage;
-          });
+        if (
+          entry.isIntersecting &&
+          hasNextPage &&
+          !isFetchingNextPage &&
+          !infiniteIsLoading
+        ) {
+          fetchNextPage();
         }
       },
       { rootMargin: "200px" }
@@ -241,17 +196,26 @@ export default function TransactionsPage() {
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [isInfinite, hasMore, loadingMore, loading, fetchTransactions]);
+  }, [isInfinite, hasNextPage, isFetchingNextPage, infiniteIsLoading, fetchNextPage]);
 
-  const refreshAfterMutation = useCallback(() => {
-    setPage(1);
-    setAllTransactions([]);
-    fetchTransactions(1, false);
-  }, [fetchTransactions]);
+  /* ---- Derived data ---- */
 
-  /* ---- Grouped data (no client-side search filtering — search is server-side) ---- */
+  const loading = isInfinite ? infiniteIsLoading : paginatedQuery.isLoading;
+  const loadingMore = isFetchingNextPage;
+  const hasMore = hasNextPage ?? false;
 
-  const sourceTransactions = isInfinite ? allTransactions : (data?.transactions ?? []);
+  // Flatten infinite pages into a single array, or use paginated data
+  const allInfiniteTransactions = infiniteQuery.data?.pages.flatMap((p) => p.transactions) ?? [];
+  const sourceTransactions = isInfinite
+    ? allInfiniteTransactions
+    : (paginatedQuery.data?.transactions ?? []);
+
+  // Pagination metadata
+  const paginationData = isInfinite
+    ? infiniteQuery.data?.pages[0]?.pagination
+    : paginatedQuery.data?.pagination;
+  const totalCount = paginationData?.total ?? null;
+  const totalPages = paginationData?.totalPages ?? 1;
 
   const dateGroups = groupByDate(sourceTransactions);
 
@@ -282,46 +246,26 @@ export default function TransactionsPage() {
   /* ---- CRUD handlers ---- */
 
   const handleCreate = async (input: TransactionInput) => {
-    await fetch("/api/transactions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input),
-    });
+    await createMutation.mutateAsync(input);
     setShowForm(false);
-    refreshAfterMutation();
   };
 
   const handleUpdate = async (input: TransactionInput) => {
     if (!editingTransaction) return;
-    await fetch(`/api/transactions/${editingTransaction.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input),
-    });
+    await updateMutation.mutateAsync({ id: editingTransaction.id, input });
     setEditingTransaction(null);
-    refreshAfterMutation();
   };
 
   const handleDelete = async () => {
     if (!deletingTransaction) return;
-    setDeleteLoading(true);
-    await fetch(`/api/transactions/${deletingTransaction.id}`, { method: "DELETE" });
-    setDeleteLoading(false);
+    await deleteMutation.mutateAsync(deletingTransaction.id);
     setDeletingTransaction(null);
-    refreshAfterMutation();
   };
 
   const handleBulkDelete = async () => {
-    setDeleteLoading(true);
-    await Promise.all(
-      Array.from(selectedIds).map((id) =>
-        fetch(`/api/transactions/${id}`, { method: "DELETE" })
-      )
-    );
-    setDeleteLoading(false);
+    await bulkDeleteMutation.mutateAsync(Array.from(selectedIds));
     setShowBulkDelete(false);
     setSelectedIds(new Set());
-    refreshAfterMutation();
   };
 
   const handleExport = () => {
@@ -348,6 +292,7 @@ export default function TransactionsPage() {
 
   /* ---- Render ---- */
 
+  const deleteLoading = deleteMutation.isPending || bulkDeleteMutation.isPending;
   const hasActiveSearch = filters.search !== "";
 
   return (
@@ -357,10 +302,10 @@ export default function TransactionsPage() {
         <div>
           <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">Transactions</h1>
           <p className="text-warm-400 text-sm mt-1">
-            {data
+            {totalCount !== null
               ? isInfinite
-                ? `${allTransactions.length} of ${data.pagination.total} loaded`
-                : `${data.pagination.total} total`
+                ? `${allInfiniteTransactions.length} of ${totalCount} loaded`
+                : `${totalCount} total`
               : "Loading..."}
           </p>
         </div>
@@ -403,7 +348,7 @@ export default function TransactionsPage() {
       <TransactionFiltersBar
         filters={filters}
         onChange={setFilters}
-        totalCount={data?.pagination.total ?? null}
+        totalCount={totalCount}
       />
 
       {/* Bulk Actions Bar */}
@@ -597,7 +542,7 @@ export default function TransactionsPage() {
                     <span className="ml-2 text-sm text-warm-400">Loading more...</span>
                   </div>
                 )}
-                {!hasMore && allTransactions.length > 0 && (
+                {!hasMore && allInfiniteTransactions.length > 0 && (
                   <div className="text-center py-4 border-t border-cream-200">
                     <p className="text-xs text-warm-300">All transactions loaded</p>
                   </div>
@@ -607,10 +552,10 @@ export default function TransactionsPage() {
             )}
 
             {/* Pagination (non-infinite mode) */}
-            {!isInfinite && data && data.pagination.totalPages > 1 && (
+            {!isInfinite && totalPages > 1 && (
               <div className="flex items-center justify-between px-5 py-3 border-t border-cream-200">
                 <p className="text-xs text-warm-400">
-                  Page {data.pagination.page} of {data.pagination.totalPages}
+                  Page {page} of {totalPages}
                 </p>
                 <div className="flex gap-1.5">
                   <button
@@ -622,7 +567,7 @@ export default function TransactionsPage() {
                   </button>
                   <button
                     onClick={() => setPage((p) => p + 1)}
-                    disabled={page >= data.pagination.totalPages}
+                    disabled={page >= totalPages}
                     className="px-3 py-1.5 rounded-lg text-xs font-medium text-warm-500 hover:bg-cream-100 disabled:opacity-30 transition-colors"
                   >
                     Next
