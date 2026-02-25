@@ -43,7 +43,7 @@ export interface BalanceTrendItem {
 export interface MultiScanItem {
   id: string;
   fileName: string;
-  status: "scanning" | "success" | "error";
+  status: "scanning" | "success" | "error" | "breaking_down";
   data?: {
     amount?: number;
     description?: string;
@@ -52,6 +52,10 @@ export interface MultiScanItem {
     categoryId?: string;
   };
   error?: string;
+  /** Compressed image kept in memory for breakdown requests */
+  imageFile?: File;
+  /** Set on breakdown children — prevents re-breakdown, enables "Itemized" badge */
+  parentId?: string;
 }
 
 /** Extend next-auth types */

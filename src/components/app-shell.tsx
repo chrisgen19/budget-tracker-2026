@@ -21,12 +21,9 @@ import { useUser } from "@/components/user-provider";
 import { ScanProvider } from "@/components/scan-provider";
 import { ScanReceiptSheet } from "@/components/scan-receipt-sheet";
 import { Modal } from "@/components/ui/modal";
-import {
-  TransactionForm,
-  type InitialTransactionData,
-} from "@/components/transactions/transaction-form";
+import { TransactionForm } from "@/components/transactions/transaction-form";
 import { MultiScanReview } from "@/components/multi-scan-review";
-import { useCreateTransaction, useBatchCreateTransactions } from "@/hooks/use-transactions";
+import { useBatchCreateTransactions } from "@/hooks/use-transactions";
 import type { MultiScanItem } from "@/types";
 import type { TransactionInput } from "@/lib/validations";
 
@@ -43,15 +40,12 @@ const NAV_ITEMS = [
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const { user, setUser } = useUser();
-  const createMutation = useCreateTransaction();
   const batchCreateMutation = useBatchCreateTransactions();
   const [scanOpen, setScanOpen] = useState(false);
 
   // Single-scan OCR state
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
-  const [scanData, setScanData] = useState<InitialTransactionData | null>(null);
-  const [showScanForm, setShowScanForm] = useState(false);
 
   // Multi-scan state
   const [multiScanItems, setMultiScanItems] = useState<MultiScanItem[]>([]);
@@ -90,17 +84,26 @@ export function AppShell({ children }: AppShellProps) {
         return;
       }
 
-      // Success — close scan sheet, open transaction form
-      setScanData({
-        amount: data.amount,
-        description: data.description,
-        type: data.type,
-        date: data.date,
-        categoryId: data.categoryId,
-      });
+      // Success — push into review modal (same flow as multi-scan)
+      const itemId = `${Date.now()}-single`;
+      setMultiScanItems([
+        {
+          id: itemId,
+          fileName: file.name,
+          status: "success" as const,
+          data: {
+            amount: data.amount,
+            description: data.description,
+            type: data.type,
+            date: data.date,
+            categoryId: data.categoryId,
+          },
+          imageFile: compressed,
+        },
+      ]);
       setIsScanning(false);
       setScanOpen(false);
-      setShowScanForm(true);
+      setShowMultiScanReview(true);
 
       // Increment local scan count
       setUser((prev) => ({ scansUsedThisMonth: prev.scansUsedThisMonth + 1 }));
@@ -108,17 +111,6 @@ export function AppShell({ children }: AppShellProps) {
       setScanError("Network error. Please check your connection and try again.");
       setIsScanning(false);
     }
-  };
-
-  const handleScanFormSubmit = async (input: TransactionInput) => {
-    await createMutation.mutateAsync(input);
-    setShowScanForm(false);
-    setScanData(null);
-  };
-
-  const handleScanFormCancel = () => {
-    setShowScanForm(false);
-    setScanData(null);
   };
 
   const handleScanSheetClose = () => {
@@ -195,6 +187,7 @@ export function AppShell({ children }: AppShellProps) {
                         date: data.date,
                         categoryId: data.categoryId,
                       },
+                      imageFile: file instanceof File ? file : undefined,
                     }
                   : item
               )
@@ -255,6 +248,69 @@ export function AppShell({ children }: AppShellProps) {
     setMultiScanItems((prev) => prev.filter((item) => item.id !== id));
   };
 
+  const handleItemize = async (id: string) => {
+    const item = multiScanItems.find((i) => i.id === id);
+    if (!item?.imageFile) return;
+
+    // Set status to breaking_down
+    setMultiScanItems((prev) =>
+      prev.map((i) => (i.id === id ? { ...i, status: "breaking_down" as const } : i))
+    );
+
+    try {
+      const formData = new FormData();
+      formData.append("receipt", item.imageFile);
+
+      const res = await fetch("/api/receipts/breakdown", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        // Revert to success on error
+        setMultiScanItems((prev) =>
+          prev.map((i) => (i.id === id ? { ...i, status: "success" as const } : i))
+        );
+        return;
+      }
+
+      // Replace the single item with N breakdown items
+      const breakdownItems: MultiScanItem[] = data.items.map(
+        (bi: { amount: number; categoryId: string; description: string }, idx: number) => ({
+          id: `${id}-breakdown-${idx}`,
+          fileName: item.fileName,
+          status: "success" as const,
+          data: {
+            amount: bi.amount,
+            description: bi.description,
+            type: "EXPENSE" as const,
+            date: data.date,
+            categoryId: bi.categoryId,
+          },
+          parentId: id,
+        })
+      );
+
+      setMultiScanItems((prev) => {
+        const index = prev.findIndex((i) => i.id === id);
+        if (index === -1) return prev;
+        const next = [...prev];
+        next.splice(index, 1, ...breakdownItems);
+        return next;
+      });
+
+      // Increment local scan count (breakdown = 1 additional credit)
+      setUser((prev) => ({ scansUsedThisMonth: prev.scansUsedThisMonth + 1 }));
+    } catch {
+      // Revert to success on network error
+      setMultiScanItems((prev) =>
+        prev.map((i) => (i.id === id ? { ...i, status: "success" as const } : i))
+      );
+    }
+  };
+
   const handleMultiScanSaveAll = async () => {
     setIsSavingAll(true);
 
@@ -290,8 +346,10 @@ export function AppShell({ children }: AppShellProps) {
   };
 
   const handleMultiScanClose = () => {
-    // Block closing while scanning or saving
-    const isStillScanning = multiScanItems.some((i) => i.status === "scanning");
+    // Block closing while scanning, breaking down, or saving
+    const isStillScanning = multiScanItems.some(
+      (i) => i.status === "scanning" || i.status === "breaking_down"
+    );
     if (isStillScanning || isSavingAll) return;
 
     setShowMultiScanReview(false);
@@ -509,21 +567,6 @@ export function AppShell({ children }: AppShellProps) {
         scansRemaining={scansRemaining}
       />
 
-      {/* Scanned Transaction Form Modal */}
-      <Modal
-        open={showScanForm}
-        onClose={handleScanFormCancel}
-        title="Add Transaction"
-      >
-        {showScanForm && scanData && (
-          <TransactionForm
-            initialData={scanData}
-            onSubmit={handleScanFormSubmit}
-            onCancel={handleScanFormCancel}
-          />
-        )}
-      </Modal>
-
       {/* Multi-Scan Review Modal */}
       <Modal
         open={showMultiScanReview && editingItemId === null}
@@ -535,6 +578,7 @@ export function AppShell({ children }: AppShellProps) {
             items={multiScanItems}
             onEdit={handleMultiScanEdit}
             onRemove={handleMultiScanRemove}
+            onItemize={handleItemize}
             onSaveAll={handleMultiScanSaveAll}
             onClose={handleMultiScanClose}
             isSaving={isSavingAll}

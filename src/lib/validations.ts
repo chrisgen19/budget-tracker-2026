@@ -65,6 +65,18 @@ export const updateAppSettingsSchema = z.object({
   monthlyScanLimit: z.number().int().min(0).max(1000).optional(),
 });
 
+export const receiptBreakdownItemSchema = z.object({
+  amount: z.number().positive(),
+  categoryId: z.string().min(1),
+  description: z.string().max(255),
+});
+
+export const receiptBreakdownResultSchema = z.object({
+  date: z.string().min(1),
+  items: z.array(receiptBreakdownItemSchema).min(1).max(20),
+});
+
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export type ReceiptScanResult = z.infer<typeof receiptScanResultSchema>;
+export type ReceiptBreakdownResult = z.infer<typeof receiptBreakdownResultSchema>;
 export type UpdateAppSettingsInput = z.infer<typeof updateAppSettingsSchema>;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Pencil, Trash2, AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
+import { Pencil, Trash2, AlertCircle, CheckCircle2, Loader2, Rows3 } from "lucide-react";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { formatCurrency } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
@@ -11,6 +11,7 @@ interface MultiScanReviewProps {
   items: MultiScanItem[];
   onEdit: (id: string) => void;
   onRemove: (id: string) => void;
+  onItemize: (id: string) => void;
   onSaveAll: () => void;
   onClose: () => void;
   isSaving: boolean;
@@ -20,6 +21,7 @@ export function MultiScanReview({
   items,
   onEdit,
   onRemove,
+  onItemize,
   onSaveAll,
   onClose,
   isSaving,
@@ -40,8 +42,10 @@ export function MultiScanReview({
     categories.find((c) => c.id === categoryId);
 
   const scanningCount = items.filter((i) => i.status === "scanning").length;
+  const breakingDownCount = items.filter((i) => i.status === "breaking_down").length;
   const successCount = items.filter((i) => i.status === "success").length;
   const isStillScanning = scanningCount > 0;
+  const isBreakingDown = breakingDownCount > 0;
   const totalItems = items.length;
   const scannedSoFar = totalItems - scanningCount;
 
@@ -92,6 +96,23 @@ export function MultiScanReview({
             );
           }
 
+          if (item.status === "breaking_down") {
+            return (
+              <div
+                key={item.id}
+                className="flex items-center gap-3 p-4 rounded-xl border border-amber/20 bg-amber-light/30"
+              >
+                <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center shrink-0">
+                  <Loader2 className="w-5 h-5 text-amber animate-spin" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-amber-dark truncate">{item.fileName}</p>
+                  <p className="text-xs text-amber-dark/70">Itemizing receipt...</p>
+                </div>
+              </div>
+            );
+          }
+
           if (item.status === "error") {
             return (
               <div
@@ -124,6 +145,8 @@ export function MultiScanReview({
                 day: "numeric",
               })
             : "";
+          const canItemize = !!item.imageFile && !item.parentId;
+          const isItemizedChild = !!item.parentId;
 
           return (
             <div
@@ -150,9 +173,16 @@ export function MultiScanReview({
 
               {/* Details */}
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-warm-700 truncate">
-                  {item.data?.description || "No description"}
-                </p>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-sm font-medium text-warm-700 truncate">
+                    {item.data?.description || "No description"}
+                  </p>
+                  {isItemizedChild && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-light/60 text-amber-dark shrink-0">
+                      Itemized
+                    </span>
+                  )}
+                </div>
                 <div className="flex items-center gap-2 mt-0.5">
                   {category && (
                     <span className="text-xs text-warm-400">{category.name}</span>
@@ -175,6 +205,16 @@ export function MultiScanReview({
 
               {/* Actions */}
               <div className="flex items-center gap-1 shrink-0">
+                {canItemize && (
+                  <button
+                    type="button"
+                    onClick={() => onItemize(item.id)}
+                    title="Itemize receipt"
+                    className="p-2 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors"
+                  >
+                    <Rows3 className="w-4 h-4" />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => onEdit(item.id)}
@@ -201,7 +241,7 @@ export function MultiScanReview({
           <button
             type="button"
             onClick={onSaveAll}
-            disabled={isSaving}
+            disabled={isSaving || isBreakingDown}
             className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-amber hover:bg-amber-dark text-white font-medium text-sm transition-colors shadow-soft disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isSaving ? (
