@@ -459,3 +459,70 @@ All notable development history for the Budget Tracker app.
 ### API Routes
 - `GET /api/admin/settings` — returns per-role scan settings (admin only)
 - `PATCH /api/admin/settings` — update individual role settings with Zod validation (admin only)
+
+---
+
+## 2026-02-24 — Desktop Scan, HEIC Support & Advanced Filters
+
+### Desktop Receipt Scanning
+- Added **Scan Receipt** option to desktop "Add Transaction" buttons on Dashboard and Transactions pages
+- Dropdown button with animation and keyboard support — appears alongside the existing "Add Transaction" action
+- Scan limits enforced with disabled state and remaining count sublabel
+- Created `ScanProvider` context to expose scan state from `AppShell` to child pages
+- Created reusable `DropdownButton` component with Framer Motion animation and outside-click dismiss
+
+### HEIC/HEIF Support
+- Fixed receipt uploads failing on non-Safari browsers for HEIC/HEIF files
+- Added `isHeicFile()` helper to bypass canvas compression for HEIC files (which browsers can't render to canvas)
+- Added `resolveMimeType()` fallback using file extension when browser reports empty MIME type
+- Updated error message to explicitly list HEIC as an accepted format
+
+### Advanced Transaction Filters
+- Redesigned filter bar with **category dropdown**, **amount range** (min/max), **sort options** (date, amount — asc/desc), and **server-side search**
+- New `TransactionFiltersBar` component with expandable mobile layout, filter chips with clear buttons, and "Clear All" reset
+- API now supports `categoryId`, `amountMin`, `amountMax`, `sortBy`, `sortDir`, and `search` query parameters
+- Type toggle shows colored active states (green for income, red for expenses, amber for all)
+
+### Bug Fixes
+- Fixed category selection resetting when editing individual items in multi-scan review modal
+- Fixed admin settings page crashing on fresh deploys — API now auto-creates default FREE/PAID settings via upsert when rows don't exist
+
+---
+
+## 2026-02-25 — Receipt Scan Performance & TanStack Query Caching
+
+### Receipt Scanning Performance
+- **Parallel multi-scan processing** — batch uploads now process with a concurrency limit of 3 instead of sequentially, significantly reducing total scan time
+- **Parallel DB queries** in scan API route — settings, scan count, and categories fetched via `Promise.all` instead of sequentially
+- **Parallel client-side compression** — all selected images compressed in parallel before API calls begin
+- **Batch transaction creation** — new `POST /api/transactions/batch` endpoint saves all scanned items in a single request instead of N sequential POSTs
+
+### TanStack Query Integration
+- Added **TanStack Query** (`@tanstack/react-query`) for client-side data caching with 5-minute stale time and 30-minute garbage collection
+- Created shared `QueryClient` instance (`src/lib/query-client.ts`) wrapped in `Providers` component
+- `QueryClientProvider` wraps the entire app alongside `SessionProvider`
+
+### Transaction & Dashboard Caching (`src/hooks/use-transactions.ts`)
+- Query key factory for transactions (list, infinite, filters) and dashboard (by month)
+- `useTransactionsQuery` — paginated query with placeholder data for smooth page transitions
+- `useTransactionsInfiniteQuery` — infinite scroll with automatic next-page detection
+- `useDashboardQuery` — monthly dashboard stats
+- Mutation hooks (`useCreateTransaction`, `useUpdateTransaction`, `useDeleteTransaction`, `useBulkDeleteTransactions`, `useBatchCreateTransactions`) with **in-place cache updates** — new/edited/deleted transactions update the infinite scroll list immediately without a full refetch
+- Dashboard and transaction list caches invalidate automatically after mutations
+
+### Category & Preferences Caching (`src/hooks/use-categories.ts`)
+- `useCategoriesQuery(type?)` — cached categories by type (EXPENSE, INCOME, or all)
+- `useQuickPreferencesQuery()` — cached quick-access category preferences
+- Mutation hooks (`useCreateCategory`, `useUpdateCategory`, `useDeleteCategory`, `useSaveQuickPreferences`) with automatic cache invalidation
+- **Transaction form** — categories load instantly on re-open (no shimmer re-flash after first load)
+- **Categories page** — all fetch/state replaced with query/mutation hooks; Quick Access section uses cached typed queries
+
+### Files Refactored
+- `src/app/(app)/transactions/page.tsx` — replaced manual `fetch`/`useEffect`/`useState` with `useTransactionsInfiniteQuery` + mutation hooks
+- `src/app/(app)/dashboard/page.tsx` — replaced manual fetch with `useDashboardQuery` + `useCreateTransaction`
+- `src/components/app-shell.tsx` — replaced `router.push` redirects with mutation hooks for transaction creation from scan
+- `src/components/transactions/transaction-form.tsx` — replaced category/preferences fetch with cached query hooks
+- `src/app/(app)/categories/page.tsx` — replaced all state management with query/mutation hooks
+
+### API Routes
+- `POST /api/transactions/batch` — atomic batch creation of multiple transactions (used by multi-scan save-all)
