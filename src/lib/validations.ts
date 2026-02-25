@@ -23,6 +23,11 @@ export const transactionSchema = z.object({
   categoryId: z.string().min(1, "Category is required"),
 });
 
+export const batchTransactionSchema = transactionSchema.extend({
+  receiptGroupId: z.string().optional(),
+  receiptBreakdown: z.any().optional(),
+});
+
 export const categorySchema = z.object({
   name: z.string().min(1, "Name is required").max(50),
   type: z.enum(["INCOME", "EXPENSE"]),

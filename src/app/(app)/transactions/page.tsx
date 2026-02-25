@@ -501,9 +501,16 @@ export default function TransactionsPage() {
 
                         {/* Description + category */}
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-warm-600 truncate">
-                            {tx.description}
-                          </p>
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-sm font-medium text-warm-600 truncate">
+                              {tx.description}
+                            </p>
+                            {tx.receiptGroupId && (
+                              <span className="shrink-0 bg-amber-light/60 text-amber-dark text-[10px] font-medium px-1.5 py-0.5 rounded">
+                                Itemized
+                              </span>
+                            )}
+                          </div>
                           <p className="text-xs text-warm-300 truncate">
                             {tx.category.name}
                           </p>

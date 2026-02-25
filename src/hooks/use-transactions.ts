@@ -360,6 +360,8 @@ export function useBatchCreateTransactions() {
         type: string;
         date: string;
         categoryId: string;
+        receiptGroupId?: string;
+        receiptBreakdown?: unknown;
       }>
     ) => {
       const res = await fetch("/api/transactions/batch", {

@@ -56,20 +56,23 @@ model Category {
 }
 
 model Transaction {
-  id          String          @id @default(cuid())
-  amount      Float
-  description String
-  type        TransactionType
-  date        DateTime
-  categoryId  String          @map("category_id")
-  category    Category        @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  userId      String          @map("user_id")
-  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt   DateTime        @default(now()) @map("created_at")
-  updatedAt   DateTime        @updatedAt @map("updated_at")
+  id               String          @id @default(cuid())
+  amount           Float
+  description      String
+  type             TransactionType
+  date             DateTime
+  categoryId       String          @map("category_id")
+  category         Category        @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  userId           String          @map("user_id")
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  receiptGroupId   String?         @map("receipt_group_id")
+  receiptBreakdown Json?           @map("receipt_breakdown")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
 
   @@index([userId, date])
   @@index([userId, type])
+  @@index([receiptGroupId])
   @@map("transactions")
 }
 

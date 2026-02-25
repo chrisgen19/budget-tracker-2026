@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
-import { transactionSchema } from "@/lib/validations";
+import { batchTransactionSchema } from "@/lib/validations";
 
 const batchSchema = z.object({
-  transactions: z.array(transactionSchema).min(1).max(50),
+  transactions: z.array(batchTransactionSchema).min(1).max(50),
 });
 
 export async function POST(request: Request) {
@@ -27,6 +27,8 @@ export async function POST(request: Request) {
             date: new Date(t.date),
             categoryId: t.categoryId,
             userId,
+            ...(t.receiptGroupId && { receiptGroupId: t.receiptGroupId }),
+            ...(t.receiptBreakdown && { receiptBreakdown: t.receiptBreakdown }),
           },
           include: { category: true },
         })

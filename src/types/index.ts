@@ -39,6 +39,12 @@ export interface BalanceTrendItem {
   balance: number;
 }
 
+/** Metadata stored on each itemized transaction for future display */
+export interface ReceiptBreakdownMeta {
+  total: number;
+  items: Array<{ category: string; amount: number; description: string }>;
+}
+
 /** Single item in a multi-receipt scan batch */
 export interface MultiScanItem {
   id: string;
@@ -50,6 +56,8 @@ export interface MultiScanItem {
     type?: "INCOME" | "EXPENSE";
     date?: string;
     categoryId?: string;
+    receiptGroupId?: string;
+    receiptBreakdown?: ReceiptBreakdownMeta;
   };
   error?: string;
   /** Compressed image kept in memory for breakdown requests */

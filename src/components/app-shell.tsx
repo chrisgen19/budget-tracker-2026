@@ -276,6 +276,22 @@ export function AppShell({ children }: AppShellProps) {
         return;
       }
 
+      // Build shared metadata for all breakdown children
+      const receiptGroupId = crypto.randomUUID();
+      const receiptBreakdown = {
+        total: data.items.reduce(
+          (sum: number, bi: { amount: number }) => sum + bi.amount,
+          0
+        ),
+        items: data.items.map(
+          (bi: { amount: number; categoryId: string; description: string }) => ({
+            category: bi.categoryId,
+            amount: bi.amount,
+            description: bi.description,
+          })
+        ),
+      };
+
       // Replace the single item with N breakdown items
       const breakdownItems: MultiScanItem[] = data.items.map(
         (bi: { amount: number; categoryId: string; description: string }, idx: number) => ({
@@ -288,6 +304,8 @@ export function AppShell({ children }: AppShellProps) {
             type: "EXPENSE" as const,
             date: data.date,
             categoryId: bi.categoryId,
+            receiptGroupId,
+            receiptBreakdown,
           },
           parentId: id,
         })
@@ -324,6 +342,8 @@ export function AppShell({ children }: AppShellProps) {
           type: item.data!.type!,
           date: item.data!.date ? new Date(item.data!.date).toISOString() : new Date().toISOString(),
           categoryId: item.data!.categoryId!,
+          ...(item.data!.receiptGroupId && { receiptGroupId: item.data!.receiptGroupId }),
+          ...(item.data!.receiptBreakdown && { receiptBreakdown: item.data!.receiptBreakdown }),
         }))
       );
     } catch {
