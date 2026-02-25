@@ -22,6 +22,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **User Roles** — Three-tier role system (ADMIN, FREE, PAID); new users default to FREE; admin can manually promote users to PAID via an admin panel; receipt scanning gated to PAID/ADMIN users
 - **Admin Panel** — Admin-only user management page (`/admin`) with user list, role badges, transaction counts, and one-click FREE/PAID role toggle; scan settings page with per-role configuration for receipt scanning, upload limits, and monthly scan limits; protected by middleware and API-level guards
 - **Receipt Scanning** — Snap a photo or upload multiple receipts and AI (Google Gemini) extracts the amount, date, category, and merchant to pre-fill transactions; batch scanning with live review modal and parallel processing; smart category matching with merchant-aware rules; non-receipt image detection; images compressed client-side before upload; HEIC/HEIF support; desktop scan dropdown on Add Transaction buttons; available to PAID/ADMIN users
+- **Receipt Itemization** — One-tap "Itemize" button splits a scanned receipt into multiple transactions grouped by spending category (e.g., Food & Dining, Personal Care, Household); each itemized transaction stores its individual line items and displays them in a collapsible "Receipt Breakdown" section inside the edit modal showing every product name and price from the receipt
 - **Monthly Scan Limits** — Configurable per-role monthly scan caps (0 = unlimited); usage badge on mobile scan button; remaining scans info in scan sheet; desktop sidebar warnings when running low or exhausted; ADMIN always unlimited
 - **TanStack Query Caching** — Client-side data caching for transactions, dashboard stats, categories, and quick-access preferences; instant re-renders on modal re-open (no loading shimmer after first fetch); in-place cache updates on create/edit/delete mutations
 - **Profile Settings** — Edit name, email, and preferred currency; change password with current-password verification; role badge displayed in header; feature toggles gated by role; sidebar updates instantly via shared context
@@ -159,11 +160,11 @@ src/
 │       ├── dashboard/       # Dashboard stats + balance trend
 │       ├── preferences/     # User preferences (privacy, quick categories, features)
 │       ├── profile/         # Profile & password update
-│       └── receipts/scan/   # Receipt OCR via Gemini AI
+│       └── receipts/        # Receipt OCR + itemized breakdown via Gemini AI
 ├── components/
 │   ├── ui/                  # Shared UI (Modal, EmptyState, IconMap)
 │   ├── dashboard/           # Chart components (Trend, Spending, BalanceTrend)
-│   ├── transactions/        # Transaction form
+│   ├── transactions/        # Transaction form + receipt breakdown viewer
 │   ├── categories/          # Category form + quick category picker
 │   ├── landing-page.tsx     # Marketing homepage for guests
 │   ├── scan-receipt-sheet.tsx # Receipt capture modal (camera/upload)
@@ -193,7 +194,7 @@ AppSettings (per role: FREE, PAID)
 
 - **User** — id, name, email, password, role (ADMIN/FREE/PAID), currency, hide_amounts, quickExpenseCategories, quickIncomeCategories, receiptScanEnabled, transactionLayout
 - **Category** — id, name, type (INCOME/EXPENSE), icon, color, isDefault, userId (null for defaults)
-- **Transaction** — id, amount, description, type, date, categoryId, userId
+- **Transaction** — id, amount, description, type, date, categoryId, userId, receiptGroupId (links itemized siblings), receiptBreakdown (JSON — individual line items)
 - **AppSettings** — id, role (unique), receiptScanEnabled, maxUploadFiles, monthlyScanLimit
 - **ScanLog** — id, userId, createdAt (tracks scan usage for monthly limits)
 

@@ -526,3 +526,38 @@ All notable development history for the Budget Tracker app.
 
 ### API Routes
 - `POST /api/transactions/batch` — atomic batch creation of multiple transactions (used by multi-scan save-all)
+
+---
+
+## 2026-02-25 — Receipt Itemization & Breakdown Viewer
+
+### Receipt Itemization (Split by Category)
+- New **"Itemize" button** in the multi-scan review modal — splits a single receipt into multiple transactions grouped by spending category
+- `POST /api/receipts/breakdown` — sends the receipt image to Gemini AI with a category-aware prompt that reads every line item, groups them by category, and returns per-category totals with individual product details
+- Each itemized transaction is linked via a shared `receiptGroupId` and tagged with an **"Itemized" badge** in the transaction list
+- Itemized transactions store `receiptBreakdown` JSON metadata with the individual line items for that category
+
+### Receipt Breakdown Viewer
+- New **`ReceiptBreakdown` component** — collapsible read-only section inside the transaction edit modal showing individual line items from the receipt
+- Rendered below the Expense/Income type toggle, only for expense transactions with breakdown data
+- Each line item shows the product name (as printed on the receipt) and its price
+- Footer row shows the category total
+- Starts expanded with a header showing item count and chevron toggle
+- Styled with the app's warm/cream aesthetic
+
+### Breakdown API Prompt
+- Gemini prompt returns `lineItems` array per category group — each entry contains the exact product name and price from the receipt
+- Per-transaction breakdown metadata stores only the line items for that specific category (not all categories)
+- Category names resolved from IDs before storing in breakdown metadata
+
+### Database
+- Added `receipt_group_id` and `receipt_breakdown` columns to `transactions` table (Prisma migration)
+
+### Files Changed
+- `src/app/api/receipts/breakdown/route.ts` — new API route for receipt itemization with category-aware Gemini prompt
+- `src/components/transactions/receipt-breakdown.tsx` — new collapsible breakdown viewer component
+- `src/components/transactions/transaction-form.tsx` — renders breakdown below type toggle for itemized expenses
+- `src/components/app-shell.tsx` — `handleItemize` builds per-transaction breakdown with individual line items
+- `src/components/multi-scan-review.tsx` — Itemize button and "Itemized" badge per breakdown child
+- `src/lib/validations.ts` — added `lineItems` schema to breakdown result validation
+- `src/types/index.ts` — `ReceiptBreakdownMeta` type with `name` + `amount` per item
