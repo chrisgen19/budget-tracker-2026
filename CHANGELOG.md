@@ -561,3 +561,11 @@ All notable development history for the Budget Tracker app.
 - `src/components/multi-scan-review.tsx` — Itemize button and "Itemized" badge per breakdown child
 - `src/lib/validations.ts` — added `lineItems` schema to breakdown result validation
 - `src/types/index.ts` — `ReceiptBreakdownMeta` type with `name` + `amount` per item
+
+---
+
+## 2026-02-26 — Dashboard Bug Fixes
+
+### Bug Fixes
+- Fixed **non-deterministic ordering** of dashboard recent transactions — added `id` as a final sort tiebreaker to prevent inconsistent results when multiple transactions share the same date and creation time (common with batch-created receipt scan transactions)
+- Fixed **dashboard loading skeleton** not matching the actual layout on mobile — summary cards skeleton now uses horizontal scroll with snap points (matching the real cards) instead of a vertical stack; card placeholders include title, subtitle, and eye button; recent transactions section uses correct padding, dividers, and 5 rows (matching the real list)
