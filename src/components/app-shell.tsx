@@ -78,6 +78,8 @@ export function AppShell({ children }: AppShellProps) {
       const compressed = await compressImage(file);
       const formData = new FormData();
       formData.append("receipt", compressed);
+      const now = new Date();
+      formData.append("localDate", `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`);
 
       const res = await fetch("/api/receipts/scan", {
         method: "POST",
@@ -165,6 +167,8 @@ export function AppShell({ children }: AppShellProps) {
           try {
             const formData = new FormData();
             formData.append("receipt", file);
+            const n = new Date();
+            formData.append("localDate", `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`);
 
             const res = await fetch("/api/receipts/scan", {
               method: "POST",

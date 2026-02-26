@@ -126,8 +126,12 @@ export async function POST(request: Request) {
       .map((c) => `- "${c.name}" (id: "${c.id}")`)
       .join("\n");
 
-    // Date-only fallback — time is appended on the client using the user's local clock
-    const todayStr = new Date().toISOString().slice(0, 10);
+    // Date-only fallback — prefer client's local date to avoid UTC offset issues
+    const localDate = formData.get("localDate");
+    const todayStr =
+      typeof localDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(localDate)
+        ? localDate
+        : new Date().toISOString().slice(0, 10);
 
     // Convert file to base64
     const arrayBuffer = await file.arrayBuffer();
