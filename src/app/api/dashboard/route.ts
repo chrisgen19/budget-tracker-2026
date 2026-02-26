@@ -49,7 +49,7 @@ export async function GET(request: Request) {
     prisma.transaction.findMany({
       where: { userId },
       include: { category: true },
-      orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+      orderBy: [{ date: "desc" }, { createdAt: "desc" }, { id: "asc" }],
       take: 5,
     }),
 
