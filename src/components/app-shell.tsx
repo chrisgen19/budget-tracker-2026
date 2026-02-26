@@ -98,6 +98,7 @@ export function AppShell({ children }: AppShellProps) {
             date: data.date,
             categoryId: data.categoryId,
             multiCategory: data.multiCategory,
+            breakdown: data.breakdown,
           },
           imageFile: compressed,
         },
@@ -188,6 +189,7 @@ export function AppShell({ children }: AppShellProps) {
                         date: data.date,
                         categoryId: data.categoryId,
                         multiCategory: data.multiCategory,
+                        breakdown: data.breakdown,
                       },
                       imageFile: file instanceof File ? file : undefined,
                     }
@@ -250,9 +252,71 @@ export function AppShell({ children }: AppShellProps) {
     setMultiScanItems((prev) => prev.filter((item) => item.id !== id));
   };
 
+  /** Expand a multi-category receipt into per-category breakdown items */
+  const expandBreakdown = useCallback(
+    (
+      id: string,
+      fileName: string,
+      date: string,
+      items: Array<{
+        amount: number;
+        categoryId: string;
+        description: string;
+        lineItems: Array<{ name: string; amount: number }>;
+      }>
+    ) => {
+      const receiptGroupId = crypto.randomUUID();
+
+      const breakdownItems: MultiScanItem[] = items.map((bi, idx) => ({
+        id: `${id}-breakdown-${idx}`,
+        fileName,
+        status: "success" as const,
+        data: {
+          amount: bi.amount,
+          description: bi.description,
+          type: "EXPENSE" as const,
+          date,
+          categoryId: bi.categoryId,
+          receiptGroupId,
+          receiptBreakdown: {
+            total: bi.amount,
+            items: bi.lineItems.map((li) => ({
+              name: li.name,
+              amount: li.amount,
+            })),
+          },
+        },
+        parentId: id,
+      }));
+
+      setMultiScanItems((prev) => {
+        const index = prev.findIndex((i) => i.id === id);
+        if (index === -1) return prev;
+        const next = [...prev];
+        next.splice(index, 1, ...breakdownItems);
+        return next;
+      });
+    },
+    []
+  );
+
   const handleItemize = async (id: string) => {
     const item = multiScanItems.find((i) => i.id === id);
-    if (!item?.imageFile) return;
+    if (!item) return;
+
+    // Use pre-loaded breakdown from combined scan (no API call, no extra credit)
+    if (item.data?.breakdown?.length) {
+      expandBreakdown(
+        id,
+        item.fileName,
+        item.data.date ?? new Date().toISOString(),
+        item.data.breakdown
+      );
+      return;
+    }
+
+    // Fallback: fetch breakdown from API (requires imageFile)
+    if (!item.imageFile) return;
 
     // Set status to breaking_down
     setMultiScanItems((prev) =>
@@ -278,49 +342,7 @@ export function AppShell({ children }: AppShellProps) {
         return;
       }
 
-      // Build per-transaction breakdown metadata with individual line items
-      const receiptGroupId = crypto.randomUUID();
-
-      interface BreakdownItem {
-        amount: number;
-        categoryId: string;
-        description: string;
-        lineItems: Array<{ name: string; amount: number }>;
-      }
-
-      // Replace the single item with N breakdown items (one per category group)
-      const breakdownItems: MultiScanItem[] = data.items.map(
-        (bi: BreakdownItem, idx: number) => ({
-          id: `${id}-breakdown-${idx}`,
-          fileName: item.fileName,
-          status: "success" as const,
-          data: {
-            amount: bi.amount,
-            description: bi.description,
-            type: "EXPENSE" as const,
-            date: data.date,
-            categoryId: bi.categoryId,
-            receiptGroupId,
-            // Per-transaction breakdown: line items within this category
-            receiptBreakdown: {
-              total: bi.amount,
-              items: bi.lineItems.map((li) => ({
-                name: li.name,
-                amount: li.amount,
-              })),
-            },
-          },
-          parentId: id,
-        })
-      );
-
-      setMultiScanItems((prev) => {
-        const index = prev.findIndex((i) => i.id === id);
-        if (index === -1) return prev;
-        const next = [...prev];
-        next.splice(index, 1, ...breakdownItems);
-        return next;
-      });
+      expandBreakdown(id, item.fileName, data.date, data.items);
 
       // Increment local scan count (breakdown = 1 additional credit)
       setUser((prev) => ({ scansUsedThisMonth: prev.scansUsedThisMonth + 1 }));

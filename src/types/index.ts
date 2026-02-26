@@ -60,6 +60,13 @@ export interface MultiScanItem {
     receiptBreakdown?: ReceiptBreakdownMeta;
     /** Whether the receipt has items spanning 2+ spending categories */
     multiCategory?: boolean;
+    /** Pre-loaded breakdown from combined scan (avoids second Gemini call) */
+    breakdown?: Array<{
+      amount: number;
+      categoryId: string;
+      description: string;
+      lineItems: Array<{ name: string; amount: number }>;
+    }>;
   };
   error?: string;
   /** Compressed image kept in memory for breakdown requests */

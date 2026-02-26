@@ -143,22 +143,28 @@ Return a JSON object with these fields:
 - "date": transaction date as "YYYY-MM-DDTHH:mm". If unreadable, use "${todayStr}".
 - "description": merchant name + short summary of purchase (max 100 chars).
 - "multiCategory": true if the receipt contains items that span 2 or more DIFFERENT categories from the list below, false if all items belong to a single category. For example, a grocery receipt with food AND cleaning supplies = true, a restaurant bill with only food = false, a single ride receipt = false.
+- "breakdown": ONLY include this field when "multiCategory" is true. Read every line item on the receipt and group them by category. Each entry has: "amount" (sum for that category), "categoryId", "description" (store name + category + 1-2 sample items, max 80 chars), and "lineItems" (array of {"name": "<item name>", "amount": <price>}). The sum of all breakdown amounts should approximately equal the receipt total. Distribute tax/service proportionally or into the largest group. Do NOT include breakdown when multiCategory is false.
 
 CATEGORIES:
 ${categoryList}
 
 CATEGORY RULES (pick categoryId by matching the merchant/items to these rules):
-1. Food & Dining: restaurants, cafes, hawker stalls, food courts, bakeries, fast food, coffee shops, bubble tea, food delivery, supermarkets, grocery stores, wet markets, seafood markets, butchers, convenience stores (7-Eleven, FairPrice, Cold Storage)
+1. Food & Dining: restaurants, cafes, hawker stalls, food courts, bakeries, fast food, coffee shops, bubble tea, food delivery, supermarkets, grocery stores, wet markets, seafood markets, butchers, convenience stores (7-Eleven, FairPrice, Cold Storage), food items, beverages, snacks, condiments, cooking ingredients, fresh produce, meat, dairy, bread, canned food, frozen food
 2. Transportation: ride-hailing (Grab, Gojek), taxis, MRT/bus top-ups, parking, fuel/petrol, tolls
 3. Shopping: clothing, electronics, department stores, online shopping (Shopee, Lazada, Amazon)
 4. Bills & Utilities: electricity, water, gas, internet, phone bills, subscriptions (Netflix, Spotify)
 5. Entertainment: movies, concerts, theme parks, games, sports, streaming services
-6. Healthcare: doctors, clinics, pharmacies, dental, hospital, health supplements
-7. For any category not listed above, match by comparing the merchant/items to the category name.
-8. When in doubt, prefer "Food & Dining" if the merchant sells any food or beverages.
+6. Healthcare: doctors, clinics, pharmacies, dental, hospital, health supplements, vitamins, medicine
+7. Personal Care: soap, shampoo, toothpaste, deodorant, lotion, tissue paper, toilet paper, napkins, feminine hygiene, razors
+8. Household: cleaning supplies (detergent, bleach, dishwashing liquid, floor cleaner), garbage bags, sponges, air freshener, insect spray
+9. For any category not listed above, match by comparing the merchant/items to the category name.
+10. When in doubt, prefer "Food & Dining" if the merchant sells any food or beverages.
+11. When in doubt about a food-adjacent item (e.g. plastic wrap, aluminum foil), put it in Household.
 
 Respond with ONLY valid JSON, no markdown or explanation:
-{"amount": <number>, "categoryId": "<id>", "date": "<datetime>", "description": "<text>", "multiCategory": <boolean>}`;
+{"amount": <number>, "categoryId": "<id>", "date": "<datetime>", "description": "<text>", "multiCategory": <boolean>}
+or when multiCategory is true:
+{"amount": <number>, "categoryId": "<id>", "date": "<datetime>", "description": "<text>", "multiCategory": true, "breakdown": [{"amount": <number>, "categoryId": "<id>", "description": "<text>", "lineItems": [{"name": "<text>", "amount": <number>}]}]}`;
 
     const response = await gemini.models.generateContent({
       model: GEMINI_MODEL,
@@ -223,18 +229,25 @@ Respond with ONLY valid JSON, no markdown or explanation:
     }
 
     // Verify the categoryId actually exists in user's categories
-    const validCategory = categories.find((c) => c.id === result.data.categoryId);
-    if (!validCategory) {
-      // Fall back to "Other Expense" or first available category
-      const fallback =
-        categories.find((c) => c.name === "Other") ?? categories[0];
-      if (fallback) {
-        result.data.categoryId = fallback.id;
+    const categoryIds = new Set(categories.map((c) => c.id));
+    const fallbackCategory =
+      categories.find((c) => c.name === "Other") ?? categories[0];
+
+    if (!categoryIds.has(result.data.categoryId) && fallbackCategory) {
+      result.data.categoryId = fallbackCategory.id;
+    }
+
+    // Validate breakdown categoryIds (same logic as breakdown route)
+    if (result.data.breakdown) {
+      for (const item of result.data.breakdown) {
+        if (!categoryIds.has(item.categoryId) && fallbackCategory) {
+          item.categoryId = fallbackCategory.id;
+        }
       }
     }
 
-    // Log successful scan for monthly limit tracking
-    await prisma.scanLog.create({ data: { userId } });
+    // Log successful scan for monthly limit tracking (fire-and-forget)
+    prisma.scanLog.create({ data: { userId } }).catch(() => {});
 
     return NextResponse.json(result.data);
   } catch {

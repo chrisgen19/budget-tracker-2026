@@ -55,21 +55,6 @@ export type RegisterInput = z.infer<typeof registerSchema>;
 export type TransactionInput = z.infer<typeof transactionSchema>;
 export type CategoryInput = z.infer<typeof categorySchema>;
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
-export const receiptScanResultSchema = z.object({
-  amount: z.number().positive(),
-  categoryId: z.string().min(1),
-  date: z.string().min(1),
-  description: z.string().max(255),
-  type: z.literal("EXPENSE"),
-  multiCategory: z.boolean(),
-});
-
-export const updateAppSettingsSchema = z.object({
-  role: z.enum(["FREE", "PAID"]),
-  receiptScanEnabled: z.boolean().optional(),
-  maxUploadFiles: z.number().int().min(1).max(50).optional(),
-  monthlyScanLimit: z.number().int().min(0).max(1000).optional(),
-});
 
 export const receiptBreakdownLineItemSchema = z.object({
   name: z.string().max(255),
@@ -86,6 +71,23 @@ export const receiptBreakdownItemSchema = z.object({
 export const receiptBreakdownResultSchema = z.object({
   date: z.string().min(1),
   items: z.array(receiptBreakdownItemSchema).min(1).max(20),
+});
+
+export const receiptScanResultSchema = z.object({
+  amount: z.number().positive(),
+  categoryId: z.string().min(1),
+  date: z.string().min(1),
+  description: z.string().max(255),
+  type: z.literal("EXPENSE"),
+  multiCategory: z.boolean(),
+  breakdown: z.array(receiptBreakdownItemSchema).min(1).max(20).optional(),
+});
+
+export const updateAppSettingsSchema = z.object({
+  role: z.enum(["FREE", "PAID"]),
+  receiptScanEnabled: z.boolean().optional(),
+  maxUploadFiles: z.number().int().min(1).max(50).optional(),
+  monthlyScanLimit: z.number().int().min(0).max(1000).optional(),
 });
 
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;

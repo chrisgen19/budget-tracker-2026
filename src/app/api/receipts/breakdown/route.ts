@@ -239,8 +239,8 @@ RULES:
       }
     }
 
-    // Log 1 scan credit for the breakdown
-    await prisma.scanLog.create({ data: { userId } });
+    // Log 1 scan credit for the breakdown (fire-and-forget)
+    prisma.scanLog.create({ data: { userId } }).catch(() => {});
 
     return NextResponse.json(result.data);
   } catch {

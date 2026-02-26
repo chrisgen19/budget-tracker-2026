@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   Plus,
   Trash2,
@@ -204,8 +204,19 @@ export default function TransactionsPage() {
   const loadingMore = isFetchingNextPage;
   const hasMore = hasNextPage ?? false;
 
-  // Flatten infinite pages into a single array, or use paginated data
-  const allInfiniteTransactions = infiniteQuery.data?.pages.flatMap((p) => p.transactions) ?? [];
+  // Flatten infinite pages into a single array, deduplicating by id.
+  // Offset-based pagination can produce duplicates when new transactions are
+  // inserted between page fetches (the offset shifts, causing a boundary item
+  // to appear on both the current and next page).
+  const allInfiniteTransactions = useMemo(() => {
+    const all = infiniteQuery.data?.pages.flatMap((p) => p.transactions) ?? [];
+    const seen = new Set<string>();
+    return all.filter((tx) => {
+      if (seen.has(tx.id)) return false;
+      seen.add(tx.id);
+      return true;
+    });
+  }, [infiniteQuery.data?.pages]);
   const sourceTransactions = isInfinite
     ? allInfiniteTransactions
     : (paginatedQuery.data?.transactions ?? []);
