@@ -381,17 +381,26 @@ export default function DashboardPage() {
 function DashboardSkeleton() {
   return (
     <div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+      {/* Summary Cards — horizontal scroll on mobile, grid on desktop */}
+      <div className="flex gap-4 overflow-x-auto snap-x snap-mandatory scrollbar-hide pb-2 mb-8 sm:grid sm:grid-cols-3 sm:overflow-visible sm:pb-0">
         {[1, 2, 3].map((i) => (
-          <div key={i} className="card p-5">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-xl animate-shimmer" />
-              <div className="w-16 h-4 rounded animate-shimmer" />
+          <div key={i} className="card p-5 min-w-[260px] shrink-0 snap-start sm:min-w-0">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl animate-shimmer" />
+                <div className="space-y-1.5">
+                  <div className="w-24 h-4 rounded animate-shimmer" />
+                  <div className="w-16 h-3 rounded animate-shimmer" />
+                </div>
+              </div>
+              <div className="w-7 h-7 rounded-lg animate-shimmer" />
             </div>
             <div className="w-32 h-8 rounded animate-shimmer" />
           </div>
         ))}
       </div>
+
+      {/* Balance Trend */}
       <div className="card p-5 mb-8">
         <div className="w-32 h-5 rounded animate-shimmer mb-2" />
         <div className="w-48 h-3 rounded animate-shimmer mb-4" />
@@ -407,6 +416,8 @@ function DashboardSkeleton() {
         </div>
         <div className="h-[180px] rounded-xl animate-shimmer" />
       </div>
+
+      {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
         {[1, 2].map((i) => (
           <div key={i} className="card p-5">
@@ -415,18 +426,25 @@ function DashboardSkeleton() {
           </div>
         ))}
       </div>
-      <div className="card p-5">
-        <div className="w-40 h-5 rounded animate-shimmer mb-4" />
-        {[1, 2, 3].map((i) => (
-          <div key={i} className="flex items-center gap-3 py-3">
-            <div className="w-9 h-9 rounded-xl animate-shimmer shrink-0" />
-            <div className="flex-1 space-y-2">
-              <div className="w-32 h-4 rounded animate-shimmer" />
-              <div className="w-24 h-3 rounded animate-shimmer" />
+
+      {/* Recent Transactions */}
+      <div className="card">
+        <div className="flex items-center justify-between p-5 pb-3">
+          <div className="w-40 h-5 rounded animate-shimmer" />
+          <div className="w-16 h-4 rounded animate-shimmer" />
+        </div>
+        <div className="divide-y divide-cream-200">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="flex items-center gap-3 px-5 py-3.5">
+              <div className="w-9 h-9 rounded-xl animate-shimmer shrink-0" />
+              <div className="flex-1 space-y-2">
+                <div className="w-32 h-4 rounded animate-shimmer" />
+                <div className="w-24 h-3 rounded animate-shimmer" />
+              </div>
+              <div className="w-20 h-4 rounded animate-shimmer" />
             </div>
-            <div className="w-20 h-4 rounded animate-shimmer" />
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
   );
