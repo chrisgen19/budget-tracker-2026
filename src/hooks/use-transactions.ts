@@ -257,19 +257,21 @@ export function useUpdateTransaction() {
       return res.json() as Promise<TransactionWithCategory>;
     },
     onSuccess: (updatedTx) => {
-      // Directly update infinite query caches
+      // Remove old version and re-insert at the correct date-sorted position.
+      // A plain in-place swap doesn't re-sort, so date/time changes would leave
+      // the transaction in its old position until a full refetch.
       queryClient.setQueriesData<InfiniteTransactionsData>(
         { queryKey: queryKeys.transactions.all },
         (old) => {
           if (!old?.pages) return old;
-          return replaceTransactionInInfiniteData(old, updatedTx);
+          const removed = removeTransactionFromInfiniteData(old, updatedTx.id);
+          return insertTransactionIntoInfiniteData(removed, updatedTx);
         }
       );
 
-      // Invalidate paginated caches
+      // Refetch active transaction queries in the background for full consistency
       queryClient.invalidateQueries({
         queryKey: queryKeys.transactions.all,
-        refetchType: "none",
       });
 
       // Invalidate dashboard
