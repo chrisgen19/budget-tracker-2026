@@ -15,7 +15,7 @@ import {
   Shield,
   AlertTriangle,
 } from "lucide-react";
-import { cn, compressImage } from "@/lib/utils";
+import { cn, compressImage, formatDateInput } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { useUser } from "@/components/user-provider";
 import { ScanProvider } from "@/components/scan-provider";
@@ -30,6 +30,14 @@ import type { TransactionInput } from "@/lib/validations";
 interface AppShellProps {
   children: React.ReactNode;
 }
+
+/** Take a date string from Gemini (YYYY-MM-DD or YYYY-MM-DDTHH:mm) and
+ *  replace the time portion with the user's current local time. */
+const withLocalTime = (dateStr: string): string => {
+  // Strip any time portion Gemini may have included
+  const dateOnly = dateStr.slice(0, 10);
+  return formatDateInput(new Date(dateOnly + "T" + new Date().toTimeString().slice(0, 5)));
+};
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -95,7 +103,7 @@ export function AppShell({ children }: AppShellProps) {
             amount: data.amount,
             description: data.description,
             type: data.type,
-            date: data.date,
+            date: withLocalTime(data.date),
             categoryId: data.categoryId,
             multiCategory: data.multiCategory,
             breakdown: data.breakdown,
@@ -186,7 +194,7 @@ export function AppShell({ children }: AppShellProps) {
                         amount: data.amount,
                         description: data.description,
                         type: data.type,
-                        date: data.date,
+                        date: withLocalTime(data.date),
                         categoryId: data.categoryId,
                         multiCategory: data.multiCategory,
                         breakdown: data.breakdown,
@@ -342,7 +350,7 @@ export function AppShell({ children }: AppShellProps) {
         return;
       }
 
-      expandBreakdown(id, item.fileName, data.date, data.items);
+      expandBreakdown(id, item.fileName, withLocalTime(data.date), data.items);
 
       // Increment local scan count (breakdown = 1 additional credit)
       setUser((prev) => ({ scansUsedThisMonth: prev.scansUsedThisMonth + 1 }));

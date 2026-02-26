@@ -3,7 +3,6 @@ import { prisma } from "@/lib/prisma";
 import { gemini, GEMINI_MODEL } from "@/lib/gemini";
 import { getAuthUserId } from "@/lib/session";
 import { receiptBreakdownResultSchema } from "@/lib/validations";
-import { formatDateInput } from "@/lib/utils";
 
 const ALLOWED_TYPES = new Set([
   "image/jpeg",
@@ -118,7 +117,8 @@ export async function POST(request: Request) {
       .map((c) => `- "${c.name}" (id: "${c.id}")`)
       .join("\n");
 
-    const todayStr = formatDateInput(new Date());
+    // Date-only fallback — time is appended on the client using the user's local clock
+    const todayStr = new Date().toISOString().slice(0, 10);
 
     const arrayBuffer = await file.arrayBuffer();
     const base64 = Buffer.from(arrayBuffer).toString("base64");
@@ -147,7 +147,7 @@ CATEGORY RULES:
 
 RESPONSE FORMAT — return ONLY valid JSON, no markdown or explanation:
 {
-  "date": "<YYYY-MM-DDTHH:mm — receipt date, or ${todayStr} if unreadable>",
+  "date": "<YYYY-MM-DD — receipt date only, no time. Use ${todayStr} if unreadable>",
   "items": [
     {
       "amount": <sum of items in this category>,
