@@ -23,6 +23,11 @@ export const transactionSchema = z.object({
   categoryId: z.string().min(1, "Category is required"),
 });
 
+export const batchTransactionSchema = transactionSchema.extend({
+  receiptGroupId: z.string().optional(),
+  receiptBreakdown: z.any().optional(),
+});
+
 export const categorySchema = z.object({
   name: z.string().min(1, "Name is required").max(50),
   type: z.enum(["INCOME", "EXPENSE"]),
@@ -50,12 +55,32 @@ export type RegisterInput = z.infer<typeof registerSchema>;
 export type TransactionInput = z.infer<typeof transactionSchema>;
 export type CategoryInput = z.infer<typeof categorySchema>;
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
+
+export const receiptBreakdownLineItemSchema = z.object({
+  name: z.string().max(255),
+  amount: z.number().positive(),
+});
+
+export const receiptBreakdownItemSchema = z.object({
+  amount: z.number().positive(),
+  categoryId: z.string().min(1),
+  description: z.string().max(255),
+  lineItems: z.array(receiptBreakdownLineItemSchema).min(1).max(50),
+});
+
+export const receiptBreakdownResultSchema = z.object({
+  date: z.string().min(1),
+  items: z.array(receiptBreakdownItemSchema).min(1).max(20),
+});
+
 export const receiptScanResultSchema = z.object({
   amount: z.number().positive(),
   categoryId: z.string().min(1),
   date: z.string().min(1),
   description: z.string().max(255),
   type: z.literal("EXPENSE"),
+  multiCategory: z.boolean(),
+  breakdown: z.array(receiptBreakdownItemSchema).min(1).max(20).optional(),
 });
 
 export const updateAppSettingsSchema = z.object({
@@ -67,4 +92,5 @@ export const updateAppSettingsSchema = z.object({
 
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export type ReceiptScanResult = z.infer<typeof receiptScanResultSchema>;
+export type ReceiptBreakdownResult = z.infer<typeof receiptBreakdownResultSchema>;
 export type UpdateAppSettingsInput = z.infer<typeof updateAppSettingsSchema>;

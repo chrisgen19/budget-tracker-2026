@@ -50,12 +50,14 @@ export async function GET(request: Request) {
     where.description = { contains: search, mode: "insensitive" };
   }
 
-  // Dynamic sort
+  // Dynamic sort — always include `id` as a final tiebreaker so offset-based
+  // pagination is deterministic (batch-created transactions share identical
+  // date + createdAt, which causes duplicates across pages without this)
   const direction = sortDir === "asc" ? "asc" : "desc";
   const orderBy =
     sortBy === "amount"
-      ? [{ amount: direction as "asc" | "desc" }, { date: "desc" as const }]
-      : [{ date: direction as "asc" | "desc" }, { createdAt: "desc" as const }];
+      ? [{ amount: direction as "asc" | "desc" }, { date: "desc" as const }, { id: "asc" as const }]
+      : [{ date: direction as "asc" | "desc" }, { createdAt: "desc" as const }, { id: "asc" as const }];
 
   const [transactions, total] = await Promise.all([
     prisma.transaction.findMany({

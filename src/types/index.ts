@@ -39,19 +39,40 @@ export interface BalanceTrendItem {
   balance: number;
 }
 
+/** Metadata stored on each itemized transaction for future display */
+export interface ReceiptBreakdownMeta {
+  total: number;
+  items: Array<{ name: string; amount: number }>;
+}
+
 /** Single item in a multi-receipt scan batch */
 export interface MultiScanItem {
   id: string;
   fileName: string;
-  status: "scanning" | "success" | "error";
+  status: "scanning" | "success" | "error" | "breaking_down";
   data?: {
     amount?: number;
     description?: string;
     type?: "INCOME" | "EXPENSE";
     date?: string;
     categoryId?: string;
+    receiptGroupId?: string;
+    receiptBreakdown?: ReceiptBreakdownMeta;
+    /** Whether the receipt has items spanning 2+ spending categories */
+    multiCategory?: boolean;
+    /** Pre-loaded breakdown from combined scan (avoids second Gemini call) */
+    breakdown?: Array<{
+      amount: number;
+      categoryId: string;
+      description: string;
+      lineItems: Array<{ name: string; amount: number }>;
+    }>;
   };
   error?: string;
+  /** Compressed image kept in memory for breakdown requests */
+  imageFile?: File;
+  /** Set on breakdown children — prevents re-breakdown, enables "Itemized" badge */
+  parentId?: string;
 }
 
 /** Extend next-auth types */
