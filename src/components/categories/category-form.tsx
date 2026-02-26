@@ -130,7 +130,7 @@ export function CategoryForm({ category, onSubmit, onCancel }: CategoryFormProps
         <label className="block text-sm font-medium text-warm-600 mb-2">
           Icon
         </label>
-        <div className="grid grid-cols-5 sm:grid-cols-6 gap-2 max-h-48 overflow-y-auto scrollbar-hide py-1 px-0.5">
+        <div className="grid grid-cols-5 sm:grid-cols-6 gap-2 max-h-64 overflow-y-auto scrollbar-hide py-1 px-0.5">
           {AVAILABLE_ICONS.map((icon) => (
             <button
               key={icon}
