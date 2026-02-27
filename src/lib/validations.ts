@@ -112,6 +112,7 @@ export const billActionSchema = z.object({
   action: z.enum(["pay", "pay_existing", "skip", "snooze"]),
   dueDate: z.string().min(1, "Due date is required"),
   transactionId: z.string().optional(),
+  snoozeDays: z.number().int().min(1).max(7).optional(),
 }).refine(
   (data) => data.action !== "pay_existing" || (data.transactionId != null && data.transactionId.length > 0),
   { message: "Transaction ID is required for pay_existing", path: ["transactionId"] }

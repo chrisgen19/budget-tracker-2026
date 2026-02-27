@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import {
   Plus,
   Trash2,
@@ -12,6 +12,7 @@ import {
   Loader2,
   ScanLine,
 } from "lucide-react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatCurrency, cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
@@ -128,12 +129,22 @@ const createInitialFilters = (): TransactionFilters => {
 /* ------------------------------------------------------------------ */
 
 export default function TransactionsPage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const highlightId = searchParams.get("highlight");
+
   const { hideAmounts } = usePrivacy();
   const { user } = useUser();
   const { canScan, openScan, scanLimitReached, scansRemaining, hasLimit } = useScan();
   const currency = user.currency;
   const isInfinite = user.transactionLayout === "infinite";
-  const [filters, setFilters] = useState<TransactionFilters>(createInitialFilters);
+  const [filters, setFilters] = useState<TransactionFilters>(() => {
+    // If highlighting a transaction, clear the month filter so we search all data
+    if (searchParams.get("highlight")) {
+      return { ...createInitialFilters(), month: "ALL" };
+    }
+    return createInitialFilters();
+  });
   const [page, setPage] = useState(1);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
@@ -198,6 +209,20 @@ export default function TransactionsPage() {
     return () => observer.disconnect();
   }, [isInfinite, hasNextPage, isFetchingNextPage, infiniteIsLoading, fetchNextPage]);
 
+  // Highlight a transaction from query param (e.g. from bill history link)
+  const highlightHandledRef = useRef(false);
+
+  const handleHighlight = useCallback((transactions: TransactionWithCategory[]) => {
+    if (!highlightId || highlightHandledRef.current) return;
+    const tx = transactions.find((t) => t.id === highlightId);
+    if (tx) {
+      highlightHandledRef.current = true;
+      setEditingTransaction(tx);
+      // Clean up URL
+      router.replace("/transactions", { scroll: false });
+    }
+  }, [highlightId, router]);
+
   /* ---- Derived data ---- */
 
   const loading = isInfinite ? infiniteIsLoading : paginatedQuery.isLoading;
@@ -217,9 +242,17 @@ export default function TransactionsPage() {
       return true;
     });
   }, [infiniteQuery.data?.pages]);
-  const sourceTransactions = isInfinite
-    ? allInfiniteTransactions
-    : (paginatedQuery.data?.transactions ?? []);
+  const sourceTransactions = useMemo(
+    () => isInfinite ? allInfiniteTransactions : (paginatedQuery.data?.transactions ?? []),
+    [isInfinite, allInfiniteTransactions, paginatedQuery.data?.transactions],
+  );
+
+  // Auto-open highlighted transaction from query param
+  useEffect(() => {
+    if (sourceTransactions.length > 0) {
+      handleHighlight(sourceTransactions);
+    }
+  }, [sourceTransactions, handleHighlight]);
 
   // Pagination metadata
   const paginationData = isInfinite

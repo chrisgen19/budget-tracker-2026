@@ -18,6 +18,7 @@ export const billKeys = {
   list: (filters?: { active?: boolean; type?: string }) =>
     ["bills", "list", filters] as const,
   pending: ["bills", "pending"] as const,
+  upcoming: ["bills", "upcoming"] as const,
   history: (id: string) => ["bills", "history", id] as const,
 };
 
@@ -41,6 +42,29 @@ const fetchBills = async (filters?: {
 const fetchPendingReminders = async (): Promise<PendingReminder[]> => {
   const res = await fetch("/api/bills/pending");
   if (!res.ok) throw new Error("Failed to fetch pending reminders");
+  return res.json();
+};
+
+export interface UpcomingBill {
+  id: string;
+  description: string;
+  categoryName: string;
+  categoryIcon: string;
+  categoryColor: string;
+  amount: number;
+  dueDate: string;
+  isOverdue: boolean;
+}
+
+export interface UpcomingBillsResponse {
+  count: number;
+  totalAmount: number;
+  bills: UpcomingBill[];
+}
+
+const fetchUpcomingBills = async (): Promise<UpcomingBillsResponse> => {
+  const res = await fetch("/api/bills/upcoming");
+  if (!res.ok) throw new Error("Failed to fetch upcoming bills");
   return res.json();
 };
 
@@ -82,6 +106,13 @@ export function usePendingRemindersQuery() {
     queryKey: billKeys.pending,
     queryFn: fetchPendingReminders,
     refetchOnWindowFocus: true,
+  });
+}
+
+export function useUpcomingBillsQuery() {
+  return useQuery({
+    queryKey: billKeys.upcoming,
+    queryFn: fetchUpcomingBills,
   });
 }
 

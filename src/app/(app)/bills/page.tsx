@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Pencil, PowerOff, CalendarClock, X, ChevronDown, ChevronUp, RotateCcw } from "lucide-react";
+import { Plus, Pencil, PowerOff, CalendarClock, X, ChevronDown, ChevronUp, RotateCcw, ExternalLink } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn, formatCurrency } from "@/lib/utils";
 import { formatFrequency } from "@/lib/bill-utils";
@@ -367,6 +368,7 @@ export default function BillsPage() {
 
 /** Inline bill payment history */
 function BillHistory({ billId, currency, hideAmounts }: { billId: string; currency: string; hideAmounts: boolean }) {
+  const router = useRouter();
   const { data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage } = useBillHistoryQuery(billId);
 
   if (isLoading) {
@@ -406,8 +408,17 @@ function BillHistory({ billId, currency, hideAmounts }: { billId: string; curren
             {log.status.charAt(0) + log.status.slice(1).toLowerCase()}
           </span>
           {log.paidAmount != null && (
-            <span className="text-warm-500 font-medium ml-auto tabular-nums">
+            <span className="text-warm-500 font-medium ml-auto tabular-nums flex items-center gap-1">
               {hideAmounts ? "***" : formatCurrency(log.paidAmount, currency)}
+              {log.transactionId && (
+                <button
+                  onClick={() => router.push(`/transactions?highlight=${log.transactionId}`)}
+                  className="p-0.5 rounded text-warm-300 hover:text-amber transition-colors"
+                  title="View transaction"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                </button>
+              )}
             </span>
           )}
         </div>

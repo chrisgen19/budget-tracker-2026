@@ -62,6 +62,7 @@ const DEFAULT_FILTERS: Omit<TransactionFilters, "month"> = {
 /* ------------------------------------------------------------------ */
 
 const getMonthLabel = (month: string) => {
+  if (month === "ALL") return "All Time";
   const [year, m] = month.split("-").map(Number);
   return new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(
     new Date(year, m - 1)

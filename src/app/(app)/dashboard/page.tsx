@@ -13,6 +13,7 @@ import {
   Eye,
   EyeOff,
   ScanLine,
+  CalendarClock,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import Link from "next/link";
@@ -27,6 +28,7 @@ import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import { useScan } from "@/components/scan-provider";
 import { useDashboardQuery, useCreateTransaction } from "@/hooks/use-transactions";
+import { useUpcomingBillsQuery } from "@/hooks/use-bills";
 import type { TransactionInput } from "@/lib/validations";
 
 export default function DashboardPage() {
@@ -41,6 +43,7 @@ export default function DashboardPage() {
   });
 
   const { data: stats, isLoading: loading } = useDashboardQuery(currentMonth);
+  const { data: upcomingData } = useUpcomingBillsQuery();
   const createMutation = useCreateTransaction();
 
   /** Display amount or censored placeholder */
@@ -242,6 +245,82 @@ export default function DashboardPage() {
               {displayAmount(stats.totalIncome, "text-income")}
             </motion.div>
           </div>
+
+          {/* Upcoming Bills */}
+          {upcomingData && upcomingData.count > 0 && (
+            <motion.div variants={fadeUp} className="card p-5 mb-8">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center">
+                    <CalendarClock className="w-5 h-5 text-amber" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-medium text-warm-700">Upcoming Bills</h2>
+                    <p className="text-xs text-warm-400">
+                      {upcomingData.count} bill{upcomingData.count > 1 ? "s" : ""} due this week
+                      {!hideAmounts && (
+                        <span className="text-warm-500 font-medium">
+                          {" "}&middot; {formatCurrency(upcomingData.totalAmount, currency)} total
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+                {upcomingData.count > 3 && (
+                  <Link
+                    href="/bills"
+                    className="text-xs text-amber hover:text-amber-dark font-medium flex items-center gap-1 transition-colors"
+                  >
+                    View all
+                    <ArrowRight className="w-3 h-3" />
+                  </Link>
+                )}
+              </div>
+              <div className="space-y-2">
+                {upcomingData.bills.slice(0, 3).map((bill) => {
+                  const due = new Date(bill.dueDate);
+                  due.setHours(0, 0, 0, 0);
+                  const today = new Date();
+                  today.setHours(0, 0, 0, 0);
+                  const diffDays = Math.floor((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                  const dueLabel = bill.isOverdue
+                    ? `${Math.abs(diffDays)}d overdue`
+                    : diffDays === 0
+                      ? "Today"
+                      : diffDays === 1
+                        ? "Tomorrow"
+                        : `In ${diffDays}d`;
+
+                  return (
+                    <div key={`${bill.id}-${bill.dueDate}`} className="flex items-center gap-3">
+                      <div
+                        className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+                        style={{ backgroundColor: bill.categoryColor + "18" }}
+                      >
+                        <CategoryIcon
+                          name={bill.categoryIcon}
+                          className="w-3.5 h-3.5"
+                          style={{ color: bill.categoryColor }}
+                        />
+                      </div>
+                      <span className="text-sm text-warm-600 truncate flex-1">
+                        {bill.description}
+                      </span>
+                      <span className={cn(
+                        "text-[11px] font-medium shrink-0",
+                        bill.isOverdue ? "text-expense" : "text-warm-400"
+                      )}>
+                        {dueLabel}
+                      </span>
+                      <span className="text-sm font-semibold tabular-nums text-warm-600 shrink-0">
+                        {hideAmounts ? "***" : formatCurrency(bill.amount, currency)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </motion.div>
+          )}
 
           {/* Balance Trend */}
           <motion.div variants={fadeUp} className="card p-5 mb-8">

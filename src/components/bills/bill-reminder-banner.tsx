@@ -1,7 +1,8 @@
 "use client";
 
+import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronLeft, ChevronRight, Check, Clock, FastForward, Pencil } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, Clock, FastForward, Pencil, ChevronUp, CheckCheck } from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { usePrivacy } from "@/components/privacy-provider";
@@ -45,8 +46,25 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
     handlePay,
     handleSnooze,
     handleSkip,
+    handlePayAll,
     isActioning,
+    payAllProgress,
   } = useBillReminders();
+
+  const [showSnoozeMenu, setShowSnoozeMenu] = useState(false);
+  const snoozeRef = useRef<HTMLDivElement>(null);
+
+  // Close snooze menu on outside click
+  useEffect(() => {
+    if (!showSnoozeMenu) return;
+    const handleClick = (e: MouseEvent) => {
+      if (snoozeRef.current && !snoozeRef.current.contains(e.target as Node)) {
+        setShowSnoozeMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showSnoozeMenu]);
 
   const { hideAmounts } = usePrivacy();
   const { user } = useUser();
@@ -159,9 +177,22 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
 
             {/* Action buttons */}
             <div className="flex items-center gap-1.5 ml-auto">
+              {/* Pay All — only when multiple reminders */}
+              {pendingReminders.length > 1 && (
+                <button
+                  onClick={handlePayAll}
+                  disabled={isActioning || payAllProgress !== null}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-income/10 text-income hover:bg-income/20 text-xs font-medium transition-colors disabled:opacity-50"
+                >
+                  <CheckCheck className="w-3 h-3" />
+                  {payAllProgress
+                    ? `Paying ${payAllProgress.current}/${payAllProgress.total}...`
+                    : `Pay All (${pendingReminders.length})`}
+                </button>
+              )}
               <button
                 onClick={() => handlePay(reminder)}
-                disabled={isActioning}
+                disabled={isActioning || payAllProgress !== null}
                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-income/10 text-income hover:bg-income/20 text-xs font-medium transition-colors disabled:opacity-50"
               >
                 <Check className="w-3 h-3" />
@@ -169,23 +200,57 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
               </button>
               <button
                 onClick={handlePayAndEditClick}
-                disabled={isActioning}
+                disabled={isActioning || payAllProgress !== null}
                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-light text-amber-dark hover:bg-amber/20 text-xs font-medium transition-colors disabled:opacity-50"
               >
                 <Pencil className="w-3 h-3" />
                 Pay &amp; Edit
               </button>
-              <button
-                onClick={() => handleSnooze(reminder)}
-                disabled={isActioning}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cream-100 text-warm-500 hover:bg-cream-200 text-xs font-medium transition-colors disabled:opacity-50"
-              >
-                <Clock className="w-3 h-3" />
-                Snooze
-              </button>
+
+              {/* Snooze dropdown */}
+              <div className="relative" ref={snoozeRef}>
+                <button
+                  onClick={() => setShowSnoozeMenu((prev) => !prev)}
+                  disabled={isActioning || payAllProgress !== null}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cream-100 text-warm-500 hover:bg-cream-200 text-xs font-medium transition-colors disabled:opacity-50"
+                >
+                  <Clock className="w-3 h-3" />
+                  Snooze
+                  <ChevronUp className={cn("w-3 h-3 transition-transform", showSnoozeMenu ? "" : "rotate-180")} />
+                </button>
+                <AnimatePresence>
+                  {showSnoozeMenu && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 4 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute bottom-full mb-1 right-0 bg-white rounded-lg shadow-soft-lg border border-cream-200 overflow-hidden min-w-[120px] z-30"
+                    >
+                      {([
+                        { label: "1 day", days: 1 },
+                        { label: "3 days", days: 3 },
+                        { label: "1 week", days: 7 },
+                      ] as const).map((option) => (
+                        <button
+                          key={option.days}
+                          onClick={() => {
+                            handleSnooze(reminder, option.days);
+                            setShowSnoozeMenu(false);
+                          }}
+                          className="w-full text-left px-3 py-2 text-xs text-warm-600 hover:bg-cream-100 transition-colors"
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
               <button
                 onClick={() => handleSkip(reminder)}
-                disabled={isActioning}
+                disabled={isActioning || payAllProgress !== null}
                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cream-100 text-warm-400 hover:bg-cream-200 text-xs font-medium transition-colors disabled:opacity-50"
               >
                 <FastForward className="w-3 h-3" />

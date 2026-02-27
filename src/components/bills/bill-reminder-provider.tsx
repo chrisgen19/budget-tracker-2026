@@ -11,9 +11,11 @@ interface BillReminderContextValue {
   currentIndex: number;
   setCurrentIndex: (index: number) => void;
   handlePay: (reminder: PendingReminder) => void;
-  handleSnooze: (reminder: PendingReminder) => void;
+  handleSnooze: (reminder: PendingReminder, snoozeDays?: number) => void;
   handleSkip: (reminder: PendingReminder) => void;
+  handlePayAll: () => void;
   isActioning: boolean;
+  payAllProgress: { current: number; total: number } | null;
   /** Set when "Pay & Edit" is clicked — AppShell reads this to open TransactionForm */
   payAndEditData: InitialTransactionData | null;
   clearPayAndEditData: () => void;
@@ -26,7 +28,9 @@ const BillReminderContext = createContext<BillReminderContextValue>({
   handlePay: () => {},
   handleSnooze: () => {},
   handleSkip: () => {},
+  handlePayAll: () => {},
   isActioning: false,
+  payAllProgress: null,
   payAndEditData: null,
   clearPayAndEditData: () => {},
 });
@@ -63,15 +67,16 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
     );
   }, [billAction, showToast]);
 
-  const handleSnooze = useCallback((reminder: PendingReminder) => {
+  const handleSnooze = useCallback((reminder: PendingReminder, snoozeDays?: number) => {
+    const days = snoozeDays ?? 1;
     billAction.mutate(
       {
         id: reminder.scheduledTransaction.id,
-        input: { action: "snooze", dueDate: reminder.dueDate },
+        input: { action: "snooze", dueDate: reminder.dueDate, snoozeDays: days },
       },
       {
         onSuccess: () => {
-          showToast(`${getBillLabel(reminder)} snoozed until tomorrow`);
+          showToast(`${getBillLabel(reminder)} snoozed for ${days} day${days > 1 ? "s" : ""}`);
         },
       },
     );
@@ -92,6 +97,47 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
     );
   }, [billAction, showToast]);
 
+  const [payAllProgress, setPayAllProgress] = useState<{ current: number; total: number } | null>(null);
+
+  const handlePayAll = useCallback(async () => {
+    if (pendingReminders.length === 0) return;
+    const total = pendingReminders.length;
+    setPayAllProgress({ current: 0, total });
+
+    // Copy reminders since the array will mutate as payments process
+    const remindersSnapshot = [...pendingReminders];
+    let completed = 0;
+
+    for (const reminder of remindersSnapshot) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          billAction.mutate(
+            {
+              id: reminder.scheduledTransaction.id,
+              input: { action: "pay", dueDate: reminder.dueDate },
+            },
+            {
+              onSuccess: () => {
+                completed++;
+                setPayAllProgress({ current: completed, total });
+                resolve();
+              },
+              onError: (err) => reject(err),
+            },
+          );
+        });
+      } catch {
+        // Continue paying remaining bills even if one fails
+        completed++;
+        setPayAllProgress({ current: completed, total });
+      }
+    }
+
+    showToast(`${completed} bill${completed > 1 ? "s" : ""} paid`);
+    setPayAllProgress(null);
+    setCurrentIndex(0);
+  }, [pendingReminders, billAction, showToast]);
+
   const clearPayAndEditData = useCallback(() => {
     setPayAndEditData(null);
   }, []);
@@ -105,7 +151,9 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
         handlePay,
         handleSnooze,
         handleSkip,
+        handlePayAll,
         isActioning: billAction.isPending,
+        payAllProgress,
         payAndEditData,
         clearPayAndEditData,
       }}

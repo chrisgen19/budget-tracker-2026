@@ -24,7 +24,7 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { action, dueDate: dueDateStr, transactionId: existingTransactionId } = billActionSchema.parse(body);
+    const { action, dueDate: dueDateStr, transactionId: existingTransactionId, snoozeDays } = billActionSchema.parse(body);
     const dueDate = new Date(dueDateStr);
 
     const originalStartDay = bill.startDate.getDate();
@@ -98,10 +98,11 @@ export async function POST(
     }
 
     if (action === "snooze") {
-      // Snooze until tomorrow — do NOT advance nextDueDate
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      tomorrow.setHours(0, 0, 0, 0);
+      // Snooze for N days (default 1) — do NOT advance nextDueDate
+      const days = snoozeDays ?? 1;
+      const snoozeUntil = new Date();
+      snoozeUntil.setDate(snoozeUntil.getDate() + days);
+      snoozeUntil.setHours(0, 0, 0, 0);
 
       await prisma.scheduledTransactionLog.create({
         data: {
@@ -109,11 +110,11 @@ export async function POST(
           dueDate,
           status: "SNOOZED",
           actionDate: new Date(),
-          snoozeUntil: tomorrow,
+          snoozeUntil,
         },
       });
 
-      return NextResponse.json({ message: "Bill snoozed until tomorrow" });
+      return NextResponse.json({ message: `Bill snoozed for ${days} day${days > 1 ? "s" : ""}` });
     }
 
     if (action === "skip") {
