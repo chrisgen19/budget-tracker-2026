@@ -18,6 +18,20 @@ enum UserRole {
   PAID
 }
 
+enum BillFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  ANNUALLY
+  CUSTOM
+}
+
+enum BillOccurrenceStatus {
+  PAID
+  SKIPPED
+  SNOOZED
+}
+
 model User {
   id           String        @id @default(cuid())
   name         String
@@ -33,6 +47,7 @@ model User {
   transactions            Transaction[]
   categories              Category[]
   scanLogs                ScanLog[]
+  scheduledTransactions   ScheduledTransaction[]
   createdAt    DateTime      @default(now()) @map("created_at")
   updatedAt    DateTime      @updatedAt @map("updated_at")
 
@@ -48,7 +63,8 @@ model Category {
   isDefault    Boolean         @default(false) @map("is_default")
   userId       String?         @map("user_id")
   user         User?           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  transactions Transaction[]
+  transactions          Transaction[]
+  scheduledTransactions ScheduledTransaction[]
   createdAt    DateTime        @default(now()) @map("created_at")
 
   @@unique([name, type, userId])
@@ -96,4 +112,45 @@ model ScanLog {
 
   @@index([userId, createdAt])
   @@map("scan_logs")
+}
+
+model ScheduledTransaction {
+  id                  String          @id @default(cuid())
+  amount              Float
+  description         String          @default("")
+  type                TransactionType
+  frequency           BillFrequency
+  customIntervalDays  Int?            @map("custom_interval_days")
+  reminderDaysBefore  Int             @default(0) @map("reminder_days_before")
+  startDate           DateTime        @map("start_date")
+  endDate             DateTime?       @map("end_date")
+  nextDueDate         DateTime        @map("next_due_date")
+  isActive            Boolean         @default(true) @map("is_active")
+  categoryId          String          @map("category_id")
+  category            Category        @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  userId              String          @map("user_id")
+  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  occurrences         ScheduledTransactionLog[]
+  createdAt           DateTime        @default(now()) @map("created_at")
+  updatedAt           DateTime        @updatedAt @map("updated_at")
+
+  @@index([userId, nextDueDate])
+  @@index([userId, isActive])
+  @@map("scheduled_transactions")
+}
+
+model ScheduledTransactionLog {
+  id                      String                @id @default(cuid())
+  scheduledTransactionId  String                @map("scheduled_transaction_id")
+  scheduledTransaction    ScheduledTransaction  @relation(fields: [scheduledTransactionId], references: [id], onDelete: Cascade)
+  dueDate                 DateTime              @map("due_date")
+  status                  BillOccurrenceStatus
+  actionDate              DateTime?             @map("action_date")
+  transactionId           String?               @map("transaction_id")
+  snoozeUntil             DateTime?             @map("snooze_until")
+  createdAt               DateTime              @default(now()) @map("created_at")
+
+  @@index([scheduledTransactionId, dueDate])
+  @@index([scheduledTransactionId, status])
+  @@map("scheduled_transaction_logs")
 }

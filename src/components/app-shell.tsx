@@ -7,6 +7,7 @@ import { signOut } from "next-auth/react";
 import {
   LayoutDashboard,
   ArrowLeftRight,
+  CalendarClock,
   Tags,
   LogOut,
   Wallet,
@@ -23,7 +24,8 @@ import { ScanReceiptSheet } from "@/components/scan-receipt-sheet";
 import { Modal } from "@/components/ui/modal";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import { MultiScanReview } from "@/components/multi-scan-review";
-import { useBatchCreateTransactions } from "@/hooks/use-transactions";
+import { useBatchCreateTransactions, useCreateTransaction } from "@/hooks/use-transactions";
+import { BillReminderBanner } from "@/components/bills/bill-reminder-banner";
 import type { MultiScanItem } from "@/types";
 import type { TransactionInput } from "@/lib/validations";
 
@@ -42,6 +44,7 @@ const withLocalTime = (dateStr: string): string => {
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
+  { href: "/bills", label: "Bills", icon: CalendarClock },
   { href: "/categories", label: "Categories", icon: Tags },
 ];
 
@@ -49,7 +52,17 @@ export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const { user, setUser } = useUser();
   const batchCreateMutation = useBatchCreateTransactions();
+  const createTransactionMutation = useCreateTransaction();
   const [scanOpen, setScanOpen] = useState(false);
+
+  // Bill reminder "Pay & Edit" state
+  const [billEditData, setBillEditData] = useState<{
+    amount: number;
+    description: string;
+    type: "INCOME" | "EXPENSE";
+    date: string;
+    categoryId: string;
+  } | null>(null);
 
   // Single-scan OCR state
   const [isScanning, setIsScanning] = useState(false);
@@ -414,6 +427,11 @@ export function AppShell({ children }: AppShellProps) {
     setEditingItemId(null);
   };
 
+  const handleBillPayAndEditSubmit = async (input: TransactionInput) => {
+    await createTransactionMutation.mutateAsync(input);
+    setBillEditData(null);
+  };
+
   return (
     <div className="min-h-screen bg-cream-100">
       {/* Desktop Sidebar */}
@@ -611,6 +629,24 @@ export function AppShell({ children }: AppShellProps) {
           </ScanProvider>
         </div>
       </main>
+
+      {/* Bill Reminder Banner */}
+      <BillReminderBanner onPayAndEdit={setBillEditData} />
+
+      {/* Bill Pay & Edit Modal */}
+      <Modal
+        open={billEditData !== null}
+        onClose={() => setBillEditData(null)}
+        title="Pay & Edit"
+      >
+        {billEditData && (
+          <TransactionForm
+            initialData={billEditData}
+            onSubmit={handleBillPayAndEditSubmit}
+            onCancel={() => setBillEditData(null)}
+          />
+        )}
+      </Modal>
 
       {/* Scan Receipt Sheet */}
       <ScanReceiptSheet

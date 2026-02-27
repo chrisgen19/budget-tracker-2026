@@ -90,6 +90,29 @@ export const updateAppSettingsSchema = z.object({
   monthlyScanLimit: z.number().int().min(0).max(1000).optional(),
 });
 
+export const scheduledTransactionSchema = z.object({
+  amount: z.number().positive("Amount must be greater than 0"),
+  description: z.string().max(255).default(""),
+  type: z.enum(["INCOME", "EXPENSE"]),
+  categoryId: z.string().min(1, "Category is required"),
+  frequency: z.enum(["DAILY", "WEEKLY", "MONTHLY", "ANNUALLY", "CUSTOM"]),
+  customIntervalDays: z.number().int().min(1).optional(),
+  reminderDaysBefore: z.number().int().min(0).max(30).default(0),
+  startDate: z.string().min(1, "Start date is required"),
+  endDate: z.string().optional(),
+}).refine(
+  (data) => data.frequency !== "CUSTOM" || (data.customIntervalDays != null && data.customIntervalDays >= 1),
+  { message: "Custom interval is required for custom frequency", path: ["customIntervalDays"] }
+);
+
+export const billActionSchema = z.object({
+  action: z.enum(["pay", "skip", "snooze"]),
+  dueDate: z.string().min(1, "Due date is required"),
+});
+
+export type ScheduledTransactionInput = z.infer<typeof scheduledTransactionSchema>;
+export type BillActionInput = z.infer<typeof billActionSchema>;
+
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export type ReceiptScanResult = z.infer<typeof receiptScanResultSchema>;
 export type ReceiptBreakdownResult = z.infer<typeof receiptBreakdownResultSchema>;

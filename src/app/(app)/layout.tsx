@@ -6,6 +6,7 @@ import { Providers } from "@/components/providers";
 import { PrivacyProvider } from "@/components/privacy-provider";
 import { UserProvider } from "@/components/user-provider";
 import { AppShell } from "@/components/app-shell";
+import { BillReminderProvider } from "@/components/bills/bill-reminder-provider";
 
 export default async function AppLayout({
   children,
@@ -69,7 +70,9 @@ export default async function AppLayout({
         }}
       >
         <PrivacyProvider>
-          <AppShell>{children}</AppShell>
+          <BillReminderProvider>
+            <AppShell>{children}</AppShell>
+          </BillReminderProvider>
         </PrivacyProvider>
       </UserProvider>
     </Providers>
