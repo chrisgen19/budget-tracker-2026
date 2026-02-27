@@ -25,7 +25,7 @@ export async function GET(request: Request) {
     where.type = type;
   }
 
-  if (month) {
+  if (month && month !== "ALL") {
     const [year, m] = month.split("-").map(Number);
     where.date = {
       gte: new Date(year, m - 1, 1),

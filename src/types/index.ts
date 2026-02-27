@@ -1,6 +1,22 @@
-import type { Category, Transaction, TransactionType, UserRole } from "@prisma/client";
+import type {
+  Category,
+  Transaction,
+  TransactionType,
+  UserRole,
+  ScheduledTransaction,
+  BillFrequency,
+  BillOccurrenceStatus,
+} from "@prisma/client";
 
-export type { Category, Transaction, TransactionType, UserRole };
+export type {
+  Category,
+  Transaction,
+  TransactionType,
+  UserRole,
+  ScheduledTransaction,
+  BillFrequency,
+  BillOccurrenceStatus,
+};
 
 /** Transaction with its category relation */
 export type TransactionWithCategory = Transaction & {
@@ -37,6 +53,19 @@ export interface MonthlyTrendItem {
 export interface BalanceTrendItem {
   date: string;   // YYYY-MM-DD
   balance: number;
+}
+
+/** Scheduled transaction with its category relation */
+export type ScheduledTransactionWithCategory = ScheduledTransaction & {
+  category: Category;
+};
+
+/** A pending bill reminder for the banner */
+export interface PendingReminder {
+  scheduledTransaction: ScheduledTransactionWithCategory;
+  dueDate: string;
+  isOverdue: boolean;
+  daysPastDue: number;
 }
 
 /** Metadata stored on each itemized transaction for future display */

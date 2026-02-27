@@ -6,6 +6,8 @@ import { Providers } from "@/components/providers";
 import { PrivacyProvider } from "@/components/privacy-provider";
 import { UserProvider } from "@/components/user-provider";
 import { AppShell } from "@/components/app-shell";
+import { BillReminderProvider } from "@/components/bills/bill-reminder-provider";
+import { ToastProvider } from "@/components/ui/toast";
 
 export default async function AppLayout({
   children,
@@ -69,7 +71,11 @@ export default async function AppLayout({
         }}
       >
         <PrivacyProvider>
-          <AppShell>{children}</AppShell>
+          <ToastProvider>
+            <BillReminderProvider>
+              <AppShell>{children}</AppShell>
+            </BillReminderProvider>
+          </ToastProvider>
         </PrivacyProvider>
       </UserProvider>
     </Providers>
