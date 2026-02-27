@@ -569,3 +569,62 @@ All notable development history for the Budget Tracker app.
 ### Bug Fixes
 - Fixed **non-deterministic ordering** of dashboard recent transactions — added `id` as a final sort tiebreaker to prevent inconsistent results when multiple transactions share the same date and creation time (common with batch-created receipt scan transactions)
 - Fixed **dashboard loading skeleton** not matching the actual layout on mobile — summary cards skeleton now uses horizontal scroll with snap points (matching the real cards) instead of a vertical stack; card placeholders include title, subtitle, and eye button; recent transactions section uses correct padding, dividers, and 5 rows (matching the real list)
+
+---
+
+## 2026-02-27 — Bills & Scheduled Transactions
+
+### Scheduled Transactions (`/bills`)
+- New **Bills** page for managing recurring bills and subscriptions
+- Full CRUD: create, edit, deactivate, and delete scheduled transactions
+- **Frequency options** — Daily, Weekly, Monthly, Annually, or Custom interval (N days)
+- **Reminder lead time** — configurable "remind X days before" per bill (0–30 days)
+- **Optional end date** — bills auto-deactivate when the end date is passed
+- Active/Inactive filter tabs with reactivate option for inactive bills
+- Each bill card shows category icon, frequency badge, due date label, and amount
+- Inline **payment history** with expandable accordion — shows PAID/SKIPPED/SNOOZED logs with dates and amounts
+- **Load-more pagination** on history (10 per page)
+
+### Bill Reminder Banner
+- **Floating reminder banner** at the bottom of the screen when bills are due or overdue
+- Shows category icon, bill name, amount, and due date status (e.g., "Due today", "3 days overdue")
+- **Overdue detection** — OVERDUE badge for past-due bills with missed occurrence tracking (up to 10 back-dated occurrences)
+- **Navigation arrows** to cycle through multiple pending reminders with counter (e.g., "2/5")
+- **Action buttons:**
+  - **Pay** — creates a transaction and advances the bill to the next due date
+  - **Pay & Edit** — pre-fills the transaction form for amount/date adjustments before saving
+  - **Snooze** — dropdown with 1 day, 3 days, or 1 week options (customizable duration)
+  - **Skip** — skips the current occurrence and advances to the next due date
+  - **Pay All** — batch-pays all pending reminders sequentially with progress indicator (e.g., "Paying 2/5...")
+- Toast feedback for all actions (e.g., "Netflix paid", "Electricity snoozed for 3 days")
+- `BillReminderProvider` context wraps the app layout — shared state across all pages
+
+### Dashboard — Upcoming Bills Card
+- New **Upcoming Bills** card on the dashboard — shows bills due within the next 7 days
+- Displays count, total amount, and up to 3 bills with category icon, name, due label, and amount
+- "View all →" link when more than 3 bills are upcoming
+- Privacy-aware (respects hide-amounts toggle)
+- Powered by `GET /api/bills/upcoming` endpoint
+
+### Bill-to-Transaction Linking
+- **History → Transaction link** — paid bill history entries show a link icon that navigates to the linked transaction on the Transactions page
+- **Highlight on navigate** — Transactions page reads `?highlight={id}` query param, sets month filter to "All Time", auto-opens the transaction's edit modal, then cleans up the URL
+
+### Performance
+- Added **60-second staleTime** to pending reminders and upcoming bills queries — prevents redundant API calls on rapid window focus (alt-tab) events
+- Pending reminders API uses **batch queries** (2 queries total: all bills + all logs) instead of per-bill queries
+
+### Database
+- Added `ScheduledTransaction` model — amount, description, type, frequency, customIntervalDays, reminderDaysBefore, startDate, endDate, nextDueDate, isActive, categoryId, userId
+- Added `ScheduledTransactionLog` model — scheduledTransactionId, dueDate, status (PAID/SKIPPED/SNOOZED), actionDate, transactionId, snoozeUntil
+- Added `BillFrequency` enum (DAILY, WEEKLY, MONTHLY, ANNUALLY, CUSTOM)
+- Added `BillOccurrenceStatus` enum (PAID, SKIPPED, SNOOZED)
+- Indexes on `[scheduledTransactionId, dueDate]` and `[scheduledTransactionId, status]`
+
+### API Routes
+- `GET/POST /api/bills` — list (with active/type filters) and create scheduled transactions
+- `GET/PUT/DELETE/PATCH /api/bills/[id]` — read, update, deactivate, and reactivate a bill
+- `POST /api/bills/[id]/action` — pay, pay_existing, skip, or snooze with configurable snooze duration
+- `GET /api/bills/[id]/history` — paginated payment history with linked transaction amounts
+- `GET /api/bills/pending` — all due/overdue reminders for the current user (batch-fetched)
+- `GET /api/bills/upcoming` — bills due within 7 days with count and total amount

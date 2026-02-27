@@ -13,7 +13,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 
 - **Landing Page** — Redesigned marketing homepage with 3D dashboard mockup preview, AI receipt scanning showcase with phone mockup, 8-feature grid, and scroll-triggered animations
 - **Authentication** — Register and login with email/password (NextAuth.js with JWT sessions); role-based access control (ADMIN, FREE, PAID)
-- **Dashboard** — Summary cards (balance, expenses, income), monthly trend bar chart, spending by category donut chart, balance trend area chart, recent transactions
+- **Dashboard** — Summary cards (balance, expenses, income), monthly trend bar chart, spending by category donut chart, balance trend area chart, upcoming bills summary, recent transactions
 - **Running Balance** — Cumulative all-time balance that carries over across months, not just monthly snapshots
 - **Balance Trend** — 30-day area chart showing daily running balance with percentage change indicator
 - **Transactions** — Full CRUD with search, type filtering (income/expense), month navigation, infinite scroll (with pagination toggle), hero amount input with dynamic type coloring, date quick-picks (Today/Yesterday/Custom), slide-in category picker, and advanced filters (category, amount range, sort)
@@ -24,6 +24,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **Receipt Scanning** — Snap a photo or upload multiple receipts and AI (Google Gemini) extracts the amount, date, category, and merchant to pre-fill transactions; batch scanning with live review modal and parallel processing; smart category matching with merchant-aware rules; non-receipt image detection; images compressed client-side before upload; HEIC/HEIF support; desktop scan dropdown on Add Transaction buttons; available to PAID/ADMIN users
 - **Receipt Itemization** — One-tap "Itemize" button splits a scanned receipt into multiple transactions grouped by spending category (e.g., Food & Dining, Personal Care, Household); each itemized transaction stores its individual line items and displays them in a collapsible "Receipt Breakdown" section inside the edit modal showing every product name and price from the receipt
 - **Monthly Scan Limits** — Configurable per-role monthly scan caps (0 = unlimited); usage badge on mobile scan button; remaining scans info in scan sheet; desktop sidebar warnings when running low or exhausted; ADMIN always unlimited
+- **Bills & Scheduled Transactions** — Create recurring bills with configurable frequency (daily, weekly, monthly, annually, custom interval); reminder banner with pay, pay & edit, snooze (1 day / 3 days / 1 week), and skip actions; "Pay All" batch payment for multiple due reminders; inline payment history with load-more pagination and transaction linking; upcoming bills summary card on dashboard; reactivate inactive bills; overdue detection with missed occurrence tracking
 - **TanStack Query Caching** — Client-side data caching for transactions, dashboard stats, categories, and quick-access preferences; instant re-renders on modal re-open (no loading shimmer after first fetch); in-place cache updates on create/edit/delete mutations
 - **Profile Settings** — Edit name, email, and preferred currency; change password with current-password verification; role badge displayed in header; feature toggles gated by role; sidebar updates instantly via shared context
 - **Dynamic Currency** — Currency selected in profile settings reflects across all pages — dashboard, transactions, charts, and forms
@@ -148,6 +149,7 @@ src/
 │   ├── (app)/               # Protected pages (requires auth)
 │   │   ├── dashboard/       # Dashboard with charts & summaries
 │   │   ├── transactions/    # Transaction list with CRUD
+│   │   ├── bills/           # Bills & scheduled transactions management
 │   │   ├── categories/      # Category management
 │   │   ├── profile/         # Profile settings (name, email, currency, password)
 │   │   └── admin/           # Admin panel (user management, scan settings)
@@ -156,6 +158,7 @@ src/
 │       ├── register/        # User registration
 │       ├── admin/           # Admin: users, roles, scan settings
 │       ├── transactions/    # Transaction CRUD
+│       ├── bills/           # Bills CRUD, actions, history, pending, upcoming
 │       ├── categories/      # Category CRUD
 │       ├── dashboard/       # Dashboard stats + balance trend
 │       ├── preferences/     # User preferences (privacy, quick categories, features)
@@ -165,13 +168,14 @@ src/
 │   ├── ui/                  # Shared UI (Modal, EmptyState, IconMap)
 │   ├── dashboard/           # Chart components (Trend, Spending, BalanceTrend)
 │   ├── transactions/        # Transaction form + receipt breakdown viewer
+│   ├── bills/               # Bill form, reminder banner, reminder provider
 │   ├── categories/          # Category form + quick category picker
 │   ├── landing-page.tsx     # Marketing homepage for guests
 │   ├── scan-receipt-sheet.tsx # Receipt capture modal (camera/upload)
 │   ├── multi-scan-review.tsx # Batch scan review modal
 │   ├── privacy-provider.tsx # Hide-amounts context (persisted in DB)
 │   └── user-provider.tsx    # Reactive user info context (name, email, currency, role)
-├── hooks/                   # TanStack Query hooks (use-transactions, use-categories)
+├── hooks/                   # TanStack Query hooks (use-transactions, use-categories, use-bills)
 ├── lib/                     # Prisma client, auth, Gemini client, query client, utils, validations
 └── types/                   # TypeScript type definitions
 
@@ -187,6 +191,8 @@ prisma/
 User ──< Transaction >── Category
  │                          │
  ├────────< Category (custom, per-user)
+ ├────────< ScheduledTransaction >── Category
+ │              └──< ScheduledTransactionLog ──> Transaction (optional)
  └────────< ScanLog
 
 AppSettings (per role: FREE, PAID)
@@ -195,6 +201,8 @@ AppSettings (per role: FREE, PAID)
 - **User** — id, name, email, password, role (ADMIN/FREE/PAID), currency, hide_amounts, quickExpenseCategories, quickIncomeCategories, receiptScanEnabled, transactionLayout
 - **Category** — id, name, type (INCOME/EXPENSE), icon, color, isDefault, userId (null for defaults)
 - **Transaction** — id, amount, description, type, date, categoryId, userId, receiptGroupId (links itemized siblings), receiptBreakdown (JSON — individual line items)
+- **ScheduledTransaction** — id, amount, description, type, frequency (DAILY/WEEKLY/MONTHLY/ANNUALLY/CUSTOM), customIntervalDays, reminderDaysBefore, startDate, endDate, nextDueDate, isActive, categoryId, userId
+- **ScheduledTransactionLog** — id, scheduledTransactionId, dueDate, status (PAID/SKIPPED/SNOOZED), actionDate, transactionId (links to created transaction), snoozeUntil
 - **AppSettings** — id, role (unique), receiptScanEnabled, maxUploadFiles, monthlyScanLimit
 - **ScanLog** — id, userId, createdAt (tracks scan usage for monthly limits)
 
