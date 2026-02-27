@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Pencil, Trash2, CalendarClock, X, ChevronDown, ChevronUp, RotateCcw } from "lucide-react";
+import { Plus, Pencil, PowerOff, CalendarClock, X, ChevronDown, ChevronUp, RotateCcw } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn, formatCurrency } from "@/lib/utils";
 import { formatFrequency } from "@/lib/bill-utils";
@@ -248,7 +248,7 @@ export default function BillsPage() {
                             onClick={() => setDeletingBill(bill)}
                             className="p-1.5 rounded-lg text-warm-300 hover:text-expense hover:bg-expense-light transition-colors"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <PowerOff className="w-3.5 h-3.5" />
                           </button>
                         )}
                       </div>
@@ -345,7 +345,7 @@ export default function BillsPage() {
               <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
             ) : (
               <>
-                <Trash2 className="w-4 h-4" />
+                <PowerOff className="w-4 h-4" />
                 Deactivate
               </>
             )}
