@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Pencil, Trash2, CalendarClock, X, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Pencil, Trash2, CalendarClock, X, ChevronDown, ChevronUp, RotateCcw } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn, formatCurrency } from "@/lib/utils";
 import { formatFrequency } from "@/lib/bill-utils";
@@ -14,6 +14,7 @@ import {
   useCreateBill,
   useUpdateBill,
   useDeleteBill,
+  useReactivateBill,
   useBillHistoryQuery,
 } from "@/hooks/use-bills";
 import { usePrivacy } from "@/components/privacy-provider";
@@ -50,6 +51,7 @@ export default function BillsPage() {
   const createBill = useCreateBill();
   const updateBill = useUpdateBill();
   const deleteBill = useDeleteBill();
+  const reactivateBill = useReactivateBill();
 
   const handleCreate = async (input: ScheduledTransactionInput) => {
     await createBill.mutateAsync(input);
@@ -223,18 +225,32 @@ export default function BillsPage() {
 
                       {/* Actions */}
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={() => setEditingBill(bill)}
-                          className="p-1.5 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors"
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => setDeletingBill(bill)}
-                          className="p-1.5 rounded-lg text-warm-300 hover:text-expense hover:bg-expense-light transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        {!isActive && (
+                          <button
+                            onClick={() => reactivateBill.mutate(bill.id)}
+                            disabled={reactivateBill.isPending}
+                            className="p-1.5 rounded-lg text-warm-300 hover:text-income hover:bg-income-light transition-colors disabled:opacity-50"
+                            title="Reactivate"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {isActive && (
+                          <button
+                            onClick={() => setEditingBill(bill)}
+                            className="p-1.5 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {isActive && (
+                          <button
+                            onClick={() => setDeletingBill(bill)}
+                            className="p-1.5 rounded-lg text-warm-300 hover:text-expense hover:bg-expense-light transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>

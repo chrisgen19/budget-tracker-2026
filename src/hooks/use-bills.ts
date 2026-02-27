@@ -152,6 +152,25 @@ export function useDeleteBill() {
   });
 }
 
+export function useReactivateBill() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/bills/${id}`, { method: "PATCH" });
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.error || "Failed to reactivate bill");
+      }
+      return res.json() as Promise<ScheduledTransactionWithCategory>;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: billKeys.all });
+      queryClient.invalidateQueries({ queryKey: billKeys.pending });
+    },
+  });
+}
+
 export function useBillAction() {
   const queryClient = useQueryClient();
 

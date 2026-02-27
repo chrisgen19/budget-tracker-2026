@@ -55,6 +55,42 @@ export async function PUT(
   }
 }
 
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const userId = await getAuthUserId();
+  if (userId instanceof NextResponse) return userId;
+
+  const { id } = await params;
+
+  const existing = await prisma.scheduledTransaction.findUnique({ where: { id } });
+  if (!existing || existing.userId !== userId) {
+    return NextResponse.json({ error: "Bill not found" }, { status: 404 });
+  }
+
+  if (existing.isActive) {
+    return NextResponse.json({ error: "Bill is already active" }, { status: 400 });
+  }
+
+  // Reactivate and reset nextDueDate to today if it's in the past
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const nextDueDate = existing.nextDueDate < today ? today : existing.nextDueDate;
+
+  const bill = await prisma.scheduledTransaction.update({
+    where: { id },
+    data: {
+      isActive: true,
+      nextDueDate,
+      endDate: null,
+    },
+    include: { category: true },
+  });
+
+  return NextResponse.json(bill);
+}
+
 export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
