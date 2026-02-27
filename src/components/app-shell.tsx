@@ -27,6 +27,7 @@ import { MultiScanReview } from "@/components/multi-scan-review";
 import { useBatchCreateTransactions, useCreateTransaction } from "@/hooks/use-transactions";
 import { BillReminderBanner, type PayAndEditData } from "@/components/bills/bill-reminder-banner";
 import { useBillAction } from "@/hooks/use-bills";
+import { useToast } from "@/components/ui/toast";
 import type { MultiScanItem } from "@/types";
 import type { TransactionInput } from "@/lib/validations";
 
@@ -423,6 +424,8 @@ export function AppShell({ children }: AppShellProps) {
     setEditingItemId(null);
   };
 
+  const { showToast } = useToast();
+
   const handleBillPayAndEditSubmit = async (input: TransactionInput) => {
     const newTx = await createTransactionMutation.mutateAsync(input);
 
@@ -436,6 +439,7 @@ export function AppShell({ children }: AppShellProps) {
           transactionId: newTx.id,
         },
       });
+      showToast(`${billEditData.description || "Bill"} paid`);
     }
 
     setBillEditData(null);

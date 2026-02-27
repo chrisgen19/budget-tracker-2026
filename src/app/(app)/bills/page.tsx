@@ -367,7 +367,7 @@ export default function BillsPage() {
 
 /** Inline bill payment history */
 function BillHistory({ billId, currency, hideAmounts }: { billId: string; currency: string; hideAmounts: boolean }) {
-  const { data, isLoading } = useBillHistoryQuery(billId);
+  const { data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage } = useBillHistoryQuery(billId);
 
   if (isLoading) {
     return (
@@ -382,7 +382,9 @@ function BillHistory({ billId, currency, hideAmounts }: { billId: string; curren
     );
   }
 
-  if (!data?.logs.length) {
+  const allLogs = data?.pages.flatMap((page) => page.logs) ?? [];
+
+  if (allLogs.length === 0) {
     return (
       <div className="px-4 pb-3">
         <p className="text-xs text-warm-300 text-center py-2">No payment history yet</p>
@@ -392,24 +394,34 @@ function BillHistory({ billId, currency, hideAmounts }: { billId: string; curren
 
   return (
     <div className="px-4 pb-3 space-y-1.5">
-      {data.logs.map((log) => (
+      {allLogs.map((log) => (
         <div key={log.id} className="flex items-center gap-3 text-xs">
           <span className="text-warm-400 tabular-nums w-24 shrink-0">
             {formatShortDate(log.dueDate)}
           </span>
           <span className={cn(
             "px-2 py-0.5 rounded-full text-[10px] font-medium",
-            STATUS_COLORS[log.status]
+            STATUS_COLORS[log.status as keyof typeof STATUS_COLORS]
           )}>
             {log.status.charAt(0) + log.status.slice(1).toLowerCase()}
           </span>
-          {log.transactionId && !hideAmounts && (
-            <span className="text-warm-400 ml-auto">
-              {formatCurrency(0, currency).replace(/[\d,.]+/, "...")}
+          {log.paidAmount != null && (
+            <span className="text-warm-500 font-medium ml-auto tabular-nums">
+              {hideAmounts ? "***" : formatCurrency(log.paidAmount, currency)}
             </span>
           )}
         </div>
       ))}
+
+      {hasNextPage && (
+        <button
+          onClick={() => fetchNextPage()}
+          disabled={isFetchingNextPage}
+          className="w-full text-center text-[11px] text-warm-400 hover:text-warm-600 font-medium py-1.5 transition-colors disabled:opacity-50"
+        >
+          {isFetchingNextPage ? "Loading..." : "Load more"}
+        </button>
+      )}
     </div>
   );
 }

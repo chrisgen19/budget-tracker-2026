@@ -1,5 +1,6 @@
 import {
   useQuery,
+  useInfiniteQuery,
   useMutation,
   useQueryClient,
 } from "@tanstack/react-query";
@@ -43,8 +44,12 @@ const fetchPendingReminders = async (): Promise<PendingReminder[]> => {
   return res.json();
 };
 
+export interface HistoryLog extends ScheduledTransactionLog {
+  paidAmount: number | null;
+}
+
 interface HistoryResponse {
-  logs: ScheduledTransactionLog[];
+  logs: HistoryLog[];
   pagination: {
     page: number;
     limit: number;
@@ -53,8 +58,10 @@ interface HistoryResponse {
   };
 }
 
-const fetchBillHistory = async (id: string): Promise<HistoryResponse> => {
-  const res = await fetch(`/api/bills/${id}/history`);
+const HISTORY_PAGE_SIZE = 10;
+
+const fetchBillHistory = async (id: string, page: number): Promise<HistoryResponse> => {
+  const res = await fetch(`/api/bills/${id}/history?page=${page}&limit=${HISTORY_PAGE_SIZE}`);
   if (!res.ok) throw new Error("Failed to fetch bill history");
   return res.json();
 };
@@ -79,9 +86,14 @@ export function usePendingRemindersQuery() {
 }
 
 export function useBillHistoryQuery(id: string) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: billKeys.history(id),
-    queryFn: () => fetchBillHistory(id),
+    queryFn: ({ pageParam }) => fetchBillHistory(id, pageParam),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) =>
+      lastPage.pagination.page < lastPage.pagination.totalPages
+        ? lastPage.pagination.page + 1
+        : undefined,
     enabled: !!id,
   });
 }
