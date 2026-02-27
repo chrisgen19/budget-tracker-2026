@@ -25,7 +25,8 @@ import { Modal } from "@/components/ui/modal";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import { MultiScanReview } from "@/components/multi-scan-review";
 import { useBatchCreateTransactions, useCreateTransaction } from "@/hooks/use-transactions";
-import { BillReminderBanner } from "@/components/bills/bill-reminder-banner";
+import { BillReminderBanner, type PayAndEditData } from "@/components/bills/bill-reminder-banner";
+import { useBillAction } from "@/hooks/use-bills";
 import type { MultiScanItem } from "@/types";
 import type { TransactionInput } from "@/lib/validations";
 
@@ -53,16 +54,11 @@ export function AppShell({ children }: AppShellProps) {
   const { user, setUser } = useUser();
   const batchCreateMutation = useBatchCreateTransactions();
   const createTransactionMutation = useCreateTransaction();
+  const billActionMutation = useBillAction();
   const [scanOpen, setScanOpen] = useState(false);
 
   // Bill reminder "Pay & Edit" state
-  const [billEditData, setBillEditData] = useState<{
-    amount: number;
-    description: string;
-    type: "INCOME" | "EXPENSE";
-    date: string;
-    categoryId: string;
-  } | null>(null);
+  const [billEditData, setBillEditData] = useState<PayAndEditData | null>(null);
 
   // Single-scan OCR state
   const [isScanning, setIsScanning] = useState(false);
@@ -428,7 +424,20 @@ export function AppShell({ children }: AppShellProps) {
   };
 
   const handleBillPayAndEditSubmit = async (input: TransactionInput) => {
-    await createTransactionMutation.mutateAsync(input);
+    const newTx = await createTransactionMutation.mutateAsync(input);
+
+    // Log the bill as paid with the newly created transaction ID
+    if (billEditData) {
+      await billActionMutation.mutateAsync({
+        id: billEditData.billId,
+        input: {
+          action: "pay_existing",
+          dueDate: billEditData.billDueDate,
+          transactionId: newTx.id,
+        },
+      });
+    }
+
     setBillEditData(null);
   };
 

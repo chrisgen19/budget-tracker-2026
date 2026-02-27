@@ -11,7 +11,7 @@ export async function GET() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // Find active bills where nextDueDate - reminderDaysBefore <= today
+  // Fetch all active bills in a single query
   const bills = await prisma.scheduledTransaction.findMany({
     where: {
       userId,
@@ -19,6 +19,26 @@ export async function GET() {
     },
     include: { category: true },
   });
+
+  if (bills.length === 0) return NextResponse.json([]);
+
+  const billIds = bills.map((b) => b.id);
+
+  // Batch fetch ALL logs for all active bills in a single query
+  const allLogs = await prisma.scheduledTransactionLog.findMany({
+    where: {
+      scheduledTransactionId: { in: billIds },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  // Index logs by scheduledTransactionId for fast lookup
+  const logsByBillId = new Map<string, typeof allLogs>();
+  for (const log of allLogs) {
+    const existing = logsByBillId.get(log.scheduledTransactionId) ?? [];
+    existing.push(log);
+    logsByBillId.set(log.scheduledTransactionId, existing);
+  }
 
   const reminders: PendingReminder[] = [];
 
@@ -33,28 +53,23 @@ export async function GET() {
     const dueDate = new Date(bill.nextDueDate);
     dueDate.setHours(0, 0, 0, 0);
 
-    // Check if this occurrence already has a log entry (PAID or SKIPPED)
-    const existingLog = await prisma.scheduledTransactionLog.findFirst({
-      where: {
-        scheduledTransactionId: bill.id,
-        dueDate: bill.nextDueDate,
-        status: { in: ["PAID", "SKIPPED"] },
-      },
-    });
+    const billLogs = logsByBillId.get(bill.id) ?? [];
+    const dueDateMs = bill.nextDueDate.getTime();
 
-    if (existingLog) continue;
+    // Check if this occurrence already has a PAID or SKIPPED log
+    const hasFinalLog = billLogs.some(
+      (log) =>
+        log.dueDate.getTime() === dueDateMs &&
+        (log.status === "PAID" || log.status === "SKIPPED"),
+    );
+    if (hasFinalLog) continue;
 
     // Check if snoozed and snooze period hasn't expired
-    const snoozeLog = await prisma.scheduledTransactionLog.findFirst({
-      where: {
-        scheduledTransactionId: bill.id,
-        dueDate: bill.nextDueDate,
-        status: "SNOOZED",
-      },
-      orderBy: { createdAt: "desc" },
-    });
-
-    if (snoozeLog?.snoozeUntil && snoozeLog.snoozeUntil > new Date()) continue;
+    const latestSnooze = billLogs.find(
+      (log) =>
+        log.dueDate.getTime() === dueDateMs && log.status === "SNOOZED",
+    );
+    if (latestSnooze?.snoozeUntil && latestSnooze.snoozeUntil > new Date()) continue;
 
     const daysPastDue = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
 
@@ -65,7 +80,7 @@ export async function GET() {
       daysPastDue: Math.max(0, daysPastDue),
     });
 
-    // If overdue, also check for missed occurrences by iterating forward
+    // If overdue, check for missed occurrences
     if (daysPastDue > 0) {
       let checkDate = computeNextDueDate(
         bill.nextDueDate,
@@ -74,18 +89,17 @@ export async function GET() {
         bill.customIntervalDays,
       );
 
-      // Generate up to 10 missed occurrences
       let missedCount = 0;
       while (checkDate <= today && missedCount < 10) {
-        const missedLog = await prisma.scheduledTransactionLog.findFirst({
-          where: {
-            scheduledTransactionId: bill.id,
-            dueDate: checkDate,
-            status: { in: ["PAID", "SKIPPED"] },
-          },
-        });
+        const checkMs = checkDate.getTime();
 
-        if (!missedLog) {
+        const missedHasFinal = billLogs.some(
+          (log) =>
+            log.dueDate.getTime() === checkMs &&
+            (log.status === "PAID" || log.status === "SKIPPED"),
+        );
+
+        if (!missedHasFinal) {
           const missedDaysPast = Math.floor((today.getTime() - checkDate.getTime()) / (1000 * 60 * 60 * 24));
           reminders.push({
             scheduledTransaction: bill as ScheduledTransactionWithCategory,

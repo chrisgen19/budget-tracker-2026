@@ -192,7 +192,7 @@ export function useBillAction() {
       queryClient.invalidateQueries({ queryKey: billKeys.pending });
 
       // If paid, also invalidate transactions and dashboard
-      if (variables.input.action === "pay") {
+      if (variables.input.action === "pay" || variables.input.action === "pay_existing") {
         queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all });
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
       }

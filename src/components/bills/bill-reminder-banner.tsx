@@ -22,14 +22,19 @@ const formatDueDateDisplay = (dateStr: string) => {
   return `Due in ${diffDays} days`;
 };
 
+export interface PayAndEditData {
+  amount: number;
+  description: string;
+  type: "INCOME" | "EXPENSE";
+  date: string;
+  categoryId: string;
+  /** Bill info needed to log the payment after transaction is created */
+  billId: string;
+  billDueDate: string;
+}
+
 interface BillReminderBannerProps {
-  onPayAndEdit: (data: {
-    amount: number;
-    description: string;
-    type: "INCOME" | "EXPENSE";
-    date: string;
-    categoryId: string;
-  }) => void;
+  onPayAndEdit: (data: PayAndEditData) => void;
 }
 
 export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
@@ -69,6 +74,8 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
       type: bill.type,
       date: `${year}-${month}-${day}T${hours}:${minutes}`,
       categoryId: bill.categoryId,
+      billId: bill.id,
+      billDueDate: reminder.dueDate,
     });
   };
 
@@ -166,7 +173,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-light text-amber-dark hover:bg-amber/20 text-xs font-medium transition-colors disabled:opacity-50"
               >
                 <Pencil className="w-3 h-3" />
-                Edit
+                Pay &amp; Edit
               </button>
               <button
                 onClick={() => handleSnooze(reminder)}
@@ -174,7 +181,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cream-100 text-warm-500 hover:bg-cream-200 text-xs font-medium transition-colors disabled:opacity-50"
               >
                 <Clock className="w-3 h-3" />
-                Skip
+                Snooze
               </button>
               <button
                 onClick={() => handleSkip(reminder)}
@@ -182,7 +189,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cream-100 text-warm-400 hover:bg-cream-200 text-xs font-medium transition-colors disabled:opacity-50"
               >
                 <FastForward className="w-3 h-3" />
-                Dismiss
+                Skip
               </button>
             </div>
           </div>

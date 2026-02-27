@@ -24,7 +24,7 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { action, dueDate: dueDateStr } = billActionSchema.parse(body);
+    const { action, dueDate: dueDateStr, transactionId: existingTransactionId } = billActionSchema.parse(body);
     const dueDate = new Date(dueDateStr);
 
     const originalStartDay = bill.startDate.getDate();
@@ -68,6 +68,33 @@ export async function POST(
       });
 
       return NextResponse.json({ message: "Bill paid", transactionId: transaction.id });
+    }
+
+    if (action === "pay_existing") {
+      // Log payment for an already-created transaction (used by "Pay & Edit" flow)
+      await prisma.scheduledTransactionLog.create({
+        data: {
+          scheduledTransactionId: bill.id,
+          dueDate,
+          status: "PAID",
+          actionDate: new Date(),
+          transactionId: existingTransactionId,
+        },
+      });
+
+      // Advance nextDueDate
+      const nextDue = computeNextDueDate(dueDate, bill.frequency, originalStartDay, bill.customIntervalDays);
+      const shouldDeactivate = bill.endDate && nextDue > bill.endDate;
+
+      await prisma.scheduledTransaction.update({
+        where: { id },
+        data: {
+          nextDueDate: nextDue,
+          ...(shouldDeactivate && { isActive: false }),
+        },
+      });
+
+      return NextResponse.json({ message: "Bill marked as paid" });
     }
 
     if (action === "snooze") {

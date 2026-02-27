@@ -103,12 +103,19 @@ export const scheduledTransactionSchema = z.object({
 }).refine(
   (data) => data.frequency !== "CUSTOM" || (data.customIntervalDays != null && data.customIntervalDays >= 1),
   { message: "Custom interval is required for custom frequency", path: ["customIntervalDays"] }
+).refine(
+  (data) => !data.endDate || new Date(data.endDate) >= new Date(data.startDate),
+  { message: "End date must be on or after start date", path: ["endDate"] }
 );
 
 export const billActionSchema = z.object({
-  action: z.enum(["pay", "skip", "snooze"]),
+  action: z.enum(["pay", "pay_existing", "skip", "snooze"]),
   dueDate: z.string().min(1, "Due date is required"),
-});
+  transactionId: z.string().optional(),
+}).refine(
+  (data) => data.action !== "pay_existing" || (data.transactionId != null && data.transactionId.length > 0),
+  { message: "Transaction ID is required for pay_existing", path: ["transactionId"] }
+);
 
 export type ScheduledTransactionInput = z.infer<typeof scheduledTransactionSchema>;
 export type BillActionInput = z.infer<typeof billActionSchema>;
