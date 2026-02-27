@@ -105,7 +105,9 @@ export function usePendingRemindersQuery() {
   return useQuery({
     queryKey: billKeys.pending,
     queryFn: fetchPendingReminders,
-    refetchOnWindowFocus: true,
+    // refetchOnWindowFocus is already the default — staleTime prevents
+    // rapid-fire refetches when the user alt-tabs frequently.
+    staleTime: 60_000,
   });
 }
 
@@ -113,6 +115,7 @@ export function useUpcomingBillsQuery() {
   return useQuery({
     queryKey: billKeys.upcoming,
     queryFn: fetchUpcomingBills,
+    staleTime: 60_000,
   });
 }
 
