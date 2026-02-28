@@ -564,6 +564,45 @@ All notable development history for the Budget Tracker app.
 
 ---
 
+## 2026-02-28 — MCP Server (Claude Desktop Integration)
+
+### MCP Server
+- New **Model Context Protocol (MCP) server** for querying budget data directly from Claude Desktop using natural language
+- Runs locally via `tsx` over stdio — Claude Desktop starts and stops it automatically, no hosted server needed
+- Architecture: `Claude Desktop → (stdio) → MCP Server → Prisma → PostgreSQL`
+- User ID passed via `BUDGET_USER_ID` environment variable in the Claude Desktop config (no HTTP session needed)
+- Standalone `mcp-server/` package with its own `package.json` and `tsconfig.json` — isolated from the Next.js build
+
+### 8 Read-Only MCP Tools
+- **`get_spending_by_category`** — spending grouped by category for a given month, sorted by amount with percentages
+- **`get_top_expenses`** — largest individual expense transactions, optionally filtered by month (configurable limit, default 10)
+- **`get_monthly_summary`** — income, expenses, and net per month for the last N months (default 6, max 24)
+- **`get_spending_trends`** — compare spending between two months, broken down by category with absolute and percentage change
+- **`search_transactions`** — search and filter by description, category, amount range, type, and month; supports pagination and sorting
+- **`get_budget_overview`** — high-level monthly summary with total income, expenses, net, running balance, and transaction count
+- **`get_upcoming_bills`** — scheduled transactions due within N days (default 7, max 90), including overdue detection
+- **`get_category_list`** — all categories (default + custom) with type filtering; useful for finding category IDs for other tools
+
+### Shared Query Library
+- Created `src/lib/budget-queries.ts` — 8 reusable read-only query functions extracted from existing API routes
+- Created `src/lib/budget-query-types.ts` — TypeScript types for all query params and return values
+- **Dependency injection** pattern — all functions take `(prisma: PrismaClient, userId: string, params)` so both the MCP server and Next.js app can use their own Prisma instance
+- Query logic mirrors existing API routes: `get_spending_by_category` from `api/dashboard` lines 104–126, `get_monthly_summary` from lines 128–151, `search_transactions` from `api/transactions` lines 22–71, `get_upcoming_bills` from `api/bills/upcoming`, `get_category_list` from `api/categories` lines 13–26
+- Designed for reuse by a future in-app AI chat feature for end users
+
+### Files Added
+- `src/lib/budget-query-types.ts` — shared TypeScript types (params + return values for all 8 queries)
+- `src/lib/budget-queries.ts` — shared query functions with Prisma dependency injection
+- `mcp-server/package.json` — standalone package with `@modelcontextprotocol/sdk` dependency
+- `mcp-server/tsconfig.json` — standalone TypeScript config
+- `mcp-server/src/index.ts` — MCP server entry point registering 8 tools with Zod input schemas
+
+### Files Modified
+- `.gitignore` — added `mcp-server/node_modules/`
+- `tsconfig.json` — excluded `mcp-server/` from root type-checking to avoid conflicts with Next.js build
+
+---
+
 ## 2026-02-26 — Dashboard Bug Fixes
 
 ### Bug Fixes
