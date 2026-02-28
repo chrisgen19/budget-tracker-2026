@@ -20,7 +20,7 @@ const getBaseUrl = () => {
 };
 
 export const sendVerificationEmail = async (email: string, token: string) => {
-  const verifyUrl = `${getBaseUrl()}/api/auth/verify-email?token=${token}`;
+  const verifyUrl = `${getBaseUrl()}/api/verify-email?token=${token}`;
 
   await getResend().emails.send({
     from: getFrom(),
