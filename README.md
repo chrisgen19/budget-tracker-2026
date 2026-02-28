@@ -30,6 +30,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **Privacy Mode** — One-tap toggle to hide all financial amounts across the app, persisted per-user in the database
 - **Responsive** — Sidebar navigation on desktop, bottom navigation on mobile; labeled floating action buttons on mobile; modal bottom sheets with drag-to-dismiss on mobile, centered cards on desktop; keyboard-aware modals on iOS Safari
 - **Dynamic Favicon** — Auto-generated favicon matching the app logo
+- **MCP Server** — Local Model Context Protocol server for querying budget data from Claude Desktop; 8 read-only tools (spending by category, top expenses, monthly summary, spending trends, search transactions, budget overview, upcoming bills, category list); shared query library reusable for future in-app AI chat
 - **Design** — Warm paper-ledger aesthetic with Young Serif + Outfit fonts, Plus Jakarta Sans for currency amounts, amber accents, and Framer Motion animations
 
 ## Tech Stack
@@ -45,6 +46,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 | Data Caching | TanStack Query |
 | Charts | Recharts |
 | OCR / AI | Google Gemini |
+| MCP Server | Model Context Protocol SDK |
 | Icons | Lucide React |
 | Animation | Framer Motion |
 
@@ -125,6 +127,91 @@ Open [http://localhost:3000](http://localhost:3000), register an account, and st
 | `pnpm db:seed` | Seed default categories + set admin role |
 | `pnpm db:studio` | Open Prisma Studio (database GUI) |
 
+## MCP Server (Claude Desktop Integration)
+
+The project includes a local [Model Context Protocol](https://modelcontextprotocol.io/) server that lets you query your budget data directly from Claude Desktop using natural language — e.g., "what's my biggest spending category?" or "how much did I spend on food this month?"
+
+### Architecture
+
+```
+Claude Desktop → (stdio) → MCP Server (local script) → Prisma → PostgreSQL
+```
+
+The MCP server is a standalone TypeScript script that runs locally via `tsx`. It is **not** a hosted server — Claude Desktop starts and stops it automatically.
+
+### Setup
+
+#### 1. Install MCP server dependencies
+
+```bash
+cd mcp-server && pnpm install && cd ..
+```
+
+#### 2. Generate Prisma client for the MCP server
+
+```bash
+cd mcp-server && npx prisma generate --schema=../prisma/schema.prisma && cd ..
+```
+
+#### 3. Find your user ID
+
+```bash
+pnpm db:studio
+```
+
+Open the `User` table in Prisma Studio and copy your user's `id` value.
+
+#### 4. Configure Claude Desktop
+
+Edit your Claude Desktop config file:
+
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+Add the following (replace the placeholder values):
+
+```json
+{
+  "mcpServers": {
+    "budgettracker": {
+      "command": "npx",
+      "args": ["tsx", "/absolute/path/to/budgettracker/mcp-server/src/index.ts"],
+      "env": {
+        "DATABASE_URL": "postgres://myuser:mypassword@localhost:5432/budgettracker-nextjs",
+        "BUDGET_USER_ID": "your-user-id-here"
+      }
+    }
+  }
+}
+```
+
+#### 5. Restart Claude Desktop
+
+Claude Desktop will automatically start the MCP server when you open a conversation. No manual startup needed.
+
+### Available MCP Tools
+
+| Tool | Description |
+|---|---|
+| `get_spending_by_category` | Spending grouped by category for a given month, with percentages |
+| `get_top_expenses` | Largest individual expense transactions, optionally filtered by month |
+| `get_monthly_summary` | Income, expenses, and net per month for the last N months |
+| `get_spending_trends` | Compare spending between two months — shows which categories increased or decreased |
+| `search_transactions` | Search and filter transactions by description, category, amount range, type, and month |
+| `get_budget_overview` | High-level monthly summary: income, expenses, net, running balance, transaction count |
+| `get_upcoming_bills` | Scheduled transactions (bills) due within N days, including overdue |
+| `get_category_list` | All categories (default + custom) — useful for finding category IDs |
+
+### Testing with MCP Inspector
+
+To verify tools work correctly before using in Claude Desktop:
+
+```bash
+BUDGET_USER_ID=your-user-id DATABASE_URL="your-database-url" npx @modelcontextprotocol/inspector npx tsx mcp-server/src/index.ts
+```
+
+This opens a web UI at `http://localhost:6274` where you can call each tool and inspect the results.
+
 ## Git Hooks
 
 This project uses **husky** + **lint-staged** to enforce code quality before code reaches the repository:
@@ -173,7 +260,15 @@ src/
 │   └── user-provider.tsx    # Reactive user info context (name, email, currency, role)
 ├── hooks/                   # TanStack Query hooks (use-transactions, use-categories)
 ├── lib/                     # Prisma client, auth, Gemini client, query client, utils, validations
+│   ├── budget-queries.ts    # Shared query functions (used by MCP server + future AI chat)
+│   └── budget-query-types.ts # TypeScript types for query params and return values
 └── types/                   # TypeScript type definitions
+
+mcp-server/                  # MCP server for Claude Desktop integration
+├── package.json             # Standalone dependencies (@modelcontextprotocol/sdk)
+├── tsconfig.json            # Standalone TypeScript config
+└── src/
+    └── index.ts             # Entry point — registers 8 read-only tools
 
 prisma/
 ├── schema.prisma            # Database schema
