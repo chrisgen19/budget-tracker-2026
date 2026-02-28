@@ -1,16 +1,26 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { registerSchema, type RegisterInput } from "@/lib/validations";
-import { UserPlus, Eye, EyeOff, Wallet } from "lucide-react";
+import { resetPasswordSchema, type ResetPasswordInput } from "@/lib/validations";
+import { Lock, Eye, EyeOff, Wallet } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 
-export default function RegisterPage() {
+export default function ResetPasswordPage() {
+  return (
+    <Suspense>
+      <ResetPasswordForm />
+    </Suspense>
+  );
+}
+
+function ResetPasswordForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const token = searchParams.get("token") || "";
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
 
@@ -18,29 +28,59 @@ export default function RegisterPage() {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<RegisterInput>({
-    resolver: zodResolver(registerSchema),
+  } = useForm<ResetPasswordInput>({
+    resolver: zodResolver(resetPasswordSchema),
+    defaultValues: { token },
   });
 
-  const onSubmit = async (data: RegisterInput) => {
+  const onSubmit = async (data: ResetPasswordInput) => {
     setError("");
 
-    const res = await fetch("/api/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
-    });
+    try {
+      const res = await fetch("/api/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
 
-    const body = await res.json();
+      const body = await res.json();
 
-    if (!res.ok) {
-      setError(body.error || "Registration failed");
-      return;
+      if (!res.ok) {
+        setError(body.error || "Something went wrong");
+        return;
+      }
+
+      router.push("/login?reset=true");
+    } catch {
+      setError("Something went wrong. Please try again.");
     }
-
-    // Redirect to verify email page
-    router.push(`/verify-email?email=${encodeURIComponent(data.email)}`);
   };
+
+  if (!token) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: "easeOut" }}
+      >
+        <div className="text-center mb-8">
+          <h1 className="font-serif text-3xl text-warm-700">Invalid Link</h1>
+          <p className="text-warm-400 mt-1">This reset link is missing or invalid.</p>
+        </div>
+        <div className="card p-8 grain-overlay text-center">
+          <p className="text-warm-600 mb-4">
+            Please request a new password reset link.
+          </p>
+          <Link
+            href="/forgot-password"
+            className="text-amber hover:text-amber-dark font-medium transition-colors"
+          >
+            Request new link
+          </Link>
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div
@@ -58,13 +98,15 @@ export default function RegisterPage() {
         >
           <Wallet className="w-8 h-8" />
         </motion.div>
-        <h1 className="font-serif text-3xl text-warm-700">Create Account</h1>
-        <p className="text-warm-400 mt-1">Start tracking your finances today.</p>
+        <h1 className="font-serif text-3xl text-warm-700">New Password</h1>
+        <p className="text-warm-400 mt-1">Choose a new password for your account.</p>
       </div>
 
-      {/* Form Card */}
+      {/* Card */}
       <div className="card p-8 grain-overlay">
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+          <input type="hidden" {...register("token")} />
+
           {error && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
@@ -77,37 +119,7 @@ export default function RegisterPage() {
 
           <div>
             <label className="block text-sm font-medium text-warm-600 mb-1.5">
-              Full Name
-            </label>
-            <input
-              type="text"
-              {...register("name")}
-              className="w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 placeholder:text-warm-300 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all"
-              placeholder="Your name"
-            />
-            {errors.name && (
-              <p className="text-expense text-sm mt-1">{errors.name.message}</p>
-            )}
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-warm-600 mb-1.5">
-              Email
-            </label>
-            <input
-              type="email"
-              {...register("email")}
-              className="w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 placeholder:text-warm-300 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all"
-              placeholder="you@example.com"
-            />
-            {errors.email && (
-              <p className="text-expense text-sm mt-1">{errors.email.message}</p>
-            )}
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-warm-600 mb-1.5">
-              Password
+              New Password
             </label>
             <div className="relative">
               <input
@@ -153,22 +165,12 @@ export default function RegisterPage() {
               <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
             ) : (
               <>
-                <UserPlus className="w-5 h-5" />
-                Create Account
+                <Lock className="w-5 h-5" />
+                Reset Password
               </>
             )}
           </button>
         </form>
-
-        <p className="text-center text-sm text-warm-400 mt-6">
-          Already have an account?{" "}
-          <Link
-            href="/login"
-            className="text-amber hover:text-amber-dark font-medium transition-colors"
-          >
-            Sign in
-          </Link>
-        </p>
       </div>
     </motion.div>
   );

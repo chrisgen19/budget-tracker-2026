@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { registerSchema } from "@/lib/validations";
+import { createVerificationToken } from "@/lib/tokens";
+import { sendVerificationEmail } from "@/lib/email";
 
 export async function POST(request: Request) {
   try {
@@ -29,8 +31,17 @@ export async function POST(request: Request) {
       },
     });
 
+    // Send verification email (non-blocking — registration succeeds even if email fails)
+    try {
+      const tokenRecord = await createVerificationToken(user.id, "EMAIL_VERIFICATION");
+      await sendVerificationEmail(validated.email, tokenRecord.token);
+    } catch (emailError) {
+      // Log but don't fail registration
+      console.error("Failed to send verification email:", emailError);
+    }
+
     return NextResponse.json(
-      { message: "Account created successfully", userId: user.id },
+      { message: "Account created successfully. Please check your email to verify.", email: validated.email },
       { status: 201 }
     );
   } catch (error) {
