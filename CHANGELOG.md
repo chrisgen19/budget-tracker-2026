@@ -569,3 +569,126 @@ All notable development history for the Budget Tracker app.
 ### Bug Fixes
 - Fixed **non-deterministic ordering** of dashboard recent transactions — added `id` as a final sort tiebreaker to prevent inconsistent results when multiple transactions share the same date and creation time (common with batch-created receipt scan transactions)
 - Fixed **dashboard loading skeleton** not matching the actual layout on mobile — summary cards skeleton now uses horizontal scroll with snap points (matching the real cards) instead of a vertical stack; card placeholders include title, subtitle, and eye button; recent transactions section uses correct padding, dividers, and 5 rows (matching the real list)
+
+---
+
+## 2026-02-26 — Receipt Scan Fixes & Icon Picker Expansion
+
+### Receipt Scan Date Fixes
+- Fixed receipt transactions recording incorrect times — **Gemini now returns date-only** (YYYY-MM-DD) instead of date-time, and the client appends the user's current local time via a `withLocalTime()` helper
+- Client sends its **local date** via FormData `localDate` field so the server fallback date matches the user's timezone instead of using server UTC (which caused off-by-one day errors in UTC+ timezones)
+
+### Transaction Re-sort on Date Change
+- Fixed transaction list not re-sorting when a transaction's date is updated — optimistic update now removes and re-inserts the transaction at the correct sorted position instead of swapping in place
+- Removed `refetchType: "none"` so active queries refetch in background for full consistency
+
+### Icon Picker Expansion
+- Expanded the category icon picker from **20 to 80 Lucide icons**, organized into 17 semantic groups: Food & Dining, Transportation, Home & Housing, Shopping, Entertainment, Health & Wellness, Education, Work & Tech, Finance, Sports & Outdoors, Nature & Weather, Pets & Animals, Travel, Communication, Personal & Misc, Time, and Utilities & Tools
+- Increased icon picker scroll area from `max-h-48` to `max-h-64` for better browsing
+
+---
+
+## 2026-02-27 — Scheduled Transactions & Bill Reminders
+
+### Scheduled Transactions (`/bills`)
+- New **Bills** page for managing recurring transactions — create, edit, deactivate, and reactivate scheduled bills
+- Supports five frequency types: **Daily**, **Weekly**, **Monthly**, **Annually**, and **Custom** (user-defined interval in days)
+- Configurable **reminder** (0–30 days before due date) to surface upcoming bills
+- **Start date** and optional **end date** — bills auto-deactivate after the end date
+- Active/Inactive tab filtering on the bills page
+
+### Bill Actions
+- **Pay** — creates a real transaction from the bill, advances `nextDueDate` to the next occurrence, deactivates if past end date
+- **Pay & Edit** — creates the transaction then immediately opens it in the edit modal for adjustments
+- **Skip** — logs the occurrence as skipped and advances to the next due date
+- **Snooze** — postpones the reminder by 1–7 days without advancing the due date
+- **Pay All** — batch-pay all pending/overdue bills in one action
+
+### Bill Reminder Banner
+- Persistent **reminder banner** across the app showing count and total amount of pending/overdue bills
+- Expandable to view and action on individual bills directly from the banner
+- Uses a `BillReminderProvider` context with 60-second stale time to prevent redundant refetches
+
+### Dashboard Integration
+- New **Upcoming Bills** card on the dashboard showing the top 3 bills due within 7 days
+- Displays bill name, amount, due date, and overdue status
+- Links to the Bills page for full management
+
+### Bill History
+- Each bill has an expandable **history log** showing all past occurrences with status (Paid, Skipped, Snoozed)
+- Paid entries show the actual transaction amount
+- Paginated with load-more (5 per page)
+
+### Smart Date Advancement (`src/lib/bill-utils.ts`)
+- `computeNextDueDate()` handles edge cases: **month-end preservation** (Jan 31 → Feb 28 → Mar 31), **leap year transitions** (Feb 29 → Feb 28 in non-leap years), and custom interval arithmetic
+
+### Performance
+- Pending reminders API batches all occurrence log queries into a single fetch to avoid N+1 queries
+- `useUpcomingBillsQuery()` and `usePendingRemindersQuery()` hooks with 60-second stale time
+
+### Database
+- Added `ScheduledTransaction` model with `frequency` (BillFrequency enum), `customIntervalDays`, `reminderDaysBefore`, `startDate`, `endDate`, `nextDueDate`, `isActive`, `categoryId`, `userId`
+- Added `ScheduledTransactionLog` model with `status` (BillOccurrenceStatus enum: PAID/SKIPPED/SNOOZED), `dueDate`, `actionDate`, `transactionId`, `snoozeUntil`
+- Indexed on `(userId, nextDueDate)`, `(userId, isActive)`, `(scheduledTransactionId, dueDate)`, and `(scheduledTransactionId, status)`
+
+### API Routes
+- `GET/POST /api/bills` — list and create scheduled transactions
+- `PUT /api/bills/[id]` — update bill (recalculates `nextDueDate` on frequency change)
+- `PATCH /api/bills/[id]` — reactivate an inactive bill
+- `DELETE /api/bills/[id]` — soft-delete (sets `isActive` to false)
+- `GET /api/bills/pending` — bills due today or overdue (for reminder banner)
+- `GET /api/bills/upcoming` — bills due within 7 days (for dashboard card)
+- `POST /api/bills/[id]/action` — handle pay, pay_existing, skip, and snooze actions
+- `GET /api/bills/[id]/history` — paginated occurrence history
+
+### Navigation
+- **Sidebar:** "Bills" nav link with CalendarClock icon for all authenticated users
+- **Mobile:** bottom nav "Bills" tab
+
+---
+
+## 2026-02-28 — Email Verification & Password Reset
+
+### Email Verification
+- New users must **verify their email** after registration — redirected to `/verify-email` with a "Resend verification email" button
+- Verification email sent via **Resend** with a styled HTML template containing a 24-hour expiry link
+- Clicking the link hits `GET /api/verify-email?token=...`, sets `emailVerified` to true, and redirects to `/login?verified=true`
+- Login page shows success banner when `?verified=true` is present
+- Rate limited: verification emails can only be resent every 2 minutes
+
+### Password Reset
+- **Forgot Password** page (`/forgot-password`) — enter email to receive a reset link
+- **Reset Password** page (`/reset-password?token=...`) — set new password with confirmation
+- Reset tokens expire after 1 hour; rate limited to one request every 5 minutes
+- **Email enumeration protection** — forgot password always shows "If an account exists, we've sent a reset link" regardless of whether the email is registered
+- Login page shows success banner when `?reset=true` is present
+
+### Token Management (`src/lib/tokens.ts`)
+- `generateToken()` — cryptographically random 64-character hex token
+- `createVerificationToken()` — deletes existing tokens of the same type, creates new with expiry (24h for email, 1h for password)
+- `validateToken()` — checks existence, type match, and expiry; cleans up expired tokens
+- `hasRecentToken()` — rate limiting helper to prevent resend spam
+
+### Email Templates (`src/lib/email.ts`)
+- `sendVerificationEmail()` — styled email with CTA button and 24-hour expiry notice
+- `sendPasswordResetEmail()` — styled email with CTA button, 1-hour expiry notice, and security note about unsolicited requests
+- Uses `NEXTAUTH_URL` for link generation to support reverse proxy deployments
+
+### API Routes
+- `GET /api/verify-email` — validates token and marks email as verified
+- `POST /api/resend-verification` — sends new verification email (2-min rate limit)
+- `POST /api/forgot-password` — initiates password reset flow (5-min rate limit)
+- `POST /api/reset-password` — validates token and updates password
+
+### Auth Flow Changes
+- Register now redirects to `/verify-email?email=...` instead of auto-signing in
+- Login shows contextual messages for verified and reset states
+- "Forgot password?" link added to login page
+
+### Database
+- Added `email_verified` boolean column to `users` table (defaults to `false`)
+- Added `VerificationToken` model with `token` (unique), `type` (TokenType enum: EMAIL_VERIFICATION/PASSWORD_RESET), `expiresAt`, indexed on `userId` and `token`
+
+### Environment Variables
+- `RESEND_API_KEY` — required for sending verification and reset emails
+- `EMAIL_FROM` — sender address (e.g., `"Budget Tracker <noreply@yourdomain.com>"`)

@@ -12,13 +12,14 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 ## Features
 
 - **Landing Page** — Redesigned marketing homepage with 3D dashboard mockup preview, AI receipt scanning showcase with phone mockup, 8-feature grid, and scroll-triggered animations
-- **Authentication** — Register and login with email/password (NextAuth.js with JWT sessions); role-based access control (ADMIN, FREE, PAID)
-- **Dashboard** — Summary cards (balance, expenses, income), monthly trend bar chart, spending by category donut chart, balance trend area chart, recent transactions
+- **Authentication** — Register and login with email/password (NextAuth.js with JWT sessions); email verification via Resend; forgot/reset password flow with secure one-time tokens; role-based access control (ADMIN, FREE, PAID)
+- **Dashboard** — Summary cards (balance, expenses, income), monthly trend bar chart, spending by category donut chart, balance trend area chart, recent transactions, upcoming bills widget
 - **Running Balance** — Cumulative all-time balance that carries over across months, not just monthly snapshots
 - **Balance Trend** — 30-day area chart showing daily running balance with percentage change indicator
 - **Transactions** — Full CRUD with search, type filtering (income/expense), month navigation, infinite scroll (with pagination toggle), hero amount input with dynamic type coloring, date quick-picks (Today/Yesterday/Custom), slide-in category picker, and advanced filters (category, amount range, sort)
 - **Quick Category Tiles** — Personalized top-4 quick-access categories per type (expense/income) with customizable order; shown in the transaction form and editable from the Categories page
-- **Categories** — 15 pre-seeded defaults (10 expense, 5 income) + create/edit/delete custom categories with color swatches, icon grid, and live preview
+- **Categories** — 15 pre-seeded defaults (10 expense, 5 income) + create/edit/delete custom categories with color swatches, 80-icon picker (organized by category), and live preview
+- **Scheduled Transactions & Bill Reminders** — Create recurring bills with flexible frequency (daily, weekly, monthly, annually, custom interval); configurable reminders (0–30 days before); pay, skip, or snooze (1–7 days) from a reminder banner; pay-all for batch payments; bill history log with load-more pagination; dashboard card showing upcoming bills due this week; reactivate inactive bills; automatic next-due-date advancement with month-end and leap-year handling
 - **User Roles** — Three-tier role system (ADMIN, FREE, PAID); new users default to FREE; admin can manually promote users to PAID via an admin panel; receipt scanning gated to PAID/ADMIN users
 - **Admin Panel** — Admin-only user management page (`/admin`) with user list, role badges, transaction counts, and one-click FREE/PAID role toggle; scan settings page with per-role configuration for receipt scanning, upload limits, and monthly scan limits; protected by middleware and API-level guards
 - **Receipt Scanning** — Snap a photo or upload multiple receipts and AI (Google Gemini) extracts the amount, date, category, and merchant to pre-fill transactions; batch scanning with live review modal and parallel processing; smart category matching with merchant-aware rules; non-receipt image detection; images compressed client-side before upload; HEIC/HEIF support; desktop scan dropdown on Add Transaction buttons; available to PAID/ADMIN users
@@ -45,6 +46,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 | Data Caching | TanStack Query |
 | Charts | Recharts |
 | OCR / AI | Google Gemini |
+| Email | Resend |
 | Icons | Lucide React |
 | Animation | Framer Motion |
 
@@ -82,12 +84,18 @@ DATABASE_URL="postgres://myuser:mypassword@localhost:5432/budgettracker-nextjs"
 NEXTAUTH_SECRET="change-this-to-a-random-secret-in-production"
 NEXTAUTH_URL="http://localhost:3000"
 
+# Resend (email verification + password reset)
+RESEND_API_KEY=""
+EMAIL_FROM="Budget Tracker <noreply@yourdomain.com>"
+
 # Google Gemini (optional — enables receipt scanning)
 GEMINI_API_KEY=""
 GEMINI_MODEL="gemini-2.5-flash"
 ```
 
 > **Note:** Generate a secure `NEXTAUTH_SECRET` for production with `openssl rand -base64 32`
+>
+> **Email:** The `RESEND_API_KEY` is required for email verification and password reset. Get one from [Resend](https://resend.com).
 >
 > **Receipt Scanning:** The `GEMINI_API_KEY` is only required if you enable the receipt scanning feature. Get one from [Google AI Studio](https://aistudio.google.com/apikey).
 
@@ -144,19 +152,28 @@ src/
 │   ├── page.tsx             # Root — landing page (guest) or redirect (auth)
 │   ├── (auth)/              # Login & Register pages
 │   │   ├── login/
-│   │   └── register/
+│   │   ├── register/
+│   │   ├── verify-email/    # Email verification page
+│   │   ├── forgot-password/ # Forgot password page
+│   │   └── reset-password/  # Reset password page
 │   ├── (app)/               # Protected pages (requires auth)
 │   │   ├── dashboard/       # Dashboard with charts & summaries
 │   │   ├── transactions/    # Transaction list with CRUD
 │   │   ├── categories/      # Category management
+│   │   ├── bills/           # Scheduled transactions & bill reminders
 │   │   ├── profile/         # Profile settings (name, email, currency, password)
 │   │   └── admin/           # Admin panel (user management, scan settings)
 │   └── api/                 # REST API routes
 │       ├── auth/            # NextAuth handler
 │       ├── register/        # User registration
+│       ├── verify-email/    # Email verification endpoint
+│       ├── resend-verification/ # Resend verification email
+│       ├── forgot-password/ # Initiate password reset
+│       ├── reset-password/  # Complete password reset
 │       ├── admin/           # Admin: users, roles, scan settings
 │       ├── transactions/    # Transaction CRUD
 │       ├── categories/      # Category CRUD
+│       ├── bills/           # Scheduled transactions & bill actions
 │       ├── dashboard/       # Dashboard stats + balance trend
 │       ├── preferences/     # User preferences (privacy, quick categories, features)
 │       ├── profile/         # Profile & password update
@@ -166,13 +183,14 @@ src/
 │   ├── dashboard/           # Chart components (Trend, Spending, BalanceTrend)
 │   ├── transactions/        # Transaction form + receipt breakdown viewer
 │   ├── categories/          # Category form + quick category picker
+│   ├── bills/               # Bill form + reminder banner + reminder provider
 │   ├── landing-page.tsx     # Marketing homepage for guests
 │   ├── scan-receipt-sheet.tsx # Receipt capture modal (camera/upload)
 │   ├── multi-scan-review.tsx # Batch scan review modal
 │   ├── privacy-provider.tsx # Hide-amounts context (persisted in DB)
 │   └── user-provider.tsx    # Reactive user info context (name, email, currency, role)
-├── hooks/                   # TanStack Query hooks (use-transactions, use-categories)
-├── lib/                     # Prisma client, auth, Gemini client, query client, utils, validations
+├── hooks/                   # TanStack Query hooks (use-transactions, use-categories, use-bills)
+├── lib/                     # Prisma client, auth, Gemini client, email, tokens, query client, utils, validations
 └── types/                   # TypeScript type definitions
 
 prisma/
@@ -187,14 +205,19 @@ prisma/
 User ──< Transaction >── Category
  │                          │
  ├────────< Category (custom, per-user)
- └────────< ScanLog
+ ├────────< ScanLog
+ ├────────< VerificationToken
+ └────────< ScheduledTransaction ──< ScheduledTransactionLog
 
 AppSettings (per role: FREE, PAID)
 ```
 
-- **User** — id, name, email, password, role (ADMIN/FREE/PAID), currency, hide_amounts, quickExpenseCategories, quickIncomeCategories, receiptScanEnabled, transactionLayout
+- **User** — id, name, email, emailVerified, password, role (ADMIN/FREE/PAID), currency, hide_amounts, quickExpenseCategories, quickIncomeCategories, receiptScanEnabled, transactionLayout
 - **Category** — id, name, type (INCOME/EXPENSE), icon, color, isDefault, userId (null for defaults)
 - **Transaction** — id, amount, description, type, date, categoryId, userId, receiptGroupId (links itemized siblings), receiptBreakdown (JSON — individual line items)
+- **ScheduledTransaction** — id, amount, description, type, frequency (DAILY/WEEKLY/MONTHLY/ANNUALLY/CUSTOM), customIntervalDays, reminderDaysBefore, startDate, endDate, nextDueDate, isActive, categoryId, userId
+- **ScheduledTransactionLog** — id, scheduledTransactionId, dueDate, status (PAID/SKIPPED/SNOOZED), actionDate, transactionId, snoozeUntil
+- **VerificationToken** — id, userId, token, type (EMAIL_VERIFICATION/PASSWORD_RESET), expiresAt
 - **AppSettings** — id, role (unique), receiptScanEnabled, maxUploadFiles, monthlyScanLimit
 - **ScanLog** — id, userId, createdAt (tracks scan usage for monthly limits)
 
