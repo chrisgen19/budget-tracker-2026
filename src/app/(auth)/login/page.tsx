@@ -1,23 +1,42 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { loginSchema, type LoginInput } from "@/lib/validations";
-import { LogIn, Eye, EyeOff, Wallet } from "lucide-react";
+import { LogIn, Eye, EyeOff, Wallet, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 
 export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const verified = searchParams.get("verified") === "true";
+  const reset = searchParams.get("reset") === "true";
+  const tokenError = searchParams.get("error");
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(
+    tokenError === "invalid-token"
+      ? "Invalid or expired verification link. Please request a new one."
+      : tokenError === "missing-token"
+        ? "Verification link is missing. Please request a new one."
+        : ""
+  );
 
   const {
     register,
     handleSubmit,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<LoginInput>({
     resolver: zodResolver(loginSchema),
@@ -39,6 +58,8 @@ export default function LoginPage() {
       router.refresh();
     }
   };
+
+  const isUnverifiedError = error === "Please verify your email before logging in";
 
   return (
     <motion.div
@@ -63,13 +84,45 @@ export default function LoginPage() {
       {/* Form Card */}
       <div className="card p-8 grain-overlay">
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+          {/* Success banners */}
+          {verified && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              className="bg-income-light border border-income/20 text-income-dark px-4 py-3 rounded-xl text-sm flex items-center gap-2"
+            >
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              Email verified successfully! You can now sign in.
+            </motion.div>
+          )}
+
+          {reset && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              className="bg-income-light border border-income/20 text-income-dark px-4 py-3 rounded-xl text-sm flex items-center gap-2"
+            >
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              Password reset successfully! Sign in with your new password.
+            </motion.div>
+          )}
+
+          {/* Error banner */}
           {error && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
               className="bg-expense-light border border-expense/20 text-expense-dark px-4 py-3 rounded-xl text-sm"
             >
-              {error}
+              <p>{error}</p>
+              {isUnverifiedError && (
+                <Link
+                  href={`/verify-email?email=${encodeURIComponent(getValues("email") || "")}`}
+                  className="text-amber hover:text-amber-dark font-medium underline mt-1 inline-block"
+                >
+                  Resend verification email
+                </Link>
+              )}
             </motion.div>
           )}
 
@@ -89,9 +142,17 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-warm-600 mb-1.5">
-              Password
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-sm font-medium text-warm-600">
+                Password
+              </label>
+              <Link
+                href="/forgot-password"
+                className="text-sm text-amber hover:text-amber-dark font-medium transition-colors"
+              >
+                Forgot password?
+              </Link>
+            </div>
             <div className="relative">
               <input
                 type={showPassword ? "text" : "password"}

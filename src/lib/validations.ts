@@ -121,7 +121,22 @@ export const billActionSchema = z.object({
 export type ScheduledTransactionInput = z.infer<typeof scheduledTransactionSchema>;
 export type BillActionInput = z.infer<typeof billActionSchema>;
 
+export const forgotPasswordSchema = z.object({
+  email: z.string().email("Please enter a valid email"),
+});
+
+export const resetPasswordSchema = z.object({
+  token: z.string().min(1, "Token is required"),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+  confirmPassword: z.string(),
+}).refine((data) => data.password === data.confirmPassword, {
+  message: "Passwords don't match",
+  path: ["confirmPassword"],
+});
+
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 export type ReceiptScanResult = z.infer<typeof receiptScanResultSchema>;
 export type ReceiptBreakdownResult = z.infer<typeof receiptBreakdownResultSchema>;
 export type UpdateAppSettingsInput = z.infer<typeof updateAppSettingsSchema>;
