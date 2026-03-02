@@ -70,7 +70,7 @@ export async function POST(request: Request) {
 
     const isAdmin = user?.role === "ADMIN";
     const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
 
     const [roleSettings, scansThisMonth, categories] = await Promise.all([
       !isAdmin && user

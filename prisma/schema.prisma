@@ -50,6 +50,7 @@ model User {
   emailVerified           Boolean       @default(false) @map("email_verified")
   receiptScanEnabled      Boolean       @default(false) @map("receipt_scan_enabled")
   transactionLayout       String        @default("infinite") @map("transaction_layout")
+  timezoneOffset          Int           @default(-480) @map("timezone_offset")
   transactions            Transaction[]
   categories              Category[]
   scanLogs                ScanLog[]

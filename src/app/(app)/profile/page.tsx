@@ -26,6 +26,38 @@ const CURRENCIES = [
   { value: "INR", label: "INR - Indian Rupee" },
 ];
 
+const TIMEZONES = [
+  { value: 720, label: "UTC-12:00" },
+  { value: 660, label: "UTC-11:00" },
+  { value: 600, label: "UTC-10:00 (Honolulu)" },
+  { value: 540, label: "UTC-09:00 (Anchorage)" },
+  { value: 480, label: "UTC-08:00 (Los Angeles)" },
+  { value: 420, label: "UTC-07:00 (Denver)" },
+  { value: 360, label: "UTC-06:00 (Chicago)" },
+  { value: 300, label: "UTC-05:00 (New York)" },
+  { value: 240, label: "UTC-04:00 (Halifax)" },
+  { value: 180, label: "UTC-03:00 (S\u00e3o Paulo)" },
+  { value: 120, label: "UTC-02:00" },
+  { value: 60, label: "UTC-01:00" },
+  { value: 0, label: "UTC+00:00 (London)" },
+  { value: -60, label: "UTC+01:00 (Paris)" },
+  { value: -120, label: "UTC+02:00 (Cairo)" },
+  { value: -180, label: "UTC+03:00 (Moscow)" },
+  { value: -240, label: "UTC+04:00 (Dubai)" },
+  { value: -300, label: "UTC+05:00 (Karachi)" },
+  { value: -330, label: "UTC+05:30 (Mumbai)" },
+  { value: -345, label: "UTC+05:45 (Kathmandu)" },
+  { value: -360, label: "UTC+06:00 (Dhaka)" },
+  { value: -420, label: "UTC+07:00 (Bangkok)" },
+  { value: -480, label: "UTC+08:00 (Manila)" },
+  { value: -540, label: "UTC+09:00 (Tokyo)" },
+  { value: -570, label: "UTC+09:30 (Adelaide)" },
+  { value: -600, label: "UTC+10:00 (Sydney)" },
+  { value: -660, label: "UTC+11:00" },
+  { value: -720, label: "UTC+12:00 (Auckland)" },
+  { value: -780, label: "UTC+13:00 (Samoa)" },
+];
+
 type Tab = "personal" | "password" | "features";
 
 const ROLE_BADGE_STYLES: Record<string, string> = {
@@ -45,7 +77,7 @@ export default function ProfilePage() {
 
   const profileForm = useForm<UpdateProfileInput>({
     resolver: zodResolver(updateProfileSchema),
-    defaultValues: { name: "", email: "", currency: "PHP" },
+    defaultValues: { name: "", email: "", currency: "PHP", timezoneOffset: -480 },
   });
 
   const passwordForm = useForm<ChangePasswordInput>({
@@ -62,6 +94,7 @@ export default function ProfilePage() {
         name: data.name,
         email: data.email,
         currency: data.currency,
+        timezoneOffset: data.timezoneOffset,
       });
     } catch {
       setProfileError("Failed to load profile");
@@ -90,8 +123,8 @@ export default function ProfilePage() {
         throw new Error(err.error || "Failed to update profile");
       }
 
-      // Update the shared user context so sidebar + currency reflect immediately
-      setUser({ name: data.name, email: data.email, currency: data.currency });
+      // Update the shared user context so sidebar + currency + timezone reflect immediately
+      setUser({ name: data.name, email: data.email, currency: data.currency, timezoneOffset: data.timezoneOffset });
 
       setProfileSuccess("Profile updated successfully");
       setTimeout(() => setProfileSuccess(""), 3000);
@@ -251,7 +284,7 @@ function PersonalInfoForm({ form, onSubmit, success, error }: PersonalInfoFormPr
       <div className="mb-5">
         <h2 className="font-serif text-lg text-warm-700">Personal Information</h2>
         <p className="text-sm text-warm-400 mt-0.5">
-          Update your name, email, and preferred currency
+          Update your name, email, currency, and timezone
         </p>
       </div>
 
@@ -303,6 +336,22 @@ function PersonalInfoForm({ form, onSubmit, success, error }: PersonalInfoFormPr
           {errors.currency && (
             <p className="text-expense text-sm mt-1">{errors.currency.message}</p>
           )}
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-warm-600 mb-1.5">
+            Timezone
+          </label>
+          <select
+            {...register("timezoneOffset", { valueAsNumber: true })}
+            className={INPUT_CLASS}
+          >
+            {TIMEZONES.map((tz) => (
+              <option key={tz.value} value={tz.value}>
+                {tz.label}
+              </option>
+            ))}
+          </select>
         </div>
 
         {success && (

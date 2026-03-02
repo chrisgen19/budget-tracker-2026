@@ -42,7 +42,7 @@ export default function DashboardPage() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   });
 
-  const { data: stats, isLoading: loading } = useDashboardQuery(currentMonth);
+  const { data: stats, isLoading: loading } = useDashboardQuery(currentMonth, user.timezoneOffset);
   const { data: upcomingData } = useUpcomingBillsQuery();
   const createMutation = useCreateTransaction();
 

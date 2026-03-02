@@ -9,7 +9,7 @@ export async function GET() {
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { name: true, email: true, currency: true },
+    select: { name: true, email: true, currency: true, timezoneOffset: true },
   });
 
   if (!user) {
@@ -48,8 +48,9 @@ export async function PATCH(request: Request) {
         name: validated.name,
         email: validated.email,
         currency: validated.currency,
+        timezoneOffset: validated.timezoneOffset,
       },
-      select: { name: true, email: true, currency: true },
+      select: { name: true, email: true, currency: true, timezoneOffset: true },
     });
 
     return NextResponse.json(updated);

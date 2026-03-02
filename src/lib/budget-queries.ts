@@ -19,19 +19,19 @@ import type {
   DateRange,
 } from "./budget-query-types";
 
-/** Parse "YYYY-MM" into a start/end date range for that month */
+/** Parse "YYYY-MM" into a UTC start/end date range for that month */
 const parseMonth = (month: string): DateRange => {
   const [year, m] = month.split("-").map(Number);
   return {
-    startDate: new Date(year, m - 1, 1),
-    endDate: new Date(year, m, 0, 23, 59, 59, 999),
+    startDate: new Date(Date.UTC(year, m - 1, 1)),
+    endDate: new Date(Date.UTC(year, m, 0, 23, 59, 59, 999)),
   };
 };
 
 /** Get current month as "YYYY-MM" */
 const currentMonth = (): string => {
   const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
 };
 
 /**
@@ -131,8 +131,8 @@ export const getMonthlySummary = async (
 ): Promise<MonthSummary[]> => {
   const months = params.months ?? 6;
   const now = new Date();
-  const startDate = new Date(now.getFullYear(), now.getMonth() - (months - 1), 1);
-  const endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const startDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (months - 1), 1));
+  const endDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
 
   const transactions = await prisma.transaction.findMany({
     where: {
@@ -150,14 +150,14 @@ export const getMonthlySummary = async (
   const result: MonthSummary[] = [];
 
   for (let i = months - 1; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    const monthLabel = `${monthNames[d.getMonth()]} ${d.getFullYear()}`;
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    const monthKey = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+    const monthLabel = `${monthNames[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 
     const monthTx = transactions.filter((t) => {
       const td = new Date(t.date);
       return (
-        `${td.getFullYear()}-${String(td.getMonth() + 1).padStart(2, "0")}` ===
+        `${td.getUTCFullYear()}-${String(td.getUTCMonth() + 1).padStart(2, "0")}` ===
         monthKey
       );
     });
@@ -251,8 +251,8 @@ export const searchTransactions = async (
   if (params.month) {
     const [year, m] = params.month.split("-").map(Number);
     where.date = {
-      gte: new Date(year, m - 1, 1),
-      lt: new Date(year, m, 1),
+      gte: new Date(Date.UTC(year, m - 1, 1)),
+      lt: new Date(Date.UTC(year, m, 1)),
     };
   }
 

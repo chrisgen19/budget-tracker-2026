@@ -45,11 +45,12 @@ export const queryKeys = {
 /*  Fetch helpers                                                      */
 /* ------------------------------------------------------------------ */
 
-const buildTransactionParams = (filters: TransactionFilters, page: number) => {
+const buildTransactionParams = (filters: TransactionFilters, page: number, tz: number) => {
   const params = new URLSearchParams({
     page: String(page),
     limit: "15",
     month: filters.month,
+    tz: String(tz),
   });
   if (filters.type !== "ALL") params.set("type", filters.type);
   if (filters.search) params.set("search", filters.search);
@@ -63,16 +64,17 @@ const buildTransactionParams = (filters: TransactionFilters, page: number) => {
 
 const fetchTransactionsPage = async (
   filters: TransactionFilters,
-  page: number
+  page: number,
+  tz: number
 ): Promise<TransactionsResponse> => {
-  const params = buildTransactionParams(filters, page);
+  const params = buildTransactionParams(filters, page, tz);
   const res = await fetch(`/api/transactions?${params}`);
   if (!res.ok) throw new Error("Failed to fetch transactions");
   return res.json();
 };
 
-const fetchDashboard = async (month: string): Promise<DashboardStats> => {
-  const res = await fetch(`/api/dashboard?month=${month}`);
+const fetchDashboard = async (month: string, tz: number): Promise<DashboardStats> => {
+  const res = await fetch(`/api/dashboard?month=${month}&tz=${tz}`);
   if (!res.ok) throw new Error("Failed to fetch dashboard");
   return res.json();
 };
@@ -82,19 +84,19 @@ const fetchDashboard = async (month: string): Promise<DashboardStats> => {
 /* ------------------------------------------------------------------ */
 
 /** Paginated transactions (non-infinite mode) */
-export function useTransactionsQuery(filters: TransactionFilters, page: number) {
+export function useTransactionsQuery(filters: TransactionFilters, page: number, tz: number) {
   return useQuery({
     queryKey: queryKeys.transactions.list(filters, page),
-    queryFn: () => fetchTransactionsPage(filters, page),
+    queryFn: () => fetchTransactionsPage(filters, page, tz),
     placeholderData: (previousData) => previousData,
   });
 }
 
 /** Infinite scroll transactions */
-export function useTransactionsInfiniteQuery(filters: TransactionFilters) {
+export function useTransactionsInfiniteQuery(filters: TransactionFilters, tz: number) {
   return useInfiniteQuery({
     queryKey: queryKeys.transactions.infinite(filters),
-    queryFn: ({ pageParam }) => fetchTransactionsPage(filters, pageParam),
+    queryFn: ({ pageParam }) => fetchTransactionsPage(filters, pageParam, tz),
     initialPageParam: 1,
     getNextPageParam: (lastPage) =>
       lastPage.pagination.page < lastPage.pagination.totalPages
@@ -104,10 +106,10 @@ export function useTransactionsInfiniteQuery(filters: TransactionFilters) {
 }
 
 /** Dashboard stats */
-export function useDashboardQuery(month: string) {
+export function useDashboardQuery(month: string, tz: number) {
   return useQuery({
     queryKey: queryKeys.dashboard.byMonth(month),
-    queryFn: () => fetchDashboard(month),
+    queryFn: () => fetchDashboard(month, tz),
   });
 }
 

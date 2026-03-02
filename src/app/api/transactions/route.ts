@@ -10,6 +10,8 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const type = searchParams.get("type");
   const month = searchParams.get("month"); // format: YYYY-MM
+  const tz = parseInt(searchParams.get("tz") || "0");
+  const tzMs = tz * 60 * 1000;
   const page = parseInt(searchParams.get("page") || "1");
   const limit = parseInt(searchParams.get("limit") || "20");
   const categoryId = searchParams.get("categoryId");
@@ -28,8 +30,8 @@ export async function GET(request: Request) {
   if (month && month !== "ALL") {
     const [year, m] = month.split("-").map(Number);
     where.date = {
-      gte: new Date(year, m - 1, 1),
-      lt: new Date(year, m, 1),
+      gte: new Date(Date.UTC(year, m - 1, 1) + tzMs),
+      lt: new Date(Date.UTC(year, m, 1) + tzMs),
     };
   }
 

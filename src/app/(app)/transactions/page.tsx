@@ -161,8 +161,8 @@ export default function TransactionsPage() {
 
   /* ---- TanStack Query hooks ---- */
 
-  const infiniteQuery = useTransactionsInfiniteQuery(filters);
-  const paginatedQuery = useTransactionsQuery(filters, page);
+  const infiniteQuery = useTransactionsInfiniteQuery(filters, user.timezoneOffset);
+  const paginatedQuery = useTransactionsQuery(filters, page, user.timezoneOffset);
 
   const createMutation = useCreateTransaction();
   const updateMutation = useUpdateTransaction();
