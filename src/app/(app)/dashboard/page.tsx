@@ -29,6 +29,7 @@ import { useUser } from "@/components/user-provider";
 import { useScan } from "@/components/scan-provider";
 import { useDashboardQuery, useCreateTransaction } from "@/hooks/use-transactions";
 import { useUpcomingBillsQuery } from "@/hooks/use-bills";
+import { useBillReminders } from "@/components/bills/bill-reminder-provider";
 import type { TransactionInput } from "@/lib/validations";
 
 export default function DashboardPage() {
@@ -44,6 +45,7 @@ export default function DashboardPage() {
 
   const { data: stats, isLoading: loading } = useDashboardQuery(currentMonth, user.timezoneOffset);
   const { data: upcomingData } = useUpcomingBillsQuery();
+  const { pendingReminders } = useBillReminders();
   const createMutation = useCreateTransaction();
 
   /** Display amount or censored placeholder */
@@ -436,7 +438,10 @@ export default function DashboardPage() {
       {/* Mobile FAB — sits above bottom nav */}
       <button
         onClick={() => setShowForm(true)}
-        className="sm:hidden fixed bottom-20 right-4 z-20 inline-flex items-center gap-1.5 px-4 py-3 rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all"
+        className={cn(
+          "sm:hidden fixed right-4 z-20 inline-flex items-center gap-1.5 px-4 py-3 rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all",
+          pendingReminders.length > 0 ? "bottom-48" : "bottom-20"
+        )}
       >
         <Plus className="w-4 h-4" />
         Transaction
