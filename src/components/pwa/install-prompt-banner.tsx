@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Download, X, Share } from "lucide-react";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import { useInstallBanner } from "@/components/pwa/install-banner-context";
@@ -24,13 +24,7 @@ export function InstallPromptBanner() {
   const { canInstall, isInstalled, promptInstall } = useInstallPrompt();
   const { bannerVisible: visible, setBannerVisible: setVisible, setBannerHeight } = useInstallBanner();
   const [showIOSGuide, setShowIOSGuide] = useState(false);
-
-  const bannerRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (node) setBannerHeight(node.offsetHeight);
-    },
-    [setBannerHeight]
-  );
+  const bannerRef = useRef<HTMLDivElement | null>(null);
 
   // Track visits on mount only — not on canInstall/isInstalled changes
   useEffect(() => {
@@ -59,6 +53,31 @@ export function InstallPromptBanner() {
       setVisible(true);
     }
   }, [canInstall, isInstalled, setVisible]);
+
+  useEffect(() => {
+    if (!visible) return;
+
+    const node = bannerRef.current;
+    if (!node) return;
+
+    const updateBannerHeight = () => {
+      setBannerHeight(node.offsetHeight);
+    };
+
+    updateBannerHeight();
+
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(() => {
+      updateBannerHeight();
+    });
+
+    observer.observe(node);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [visible, setBannerHeight]);
 
   const handleDismiss = () => {
     setVisible(false);
