@@ -26,6 +26,7 @@ import { TransactionForm } from "@/components/transactions/transaction-form";
 import { MultiScanReview } from "@/components/multi-scan-review";
 import { useBatchCreateTransactions, useCreateTransaction } from "@/hooks/use-transactions";
 import { BillReminderBanner, type PayAndEditData } from "@/components/bills/bill-reminder-banner";
+import { InstallBannerProvider } from "@/components/pwa/install-banner-context";
 import { InstallPromptBanner } from "@/components/pwa/install-prompt-banner";
 import { OfflineBanner } from "@/components/pwa/offline-banner";
 import { useBillAction } from "@/hooks/use-bills";
@@ -448,6 +449,7 @@ export function AppShell({ children }: AppShellProps) {
   };
 
   return (
+    <InstallBannerProvider>
     <div className="min-h-screen bg-cream-100">
       {/* Offline Banner */}
       <OfflineBanner />
@@ -726,5 +728,6 @@ export function AppShell({ children }: AppShellProps) {
           })()}
       </Modal>
     </div>
+    </InstallBannerProvider>
   );
 }

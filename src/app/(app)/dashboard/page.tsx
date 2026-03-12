@@ -30,6 +30,7 @@ import { useScan } from "@/components/scan-provider";
 import { useDashboardQuery, useCreateTransaction } from "@/hooks/use-transactions";
 import { useUpcomingBillsQuery } from "@/hooks/use-bills";
 import { useBillReminders } from "@/components/bills/bill-reminder-provider";
+import { useInstallBanner } from "@/components/pwa/install-banner-context";
 import type { TransactionInput } from "@/lib/validations";
 
 export default function DashboardPage() {
@@ -46,6 +47,7 @@ export default function DashboardPage() {
   const { data: stats, isLoading: loading } = useDashboardQuery(currentMonth, user.timezoneOffset);
   const { data: upcomingData } = useUpcomingBillsQuery();
   const { pendingReminders } = useBillReminders();
+  const { bannerVisible: installBannerVisible } = useInstallBanner();
   const createMutation = useCreateTransaction();
 
   /** Display amount or censored placeholder */
@@ -435,13 +437,11 @@ export default function DashboardPage() {
         </motion.div>
       ) : null}
 
-      {/* Mobile FAB — sits above bottom nav */}
+      {/* Mobile FAB — sits above bottom nav, install banner, and bill reminders */}
       <button
         onClick={() => setShowForm(true)}
-        className={cn(
-          "sm:hidden fixed right-4 z-20 inline-flex items-center gap-1.5 px-4 py-3 rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all",
-          pendingReminders.length > 0 ? "bottom-[calc(12rem+env(safe-area-inset-bottom))]" : "bottom-[calc(5rem+env(safe-area-inset-bottom))]"
-        )}
+        style={{ bottom: `calc(${5 + (installBannerVisible ? 7.5 : 0) + (pendingReminders.length > 0 ? 7 : 0)}rem + env(safe-area-inset-bottom))` }}
+        className="sm:hidden fixed right-4 z-40 inline-flex items-center gap-1.5 px-4 py-3 rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all duration-300"
       >
         <Plus className="w-4 h-4" />
         Transaction

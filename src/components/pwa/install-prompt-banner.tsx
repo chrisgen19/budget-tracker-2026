@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Download, X, Share } from "lucide-react";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
+import { useInstallBanner } from "@/components/pwa/install-banner-context";
 import { cn } from "@/lib/utils";
 
 const DISMISS_KEY = "pwa-install-dismissed";
@@ -20,7 +21,7 @@ function isIOS() {
 
 export function InstallPromptBanner() {
   const { canInstall, isInstalled, promptInstall } = useInstallPrompt();
-  const [visible, setVisible] = useState(false);
+  const { bannerVisible: visible, setBannerVisible: setVisible } = useInstallBanner();
   const [showIOSGuide, setShowIOSGuide] = useState(false);
 
   // Track visits on mount only — not on canInstall/isInstalled changes
@@ -45,7 +46,7 @@ export function InstallPromptBanner() {
       setShowIOSGuide(true);
       setVisible(true);
     }
-  }, [canInstall, isInstalled]);
+  }, [canInstall, isInstalled, setVisible]);
 
   const handleDismiss = () => {
     setVisible(false);
