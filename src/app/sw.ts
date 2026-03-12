@@ -19,10 +19,19 @@ const serwist = new Serwist({
   clientsClaim: true,
   navigationPreload: true,
   runtimeCaching: [
-    // All /api/* routes must be network-only — never cache authenticated responses
+    // All /api/* routes — never cache authenticated responses
     {
       matcher({ url, sameOrigin }: { url: URL; sameOrigin: boolean }) {
         return sameOrigin && url.pathname.startsWith("/api/");
+      },
+      handler: new NetworkOnly(),
+    },
+    // Authenticated page routes — HTML/RSC payloads contain user data via UserProvider
+    {
+      matcher({ url, sameOrigin }: { url: URL; sameOrigin: boolean }) {
+        if (!sameOrigin) return false;
+        const protectedPaths = ["/dashboard", "/transactions", "/bills", "/categories", "/profile", "/admin"];
+        return protectedPaths.some((p) => url.pathname.startsWith(p));
       },
       handler: new NetworkOnly(),
     },

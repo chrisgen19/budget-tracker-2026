@@ -11,7 +11,11 @@ const MIN_VISITS = 3;
 
 function isIOS() {
   if (typeof navigator === "undefined") return false;
-  return /iPad|iPhone|iPod/.test(navigator.userAgent);
+  if (/iPhone|iPod/.test(navigator.userAgent)) return true;
+  if (/iPad/.test(navigator.userAgent)) return true;
+  // iPadOS 13+ reports as Macintosh — detect via multi-touch support
+  if (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1) return true;
+  return false;
 }
 
 export function InstallPromptBanner() {
@@ -19,20 +23,22 @@ export function InstallPromptBanner() {
   const [visible, setVisible] = useState(false);
   const [showIOSGuide, setShowIOSGuide] = useState(false);
 
+  // Track visits on mount only — not on canInstall/isInstalled changes
+  useEffect(() => {
+    const visits = parseInt(localStorage.getItem(MIN_VISITS_KEY) || "0", 10) + 1;
+    localStorage.setItem(MIN_VISITS_KEY, String(visits));
+  }, []);
+
+  // Show banner when conditions are met
   useEffect(() => {
     if (isInstalled) return;
 
-    // Check if user dismissed
     const dismissed = localStorage.getItem(DISMISS_KEY);
     if (dismissed) return;
 
-    // Increment visit count
-    const visits = parseInt(localStorage.getItem(MIN_VISITS_KEY) || "0", 10) + 1;
-    localStorage.setItem(MIN_VISITS_KEY, String(visits));
-
+    const visits = parseInt(localStorage.getItem(MIN_VISITS_KEY) || "0", 10);
     if (visits < MIN_VISITS) return;
 
-    // Show banner: either native prompt (Android/desktop) or iOS guide
     if (canInstall) {
       setVisible(true);
     } else if (isIOS()) {
