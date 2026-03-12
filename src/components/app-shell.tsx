@@ -26,6 +26,8 @@ import { TransactionForm } from "@/components/transactions/transaction-form";
 import { MultiScanReview } from "@/components/multi-scan-review";
 import { useBatchCreateTransactions, useCreateTransaction } from "@/hooks/use-transactions";
 import { BillReminderBanner, type PayAndEditData } from "@/components/bills/bill-reminder-banner";
+import { InstallPromptBanner } from "@/components/pwa/install-prompt-banner";
+import { OfflineBanner } from "@/components/pwa/offline-banner";
 import { useBillAction } from "@/hooks/use-bills";
 import { useToast } from "@/components/ui/toast";
 import type { MultiScanItem } from "@/types";
@@ -447,6 +449,9 @@ export function AppShell({ children }: AppShellProps) {
 
   return (
     <div className="min-h-screen bg-cream-100">
+      {/* Offline Banner */}
+      <OfflineBanner />
+
       {/* Desktop Sidebar */}
       <aside className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:flex lg:w-64 lg:flex-col bg-white border-r border-cream-300/60 shadow-warm z-30">
         {/* Logo */}
@@ -645,6 +650,9 @@ export function AppShell({ children }: AppShellProps) {
 
       {/* Bill Reminder Banner */}
       <BillReminderBanner onPayAndEdit={setBillEditData} />
+
+      {/* PWA Install Prompt */}
+      <InstallPromptBanner />
 
       {/* Bill Pay & Edit Modal */}
       <Modal
