@@ -47,7 +47,7 @@ export default function DashboardPage() {
   const { data: stats, isLoading: loading } = useDashboardQuery(currentMonth, user.timezoneOffset);
   const { data: upcomingData } = useUpcomingBillsQuery();
   const { pendingReminders } = useBillReminders();
-  const { bannerVisible: installBannerVisible } = useInstallBanner();
+  const { bannerVisible: installBannerVisible, bannerHeight: installBannerHeight } = useInstallBanner();
   const createMutation = useCreateTransaction();
 
   /** Display amount or censored placeholder */
@@ -440,7 +440,7 @@ export default function DashboardPage() {
       {/* Mobile FAB — sits above bottom nav, install banner, and bill reminders */}
       <button
         onClick={() => setShowForm(true)}
-        style={{ bottom: `calc(${5 + (installBannerVisible ? 7.5 : 0) + (pendingReminders.length > 0 ? 7 : 0)}rem + env(safe-area-inset-bottom))` }}
+        style={{ bottom: `calc(${5 + (pendingReminders.length > 0 ? 7 : 0)}rem + ${installBannerVisible ? installBannerHeight + 12 : 0}px + env(safe-area-inset-bottom))` }}
         className="sm:hidden fixed right-4 z-40 inline-flex items-center gap-1.5 px-4 py-3 rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all duration-300"
       >
         <Plus className="w-4 h-4" />

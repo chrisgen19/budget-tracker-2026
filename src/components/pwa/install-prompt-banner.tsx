@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Download, X, Share } from "lucide-react";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import { useInstallBanner } from "@/components/pwa/install-banner-context";
@@ -22,8 +22,15 @@ function isIOS() {
 
 export function InstallPromptBanner() {
   const { canInstall, isInstalled, promptInstall } = useInstallPrompt();
-  const { bannerVisible: visible, setBannerVisible: setVisible } = useInstallBanner();
+  const { bannerVisible: visible, setBannerVisible: setVisible, setBannerHeight } = useInstallBanner();
   const [showIOSGuide, setShowIOSGuide] = useState(false);
+
+  const bannerRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (node) setBannerHeight(node.offsetHeight);
+    },
+    [setBannerHeight]
+  );
 
   // Track visits on mount only — not on canInstall/isInstalled changes
   useEffect(() => {
@@ -67,7 +74,7 @@ export function InstallPromptBanner() {
   if (!visible) return null;
 
   return (
-    <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] lg:bottom-6 left-4 right-4 lg:left-auto lg:right-6 lg:w-80 z-40 animate-fade-in-up">
+    <div ref={bannerRef} className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] lg:bottom-6 left-4 right-4 lg:left-auto lg:right-6 lg:w-80 z-40 animate-fade-in-up">
       <div className="bg-white rounded-2xl shadow-soft-md border border-cream-300/50 p-4">
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center shrink-0">
