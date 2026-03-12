@@ -757,7 +757,8 @@ export default function TransactionsPage() {
       {/* Mobile FAB */}
       <button
         onClick={() => setShowForm(true)}
-        className="sm:hidden fixed bottom-20 right-4 z-20 inline-flex items-center gap-1.5 px-4 py-3 rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all"
+        style={{ bottom: `calc(5rem + env(safe-area-inset-bottom))` }}
+        className="sm:hidden fixed right-4 z-40 inline-flex items-center gap-1.5 px-4 py-3 rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all"
       >
         <Plus className="w-4 h-4" />
         Transaction

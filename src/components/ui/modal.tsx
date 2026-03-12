@@ -97,6 +97,7 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
   useEffect(() => {
     if (!open) return;
 
+    const scrollY = window.scrollY;
     const originalOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
@@ -109,6 +110,7 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
     return () => {
       document.removeEventListener("keydown", handleEscape);
       document.body.style.overflow = originalOverflow;
+      window.scrollTo(0, scrollY);
     };
   }, [open]);
 
@@ -120,6 +122,8 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
     const content = contentRef.current;
     if (!content) return;
 
+    let pendingTimer: ReturnType<typeof setTimeout>;
+
     const handleFocusIn = (e: FocusEvent) => {
       const target = e.target;
       if (
@@ -128,14 +132,18 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
         target instanceof HTMLSelectElement
       ) {
         // Delay to let the keyboard animation and viewport resize settle
-        setTimeout(() => {
+        clearTimeout(pendingTimer);
+        pendingTimer = setTimeout(() => {
           target.scrollIntoView({ block: "center", behavior: "smooth" });
         }, 350);
       }
     };
 
     content.addEventListener("focusin", handleFocusIn);
-    return () => content.removeEventListener("focusin", handleFocusIn);
+    return () => {
+      content.removeEventListener("focusin", handleFocusIn);
+      clearTimeout(pendingTimer);
+    };
   }, [open, isMobile]);
 
   // On mobile, pin the container to the visual viewport so Safari's
