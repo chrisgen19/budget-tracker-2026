@@ -440,7 +440,7 @@ export default function DashboardPage() {
         onClick={() => setShowForm(true)}
         className={cn(
           "sm:hidden fixed right-4 z-20 inline-flex items-center gap-1.5 px-4 py-3 rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all",
-          pendingReminders.length > 0 ? "bottom-48" : "bottom-20"
+          pendingReminders.length > 0 ? "bottom-[calc(12rem+env(safe-area-inset-bottom))]" : "bottom-[calc(5rem+env(safe-area-inset-bottom))]"
         )}
       >
         <Plus className="w-4 h-4" />
