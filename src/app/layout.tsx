@@ -55,7 +55,7 @@ export default function RootLayout({
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
       </head>
       <body className="font-sans antialiased">
-        <SerwistProvider swUrl="/sw.js" reloadOnOnline={false}>
+        <SerwistProvider swUrl="/sw.js" reloadOnOnline={false} disable={process.env.NODE_ENV === "development"}>
           {children}
         </SerwistProvider>
       </body>
