@@ -6,9 +6,10 @@ import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import { useInstallBanner } from "@/components/pwa/install-banner-context";
 import { cn } from "@/lib/utils";
 
-const DISMISS_KEY = "pwa-install-dismissed";
+const DISMISS_KEY = "pwa-install-dismissed-at";
 const MIN_VISITS_KEY = "pwa-visit-count";
 const MIN_VISITS = 3;
+const DISMISS_DAYS = 14;
 
 function isIOS() {
   if (typeof navigator === "undefined") return false;
@@ -34,8 +35,12 @@ export function InstallPromptBanner() {
   useEffect(() => {
     if (isInstalled) return;
 
-    const dismissed = localStorage.getItem(DISMISS_KEY);
-    if (dismissed) return;
+    const dismissedAt = localStorage.getItem(DISMISS_KEY);
+    if (dismissedAt) {
+      const daysSince = (Date.now() - parseInt(dismissedAt, 10)) / (1000 * 60 * 60 * 24);
+      if (daysSince < DISMISS_DAYS) return;
+      localStorage.removeItem(DISMISS_KEY);
+    }
 
     const visits = parseInt(localStorage.getItem(MIN_VISITS_KEY) || "0", 10);
     if (visits < MIN_VISITS) return;
@@ -50,7 +55,7 @@ export function InstallPromptBanner() {
 
   const handleDismiss = () => {
     setVisible(false);
-    localStorage.setItem(DISMISS_KEY, "1");
+    localStorage.setItem(DISMISS_KEY, String(Date.now()));
   };
 
   const handleInstall = async () => {
