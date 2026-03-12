@@ -47,8 +47,9 @@ export function InstallPromptBanner() {
   };
 
   const handleInstall = async () => {
-    const accepted = await promptInstall();
-    if (accepted) setVisible(false);
+    await promptInstall();
+    // Hide banner regardless of outcome — the deferred prompt is consumed either way
+    setVisible(false);
   };
 
   if (!visible) return null;
@@ -76,6 +77,7 @@ export function InstallPromptBanner() {
           </div>
           <button
             onClick={handleDismiss}
+            aria-label="Dismiss install prompt"
             className="p-1 rounded-lg text-warm-300 hover:text-warm-500 hover:bg-cream-100 transition-colors shrink-0"
           >
             <X className="w-4 h-4" />
