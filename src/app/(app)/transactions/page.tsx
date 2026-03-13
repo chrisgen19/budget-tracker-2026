@@ -160,6 +160,8 @@ export default function TransactionsPage() {
   const [deletingTransaction, setDeletingTransaction] =
     useState<TransactionWithCategory | null>(null);
   const [showBulkDelete, setShowBulkDelete] = useState(false);
+  const [scrollTargetId, setScrollTargetId] = useState<string | null>(null);
+  const [highlightedRowId, setHighlightedRowId] = useState<string | null>(null);
 
   /* ---- TanStack Query hooks ---- */
 
@@ -256,6 +258,24 @@ export default function TransactionsPage() {
     }
   }, [sourceTransactions, handleHighlight]);
 
+  // Scroll to a newly created/updated transaction once it is visible in the list
+  useEffect(() => {
+    if (!scrollTargetId) return;
+    const selector = `[data-transaction-id="${scrollTargetId}"]`;
+    const row = document.querySelector<HTMLElement>(selector);
+    if (!row) return;
+
+    row.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightedRowId(scrollTargetId);
+    setScrollTargetId(null);
+
+    const timeoutId = window.setTimeout(() => {
+      setHighlightedRowId((current) => (current === scrollTargetId ? null : current));
+    }, 1600);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [scrollTargetId, sourceTransactions]);
+
   // Pagination metadata
   const paginationData = isInfinite
     ? infiniteQuery.data?.pages[0]?.pagination
@@ -292,14 +312,16 @@ export default function TransactionsPage() {
   /* ---- CRUD handlers ---- */
 
   const handleCreate = async (input: TransactionInput) => {
-    await createMutation.mutateAsync(input);
+    const createdTx = await createMutation.mutateAsync(input);
     setShowForm(false);
+    setScrollTargetId(createdTx.id);
   };
 
   const handleUpdate = async (input: TransactionInput) => {
     if (!editingTransaction) return;
-    await updateMutation.mutateAsync({ id: editingTransaction.id, input });
+    const updatedTx = await updateMutation.mutateAsync({ id: editingTransaction.id, input });
     setEditingTransaction(null);
+    setScrollTargetId(updatedTx.id);
   };
 
   const handleDelete = async () => {
@@ -511,8 +533,10 @@ export default function TransactionsPage() {
                     return (
                       <div
                         key={tx.id}
+                        data-transaction-id={tx.id}
                         className={cn(
                           "flex items-center gap-3 px-5 py-3 transition-colors group cursor-pointer",
+                          highlightedRowId === tx.id && "bg-amber-light/40 ring-1 ring-amber/40",
                           isSelected ? "bg-amber-light/20" : "hover:bg-cream-50/80"
                         )}
                         onClick={() => setEditingTransaction(tx)}
