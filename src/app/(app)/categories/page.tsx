@@ -8,6 +8,7 @@ import { CategoryIcon } from "@/components/ui/icon-map";
 import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CategoryForm } from "@/components/categories/category-form";
+import { MobileFab } from "@/components/ui/mobile-fab";
 import { QuickCategoryPicker } from "@/components/categories/quick-category-picker";
 import {
   useCategoriesQuery,
@@ -492,13 +493,7 @@ export default function CategoriesPage() {
       </Modal>
 
       {/* Mobile FAB */}
-      <button
-        onClick={() => setShowForm(true)}
-        className="sm:hidden fixed bottom-20 right-4 z-20 inline-flex items-center gap-1.5 px-4 py-3 rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all"
-      >
-        <Plus className="w-4 h-4" />
-        Category
-      </button>
+      <MobileFab label="Category" icon={Plus} onClick={() => setShowForm(true)} />
     </div>
   );
 }

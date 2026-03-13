@@ -30,13 +30,10 @@ import { useScan } from "@/components/scan-provider";
 import { useDashboardQuery, useCreateTransaction } from "@/hooks/use-transactions";
 import { useUpcomingBillsQuery } from "@/hooks/use-bills";
 import { useBillReminders } from "@/components/bills/bill-reminder-provider";
-import { useInstallBanner } from "@/components/pwa/install-banner-context";
+import { MobileFab } from "@/components/ui/mobile-fab";
 import type { TransactionInput } from "@/lib/validations";
 
-const MOBILE_FAB_BASE_OFFSET_REM = 5;
 const BILL_REMINDER_STACK_OFFSET_REM = 7;
-const INSTALL_BANNER_BASE_OFFSET_REM = 4.5;
-const INSTALL_BANNER_GAP_PX = 12;
 
 export default function DashboardPage() {
   const [showForm, setShowForm] = useState(false);
@@ -52,12 +49,8 @@ export default function DashboardPage() {
   const { data: stats, isLoading: loading } = useDashboardQuery(currentMonth, user.timezoneOffset);
   const { data: upcomingData } = useUpcomingBillsQuery();
   const { pendingReminders } = useBillReminders();
-  const { bannerVisible: installBannerVisible, bannerHeight: installBannerHeight } = useInstallBanner();
   const createMutation = useCreateTransaction();
-  const fabBaseOffsetRem = MOBILE_FAB_BASE_OFFSET_REM + (pendingReminders.length > 0 ? BILL_REMINDER_STACK_OFFSET_REM : 0);
-  const installBannerClearance = installBannerVisible
-    ? `max(0px, calc(${installBannerHeight + INSTALL_BANNER_GAP_PX}px - ${fabBaseOffsetRem - INSTALL_BANNER_BASE_OFFSET_REM}rem))`
-    : "0px";
+  const fabExtraOffsetRem = pendingReminders.length > 0 ? BILL_REMINDER_STACK_OFFSET_REM : 0;
 
   /** Display amount or censored placeholder */
   const displayAmount = (amount: number, colorClass?: string) =>
@@ -446,15 +439,8 @@ export default function DashboardPage() {
         </motion.div>
       ) : null}
 
-      {/* Mobile FAB — sits above bottom nav, install banner, and bill reminders */}
-      <button
-        onClick={() => setShowForm(true)}
-        style={{ bottom: `calc(${fabBaseOffsetRem}rem + ${installBannerClearance} + env(safe-area-inset-bottom))` }}
-        className="sm:hidden fixed right-4 z-40 inline-flex items-center gap-1.5 px-4 py-3 rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all duration-300"
-      >
-        <Plus className="w-4 h-4" />
-        Transaction
-      </button>
+      {/* Mobile FAB */}
+      <MobileFab label="Transaction" icon={Plus} onClick={() => setShowForm(true)} extraOffsetRem={fabExtraOffsetRem} />
 
       {/* Add Transaction Modal */}
       <Modal

@@ -27,7 +27,7 @@ import {
 import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import { useScan } from "@/components/scan-provider";
-import { useInstallBanner } from "@/components/pwa/install-banner-context";
+import { MobileFab } from "@/components/ui/mobile-fab";
 import {
   useTransactionsQuery,
   useTransactionsInfiniteQuery,
@@ -137,10 +137,6 @@ export default function TransactionsPage() {
   const { hideAmounts } = usePrivacy();
   const { user } = useUser();
   const { canScan, openScan, scanLimitReached, scansRemaining, hasLimit } = useScan();
-  const { bannerVisible: installBannerVisible, bannerHeight: installBannerHeight } = useInstallBanner();
-  const installBannerClearance = installBannerVisible
-    ? `max(0px, calc(${installBannerHeight + 12}px - 0.5rem))`
-    : "0px";
   const currency = user.currency;
   const isInfinite = user.transactionLayout === "infinite";
   const [filters, setFilters] = useState<TransactionFilters>(() => {
@@ -760,14 +756,7 @@ export default function TransactionsPage() {
       </Modal>
 
       {/* Mobile FAB */}
-      <button
-        onClick={() => setShowForm(true)}
-        style={{ bottom: `calc(5rem + ${installBannerClearance} + env(safe-area-inset-bottom))` }}
-        className="sm:hidden fixed right-4 z-40 inline-flex items-center gap-1.5 px-4 py-3 rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all"
-      >
-        <Plus className="w-4 h-4" />
-        Transaction
-      </button>
+      <MobileFab label="Transaction" icon={Plus} onClick={() => setShowForm(true)} />
     </div>
   );
 }
