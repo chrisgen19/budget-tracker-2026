@@ -24,7 +24,7 @@ export async function GET() {
     quickIncomeCategories: user?.quickIncomeCategories ?? [],
     receiptScanEnabled: user?.receiptScanEnabled ?? false,
     transactionLayout: user?.transactionLayout ?? "infinite",
-    transactionAmountAutofocus: user?.transactionAmountAutofocus ?? false,
+    transactionAmountAutofocus: user?.transactionAmountAutofocus ?? true,
   });
 }
 

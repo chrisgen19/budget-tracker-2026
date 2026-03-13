@@ -71,7 +71,7 @@ export default async function AppLayout({
           timezoneOffset: dbUser?.timezoneOffset ?? -480,
           receiptScanEnabled: dbUser?.receiptScanEnabled ?? false,
           transactionLayout: (dbUser?.transactionLayout as "infinite" | "pagination") ?? "infinite",
-          transactionAmountAutofocus: dbUser?.transactionAmountAutofocus ?? false,
+          transactionAmountAutofocus: dbUser?.transactionAmountAutofocus ?? true,
           role: userRole,
           roleScanEnabled,
           maxUploadFiles,

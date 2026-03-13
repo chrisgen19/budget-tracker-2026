@@ -107,7 +107,17 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
 
     document.addEventListener("keydown", handleEscape);
 
+    // Move focus into the modal if no child has autoFocus.
+    // Delay slightly so the animation can render the content first.
+    const focusTimer = setTimeout(() => {
+      const content = contentRef.current;
+      if (content && !content.contains(document.activeElement)) {
+        content.focus({ preventScroll: true });
+      }
+    }, 50);
+
     return () => {
+      clearTimeout(focusTimer);
       document.removeEventListener("keydown", handleEscape);
       document.body.style.overflow = originalOverflow;
       window.scrollTo(0, scrollY);
@@ -225,7 +235,7 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
             </div>
 
             {/* Scrollable Content */}
-            <div ref={contentRef} className="p-6 overflow-y-auto flex-1">{children}</div>
+            <div ref={contentRef} tabIndex={-1} className="p-6 overflow-y-auto flex-1 outline-none">{children}</div>
           </motion.div>
         </div>
       )}
