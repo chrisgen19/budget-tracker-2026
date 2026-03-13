@@ -144,5 +144,22 @@ src/
 - `pnpm` as package manager. Node 20+
 - Run `pnpm lint` and `pnpm type-check` before finishing any code changes
 
+## Rule Strictness
+- **Hard requirements** (must pass): TypeScript, naming conventions, no `console.log` in commits, `pnpm` usage, and successful `pnpm lint` + `pnpm type-check`
+- **Strong preferences** (use judgment): function/component size targets (≤ 50/150 lines), utility style choices, and minimizing `@apply`
+- If a strong preference conflicts with clarity or maintainability, prefer clearer code and document the tradeoff in your PR notes
+
+## PR Checklist
+- Lint and type-check pass locally (`pnpm lint` and `pnpm type-check`)
+- New/changed behavior includes tests or a short manual test plan
+- No secrets or local-only environment values are committed
+- Loading, error, and empty states are handled for affected UI
+- Update docs/changelog when behavior, routes, or setup changes
+
+## Next.js Version Note
+- Current baseline is **Next.js 15 (App Router)** in this repo
+- If adopting Next.js 16 conventions/features, do so in isolated PRs and document migration impact (routing/auth/middleware/cache behavior) before broad rollout
+- Avoid mixing 15/16 patterns in the same feature PR unless required for compatibility
+
 ## Changelog
 See [CHANGELOG.md](CHANGELOG.md) for full development history and feature log.
