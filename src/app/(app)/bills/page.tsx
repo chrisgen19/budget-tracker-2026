@@ -8,6 +8,7 @@ import { cn, formatCurrency } from "@/lib/utils";
 import { formatFrequency } from "@/lib/bill-utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { Modal } from "@/components/ui/modal";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BillForm } from "@/components/bills/bill-form";
 import { MobileFab } from "@/components/ui/mobile-fab";
@@ -315,45 +316,29 @@ export default function BillsPage() {
       </Modal>
 
       {/* Delete Confirmation Modal */}
-      <Modal
+      <ConfirmModal
         open={!!deletingBill}
         onClose={() => setDeletingBill(null)}
+        onConfirm={handleDelete}
         title="Deactivate Bill"
-      >
-        <p className="text-warm-500 text-sm mb-2">
-          Are you sure you want to deactivate{" "}
-          <span className="font-medium text-warm-700">
-            &ldquo;{deletingBill?.description || deletingBill?.category.name}&rdquo;
-          </span>
-          ?
-        </p>
-        <p className="text-warm-400 text-xs mb-6">
-          The bill will be deactivated and no longer trigger reminders. Payment history is preserved.
-        </p>
-        <div className="flex gap-3">
-          <button
-            onClick={() => setDeletingBill(null)}
-            className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl border border-cream-300 text-warm-500 font-medium text-sm hover:bg-cream-100 transition-colors"
-          >
-            <X className="w-4 h-4" />
-            Cancel
-          </button>
-          <button
-            onClick={handleDelete}
-            disabled={deleteBill.isPending}
-            className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl bg-expense hover:bg-expense-dark text-white font-medium text-sm transition-colors disabled:opacity-50"
-          >
-            {deleteBill.isPending ? (
-              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            ) : (
-              <>
-                <PowerOff className="w-4 h-4" />
-                Deactivate
-              </>
-            )}
-          </button>
-        </div>
-      </Modal>
+        message={
+          <>
+            <p>
+              Are you sure you want to deactivate{" "}
+              <span className="font-medium text-warm-700">
+                &ldquo;{deletingBill?.description || deletingBill?.category.name}&rdquo;
+              </span>
+              ?
+            </p>
+            <p className="text-warm-400 text-xs mt-2">
+              The bill will be deactivated and no longer trigger reminders. Payment history is preserved.
+            </p>
+          </>
+        }
+        confirmLabel="Deactivate"
+        confirmIcon={PowerOff}
+        loading={deleteBill.isPending}
+      />
 
       {/* Mobile FAB */}
       <MobileFab label="Bill" icon={Plus} onClick={() => setShowForm(true)} />

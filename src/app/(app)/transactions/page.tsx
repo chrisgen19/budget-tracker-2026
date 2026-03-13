@@ -17,6 +17,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { formatCurrency, cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { Modal } from "@/components/ui/modal";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { DropdownButton, type DropdownItem } from "@/components/ui/dropdown-button";
 import { TransactionForm } from "@/components/transactions/transaction-form";
@@ -680,80 +681,41 @@ export default function TransactionsPage() {
       </Modal>
 
       {/* Single Delete Confirmation */}
-      <Modal
+      <ConfirmModal
         open={!!deletingTransaction}
         onClose={() => setDeletingTransaction(null)}
+        onConfirm={handleDelete}
         title="Delete Transaction"
-      >
-        <p className="text-warm-500 text-sm mb-6">
-          Are you sure you want to delete{" "}
-          <span className="font-medium text-warm-700">
-            &ldquo;{deletingTransaction?.description}&rdquo;
-          </span>
-          ? This action cannot be undone.
-        </p>
-        <div className="flex gap-3">
-          <button
-            onClick={() => setDeletingTransaction(null)}
-            className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl border border-cream-300 text-warm-500 font-medium text-sm hover:bg-cream-100 transition-colors"
-          >
-            <X className="w-4 h-4" />
-            Cancel
-          </button>
-          <button
-            onClick={handleDelete}
-            disabled={deleteLoading}
-            className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl bg-expense hover:bg-expense-dark text-white font-medium text-sm transition-colors disabled:opacity-50"
-          >
-            {deleteLoading ? (
-              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            ) : (
-              <>
-                <Trash2 className="w-4 h-4" />
-                Delete
-              </>
-            )}
-          </button>
-        </div>
-      </Modal>
+        message={
+          <p>
+            Are you sure you want to delete{" "}
+            <span className="font-medium text-warm-700">
+              &ldquo;{deletingTransaction?.description}&rdquo;
+            </span>
+            ? This action cannot be undone.
+          </p>
+        }
+        loading={deleteLoading}
+      />
 
       {/* Bulk Delete Confirmation */}
-      <Modal
+      <ConfirmModal
         open={showBulkDelete}
         onClose={() => setShowBulkDelete(false)}
+        onConfirm={handleBulkDelete}
         title="Delete Transactions"
-      >
-        <p className="text-warm-500 text-sm mb-6">
-          Are you sure you want to delete{" "}
-          <span className="font-medium text-warm-700">
-            {selectedIds.size} transaction{selectedIds.size > 1 ? "s" : ""}
-          </span>
-          ? This action cannot be undone.
-        </p>
-        <div className="flex gap-3">
-          <button
-            onClick={() => setShowBulkDelete(false)}
-            className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl border border-cream-300 text-warm-500 font-medium text-sm hover:bg-cream-100 transition-colors"
-          >
-            <X className="w-4 h-4" />
-            Cancel
-          </button>
-          <button
-            onClick={handleBulkDelete}
-            disabled={deleteLoading}
-            className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl bg-expense hover:bg-expense-dark text-white font-medium text-sm transition-colors disabled:opacity-50"
-          >
-            {deleteLoading ? (
-              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            ) : (
-              <>
-                <Trash2 className="w-4 h-4" />
-                {`Delete ${selectedIds.size}`}
-              </>
-            )}
-          </button>
-        </div>
-      </Modal>
+        message={
+          <p>
+            Are you sure you want to delete{" "}
+            <span className="font-medium text-warm-700">
+              {selectedIds.size} transaction{selectedIds.size > 1 ? "s" : ""}
+            </span>
+            ? This action cannot be undone.
+          </p>
+        }
+        confirmLabel={`Delete ${selectedIds.size}`}
+        loading={deleteLoading}
+      />
 
       {/* Mobile FAB */}
       <MobileFab label="Transaction" icon={Plus} onClick={() => setShowForm(true)} />

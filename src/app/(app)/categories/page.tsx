@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { Modal } from "@/components/ui/modal";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CategoryForm } from "@/components/categories/category-form";
 import { MobileFab } from "@/components/ui/mobile-fab";
@@ -447,50 +448,32 @@ export default function CategoriesPage() {
       </Modal>
 
       {/* Delete Confirmation Modal */}
-      <Modal
+      <ConfirmModal
         open={!!deletingCategory}
         onClose={() => setDeletingCategory(null)}
+        onConfirm={handleDelete}
         title="Delete Category"
-      >
-        <p className="text-warm-500 text-sm mb-2">
-          Are you sure you want to delete{" "}
-          <span className="font-medium text-warm-700">
-            &ldquo;{deletingCategory?.name}&rdquo;
-          </span>
-          ?
-        </p>
-        {deleteError && (
-          <div className="bg-expense-light border border-expense/20 text-expense-dark px-4 py-3 rounded-xl text-sm mb-4">
-            {deleteError}
-          </div>
-        )}
-        <p className="text-warm-400 text-xs mb-6">
-          Categories with existing transactions cannot be deleted.
-        </p>
-        <div className="flex gap-3">
-          <button
-            onClick={() => setDeletingCategory(null)}
-            className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl border border-cream-300 text-warm-500 font-medium text-sm hover:bg-cream-100 transition-colors"
-          >
-            <X className="w-4 h-4" />
-            Cancel
-          </button>
-          <button
-            onClick={handleDelete}
-            disabled={deleteCategory.isPending}
-            className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl bg-expense hover:bg-expense-dark text-white font-medium text-sm transition-colors disabled:opacity-50"
-          >
-            {deleteCategory.isPending ? (
-              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            ) : (
-              <>
-                <Trash2 className="w-4 h-4" />
-                Delete
-              </>
+        message={
+          <>
+            <p>
+              Are you sure you want to delete{" "}
+              <span className="font-medium text-warm-700">
+                &ldquo;{deletingCategory?.name}&rdquo;
+              </span>
+              ?
+            </p>
+            {deleteError && (
+              <div className="bg-expense-light border border-expense/20 text-expense-dark px-4 py-3 rounded-xl text-sm mb-4">
+                {deleteError}
+              </div>
             )}
-          </button>
-        </div>
-      </Modal>
+            <p className="text-warm-400 text-xs mt-2">
+              Categories with existing transactions cannot be deleted.
+            </p>
+          </>
+        }
+        loading={deleteCategory.isPending}
+      />
 
       {/* Mobile FAB */}
       <MobileFab label="Category" icon={Plus} onClick={() => setShowForm(true)} />
