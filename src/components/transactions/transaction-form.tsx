@@ -322,7 +322,7 @@ export function TransactionForm({ transaction, initialData, onSubmit, onCancel, 
                       : "text-expense caret-expense"
                   )}
                   placeholder="0.00"
-                  autoFocus={!transaction}
+                  autoFocus={!transaction && user.transactionAmountAutofocus}
                 />
               </div>
               {errors.amount && (
