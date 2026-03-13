@@ -1,7 +1,5 @@
--- Backfill existing rows to true (preserve previous always-on behavior)
-UPDATE "users" SET "transaction_amount_autofocus" = true
-WHERE "transaction_amount_autofocus" = false;
-
--- Change column default for new signups
+-- Repair the column default for environments that previously applied
+-- transaction_amount_autofocus with DEFAULT false. Do not rewrite stored
+-- false values here because they may now reflect real user opt-outs.
 ALTER TABLE "users"
 ALTER COLUMN "transaction_amount_autofocus" SET DEFAULT true;
