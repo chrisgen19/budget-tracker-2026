@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { User, Lock, Check, Loader2, Sparkles, ScanLine, Rows3 } from "lucide-react";
+import { User, Lock, Check, Loader2, Sparkles, ScanLine, Rows3, Target } from "lucide-react";
 import {
   updateProfileSchema,
   changePasswordSchema,
@@ -495,6 +495,7 @@ function FeaturesForm() {
   const { user, setUser } = useUser();
   const [saving, setSaving] = useState(false);
   const [savingLayout, setSavingLayout] = useState(false);
+  const [savingAutofocus, setSavingAutofocus] = useState(false);
 
   const handleToggle = async () => {
     const newValue = !user.receiptScanEnabled;
@@ -543,6 +544,30 @@ function FeaturesForm() {
       setUser({ transactionLayout: oldValue });
     } finally {
       setSavingLayout(false);
+    }
+  };
+
+  const handleAutofocusToggle = async () => {
+    const newValue = !user.transactionAmountAutofocus;
+    const oldValue = user.transactionAmountAutofocus;
+
+    setUser({ transactionAmountAutofocus: newValue });
+    setSavingAutofocus(true);
+
+    try {
+      const res = await fetch("/api/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transactionAmountAutofocus: newValue }),
+      });
+
+      if (!res.ok) {
+        setUser({ transactionAmountAutofocus: oldValue });
+      }
+    } catch {
+      setUser({ transactionAmountAutofocus: oldValue });
+    } finally {
+      setSavingAutofocus(false);
     }
   };
 
@@ -627,6 +652,41 @@ function FeaturesForm() {
               className={cn(
                 "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200",
                 user.transactionLayout === "infinite" ? "translate-x-5" : "translate-x-0"
+              )}
+            />
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between gap-4 p-4 rounded-xl border border-cream-300 bg-cream-50/50">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center">
+              <Target className="w-5 h-5 text-amber-dark" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-warm-600">
+                Auto-focus Amount
+              </p>
+              <p className="text-xs text-warm-400">
+                Focus Amount field first when opening a new transaction form
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            role="switch"
+            aria-checked={user.transactionAmountAutofocus}
+            disabled={savingAutofocus}
+            onClick={handleAutofocusToggle}
+            className={cn(
+              "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/30 disabled:opacity-50 disabled:cursor-not-allowed",
+              user.transactionAmountAutofocus ? "bg-amber" : "bg-cream-300"
+            )}
+          >
+            <span
+              className={cn(
+                "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200",
+                user.transactionAmountAutofocus ? "translate-x-5" : "translate-x-0"
               )}
             />
           </button>

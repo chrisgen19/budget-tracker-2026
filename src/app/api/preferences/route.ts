@@ -14,6 +14,7 @@ export async function GET() {
       quickIncomeCategories: true,
       receiptScanEnabled: true,
       transactionLayout: true,
+      transactionAmountAutofocus: true,
     },
   });
 
@@ -23,6 +24,7 @@ export async function GET() {
     quickIncomeCategories: user?.quickIncomeCategories ?? [],
     receiptScanEnabled: user?.receiptScanEnabled ?? false,
     transactionLayout: user?.transactionLayout ?? "infinite",
+    transactionAmountAutofocus: user?.transactionAmountAutofocus ?? true,
   });
 }
 
@@ -77,6 +79,10 @@ export async function PATCH(request: Request) {
     data.transactionLayout = layout;
   }
 
+  if ("transactionAmountAutofocus" in body) {
+    data.transactionAmountAutofocus = Boolean(body.transactionAmountAutofocus);
+  }
+
   const user = await prisma.user.update({
     where: { id: userId },
     data,
@@ -86,6 +92,7 @@ export async function PATCH(request: Request) {
       quickIncomeCategories: true,
       receiptScanEnabled: true,
       transactionLayout: true,
+      transactionAmountAutofocus: true,
     },
   });
 
@@ -95,5 +102,6 @@ export async function PATCH(request: Request) {
     quickIncomeCategories: user.quickIncomeCategories,
     receiptScanEnabled: user.receiptScanEnabled,
     transactionLayout: user.transactionLayout,
+    transactionAmountAutofocus: user.transactionAmountAutofocus,
   });
 }

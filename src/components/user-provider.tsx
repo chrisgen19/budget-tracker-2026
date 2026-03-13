@@ -10,6 +10,7 @@ interface UserInfo {
   timezoneOffset: number;
   receiptScanEnabled: boolean;
   transactionLayout: "infinite" | "pagination";
+  transactionAmountAutofocus: boolean;
   role: UserRole;
   roleScanEnabled: boolean;
   maxUploadFiles: number;
@@ -25,7 +26,7 @@ interface UserContextValue {
 }
 
 const UserContext = createContext<UserContextValue>({
-  user: { name: "", email: "", currency: "PHP", timezoneOffset: -480, receiptScanEnabled: false, transactionLayout: "infinite", role: "FREE", roleScanEnabled: false, maxUploadFiles: 10, monthlyScanLimit: 0, scansUsedThisMonth: 0 },
+  user: { name: "", email: "", currency: "PHP", timezoneOffset: -480, receiptScanEnabled: false, transactionLayout: "infinite", transactionAmountAutofocus: true, role: "FREE", roleScanEnabled: false, maxUploadFiles: 10, monthlyScanLimit: 0, scansUsedThisMonth: 0 },
   setUser: () => {},
 });
 

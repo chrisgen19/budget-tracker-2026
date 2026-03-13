@@ -23,7 +23,14 @@ export default async function AppLayout({
   // Fetch user preferences and role-based settings from DB
   const dbUser = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { currency: true, receiptScanEnabled: true, transactionLayout: true, timezoneOffset: true, role: true },
+    select: {
+      currency: true,
+      receiptScanEnabled: true,
+      transactionLayout: true,
+      transactionAmountAutofocus: true,
+      timezoneOffset: true,
+      role: true,
+    },
   });
 
   const userRole = dbUser?.role ?? "FREE";
@@ -64,6 +71,7 @@ export default async function AppLayout({
           timezoneOffset: dbUser?.timezoneOffset ?? -480,
           receiptScanEnabled: dbUser?.receiptScanEnabled ?? false,
           transactionLayout: (dbUser?.transactionLayout as "infinite" | "pagination") ?? "infinite",
+          transactionAmountAutofocus: dbUser?.transactionAmountAutofocus ?? true,
           role: userRole,
           roleScanEnabled,
           maxUploadFiles,
