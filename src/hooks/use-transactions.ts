@@ -30,6 +30,7 @@ export interface TransactionsResponse {
 export const queryKeys = {
   transactions: {
     all: ["transactions"] as const,
+    lists: ["transactions", "list"] as const,
     list: (filters: TransactionFilters, page: number) =>
       ["transactions", "list", filters, page] as const,
     infinite: (filters: TransactionFilters) =>
@@ -62,7 +63,7 @@ const buildTransactionParams = (filters: TransactionFilters, page: number, tz: n
   return params;
 };
 
-const fetchTransactionsPage = async (
+export const fetchTransactionsPage = async (
   filters: TransactionFilters,
   page: number,
   tz: number
@@ -231,9 +232,9 @@ export function useCreateTransaction() {
         }
       );
 
-      // Refetch active transaction queries in the background for full consistency
+      // Refetch active paginated transaction queries for server-backed ordering/counts
       queryClient.invalidateQueries({
-        queryKey: queryKeys.transactions.all,
+        queryKey: queryKeys.transactions.lists,
       });
 
       // Invalidate dashboard (triggers background refetch)
@@ -304,7 +305,7 @@ export function useDeleteTransaction() {
 
       // Invalidate paginated caches
       queryClient.invalidateQueries({
-        queryKey: queryKeys.transactions.all,
+        queryKey: queryKeys.transactions.lists,
         refetchType: "none",
       });
 
@@ -340,7 +341,7 @@ export function useBulkDeleteTransactions() {
 
       // Invalidate paginated caches
       queryClient.invalidateQueries({
-        queryKey: queryKeys.transactions.all,
+        queryKey: queryKeys.transactions.lists,
         refetchType: "none",
       });
 
@@ -391,7 +392,7 @@ export function useBatchCreateTransactions() {
 
       // Invalidate paginated caches
       queryClient.invalidateQueries({
-        queryKey: queryKeys.transactions.all,
+        queryKey: queryKeys.transactions.lists,
         refetchType: "none",
       });
 

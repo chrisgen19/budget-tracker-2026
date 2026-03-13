@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
   Trash2,
@@ -30,6 +31,8 @@ import { useUser } from "@/components/user-provider";
 import { useScan } from "@/components/scan-provider";
 import { MobileFab } from "@/components/ui/mobile-fab";
 import {
+  fetchTransactionsPage,
+  queryKeys,
   useTransactionsQuery,
   useTransactionsInfiniteQuery,
   useCreateTransaction,
@@ -133,6 +136,7 @@ const createInitialFilters = (): TransactionFilters => {
 export default function TransactionsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const highlightId = searchParams.get("highlight");
 
   const { hideAmounts } = usePrivacy();
@@ -228,6 +232,36 @@ export default function TransactionsPage() {
     }
   }, [highlightId, router]);
 
+  const locateTransactionPage = useCallback(
+    async (transactionId: string) => {
+      if (isInfinite) return null;
+
+      let nextPage = 1;
+      let totalPagesToCheck = 1;
+
+      try {
+        while (nextPage <= totalPagesToCheck) {
+          const data = await queryClient.fetchQuery({
+            queryKey: queryKeys.transactions.list(filters, nextPage),
+            queryFn: () => fetchTransactionsPage(filters, nextPage, user.timezoneOffset),
+          });
+
+          if (data.transactions.some((tx) => tx.id === transactionId)) {
+            return nextPage;
+          }
+
+          totalPagesToCheck = data.pagination.totalPages;
+          nextPage += 1;
+        }
+      } catch {
+        return null;
+      }
+
+      return null;
+    },
+    [filters, isInfinite, queryClient, user.timezoneOffset],
+  );
+
   /* ---- Derived data ---- */
 
   const loading = isInfinite ? infiniteIsLoading : paginatedQuery.isLoading;
@@ -259,11 +293,9 @@ export default function TransactionsPage() {
     }
   }, [sourceTransactions, handleHighlight]);
 
-  // Scroll to a newly created/updated transaction once it appears in the list.
-  // Uses a ref instead of state so clearing the target doesn't trigger a
-  // re-render (which would run cleanup and kill the highlight timeout).
-  // The effect only fires when sourceTransactions changes, which naturally
-  // waits for query refetches in paginated mode.
+  // Scroll to a newly created/updated transaction once the rendered list
+  // actually includes it. The target lives in a ref so clearing it does not
+  // trigger a cleanup cycle that would cancel the highlight timeout.
   useEffect(() => {
     const targetId = scrollTargetRef.current;
     if (!targetId) return;
@@ -327,13 +359,38 @@ export default function TransactionsPage() {
     const createdTx = await createMutation.mutateAsync(input);
     setShowForm(false);
     scrollTargetRef.current = createdTx.id;
+
+    if (!isInfinite) {
+      const targetPage = await locateTransactionPage(createdTx.id);
+      if (targetPage !== null) {
+        setPage(targetPage);
+      } else if (scrollTargetRef.current === createdTx.id) {
+        scrollTargetRef.current = null;
+      }
+    }
   };
 
   const handleUpdate = async (input: TransactionInput) => {
     if (!editingTransaction) return;
-    const updatedTx = await updateMutation.mutateAsync({ id: editingTransaction.id, input });
-    setEditingTransaction(null);
-    scrollTargetRef.current = updatedTx.id;
+    const targetId = editingTransaction.id;
+    scrollTargetRef.current = targetId;
+
+    try {
+      await updateMutation.mutateAsync({ id: targetId, input });
+      setEditingTransaction(null);
+
+      if (!isInfinite) {
+        const targetPage = await locateTransactionPage(targetId);
+        if (targetPage !== null) {
+          setPage(targetPage);
+        } else if (scrollTargetRef.current === targetId) {
+          scrollTargetRef.current = null;
+        }
+      }
+    } catch (error) {
+      if (scrollTargetRef.current === targetId) scrollTargetRef.current = null;
+      throw error;
+    }
   };
 
   const handleDelete = async () => {
