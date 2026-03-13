@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
   Trash2,
@@ -30,6 +31,8 @@ import { useUser } from "@/components/user-provider";
 import { useScan } from "@/components/scan-provider";
 import { MobileFab } from "@/components/ui/mobile-fab";
 import {
+  fetchTransactionsPage,
+  queryKeys,
   useTransactionsQuery,
   useTransactionsInfiniteQuery,
   useCreateTransaction,
@@ -133,6 +136,7 @@ const createInitialFilters = (): TransactionFilters => {
 export default function TransactionsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const highlightId = searchParams.get("highlight");
 
   const { hideAmounts } = usePrivacy();
@@ -160,6 +164,9 @@ export default function TransactionsPage() {
   const [deletingTransaction, setDeletingTransaction] =
     useState<TransactionWithCategory | null>(null);
   const [showBulkDelete, setShowBulkDelete] = useState(false);
+  const scrollTargetRef = useRef<string | null>(null);
+  const highlightTimeoutRef = useRef<number | undefined>(undefined);
+  const [highlightedRowId, setHighlightedRowId] = useState<string | null>(null);
 
   /* ---- TanStack Query hooks ---- */
 
@@ -225,6 +232,36 @@ export default function TransactionsPage() {
     }
   }, [highlightId, router]);
 
+  const locateTransactionPage = useCallback(
+    async (transactionId: string) => {
+      if (isInfinite) return null;
+
+      let nextPage = 1;
+      let totalPagesToCheck = 1;
+
+      try {
+        while (nextPage <= totalPagesToCheck) {
+          const data = await queryClient.fetchQuery({
+            queryKey: queryKeys.transactions.list(filters, nextPage),
+            queryFn: () => fetchTransactionsPage(filters, nextPage, user.timezoneOffset),
+          });
+
+          if (data.transactions.some((tx) => tx.id === transactionId)) {
+            return nextPage;
+          }
+
+          totalPagesToCheck = data.pagination.totalPages;
+          nextPage += 1;
+        }
+      } catch {
+        return null;
+      }
+
+      return null;
+    },
+    [filters, isInfinite, queryClient, user.timezoneOffset],
+  );
+
   /* ---- Derived data ---- */
 
   const loading = isInfinite ? infiniteIsLoading : paginatedQuery.isLoading;
@@ -255,6 +292,33 @@ export default function TransactionsPage() {
       handleHighlight(sourceTransactions);
     }
   }, [sourceTransactions, handleHighlight]);
+
+  // Scroll to a newly created/updated transaction once the rendered list
+  // actually includes it. The target lives in a ref so clearing it does not
+  // trigger a cleanup cycle that would cancel the highlight timeout.
+  useEffect(() => {
+    const targetId = scrollTargetRef.current;
+    if (!targetId) return;
+
+    const row = document.querySelector<HTMLElement>(`[data-transaction-id="${targetId}"]`);
+    if (!row) return;
+
+    scrollTargetRef.current = null;
+    row.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightedRowId(targetId);
+
+    if (highlightTimeoutRef.current) window.clearTimeout(highlightTimeoutRef.current);
+    highlightTimeoutRef.current = window.setTimeout(() => {
+      setHighlightedRowId((current) => (current === targetId ? null : current));
+    }, 1600);
+  }, [sourceTransactions]);
+
+  // Cleanup highlight timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (highlightTimeoutRef.current) window.clearTimeout(highlightTimeoutRef.current);
+    };
+  }, []);
 
   // Pagination metadata
   const paginationData = isInfinite
@@ -292,14 +356,41 @@ export default function TransactionsPage() {
   /* ---- CRUD handlers ---- */
 
   const handleCreate = async (input: TransactionInput) => {
-    await createMutation.mutateAsync(input);
+    const createdTx = await createMutation.mutateAsync(input);
     setShowForm(false);
+    scrollTargetRef.current = createdTx.id;
+
+    if (!isInfinite) {
+      const targetPage = await locateTransactionPage(createdTx.id);
+      if (targetPage !== null) {
+        setPage(targetPage);
+      } else if (scrollTargetRef.current === createdTx.id) {
+        scrollTargetRef.current = null;
+      }
+    }
   };
 
   const handleUpdate = async (input: TransactionInput) => {
     if (!editingTransaction) return;
-    await updateMutation.mutateAsync({ id: editingTransaction.id, input });
-    setEditingTransaction(null);
+    const targetId = editingTransaction.id;
+    scrollTargetRef.current = targetId;
+
+    try {
+      await updateMutation.mutateAsync({ id: targetId, input });
+      setEditingTransaction(null);
+
+      if (!isInfinite) {
+        const targetPage = await locateTransactionPage(targetId);
+        if (targetPage !== null) {
+          setPage(targetPage);
+        } else if (scrollTargetRef.current === targetId) {
+          scrollTargetRef.current = null;
+        }
+      }
+    } catch (error) {
+      if (scrollTargetRef.current === targetId) scrollTargetRef.current = null;
+      throw error;
+    }
   };
 
   const handleDelete = async () => {
@@ -511,8 +602,10 @@ export default function TransactionsPage() {
                     return (
                       <div
                         key={tx.id}
+                        data-transaction-id={tx.id}
                         className={cn(
                           "flex items-center gap-3 px-5 py-3 transition-colors group cursor-pointer",
+                          highlightedRowId === tx.id && "bg-amber-light/40 ring-1 ring-amber/40",
                           isSelected ? "bg-amber-light/20" : "hover:bg-cream-50/80"
                         )}
                         onClick={() => setEditingTransaction(tx)}

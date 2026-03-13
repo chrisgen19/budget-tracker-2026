@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   TrendingUp,
   TrendingDown,
@@ -37,6 +37,8 @@ const BILL_REMINDER_STACK_OFFSET_REM = 7;
 
 export default function DashboardPage() {
   const [showForm, setShowForm] = useState(false);
+  const [shouldScrollToRecent, setShouldScrollToRecent] = useState(false);
+  const recentTransactionsRef = useRef<HTMLDivElement>(null);
   const { hideAmounts, toggleHideAmounts } = usePrivacy();
   const { user } = useUser();
   const { canScan, openScan, scanLimitReached, scansRemaining, hasLimit } = useScan();
@@ -78,7 +80,19 @@ export default function DashboardPage() {
   const handleCreate = async (input: TransactionInput) => {
     await createMutation.mutateAsync(input);
     setShowForm(false);
+    setShouldScrollToRecent(true);
   };
+
+  useEffect(() => {
+    if (!shouldScrollToRecent || showForm) return;
+
+    const timeoutId = window.setTimeout(() => {
+      recentTransactionsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setShouldScrollToRecent(false);
+    }, 120);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [shouldScrollToRecent, showForm]);
 
   const navigateMonth = (direction: -1 | 1) => {
     const [year, month] = currentMonth.split("-").map(Number);
@@ -376,7 +390,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Recent Transactions */}
-          <motion.div variants={fadeUp} className="card">
+          <motion.div ref={recentTransactionsRef} variants={fadeUp} className="card">
             <div className="flex items-center justify-between p-5 pb-3">
               <h2 className="font-serif text-lg text-warm-700">
                 Recent Transactions
