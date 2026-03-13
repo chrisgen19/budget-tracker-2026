@@ -12,11 +12,11 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 ## Features
 
 - **Landing Page** — Redesigned marketing homepage with 3D dashboard mockup preview, AI receipt scanning showcase with phone mockup, 8-feature grid, and scroll-triggered animations
-- **Authentication** — Register and login with email/password (NextAuth.js with JWT sessions); role-based access control (ADMIN, FREE, PAID)
+- **Authentication** — Register and login with email/password (NextAuth.js with JWT sessions); email verification via Resend; password reset flow with secure token links; role-based access control (ADMIN, FREE, PAID)
 - **Dashboard** — Summary cards (balance, expenses, income), monthly trend bar chart, spending by category donut chart, balance trend area chart, recent transactions
 - **Running Balance** — Cumulative all-time balance that carries over across months, not just monthly snapshots
 - **Balance Trend** — 30-day area chart showing daily running balance with percentage change indicator
-- **Transactions** — Full CRUD with search, type filtering (income/expense), month navigation, infinite scroll (with pagination toggle), hero amount input with dynamic type coloring, date quick-picks (Today/Yesterday/Custom), slide-in category picker, and advanced filters (category, amount range, sort)
+- **Transactions** — Full CRUD with search, type filtering (income/expense), month navigation, infinite scroll (with pagination toggle), hero amount input with dynamic type coloring, date quick-picks (Today/Yesterday/Custom), slide-in category picker, advanced filters (category, amount range, sort), and auto-scroll with highlight animation on newly created or updated transactions
 - **Quick Category Tiles** — Personalized top-4 quick-access categories per type (expense/income) with customizable order; shown in the transaction form and editable from the Categories page
 - **Categories** — 15 pre-seeded defaults (10 expense, 5 income) + create/edit/delete custom categories with color swatches, icon grid, and live preview
 - **User Roles** — Three-tier role system (ADMIN, FREE, PAID); new users default to FREE; admin can manually promote users to PAID via an admin panel; receipt scanning gated to PAID/ADMIN users
@@ -30,6 +30,9 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **Privacy Mode** — One-tap toggle to hide all financial amounts across the app, persisted per-user in the database
 - **Responsive** — Sidebar navigation on desktop, bottom navigation on mobile; labeled floating action buttons on mobile; modal bottom sheets with drag-to-dismiss on mobile, centered cards on desktop; keyboard-aware modals on iOS Safari
 - **Dynamic Favicon** — Auto-generated favicon matching the app logo
+- **Scheduled Bills & Reminders** — Recurring bill management with configurable frequency (weekly, biweekly, monthly, quarterly, yearly); mobile toast reminders for upcoming and overdue bills; one-tap pay that auto-creates the expense transaction; bill history with links to past payments
+- **Progressive Web App** — Installable PWA with offline support via Serwist service worker; install prompt banner (Android + iOS Safari guide); standalone mode with safe-area handling; smart caching for API responses and static assets
+- **Timezone-Aware Dates** — All date queries respect the user's local timezone offset for accurate day boundaries and month grouping
 - **MCP Server** — Local Model Context Protocol server for querying budget data from Claude Desktop; 8 read-only tools (spending by category, top expenses, monthly summary, spending trends, search transactions, budget overview, upcoming bills, category list); shared query library reusable for future in-app AI chat
 - **Design** — Warm paper-ledger aesthetic with Young Serif + Outfit fonts, Plus Jakarta Sans for currency amounts, amber accents, and Framer Motion animations
 
@@ -46,6 +49,8 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 | Data Caching | TanStack Query |
 | Charts | Recharts |
 | OCR / AI | Google Gemini |
+| Email | Resend |
+| PWA | Serwist (Service Worker) |
 | MCP Server | Model Context Protocol SDK |
 | Icons | Lucide React |
 | Animation | Framer Motion |
@@ -236,6 +241,7 @@ src/
 │   │   ├── dashboard/       # Dashboard with charts & summaries
 │   │   ├── transactions/    # Transaction list with CRUD
 │   │   ├── categories/      # Category management
+│   │   ├── bills/           # Scheduled bills & reminders
 │   │   ├── profile/         # Profile settings (name, email, currency, password)
 │   │   └── admin/           # Admin panel (user management, scan settings)
 │   └── api/                 # REST API routes
@@ -245,14 +251,18 @@ src/
 │       ├── transactions/    # Transaction CRUD
 │       ├── categories/      # Category CRUD
 │       ├── dashboard/       # Dashboard stats + balance trend
+│       ├── bills/           # Scheduled bill CRUD + upcoming bills
 │       ├── preferences/     # User preferences (privacy, quick categories, features)
 │       ├── profile/         # Profile & password update
+│       ├── email/           # Email verification + password reset (Resend)
 │       └── receipts/        # Receipt OCR + itemized breakdown via Gemini AI
 ├── components/
-│   ├── ui/                  # Shared UI (Modal, EmptyState, IconMap)
+│   ├── ui/                  # Shared UI (Modal, ConfirmModal, MobileFab, EmptyState, IconMap)
 │   ├── dashboard/           # Chart components (Trend, Spending, BalanceTrend)
 │   ├── transactions/        # Transaction form + receipt breakdown viewer
 │   ├── categories/          # Category form + quick category picker
+│   ├── bills/               # Bill form + bill reminder provider
+│   ├── pwa/                 # Install prompt banner + banner context
 │   ├── landing-page.tsx     # Marketing homepage for guests
 │   ├── scan-receipt-sheet.tsx # Receipt capture modal (camera/upload)
 │   ├── multi-scan-review.tsx # Batch scan review modal
@@ -282,16 +292,20 @@ prisma/
 User ──< Transaction >── Category
  │                          │
  ├────────< Category (custom, per-user)
- └────────< ScanLog
+ ├────────< Bill >── Category
+ ├────────< ScanLog
+ └────────< VerificationToken
 
 AppSettings (per role: FREE, PAID)
 ```
 
-- **User** — id, name, email, password, role (ADMIN/FREE/PAID), currency, hide_amounts, quickExpenseCategories, quickIncomeCategories, receiptScanEnabled, transactionLayout
+- **User** — id, name, email, emailVerified, password, role (ADMIN/FREE/PAID), currency, timezoneOffset, hide_amounts, quickExpenseCategories, quickIncomeCategories, receiptScanEnabled, transactionLayout
 - **Category** — id, name, type (INCOME/EXPENSE), icon, color, isDefault, userId (null for defaults)
 - **Transaction** — id, amount, description, type, date, categoryId, userId, receiptGroupId (links itemized siblings), receiptBreakdown (JSON — individual line items)
+- **Bill** — id, amount, description, frequency, nextDueDate, isActive, categoryId, userId (recurring scheduled transactions)
 - **AppSettings** — id, role (unique), receiptScanEnabled, maxUploadFiles, monthlyScanLimit
 - **ScanLog** — id, userId, createdAt (tracks scan usage for monthly limits)
+- **VerificationToken** — id, token, type (EMAIL_VERIFY/PASSWORD_RESET), userId, expiresAt
 
 ## Changelog
 

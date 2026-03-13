@@ -608,3 +608,128 @@ All notable development history for the Budget Tracker app.
 ### Bug Fixes
 - Fixed **non-deterministic ordering** of dashboard recent transactions — added `id` as a final sort tiebreaker to prevent inconsistent results when multiple transactions share the same date and creation time (common with batch-created receipt scan transactions)
 - Fixed **dashboard loading skeleton** not matching the actual layout on mobile — summary cards skeleton now uses horizontal scroll with snap points (matching the real cards) instead of a vertical stack; card placeholders include title, subtitle, and eye button; recent transactions section uses correct padding, dividers, and 5 rows (matching the real list)
+
+---
+
+## 2026-02-27 — Scheduled Bills & Reminders
+
+### Bill Management
+- New **Bills** page (`/bills`) for managing recurring scheduled transactions (rent, subscriptions, utilities, etc.)
+- Full CRUD: create, edit, and deactivate bills with description, amount, category, frequency, and next due date
+- **Frequency options** — weekly, biweekly, monthly, quarterly, and yearly recurrence
+- Active/inactive toggle — deactivated bills stop triggering reminders but preserve payment history
+- Bills page shows upcoming due dates, amounts, and category icons
+
+### Bill Reminders
+- **Mobile toast reminders** — floating banner stack on the dashboard showing upcoming and overdue bills
+- Overdue bills highlighted in red; upcoming bills in amber
+- **One-tap pay** — creates the expense transaction from the bill details and advances the next due date automatically
+- Pay & Edit modal allows adjusting amount, date, or description before confirming payment
+- Bill reminder provider (`BillReminderProvider`) manages pending reminders across the app
+
+### Bill History
+- Each bill tracks payment history via linked transactions
+- Expandable history section on each bill card showing past payments with dates and amounts
+- History entries link directly to the corresponding transaction (opens edit modal via `?highlight=` param)
+
+### Dashboard Integration
+- **Upcoming Bills** widget on the dashboard — shows next 5 due bills with days-until-due badges
+- Dashboard FAB repositioned to account for bill reminder stack on mobile
+
+### Database
+- Added `Bill` model with `amount`, `description`, `frequency` (enum), `nextDueDate`, `isActive`, `categoryId`, `userId`
+- Added `billId` optional field on `Transaction` to link payments to their source bill
+
+### API Routes
+- `GET/POST /api/bills` — list and create bills
+- `PUT/DELETE /api/bills/[id]` — update and deactivate bills
+- `GET /api/bills/upcoming` — upcoming bills within 30 days (used by dashboard and MCP server)
+- `POST /api/bills/[id]/pay` — mark bill as paid, create transaction, advance next due date
+
+---
+
+## 2026-02-28 — Email Verification & Password Reset
+
+### Email Verification
+- New users receive a **verification email** after registration via Resend
+- Verification link with secure token expires after 24 hours
+- Unverified users see a banner prompting them to check their email
+- `GET /api/email/verify?token=` — validates token and marks email as verified
+
+### Password Reset
+- **Forgot password** flow on the login page — enter email to receive a reset link
+- Reset token expires after 1 hour
+- `POST /api/email/forgot-password` — sends reset link via Resend
+- `POST /api/email/reset-password` — validates token and updates password
+
+### Database
+- Added `email_verified` timestamp column to `users` table
+- Added `VerificationToken` model with `token`, `type` (EMAIL_VERIFY/PASSWORD_RESET), `userId`, `expiresAt`
+
+### Environment Variables
+- `RESEND_API_KEY` — required for sending verification and reset emails
+- `RESEND_FROM_EMAIL` — sender address (defaults to `onboarding@resend.dev` for development)
+
+---
+
+## 2026-03-01 — Timezone-Aware Dates
+
+### Timezone Support
+- All date queries now respect the **user's local timezone offset** for accurate day boundaries and month grouping
+- Added `timezoneOffset` to `UserProvider` context — detected from `new Date().getTimezoneOffset()` on the client
+- Dashboard, transactions, and bill queries pass the timezone offset to API routes
+- API routes use the offset to compute correct date ranges for filtering and grouping
+- Added `timezone_offset` column to `users` table
+
+---
+
+## 2026-03-12 — Progressive Web App
+
+### PWA Support
+- App is now **installable as a PWA** on Android, iOS, and desktop browsers
+- **Serwist** service worker for offline support and smart caching of API responses and static assets
+- Web app manifest with app name, icons, theme color, and standalone display mode
+
+### Install Prompt
+- **Install prompt banner** — appears after 3 visits for eligible users (not already installed)
+- Android: native install prompt via `beforeinstallprompt` event
+- iOS Safari: guided instructions ("Tap Share, then Add to Home Screen")
+- Dismiss persists for 14 days before re-showing
+- Banner height measured via `ResizeObserver` for dynamic FAB positioning
+
+### Standalone Mode
+- Safe-area inset handling for notched devices in standalone mode
+- Mobile FAB positioning accounts for bottom nav, install banner, and bill reminders
+
+### Caching Strategy
+- Runtime caching for API routes (NetworkFirst) and static assets (StaleWhileRevalidate)
+- Auth routes excluded from caching to prevent stale session data
+
+### Bug Fixes
+- Disabled `SerwistProvider` in development to prevent `sw.js` 404 errors
+- Fixed iPadOS detection for install banner (reports as Macintosh with multi-touch)
+- Modal scroll position preserved on close to prevent scroll jump
+
+---
+
+## 2026-03-13 — UI Component Refactors & Transaction Auto-Scroll
+
+### Shared MobileFab Component
+- Extracted **`MobileFab`** component (`src/components/ui/mobile-fab.tsx`) — shared across dashboard, transactions, categories, and bills pages
+- Centralizes install banner clearance logic so positioning updates apply everywhere automatically
+- Accepts `label`, `icon`, `onClick`, and optional `extraOffsetRem` props
+- Fixed categories and bills FABs that were missing install banner awareness (static `bottom-20`)
+
+### Shared ConfirmModal Component
+- Extracted **`ConfirmModal`** component (`src/components/ui/confirm-modal.tsx`) — reusable confirmation dialog for delete/deactivate actions
+- Replaces ~85 lines of duplicated modal markup across transactions (single + bulk delete), bills (deactivate), and categories (delete)
+- Accepts `title`, `message` (ReactNode), `confirmLabel`, `confirmIcon`, `loading`, `onConfirm`, and `onClose` props
+
+### Transaction Auto-Scroll
+- After creating or updating a transaction, the list **auto-scrolls to the target row** and highlights it with an amber ring animation for 1.6 seconds
+- Dashboard scrolls to the Recent Transactions section after quick-add
+- Uses refs (`scrollTargetRef`, `highlightTimeoutRef`) instead of state to avoid re-render race conditions that would kill the highlight timeout
+- **Paginated mode support** — `locateTransactionPage()` searches through pages to find and navigate to the one containing the target transaction
+- Scroll effect depends only on `sourceTransactions` changes, naturally waiting for query refetches before attempting to scroll
+- Stale ref cleanup: ref is cleared if the transaction can't be found (e.g., filtered out)
+- `useCreateTransaction` invalidation scoped to `queryKeys.transactions.lists` to avoid unnecessary N-page refetches of infinite scroll caches
