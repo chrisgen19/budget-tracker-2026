@@ -160,7 +160,8 @@ export default function TransactionsPage() {
   const [deletingTransaction, setDeletingTransaction] =
     useState<TransactionWithCategory | null>(null);
   const [showBulkDelete, setShowBulkDelete] = useState(false);
-  const [scrollTargetId, setScrollTargetId] = useState<string | null>(null);
+  const scrollTargetRef = useRef<string | null>(null);
+  const highlightTimeoutRef = useRef<number | undefined>(undefined);
   const [highlightedRowId, setHighlightedRowId] = useState<string | null>(null);
 
   /* ---- TanStack Query hooks ---- */
@@ -258,23 +259,34 @@ export default function TransactionsPage() {
     }
   }, [sourceTransactions, handleHighlight]);
 
-  // Scroll to a newly created/updated transaction once it is visible in the list
+  // Scroll to a newly created/updated transaction once it appears in the list.
+  // Uses a ref instead of state so clearing the target doesn't trigger a
+  // re-render (which would run cleanup and kill the highlight timeout).
+  // The effect only fires when sourceTransactions changes, which naturally
+  // waits for query refetches in paginated mode.
   useEffect(() => {
-    if (!scrollTargetId) return;
-    const selector = `[data-transaction-id="${scrollTargetId}"]`;
-    const row = document.querySelector<HTMLElement>(selector);
+    const targetId = scrollTargetRef.current;
+    if (!targetId) return;
+
+    const row = document.querySelector<HTMLElement>(`[data-transaction-id="${targetId}"]`);
     if (!row) return;
 
+    scrollTargetRef.current = null;
     row.scrollIntoView({ behavior: "smooth", block: "center" });
-    setHighlightedRowId(scrollTargetId);
-    setScrollTargetId(null);
+    setHighlightedRowId(targetId);
 
-    const timeoutId = window.setTimeout(() => {
-      setHighlightedRowId((current) => (current === scrollTargetId ? null : current));
+    if (highlightTimeoutRef.current) window.clearTimeout(highlightTimeoutRef.current);
+    highlightTimeoutRef.current = window.setTimeout(() => {
+      setHighlightedRowId((current) => (current === targetId ? null : current));
     }, 1600);
+  }, [sourceTransactions]);
 
-    return () => window.clearTimeout(timeoutId);
-  }, [scrollTargetId, sourceTransactions]);
+  // Cleanup highlight timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (highlightTimeoutRef.current) window.clearTimeout(highlightTimeoutRef.current);
+    };
+  }, []);
 
   // Pagination metadata
   const paginationData = isInfinite
@@ -314,14 +326,14 @@ export default function TransactionsPage() {
   const handleCreate = async (input: TransactionInput) => {
     const createdTx = await createMutation.mutateAsync(input);
     setShowForm(false);
-    setScrollTargetId(createdTx.id);
+    scrollTargetRef.current = createdTx.id;
   };
 
   const handleUpdate = async (input: TransactionInput) => {
     if (!editingTransaction) return;
     const updatedTx = await updateMutation.mutateAsync({ id: editingTransaction.id, input });
     setEditingTransaction(null);
-    setScrollTargetId(updatedTx.id);
+    scrollTargetRef.current = updatedTx.id;
   };
 
   const handleDelete = async () => {
