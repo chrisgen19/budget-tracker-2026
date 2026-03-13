@@ -231,10 +231,9 @@ export function useCreateTransaction() {
         }
       );
 
-      // Invalidate paginated caches (triggers background refetch)
+      // Refetch active transaction queries in the background for full consistency
       queryClient.invalidateQueries({
         queryKey: queryKeys.transactions.all,
-        refetchType: "none",
       });
 
       // Invalidate dashboard (triggers background refetch)
