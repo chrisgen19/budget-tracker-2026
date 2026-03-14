@@ -33,31 +33,16 @@ const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB
 const stripCodeFences = (text: string): string =>
   text.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "");
 
-/** Fix receipt date when POS systems print an obviously wrong year.
- *  Extracts the date portion first to handle both "YYYY-MM-DD" and full ISO timestamps.
- *  Only corrects when the month/day are close to today (within 3 days) but the year
- *  differs — the clear signature of a POS with a misconfigured clock.
- *  Legitimate historical receipts (different month/day) are never modified. */
-const clampReceiptDate = (dateStr: string, fallback: string): string => {
+/** Normalize receipt date and flag when the year differs from today.
+ *  Extracts the date portion to handle both "YYYY-MM-DD" and full ISO timestamps.
+ *  Never modifies the date — returns a warning flag instead so the UI can
+ *  prompt the user to confirm or correct it. */
+const checkReceiptDate = (dateStr: string, fallback: string): { date: string; dateWarning: boolean } => {
   const dateOnly = dateStr.slice(0, 10); // normalize "2024-03-14T13:45" → "2024-03-14"
   const parsed = new Date(dateOnly + "T00:00:00");
-  if (isNaN(parsed.getTime())) return fallback;
-  const today = new Date(fallback + "T00:00:00");
-  const parsedYear = parsed.getFullYear();
-  const todayYear = today.getFullYear();
-  if (parsedYear === todayYear) return dateOnly;
-  // Check if month/day are within 3 days of today (same year context)
-  const sameYearDate = new Date(
-    `${todayYear}-${dateOnly.slice(5)}T00:00:00`
-  );
-  if (isNaN(sameYearDate.getTime())) return dateOnly;
-  const dayDiff = Math.abs(sameYearDate.getTime() - today.getTime());
-  const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
-  if (dayDiff <= threeDaysMs) {
-    // Month/day match today but year is wrong → POS year error
-    return `${todayYear}-${dateOnly.slice(5)}`;
-  }
-  return dateOnly;
+  if (isNaN(parsed.getTime())) return { date: fallback, dateWarning: false };
+  const todayYear = new Date(fallback + "T00:00:00").getFullYear();
+  return { date: dateOnly, dateWarning: parsed.getFullYear() !== todayYear };
 };
 
 export async function POST(request: Request) {
@@ -255,8 +240,9 @@ RULES:
       );
     }
 
-    // Clamp date if POS printed a wrong year
-    result.data.date = clampReceiptDate(result.data.date, todayStr);
+    // Normalize date and flag suspicious year for the UI
+    const { date: normalizedDate, dateWarning } = checkReceiptDate(result.data.date, todayStr);
+    result.data.date = normalizedDate;
 
     // Verify each categoryId exists, fall back to "Other" if not
     const categoryIds = new Set(categories.map((c) => c.id));
@@ -272,7 +258,7 @@ RULES:
     // Log 1 scan credit for the breakdown (fire-and-forget)
     prisma.scanLog.create({ data: { userId } }).catch(() => {});
 
-    return NextResponse.json(result.data);
+    return NextResponse.json({ ...result.data, dateWarning });
   } catch {
     return NextResponse.json(
       { error: "Failed to break down receipt. Please try again." },

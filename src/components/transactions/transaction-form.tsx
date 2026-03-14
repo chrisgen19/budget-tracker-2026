@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, CalendarDays, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, CalendarDays, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { transactionSchema, type TransactionInput } from "@/lib/validations";
 import { formatDateInput, getCurrencySymbol, cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
@@ -24,6 +24,8 @@ export interface InitialTransactionData {
 interface TransactionFormProps {
   transaction?: TransactionWithCategory | null;
   initialData?: InitialTransactionData;
+  /** When true, shows a warning that the receipt date year looks suspicious (possible POS error) */
+  dateWarning?: boolean;
   onSubmit: (data: TransactionInput) => Promise<void>;
   onCancel: () => void;
   onDelete?: () => void;
@@ -58,7 +60,7 @@ const slideVariants = {
 
 const QUICK_CATEGORY_COUNT = 4;
 
-export function TransactionForm({ transaction, initialData, onSubmit, onCancel, onDelete }: TransactionFormProps) {
+export function TransactionForm({ transaction, initialData, dateWarning, onSubmit, onCancel, onDelete }: TransactionFormProps) {
   const { user } = useUser();
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [displayAmount, setDisplayAmount] = useState<string>(() => {
@@ -461,6 +463,15 @@ export function TransactionForm({ transaction, initialData, onSubmit, onCancel, 
                   onChange={(e) => setValue("date", e.target.value)}
                   className="w-full mt-2.5 px-4 py-2.5 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 text-sm focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all appearance-none [&::-webkit-calendar-picker-indicator]:opacity-60"
                 />
+              )}
+
+              {dateWarning && dateMode !== "today" && dateMode !== "yesterday" && (
+                <div className="flex items-start gap-2 mt-2.5 p-3 rounded-xl bg-amber-50 border border-amber-200">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-700">
+                    The receipt date year looks incorrect (possible POS error). Please verify the date is correct or tap <strong>Today</strong> to use today&apos;s date.
+                  </p>
+                </div>
               )}
 
               {errors.date && (
