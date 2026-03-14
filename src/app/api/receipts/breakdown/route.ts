@@ -35,20 +35,27 @@ const stripCodeFences = (text: string): string =>
 
 /** Fix receipt date when POS systems print an obviously wrong year.
  *  Extracts the date portion first to handle both "YYYY-MM-DD" and full ISO timestamps.
- *  Only corrects when the year is clearly bogus (>1 year from today) — legitimate
- *  historical receipts being backfilled are left untouched. */
+ *  Only corrects when the month/day are close to today (within 3 days) but the year
+ *  differs — the clear signature of a POS with a misconfigured clock.
+ *  Legitimate historical receipts (different month/day) are never modified. */
 const clampReceiptDate = (dateStr: string, fallback: string): string => {
   const dateOnly = dateStr.slice(0, 10); // normalize "2024-03-14T13:45" → "2024-03-14"
   const parsed = new Date(dateOnly + "T00:00:00");
   if (isNaN(parsed.getTime())) return fallback;
   const today = new Date(fallback + "T00:00:00");
-  const diffMs = Math.abs(parsed.getTime() - today.getTime());
-  const oneYearMs = 365 * 24 * 60 * 60 * 1000;
-  if (diffMs > oneYearMs) {
-    // Preserve month and day, replace year with current year
-    const corrected = `${today.getFullYear()}-${dateOnly.slice(5)}`;
-    const correctedDate = new Date(corrected + "T00:00:00");
-    return isNaN(correctedDate.getTime()) ? fallback : corrected;
+  const parsedYear = parsed.getFullYear();
+  const todayYear = today.getFullYear();
+  if (parsedYear === todayYear) return dateOnly;
+  // Check if month/day are within 3 days of today (same year context)
+  const sameYearDate = new Date(
+    `${todayYear}-${dateOnly.slice(5)}T00:00:00`
+  );
+  if (isNaN(sameYearDate.getTime())) return dateOnly;
+  const dayDiff = Math.abs(sameYearDate.getTime() - today.getTime());
+  const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+  if (dayDiff <= threeDaysMs) {
+    // Month/day match today but year is wrong → POS year error
+    return `${todayYear}-${dateOnly.slice(5)}`;
   }
   return dateOnly;
 };
