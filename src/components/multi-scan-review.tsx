@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Pencil, Trash2, AlertCircle, CheckCircle2, Loader2, Rows3 } from "lucide-react";
 import { CategoryIcon } from "@/components/ui/icon-map";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
 import type { Category, MultiScanItem } from "@/types";
 
@@ -143,6 +143,7 @@ export function MultiScanReview({
             ? new Date(item.data.date).toLocaleDateString("en-PH", {
                 month: "short",
                 day: "numeric",
+                ...(item.data.dateWarning && { year: "numeric" }),
               })
             : "";
           const canItemize = !!item.imageFile && !item.parentId && !!item.data?.multiCategory;
@@ -191,7 +192,12 @@ export function MultiScanReview({
                     <span className="text-xs text-warm-200">&middot;</span>
                   )}
                   {formattedDate && (
-                    <span className="text-xs text-warm-400">{formattedDate}</span>
+                    <span className={cn("text-xs", item.data?.dateWarning ? "text-amber-600 font-medium" : "text-warm-400")}>
+                      {item.data?.dateWarning && "⚠ "}{formattedDate}
+                      {item.data?.dateWarning && (
+                        <span className="text-[10px] text-amber-500 ml-1">(check year)</span>
+                      )}
+                    </span>
                   )}
                 </div>
               </div>

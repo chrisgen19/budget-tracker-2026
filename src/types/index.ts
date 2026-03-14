@@ -96,6 +96,8 @@ export interface MultiScanItem {
       description: string;
       lineItems: Array<{ name: string; amount: number }>;
     }>;
+    /** True when the receipt date year differs from the current year (possible POS error) */
+    dateWarning?: boolean;
   };
   error?: string;
   /** Compressed image kept in memory for breakdown requests */

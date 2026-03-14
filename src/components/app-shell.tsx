@@ -122,6 +122,7 @@ export function AppShell({ children }: AppShellProps) {
             categoryId: data.categoryId,
             multiCategory: data.multiCategory,
             breakdown: data.breakdown,
+            dateWarning: data.dateWarning,
           },
           imageFile: compressed,
         },
@@ -215,6 +216,7 @@ export function AppShell({ children }: AppShellProps) {
                         categoryId: data.categoryId,
                         multiCategory: data.multiCategory,
                         breakdown: data.breakdown,
+                        dateWarning: data.dateWarning,
                       },
                       imageFile: file instanceof File ? file : undefined,
                     }
@@ -288,7 +290,8 @@ export function AppShell({ children }: AppShellProps) {
         categoryId: string;
         description: string;
         lineItems: Array<{ name: string; amount: number }>;
-      }>
+      }>,
+      dateWarning?: boolean
     ) => {
       const receiptGroupId = crypto.randomUUID();
 
@@ -303,6 +306,7 @@ export function AppShell({ children }: AppShellProps) {
           date,
           categoryId: bi.categoryId,
           receiptGroupId,
+          dateWarning,
           receiptBreakdown: {
             total: bi.amount,
             items: bi.lineItems.map((li) => ({
@@ -335,7 +339,8 @@ export function AppShell({ children }: AppShellProps) {
         id,
         item.fileName,
         item.data.date ?? new Date().toISOString(),
-        item.data.breakdown
+        item.data.breakdown,
+        item.data.dateWarning
       );
       return;
     }
@@ -367,7 +372,7 @@ export function AppShell({ children }: AppShellProps) {
         return;
       }
 
-      expandBreakdown(id, item.fileName, withLocalTime(data.date), data.items);
+      expandBreakdown(id, item.fileName, withLocalTime(data.date), data.items, data.dateWarning);
 
       // Increment local scan count (breakdown = 1 additional credit)
       setUser((prev) => ({ scansUsedThisMonth: prev.scansUsedThisMonth + 1 }));
@@ -721,6 +726,7 @@ export function AppShell({ children }: AppShellProps) {
                   date: editItem.data.date,
                   categoryId: editItem.data.categoryId,
                 }}
+                dateWarning={editItem.data.dateWarning}
                 onSubmit={handleMultiScanEditSubmit}
                 onCancel={() => setEditingItemId(null)}
               />
