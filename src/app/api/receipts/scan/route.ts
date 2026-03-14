@@ -35,6 +35,17 @@ const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB
 const stripCodeFences = (text: string): string =>
   text.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "");
 
+/** Clamp receipt date — if Gemini returns a date more than 6 months from today, use today instead.
+ *  Some POS systems print incorrect years (e.g. 2024 instead of 2026) on receipts. */
+const clampReceiptDate = (dateStr: string, fallback: string): string => {
+  const parsed = new Date(dateStr + "T00:00:00");
+  if (isNaN(parsed.getTime())) return fallback;
+  const today = new Date(fallback + "T00:00:00");
+  const diffMs = Math.abs(parsed.getTime() - today.getTime());
+  const sixMonthsMs = 6 * 30 * 24 * 60 * 60 * 1000;
+  return diffMs > sixMonthsMs ? fallback : dateStr;
+};
+
 export async function POST(request: Request) {
   const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
@@ -144,7 +155,7 @@ If the image is NOT a receipt (e.g. a random photo, screenshot, or document), re
 Return a JSON object with these fields:
 - "amount": the grand total / total due including tax, tips, and service charges (number). Use the largest final amount on the receipt.
 - "categoryId": pick the best category ID using the rules below.
-- "date": transaction date as "YYYY-MM-DD" (date only, no time). If the date is unreadable, use "${todayStr}".
+- "date": the TRANSACTION date (the date of purchase, usually near the top of the receipt next to the time). Use "YYYY-MM-DD" format (date only, no time). IMPORTANT: Ignore any "Date of Issuance", PTU accreditation dates, permit dates, or BIR registration dates — these are regulatory dates, NOT the purchase date. If the transaction date is unreadable, use "${todayStr}".
 - "description": merchant name + short summary of purchase (max 100 chars).
 - "multiCategory": true if the receipt contains items that span 2 or more DIFFERENT categories from the list below, false if all items belong to a single category. For example, a grocery receipt with food AND cleaning supplies = true, a restaurant bill with only food = false, a single ride receipt = false.
 - "breakdown": ONLY include this field when "multiCategory" is true. Read every line item on the receipt and group them by category. Each entry has: "amount" (sum for that category), "categoryId", "description" (store name + category + 1-2 sample items, max 80 chars), and "lineItems" (array of {"name": "<item name>", "amount": <price>}). The sum of all breakdown amounts should approximately equal the receipt total. Distribute tax/service proportionally or into the largest group. Do NOT include breakdown when multiCategory is false.
@@ -230,6 +241,16 @@ or when multiCategory is true:
         { error: "Could not extract transaction details from this receipt." },
         { status: 422 }
       );
+    }
+
+    // Clamp date if POS printed a wrong year
+    result.data.date = clampReceiptDate(result.data.date, todayStr);
+    if (result.data.breakdown) {
+      for (const item of result.data.breakdown) {
+        if ("date" in item && typeof item.date === "string") {
+          item.date = clampReceiptDate(item.date, todayStr);
+        }
+      }
     }
 
     // Verify the categoryId actually exists in user's categories

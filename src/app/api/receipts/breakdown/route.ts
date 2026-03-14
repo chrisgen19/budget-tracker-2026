@@ -33,6 +33,17 @@ const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB
 const stripCodeFences = (text: string): string =>
   text.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "");
 
+/** Clamp receipt date — if Gemini returns a date more than 6 months from today, use today instead.
+ *  Some POS systems print incorrect years (e.g. 2024 instead of 2026) on receipts. */
+const clampReceiptDate = (dateStr: string, fallback: string): string => {
+  const parsed = new Date(dateStr + "T00:00:00");
+  if (isNaN(parsed.getTime())) return fallback;
+  const today = new Date(fallback + "T00:00:00");
+  const diffMs = Math.abs(parsed.getTime() - today.getTime());
+  const sixMonthsMs = 6 * 30 * 24 * 60 * 60 * 1000;
+  return diffMs > sixMonthsMs ? fallback : dateStr;
+};
+
 export async function POST(request: Request) {
   const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
@@ -147,7 +158,7 @@ CATEGORY RULES:
 
 RESPONSE FORMAT — return ONLY valid JSON, no markdown or explanation:
 {
-  "date": "<YYYY-MM-DD — receipt date only, no time. Use ${todayStr} if unreadable>",
+  "date": "<YYYY-MM-DD — the TRANSACTION/purchase date, usually near the top of the receipt next to the time. IGNORE any 'Date of Issuance', PTU accreditation, permit, or BIR registration dates. Use ${todayStr} if unreadable>",
   "items": [
     {
       "amount": <sum of items in this category>,
@@ -227,6 +238,9 @@ RULES:
         { status: 422 }
       );
     }
+
+    // Clamp date if POS printed a wrong year
+    result.data.date = clampReceiptDate(result.data.date, todayStr);
 
     // Verify each categoryId exists, fall back to "Other" if not
     const categoryIds = new Set(categories.map((c) => c.id));
