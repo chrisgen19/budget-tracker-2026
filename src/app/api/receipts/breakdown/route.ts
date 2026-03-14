@@ -33,15 +33,24 @@ const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB
 const stripCodeFences = (text: string): string =>
   text.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "");
 
-/** Clamp receipt date — if Gemini returns a date more than 6 months from today, use today instead.
- *  Some POS systems print incorrect years (e.g. 2024 instead of 2026) on receipts. */
+/** Fix receipt date when POS systems print an obviously wrong year.
+ *  Extracts the date portion first to handle both "YYYY-MM-DD" and full ISO timestamps.
+ *  Only corrects when the year is clearly bogus (>1 year from today) — legitimate
+ *  historical receipts being backfilled are left untouched. */
 const clampReceiptDate = (dateStr: string, fallback: string): string => {
-  const parsed = new Date(dateStr + "T00:00:00");
+  const dateOnly = dateStr.slice(0, 10); // normalize "2024-03-14T13:45" → "2024-03-14"
+  const parsed = new Date(dateOnly + "T00:00:00");
   if (isNaN(parsed.getTime())) return fallback;
   const today = new Date(fallback + "T00:00:00");
   const diffMs = Math.abs(parsed.getTime() - today.getTime());
-  const sixMonthsMs = 6 * 30 * 24 * 60 * 60 * 1000;
-  return diffMs > sixMonthsMs ? fallback : dateStr;
+  const oneYearMs = 365 * 24 * 60 * 60 * 1000;
+  if (diffMs > oneYearMs) {
+    // Preserve month and day, replace year with current year
+    const corrected = `${today.getFullYear()}-${dateOnly.slice(5)}`;
+    const correctedDate = new Date(corrected + "T00:00:00");
+    return isNaN(correctedDate.getTime()) ? fallback : corrected;
+  }
+  return dateOnly;
 };
 
 export async function POST(request: Request) {
