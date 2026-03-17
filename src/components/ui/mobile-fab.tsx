@@ -2,8 +2,10 @@
 
 import type { LucideIcon } from "lucide-react";
 import { useInstallBanner } from "@/components/pwa/install-banner-context";
+import { useBillReminders } from "@/components/bills/bill-reminder-provider";
 
 const BASE_OFFSET_REM = 5;
+const BILL_REMINDER_STACK_OFFSET_REM = 7;
 const INSTALL_BANNER_BASE_REM = 4.5;
 const INSTALL_BANNER_GAP_PX = 12;
 
@@ -11,14 +13,14 @@ interface MobileFabProps {
   label: string;
   icon: LucideIcon;
   onClick: () => void;
-  /** Extra rem added to the base offset (e.g. for bill reminder stack) */
-  extraOffsetRem?: number;
 }
 
-export function MobileFab({ label, icon: Icon, onClick, extraOffsetRem = 0 }: MobileFabProps) {
+export function MobileFab({ label, icon: Icon, onClick }: MobileFabProps) {
   const { bannerVisible, bannerHeight } = useInstallBanner();
+  const { pendingReminders } = useBillReminders();
 
-  const baseRem = BASE_OFFSET_REM + extraOffsetRem;
+  const billOffset = pendingReminders.length > 0 ? BILL_REMINDER_STACK_OFFSET_REM : 0;
+  const baseRem = BASE_OFFSET_REM + billOffset;
   const bannerClearance = bannerVisible
     ? `max(0px, calc(${bannerHeight + INSTALL_BANNER_GAP_PX}px - ${baseRem - INSTALL_BANNER_BASE_REM}rem))`
     : "0px";
