@@ -29,11 +29,8 @@ import { useUser } from "@/components/user-provider";
 import { useScan } from "@/components/scan-provider";
 import { useDashboardQuery, useCreateTransaction } from "@/hooks/use-transactions";
 import { useUpcomingBillsQuery } from "@/hooks/use-bills";
-import { useBillReminders } from "@/components/bills/bill-reminder-provider";
 import { MobileFab } from "@/components/ui/mobile-fab";
 import type { TransactionInput } from "@/lib/validations";
-
-const BILL_REMINDER_STACK_OFFSET_REM = 7;
 
 export default function DashboardPage() {
   const [showForm, setShowForm] = useState(false);
@@ -50,9 +47,7 @@ export default function DashboardPage() {
 
   const { data: stats, isLoading: loading } = useDashboardQuery(currentMonth, user.timezoneOffset);
   const { data: upcomingData } = useUpcomingBillsQuery();
-  const { pendingReminders } = useBillReminders();
   const createMutation = useCreateTransaction();
-  const fabExtraOffsetRem = pendingReminders.length > 0 ? BILL_REMINDER_STACK_OFFSET_REM : 0;
 
   /** Display amount or censored placeholder */
   const displayAmount = (amount: number, colorClass?: string) =>
@@ -454,7 +449,7 @@ export default function DashboardPage() {
       ) : null}
 
       {/* Mobile FAB */}
-      <MobileFab label="Transaction" icon={Plus} onClick={() => setShowForm(true)} extraOffsetRem={fabExtraOffsetRem} />
+      <MobileFab label="Transaction" icon={Plus} onClick={() => setShowForm(true)} />
 
       {/* Add Transaction Modal */}
       <Modal
