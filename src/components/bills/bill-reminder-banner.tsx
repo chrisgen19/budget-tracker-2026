@@ -104,7 +104,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 100, opacity: 0 }}
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
-        className="fixed bottom-20 lg:bottom-8 left-4 right-4 lg:left-auto lg:right-8 lg:w-auto z-20"
+        className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] lg:bottom-8 left-4 right-4 lg:left-auto lg:right-8 lg:w-auto z-20"
       >
         <div className="bg-white rounded-2xl shadow-soft-lg border border-cream-300/60 overflow-hidden max-w-xl mx-auto">
           {/* Header row */}
