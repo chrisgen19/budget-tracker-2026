@@ -717,7 +717,7 @@ All notable development history for the Budget Tracker app.
 ### Shared MobileFab Component
 - Extracted **`MobileFab`** component (`src/components/ui/mobile-fab.tsx`) — shared across dashboard, transactions, categories, and bills pages
 - Centralizes install banner clearance logic so positioning updates apply everywhere automatically
-- Accepts `label`, `icon`, `onClick`, and optional `extraOffsetRem` props
+- Accepts `label`, `icon`, and `onClick` props
 - Fixed categories and bills FABs that were missing install banner awareness (static `bottom-20`)
 
 ### Shared ConfirmModal Component
@@ -733,3 +733,21 @@ All notable development history for the Budget Tracker app.
 - Scroll effect depends only on `sourceTransactions` changes, naturally waiting for query refetches before attempting to scroll
 - Stale ref cleanup: ref is cleared if the transaction can't be found (e.g., filtered out)
 - `useCreateTransaction` invalidation scoped to `queryKeys.transactions.lists` to avoid unnecessary N-page refetches of infinite scroll caches
+
+---
+
+## 2026-03-17 — Receipt Scan Date Fix & Bill Banner PWA Fix
+
+### Receipt Scan Date Validation
+- Added `dateWarning` flag to receipt scan API responses when the AI-extracted date appears suspicious (e.g., POS systems returning wrong year)
+- Transaction form and multi-scan review surface a warning to the user instead of silently auto-correcting the date
+- Scan API normalizes ISO date strings and relaxes the date clamp threshold to avoid false positives
+
+### Bill Reminder Banner — PWA Safe Area
+- Fixed bill reminder banner being partially hidden behind the home indicator on notched iPhones in PWA standalone mode
+- Added `env(safe-area-inset-bottom)` to banner positioning, matching the pattern already used by the bottom nav, MobileFab, and install prompt banner
+
+### MobileFab — Auto Bill Reminder Offset
+- `MobileFab` now consumes `useBillReminders` directly and automatically offsets itself above the bill reminder banner on **all pages** (transactions, categories, bills)
+- Previously only the dashboard passed `extraOffsetRem` — other pages had the FAB overlapping the banner
+- Removed the `extraOffsetRem` prop; offset logic is now internal to the component
