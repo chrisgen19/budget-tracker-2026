@@ -71,17 +71,18 @@ export async function GET() {
     );
     if (latestSnooze?.snoozeUntil && latestSnooze.snoozeUntil > new Date()) continue;
 
-    const daysPastDue = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+    const diffDays = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
 
     reminders.push({
       scheduledTransaction: bill as ScheduledTransactionWithCategory,
       dueDate: bill.nextDueDate.toISOString(),
-      isOverdue: daysPastDue > 0,
-      daysPastDue: Math.max(0, daysPastDue),
+      isOverdue: diffDays > 0,
+      daysPastDue: Math.max(0, diffDays),
+      daysUntilDue: Math.max(0, -diffDays),
     });
 
     // If overdue, check for missed occurrences
-    if (daysPastDue > 0) {
+    if (diffDays > 0) {
       let checkDate = computeNextDueDate(
         bill.nextDueDate,
         bill.frequency,
@@ -100,12 +101,13 @@ export async function GET() {
         );
 
         if (!missedHasFinal) {
-          const missedDaysPast = Math.floor((today.getTime() - checkDate.getTime()) / (1000 * 60 * 60 * 24));
+          const missedDiff = Math.floor((today.getTime() - checkDate.getTime()) / (1000 * 60 * 60 * 24));
           reminders.push({
             scheduledTransaction: bill as ScheduledTransactionWithCategory,
             dueDate: checkDate.toISOString(),
-            isOverdue: missedDaysPast > 0,
-            daysPastDue: Math.max(0, missedDaysPast),
+            isOverdue: missedDiff > 0,
+            daysPastDue: Math.max(0, missedDiff),
+            daysUntilDue: Math.max(0, -missedDiff),
           });
         }
 

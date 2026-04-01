@@ -66,6 +66,8 @@ export interface PendingReminder {
   dueDate: string;
   isOverdue: boolean;
   daysPastDue: number;
+  /** Days until due (0 = today, positive = future). Only meaningful when !isOverdue. */
+  daysUntilDue: number;
 }
 
 /** Metadata stored on each itemized transaction for future display */

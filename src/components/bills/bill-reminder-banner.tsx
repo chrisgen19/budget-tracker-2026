@@ -9,18 +9,16 @@ import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import { useBillReminders } from "@/components/bills/bill-reminder-provider";
 
-const formatDueDateDisplay = (dateStr: string) => {
-  const due = new Date(dateStr);
-  due.setHours(0, 0, 0, 0);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const diffDays = Math.floor((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-
-  if (diffDays === 0) return "Due today";
-  if (diffDays === 1) return "Due tomorrow";
-  if (diffDays === -1) return "1 day overdue";
-  if (diffDays < 0) return `${Math.abs(diffDays)} days overdue`;
-  return `Due in ${diffDays} days`;
+/** Derive display text entirely from server-provided values to stay consistent
+ *  with the OVERDUE badge and sort order (avoids client/server timezone mismatch). */
+const formatDueDateDisplay = (isOverdue: boolean, daysPastDue: number, daysUntilDue: number) => {
+  if (isOverdue) {
+    if (daysPastDue === 1) return "1 day overdue";
+    return `${daysPastDue} days overdue`;
+  }
+  if (daysUntilDue === 0) return "Due today";
+  if (daysUntilDue === 1) return "Due tomorrow";
+  return `Due in ${daysUntilDue} days`;
 };
 
 export interface PayAndEditData {
@@ -74,8 +72,8 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
   const reminder = pendingReminders[currentIndex];
   if (!reminder) return null;
 
-  const { scheduledTransaction: bill, isOverdue, daysPastDue } = reminder;
-  const dueDateDisplay = formatDueDateDisplay(reminder.dueDate);
+  const { scheduledTransaction: bill, isOverdue, daysPastDue, daysUntilDue } = reminder;
+  const dueDateDisplay = formatDueDateDisplay(isOverdue, daysPastDue, daysUntilDue);
 
   const handlePayAndEditClick = () => {
     // Format dueDate to datetime-local format for the transaction form
