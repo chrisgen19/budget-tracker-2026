@@ -129,6 +129,8 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
 
     if (failed === 0) {
       showToast(`${succeeded} bill${succeeded > 1 ? "s" : ""} paid`);
+    } else if (succeeded === 0) {
+      showToast(`All ${failed} bill${failed > 1 ? "s" : ""} failed`);
     } else {
       showToast(`${succeeded} paid, ${failed} failed`);
     }
