@@ -439,15 +439,20 @@ export function AppShell({ children }: AppShellProps) {
 
     // Log the bill as paid with the newly created transaction ID
     if (billEditData) {
-      await billActionMutation.mutateAsync({
-        id: billEditData.billId,
-        input: {
-          action: "pay_existing",
-          dueDate: billEditData.billDueDate,
-          transactionId: newTx.id,
-        },
-      });
-      showToast(`${billEditData.description || "Bill"} paid`);
+      try {
+        await billActionMutation.mutateAsync({
+          id: billEditData.billId,
+          input: {
+            action: "pay_existing",
+            dueDate: billEditData.billDueDate,
+            transactionId: newTx.id,
+          },
+        });
+        showToast(`${billEditData.description || "Bill"} paid`);
+      } catch {
+        showToast("Transaction saved but bill could not be marked as paid. Please pay the bill manually.");
+        return;
+      }
     }
 
     setBillEditData(null);

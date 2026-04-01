@@ -10,8 +10,10 @@ import { useUser } from "@/components/user-provider";
 import { useBillReminders } from "@/components/bills/bill-reminder-provider";
 
 const formatDueDateDisplay = (dateStr: string) => {
-  const due = new Date(dateStr);
-  due.setHours(0, 0, 0, 0);
+  // Parse date parts to avoid UTC→local timezone shift (e.g., UTC-5 shifting the date back a day)
+  const [datePart] = dateStr.split("T");
+  const [year, month, day] = datePart.split("-").map(Number);
+  const due = new Date(year, month - 1, day);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const diffDays = Math.floor((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));

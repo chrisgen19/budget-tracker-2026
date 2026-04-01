@@ -4,7 +4,6 @@ import { createContext, useContext, useState, useCallback } from "react";
 import { usePendingRemindersQuery, useBillAction } from "@/hooks/use-bills";
 import { useToast } from "@/components/ui/toast";
 import type { PendingReminder } from "@/types";
-import type { InitialTransactionData } from "@/components/transactions/transaction-form";
 
 interface BillReminderContextValue {
   pendingReminders: PendingReminder[];
@@ -16,9 +15,6 @@ interface BillReminderContextValue {
   handlePayAll: () => void;
   isActioning: boolean;
   payAllProgress: { current: number; total: number } | null;
-  /** Set when "Pay & Edit" is clicked — AppShell reads this to open TransactionForm */
-  payAndEditData: InitialTransactionData | null;
-  clearPayAndEditData: () => void;
 }
 
 const BillReminderContext = createContext<BillReminderContextValue>({
@@ -31,8 +27,6 @@ const BillReminderContext = createContext<BillReminderContextValue>({
   handlePayAll: () => {},
   isActioning: false,
   payAllProgress: null,
-  payAndEditData: null,
-  clearPayAndEditData: () => {},
 });
 
 export const useBillReminders = () => useContext(BillReminderContext);
@@ -42,7 +36,6 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
   const billAction = useBillAction();
   const { showToast } = useToast();
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [payAndEditData, setPayAndEditData] = useState<InitialTransactionData | null>(null);
 
   // Keep index in bounds when reminders change
   const safeIndex = pendingReminders.length > 0
@@ -106,7 +99,8 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
 
     // Copy reminders since the array will mutate as payments process
     const remindersSnapshot = [...pendingReminders];
-    let completed = 0;
+    let succeeded = 0;
+    let failed = 0;
 
     for (const reminder of remindersSnapshot) {
       try {
@@ -118,8 +112,8 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
             },
             {
               onSuccess: () => {
-                completed++;
-                setPayAllProgress({ current: completed, total });
+                succeeded++;
+                setPayAllProgress({ current: succeeded + failed, total });
                 resolve();
               },
               onError: (err) => reject(err),
@@ -128,19 +122,19 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
         });
       } catch {
         // Continue paying remaining bills even if one fails
-        completed++;
-        setPayAllProgress({ current: completed, total });
+        failed++;
+        setPayAllProgress({ current: succeeded + failed, total });
       }
     }
 
-    showToast(`${completed} bill${completed > 1 ? "s" : ""} paid`);
+    if (failed === 0) {
+      showToast(`${succeeded} bill${succeeded > 1 ? "s" : ""} paid`);
+    } else {
+      showToast(`${succeeded} paid, ${failed} failed`);
+    }
     setPayAllProgress(null);
     setCurrentIndex(0);
   }, [pendingReminders, billAction, showToast]);
-
-  const clearPayAndEditData = useCallback(() => {
-    setPayAndEditData(null);
-  }, []);
 
   return (
     <BillReminderContext.Provider
@@ -154,8 +148,6 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
         handlePayAll,
         isActioning: billAction.isPending,
         payAllProgress,
-        payAndEditData,
-        clearPayAndEditData,
       }}
     >
       {children}
