@@ -451,7 +451,6 @@ export function AppShell({ children }: AppShellProps) {
         showToast(`${billEditData.description || "Bill"} paid`);
       } catch {
         showToast("Transaction saved but bill could not be marked as paid. Please pay the bill manually.");
-        return;
       }
     }
 

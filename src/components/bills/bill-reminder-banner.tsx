@@ -9,20 +9,25 @@ import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import { useBillReminders } from "@/components/bills/bill-reminder-provider";
 
-const formatDueDateDisplay = (dateStr: string) => {
-  // Parse date parts to avoid UTC→local timezone shift (e.g., UTC-5 shifting the date back a day)
+/** Use server-provided isOverdue/daysPastDue for overdue text to stay consistent
+ *  with the OVERDUE badge (avoids client/server timezone mismatch). For upcoming
+ *  dates, parse the ISO string without UTC interpretation to compute days-until. */
+const formatDueDateDisplay = (dateStr: string, isOverdue: boolean, daysPastDue: number) => {
+  if (isOverdue) {
+    if (daysPastDue === 1) return "1 day overdue";
+    return `${daysPastDue} days overdue`;
+  }
+  // Parse date parts to avoid UTC→local shift (e.g., UTC-5 moving the date back a day)
   const [datePart] = dateStr.split("T");
   const [year, month, day] = datePart.split("-").map(Number);
   const due = new Date(year, month - 1, day);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const diffDays = Math.floor((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  const daysUntil = Math.floor((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 
-  if (diffDays === 0) return "Due today";
-  if (diffDays === 1) return "Due tomorrow";
-  if (diffDays === -1) return "1 day overdue";
-  if (diffDays < 0) return `${Math.abs(diffDays)} days overdue`;
-  return `Due in ${diffDays} days`;
+  if (daysUntil <= 0) return "Due today";
+  if (daysUntil === 1) return "Due tomorrow";
+  return `Due in ${daysUntil} days`;
 };
 
 export interface PayAndEditData {
@@ -77,7 +82,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
   if (!reminder) return null;
 
   const { scheduledTransaction: bill, isOverdue, daysPastDue } = reminder;
-  const dueDateDisplay = formatDueDateDisplay(reminder.dueDate);
+  const dueDateDisplay = formatDueDateDisplay(reminder.dueDate, isOverdue, daysPastDue);
 
   const handlePayAndEditClick = () => {
     // Format dueDate to datetime-local format for the transaction form
