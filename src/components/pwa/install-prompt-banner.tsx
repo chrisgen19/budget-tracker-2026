@@ -11,6 +11,8 @@ const MIN_VISITS_KEY = "pwa-visit-count";
 const MIN_VISITS = 3;
 const DISMISS_DAYS = 14;
 
+// navigator.userAgent is deprecated but navigator.userAgentData is not yet
+// supported on iOS Safari, so UA sniffing remains the pragmatic choice here.
 function isIOS() {
   if (typeof navigator === "undefined") return false;
   if (/iPhone|iPod/.test(navigator.userAgent)) return true;
@@ -66,7 +68,11 @@ export function InstallPromptBanner() {
 
     updateBannerHeight();
 
-    if (typeof ResizeObserver === "undefined") return;
+    if (typeof ResizeObserver === "undefined") {
+      return () => {
+        setBannerHeight(0);
+      };
+    }
 
     const observer = new ResizeObserver(() => {
       updateBannerHeight();
@@ -76,6 +82,7 @@ export function InstallPromptBanner() {
 
     return () => {
       observer.disconnect();
+      setBannerHeight(0);
     };
   }, [visible, setBannerHeight]);
 
@@ -93,7 +100,7 @@ export function InstallPromptBanner() {
   if (!visible) return null;
 
   return (
-    <div ref={bannerRef} className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] lg:bottom-6 left-4 right-4 lg:left-auto lg:right-6 lg:w-80 z-40 animate-fade-in-up">
+    <div ref={bannerRef} role="status" aria-live="polite" className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] lg:bottom-6 left-4 right-4 lg:left-auto lg:right-6 lg:w-80 z-40 animate-fade-in-up">
       <div className="bg-white rounded-2xl shadow-soft-md border border-cream-300/50 p-4">
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center shrink-0">
@@ -121,7 +128,17 @@ export function InstallPromptBanner() {
             <X className="w-4 h-4" />
           </button>
         </div>
-        {!showIOSGuide && (
+        {showIOSGuide ? (
+          <button
+            onClick={handleDismiss}
+            className={cn(
+              "w-full mt-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors",
+              "bg-cream-100 text-warm-500 hover:bg-cream-300/50"
+            )}
+          >
+            Got it
+          </button>
+        ) : (
           <button
             onClick={handleInstall}
             className={cn(
