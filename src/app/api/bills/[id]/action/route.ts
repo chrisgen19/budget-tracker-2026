@@ -83,8 +83,8 @@ export async function POST(
             transactionId: existingTransactionId,
           },
         }),
-        prisma.transaction.update({
-          where: { id: existingTransactionId! },
+        prisma.transaction.updateMany({
+          where: { id: existingTransactionId!, userId },
           data: { billId: bill.id },
         }),
       ]);
