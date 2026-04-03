@@ -100,6 +100,7 @@ model Transaction {
   @@index([userId, date])
   @@index([userId, type])
   @@index([receiptGroupId])
+  @@index([billId])
   @@map("transactions")
 }
 

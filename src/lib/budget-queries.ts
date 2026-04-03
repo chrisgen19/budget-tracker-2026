@@ -51,7 +51,7 @@ export const getSpendingByCategory = async (
       type: "EXPENSE",
       date: { gte: startDate, lte: endDate },
     },
-    include: { category: true, bill: true },
+    include: { category: true },
   });
 
   const categoryMap = new Map<
@@ -106,7 +106,7 @@ export const getTopExpenses = async (
 
   const transactions = await prisma.transaction.findMany({
     where,
-    include: { category: true, bill: true },
+    include: { category: true },
     orderBy: { amount: "desc" },
     take: limit,
   });
