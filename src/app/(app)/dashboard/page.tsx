@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   TrendingUp,
   TrendingDown,
@@ -17,20 +17,23 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { formatCurrency, formatDate, getCurrencySymbol, cn } from "@/lib/utils";
+import { formatCurrency, getCurrencySymbol, cn } from "@/lib/utils";
+import { groupByDate, formatTime } from "@/lib/transaction-helpers";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Modal } from "@/components/ui/modal";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import { SpendingChart, TrendChart, BalanceTrendChart } from "@/components/dashboard/charts";
 import { DropdownButton, type DropdownItem } from "@/components/ui/dropdown-button";
 import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import { useScan } from "@/components/scan-provider";
-import { useDashboardQuery, useCreateTransaction } from "@/hooks/use-transactions";
+import { useDashboardQuery, useCreateTransaction, useUpdateTransaction, useDeleteTransaction } from "@/hooks/use-transactions";
 import { useUpcomingBillsQuery } from "@/hooks/use-bills";
 import { MobileFab } from "@/components/ui/mobile-fab";
 import type { TransactionInput } from "@/lib/validations";
+import type { TransactionWithCategory } from "@/types";
 
 export default function DashboardPage() {
   const [showForm, setShowForm] = useState(false);
@@ -45,9 +48,14 @@ export default function DashboardPage() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   });
 
+  const [editingTransaction, setEditingTransaction] = useState<TransactionWithCategory | null>(null);
+  const [deletingTransaction, setDeletingTransaction] = useState<TransactionWithCategory | null>(null);
+
   const { data: stats, isLoading: loading } = useDashboardQuery(currentMonth, user.timezoneOffset);
   const { data: upcomingData } = useUpcomingBillsQuery();
   const createMutation = useCreateTransaction();
+  const updateMutation = useUpdateTransaction();
+  const deleteMutation = useDeleteTransaction();
 
   /** Display amount or censored placeholder */
   const displayAmount = (amount: number, colorClass?: string) =>
@@ -59,24 +67,28 @@ export default function DashboardPage() {
       </span>
     );
 
-  /** Display inline amount or censored placeholder (for transaction rows) */
-  const displayInlineAmount = (amount: number, type: "INCOME" | "EXPENSE") => {
-    const colorClass = type === "INCOME" ? "text-income" : "text-expense";
-    const prefix = type === "INCOME" ? "+" : "-";
-    return hideAmounts ? (
-      <span className={cn("text-sm font-display font-semibold tabular-nums", colorClass)}>••••</span>
-    ) : (
-      <span className={cn("text-sm font-display font-semibold tabular-nums", colorClass)}>
-        {prefix}{formatCurrency(amount, currency)}
-      </span>
-    );
-  };
-
   const handleCreate = async (input: TransactionInput) => {
     await createMutation.mutateAsync(input);
     setShowForm(false);
     setShouldScrollToRecent(true);
   };
+
+  const handleUpdate = async (input: TransactionInput) => {
+    if (!editingTransaction) return;
+    await updateMutation.mutateAsync({ id: editingTransaction.id, input });
+    setEditingTransaction(null);
+  };
+
+  const handleDelete = async () => {
+    if (!deletingTransaction) return;
+    await deleteMutation.mutateAsync(deletingTransaction.id);
+    setDeletingTransaction(null);
+  };
+
+  const recentDateGroups = useMemo(
+    () => (stats?.recentTransactions ? groupByDate(stats.recentTransactions) : []),
+    [stats?.recentTransactions],
+  );
 
   useEffect(() => {
     if (!shouldScrollToRecent || showForm) return;
@@ -385,7 +397,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Recent Transactions */}
-          <motion.div ref={recentTransactionsRef} variants={fadeUp} className="card">
+          <motion.div ref={recentTransactionsRef} variants={fadeUp} className="card overflow-hidden">
             <div className="flex items-center justify-between p-5 pb-3">
               <h2 className="font-serif text-lg text-warm-700">
                 Recent Transactions
@@ -399,35 +411,82 @@ export default function DashboardPage() {
               </Link>
             </div>
 
-            {stats.recentTransactions.length > 0 ? (
-              <div className="divide-y divide-cream-200">
-                {stats.recentTransactions.map((tx) => (
-                  <div
-                    key={tx.id}
-                    className="flex items-center gap-3 px-5 py-3.5 hover:bg-cream-50 transition-colors"
-                  >
-                    <div
-                      className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-                      style={{ backgroundColor: tx.category.color + "18" }}
-                    >
-                      <CategoryIcon
-                        name={tx.category.icon}
-                        className="w-4 h-4"
-                        style={{ color: tx.category.color }}
-                      />
+            {recentDateGroups.length > 0 ? (
+              <>
+                {recentDateGroups.map((group) => (
+                  <div key={group.dateKey}>
+                    {/* Date header */}
+                    <div className="flex items-center justify-between px-5 py-2.5 bg-cream-50 border-b border-cream-200">
+                      <span className="text-xs font-semibold text-warm-500 uppercase tracking-wide">
+                        {group.dateLabel}
+                      </span>
+                      {!hideAmounts && (
+                        <span
+                          className={cn(
+                            "text-xs font-display font-semibold tabular-nums",
+                            group.subtotal >= 0 ? "text-income" : "text-expense"
+                          )}
+                        >
+                          {group.subtotal >= 0 ? "+" : "-"}
+                          {formatCurrency(Math.abs(group.subtotal), currency)}
+                        </span>
+                      )}
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-warm-600 truncate">
-                        {tx.description}
-                      </p>
-                      <p className="text-xs text-warm-300">
-                        {tx.category.name} &middot; {formatDate(tx.date)}
-                      </p>
+
+                    {/* Transaction rows */}
+                    <div className="divide-y divide-cream-100">
+                      {group.transactions.map((tx) => (
+                        <div
+                          key={tx.id}
+                          className="flex items-center gap-3 px-5 py-3 hover:bg-cream-50/80 transition-colors cursor-pointer"
+                          onClick={() => setEditingTransaction(tx)}
+                        >
+                          <div
+                            className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+                            style={{ backgroundColor: tx.category.color + "18" }}
+                          >
+                            <CategoryIcon
+                              name={tx.category.icon}
+                              className="w-4 h-4"
+                              style={{ color: tx.category.color }}
+                            />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <p className="text-sm font-medium text-warm-600 truncate">
+                                {tx.description}
+                              </p>
+                              {tx.receiptGroupId && (
+                                <span className="shrink-0 bg-amber-light/60 text-amber-dark text-[10px] font-medium px-1.5 py-0.5 rounded">
+                                  Itemized
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-warm-300 truncate">
+                              {tx.category.name}
+                            </p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p
+                              className={cn(
+                                "text-sm font-display font-semibold tabular-nums",
+                                tx.type === "INCOME" ? "text-income" : "text-expense"
+                              )}
+                            >
+                              {hideAmounts
+                                ? "••••"
+                                : `${tx.type === "INCOME" ? "+" : "-"}${formatCurrency(tx.amount, currency)}`}
+                            </p>
+                            <p className="text-[11px] text-warm-300 tabular-nums">
+                              {formatTime(tx.date)}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                    {displayInlineAmount(tx.amount, tx.type)}
                   </div>
                 ))}
-              </div>
+              </>
             ) : (
               <EmptyState
                 icon={BarChart3}
@@ -462,6 +521,44 @@ export default function DashboardPage() {
           onCancel={() => setShowForm(false)}
         />
       </Modal>
+
+      {/* Edit Transaction Modal */}
+      <Modal
+        open={!!editingTransaction}
+        onClose={() => setEditingTransaction(null)}
+        title="Edit Transaction"
+      >
+        {editingTransaction && (
+          <TransactionForm
+            transaction={editingTransaction}
+            onSubmit={handleUpdate}
+            onCancel={() => setEditingTransaction(null)}
+            onDelete={() => {
+              const tx = editingTransaction;
+              setEditingTransaction(null);
+              setDeletingTransaction(tx);
+            }}
+          />
+        )}
+      </Modal>
+
+      {/* Delete Confirmation */}
+      <ConfirmModal
+        open={!!deletingTransaction}
+        onClose={() => setDeletingTransaction(null)}
+        onConfirm={handleDelete}
+        title="Delete Transaction"
+        message={
+          <p>
+            Are you sure you want to delete{" "}
+            <span className="font-medium text-warm-700">
+              &ldquo;{deletingTransaction?.description}&rdquo;
+            </span>
+            ? This action cannot be undone.
+          </p>
+        }
+        loading={deleteMutation.isPending}
+      />
     </div>
   );
 }
@@ -516,20 +613,28 @@ function DashboardSkeleton() {
       </div>
 
       {/* Recent Transactions */}
-      <div className="card">
+      <div className="card overflow-hidden">
         <div className="flex items-center justify-between p-5 pb-3">
           <div className="w-40 h-5 rounded animate-shimmer" />
           <div className="w-16 h-4 rounded animate-shimmer" />
         </div>
-        <div className="divide-y divide-cream-200">
+        {/* Skeleton date group */}
+        <div className="flex items-center justify-between px-5 py-2.5 bg-cream-50 border-b border-cream-200">
+          <div className="w-32 h-3 rounded animate-shimmer" />
+          <div className="w-16 h-3 rounded animate-shimmer" />
+        </div>
+        <div className="divide-y divide-cream-100">
           {[1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="flex items-center gap-3 px-5 py-3.5">
+            <div key={i} className="flex items-center gap-3 px-5 py-3">
               <div className="w-9 h-9 rounded-xl animate-shimmer shrink-0" />
               <div className="flex-1 space-y-2">
                 <div className="w-32 h-4 rounded animate-shimmer" />
                 <div className="w-24 h-3 rounded animate-shimmer" />
               </div>
-              <div className="w-20 h-4 rounded animate-shimmer" />
+              <div className="space-y-1.5 shrink-0">
+                <div className="w-20 h-4 rounded animate-shimmer" />
+                <div className="w-14 h-3 rounded animate-shimmer ml-auto" />
+              </div>
             </div>
           ))}
         </div>
