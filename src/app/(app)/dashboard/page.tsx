@@ -427,7 +427,7 @@ export default function DashboardPage() {
                             group.subtotal >= 0 ? "text-income" : "text-expense"
                           )}
                         >
-                          {group.subtotal >= 0 ? "+" : ""}
+                          {group.subtotal >= 0 ? "+" : "-"}
                           {formatCurrency(Math.abs(group.subtotal), currency)}
                         </span>
                       )}
