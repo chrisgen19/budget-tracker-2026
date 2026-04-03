@@ -600,6 +600,11 @@ export default function TransactionsPage() {
                                 Itemized
                               </span>
                             )}
+                            {tx.billId && (
+                              <span className="shrink-0 bg-income-light text-income text-[10px] font-medium px-1.5 py-0.5 rounded">
+                                Bill
+                              </span>
+                            )}
                           </div>
                           <p className="text-xs text-warm-300 truncate">
                             {tx.category.name}

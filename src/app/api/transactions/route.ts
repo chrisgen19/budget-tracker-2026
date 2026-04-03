@@ -64,7 +64,7 @@ export async function GET(request: Request) {
   const [transactions, total] = await Promise.all([
     prisma.transaction.findMany({
       where,
-      include: { category: true },
+      include: { category: true, bill: true },
       orderBy,
       skip: (page - 1) * limit,
       take: limit,
@@ -100,7 +100,7 @@ export async function POST(request: Request) {
         categoryId: validated.categoryId,
         userId,
       },
-      include: { category: true },
+      include: { category: true, bill: true },
     });
 
     return NextResponse.json(transaction, { status: 201 });

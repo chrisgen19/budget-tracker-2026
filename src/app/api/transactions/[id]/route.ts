@@ -35,7 +35,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
         date: new Date(validated.date),
         categoryId: validated.categoryId,
       },
-      include: { category: true },
+      include: { category: true, bill: true },
     });
 
     return NextResponse.json(transaction);
