@@ -624,27 +624,7 @@ function DashboardSkeleton() {
           <div className="w-16 h-3 rounded animate-shimmer" />
         </div>
         <div className="divide-y divide-cream-100">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="flex items-center gap-3 px-5 py-3">
-              <div className="w-9 h-9 rounded-xl animate-shimmer shrink-0" />
-              <div className="flex-1 space-y-2">
-                <div className="w-32 h-4 rounded animate-shimmer" />
-                <div className="w-24 h-3 rounded animate-shimmer" />
-              </div>
-              <div className="space-y-1.5 shrink-0">
-                <div className="w-20 h-4 rounded animate-shimmer" />
-                <div className="w-14 h-3 rounded animate-shimmer ml-auto" />
-              </div>
-            </div>
-          ))}
-        </div>
-        {/* Second skeleton date group */}
-        <div className="flex items-center justify-between px-5 py-2.5 bg-cream-50 border-b border-cream-200">
-          <div className="w-28 h-3 rounded animate-shimmer" />
-          <div className="w-14 h-3 rounded animate-shimmer" />
-        </div>
-        <div className="divide-y divide-cream-100">
-          {[1, 2].map((i) => (
+          {[1, 2, 3, 4, 5].map((i) => (
             <div key={i} className="flex items-center gap-3 px-5 py-3">
               <div className="w-9 h-9 rounded-xl animate-shimmer shrink-0" />
               <div className="flex-1 space-y-2">
