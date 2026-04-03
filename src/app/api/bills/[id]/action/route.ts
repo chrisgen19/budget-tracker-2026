@@ -72,7 +72,16 @@ export async function POST(
     }
 
     if (action === "pay_existing") {
-      // Log payment for an already-created transaction (used by "Pay & Edit" flow)
+      // Verify the target transaction belongs to the authenticated user
+      const existingTx = await prisma.transaction.findFirst({
+        where: { id: existingTransactionId!, userId },
+        select: { id: true },
+      });
+      if (!existingTx) {
+        return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
+      }
+
+      // Log payment and link bill to the transaction
       await prisma.$transaction([
         prisma.scheduledTransactionLog.create({
           data: {
@@ -80,11 +89,11 @@ export async function POST(
             dueDate,
             status: "PAID",
             actionDate: new Date(),
-            transactionId: existingTransactionId,
+            transactionId: existingTx.id,
           },
         }),
-        prisma.transaction.updateMany({
-          where: { id: existingTransactionId!, userId },
+        prisma.transaction.update({
+          where: { id: existingTx.id },
           data: { billId: bill.id },
         }),
       ]);
