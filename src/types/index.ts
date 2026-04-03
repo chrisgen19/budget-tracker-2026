@@ -18,9 +18,10 @@ export type {
   BillOccurrenceStatus,
 };
 
-/** Transaction with its category relation */
+/** Transaction with its category (and optional bill) relation */
 export type TransactionWithCategory = Transaction & {
   category: Category;
+  bill?: ScheduledTransaction | null;
 };
 
 /** Dashboard summary stats */

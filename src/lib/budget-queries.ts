@@ -51,7 +51,7 @@ export const getSpendingByCategory = async (
       type: "EXPENSE",
       date: { gte: startDate, lte: endDate },
     },
-    include: { category: true },
+    include: { category: true, bill: true },
   });
 
   const categoryMap = new Map<
@@ -106,7 +106,7 @@ export const getTopExpenses = async (
 
   const transactions = await prisma.transaction.findMany({
     where,
-    include: { category: true },
+    include: { category: true, bill: true },
     orderBy: { amount: "desc" },
     take: limit,
   });
@@ -288,7 +288,7 @@ export const searchTransactions = async (
   const [transactions, total] = await Promise.all([
     prisma.transaction.findMany({
       where,
-      include: { category: true },
+      include: { category: true, bill: true },
       orderBy,
       skip: (page - 1) * limit,
       take: limit,

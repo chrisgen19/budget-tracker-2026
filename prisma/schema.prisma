@@ -90,10 +90,12 @@ model Transaction {
   category         Category        @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   userId           String          @map("user_id")
   user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  receiptGroupId   String?         @map("receipt_group_id")
-  receiptBreakdown Json?           @map("receipt_breakdown")
-  createdAt        DateTime        @default(now()) @map("created_at")
-  updatedAt        DateTime        @updatedAt @map("updated_at")
+  receiptGroupId   String?                @map("receipt_group_id")
+  receiptBreakdown Json?                  @map("receipt_breakdown")
+  billId           String?                @map("bill_id")
+  bill             ScheduledTransaction?  @relation(fields: [billId], references: [id], onDelete: SetNull)
+  createdAt        DateTime               @default(now()) @map("created_at")
+  updatedAt        DateTime               @updatedAt @map("updated_at")
 
   @@index([userId, date])
   @@index([userId, type])
@@ -140,6 +142,7 @@ model ScheduledTransaction {
   userId              String          @map("user_id")
   user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   occurrences         ScheduledTransactionLog[]
+  transactions        Transaction[]
   createdAt           DateTime        @default(now()) @map("created_at")
   updatedAt           DateTime        @updatedAt @map("updated_at")
 

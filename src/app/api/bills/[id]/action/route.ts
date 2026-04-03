@@ -39,6 +39,7 @@ export async function POST(
           date: dueDate,
           categoryId: bill.categoryId,
           userId,
+          billId: bill.id,
         },
       });
 
@@ -72,15 +73,21 @@ export async function POST(
 
     if (action === "pay_existing") {
       // Log payment for an already-created transaction (used by "Pay & Edit" flow)
-      await prisma.scheduledTransactionLog.create({
-        data: {
-          scheduledTransactionId: bill.id,
-          dueDate,
-          status: "PAID",
-          actionDate: new Date(),
-          transactionId: existingTransactionId,
-        },
-      });
+      await prisma.$transaction([
+        prisma.scheduledTransactionLog.create({
+          data: {
+            scheduledTransactionId: bill.id,
+            dueDate,
+            status: "PAID",
+            actionDate: new Date(),
+            transactionId: existingTransactionId,
+          },
+        }),
+        prisma.transaction.update({
+          where: { id: existingTransactionId! },
+          data: { billId: bill.id },
+        }),
+      ]);
 
       // Advance nextDueDate
       const nextDue = computeNextDueDate(dueDate, bill.frequency, originalStartDay, bill.customIntervalDays);
