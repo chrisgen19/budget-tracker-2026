@@ -26,6 +26,8 @@ export async function GET() {
     const dueDate = new Date(bill.nextDueDate);
     dueDate.setHours(0, 0, 0, 0);
     const isOverdue = dueDate < today;
+    const diffMs = dueDate.getTime() - today.getTime();
+    const daysUntilDue = Math.round(diffMs / (1000 * 60 * 60 * 24));
 
     return {
       id: bill.id,
@@ -36,6 +38,7 @@ export async function GET() {
       amount: bill.amount,
       dueDate: bill.nextDueDate.toISOString(),
       isOverdue,
+      daysUntilDue,
     };
   });
 

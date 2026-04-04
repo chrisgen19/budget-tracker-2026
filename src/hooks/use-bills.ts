@@ -54,6 +54,7 @@ export interface UpcomingBill {
   amount: number;
   dueDate: string;
   isOverdue: boolean;
+  daysUntilDue: number;
 }
 
 export interface UpcomingBillsResponse {
