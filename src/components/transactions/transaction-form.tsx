@@ -11,6 +11,7 @@ import { CategoryIcon } from "@/components/ui/icon-map";
 import { ReceiptBreakdown } from "@/components/transactions/receipt-breakdown";
 import { useUser } from "@/components/user-provider";
 import { useCategoriesQuery, useQuickPreferencesQuery } from "@/hooks/use-categories";
+import { LabelPicker } from "@/components/transactions/label-picker";
 import type { Category, TransactionWithCategory, ReceiptBreakdownMeta } from "@/types";
 
 export interface InitialTransactionData {
@@ -92,6 +93,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, onSubmi
         ? formatDateInput(transaction.date)
         : initialData?.date ?? formatDateInput(new Date()),
       categoryId: transaction?.categoryId ?? initialData?.categoryId ?? "",
+      labelIds: transaction?.labels?.map((tl) => tl.labelId) ?? [],
     },
   });
 
@@ -411,6 +413,12 @@ export function TransactionForm({ transaction, initialData, dateWarning, onSubmi
                 <p className="text-expense text-sm mt-1.5">{errors.categoryId.message}</p>
               )}
             </div>
+
+            {/* Labels */}
+            <LabelPicker
+              selectedIds={watch("labelIds") ?? []}
+              onChange={(ids) => setValue("labelIds", ids)}
+            />
 
             {/* Date — quick picks */}
             <div>

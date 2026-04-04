@@ -9,6 +9,7 @@ import {
   ArrowLeftRight,
   CalendarClock,
   Tags,
+  Tag,
   LogOut,
   Wallet,
   User,
@@ -51,6 +52,7 @@ const NAV_ITEMS = [
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
   { href: "/bills", label: "Bills", icon: CalendarClock },
   { href: "/categories", label: "Categories", icon: Tags },
+  { href: "/labels", label: "Labels", icon: Tag },
 ];
 
 export function AppShell({ children }: AppShellProps) {

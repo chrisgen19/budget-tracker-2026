@@ -35,10 +35,26 @@ export async function PUT(request: Request, { params }: RouteParams) {
         date: new Date(validated.date),
         categoryId: validated.categoryId,
       },
-      include: { category: true, bill: true },
     });
 
-    return NextResponse.json(transaction);
+    // Sync labels: delete all existing, recreate from input
+    await prisma.transactionLabel.deleteMany({ where: { transactionId: id } });
+
+    if (validated.labelIds && validated.labelIds.length > 0) {
+      await prisma.transactionLabel.createMany({
+        data: validated.labelIds.map((labelId) => ({
+          transactionId: id,
+          labelId,
+        })),
+      });
+    }
+
+    const result = await prisma.transaction.findUniqueOrThrow({
+      where: { id },
+      include: { category: true, bill: true, labels: { include: { label: true } } },
+    });
+
+    return NextResponse.json(result);
   } catch (error) {
     if (error instanceof Error && error.name === "ZodError") {
       return NextResponse.json({ error: "Invalid input" }, { status: 400 });

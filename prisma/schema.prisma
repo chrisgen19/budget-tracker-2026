@@ -57,6 +57,7 @@ model User {
   scanLogs                ScanLog[]
   scheduledTransactions   ScheduledTransaction[]
   verificationTokens      VerificationToken[]
+  labels                  Label[]
   createdAt    DateTime      @default(now()) @map("created_at")
   updatedAt    DateTime      @updatedAt @map("updated_at")
 
@@ -94,6 +95,7 @@ model Transaction {
   receiptBreakdown Json?                  @map("receipt_breakdown")
   billId           String?                @map("bill_id")
   bill             ScheduledTransaction?  @relation(fields: [billId], references: [id], onDelete: SetNull)
+  labels           TransactionLabel[]
   createdAt        DateTime               @default(now()) @map("created_at")
   updatedAt        DateTime               @updatedAt @map("updated_at")
 
@@ -180,4 +182,31 @@ model VerificationToken {
   @@index([userId])
   @@index([token])
   @@map("verification_tokens")
+}
+
+model Label {
+  id           String             @id @default(cuid())
+  name         String
+  color        String
+  userId       String             @map("user_id")
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions TransactionLabel[]
+  createdAt    DateTime           @default(now()) @map("created_at")
+
+  @@unique([name, userId])
+  @@map("labels")
+}
+
+model TransactionLabel {
+  id            String      @id @default(cuid())
+  transactionId String      @map("transaction_id")
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  labelId       String      @map("label_id")
+  label         Label       @relation(fields: [labelId], references: [id], onDelete: Cascade)
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  @@unique([transactionId, labelId])
+  @@index([transactionId])
+  @@index([labelId])
+  @@map("transaction_labels")
 }

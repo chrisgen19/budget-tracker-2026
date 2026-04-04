@@ -39,6 +39,11 @@ export async function GET(request: Request) {
     where.categoryId = categoryId;
   }
 
+  const labelId = searchParams.get("labelId");
+  if (labelId) {
+    where.labels = { some: { labelId } };
+  }
+
   // Amount range filter
   if (amountMin || amountMax) {
     const amountFilter: Record<string, number> = {};
@@ -64,7 +69,7 @@ export async function GET(request: Request) {
   const [transactions, total] = await Promise.all([
     prisma.transaction.findMany({
       where,
-      include: { category: true, bill: true },
+      include: { category: true, bill: true, labels: { include: { label: true } } },
       orderBy,
       skip: (page - 1) * limit,
       take: limit,
@@ -100,10 +105,23 @@ export async function POST(request: Request) {
         categoryId: validated.categoryId,
         userId,
       },
-      include: { category: true, bill: true },
     });
 
-    return NextResponse.json(transaction, { status: 201 });
+    if (validated.labelIds && validated.labelIds.length > 0) {
+      await prisma.transactionLabel.createMany({
+        data: validated.labelIds.map((labelId) => ({
+          transactionId: transaction.id,
+          labelId,
+        })),
+      });
+    }
+
+    const result = await prisma.transaction.findUniqueOrThrow({
+      where: { id: transaction.id },
+      include: { category: true, bill: true, labels: { include: { label: true } } },
+    });
+
+    return NextResponse.json(result, { status: 201 });
   } catch (error) {
     if (error instanceof Error && error.name === "ZodError") {
       return NextResponse.json({ error: "Invalid input" }, { status: 400 });

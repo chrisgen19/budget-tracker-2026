@@ -6,6 +6,8 @@ import type {
   ScheduledTransaction,
   BillFrequency,
   BillOccurrenceStatus,
+  Label,
+  TransactionLabel,
 } from "@prisma/client";
 
 export type {
@@ -16,12 +18,20 @@ export type {
   ScheduledTransaction,
   BillFrequency,
   BillOccurrenceStatus,
+  Label,
+  TransactionLabel,
 };
 
 /** Transaction with its category (and optional bill) relation */
 export type TransactionWithCategory = Transaction & {
   category: Category;
   bill?: ScheduledTransaction | null;
+  labels?: (TransactionLabel & { label: Label })[];
+};
+
+/** Label with transaction count */
+export type LabelWithCount = Label & {
+  _count: { transactions: number };
 };
 
 /** Dashboard summary stats */

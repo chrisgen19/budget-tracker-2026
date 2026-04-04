@@ -73,6 +73,7 @@ const createInitialFilters = (): TransactionFilters => {
     type: "ALL",
     month: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`,
     categoryId: null,
+    labelId: null,
     amountMin: null,
     amountMax: null,
     sortBy: "date",
@@ -606,9 +607,33 @@ export default function TransactionsPage() {
                               </span>
                             )}
                           </div>
-                          <p className="text-xs text-warm-300 truncate">
-                            {tx.category.name}
-                          </p>
+                          <div className="flex items-center gap-1 min-w-0">
+                            <p className="text-xs text-warm-300 truncate">
+                              {tx.category.name}
+                            </p>
+                            {tx.labels && tx.labels.length > 0 && (
+                              <>
+                                <span className="text-warm-200">&middot;</span>
+                                {tx.labels.slice(0, 3).map((tl) => (
+                                  <span
+                                    key={tl.id}
+                                    className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0"
+                                    style={{
+                                      backgroundColor: tl.label.color + "18",
+                                      color: tl.label.color,
+                                    }}
+                                  >
+                                    {tl.label.name}
+                                  </span>
+                                ))}
+                                {tx.labels.length > 3 && (
+                                  <span className="text-[10px] text-warm-300 shrink-0">
+                                    +{tx.labels.length - 3}
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </div>
                         </div>
 
                         {/* Amount + time */}

@@ -13,6 +13,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { cn, getCurrencySymbol } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { useUser } from "@/components/user-provider";
+import { useLabelsQuery } from "@/hooks/use-labels";
 import type { Category } from "@/types";
 
 /* ------------------------------------------------------------------ */
@@ -24,6 +25,7 @@ export interface TransactionFilters {
   type: "ALL" | "INCOME" | "EXPENSE";
   month: string;
   categoryId: string | null;
+  labelId: string | null;
   amountMin: number | null;
   amountMax: number | null;
   sortBy: "date" | "amount";
@@ -51,6 +53,7 @@ const DEFAULT_FILTERS: Omit<TransactionFilters, "month"> = {
   search: "",
   type: "ALL",
   categoryId: null,
+  labelId: null,
   amountMin: null,
   amountMax: null,
   sortBy: "date",
@@ -73,6 +76,7 @@ const getMonthLabel = (month: string) => {
 const countAdvancedFilters = (f: TransactionFilters): number => {
   let count = 0;
   if (f.categoryId) count++;
+  if (f.labelId) count++;
   if (f.amountMin !== null) count++;
   if (f.amountMax !== null) count++;
   if (f.sortBy !== "date" || f.sortDir !== "desc") count++;
@@ -84,6 +88,7 @@ const hasActiveFilters = (f: TransactionFilters): boolean =>
   f.search !== "" ||
   f.type !== "ALL" ||
   f.categoryId !== null ||
+  f.labelId !== null ||
   f.amountMin !== null ||
   f.amountMax !== null ||
   f.sortBy !== "date" ||
@@ -140,7 +145,11 @@ export function TransactionFiltersBar({
   // Categories for dropdown
   const [categories, setCategories] = useState<Category[]>([]);
   const categoryDropdown = useDropdown();
+  const labelDropdown = useDropdown();
   const sortDropdown = useDropdown();
+
+  // Labels for dropdown
+  const { data: labels = [] } = useLabelsQuery();
 
   // Amount input local state (strings for controlled inputs)
   const [amountMinInput, setAmountMinInput] = useState(
@@ -236,6 +245,9 @@ export function TransactionFiltersBar({
   const selectedCategory = filters.categoryId
     ? categories.find((c) => c.id === filters.categoryId)
     : null;
+  const selectedLabel = filters.labelId
+    ? labels.find((l) => l.id === filters.labelId)
+    : null;
 
   const currentSortLabel =
     SORT_OPTIONS.find((o) => o.sortBy === filters.sortBy && o.sortDir === filters.sortDir)?.label ??
@@ -260,6 +272,12 @@ export function TransactionFiltersBar({
     activeChips.push({
       label: selectedCategory.name,
       onRemove: () => update({ categoryId: null }),
+    });
+  }
+  if (selectedLabel) {
+    activeChips.push({
+      label: selectedLabel.name,
+      onRemove: () => update({ labelId: null }),
     });
   }
   if (filters.amountMin !== null) {
@@ -440,6 +458,88 @@ export function TransactionFiltersBar({
               )}
             </AnimatePresence>
           </div>
+
+          {/* Desktop: Label Dropdown */}
+          {labels.length > 0 && (
+            <div ref={labelDropdown.ref} className="relative hidden sm:block">
+              <button
+                onClick={() => labelDropdown.setOpen((o) => !o)}
+                className={cn(
+                  "inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors",
+                  filters.labelId
+                    ? "border-amber/40 bg-amber-light/10 text-warm-700"
+                    : "border-cream-200 text-warm-500 hover:border-cream-300 hover:text-warm-600"
+                )}
+              >
+                {selectedLabel ? (
+                  <>
+                    <span
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{ backgroundColor: selectedLabel.color }}
+                    />
+                    <span className="max-w-[120px] truncate">{selectedLabel.name}</span>
+                  </>
+                ) : (
+                  <span>Label</span>
+                )}
+                <ChevronDown
+                  className={cn(
+                    "w-3.5 h-3.5 transition-transform duration-200",
+                    labelDropdown.open && "rotate-180"
+                  )}
+                />
+              </button>
+
+              <AnimatePresence>
+                {labelDropdown.open && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute left-0 top-full mt-1 w-52 max-h-64 overflow-y-auto bg-white rounded-xl shadow-soft-lg border border-cream-300/60 z-50"
+                  >
+                    <button
+                      onClick={() => {
+                        update({ labelId: null });
+                        labelDropdown.setOpen(false);
+                      }}
+                      className={cn(
+                        "flex items-center gap-3 w-full px-4 py-2.5 text-left text-sm transition-colors",
+                        !filters.labelId
+                          ? "bg-cream-50 text-warm-700 font-medium"
+                          : "text-warm-500 hover:bg-cream-50"
+                      )}
+                    >
+                      All labels
+                    </button>
+                    <div className="h-px bg-cream-200" />
+                    {labels.map((lbl) => (
+                      <button
+                        key={lbl.id}
+                        onClick={() => {
+                          update({ labelId: lbl.id });
+                          labelDropdown.setOpen(false);
+                        }}
+                        className={cn(
+                          "flex items-center gap-3 w-full px-4 py-2.5 text-left text-sm transition-colors",
+                          filters.labelId === lbl.id
+                            ? "bg-cream-50 text-warm-700 font-medium"
+                            : "text-warm-500 hover:bg-cream-50"
+                        )}
+                      >
+                        <span
+                          className="w-3 h-3 rounded-full shrink-0"
+                          style={{ backgroundColor: lbl.color }}
+                        />
+                        <span className="truncate">{lbl.name}</span>
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
 
           {/* Desktop: Sort Dropdown */}
           <div ref={sortDropdown.ref} className="relative hidden sm:block">
@@ -678,6 +778,91 @@ export function TransactionFiltersBar({
                     </AnimatePresence>
                   </div>
                 </div>
+
+                {/* Label */}
+                {labels.length > 0 && (
+                  <div>
+                    <label className="block text-xs font-medium text-warm-400 mb-1.5">Label</label>
+                    <div ref={labelDropdown.ref} className="relative">
+                      <button
+                        onClick={() => labelDropdown.setOpen((o) => !o)}
+                        className={cn(
+                          "w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg border text-sm transition-colors",
+                          filters.labelId
+                            ? "border-amber/40 bg-amber-light/10 text-warm-700"
+                            : "border-cream-200 text-warm-500"
+                        )}
+                      >
+                        {selectedLabel ? (
+                          <span className="flex items-center gap-2">
+                            <span
+                              className="w-2 h-2 rounded-full shrink-0"
+                              style={{ backgroundColor: selectedLabel.color }}
+                            />
+                            {selectedLabel.name}
+                          </span>
+                        ) : (
+                          <span>All labels</span>
+                        )}
+                        <ChevronDown
+                          className={cn(
+                            "w-3.5 h-3.5 transition-transform duration-200",
+                            labelDropdown.open && "rotate-180"
+                          )}
+                        />
+                      </button>
+
+                      <AnimatePresence>
+                        {labelDropdown.open && (
+                          <motion.div
+                            initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                            transition={{ duration: 0.15 }}
+                            className="absolute left-0 right-0 top-full mt-1 max-h-52 overflow-y-auto bg-white rounded-xl shadow-soft-lg border border-cream-300/60 z-50"
+                          >
+                            <button
+                              onClick={() => {
+                                update({ labelId: null });
+                                labelDropdown.setOpen(false);
+                              }}
+                              className={cn(
+                                "flex items-center gap-3 w-full px-4 py-2.5 text-left text-sm transition-colors",
+                                !filters.labelId
+                                  ? "bg-cream-50 text-warm-700 font-medium"
+                                  : "text-warm-500 hover:bg-cream-50"
+                              )}
+                            >
+                              All labels
+                            </button>
+                            <div className="h-px bg-cream-200" />
+                            {labels.map((lbl) => (
+                              <button
+                                key={lbl.id}
+                                onClick={() => {
+                                  update({ labelId: lbl.id });
+                                  labelDropdown.setOpen(false);
+                                }}
+                                className={cn(
+                                  "flex items-center gap-3 w-full px-4 py-2.5 text-left text-sm transition-colors",
+                                  filters.labelId === lbl.id
+                                    ? "bg-cream-50 text-warm-700 font-medium"
+                                    : "text-warm-500 hover:bg-cream-50"
+                                )}
+                              >
+                                <span
+                                  className="w-3 h-3 rounded-full shrink-0"
+                                  style={{ backgroundColor: lbl.color }}
+                                />
+                                <span className="truncate">{lbl.name}</span>
+                              </button>
+                            ))}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  </div>
+                )}
 
                 {/* Amount Range */}
                 <div>
