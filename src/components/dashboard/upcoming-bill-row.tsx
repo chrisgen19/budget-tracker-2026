@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Clock, FastForward, ChevronDown, ChevronUp } from "lucide-react";
+import { Check, Clock, FastForward, ChevronDown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatCurrency, cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
@@ -14,6 +14,7 @@ interface UpcomingBillRowProps {
   hideAmounts: boolean;
   isExpanded: boolean;
   onToggleExpand: () => void;
+  onActionComplete: () => void;
 }
 
 const SNOOZE_OPTIONS = [
@@ -28,6 +29,7 @@ export function UpcomingBillRow({
   hideAmounts,
   isExpanded,
   onToggleExpand,
+  onActionComplete,
 }: UpcomingBillRowProps) {
   const billAction = useBillAction();
   const { showToast } = useToast();
@@ -68,7 +70,10 @@ export function UpcomingBillRow({
       {
         onSuccess: () => {
           showToast(`${bill.description} paid`);
-          onToggleExpand();
+          onActionComplete();
+        },
+        onError: () => {
+          showToast("Failed to pay bill", "error");
         },
       },
     );
@@ -80,7 +85,10 @@ export function UpcomingBillRow({
       {
         onSuccess: () => {
           showToast(`${bill.description} skipped`);
-          onToggleExpand();
+          onActionComplete();
+        },
+        onError: () => {
+          showToast("Failed to skip bill", "error");
         },
       },
     );
@@ -93,7 +101,10 @@ export function UpcomingBillRow({
         onSuccess: () => {
           showToast(`${bill.description} snoozed for ${snoozeDays} day${snoozeDays > 1 ? "s" : ""}`);
           setShowSnoozeMenu(false);
-          onToggleExpand();
+          onActionComplete();
+        },
+        onError: () => {
+          showToast("Failed to snooze bill", "error");
         },
       },
     );
@@ -107,9 +118,17 @@ export function UpcomingBillRow({
       transition={{ duration: 0.2 }}
     >
       {/* Clickable row */}
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={isExpanded}
         onClick={onToggleExpand}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggleExpand();
+          }
+        }}
         className="flex items-center gap-3 w-full text-left rounded-lg px-1.5 py-1 -mx-1.5 transition-colors hover:bg-cream-50 cursor-pointer"
       >
         <div
@@ -140,7 +159,7 @@ export function UpcomingBillRow({
             isExpanded && "rotate-180",
           )}
         />
-      </button>
+      </div>
 
       {/* Expandable action bar */}
       <AnimatePresence>
@@ -172,16 +191,16 @@ export function UpcomingBillRow({
                 >
                   <Clock className="w-3 h-3" />
                   Snooze
-                  <ChevronUp className={cn("w-3 h-3 transition-transform", showSnoozeMenu ? "" : "rotate-180")} />
+                  <ChevronDown className={cn("w-3 h-3 transition-transform", showSnoozeMenu ? "rotate-180" : "")} />
                 </button>
                 <AnimatePresence>
                   {showSnoozeMenu && (
                     <motion.div
-                      initial={{ opacity: 0, y: 4 }}
+                      initial={{ opacity: 0, y: -4 }}
                       animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: 4 }}
+                      exit={{ opacity: 0, y: -4 }}
                       transition={{ duration: 0.15 }}
-                      className="absolute bottom-full mb-1 left-0 bg-white rounded-lg shadow-soft-lg border border-cream-200 overflow-hidden min-w-[120px] z-30"
+                      className="absolute top-full mt-1 left-0 bg-white rounded-lg shadow-soft-lg border border-cream-200 overflow-hidden min-w-[120px] z-30"
                     >
                       {SNOOZE_OPTIONS.map((option) => (
                         <button

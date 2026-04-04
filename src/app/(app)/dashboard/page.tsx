@@ -317,6 +317,7 @@ export default function DashboardPage() {
                       onToggleExpand={() =>
                         setExpandedBillId((prev) => (prev === bill.id ? null : bill.id))
                       }
+                      onActionComplete={() => setExpandedBillId(null)}
                     />
                   ))}
                 </AnimatePresence>
