@@ -234,9 +234,9 @@ export function useCreateTransaction() {
         }
       );
 
-      // Refetch active paginated transaction queries for server-backed ordering/counts
+      // Refetch active transaction queries (paginated + infinite) for full consistency
       queryClient.invalidateQueries({
-        queryKey: queryKeys.transactions.lists,
+        queryKey: queryKeys.transactions.all,
       });
 
       // Invalidate dashboard (triggers background refetch)

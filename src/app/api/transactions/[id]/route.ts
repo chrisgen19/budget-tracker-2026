@@ -26,14 +26,15 @@ export async function PUT(request: Request, { params }: RouteParams) {
     const body = await request.json();
     const validated = transactionSchema.parse(body);
 
-    // Validate label ownership before writing
+    // Validate label ownership before writing (only when labelIds is explicitly provided)
+    const hasLabelIds = validated.labelIds !== undefined;
     const verifiedLabelIds: string[] = [];
-    if (validated.labelIds && validated.labelIds.length > 0) {
+    if (hasLabelIds && validated.labelIds!.length > 0) {
       const ownedLabels = await prisma.label.findMany({
-        where: { id: { in: validated.labelIds }, userId },
+        where: { id: { in: validated.labelIds! }, userId },
         select: { id: true },
       });
-      if (ownedLabels.length !== validated.labelIds.length) {
+      if (ownedLabels.length !== validated.labelIds!.length) {
         return NextResponse.json(
           { error: "One or more labels are invalid or do not belong to you" },
           { status: 400 }
@@ -54,16 +55,18 @@ export async function PUT(request: Request, { params }: RouteParams) {
         },
       });
 
-      // Sync labels: delete all existing, recreate from input
-      await tx.transactionLabel.deleteMany({ where: { transactionId: id } });
+      // Sync labels only when labelIds was explicitly provided in the request
+      if (hasLabelIds) {
+        await tx.transactionLabel.deleteMany({ where: { transactionId: id } });
 
-      if (verifiedLabelIds.length > 0) {
-        await tx.transactionLabel.createMany({
-          data: verifiedLabelIds.map((labelId) => ({
-            transactionId: id,
-            labelId,
-          })),
-        });
+        if (verifiedLabelIds.length > 0) {
+          await tx.transactionLabel.createMany({
+            data: verifiedLabelIds.map((labelId) => ({
+              transactionId: id,
+              labelId,
+            })),
+          });
+        }
       }
 
       return tx.transaction.findUniqueOrThrow({
