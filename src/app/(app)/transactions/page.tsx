@@ -12,6 +12,8 @@ import {
   X,
   Loader2,
   ScanLine,
+  Receipt,
+  CalendarClock,
 } from "lucide-react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -597,12 +599,14 @@ export default function TransactionsPage() {
                               {tx.description}
                             </p>
                             {tx.receiptGroupId && (
-                              <span className="shrink-0 bg-amber-light/60 text-amber-dark text-[10px] font-medium px-1.5 py-0.5 rounded">
+                              <span className="shrink-0 inline-flex items-center gap-0.5 bg-amber-light/60 text-amber-dark text-[10px] font-medium px-1.5 py-0.5 rounded">
+                                <Receipt className="w-2.5 h-2.5" />
                                 Itemized
                               </span>
                             )}
                             {tx.billId && (
-                              <span className="shrink-0 bg-income-light text-income text-[10px] font-medium px-1.5 py-0.5 rounded">
+                              <span className="shrink-0 inline-flex items-center gap-0.5 bg-income-light text-income text-[10px] font-medium px-1.5 py-0.5 rounded">
+                                <CalendarClock className="w-2.5 h-2.5" />
                                 Bill
                               </span>
                             )}
