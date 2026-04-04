@@ -11,6 +11,7 @@ import { CategoryIcon } from "@/components/ui/icon-map";
 import { ReceiptBreakdown } from "@/components/transactions/receipt-breakdown";
 import { useUser } from "@/components/user-provider";
 import { useCategoriesQuery, useQuickPreferencesQuery } from "@/hooks/use-categories";
+import { LabelPicker } from "@/components/transactions/label-picker";
 import type { Category, TransactionWithCategory, ReceiptBreakdownMeta } from "@/types";
 
 export interface InitialTransactionData {
@@ -26,6 +27,8 @@ interface TransactionFormProps {
   initialData?: InitialTransactionData;
   /** When true, shows a warning that the receipt date year looks suspicious (possible POS error) */
   dateWarning?: boolean;
+  /** Hide the label picker (e.g. in scan-review flows where labels aren't persisted) */
+  hideLabelPicker?: boolean;
   onSubmit: (data: TransactionInput) => Promise<void>;
   onCancel: () => void;
   onDelete?: () => void;
@@ -60,7 +63,7 @@ const slideVariants = {
 
 const QUICK_CATEGORY_COUNT = 4;
 
-export function TransactionForm({ transaction, initialData, dateWarning, onSubmit, onCancel, onDelete }: TransactionFormProps) {
+export function TransactionForm({ transaction, initialData, dateWarning, hideLabelPicker, onSubmit, onCancel, onDelete }: TransactionFormProps) {
   const { user } = useUser();
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [displayAmount, setDisplayAmount] = useState<string>(() => {
@@ -92,6 +95,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, onSubmi
         ? formatDateInput(transaction.date)
         : initialData?.date ?? formatDateInput(new Date()),
       categoryId: transaction?.categoryId ?? initialData?.categoryId ?? "",
+      labelIds: transaction?.labels?.map((tl) => tl.labelId) ?? [],
     },
   });
 
@@ -411,6 +415,14 @@ export function TransactionForm({ transaction, initialData, dateWarning, onSubmi
                 <p className="text-expense text-sm mt-1.5">{errors.categoryId.message}</p>
               )}
             </div>
+
+            {/* Labels */}
+            {!hideLabelPicker && (
+              <LabelPicker
+                selectedIds={watch("labelIds") ?? []}
+                onChange={(ids) => setValue("labelIds", ids)}
+              />
+            )}
 
             {/* Date — quick picks */}
             <div>

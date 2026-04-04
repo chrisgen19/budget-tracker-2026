@@ -9,6 +9,7 @@ import {
   ArrowLeftRight,
   CalendarClock,
   Tags,
+  Tag,
   LogOut,
   Wallet,
   User,
@@ -51,7 +52,11 @@ const NAV_ITEMS = [
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
   { href: "/bills", label: "Bills", icon: CalendarClock },
   { href: "/categories", label: "Categories", icon: Tags },
+  { href: "/labels", label: "Labels", icon: Tag },
 ];
+
+/** Mobile bottom nav excludes Labels to avoid overflow on narrow viewports */
+const MOBILE_NAV_ITEMS = NAV_ITEMS.filter((item) => item.href !== "/labels");
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
@@ -592,7 +597,7 @@ export function AppShell({ children }: AppShellProps) {
       {/* Mobile Bottom Navigation */}
       <nav className="lg:hidden fixed bottom-0 inset-x-0 bg-white/90 backdrop-blur-md border-t border-cream-300/60 z-30 px-2 pb-[env(safe-area-inset-bottom)]">
         <div className="flex items-center justify-around py-2">
-          {NAV_ITEMS.map((item) => {
+          {MOBILE_NAV_ITEMS.map((item) => {
             const isActive = pathname === item.href;
             return (
               <Link
@@ -674,6 +679,7 @@ export function AppShell({ children }: AppShellProps) {
         {billEditData && (
           <TransactionForm
             initialData={billEditData}
+            hideLabelPicker
             onSubmit={handleBillPayAndEditSubmit}
             onCancel={() => setBillEditData(null)}
           />
@@ -731,6 +737,7 @@ export function AppShell({ children }: AppShellProps) {
                   categoryId: editItem.data.categoryId,
                 }}
                 dateWarning={editItem.data.dateWarning}
+                hideLabelPicker
                 onSubmit={handleMultiScanEditSubmit}
                 onCancel={() => setEditingItemId(null)}
               />

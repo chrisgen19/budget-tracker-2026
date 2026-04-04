@@ -39,6 +39,11 @@ export async function GET(request: Request) {
     where.categoryId = categoryId;
   }
 
+  const labelId = searchParams.get("labelId");
+  if (labelId) {
+    where.labels = { some: { labelId } };
+  }
+
   // Amount range filter
   if (amountMin || amountMax) {
     const amountFilter: Record<string, number> = {};
@@ -64,7 +69,7 @@ export async function GET(request: Request) {
   const [transactions, total] = await Promise.all([
     prisma.transaction.findMany({
       where,
-      include: { category: true, bill: true },
+      include: { category: true, bill: true, labels: { include: { label: true } } },
       orderBy,
       skip: (page - 1) * limit,
       take: limit,
@@ -91,19 +96,50 @@ export async function POST(request: Request) {
     const body = await request.json();
     const validated = transactionSchema.parse(body);
 
-    const transaction = await prisma.transaction.create({
-      data: {
-        amount: validated.amount,
-        description: validated.description,
-        type: validated.type,
-        date: new Date(validated.date),
-        categoryId: validated.categoryId,
-        userId,
-      },
-      include: { category: true, bill: true },
+    // Validate label ownership before writing
+    const verifiedLabelIds: string[] = [];
+    if (validated.labelIds && validated.labelIds.length > 0) {
+      const ownedLabels = await prisma.label.findMany({
+        where: { id: { in: validated.labelIds }, userId },
+        select: { id: true },
+      });
+      if (ownedLabels.length !== validated.labelIds.length) {
+        return NextResponse.json(
+          { error: "One or more labels are invalid or do not belong to you" },
+          { status: 400 }
+        );
+      }
+      verifiedLabelIds.push(...ownedLabels.map((l) => l.id));
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const transaction = await tx.transaction.create({
+        data: {
+          amount: validated.amount,
+          description: validated.description,
+          type: validated.type,
+          date: new Date(validated.date),
+          categoryId: validated.categoryId,
+          userId,
+        },
+      });
+
+      if (verifiedLabelIds.length > 0) {
+        await tx.transactionLabel.createMany({
+          data: verifiedLabelIds.map((labelId) => ({
+            transactionId: transaction.id,
+            labelId,
+          })),
+        });
+      }
+
+      return tx.transaction.findUniqueOrThrow({
+        where: { id: transaction.id },
+        include: { category: true, bill: true, labels: { include: { label: true } } },
+      });
     });
 
-    return NextResponse.json(transaction, { status: 201 });
+    return NextResponse.json(result, { status: 201 });
   } catch (error) {
     if (error instanceof Error && error.name === "ZodError") {
       return NextResponse.json({ error: "Invalid input" }, { status: 400 });

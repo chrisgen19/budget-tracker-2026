@@ -21,11 +21,17 @@ export const transactionSchema = z.object({
   type: z.enum(["INCOME", "EXPENSE"]),
   date: z.string().min(1, "Date is required"),
   categoryId: z.string().min(1, "Category is required"),
+  labelIds: z.array(z.string()).optional(),
 });
 
 export const batchTransactionSchema = transactionSchema.extend({
   receiptGroupId: z.string().optional(),
   receiptBreakdown: z.any().optional(),
+});
+
+export const labelSchema = z.object({
+  name: z.string().min(1, "Name is required").max(30),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Invalid color format"),
 });
 
 export const categorySchema = z.object({
@@ -54,6 +60,7 @@ export const changePasswordSchema = z.object({
 export type LoginInput = z.infer<typeof loginSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type TransactionInput = z.infer<typeof transactionSchema>;
+export type LabelInput = z.infer<typeof labelSchema>;
 export type CategoryInput = z.infer<typeof categorySchema>;
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 

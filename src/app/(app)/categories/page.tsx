@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Pencil, Trash2, Tags, Lock, X, Zap } from "lucide-react";
+import { Plus, Pencil, Trash2, Tags, Lock, X, Zap, Tag, ChevronRight } from "lucide-react";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
@@ -108,6 +109,18 @@ export default function CategoriesPage() {
           New Category
         </button>
       </div>
+
+      {/* Mobile link to Labels (desktop uses sidebar) */}
+      <Link
+        href="/labels"
+        className="lg:hidden flex items-center justify-between gap-3 px-4 py-3 mb-4 rounded-xl border border-cream-200 bg-cream-50/50 text-warm-500 hover:text-warm-700 hover:border-cream-300 transition-colors"
+      >
+        <span className="flex items-center gap-2.5">
+          <Tag className="w-4 h-4" />
+          <span className="text-sm font-medium">Labels</span>
+        </span>
+        <ChevronRight className="w-4 h-4 text-warm-300" />
+      </Link>
 
       {/* Filter */}
       <div className="flex gap-1 p-0.5 bg-cream-200/60 rounded-lg w-fit mb-6">

@@ -8,6 +8,7 @@ import {
 import type { TransactionInput } from "@/lib/validations";
 import type { TransactionWithCategory, DashboardStats } from "@/types";
 import type { TransactionFilters } from "@/components/transactions/transaction-filters";
+import { labelKeys } from "@/hooks/use-labels";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -56,6 +57,7 @@ const buildTransactionParams = (filters: TransactionFilters, page: number, tz: n
   if (filters.type !== "ALL") params.set("type", filters.type);
   if (filters.search) params.set("search", filters.search);
   if (filters.categoryId) params.set("categoryId", filters.categoryId);
+  if (filters.labelId) params.set("labelId", filters.labelId);
   if (filters.amountMin !== null) params.set("amountMin", String(filters.amountMin));
   if (filters.amountMax !== null) params.set("amountMax", String(filters.amountMax));
   if (filters.sortBy !== "date") params.set("sortBy", filters.sortBy);
@@ -232,15 +234,18 @@ export function useCreateTransaction() {
         }
       );
 
-      // Refetch active paginated transaction queries for server-backed ordering/counts
+      // Refetch active transaction queries (paginated + infinite) for full consistency
       queryClient.invalidateQueries({
-        queryKey: queryKeys.transactions.lists,
+        queryKey: queryKeys.transactions.all,
       });
 
       // Invalidate dashboard (triggers background refetch)
       queryClient.invalidateQueries({
         queryKey: queryKeys.dashboard.all,
       });
+
+      // Invalidate label counts
+      queryClient.invalidateQueries({ queryKey: labelKeys.all });
     },
   });
 }
@@ -280,6 +285,9 @@ export function useUpdateTransaction() {
       queryClient.invalidateQueries({
         queryKey: queryKeys.dashboard.all,
       });
+
+      // Invalidate label counts
+      queryClient.invalidateQueries({ queryKey: labelKeys.all });
     },
   });
 }
@@ -313,6 +321,9 @@ export function useDeleteTransaction() {
       queryClient.invalidateQueries({
         queryKey: queryKeys.dashboard.all,
       });
+
+      // Invalidate label counts
+      queryClient.invalidateQueries({ queryKey: labelKeys.all });
     },
   });
 }
@@ -322,10 +333,14 @@ export function useBulkDeleteTransactions() {
 
   return useMutation({
     mutationFn: async (ids: string[]) => {
-      await Promise.all(
-        ids.map((id) => fetch(`/api/transactions/${id}`, { method: "DELETE" }))
-      );
-      return ids;
+      const res = await fetch("/api/transactions/batch", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) throw new Error("Failed to delete transactions");
+      const data = await res.json() as { deleted: number; ids: string[] };
+      return data.ids;
     },
     onSuccess: (deletedIds) => {
       const idSet = new Set(deletedIds);
@@ -349,6 +364,9 @@ export function useBulkDeleteTransactions() {
       queryClient.invalidateQueries({
         queryKey: queryKeys.dashboard.all,
       });
+
+      // Invalidate label counts
+      queryClient.invalidateQueries({ queryKey: labelKeys.all });
     },
   });
 }
