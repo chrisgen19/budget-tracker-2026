@@ -188,7 +188,22 @@ export default function LabelsPage() {
             <span className="font-medium text-warm-700">
               &ldquo;{deletingLabel?.name}&rdquo;
             </span>
-            ? This will remove the label from all transactions.
+            ?
+            {deletingLabel && deletingLabel._count.transactions > 0 ? (
+              <>
+                {" "}
+                This will remove the label from{" "}
+                <span className="font-medium text-warm-700">
+                  {deletingLabel._count.transactions}{" "}
+                  {deletingLabel._count.transactions === 1
+                    ? "transaction"
+                    : "transactions"}
+                </span>
+                .
+              </>
+            ) : (
+              " This label has no transactions."
+            )}
           </p>
         }
         loading={deleteLabel.isPending}

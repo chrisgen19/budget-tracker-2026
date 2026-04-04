@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
@@ -6,6 +6,10 @@ import { batchTransactionSchema } from "@/lib/validations";
 
 const batchSchema = z.object({
   transactions: z.array(batchTransactionSchema).min(1).max(50),
+});
+
+const batchDeleteSchema = z.object({
+  ids: z.array(z.string()).min(1).max(50),
 });
 
 export async function POST(request: Request) {
@@ -42,6 +46,30 @@ export async function POST(request: Request) {
     }
     return NextResponse.json(
       { error: "Failed to create transactions" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  const userId = await getAuthUserId();
+  if (userId instanceof NextResponse) return userId;
+
+  try {
+    const body = await request.json();
+    const { ids } = batchDeleteSchema.parse(body);
+
+    const { count } = await prisma.transaction.deleteMany({
+      where: { id: { in: ids }, userId },
+    });
+
+    return NextResponse.json({ deleted: count });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+    }
+    return NextResponse.json(
+      { error: "Failed to delete transactions" },
       { status: 500 }
     );
   }

@@ -333,9 +333,12 @@ export function useBulkDeleteTransactions() {
 
   return useMutation({
     mutationFn: async (ids: string[]) => {
-      await Promise.all(
-        ids.map((id) => fetch(`/api/transactions/${id}`, { method: "DELETE" }))
-      );
+      const res = await fetch("/api/transactions/batch", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) throw new Error("Failed to delete transactions");
       return ids;
     },
     onSuccess: (deletedIds) => {

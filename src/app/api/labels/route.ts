@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     const validated = labelSchema.parse(body);
 
     const existing = await prisma.label.findFirst({
-      where: { name: validated.name, userId },
+      where: { name: { equals: validated.name, mode: "insensitive" }, userId },
     });
 
     if (existing) {

@@ -30,7 +30,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
 
     // Check for duplicate name (excluding self)
     const duplicate = await prisma.label.findFirst({
-      where: { name: validated.name, userId, NOT: { id } },
+      where: { name: { equals: validated.name, mode: "insensitive" }, userId, NOT: { id } },
     });
 
     if (duplicate) {
