@@ -18,7 +18,7 @@ export const billKeys = {
   list: (filters?: { active?: boolean; type?: string }) =>
     ["bills", "list", filters] as const,
   pending: ["bills", "pending"] as const,
-  upcoming: ["bills", "upcoming"] as const,
+  upcoming: (tz: number) => ["bills", "upcoming", tz] as const,
   history: (id: string) => ["bills", "history", id] as const,
 };
 
@@ -114,7 +114,7 @@ export function usePendingRemindersQuery() {
 
 export function useUpcomingBillsQuery(tz: number) {
   return useQuery({
-    queryKey: billKeys.upcoming,
+    queryKey: billKeys.upcoming(tz),
     queryFn: () => fetchUpcomingBills(tz),
     staleTime: 60_000,
   });
