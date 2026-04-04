@@ -79,6 +79,8 @@ export function useUpdateLabel() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }
@@ -97,6 +99,8 @@ export function useDeleteLabel() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }

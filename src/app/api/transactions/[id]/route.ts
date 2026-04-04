@@ -27,13 +27,19 @@ export async function PUT(request: Request, { params }: RouteParams) {
     const validated = transactionSchema.parse(body);
 
     // Validate label ownership before writing
-    let verifiedLabelIds: string[] = [];
+    const verifiedLabelIds: string[] = [];
     if (validated.labelIds && validated.labelIds.length > 0) {
       const ownedLabels = await prisma.label.findMany({
         where: { id: { in: validated.labelIds }, userId },
         select: { id: true },
       });
-      verifiedLabelIds = ownedLabels.map((l) => l.id);
+      if (ownedLabels.length !== validated.labelIds.length) {
+        return NextResponse.json(
+          { error: "One or more labels are invalid or do not belong to you" },
+          { status: 400 }
+        );
+      }
+      verifiedLabelIds.push(...ownedLabels.map((l) => l.id));
     }
 
     const result = await prisma.$transaction(async (tx) => {

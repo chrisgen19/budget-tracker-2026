@@ -8,6 +8,7 @@ import {
 import type { TransactionInput } from "@/lib/validations";
 import type { TransactionWithCategory, DashboardStats } from "@/types";
 import type { TransactionFilters } from "@/components/transactions/transaction-filters";
+import { labelKeys } from "@/hooks/use-labels";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -242,6 +243,9 @@ export function useCreateTransaction() {
       queryClient.invalidateQueries({
         queryKey: queryKeys.dashboard.all,
       });
+
+      // Invalidate label counts
+      queryClient.invalidateQueries({ queryKey: labelKeys.all });
     },
   });
 }
@@ -281,6 +285,9 @@ export function useUpdateTransaction() {
       queryClient.invalidateQueries({
         queryKey: queryKeys.dashboard.all,
       });
+
+      // Invalidate label counts
+      queryClient.invalidateQueries({ queryKey: labelKeys.all });
     },
   });
 }
@@ -314,6 +321,9 @@ export function useDeleteTransaction() {
       queryClient.invalidateQueries({
         queryKey: queryKeys.dashboard.all,
       });
+
+      // Invalidate label counts
+      queryClient.invalidateQueries({ queryKey: labelKeys.all });
     },
   });
 }
@@ -350,6 +360,9 @@ export function useBulkDeleteTransactions() {
       queryClient.invalidateQueries({
         queryKey: queryKeys.dashboard.all,
       });
+
+      // Invalidate label counts
+      queryClient.invalidateQueries({ queryKey: labelKeys.all });
     },
   });
 }
