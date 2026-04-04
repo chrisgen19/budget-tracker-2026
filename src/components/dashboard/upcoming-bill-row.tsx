@@ -112,7 +112,7 @@ export function UpcomingBillRow({
 
   return (
     <motion.div
-      layout
+      layout="position"
       initial={{ opacity: 1 }}
       exit={{ opacity: 0, height: 0, marginBottom: 0 }}
       transition={{ duration: 0.2 }}
@@ -200,7 +200,7 @@ export function UpcomingBillRow({
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -4 }}
                       transition={{ duration: 0.15 }}
-                      className="absolute top-full mt-1 left-0 bg-white rounded-lg shadow-soft-lg border border-cream-200 overflow-hidden min-w-[120px] z-30"
+                      className="absolute top-full mt-1 left-0 bg-white rounded-lg shadow-soft-lg border border-cream-200 overflow-hidden min-w-[120px] z-50"
                     >
                       {SNOOZE_OPTIONS.map((option) => (
                         <button
