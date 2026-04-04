@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Plus, X, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLabelsQuery } from "@/hooks/use-labels";
@@ -12,8 +12,17 @@ interface LabelPickerProps {
 
 export function LabelPicker({ selectedIds, onChange }: LabelPickerProps) {
   const [open, setOpen] = useState(false);
+  const [openUpward, setOpenUpward] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const { data: labels = [] } = useLabelsQuery();
+
+  const checkPosition = useCallback(() => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    setOpenUpward(spaceBelow < 220);
+  }, []);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -77,8 +86,12 @@ export function LabelPicker({ selectedIds, onChange }: LabelPickerProps) {
         {/* Add label button / dropdown trigger */}
         <div className="relative" ref={dropdownRef}>
           <button
+            ref={triggerRef}
             type="button"
-            onClick={() => setOpen(!open)}
+            onClick={() => {
+              checkPosition();
+              setOpen(!open);
+            }}
             className={cn(
               "inline-flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full border-2 border-dashed transition-colors",
               open
@@ -93,7 +106,12 @@ export function LabelPicker({ selectedIds, onChange }: LabelPickerProps) {
 
           {/* Dropdown */}
           {open && (
-            <div className="absolute left-0 top-full mt-1.5 z-50 w-56 bg-white rounded-xl shadow-soft-md border border-cream-200 py-1.5 max-h-48 overflow-y-auto">
+            <div
+              className={cn(
+                "absolute left-0 z-50 w-56 bg-white rounded-xl shadow-soft-md border border-cream-200 py-1.5 max-h-48 overflow-y-auto",
+                openUpward ? "bottom-full mb-1.5" : "top-full mt-1.5"
+              )}
+            >
               {labels.map((lbl) => {
                 const isSelected = selectedIds.includes(lbl.id);
                 return (

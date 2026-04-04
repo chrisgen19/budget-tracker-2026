@@ -339,7 +339,8 @@ export function useBulkDeleteTransactions() {
         body: JSON.stringify({ ids }),
       });
       if (!res.ok) throw new Error("Failed to delete transactions");
-      return ids;
+      const data = await res.json() as { deleted: number; ids: string[] };
+      return data.ids;
     },
     onSuccess: (deletedIds) => {
       const idSet = new Set(deletedIds);

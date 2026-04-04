@@ -59,11 +59,20 @@ export async function DELETE(request: NextRequest) {
     const body = await request.json();
     const { ids } = batchDeleteSchema.parse(body);
 
-    const { count } = await prisma.transaction.deleteMany({
+    // Find which IDs actually belong to the user before deleting
+    const owned = await prisma.transaction.findMany({
       where: { id: { in: ids }, userId },
+      select: { id: true },
     });
+    const ownedIds = owned.map((t) => t.id);
 
-    return NextResponse.json({ deleted: count });
+    if (ownedIds.length > 0) {
+      await prisma.transaction.deleteMany({
+        where: { id: { in: ownedIds } },
+      });
+    }
+
+    return NextResponse.json({ deleted: ownedIds.length, ids: ownedIds });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: "Invalid input" }, { status: 400 });

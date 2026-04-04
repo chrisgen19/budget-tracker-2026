@@ -193,6 +193,9 @@ model Label {
   transactions TransactionLabel[]
   createdAt    DateTime           @default(now()) @map("created_at")
 
+  // NOTE: The actual DB index uses LOWER(name) for case-insensitive uniqueness
+  // (see migration 20260405120000). Prisma doesn't support expression indexes,
+  // so this @@unique is kept for ORM awareness but the DB constraint is authoritative.
   @@unique([name, userId])
   @@map("labels")
 }
