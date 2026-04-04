@@ -751,3 +751,18 @@ All notable development history for the Budget Tracker app.
 - `MobileFab` now consumes `useBillReminders` directly and automatically offsets itself above the bill reminder banner on **all pages** (transactions, categories, bills)
 - Previously only the dashboard passed `extraOffsetRem` — other pages had the FAB overlapping the banner
 - Removed the `extraOffsetRem` prop; offset logic is now internal to the component
+
+---
+
+## 2026-04-04 — Upcoming Bills Timezone Fix
+
+### Server-Side `daysUntilDue` Computation
+- Moved `daysUntilDue` calculation from the dashboard client to the `/api/bills/upcoming` API response
+- Previously, the dashboard computed `diffDays` client-side using `new Date()`, which could drift from the server's `isOverdue` flag when the user's local timezone differs from UTC — e.g., showing "In -1d" for a bill the server considers not overdue
+- Both `isOverdue` and `daysUntilDue` are now derived from the same server-side `today`, guaranteeing consistency
+
+### Timezone-Aware Upcoming Bills API
+- `/api/bills/upcoming` now accepts a `tz` query param (user's `getTimezoneOffset()` in minutes), matching the pattern used by `/api/dashboard`
+- "Today" is computed as UTC midnight of the user's local date, so `isOverdue`, `daysUntilDue`, and the 7-day query window are all relative to the user's timezone
+- Added `daysUntilDue` field to the `UpcomingBill` type in `use-bills.ts`
+- `billKeys.upcoming` query key now includes `tz` so the React Query cache invalidates immediately when the user changes their timezone in profile settings
