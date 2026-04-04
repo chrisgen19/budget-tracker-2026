@@ -52,7 +52,7 @@ export default function DashboardPage() {
   const [deletingTransaction, setDeletingTransaction] = useState<TransactionWithCategory | null>(null);
 
   const { data: stats, isLoading: loading } = useDashboardQuery(currentMonth, user.timezoneOffset);
-  const { data: upcomingData } = useUpcomingBillsQuery();
+  const { data: upcomingData } = useUpcomingBillsQuery(user.timezoneOffset);
   const createMutation = useCreateTransaction();
   const updateMutation = useUpdateTransaction();
   const deleteMutation = useDeleteTransaction();

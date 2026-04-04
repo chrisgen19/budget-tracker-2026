@@ -63,8 +63,8 @@ export interface UpcomingBillsResponse {
   bills: UpcomingBill[];
 }
 
-const fetchUpcomingBills = async (): Promise<UpcomingBillsResponse> => {
-  const res = await fetch("/api/bills/upcoming");
+const fetchUpcomingBills = async (tz: number): Promise<UpcomingBillsResponse> => {
+  const res = await fetch(`/api/bills/upcoming?tz=${tz}`);
   if (!res.ok) throw new Error("Failed to fetch upcoming bills");
   return res.json();
 };
@@ -112,10 +112,10 @@ export function usePendingRemindersQuery() {
   });
 }
 
-export function useUpcomingBillsQuery() {
+export function useUpcomingBillsQuery(tz: number) {
   return useQuery({
     queryKey: billKeys.upcoming,
-    queryFn: fetchUpcomingBills,
+    queryFn: () => fetchUpcomingBills(tz),
     staleTime: 60_000,
   });
 }
