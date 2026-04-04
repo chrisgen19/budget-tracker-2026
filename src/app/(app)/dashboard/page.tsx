@@ -52,7 +52,7 @@ export default function DashboardPage() {
   const [deletingTransaction, setDeletingTransaction] = useState<TransactionWithCategory | null>(null);
 
   const { data: stats, isLoading: loading } = useDashboardQuery(currentMonth, user.timezoneOffset);
-  const { data: upcomingData } = useUpcomingBillsQuery();
+  const { data: upcomingData } = useUpcomingBillsQuery(user.timezoneOffset);
   const createMutation = useCreateTransaction();
   const updateMutation = useUpdateTransaction();
   const deleteMutation = useDeleteTransaction();
@@ -305,18 +305,14 @@ export default function DashboardPage() {
               </div>
               <div className="space-y-2">
                 {upcomingData.bills.slice(0, 3).map((bill) => {
-                  const due = new Date(bill.dueDate);
-                  due.setHours(0, 0, 0, 0);
-                  const today = new Date();
-                  today.setHours(0, 0, 0, 0);
-                  const diffDays = Math.floor((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                  const days = bill.daysUntilDue;
                   const dueLabel = bill.isOverdue
-                    ? `${Math.abs(diffDays)}d overdue`
-                    : diffDays === 0
+                    ? `${Math.abs(days)}d overdue`
+                    : days === 0
                       ? "Today"
-                      : diffDays === 1
+                      : days === 1
                         ? "Tomorrow"
-                        : `In ${diffDays}d`;
+                        : `In ${days}d`;
 
                   return (
                     <div key={`${bill.id}-${bill.dueDate}`} className="flex items-center gap-3">

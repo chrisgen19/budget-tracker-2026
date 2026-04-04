@@ -18,7 +18,7 @@ export const billKeys = {
   list: (filters?: { active?: boolean; type?: string }) =>
     ["bills", "list", filters] as const,
   pending: ["bills", "pending"] as const,
-  upcoming: ["bills", "upcoming"] as const,
+  upcoming: (tz: number) => ["bills", "upcoming", tz] as const,
   history: (id: string) => ["bills", "history", id] as const,
 };
 
@@ -54,6 +54,7 @@ export interface UpcomingBill {
   amount: number;
   dueDate: string;
   isOverdue: boolean;
+  daysUntilDue: number;
 }
 
 export interface UpcomingBillsResponse {
@@ -62,8 +63,8 @@ export interface UpcomingBillsResponse {
   bills: UpcomingBill[];
 }
 
-const fetchUpcomingBills = async (): Promise<UpcomingBillsResponse> => {
-  const res = await fetch("/api/bills/upcoming");
+const fetchUpcomingBills = async (tz: number): Promise<UpcomingBillsResponse> => {
+  const res = await fetch(`/api/bills/upcoming?tz=${tz}`);
   if (!res.ok) throw new Error("Failed to fetch upcoming bills");
   return res.json();
 };
@@ -111,10 +112,10 @@ export function usePendingRemindersQuery() {
   });
 }
 
-export function useUpcomingBillsQuery() {
+export function useUpcomingBillsQuery(tz: number) {
   return useQuery({
-    queryKey: billKeys.upcoming,
-    queryFn: fetchUpcomingBills,
+    queryKey: billKeys.upcoming(tz),
+    queryFn: () => fetchUpcomingBills(tz),
     staleTime: 60_000,
   });
 }

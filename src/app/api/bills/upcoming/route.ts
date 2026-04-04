@@ -2,12 +2,18 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 
-export async function GET() {
+export async function GET(request: Request) {
   const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const { searchParams } = new URL(request.url);
+  const tz = parseInt(searchParams.get("tz") || "0");
+  const tzMs = tz * 60 * 1000;
+
+  // Compute "today" in the user's local timezone
+  const nowUtc = new Date();
+  const localNow = new Date(nowUtc.getTime() - tzMs);
+  const today = new Date(Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), localNow.getUTCDate()));
 
   const nextWeek = new Date(today);
   nextWeek.setDate(nextWeek.getDate() + 7);
@@ -26,6 +32,8 @@ export async function GET() {
     const dueDate = new Date(bill.nextDueDate);
     dueDate.setHours(0, 0, 0, 0);
     const isOverdue = dueDate < today;
+    const diffMs = dueDate.getTime() - today.getTime();
+    const daysUntilDue = Math.round(diffMs / (1000 * 60 * 60 * 24));
 
     return {
       id: bill.id,
@@ -36,6 +44,7 @@ export async function GET() {
       amount: bill.amount,
       dueDate: bill.nextDueDate.toISOString(),
       isOverdue,
+      daysUntilDue,
     };
   });
 
