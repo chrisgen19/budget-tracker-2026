@@ -96,29 +96,41 @@ export async function POST(request: Request) {
     const body = await request.json();
     const validated = transactionSchema.parse(body);
 
-    const transaction = await prisma.transaction.create({
-      data: {
-        amount: validated.amount,
-        description: validated.description,
-        type: validated.type,
-        date: new Date(validated.date),
-        categoryId: validated.categoryId,
-        userId,
-      },
-    });
-
+    // Validate label ownership before writing
+    let verifiedLabelIds: string[] = [];
     if (validated.labelIds && validated.labelIds.length > 0) {
-      await prisma.transactionLabel.createMany({
-        data: validated.labelIds.map((labelId) => ({
-          transactionId: transaction.id,
-          labelId,
-        })),
+      const ownedLabels = await prisma.label.findMany({
+        where: { id: { in: validated.labelIds }, userId },
+        select: { id: true },
       });
+      verifiedLabelIds = ownedLabels.map((l) => l.id);
     }
 
-    const result = await prisma.transaction.findUniqueOrThrow({
-      where: { id: transaction.id },
-      include: { category: true, bill: true, labels: { include: { label: true } } },
+    const result = await prisma.$transaction(async (tx) => {
+      const transaction = await tx.transaction.create({
+        data: {
+          amount: validated.amount,
+          description: validated.description,
+          type: validated.type,
+          date: new Date(validated.date),
+          categoryId: validated.categoryId,
+          userId,
+        },
+      });
+
+      if (verifiedLabelIds.length > 0) {
+        await tx.transactionLabel.createMany({
+          data: verifiedLabelIds.map((labelId) => ({
+            transactionId: transaction.id,
+            labelId,
+          })),
+        });
+      }
+
+      return tx.transaction.findUniqueOrThrow({
+        where: { id: transaction.id },
+        include: { category: true, bill: true, labels: { include: { label: true } } },
+      });
     });
 
     return NextResponse.json(result, { status: 201 });
