@@ -69,7 +69,7 @@ export async function GET(request: Request) {
     // Recent 5 transactions (any month) — ordered by date then creation time
     prisma.transaction.findMany({
       where: { userId },
-      include: { category: true, bill: true },
+      include: { category: true, bill: true, labels: { include: { label: true } } },
       orderBy: [{ date: "desc" }, { createdAt: "desc" }, { id: "asc" }],
       take: 5,
     }),
