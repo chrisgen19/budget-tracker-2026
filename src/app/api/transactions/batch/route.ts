@@ -9,7 +9,7 @@ const batchSchema = z.object({
 });
 
 const batchDeleteSchema = z.object({
-  ids: z.array(z.string()).min(1).max(50),
+  ids: z.array(z.string()).min(1),
 });
 
 export async function POST(request: Request) {
