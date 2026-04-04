@@ -15,7 +15,7 @@ import {
   ScanLine,
   CalendarClock,
 } from "lucide-react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { formatCurrency, getCurrencySymbol, cn } from "@/lib/utils";
 import { groupByDate, formatTime } from "@/lib/transaction-helpers";
@@ -31,6 +31,7 @@ import { useUser } from "@/components/user-provider";
 import { useScan } from "@/components/scan-provider";
 import { useDashboardQuery, useCreateTransaction, useUpdateTransaction, useDeleteTransaction } from "@/hooks/use-transactions";
 import { useUpcomingBillsQuery } from "@/hooks/use-bills";
+import { UpcomingBillRow } from "@/components/dashboard/upcoming-bill-row";
 import { MobileFab } from "@/components/ui/mobile-fab";
 import type { TransactionInput } from "@/lib/validations";
 import type { TransactionWithCategory } from "@/types";
@@ -50,6 +51,7 @@ export default function DashboardPage() {
 
   const [editingTransaction, setEditingTransaction] = useState<TransactionWithCategory | null>(null);
   const [deletingTransaction, setDeletingTransaction] = useState<TransactionWithCategory | null>(null);
+  const [expandedBillId, setExpandedBillId] = useState<string | null>(null);
 
   const { data: stats, isLoading: loading } = useDashboardQuery(currentMonth, user.timezoneOffset);
   const { data: upcomingData } = useUpcomingBillsQuery(user.timezoneOffset);
@@ -304,43 +306,20 @@ export default function DashboardPage() {
                 )}
               </div>
               <div className="space-y-2">
-                {upcomingData.bills.slice(0, 3).map((bill) => {
-                  const days = bill.daysUntilDue;
-                  const dueLabel = bill.isOverdue
-                    ? `${Math.abs(days)}d overdue`
-                    : days === 0
-                      ? "Today"
-                      : days === 1
-                        ? "Tomorrow"
-                        : `In ${days}d`;
-
-                  return (
-                    <div key={`${bill.id}-${bill.dueDate}`} className="flex items-center gap-3">
-                      <div
-                        className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
-                        style={{ backgroundColor: bill.categoryColor + "18" }}
-                      >
-                        <CategoryIcon
-                          name={bill.categoryIcon}
-                          className="w-3.5 h-3.5"
-                          style={{ color: bill.categoryColor }}
-                        />
-                      </div>
-                      <span className="text-sm text-warm-600 truncate flex-1">
-                        {bill.description}
-                      </span>
-                      <span className={cn(
-                        "text-[11px] font-medium shrink-0",
-                        bill.isOverdue ? "text-expense" : "text-warm-400"
-                      )}>
-                        {dueLabel}
-                      </span>
-                      <span className="text-sm font-semibold tabular-nums text-warm-600 shrink-0">
-                        {hideAmounts ? "***" : formatCurrency(bill.amount, currency)}
-                      </span>
-                    </div>
-                  );
-                })}
+                <AnimatePresence mode="popLayout">
+                  {upcomingData.bills.slice(0, 3).map((bill) => (
+                    <UpcomingBillRow
+                      key={`${bill.id}-${bill.dueDate}`}
+                      bill={bill}
+                      currency={currency}
+                      hideAmounts={hideAmounts}
+                      isExpanded={expandedBillId === bill.id}
+                      onToggleExpand={() =>
+                        setExpandedBillId((prev) => (prev === bill.id ? null : bill.id))
+                      }
+                    />
+                  ))}
+                </AnimatePresence>
               </div>
             </motion.div>
           )}
