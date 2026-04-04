@@ -679,6 +679,7 @@ export function AppShell({ children }: AppShellProps) {
         {billEditData && (
           <TransactionForm
             initialData={billEditData}
+            hideLabelPicker
             onSubmit={handleBillPayAndEditSubmit}
             onCancel={() => setBillEditData(null)}
           />
@@ -736,6 +737,7 @@ export function AppShell({ children }: AppShellProps) {
                   categoryId: editItem.data.categoryId,
                 }}
                 dateWarning={editItem.data.dateWarning}
+                hideLabelPicker
                 onSubmit={handleMultiScanEditSubmit}
                 onCancel={() => setEditingItemId(null)}
               />

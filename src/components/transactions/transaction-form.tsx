@@ -27,6 +27,8 @@ interface TransactionFormProps {
   initialData?: InitialTransactionData;
   /** When true, shows a warning that the receipt date year looks suspicious (possible POS error) */
   dateWarning?: boolean;
+  /** Hide the label picker (e.g. in scan-review flows where labels aren't persisted) */
+  hideLabelPicker?: boolean;
   onSubmit: (data: TransactionInput) => Promise<void>;
   onCancel: () => void;
   onDelete?: () => void;
@@ -61,7 +63,7 @@ const slideVariants = {
 
 const QUICK_CATEGORY_COUNT = 4;
 
-export function TransactionForm({ transaction, initialData, dateWarning, onSubmit, onCancel, onDelete }: TransactionFormProps) {
+export function TransactionForm({ transaction, initialData, dateWarning, hideLabelPicker, onSubmit, onCancel, onDelete }: TransactionFormProps) {
   const { user } = useUser();
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [displayAmount, setDisplayAmount] = useState<string>(() => {
@@ -415,10 +417,12 @@ export function TransactionForm({ transaction, initialData, dateWarning, onSubmi
             </div>
 
             {/* Labels */}
-            <LabelPicker
-              selectedIds={watch("labelIds") ?? []}
-              onChange={(ids) => setValue("labelIds", ids)}
-            />
+            {!hideLabelPicker && (
+              <LabelPicker
+                selectedIds={watch("labelIds") ?? []}
+                onChange={(ids) => setValue("labelIds", ids)}
+              />
+            )}
 
             {/* Date — quick picks */}
             <div>
