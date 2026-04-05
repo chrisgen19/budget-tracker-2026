@@ -24,6 +24,7 @@ export default function LabelsPage() {
   const [deletingLabel, setDeletingLabel] = useState<LabelWithCountAndSchedules | null>(null);
   const [applyingLabel, setApplyingLabel] = useState<LabelWithCountAndSchedules | null>(null);
   const [applyResult, setApplyResult] = useState<number | null>(null);
+  const [applyError, setApplyError] = useState<string | null>(null);
 
   const { data: labels = [], isLoading: loading } = useLabelsQuery();
   const createLabel = useCreateLabel();
@@ -31,12 +32,15 @@ export default function LabelsPage() {
   const deleteLabel = useDeleteLabel();
   const applySchedule = useApplyLabelSchedule();
 
-  // Auto-dismiss apply result toast after 3 seconds
+  // Auto-dismiss apply result/error toast after 3 seconds
   useEffect(() => {
-    if (applyResult === null) return;
-    const timer = setTimeout(() => setApplyResult(null), 3000);
+    if (applyResult === null && applyError === null) return;
+    const timer = setTimeout(() => {
+      setApplyResult(null);
+      setApplyError(null);
+    }, 3000);
     return () => clearTimeout(timer);
-  }, [applyResult]);
+  }, [applyResult, applyError]);
 
   const handleCreate = async (input: LabelInput) => {
     await createLabel.mutateAsync(input);
@@ -61,6 +65,10 @@ export default function LabelsPage() {
     applySchedule.mutate(applyingLabel.id, {
       onSuccess: (data) => {
         setApplyResult(data.applied);
+        setApplyingLabel(null);
+      },
+      onError: (err) => {
+        setApplyError(err instanceof Error ? err.message : "Failed to apply schedule");
         setApplyingLabel(null);
       },
     });
@@ -267,7 +275,7 @@ export default function LabelsPage() {
         loading={applySchedule.isPending}
       />
 
-      {/* Apply Result Toast */}
+      {/* Apply Result / Error Toast */}
       <AnimatePresence>
         {applyResult !== null && (
           <motion.div
@@ -278,6 +286,16 @@ export default function LabelsPage() {
           >
             Applied label to {applyResult}{" "}
             {applyResult === 1 ? "transaction" : "transactions"}.
+          </motion.div>
+        )}
+        {applyError && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-expense text-white text-sm px-5 py-3 rounded-xl shadow-lg z-50"
+          >
+            {applyError}
           </motion.div>
         )}
       </AnimatePresence>

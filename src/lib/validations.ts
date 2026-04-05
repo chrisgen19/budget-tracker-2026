@@ -36,13 +36,13 @@ export const labelScheduleSchema = z.object({
   endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Invalid time format"),
 }).refine(
   (s) => s.startTime < s.endTime,
-  { message: "End time must be after start time", path: ["endTime"] }
+  { message: "End time must be after start time (overnight ranges not supported)", path: ["endTime"] }
 );
 
 export const labelSchema = z.object({
   name: z.string().min(1, "Name is required").max(30),
   color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Invalid color format"),
-  schedules: z.array(labelScheduleSchema).optional(),
+  schedules: z.array(labelScheduleSchema).max(10, "Maximum 10 schedules per label").optional(),
 });
 
 export const categorySchema = z.object({

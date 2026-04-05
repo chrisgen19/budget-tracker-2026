@@ -85,6 +85,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     handleSubmit,
     watch,
     setValue,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<TransactionInput>({
     resolver: zodResolver(transactionSchema),
@@ -110,6 +111,14 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   const userRemovedAutoLabels = useRef<Set<string>>(new Set());
   const autoAppliedLabels = useRef<Set<string>>(new Set());
   const prevScheduledLabelId = useRef<string | null>(null);
+  // Seed initial snapshot: if editing and the transaction already has the scheduled
+  // label, show the clock icon immediately without waiting for the effect to run.
+  const [autoAppliedSnapshot, setAutoAppliedSnapshot] = useState<string[]>(() => {
+    if (!transaction || !scheduledLabelId) return [];
+    const existingIds = transaction.labels?.map((tl) => tl.labelId) ?? [];
+    if (existingIds.includes(scheduledLabelId)) return [scheduledLabelId];
+    return [];
+  });
 
   // TanStack Query hooks — cached across mounts
   const { data: categories = [], isLoading: loadingCategories } = useCategoriesQuery(selectedType);
@@ -157,6 +166,9 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     const prev = prevScheduledLabelId.current;
     prevScheduledLabelId.current = scheduledLabelId;
 
+    // Read current label state imperatively to avoid stale closure issues
+    const currentIds = getValues("labelIds") ?? [];
+
     // On first computation for edits: if the transaction already has the
     // scheduled label from a prior session, seed autoAppliedLabels so the
     // removal branch can clean it up when the date moves outside the window.
@@ -172,7 +184,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
       userRemovedAutoLabels.current.delete(scheduledLabelId);
     }
 
-    let updatedIds = [...watchedLabelIds];
+    let updatedIds = [...currentIds];
 
     // Remove previous auto-label only if WE auto-applied it (not user-owned)
     if (prev && prev !== scheduledLabelId && autoAppliedLabels.current.has(prev)) {
@@ -191,9 +203,12 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     }
 
     // Only update if the array actually changed
-    if (updatedIds.length !== watchedLabelIds.length || updatedIds.some((id, i) => id !== watchedLabelIds[i])) {
+    if (updatedIds.length !== currentIds.length || updatedIds.some((id, i) => id !== currentIds[i])) {
       setValue("labelIds", updatedIds);
     }
+
+    // Sync snapshot for LabelPicker display
+    setAutoAppliedSnapshot([...autoAppliedLabels.current]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scheduledLabelId, hideLabelPicker]);
 
@@ -495,10 +510,11 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                       autoAppliedLabels.current.delete(scheduledLabelId);
                       userRemovedAutoLabels.current.delete(scheduledLabelId);
                     }
+                    setAutoAppliedSnapshot([...autoAppliedLabels.current]);
                   }
                   setValue("labelIds", ids);
                 }}
-                autoAppliedIds={scheduledLabelId ? [scheduledLabelId] : []}
+                autoAppliedIds={autoAppliedSnapshot}
               />
             )}
 

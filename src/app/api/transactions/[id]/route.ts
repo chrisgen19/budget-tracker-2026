@@ -28,8 +28,10 @@ export async function PUT(request: Request, { params }: RouteParams) {
     const validated = transactionSchema.parse(body);
 
     // Validate label ownership before writing (only when labelIds is explicitly provided)
-    let hasLabelIds = validated.labelIds !== undefined;
+    const hasLabelIds = validated.labelIds !== undefined;
     const verifiedLabelIds: string[] = [];
+    let shouldSyncLabels = hasLabelIds;
+
     if (hasLabelIds && validated.labelIds!.length > 0) {
       const ownedLabels = await prisma.label.findMany({
         where: { id: { in: validated.labelIds! }, userId },
@@ -63,7 +65,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
           }
         }
         if (scheduledId) verifiedLabelIds.push(scheduledId);
-        hasLabelIds = true;
+        shouldSyncLabels = true;
       }
     }
 
@@ -80,7 +82,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
       });
 
       // Sync labels when labelIds was explicitly provided or computed server-side
-      if (hasLabelIds) {
+      if (shouldSyncLabels) {
         await tx.transactionLabel.deleteMany({ where: { transactionId: id } });
 
         if (verifiedLabelIds.length > 0) {
