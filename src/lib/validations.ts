@@ -29,9 +29,20 @@ export const batchTransactionSchema = transactionSchema.extend({
   receiptBreakdown: z.any().optional(),
 });
 
+export const labelScheduleSchema = z.object({
+  id: z.string().optional(),
+  days: z.array(z.number().int().min(0).max(6)).min(1, "Select at least one day"),
+  startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Invalid time format"),
+  endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Invalid time format"),
+}).refine(
+  (s) => s.startTime < s.endTime,
+  { message: "End time must be after start time", path: ["endTime"] }
+);
+
 export const labelSchema = z.object({
   name: z.string().min(1, "Name is required").max(30),
   color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Invalid color format"),
+  schedules: z.array(labelScheduleSchema).optional(),
 });
 
 export const categorySchema = z.object({
@@ -61,6 +72,7 @@ export type LoginInput = z.infer<typeof loginSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type TransactionInput = z.infer<typeof transactionSchema>;
 export type LabelInput = z.infer<typeof labelSchema>;
+export type LabelScheduleInput = z.infer<typeof labelScheduleSchema>;
 export type CategoryInput = z.infer<typeof categorySchema>;
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 

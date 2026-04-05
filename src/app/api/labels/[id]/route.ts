@@ -40,13 +40,34 @@ export async function PUT(request: Request, { params }: RouteParams) {
       );
     }
 
-    const label = await prisma.label.update({
-      where: { id },
-      data: {
-        name: validated.name,
-        color: validated.color,
-      },
-      include: { _count: { select: { transactions: true } } },
+    const label = await prisma.$transaction(async (tx) => {
+      // Sync schedules: delete all existing, re-create from input
+      if (validated.schedules !== undefined) {
+        await tx.labelSchedule.deleteMany({ where: { labelId: id } });
+
+        if (validated.schedules.length > 0) {
+          await tx.labelSchedule.createMany({
+            data: validated.schedules.map((s) => ({
+              labelId: id,
+              days: s.days,
+              startTime: s.startTime,
+              endTime: s.endTime,
+            })),
+          });
+        }
+      }
+
+      return tx.label.update({
+        where: { id },
+        data: {
+          name: validated.name,
+          color: validated.color,
+        },
+        include: {
+          _count: { select: { transactions: true } },
+          schedules: { orderBy: { createdAt: "asc" } },
+        },
+      });
     });
 
     return NextResponse.json(label);

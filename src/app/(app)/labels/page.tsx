@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Pencil, Trash2, Tag } from "lucide-react";
+import { Plus, Pencil, Trash2, Tag, Clock, Play } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
@@ -13,19 +13,23 @@ import {
   useCreateLabel,
   useUpdateLabel,
   useDeleteLabel,
+  useApplyLabelSchedule,
 } from "@/hooks/use-labels";
 import type { LabelInput } from "@/lib/validations";
-import type { LabelWithCount } from "@/types";
+import type { LabelWithCountAndSchedules } from "@/types";
 
 export default function LabelsPage() {
   const [showForm, setShowForm] = useState(false);
-  const [editingLabel, setEditingLabel] = useState<LabelWithCount | null>(null);
-  const [deletingLabel, setDeletingLabel] = useState<LabelWithCount | null>(null);
+  const [editingLabel, setEditingLabel] = useState<LabelWithCountAndSchedules | null>(null);
+  const [deletingLabel, setDeletingLabel] = useState<LabelWithCountAndSchedules | null>(null);
+  const [applyingLabel, setApplyingLabel] = useState<LabelWithCountAndSchedules | null>(null);
+  const [applyResult, setApplyResult] = useState<number | null>(null);
 
   const { data: labels = [], isLoading: loading } = useLabelsQuery();
   const createLabel = useCreateLabel();
   const updateLabel = useUpdateLabel();
   const deleteLabel = useDeleteLabel();
+  const applySchedule = useApplyLabelSchedule();
 
   const handleCreate = async (input: LabelInput) => {
     await createLabel.mutateAsync(input);
@@ -42,6 +46,16 @@ export default function LabelsPage() {
     if (!deletingLabel) return;
     deleteLabel.mutate(deletingLabel.id, {
       onSuccess: () => setDeletingLabel(null),
+    });
+  };
+
+  const handleApply = () => {
+    if (!applyingLabel) return;
+    applySchedule.mutate(applyingLabel.id, {
+      onSuccess: (data) => {
+        setApplyResult(data.applied);
+        setApplyingLabel(null);
+      },
     });
   };
 
@@ -98,53 +112,70 @@ export default function LabelsPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <AnimatePresence mode="popLayout">
-            {labels.map((lbl) => (
-              <motion.div
-                key={lbl.id}
-                layout
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="card-hover p-4 group"
-              >
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
-                    style={{ backgroundColor: lbl.color + "18" }}
-                  >
+            {labels.map((lbl) => {
+              const hasSchedules = lbl.schedules.length > 0;
+              return (
+                <motion.div
+                  key={lbl.id}
+                  layout
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  className="card-hover p-4 group"
+                >
+                  <div className="flex items-center gap-3">
                     <div
-                      className="w-3 h-3 rounded-full"
-                      style={{ backgroundColor: lbl.color }}
-                    />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-warm-600 truncate">
-                      {lbl.name}
-                    </p>
-                    <p className="text-xs text-warm-300">
-                      {lbl._count.transactions}{" "}
-                      {lbl._count.transactions === 1
-                        ? "transaction"
-                        : "transactions"}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                    <button
-                      onClick={() => setEditingLabel(lbl)}
-                      className="p-1.5 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors"
+                      className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+                      style={{ backgroundColor: lbl.color + "18" }}
                     >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => setDeletingLabel(lbl)}
-                      className="p-1.5 rounded-lg text-warm-300 hover:text-expense hover:bg-expense-light transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                      <div
+                        className="w-3 h-3 rounded-full"
+                        style={{ backgroundColor: lbl.color }}
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-sm font-medium text-warm-600 truncate">
+                          {lbl.name}
+                        </p>
+                        {hasSchedules && (
+                          <Clock className="w-3 h-3 text-amber shrink-0" />
+                        )}
+                      </div>
+                      <p className="text-xs text-warm-300">
+                        {lbl._count.transactions}{" "}
+                        {lbl._count.transactions === 1
+                          ? "transaction"
+                          : "transactions"}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                      {hasSchedules && (
+                        <button
+                          onClick={() => setApplyingLabel(lbl)}
+                          className="p-1.5 rounded-lg text-warm-300 hover:text-income hover:bg-income-light transition-colors"
+                          title="Apply to existing transactions"
+                        >
+                          <Play className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setEditingLabel(lbl)}
+                        className="p-1.5 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => setDeletingLabel(lbl)}
+                        className="p-1.5 rounded-lg text-warm-300 hover:text-expense hover:bg-expense-light transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              </motion.div>
-            ))}
+                </motion.div>
+              );
+            })}
           </AnimatePresence>
         </div>
       )}
@@ -208,6 +239,44 @@ export default function LabelsPage() {
         }
         loading={deleteLabel.isPending}
       />
+
+      {/* Apply Schedule Confirmation Modal */}
+      <ConfirmModal
+        open={!!applyingLabel}
+        onClose={() => setApplyingLabel(null)}
+        onConfirm={handleApply}
+        title="Apply Schedule to Existing"
+        confirmLabel="Apply"
+        message={
+          <p>
+            This will scan all your transactions and apply the{" "}
+            <span className="font-medium text-warm-700">
+              &ldquo;{applyingLabel?.name}&rdquo;
+            </span>{" "}
+            label where the schedule matches. Labels already applied won&apos;t
+            be duplicated.
+          </p>
+        }
+        loading={applySchedule.isPending}
+      />
+
+      {/* Apply Result Toast */}
+      <AnimatePresence>
+        {applyResult !== null && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-warm-800 text-white text-sm px-5 py-3 rounded-xl shadow-lg z-50"
+            onAnimationComplete={() => {
+              setTimeout(() => setApplyResult(null), 3000);
+            }}
+          >
+            Applied label to {applyResult}{" "}
+            {applyResult === 1 ? "transaction" : "transactions"}.
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Mobile FAB */}
       <MobileFab label="Label" icon={Plus} onClick={() => setShowForm(true)} />

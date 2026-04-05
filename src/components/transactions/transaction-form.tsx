@@ -12,6 +12,7 @@ import { ReceiptBreakdown } from "@/components/transactions/receipt-breakdown";
 import { useUser } from "@/components/user-provider";
 import { useCategoriesQuery, useQuickPreferencesQuery } from "@/hooks/use-categories";
 import { LabelPicker } from "@/components/transactions/label-picker";
+import { useScheduledLabel } from "@/hooks/use-scheduled-label";
 import type { Category, TransactionWithCategory, ReceiptBreakdownMeta } from "@/types";
 
 export interface InitialTransactionData {
@@ -102,6 +103,12 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   const selectedType = watch("type");
   const watchedCategoryId = watch("categoryId");
   const watchedDate = watch("date");
+  const watchedLabelIds = watch("labelIds") ?? [];
+
+  // Auto-label scheduling
+  const { scheduledLabelId } = useScheduledLabel(watchedDate);
+  const userRemovedAutoLabels = useRef<Set<string>>(new Set());
+  const prevScheduledLabelId = useRef<string | null>(null);
 
   // TanStack Query hooks — cached across mounts
   const { data: categories = [], isLoading: loadingCategories } = useCategoriesQuery(selectedType);
@@ -142,6 +149,36 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
       setValue("categoryId", "");
     }
   }, [categories, selectedType, setValue, transaction, initialData]);
+
+  // Auto-apply or remove scheduled label when date changes
+  useEffect(() => {
+    if (hideLabelPicker) return;
+    const prev = prevScheduledLabelId.current;
+    prevScheduledLabelId.current = scheduledLabelId;
+
+    // When the scheduled label changes, reset removal tracking for the new label
+    if (scheduledLabelId !== prev) {
+      if (scheduledLabelId) {
+        userRemovedAutoLabels.current.delete(scheduledLabelId);
+      }
+    }
+
+    // Remove previous auto-label if it changed and user didn't manually add it
+    if (prev && prev !== scheduledLabelId && watchedLabelIds.includes(prev)) {
+      setValue("labelIds", watchedLabelIds.filter((id) => id !== prev));
+      return;
+    }
+
+    // Auto-add new scheduled label if not already present and not user-removed
+    if (
+      scheduledLabelId &&
+      !watchedLabelIds.includes(scheduledLabelId) &&
+      !userRemovedAutoLabels.current.has(scheduledLabelId)
+    ) {
+      setValue("labelIds", [...watchedLabelIds, scheduledLabelId]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scheduledLabelId, hideLabelPicker]);
 
   const setDateToToday = () => {
     setDateMode("today");
@@ -419,8 +456,15 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
             {/* Labels */}
             {!hideLabelPicker && (
               <LabelPicker
-                selectedIds={watch("labelIds") ?? []}
-                onChange={(ids) => setValue("labelIds", ids)}
+                selectedIds={watchedLabelIds}
+                onChange={(ids) => {
+                  // Track if user manually removed the auto-applied label
+                  if (scheduledLabelId && watchedLabelIds.includes(scheduledLabelId) && !ids.includes(scheduledLabelId)) {
+                    userRemovedAutoLabels.current.add(scheduledLabelId);
+                  }
+                  setValue("labelIds", ids);
+                }}
+                autoAppliedIds={scheduledLabelId ? [scheduledLabelId] : []}
               />
             )}
 

@@ -191,6 +191,7 @@ model Label {
   userId       String             @map("user_id")
   user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions TransactionLabel[]
+  schedules    LabelSchedule[]
   createdAt    DateTime           @default(now()) @map("created_at")
 
   // NOTE: The actual DB index uses LOWER(name) for case-insensitive uniqueness
@@ -198,6 +199,19 @@ model Label {
   // so this @@unique is kept for ORM awareness but the DB constraint is authoritative.
   @@unique([name, userId])
   @@map("labels")
+}
+
+model LabelSchedule {
+  id        String   @id @default(cuid())
+  labelId   String   @map("label_id")
+  label     Label    @relation(fields: [labelId], references: [id], onDelete: Cascade)
+  days      Int[]
+  startTime String   @map("start_time")
+  endTime   String   @map("end_time")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([labelId])
+  @@map("label_schedules")
 }
 
 model TransactionLabel {

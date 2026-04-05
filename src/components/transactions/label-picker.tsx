@@ -1,16 +1,17 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Plus, X, ChevronDown } from "lucide-react";
+import { Clock, Plus, X, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLabelsQuery } from "@/hooks/use-labels";
 
 interface LabelPickerProps {
   selectedIds: string[];
   onChange: (ids: string[]) => void;
+  autoAppliedIds?: string[];
 }
 
-export function LabelPicker({ selectedIds, onChange }: LabelPickerProps) {
+export function LabelPicker({ selectedIds, onChange, autoAppliedIds = [] }: LabelPickerProps) {
   const [open, setOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -59,7 +60,9 @@ export function LabelPicker({ selectedIds, onChange }: LabelPickerProps) {
 
       {/* Selected labels as pills */}
       <div className="flex flex-wrap items-center gap-2">
-        {selectedLabels.map((lbl) => (
+        {selectedLabels.map((lbl) => {
+          const isAuto = autoAppliedIds.includes(lbl.id);
+          return (
           <span
             key={lbl.id}
             className="inline-flex items-center gap-1.5 text-xs font-medium pl-2.5 pr-1.5 py-1 rounded-full"
@@ -73,6 +76,9 @@ export function LabelPicker({ selectedIds, onChange }: LabelPickerProps) {
               style={{ backgroundColor: lbl.color }}
             />
             {lbl.name}
+            {isAuto && (
+              <Clock className="w-3 h-3 opacity-60" />
+            )}
             <button
               type="button"
               onClick={() => remove(lbl.id)}
@@ -81,7 +87,8 @@ export function LabelPicker({ selectedIds, onChange }: LabelPickerProps) {
               <X className="w-3 h-3" />
             </button>
           </span>
-        ))}
+          );
+        })}
 
         {/* Add label button / dropdown trigger */}
         <div className="relative" ref={dropdownRef}>
