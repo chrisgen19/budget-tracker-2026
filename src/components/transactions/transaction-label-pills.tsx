@@ -11,6 +11,8 @@ interface TransactionLabelPillsProps {
   onRemove?: (transactionLabelId: string, labelId: string) => void;
   /** Label ID currently being removed (shows spinner instead of X) */
   removingLabelId?: string | null;
+  /** Disable all remove buttons (e.g. while another remove is in flight) */
+  removeDisabled?: boolean;
 }
 
 export function TransactionLabelPills({
@@ -18,6 +20,7 @@ export function TransactionLabelPills({
   maxVisible = 2,
   onRemove,
   removingLabelId,
+  removeDisabled,
 }: TransactionLabelPillsProps) {
   if (labels.length === 0) return null;
 
@@ -46,11 +49,12 @@ export function TransactionLabelPills({
               ) : (
                 <button
                   type="button"
+                  disabled={removeDisabled}
                   onClick={(e) => {
                     e.stopPropagation();
                     onRemove(tl.id, tl.labelId);
                   }}
-                  className="hidden sm:group-hover/pill:inline-flex items-center justify-center w-3 h-3 -mr-0.5 rounded-full hover:bg-black/10 transition-colors"
+                  className="hidden sm:group-hover/pill:inline-flex items-center justify-center w-3 h-3 -mr-0.5 rounded-full hover:bg-black/10 transition-colors disabled:opacity-30 disabled:pointer-events-none"
                 >
                   <X className="w-2.5 h-2.5" />
                 </button>

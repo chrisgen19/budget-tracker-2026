@@ -458,5 +458,11 @@ export function useRemoveTransactionLabel() {
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
     },
+    onError: () => {
+      // Refetch to restore consistent state (pill stays visible since cache
+      // update only happens onSuccess, but invalidate to be safe)
+      queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
+    },
   });
 }

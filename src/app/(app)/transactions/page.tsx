@@ -631,6 +631,7 @@ export default function TransactionsPage() {
                                     ? removeLabelMutation.variables.labelId
                                     : null
                                 }
+                                removeDisabled={removeLabelMutation.isPending}
                               />
                             )}
                           </div>

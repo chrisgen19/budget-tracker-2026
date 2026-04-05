@@ -465,6 +465,7 @@ export default function DashboardPage() {
                                       ? removeLabelMutation.variables.labelId
                                       : null
                                   }
+                                  removeDisabled={removeLabelMutation.isPending}
                                 />
                               )}
                             </div>
