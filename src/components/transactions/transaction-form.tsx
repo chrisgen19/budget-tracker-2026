@@ -157,6 +157,16 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     const prev = prevScheduledLabelId.current;
     prevScheduledLabelId.current = scheduledLabelId;
 
+    // On first computation for edits: if the transaction already has the
+    // scheduled label from a prior session, seed autoAppliedLabels so the
+    // removal branch can clean it up when the date moves outside the window.
+    if (prev === null && transaction && scheduledLabelId) {
+      const existingLabelIds = transaction.labels?.map((tl) => tl.labelId) ?? [];
+      if (existingLabelIds.includes(scheduledLabelId)) {
+        autoAppliedLabels.current.add(scheduledLabelId);
+      }
+    }
+
     // When the scheduled label changes, reset removal tracking for the new label
     if (scheduledLabelId !== prev && scheduledLabelId) {
       userRemovedAutoLabels.current.delete(scheduledLabelId);

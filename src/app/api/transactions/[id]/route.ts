@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { transactionSchema } from "@/lib/validations";
+import { getScheduledLabelId, type ScheduleRule } from "@/lib/schedule-matching";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -27,7 +28,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
     const validated = transactionSchema.parse(body);
 
     // Validate label ownership before writing (only when labelIds is explicitly provided)
-    const hasLabelIds = validated.labelIds !== undefined;
+    let hasLabelIds = validated.labelIds !== undefined;
     const verifiedLabelIds: string[] = [];
     if (hasLabelIds && validated.labelIds!.length > 0) {
       const ownedLabels = await prisma.label.findMany({
@@ -43,6 +44,53 @@ export async function PUT(request: Request, { params }: RouteParams) {
       verifiedLabelIds.push(...ownedLabels.map((l) => l.id));
     }
 
+    // Server-side auto-label when labelIds not provided (cold-cache edits, hidden-label flows)
+    if (!hasLabelIds) {
+      const [labelsWithSchedules, user] = await Promise.all([
+        prisma.label.findMany({
+          where: { userId, schedules: { some: {} } },
+          include: { schedules: true },
+          orderBy: { createdAt: "asc" },
+        }),
+        prisma.user.findUniqueOrThrow({
+          where: { id: userId },
+          select: { timezoneOffset: true },
+        }),
+      ]);
+
+      if (labelsWithSchedules.length > 0) {
+        const scheduleRules: ScheduleRule[] = labelsWithSchedules.flatMap((label) =>
+          label.schedules.map((s) => ({
+            labelId: label.id,
+            labelCreatedAt: label.createdAt,
+            days: s.days,
+            startTime: s.startTime,
+            endTime: s.endTime,
+          }))
+        );
+        const scheduledId = getScheduledLabelId(
+          new Date(validated.date),
+          user.timezoneOffset,
+          scheduleRules
+        );
+
+        // Preserve any existing non-scheduled labels, replace/add the scheduled one
+        const existingLabels = await prisma.transactionLabel.findMany({
+          where: { transactionId: id },
+          select: { labelId: true },
+        });
+        const scheduledLabelIds = new Set(labelsWithSchedules.map((l) => l.id));
+        // Keep manually-applied labels, drop any previously scheduled ones
+        for (const el of existingLabels) {
+          if (!scheduledLabelIds.has(el.labelId)) {
+            verifiedLabelIds.push(el.labelId);
+          }
+        }
+        if (scheduledId) verifiedLabelIds.push(scheduledId);
+        hasLabelIds = true;
+      }
+    }
+
     const result = await prisma.$transaction(async (tx) => {
       await tx.transaction.update({
         where: { id },
@@ -55,7 +103,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
         },
       });
 
-      // Sync labels only when labelIds was explicitly provided in the request
+      // Sync labels when labelIds was explicitly provided or computed server-side
       if (hasLabelIds) {
         await tx.transactionLabel.deleteMany({ where: { transactionId: id } });
 
