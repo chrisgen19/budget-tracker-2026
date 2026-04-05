@@ -459,6 +459,12 @@ export default function DashboardPage() {
                                   onRemove={(_tlId, labelId) =>
                                     removeLabelMutation.mutate({ transactionId: tx.id, labelId })
                                   }
+                                  removingLabelId={
+                                    removeLabelMutation.isPending &&
+                                    removeLabelMutation.variables?.transactionId === tx.id
+                                      ? removeLabelMutation.variables.labelId
+                                      : null
+                                  }
                                 />
                               )}
                             </div>
