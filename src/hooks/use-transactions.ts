@@ -421,3 +421,42 @@ export function useBatchCreateTransactions() {
     },
   });
 }
+
+export function useRemoveTransactionLabel() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ transactionId, labelId }: { transactionId: string; labelId: string }) => {
+      const res = await fetch(`/api/transactions/${transactionId}/labels/${labelId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to remove label");
+      return { transactionId, labelId };
+    },
+    onSuccess: ({ transactionId, labelId }) => {
+      // Optimistically strip the label from infinite query caches
+      queryClient.setQueriesData<InfiniteTransactionsData>(
+        { queryKey: queryKeys.transactions.all },
+        (old) => {
+          if (!old?.pages) return old;
+          return {
+            ...old,
+            pages: old.pages.map((page) => ({
+              ...page,
+              transactions: page.transactions.map((t) =>
+                t.id === transactionId
+                  ? { ...t, labels: t.labels?.filter((tl) => tl.labelId !== labelId) }
+                  : t
+              ),
+            })),
+          };
+        }
+      );
+
+      // Invalidate paginated + dashboard caches
+      queryClient.invalidateQueries({ queryKey: queryKeys.transactions.lists, refetchType: "none" });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
+      queryClient.invalidateQueries({ queryKey: labelKeys.all });
+    },
+  });
+}
