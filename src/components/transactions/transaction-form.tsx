@@ -108,6 +108,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   // Auto-label scheduling
   const { scheduledLabelId } = useScheduledLabel(watchedDate);
   const userRemovedAutoLabels = useRef<Set<string>>(new Set());
+  const autoAppliedLabels = useRef<Set<string>>(new Set());
   const prevScheduledLabelId = useRef<string | null>(null);
 
   // TanStack Query hooks — cached across mounts
@@ -157,25 +158,31 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     prevScheduledLabelId.current = scheduledLabelId;
 
     // When the scheduled label changes, reset removal tracking for the new label
-    if (scheduledLabelId !== prev) {
-      if (scheduledLabelId) {
-        userRemovedAutoLabels.current.delete(scheduledLabelId);
-      }
+    if (scheduledLabelId !== prev && scheduledLabelId) {
+      userRemovedAutoLabels.current.delete(scheduledLabelId);
     }
 
-    // Remove previous auto-label if it changed and user didn't manually add it
-    if (prev && prev !== scheduledLabelId && watchedLabelIds.includes(prev)) {
-      setValue("labelIds", watchedLabelIds.filter((id) => id !== prev));
-      return;
+    let updatedIds = [...watchedLabelIds];
+
+    // Remove previous auto-label only if WE auto-applied it (not user-owned)
+    if (prev && prev !== scheduledLabelId && autoAppliedLabels.current.has(prev)) {
+      updatedIds = updatedIds.filter((id) => id !== prev);
+      autoAppliedLabels.current.delete(prev);
     }
 
     // Auto-add new scheduled label if not already present and not user-removed
     if (
       scheduledLabelId &&
-      !watchedLabelIds.includes(scheduledLabelId) &&
+      !updatedIds.includes(scheduledLabelId) &&
       !userRemovedAutoLabels.current.has(scheduledLabelId)
     ) {
-      setValue("labelIds", [...watchedLabelIds, scheduledLabelId]);
+      updatedIds = [...updatedIds, scheduledLabelId];
+      autoAppliedLabels.current.add(scheduledLabelId);
+    }
+
+    // Only update if the array actually changed
+    if (updatedIds.length !== watchedLabelIds.length || updatedIds.some((id, i) => id !== watchedLabelIds[i])) {
+      setValue("labelIds", updatedIds);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scheduledLabelId, hideLabelPicker]);
