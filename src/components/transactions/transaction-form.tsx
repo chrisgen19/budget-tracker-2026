@@ -12,6 +12,7 @@ import { ReceiptBreakdown } from "@/components/transactions/receipt-breakdown";
 import { useUser } from "@/components/user-provider";
 import { useCategoriesQuery, useQuickPreferencesQuery } from "@/hooks/use-categories";
 import { LabelPicker } from "@/components/transactions/label-picker";
+import { useScheduledLabel } from "@/hooks/use-scheduled-label";
 import type { Category, TransactionWithCategory, ReceiptBreakdownMeta } from "@/types";
 
 export interface InitialTransactionData {
@@ -84,6 +85,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     handleSubmit,
     watch,
     setValue,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<TransactionInput>({
     resolver: zodResolver(transactionSchema),
@@ -102,6 +104,23 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   const selectedType = watch("type");
   const watchedCategoryId = watch("categoryId");
   const watchedDate = watch("date");
+  const watchedLabelIds = watch("labelIds") ?? [];
+
+  // Auto-label scheduling
+  const { scheduledLabelId } = useScheduledLabel(watchedDate);
+  const userRemovedAutoLabels = useRef<Set<string>>(new Set());
+  const autoAppliedLabels = useRef<Set<string>>(new Set());
+  const prevScheduledLabelId = useRef<string | null>(null);
+  // Tracks whether the user interacted with labels at all (add, remove, toggle)
+  const userTouchedLabels = useRef(false);
+  // Seed initial snapshot: if editing and the transaction already has the scheduled
+  // label, show the clock icon immediately without waiting for the effect to run.
+  const [autoAppliedSnapshot, setAutoAppliedSnapshot] = useState<string[]>(() => {
+    if (!transaction || !scheduledLabelId) return [];
+    const existingIds = transaction.labels?.map((tl) => tl.labelId) ?? [];
+    if (existingIds.includes(scheduledLabelId)) return [scheduledLabelId];
+    return [];
+  });
 
   // TanStack Query hooks — cached across mounts
   const { data: categories = [], isLoading: loadingCategories } = useCategoriesQuery(selectedType);
@@ -142,6 +161,63 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
       setValue("categoryId", "");
     }
   }, [categories, selectedType, setValue, transaction, initialData]);
+
+  // Auto-apply or remove scheduled label when date changes
+  useEffect(() => {
+    if (hideLabelPicker) return;
+    const prev = prevScheduledLabelId.current;
+    prevScheduledLabelId.current = scheduledLabelId;
+
+    // Read current label state imperatively to avoid stale closure issues
+    const currentIds = getValues("labelIds") ?? [];
+
+    // On first computation for edits: seed tracking refs from the transaction's
+    // existing labels so the auto-label logic behaves correctly.
+    if (prev === null && transaction && scheduledLabelId) {
+      const existingLabelIds = transaction.labels?.map((tl) => tl.labelId) ?? [];
+      if (existingLabelIds.includes(scheduledLabelId)) {
+        // Transaction has the scheduled label — mark as auto-applied so the
+        // removal branch can clean it up when the date moves outside the window.
+        autoAppliedLabels.current.add(scheduledLabelId);
+      } else {
+        // Schedule matches but label is absent (e.g. quick-removed from list
+        // view). Seed userRemovedAutoLabels so the effect doesn't re-add it.
+        userRemovedAutoLabels.current.add(scheduledLabelId);
+      }
+    }
+
+    // When the scheduled label changes, reset removal tracking for the new label
+    if (scheduledLabelId !== prev && scheduledLabelId) {
+      userRemovedAutoLabels.current.delete(scheduledLabelId);
+    }
+
+    let updatedIds = [...currentIds];
+
+    // Remove previous auto-label only if WE auto-applied it (not user-owned)
+    if (prev && prev !== scheduledLabelId && autoAppliedLabels.current.has(prev)) {
+      updatedIds = updatedIds.filter((id) => id !== prev);
+      autoAppliedLabels.current.delete(prev);
+    }
+
+    // Auto-add new scheduled label if not already present and not user-removed
+    if (
+      scheduledLabelId &&
+      !updatedIds.includes(scheduledLabelId) &&
+      !userRemovedAutoLabels.current.has(scheduledLabelId)
+    ) {
+      updatedIds = [...updatedIds, scheduledLabelId];
+      autoAppliedLabels.current.add(scheduledLabelId);
+    }
+
+    // Only update if the array actually changed
+    if (updatedIds.length !== currentIds.length || updatedIds.some((id, i) => id !== currentIds[i])) {
+      setValue("labelIds", updatedIds);
+    }
+
+    // Sync snapshot for LabelPicker display
+    setAutoAppliedSnapshot([...autoAppliedLabels.current]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scheduledLabelId, hideLabelPicker]);
 
   const setDateToToday = () => {
     setDateMode("today");
@@ -236,9 +312,18 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
           transition={{ type: "spring", stiffness: 300, damping: 30 }}
         >
           <form
-            onSubmit={handleSubmit((data) =>
-              onSubmit({ ...data, date: new Date(data.date).toISOString() })
-            )}
+            onSubmit={handleSubmit((data) => {
+              const { labelIds, ...rest } = data;
+              const payload = { ...rest, date: new Date(data.date).toISOString() };
+              // Omit labelIds when:
+              // - the picker is hidden (server should auto-apply), OR
+              // - the picker is visible but the user never interacted with labels
+              //   (labelIds is still the default [] and no auto-label was applied/removed)
+              const userInteractedWithLabels = userTouchedLabels.current
+                || userRemovedAutoLabels.current.size > 0;
+              const includeLabelIds = !hideLabelPicker && userInteractedWithLabels;
+              return onSubmit(includeLabelIds ? { ...payload, labelIds } : payload);
+            })}
             className="space-y-6"
           >
             {/* Type Toggle */}
@@ -419,8 +504,25 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
             {/* Labels */}
             {!hideLabelPicker && (
               <LabelPicker
-                selectedIds={watch("labelIds") ?? []}
-                onChange={(ids) => setValue("labelIds", ids)}
+                selectedIds={watchedLabelIds}
+                onChange={(ids) => {
+                  userTouchedLabels.current = true;
+                  if (scheduledLabelId) {
+                    // User manually removed the auto-applied label
+                    if (watchedLabelIds.includes(scheduledLabelId) && !ids.includes(scheduledLabelId)) {
+                      userRemovedAutoLabels.current.add(scheduledLabelId);
+                      autoAppliedLabels.current.delete(scheduledLabelId);
+                    }
+                    // User manually re-added the label — treat as user-owned, not auto
+                    if (!watchedLabelIds.includes(scheduledLabelId) && ids.includes(scheduledLabelId)) {
+                      autoAppliedLabels.current.delete(scheduledLabelId);
+                      userRemovedAutoLabels.current.delete(scheduledLabelId);
+                    }
+                    setAutoAppliedSnapshot([...autoAppliedLabels.current]);
+                  }
+                  setValue("labelIds", ids);
+                }}
+                autoAppliedIds={autoAppliedSnapshot}
               />
             )}
 

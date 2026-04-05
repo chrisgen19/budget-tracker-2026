@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { transactionSchema } from "@/lib/validations";
+import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 
 export async function GET(request: Request) {
   const userId = await getAuthUserId();
@@ -110,6 +111,16 @@ export async function POST(request: Request) {
         );
       }
       verifiedLabelIds.push(...ownedLabels.map((l) => l.id));
+    }
+
+    // Server-side auto-label when labelIds not provided (hidden-label flows, external callers).
+    // When labelIds is explicitly [] the user opted out — respect that.
+    if (validated.labelIds === undefined) {
+      const ctx = await getScheduleContext(userId);
+      if (ctx) {
+        const scheduledId = matchScheduledLabel(new Date(validated.date), ctx);
+        if (scheduledId) verifiedLabelIds.push(scheduledId);
+      }
     }
 
     const result = await prisma.$transaction(async (tx) => {

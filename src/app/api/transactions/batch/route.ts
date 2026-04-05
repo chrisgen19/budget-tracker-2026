@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { batchTransactionSchema } from "@/lib/validations";
+import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 
 const batchSchema = z.object({
   transactions: z.array(batchTransactionSchema).min(1).max(50),
@@ -20,23 +21,33 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { transactions } = batchSchema.parse(body);
 
-    // Use prisma.$transaction with individual creates so we get `include: { category: true }`
+    // Fetch schedule context for auto-tagging (short-circuits when no schedules exist)
+    const ctx = await getScheduleContext(userId);
+
     const created = await prisma.$transaction(
-      transactions.map((t) =>
-        prisma.transaction.create({
+      transactions.map((t) => {
+        const txDate = new Date(t.date);
+        const scheduledLabelId = ctx ? matchScheduledLabel(txDate, ctx) : null;
+
+        return prisma.transaction.create({
           data: {
             amount: t.amount,
             description: t.description,
             type: t.type,
-            date: new Date(t.date),
+            date: txDate,
             categoryId: t.categoryId,
             userId,
             ...(t.receiptGroupId && { receiptGroupId: t.receiptGroupId }),
             ...(t.receiptBreakdown && { receiptBreakdown: t.receiptBreakdown }),
+            ...(scheduledLabelId && {
+              labels: {
+                create: { labelId: scheduledLabelId },
+              },
+            }),
           },
-          include: { category: true },
-        })
-      )
+          include: { category: true, labels: { include: { label: true } } },
+        });
+      })
     );
 
     return NextResponse.json({ transactions: created }, { status: 201 });

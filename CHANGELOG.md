@@ -754,6 +754,33 @@ All notable development history for the Budget Tracker app.
 
 ---
 
+## 2026-04-05 — Label Schedules (Auto-Tagging)
+
+### Label Schedule Configuration
+- Labels can now have time-of-day + day-of-week schedules (e.g. Mon-Fri 9am-5pm)
+- Multiple schedules per label supported; first-created label wins on overlap
+- Schedule UI in label create/edit form with day toggles + time range inputs
+- `LabelSchedule` Prisma model: `days` (int[]), `startTime`/`endTime` (HH:mm strings)
+
+### Client-Side Auto-Labeling
+- `useScheduledLabel` hook reactively computes matching label as transaction date changes
+- Auto-applied labels show clock icon badge in the label picker
+- Users can remove auto-applied labels before saving (e.g. holidays)
+- Removal tracking via refs prevents re-adding labels the user explicitly removed
+
+### Server-Side Auto-Labeling
+- Shared `schedule-server.ts` helper (`getScheduleContext` + `matchScheduledLabel`) used across all API routes
+- `POST /api/transactions` — auto-labels when `labelIds` not provided (hidden-label / scan flows)
+- `PUT /api/transactions/[id]` — auto-labels on cold-cache edits, preserves manual labels
+- `POST /api/transactions/batch` — auto-labels each transaction in batch (receipt scans)
+- `POST /api/bills/[id]/action` (pay) — auto-labels bill payment transactions
+- Convention: `labelIds: undefined` = server auto-applies; `labelIds: []` = user opted out
+
+### Retroactive Apply
+- `POST /api/labels/[id]/apply` — cursor-paginated endpoint to apply schedule to existing transactions
+- "Apply to existing" button on label cards with schedules
+- Confirmation modal + success toast with count of applied transactions
+
 ## 2026-04-04 — Upcoming Bills Timezone Fix
 
 ### Server-Side `daysUntilDue` Computation

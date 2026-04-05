@@ -9,7 +9,10 @@ export async function GET() {
 
   const labels = await prisma.label.findMany({
     where: { userId },
-    include: { _count: { select: { transactions: true } } },
+    include: {
+      _count: { select: { transactions: true } },
+      schedules: { orderBy: { createdAt: "asc" } },
+    },
     orderBy: { name: "asc" },
   });
 
@@ -40,8 +43,20 @@ export async function POST(request: Request) {
         name: validated.name,
         color: validated.color,
         userId,
+        ...(validated.schedules && validated.schedules.length > 0 && {
+          schedules: {
+            create: validated.schedules.map((s) => ({
+              days: s.days,
+              startTime: s.startTime,
+              endTime: s.endTime,
+            })),
+          },
+        }),
       },
-      include: { _count: { select: { transactions: true } } },
+      include: {
+        _count: { select: { transactions: true } },
+        schedules: { orderBy: { createdAt: "asc" } },
+      },
     });
 
     return NextResponse.json(label, { status: 201 });

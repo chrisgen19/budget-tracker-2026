@@ -32,6 +32,7 @@ import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import { useScan } from "@/components/scan-provider";
 import { MobileFab } from "@/components/ui/mobile-fab";
+import { TransactionLabelPills } from "@/components/transactions/transaction-label-pills";
 import {
   fetchTransactionsPage,
   queryKeys,
@@ -41,6 +42,7 @@ import {
   useUpdateTransaction,
   useDeleteTransaction,
   useBulkDeleteTransactions,
+  useRemoveTransactionLabel,
 } from "@/hooks/use-transactions";
 import type { TransactionInput } from "@/lib/validations";
 import { groupByDate, formatTime } from "@/lib/transaction-helpers";
@@ -131,6 +133,7 @@ export default function TransactionsPage() {
   const updateMutation = useUpdateTransaction();
   const deleteMutation = useDeleteTransaction();
   const bulkDeleteMutation = useBulkDeleteTransactions();
+  const removeLabelMutation = useRemoveTransactionLabel();
 
   // Reset page & selection when filters change
   useEffect(() => {
@@ -616,26 +619,20 @@ export default function TransactionsPage() {
                               {tx.category.name}
                             </p>
                             {tx.labels && tx.labels.length > 0 && (
-                              <>
-                                <span className="text-warm-200">&middot;</span>
-                                {tx.labels.slice(0, 3).map((tl) => (
-                                  <span
-                                    key={tl.id}
-                                    className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0"
-                                    style={{
-                                      backgroundColor: tl.label.color + "18",
-                                      color: tl.label.color,
-                                    }}
-                                  >
-                                    {tl.label.name}
-                                  </span>
-                                ))}
-                                {tx.labels.length > 3 && (
-                                  <span className="text-[10px] text-warm-300 shrink-0">
-                                    +{tx.labels.length - 3}
-                                  </span>
-                                )}
-                              </>
+                              <TransactionLabelPills
+                                labels={tx.labels}
+                                maxVisible={3}
+                                onRemove={(_tlId, labelId) =>
+                                  removeLabelMutation.mutate({ transactionId: tx.id, labelId })
+                                }
+                                removingLabelId={
+                                  removeLabelMutation.isPending &&
+                                  removeLabelMutation.variables?.transactionId === tx.id
+                                    ? removeLabelMutation.variables.labelId
+                                    : null
+                                }
+                                removeDisabled={removeLabelMutation.isPending}
+                              />
                             )}
                           </div>
                         </div>

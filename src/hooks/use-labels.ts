@@ -4,7 +4,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type { LabelInput } from "@/lib/validations";
-import type { LabelWithCount } from "@/types";
+import type { LabelWithCountAndSchedules } from "@/types";
 
 /* ------------------------------------------------------------------ */
 /*  Query key factory                                                  */
@@ -18,7 +18,7 @@ export const labelKeys = {
 /*  Fetch helpers                                                      */
 /* ------------------------------------------------------------------ */
 
-const fetchLabels = async (): Promise<LabelWithCount[]> => {
+const fetchLabels = async (): Promise<LabelWithCountAndSchedules[]> => {
   const res = await fetch("/api/labels");
   if (!res.ok) throw new Error("Failed to fetch labels");
   return res.json();
@@ -53,7 +53,7 @@ export function useCreateLabel() {
         const body = await res.json();
         throw new Error(body.error || "Failed to create label");
       }
-      return res.json() as Promise<LabelWithCount>;
+      return res.json() as Promise<LabelWithCountAndSchedules>;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
@@ -75,7 +75,7 @@ export function useUpdateLabel() {
         const body = await res.json();
         throw new Error(body.error || "Failed to update label");
       }
-      return res.json() as Promise<LabelWithCount>;
+      return res.json() as Promise<LabelWithCountAndSchedules>;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
@@ -96,6 +96,26 @@ export function useDeleteLabel() {
         throw new Error(body.error || "Failed to delete label");
       }
       return id;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: labelKeys.all });
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export function useApplyLabelSchedule() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (labelId: string) => {
+      const res = await fetch(`/api/labels/${labelId}/apply`, { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.error || "Failed to apply schedule");
+      }
+      return res.json() as Promise<{ applied: number; removed?: number }>;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: labelKeys.all });

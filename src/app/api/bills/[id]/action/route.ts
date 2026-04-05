@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { billActionSchema } from "@/lib/validations";
 import { computeNextDueDate } from "@/lib/bill-utils";
+import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 
 export async function POST(
   request: Request,
@@ -30,6 +31,10 @@ export async function POST(
     const originalStartDay = bill.startDate.getDate();
 
     if (action === "pay") {
+      // Compute scheduled label for this bill payment date
+      const ctx = await getScheduleContext(userId);
+      const scheduledLabelId = ctx ? matchScheduledLabel(dueDate, ctx) : null;
+
       // Create the real transaction
       const transaction = await prisma.transaction.create({
         data: {
@@ -40,6 +45,11 @@ export async function POST(
           categoryId: bill.categoryId,
           userId,
           billId: bill.id,
+          ...(scheduledLabelId && {
+            labels: {
+              create: { labelId: scheduledLabelId },
+            },
+          }),
         },
       });
 

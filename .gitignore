@@ -38,6 +38,7 @@ yarn-error.log*
 # claude code
 .claude-work/
 .claude/settings.local.json
+.agents/
 
 # mcp server
 mcp-server/node_modules/
