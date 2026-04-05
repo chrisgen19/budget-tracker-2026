@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Loader2, X } from "lucide-react";
 import type { Label, TransactionLabel } from "@/types";
 
@@ -22,6 +23,9 @@ export function TransactionLabelPills({
   removingLabelId,
   removeDisabled,
 }: TransactionLabelPillsProps) {
+  // On mobile, tap a pill to reveal X; tap again or tap elsewhere to dismiss
+  const [activePillId, setActivePillId] = useState<string | null>(null);
+
   if (labels.length === 0) return null;
 
   const visible = labels.slice(0, maxVisible);
@@ -32,6 +36,7 @@ export function TransactionLabelPills({
       <span className="text-warm-200">&middot;</span>
       {visible.map((tl) => {
         const isRemoving = removingLabelId === tl.labelId;
+        const isActive = activePillId === tl.id;
         return (
           <span
             key={tl.id}
@@ -40,6 +45,12 @@ export function TransactionLabelPills({
               backgroundColor: tl.label.color + "18",
               color: tl.label.color,
               opacity: isRemoving ? 0.5 : 1,
+            }}
+            onClick={(e) => {
+              if (!onRemove || isRemoving) return;
+              // On mobile: toggle active state to reveal X button
+              e.stopPropagation();
+              setActivePillId(isActive ? null : tl.id);
             }}
           >
             {tl.label.name}
@@ -52,9 +63,14 @@ export function TransactionLabelPills({
                   disabled={removeDisabled}
                   onClick={(e) => {
                     e.stopPropagation();
+                    setActivePillId(null);
                     onRemove(tl.id, tl.labelId);
                   }}
-                  className="hidden sm:group-hover/pill:inline-flex items-center justify-center w-3 h-3 -mr-0.5 rounded-full hover:bg-black/10 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                  className={
+                    isActive
+                      ? "inline-flex items-center justify-center w-3 h-3 -mr-0.5 rounded-full hover:bg-black/10 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                      : "hidden sm:group-hover/pill:inline-flex items-center justify-center w-3 h-3 -mr-0.5 rounded-full hover:bg-black/10 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                  }
                 >
                   <X className="w-2.5 h-2.5" />
                 </button>

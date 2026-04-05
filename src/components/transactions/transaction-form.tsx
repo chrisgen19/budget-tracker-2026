@@ -111,6 +111,8 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   const userRemovedAutoLabels = useRef<Set<string>>(new Set());
   const autoAppliedLabels = useRef<Set<string>>(new Set());
   const prevScheduledLabelId = useRef<string | null>(null);
+  // Tracks whether the user interacted with labels at all (add, remove, toggle)
+  const userTouchedLabels = useRef(false);
   // Seed initial snapshot: if editing and the transaction already has the scheduled
   // label, show the clock icon immediately without waiting for the effect to run.
   const [autoAppliedSnapshot, setAutoAppliedSnapshot] = useState<string[]>(() => {
@@ -169,13 +171,18 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     // Read current label state imperatively to avoid stale closure issues
     const currentIds = getValues("labelIds") ?? [];
 
-    // On first computation for edits: if the transaction already has the
-    // scheduled label from a prior session, seed autoAppliedLabels so the
-    // removal branch can clean it up when the date moves outside the window.
+    // On first computation for edits: seed tracking refs from the transaction's
+    // existing labels so the auto-label logic behaves correctly.
     if (prev === null && transaction && scheduledLabelId) {
       const existingLabelIds = transaction.labels?.map((tl) => tl.labelId) ?? [];
       if (existingLabelIds.includes(scheduledLabelId)) {
+        // Transaction has the scheduled label — mark as auto-applied so the
+        // removal branch can clean it up when the date moves outside the window.
         autoAppliedLabels.current.add(scheduledLabelId);
+      } else {
+        // Schedule matches but label is absent (e.g. quick-removed from list
+        // view). Seed userRemovedAutoLabels so the effect doesn't re-add it.
+        userRemovedAutoLabels.current.add(scheduledLabelId);
       }
     }
 
@@ -312,7 +319,8 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               // - the picker is hidden (server should auto-apply), OR
               // - the picker is visible but the user never interacted with labels
               //   (labelIds is still the default [] and no auto-label was applied/removed)
-              const userInteractedWithLabels = (labelIds && labelIds.length > 0)
+              const userInteractedWithLabels = userTouchedLabels.current
+                || (labelIds && labelIds.length > 0)
                 || userRemovedAutoLabels.current.size > 0;
               const includeLabelIds = !hideLabelPicker && userInteractedWithLabels;
               return onSubmit(includeLabelIds ? { ...payload, labelIds } : payload);
@@ -499,6 +507,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               <LabelPicker
                 selectedIds={watchedLabelIds}
                 onChange={(ids) => {
+                  userTouchedLabels.current = true;
                   if (scheduledLabelId) {
                     // User manually removed the auto-applied label
                     if (watchedLabelIds.includes(scheduledLabelId) && !ids.includes(scheduledLabelId)) {

@@ -453,8 +453,9 @@ export function useRemoveTransactionLabel() {
         }
       );
 
-      // Invalidate paginated + dashboard caches
-      queryClient.invalidateQueries({ queryKey: queryKeys.transactions.lists, refetchType: "none" });
+      // Invalidate paginated + dashboard caches (no refetchType: "none" here —
+      // paginated layout has no optimistic update, so it must refetch)
+      queryClient.invalidateQueries({ queryKey: queryKeys.transactions.lists });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
     },
