@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { billActionSchema } from "@/lib/validations";
 import { computeNextDueDate } from "@/lib/bill-utils";
+import { getScheduledLabelId, type ScheduleRule } from "@/lib/schedule-matching";
 
 export async function POST(
   request: Request,
@@ -30,6 +31,33 @@ export async function POST(
     const originalStartDay = bill.startDate.getDate();
 
     if (action === "pay") {
+      // Compute scheduled label for this bill payment date
+      const [labelsWithSchedules, user] = await Promise.all([
+        prisma.label.findMany({
+          where: { userId, schedules: { some: {} } },
+          include: { schedules: true },
+          orderBy: { createdAt: "asc" },
+        }),
+        prisma.user.findUniqueOrThrow({
+          where: { id: userId },
+          select: { timezoneOffset: true },
+        }),
+      ]);
+
+      const scheduleRules: ScheduleRule[] = labelsWithSchedules.flatMap((label) =>
+        label.schedules.map((s) => ({
+          labelId: label.id,
+          labelCreatedAt: label.createdAt,
+          days: s.days,
+          startTime: s.startTime,
+          endTime: s.endTime,
+        }))
+      );
+
+      const scheduledLabelId = scheduleRules.length > 0
+        ? getScheduledLabelId(dueDate, user.timezoneOffset, scheduleRules)
+        : null;
+
       // Create the real transaction
       const transaction = await prisma.transaction.create({
         data: {
@@ -40,6 +68,11 @@ export async function POST(
           categoryId: bill.categoryId,
           userId,
           billId: bill.id,
+          ...(scheduledLabelId && {
+            labels: {
+              create: { labelId: scheduledLabelId },
+            },
+          }),
         },
       });
 

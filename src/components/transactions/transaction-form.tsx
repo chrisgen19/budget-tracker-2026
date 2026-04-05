@@ -280,9 +280,13 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
           transition={{ type: "spring", stiffness: 300, damping: 30 }}
         >
           <form
-            onSubmit={handleSubmit((data) =>
-              onSubmit({ ...data, date: new Date(data.date).toISOString() })
-            )}
+            onSubmit={handleSubmit((data) => {
+              const { labelIds, ...rest } = data;
+              const payload = { ...rest, date: new Date(data.date).toISOString() };
+              // Only include labelIds when the picker is visible (user made an explicit choice).
+              // Hidden-label flows omit it so the server can auto-apply scheduled labels.
+              return onSubmit(hideLabelPicker ? payload : { ...payload, labelIds });
+            })}
             className="space-y-6"
           >
             {/* Type Toggle */}

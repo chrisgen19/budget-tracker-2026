@@ -113,9 +113,9 @@ export async function POST(request: Request) {
       verifiedLabelIds.push(...ownedLabels.map((l) => l.id));
     }
 
-    // Server-side auto-label when no labels were explicitly chosen
-    // Covers: labelIds undefined (external callers) and empty array (hidden-label flows like Bill Pay)
-    if (verifiedLabelIds.length === 0) {
+    // Server-side auto-label when labelIds not provided (hidden-label flows, external callers).
+    // When labelIds is explicitly [] the user opted out — respect that.
+    if (validated.labelIds === undefined) {
       const [labelsWithSchedules, user] = await Promise.all([
         prisma.label.findMany({
           where: { userId, schedules: { some: {} } },
