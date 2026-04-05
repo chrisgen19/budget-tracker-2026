@@ -37,15 +37,21 @@ export async function POST(_request: Request, { params }: RouteParams) {
   }
 
   // Process transactions in batches using cursor-based pagination.
-  // skipDuplicates handles existing associations, avoiding a full pre-fetch.
+  // For each transaction: insert the label if the schedule matches, or remove
+  // a stale association if the schedule no longer matches (e.g. after edit).
   let applied = 0;
+  let removed = 0;
   let cursor: string | undefined;
   const BATCH_SIZE = 500;
 
   while (true) {
     const transactions = await prisma.transaction.findMany({
       where: { userId },
-      select: { id: true, date: true },
+      select: {
+        id: true,
+        date: true,
+        labels: { where: { labelId: id }, select: { id: true } },
+      },
       orderBy: { id: "asc" },
       take: BATCH_SIZE,
       ...(cursor && { skip: 1, cursor: { id: cursor } }),
@@ -54,12 +60,17 @@ export async function POST(_request: Request, { params }: RouteParams) {
     if (transactions.length === 0) break;
 
     const toInsert: { transactionId: string; labelId: string }[] = [];
+    const toRemoveIds: string[] = [];
 
     for (const tx of transactions) {
       const matchedLabelId = matchScheduledLabel(tx.date, ctx);
+      const hasLabel = tx.labels.length > 0;
 
-      if (matchedLabelId === id) {
+      if (matchedLabelId === id && !hasLabel) {
         toInsert.push({ transactionId: tx.id, labelId: id });
+      } else if (matchedLabelId !== id && hasLabel) {
+        // Schedule no longer matches (narrowed window or lost to overlap) — remove stale
+        toRemoveIds.push(...tx.labels.map((tl) => tl.id));
       }
     }
 
@@ -71,9 +82,16 @@ export async function POST(_request: Request, { params }: RouteParams) {
       applied += result.count;
     }
 
+    if (toRemoveIds.length > 0) {
+      const result = await prisma.transactionLabel.deleteMany({
+        where: { id: { in: toRemoveIds } },
+      });
+      removed += result.count;
+    }
+
     cursor = transactions[transactions.length - 1].id;
     if (transactions.length < BATCH_SIZE) break;
   }
 
-  return NextResponse.json({ applied });
+  return NextResponse.json({ applied, removed });
 }

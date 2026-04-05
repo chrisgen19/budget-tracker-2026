@@ -115,7 +115,7 @@ export function useApplyLabelSchedule() {
         const body = await res.json();
         throw new Error(body.error || "Failed to apply schedule");
       }
-      return res.json() as Promise<{ applied: number }>;
+      return res.json() as Promise<{ applied: number; removed?: number }>;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: labelKeys.all });

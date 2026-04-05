@@ -23,7 +23,7 @@ export default function LabelsPage() {
   const [editingLabel, setEditingLabel] = useState<LabelWithCountAndSchedules | null>(null);
   const [deletingLabel, setDeletingLabel] = useState<LabelWithCountAndSchedules | null>(null);
   const [applyingLabel, setApplyingLabel] = useState<LabelWithCountAndSchedules | null>(null);
-  const [applyResult, setApplyResult] = useState<number | null>(null);
+  const [applyResult, setApplyResult] = useState<{ applied: number; removed: number } | null>(null);
   const [applyError, setApplyError] = useState<string | null>(null);
 
   const { data: labels = [], isLoading: loading } = useLabelsQuery();
@@ -64,7 +64,7 @@ export default function LabelsPage() {
     if (!applyingLabel) return;
     applySchedule.mutate(applyingLabel.id, {
       onSuccess: (data) => {
-        setApplyResult(data.applied);
+        setApplyResult({ applied: data.applied, removed: data.removed ?? 0 });
         setApplyingLabel(null);
       },
       onError: (err) => {
@@ -284,8 +284,12 @@ export default function LabelsPage() {
             exit={{ opacity: 0, y: 20 }}
             className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-warm-800 text-white text-sm px-5 py-3 rounded-xl shadow-lg z-50"
           >
-            Applied label to {applyResult}{" "}
-            {applyResult === 1 ? "transaction" : "transactions"}.
+            Applied to {applyResult.applied}{" "}
+            {applyResult.applied === 1 ? "transaction" : "transactions"}
+            {applyResult.removed > 0 && (
+              <>, removed from {applyResult.removed}</>
+            )}
+            .
           </motion.div>
         )}
         {applyError && (
