@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { transactionSchema } from "@/lib/validations";
-import { getScheduledLabelId, type ScheduleRule } from "@/lib/schedule-matching";
+import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 
 export async function GET(request: Request) {
   const userId = await getAuthUserId();
@@ -116,33 +116,9 @@ export async function POST(request: Request) {
     // Server-side auto-label when labelIds not provided (hidden-label flows, external callers).
     // When labelIds is explicitly [] the user opted out — respect that.
     if (validated.labelIds === undefined) {
-      const [labelsWithSchedules, user] = await Promise.all([
-        prisma.label.findMany({
-          where: { userId, schedules: { some: {} } },
-          include: { schedules: true },
-          orderBy: { createdAt: "asc" },
-        }),
-        prisma.user.findUniqueOrThrow({
-          where: { id: userId },
-          select: { timezoneOffset: true },
-        }),
-      ]);
-
-      if (labelsWithSchedules.length > 0) {
-        const scheduleRules: ScheduleRule[] = labelsWithSchedules.flatMap((label) =>
-          label.schedules.map((s) => ({
-            labelId: label.id,
-            labelCreatedAt: label.createdAt,
-            days: s.days,
-            startTime: s.startTime,
-            endTime: s.endTime,
-          }))
-        );
-        const scheduledId = getScheduledLabelId(
-          new Date(validated.date),
-          user.timezoneOffset,
-          scheduleRules
-        );
+      const ctx = await getScheduleContext(userId);
+      if (ctx) {
+        const scheduledId = matchScheduledLabel(new Date(validated.date), ctx);
         if (scheduledId) verifiedLabelIds.push(scheduledId);
       }
     }

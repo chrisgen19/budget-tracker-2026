@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
-import { getScheduledLabelId, type ScheduleRule } from "@/lib/schedule-matching";
+import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -30,27 +30,11 @@ export async function POST(_request: Request, { params }: RouteParams) {
     );
   }
 
-  // Fetch ALL user labels with schedules for overlap priority check
-  const allLabelsWithSchedules = await prisma.label.findMany({
-    where: { userId, schedules: { some: {} } },
-    include: { schedules: true },
-    orderBy: { createdAt: "asc" },
-  });
-
-  const scheduleRules: ScheduleRule[] = allLabelsWithSchedules.flatMap((l) =>
-    l.schedules.map((s) => ({
-      labelId: l.id,
-      labelCreatedAt: l.createdAt,
-      days: s.days,
-      startTime: s.startTime,
-      endTime: s.endTime,
-    }))
-  );
-
-  const user = await prisma.user.findUniqueOrThrow({
-    where: { id: userId },
-    select: { timezoneOffset: true },
-  });
+  // Fetch schedule context (all labels with schedules + timezone) for overlap priority
+  const ctx = await getScheduleContext(userId);
+  if (!ctx) {
+    return NextResponse.json({ applied: 0 });
+  }
 
   // Get existing associations for this label to avoid duplicates
   const existingAssociations = await prisma.transactionLabel.findMany({
@@ -80,11 +64,7 @@ export async function POST(_request: Request, { params }: RouteParams) {
     for (const tx of transactions) {
       if (existingSet.has(tx.id)) continue;
 
-      const matchedLabelId = getScheduledLabelId(
-        tx.date,
-        user.timezoneOffset,
-        scheduleRules
-      );
+      const matchedLabelId = matchScheduledLabel(tx.date, ctx);
 
       if (matchedLabelId === id) {
         toInsert.push({ transactionId: tx.id, labelId: id });

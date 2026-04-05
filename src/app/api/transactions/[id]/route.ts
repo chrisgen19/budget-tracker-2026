@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { transactionSchema } from "@/lib/validations";
-import { getScheduledLabelId, type ScheduleRule } from "@/lib/schedule-matching";
+import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -46,43 +46,19 @@ export async function PUT(request: Request, { params }: RouteParams) {
 
     // Server-side auto-label when labelIds not provided (cold-cache edits, hidden-label flows)
     if (!hasLabelIds) {
-      const [labelsWithSchedules, user] = await Promise.all([
-        prisma.label.findMany({
-          where: { userId, schedules: { some: {} } },
-          include: { schedules: true },
-          orderBy: { createdAt: "asc" },
-        }),
-        prisma.user.findUniqueOrThrow({
-          where: { id: userId },
-          select: { timezoneOffset: true },
+      const [ctx, existingLabels] = await Promise.all([
+        getScheduleContext(userId),
+        prisma.transactionLabel.findMany({
+          where: { transactionId: id },
+          select: { labelId: true },
         }),
       ]);
 
-      if (labelsWithSchedules.length > 0) {
-        const scheduleRules: ScheduleRule[] = labelsWithSchedules.flatMap((label) =>
-          label.schedules.map((s) => ({
-            labelId: label.id,
-            labelCreatedAt: label.createdAt,
-            days: s.days,
-            startTime: s.startTime,
-            endTime: s.endTime,
-          }))
-        );
-        const scheduledId = getScheduledLabelId(
-          new Date(validated.date),
-          user.timezoneOffset,
-          scheduleRules
-        );
-
-        // Preserve any existing non-scheduled labels, replace/add the scheduled one
-        const existingLabels = await prisma.transactionLabel.findMany({
-          where: { transactionId: id },
-          select: { labelId: true },
-        });
-        const scheduledLabelIds = new Set(labelsWithSchedules.map((l) => l.id));
+      if (ctx) {
+        const scheduledId = matchScheduledLabel(new Date(validated.date), ctx);
         // Keep manually-applied labels, drop any previously scheduled ones
         for (const el of existingLabels) {
-          if (!scheduledLabelIds.has(el.labelId)) {
+          if (!ctx.scheduledLabelIds.has(el.labelId)) {
             verifiedLabelIds.push(el.labelId);
           }
         }

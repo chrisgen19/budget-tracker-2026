@@ -35,7 +35,8 @@ src/
 ├── components/
 │   ├── ui/                 # Shared UI: Modal, EmptyState, IconMap, MobileFab, ConfirmModal, Toast, DropdownButton
 │   ├── dashboard/          # Chart components
-│   ├── transactions/       # Transaction form, ReceiptBreakdown
+│   ├── transactions/       # Transaction form, LabelPicker, ReceiptBreakdown
+│   ├── labels/             # LabelForm (with schedule config)
 │   ├── categories/         # Category form
 │   ├── bills/              # BillForm, BillReminderBanner, BillReminderProvider
 │   ├── pwa/                # InstallPromptBanner, OfflineBanner, InstallBannerContext
@@ -57,6 +58,8 @@ src/
 │   ├── bill-utils.ts       # Bill due-date advancement logic
 │   ├── budget-queries.ts   # Shared read-only Prisma query functions (used by app + MCP)
 │   ├── budget-query-types.ts  # TypeScript types for budget queries
+│   ├── schedule-matching.ts   # Pure schedule-matching utility (shared client/server)
+│   ├── schedule-server.ts     # Server-side schedule helpers (Prisma queries + matching)
 │   ├── query-client.ts     # TanStack Query client factory
 │   ├── utils.ts            # General utilities
 │   ├── validations.ts      # Zod schemas
@@ -88,8 +91,9 @@ src/
 - `DATABASE_URL` in `.env` points to local PostgreSQL
 - Default categories are seeded (15 total: 10 expense, 5 income)
 - Users can create custom categories on top of defaults
-- Key models: `User`, `Category`, `Transaction`, `Bill`, `VerificationToken`
+- Key models: `User`, `Category`, `Transaction`, `Bill`, `Label`, `LabelSchedule`, `TransactionLabel`, `VerificationToken`
 - Notable columns: `users.hide_amounts`, `users.timezone_offset`, `users.email_verified`, `transactions.receipt_group_id`, `transactions.receipt_breakdown`, `transactions.bill_id`
+- `LabelSchedule` stores per-label auto-apply rules: `days` (int[]), `startTime`/`endTime` (HH:mm), linked to `Label` via `labelId`
 
 ## Key Patterns
 - **PrivacyProvider** (`src/components/privacy-provider.tsx`) — shared hide-amounts state across all app pages, persisted in DB via `/api/preferences`
@@ -104,6 +108,7 @@ src/
 - **Receipt itemization** — multi-scan groups transactions by `receiptGroupId`; per-transaction `receiptBreakdown` JSON stores individual line items for each category
 - **TanStack React Query** — all data fetching uses React Query; `queryKeys` object in each query hook scopes cache invalidation; `query-client.ts` exports a factory (needed for server/client separation)
 - **Shared budget queries** (`src/lib/budget-queries.ts`) — dependency-injected Prisma functions shared between API routes and the MCP server
+- **Label schedules** — labels can have time-of-day + day-of-week schedules that auto-tag transactions; pure matching in `schedule-matching.ts`, server helpers in `schedule-server.ts`, client hook in `use-scheduled-label.ts`; first-created label wins on overlap; `labelIds: undefined` = server auto-applies, `labelIds: []` = user opted out
 - **Timezone offsets** — all date-range queries accept a `timezoneOffset` (minutes) for correct day/month boundaries; offset stored in `users.timezone_offset` and provided by `UserProvider`
 - **MCP server** (`mcp-server/`) — standalone package; runs via `tsx` over stdio; user ID injected via `BUDGET_USER_ID` env var; excluded from root `tsconfig.json`
 
@@ -118,6 +123,10 @@ src/
 - `PUT/DELETE /api/bills/[id]` — update/deactivate bills
 - `GET /api/bills/upcoming` — bills due within 30 days
 - `POST /api/bills/[id]/pay` — pay bill: creates transaction + advances next due date
+- `GET/POST /api/labels` — list (with schedules) + create labels
+- `PUT/DELETE /api/labels/[id]` — update/delete labels (ownership check)
+- `POST /api/labels/[id]/apply` — retroactively apply schedule to existing transactions
+- `POST /api/transactions/batch` — batch create/delete transactions (with auto-labeling)
 - `POST /api/receipts/scan` — Gemini OCR for single receipt
 - `POST /api/receipts/breakdown` — Gemini itemization by category for multi-scan
 - `GET/PATCH /api/preferences` — read/toggle user preferences (hide_amounts, etc.)

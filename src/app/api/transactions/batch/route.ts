@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { batchTransactionSchema } from "@/lib/validations";
-import { getScheduledLabelId, type ScheduleRule } from "@/lib/schedule-matching";
+import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 
 const batchSchema = z.object({
   transactions: z.array(batchTransactionSchema).min(1).max(50),
@@ -21,35 +21,13 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { transactions } = batchSchema.parse(body);
 
-    // Fetch labels with schedules + user timezone for auto-tagging
-    const [labelsWithSchedules, user] = await Promise.all([
-      prisma.label.findMany({
-        where: { userId, schedules: { some: {} } },
-        include: { schedules: true },
-        orderBy: { createdAt: "asc" },
-      }),
-      prisma.user.findUniqueOrThrow({
-        where: { id: userId },
-        select: { timezoneOffset: true },
-      }),
-    ]);
-
-    const scheduleRules: ScheduleRule[] = labelsWithSchedules.flatMap((label) =>
-      label.schedules.map((s) => ({
-        labelId: label.id,
-        labelCreatedAt: label.createdAt,
-        days: s.days,
-        startTime: s.startTime,
-        endTime: s.endTime,
-      }))
-    );
+    // Fetch schedule context for auto-tagging (short-circuits when no schedules exist)
+    const ctx = await getScheduleContext(userId);
 
     const created = await prisma.$transaction(
       transactions.map((t) => {
         const txDate = new Date(t.date);
-        const scheduledLabelId = scheduleRules.length > 0
-          ? getScheduledLabelId(txDate, user.timezoneOffset, scheduleRules)
-          : null;
+        const scheduledLabelId = ctx ? matchScheduledLabel(txDate, ctx) : null;
 
         return prisma.transaction.create({
           data: {

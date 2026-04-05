@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Plus, Pencil, Trash2, Tag, Clock, Play } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Modal } from "@/components/ui/modal";
@@ -30,6 +30,13 @@ export default function LabelsPage() {
   const updateLabel = useUpdateLabel();
   const deleteLabel = useDeleteLabel();
   const applySchedule = useApplyLabelSchedule();
+
+  // Auto-dismiss apply result toast after 3 seconds
+  useEffect(() => {
+    if (applyResult === null) return;
+    const timer = setTimeout(() => setApplyResult(null), 3000);
+    return () => clearTimeout(timer);
+  }, [applyResult]);
 
   const handleCreate = async (input: LabelInput) => {
     await createLabel.mutateAsync(input);
@@ -268,9 +275,6 @@ export default function LabelsPage() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
             className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-warm-800 text-white text-sm px-5 py-3 rounded-xl shadow-lg z-50"
-            onAnimationComplete={() => {
-              setTimeout(() => setApplyResult(null), 3000);
-            }}
           >
             Applied label to {applyResult}{" "}
             {applyResult === 1 ? "transaction" : "transactions"}.

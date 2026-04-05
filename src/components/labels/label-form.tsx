@@ -215,6 +215,7 @@ export function LabelForm({ label, onSubmit, onCancel }: LabelFormProps) {
 
         <p className="text-[11px] text-warm-300 mt-2">
           Transactions within these time windows will be auto-tagged with this label.
+          End time is exclusive (e.g. 17:00 means up to but not including 5:00 PM).
         </p>
       </div>
 
