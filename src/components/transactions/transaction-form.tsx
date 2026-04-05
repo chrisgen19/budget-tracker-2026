@@ -283,9 +283,14 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
             onSubmit={handleSubmit((data) => {
               const { labelIds, ...rest } = data;
               const payload = { ...rest, date: new Date(data.date).toISOString() };
-              // Only include labelIds when the picker is visible (user made an explicit choice).
-              // Hidden-label flows omit it so the server can auto-apply scheduled labels.
-              return onSubmit(hideLabelPicker ? payload : { ...payload, labelIds });
+              // Omit labelIds when:
+              // - the picker is hidden (server should auto-apply), OR
+              // - the picker is visible but the user never interacted with labels
+              //   (labelIds is still the default [] and no auto-label was applied/removed)
+              const userInteractedWithLabels = (labelIds && labelIds.length > 0)
+                || userRemovedAutoLabels.current.size > 0;
+              const includeLabelIds = !hideLabelPicker && userInteractedWithLabels;
+              return onSubmit(includeLabelIds ? { ...payload, labelIds } : payload);
             })}
             className="space-y-6"
           >
@@ -469,9 +474,17 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               <LabelPicker
                 selectedIds={watchedLabelIds}
                 onChange={(ids) => {
-                  // Track if user manually removed the auto-applied label
-                  if (scheduledLabelId && watchedLabelIds.includes(scheduledLabelId) && !ids.includes(scheduledLabelId)) {
-                    userRemovedAutoLabels.current.add(scheduledLabelId);
+                  if (scheduledLabelId) {
+                    // User manually removed the auto-applied label
+                    if (watchedLabelIds.includes(scheduledLabelId) && !ids.includes(scheduledLabelId)) {
+                      userRemovedAutoLabels.current.add(scheduledLabelId);
+                      autoAppliedLabels.current.delete(scheduledLabelId);
+                    }
+                    // User manually re-added the label — treat as user-owned, not auto
+                    if (!watchedLabelIds.includes(scheduledLabelId) && ids.includes(scheduledLabelId)) {
+                      autoAppliedLabels.current.delete(scheduledLabelId);
+                      userRemovedAutoLabels.current.delete(scheduledLabelId);
+                    }
                   }
                   setValue("labelIds", ids);
                 }}
