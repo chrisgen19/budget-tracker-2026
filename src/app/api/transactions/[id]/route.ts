@@ -58,13 +58,31 @@ export async function PUT(request: Request, { params }: RouteParams) {
 
       if (ctx) {
         const scheduledId = matchScheduledLabel(new Date(validated.date), ctx);
-        // Keep manually-applied labels, drop any previously scheduled ones
+        const existingLabelIdSet = new Set(existingLabels.map((el) => el.labelId));
+
+        // Preserve all existing labels (both manual and scheduled) as-is.
+        // Only adjust the scheduled slot: add the computed match if absent,
+        // or remove a stale scheduled label if the match changed.
         for (const el of existingLabels) {
-          if (!ctx.scheduledLabelIds.has(el.labelId)) {
-            verifiedLabelIds.push(el.labelId);
+          const isScheduled = ctx.scheduledLabelIds.has(el.labelId);
+          if (isScheduled && el.labelId !== scheduledId) {
+            // Stale scheduled label (date moved outside window or lost overlap) — drop it
+            continue;
+          }
+          verifiedLabelIds.push(el.labelId);
+        }
+        // Add new scheduled label only if not already present (user may have
+        // quick-removed it — absence is treated as an intentional override)
+        if (scheduledId && !existingLabelIdSet.has(scheduledId)) {
+          // Only auto-add if no other scheduled label was present (fresh transaction).
+          // If the user removed it previously, the absence is the override.
+          const hadAnyScheduledLabel = existingLabels.some(
+            (el) => ctx.scheduledLabelIds.has(el.labelId)
+          );
+          if (!hadAnyScheduledLabel) {
+            verifiedLabelIds.push(scheduledId);
           }
         }
-        if (scheduledId) verifiedLabelIds.push(scheduledId);
         shouldSyncLabels = true;
       }
     }

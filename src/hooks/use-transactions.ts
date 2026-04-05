@@ -453,9 +453,11 @@ export function useRemoveTransactionLabel() {
         }
       );
 
-      // Invalidate paginated + dashboard caches (no refetchType: "none" here —
-      // paginated layout has no optimistic update, so it must refetch)
-      queryClient.invalidateQueries({ queryKey: queryKeys.transactions.lists });
+      // Invalidate all transaction queries so filtered views (including infinite
+      // queries with a labelId filter) refetch and exclude the transaction.
+      // The optimistic cache update above gives instant UI feedback for the
+      // common case; the invalidation ensures correctness for filtered views.
+      queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
     },
