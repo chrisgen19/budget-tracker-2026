@@ -182,12 +182,14 @@ export interface AnalyticsSummary {
 export interface AnalyticsData {
   incomeExpenses: AnalyticsPeriodItem[];
   categoryBreakdown: AnalyticsCategoryItem[];
+  allCategoryBreakdown: AnalyticsCategoryItem[];
   labelBreakdown: AnalyticsLabelItem[];
   cashFlow: AnalyticsCashFlowItem[];
   summary: AnalyticsSummary;
   /** Previous period data for comparison (income & expenses report) */
   previousSummary: AnalyticsSummary;
   previousCategoryBreakdown: AnalyticsCategoryItem[];
+  allPreviousCategoryBreakdown: AnalyticsCategoryItem[];
   periodLabel: string;
   previousPeriodLabel: string;
 }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useCallback, useMemo } from "react";
-import type { AnalyticsCategoryItem, AnalyticsLabelItem } from "@/types";
 import { motion } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
 import { useUser } from "@/components/user-provider";
@@ -53,8 +52,9 @@ const formatPeriodLabel = (periodType: PeriodType, from: string, to: string): st
     }
     return `${MONTH_SHORT[fM - 1]} ${fD}, ${fY} – ${MONTH_SHORT[tM - 1]} ${tD}, ${tY}`;
   }
-  // Custom
-  if (fY === tY && fM === tM && fD === 1) {
+  // Custom — only show full month label if range covers the entire month
+  const lastDayOfMonth = new Date(fY, fM, 0).getDate();
+  if (fY === tY && fM === tM && fD === 1 && tD === lastDayOfMonth) {
     return `${MONTHS[fM - 1]} ${fY}`;
   }
   if (fY === tY) {
@@ -142,24 +142,10 @@ export default function AnalyticsPage() {
     granularity,
     from: dateRange.from,
     to: dateRange.to,
-    type: "ALL" as const,
-  }), [granularity, dateRange]);
+    type: typeFilter,
+  }), [granularity, dateRange, typeFilter]);
 
   const { data, isLoading, isError } = useAnalyticsQuery(params, tz);
-
-  const filteredCategories = useMemo((): AnalyticsCategoryItem[] => {
-    if (!data || typeFilter === "ALL") return data?.categoryBreakdown ?? [];
-    const filtered = data.categoryBreakdown.filter((c) => c.type === typeFilter);
-    const total = filtered.reduce((sum, c) => sum + c.amount, 0);
-    return filtered.map((c) => ({
-      ...c,
-      percentage: total > 0 ? Math.round((c.amount / total) * 100) : 0,
-    }));
-  }, [data, typeFilter]);
-
-  const filteredLabels = useMemo((): AnalyticsLabelItem[] => {
-    return data?.labelBreakdown ?? [];
-  }, [data]);
 
   const handlePeriodSelect = useCallback((type: PeriodType, from: string, to: string) => {
     setPeriodType(type);
@@ -231,8 +217,8 @@ export default function AnalyticsPage() {
               previousPeriodLabel={data.previousPeriodLabel}
               summary={data.summary}
               previousSummary={data.previousSummary}
-              categoryBreakdown={data.categoryBreakdown}
-              previousCategoryBreakdown={data.previousCategoryBreakdown}
+              categoryBreakdown={data.allCategoryBreakdown}
+              previousCategoryBreakdown={data.allPreviousCategoryBreakdown}
               currency={currency}
               hideAmounts={hideAmounts}
             />
@@ -257,13 +243,13 @@ export default function AnalyticsPage() {
                 </div>
                 <TypeFilter value={typeFilter} onChange={setTypeFilter} />
               </div>
-              <CategoryBreakdownChart data={filteredCategories} currency={currency} hideAmounts={hideAmounts} />
+              <CategoryBreakdownChart data={data.categoryBreakdown} currency={currency} hideAmounts={hideAmounts} />
             </motion.div>
 
             <motion.div variants={fadeUp} className="card p-5">
               <h2 className="font-serif text-lg text-warm-700">By Label</h2>
               <p className="text-xs text-warm-300 mb-4">Spending by label tags</p>
-              <LabelBreakdownChart data={filteredLabels} currency={currency} hideAmounts={hideAmounts} />
+              <LabelBreakdownChart data={data.labelBreakdown} currency={currency} hideAmounts={hideAmounts} />
             </motion.div>
           </div>
         </motion.div>

@@ -269,6 +269,14 @@ export async function GET(request: Request) {
   // --- Previous period: summary + category breakdown ---
   const { summary: previousSummary, categoryBreakdown: previousCategoryBreakdown } = computePeriodData(prevTransactions, type);
 
+  // --- Unfiltered category breakdowns for income/expenses report ---
+  const allCategoryBreakdown = type === "ALL"
+    ? categoryBreakdown
+    : computePeriodData(transactions, "ALL").categoryBreakdown;
+  const allPreviousCategoryBreakdown = type === "ALL"
+    ? previousCategoryBreakdown
+    : computePeriodData(prevTransactions, "ALL").categoryBreakdown;
+
   // --- Label Breakdown (current period only) ---
   const filteredForLabel = type === "ALL" ? transactions : transactions.filter((t) => t.type === type);
   const labelMap = new Map<string, AnalyticsLabelItem>();
@@ -326,11 +334,13 @@ export async function GET(request: Request) {
   return NextResponse.json({
     incomeExpenses,
     categoryBreakdown,
+    allCategoryBreakdown,
     labelBreakdown,
     cashFlow,
     summary,
     previousSummary,
     previousCategoryBreakdown,
+    allPreviousCategoryBreakdown,
     periodLabel,
     previousPeriodLabel,
   });
