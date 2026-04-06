@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, ChevronRight, Check, Clock, FastForward, Pencil, ChevronUp, CheckCheck } from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils";
@@ -47,10 +47,30 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
     handlePayAll,
     isActioning,
     payAllProgress,
+    setBannerHeight,
   } = useBillReminders();
 
   const [showSnoozeMenu, setShowSnoozeMenu] = useState(false);
   const snoozeRef = useRef<HTMLDivElement>(null);
+  const observerRef = useRef<ResizeObserver | null>(null);
+
+  // Callback ref to measure banner height dynamically via ResizeObserver
+  const bannerRef = useCallback((el: HTMLDivElement | null) => {
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+      observerRef.current = null;
+    }
+    if (!el) {
+      setBannerHeight(0);
+      return;
+    }
+    const observer = new ResizeObserver(([entry]) => {
+      const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.target.getBoundingClientRect().height;
+      setBannerHeight(height);
+    });
+    observer.observe(el);
+    observerRef.current = observer;
+  }, [setBannerHeight]);
 
   // Close snooze menu on outside click
   useEffect(() => {
@@ -98,6 +118,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
   return (
     <AnimatePresence>
       <motion.div
+        ref={bannerRef}
         initial={{ y: 100, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 100, opacity: 0 }}
