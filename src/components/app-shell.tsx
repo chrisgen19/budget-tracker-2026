@@ -57,8 +57,8 @@ const NAV_ITEMS = [
   { href: "/labels", label: "Labels", icon: Tag },
 ];
 
-/** Mobile bottom nav excludes Labels to avoid overflow on narrow viewports */
-const MOBILE_NAV_ITEMS = NAV_ITEMS.filter((item) => item.href !== "/labels");
+/** Mobile bottom nav excludes Labels and Categories to avoid overflow on narrow viewports */
+const MOBILE_NAV_ITEMS = NAV_ITEMS.filter((item) => item.href !== "/labels" && item.href !== "/categories");
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();

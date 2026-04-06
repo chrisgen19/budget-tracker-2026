@@ -155,12 +155,24 @@ export const resetPasswordSchema = z.object({
   path: ["confirmPassword"],
 });
 
+const validDateString = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)")
+  .refine((s) => {
+    const [y, m, d] = s.split("-").map(Number);
+    const date = new Date(y, m - 1, d);
+    return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
+  }, "Invalid calendar date");
+
 export const analyticsQuerySchema = z.object({
   granularity: z.enum(["weekly", "monthly", "yearly"]),
-  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)"),
-  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)"),
+  from: validDateString,
+  to: validDateString,
   tz: z.coerce.number().int(),
   type: z.enum(["ALL", "INCOME", "EXPENSE"]).default("ALL"),
+}).refine((data) => data.from <= data.to, {
+  message: "from must not be after to",
+  path: ["from"],
 });
 
 export type AnalyticsQueryInput = z.infer<typeof analyticsQuerySchema>;

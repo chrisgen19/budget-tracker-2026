@@ -139,7 +139,7 @@ const computePeriodData = (
       existing.transactionCount += 1;
     } else {
       categoryMap.set(mapKey, {
-        id: t.categoryId,
+        id: mapKey,
         name: t.category.name,
         color: t.category.color,
         icon: t.category.icon,
@@ -261,7 +261,7 @@ export async function GET(request: Request) {
 
   for (const key of bucketKeys) {
     const bucket = periodMap.get(key)!;
-    const periodLabel = toBucketLabel(key, granularity, startDate, endDate);
+    const periodLabel = toBucketLabel(key, granularity, fromDate, toDate);
     const net = bucket.income - bucket.expenses;
     cumulativeNet += net;
 
@@ -315,15 +315,13 @@ export async function GET(request: Request) {
     }
   }
 
-  const labelBreakdown: AnalyticsLabelItem[] = Array.from(labelMap.values())
-    .sort((a, b) => b.amount - a.amount)
-    .map((item) => ({
-      ...item,
-      percentage: totalForLabelPct > 0 ? Math.round((item.amount / totalForLabelPct) * 100) : 0,
-    }));
+  const labelEntries: AnalyticsLabelItem[] = Array.from(labelMap.values()).map((item) => ({
+    ...item,
+    percentage: totalForLabelPct > 0 ? Math.round((item.amount / totalForLabelPct) * 100) : 0,
+  }));
 
   if (unlabeledCount > 0) {
-    labelBreakdown.push({
+    labelEntries.push({
       id: "unlabeled",
       name: "Unlabeled",
       color: "#9CA3AF",
@@ -332,6 +330,8 @@ export async function GET(request: Request) {
       transactionCount: unlabeledCount,
     });
   }
+
+  const labelBreakdown = labelEntries.sort((a, b) => b.amount - a.amount);
 
   // --- Period labels ---
   const periodLabel = formatPeriodLabel(from, to);
