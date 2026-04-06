@@ -62,8 +62,8 @@ const navigateRange = (
   granularity: AnalyticsGranularity,
   direction: "prev" | "next"
 ): { from: string; to: string } => {
-  const fromDate = new Date(from);
-  const toDate = new Date(to);
+  const fromDate = parseLocalDate(from);
+  const toDate = parseLocalDate(to);
   const sign = direction === "next" ? 1 : -1;
 
   switch (granularity) {
@@ -102,9 +102,15 @@ const formatDateStr = (d: Date): string => {
   return `${y}-${m}-${day}`;
 };
 
+/** Parse YYYY-MM-DD as a local date (not UTC midnight). */
+const parseLocalDate = (s: string): Date => {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, m - 1, d);
+};
+
 /** Auto-pick granularity based on date span. */
 const autoGranularity = (from: string, to: string): AnalyticsGranularity => {
-  const days = (new Date(to).getTime() - new Date(from).getTime()) / (24 * 60 * 60 * 1000);
+  const days = (parseLocalDate(to).getTime() - parseLocalDate(from).getTime()) / (24 * 60 * 60 * 1000);
   if (days < 90) return "weekly";
   if (days < 730) return "monthly";
   return "yearly";

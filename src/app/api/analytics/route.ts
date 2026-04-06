@@ -202,6 +202,8 @@ export async function GET(request: Request) {
     }));
 
   // --- Label Breakdown ---
+  // For multi-label transactions, split the amount evenly across labels
+  // so percentages don't exceed 100%.
   const filteredForLabel = type === "ALL"
     ? transactions
     : transactions.filter((t) => t.type === type);
@@ -217,17 +219,18 @@ export async function GET(request: Request) {
       unlabeledCount += 1;
       continue;
     }
+    const share = t.amount / t.labels.length;
     for (const tl of t.labels) {
       const existing = labelMap.get(tl.labelId);
       if (existing) {
-        existing.amount += t.amount;
+        existing.amount += share;
         existing.transactionCount += 1;
       } else {
         labelMap.set(tl.labelId, {
           id: tl.labelId,
           name: tl.label.name,
           color: tl.label.color,
-          amount: t.amount,
+          amount: share,
           percentage: 0,
           transactionCount: 1,
         });
