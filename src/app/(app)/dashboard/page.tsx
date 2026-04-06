@@ -398,6 +398,11 @@ export default function DashboardPage() {
                     <div className="flex items-center justify-between px-5 py-2.5 bg-cream-50 border-b border-cream-200">
                       <span className="text-xs font-semibold text-warm-500 uppercase tracking-wide">
                         {group.dateLabel}
+                        {user.showDayName && (
+                          <span className="text-warm-300 font-normal normal-case tracking-normal ml-1.5">
+                            · {user.dayNameFormat === "FULL" ? group.dayNameFull : group.dayNameShort}
+                          </span>
+                        )}
                       </span>
                       {!hideAmounts && (
                         <span

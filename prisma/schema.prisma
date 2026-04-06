@@ -32,6 +32,11 @@ enum BillOccurrenceStatus {
   SNOOZED
 }
 
+enum DayNameFormat {
+  FULL
+  SHORT
+}
+
 enum TokenType {
   EMAIL_VERIFICATION
   PASSWORD_RESET
@@ -52,6 +57,8 @@ model User {
   transactionLayout       String        @default("infinite") @map("transaction_layout")
   transactionAmountAutofocus Boolean    @default(true) @map("transaction_amount_autofocus")
   defaultLabelType           String     @default("EXPENSE") @map("default_label_type")
+  showDayName                Boolean    @default(true) @map("show_day_name")
+  dayNameFormat              DayNameFormat @default(SHORT) @map("day_name_format")
   timezoneOffset          Int           @default(-480) @map("timezone_offset")
   transactions            Transaction[]
   categories              Category[]

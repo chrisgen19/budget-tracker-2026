@@ -16,6 +16,8 @@ export async function GET() {
       transactionLayout: true,
       transactionAmountAutofocus: true,
       defaultLabelType: true,
+      showDayName: true,
+      dayNameFormat: true,
     },
   });
 
@@ -27,6 +29,8 @@ export async function GET() {
     transactionLayout: user?.transactionLayout ?? "infinite",
     transactionAmountAutofocus: user?.transactionAmountAutofocus ?? true,
     defaultLabelType: user?.defaultLabelType ?? "EXPENSE",
+    showDayName: user?.showDayName ?? true,
+    dayNameFormat: user?.dayNameFormat ?? "SHORT",
   });
 }
 
@@ -96,6 +100,21 @@ export async function PATCH(request: Request) {
     data.defaultLabelType = val;
   }
 
+  if ("showDayName" in body) {
+    data.showDayName = Boolean(body.showDayName);
+  }
+
+  if ("dayNameFormat" in body) {
+    const val = body.dayNameFormat;
+    if (val !== "FULL" && val !== "SHORT") {
+      return NextResponse.json(
+        { error: "dayNameFormat must be 'FULL' or 'SHORT'" },
+        { status: 400 }
+      );
+    }
+    data.dayNameFormat = val;
+  }
+
   const user = await prisma.user.update({
     where: { id: userId },
     data,
@@ -107,6 +126,8 @@ export async function PATCH(request: Request) {
       transactionLayout: true,
       transactionAmountAutofocus: true,
       defaultLabelType: true,
+      showDayName: true,
+      dayNameFormat: true,
     },
   });
 
@@ -118,5 +139,7 @@ export async function PATCH(request: Request) {
     transactionLayout: user.transactionLayout,
     transactionAmountAutofocus: user.transactionAmountAutofocus,
     defaultLabelType: user.defaultLabelType,
+    showDayName: user.showDayName,
+    dayNameFormat: user.dayNameFormat,
   });
 }
