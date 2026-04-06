@@ -60,7 +60,10 @@ export async function POST(request: Request) {
             : null;
           if (scheduledLabelId) resolvedLabelIds = [scheduledLabelId];
         } else if (t.labelIds.length > 0) {
+          const seen = new Set<string>();
           resolvedLabelIds = t.labelIds.filter((id) => {
+            if (seen.has(id)) return false;
+            seen.add(id);
             const applicableTo = ownedLabelMap.get(id);
             return applicableTo === "BOTH" || applicableTo === t.type;
           });
