@@ -42,8 +42,9 @@ export async function POST(request: Request) {
       ownedLabelMap = new Map(ownedLabels.map((l) => [l.id, l.applicableTo]));
     }
 
-    // Fetch schedule context for auto-tagging (short-circuits when no schedules exist)
-    const ctx = await getScheduleContext(userId);
+    // Fetch schedule context only when at least one item needs auto-tagging
+    const needsAutoLabel = transactions.some((t) => t.labelIds === undefined);
+    const ctx = needsAutoLabel ? await getScheduleContext(userId) : null;
 
     const created = await prisma.$transaction(
       transactions.map((t) => {

@@ -100,11 +100,12 @@ export async function POST(request: Request) {
     // Validate label ownership and type compatibility before writing
     const verifiedLabelIds: string[] = [];
     if (validated.labelIds && validated.labelIds.length > 0) {
+      const uniqueLabelIds = [...new Set(validated.labelIds)];
       const ownedLabels = await prisma.label.findMany({
-        where: { id: { in: validated.labelIds }, userId },
+        where: { id: { in: uniqueLabelIds }, userId },
         select: { id: true, applicableTo: true },
       });
-      if (ownedLabels.length !== validated.labelIds.length) {
+      if (ownedLabels.length !== uniqueLabelIds.length) {
         return NextResponse.json(
           { error: "One or more labels are invalid or do not belong to you" },
           { status: 400 }
