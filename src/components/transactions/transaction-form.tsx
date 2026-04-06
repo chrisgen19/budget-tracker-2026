@@ -22,6 +22,7 @@ export interface InitialTransactionData {
   type?: "INCOME" | "EXPENSE";
   date?: string;
   categoryId?: string;
+  labelIds?: string[];
 }
 
 interface TransactionFormProps {
@@ -98,7 +99,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
         ? formatDateInput(transaction.date)
         : initialData?.date ?? formatDateInput(new Date()),
       categoryId: transaction?.categoryId ?? initialData?.categoryId ?? "",
-      labelIds: transaction?.labels?.map((tl) => tl.labelId) ?? [],
+      labelIds: transaction?.labels?.map((tl) => tl.labelId) ?? initialData?.labelIds ?? [],
     },
   });
 

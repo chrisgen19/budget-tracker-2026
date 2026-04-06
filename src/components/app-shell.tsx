@@ -269,11 +269,13 @@ export function AppShell({ children }: AppShellProps) {
           ? {
               ...item,
               data: {
+                ...item.data,
                 amount: input.amount,
                 description: input.description,
                 type: input.type,
                 date: input.date,
                 categoryId: input.categoryId,
+                labelIds: input.labelIds,
               },
             }
           : item
@@ -404,6 +406,7 @@ export function AppShell({ children }: AppShellProps) {
           type: item.data!.type!,
           date: item.data!.date ? new Date(item.data!.date).toISOString() : new Date().toISOString(),
           categoryId: item.data!.categoryId!,
+          ...(item.data!.labelIds && { labelIds: item.data!.labelIds }),
           ...(item.data!.receiptGroupId && { receiptGroupId: item.data!.receiptGroupId }),
           ...(item.data!.receiptBreakdown && { receiptBreakdown: item.data!.receiptBreakdown }),
         }))
@@ -737,9 +740,9 @@ export function AppShell({ children }: AppShellProps) {
                   type: editItem.data.type,
                   date: editItem.data.date,
                   categoryId: editItem.data.categoryId,
+                  labelIds: editItem.data.labelIds,
                 }}
                 dateWarning={editItem.data.dateWarning}
-                hideLabelPicker
                 onSubmit={handleMultiScanEditSubmit}
                 onCancel={() => setEditingItemId(null)}
               />

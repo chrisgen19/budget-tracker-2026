@@ -106,6 +106,7 @@ export interface MultiScanItem {
     type?: "INCOME" | "EXPENSE";
     date?: string;
     categoryId?: string;
+    labelIds?: string[];
     receiptGroupId?: string;
     receiptBreakdown?: ReceiptBreakdownMeta;
     /** Whether the receipt has items spanning 2+ spending categories */
