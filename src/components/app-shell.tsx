@@ -15,7 +15,6 @@ import {
   User,
   ScanLine,
   Shield,
-  Settings2,
   AlertTriangle,
 } from "lucide-react";
 import { cn, compressImage, formatDateInput } from "@/lib/utils";
@@ -54,11 +53,10 @@ const NAV_ITEMS = [
   { href: "/bills", label: "Bills", icon: CalendarClock },
   { href: "/categories", label: "Categories", icon: Tags },
   { href: "/labels", label: "Labels", icon: Tag },
-  { href: "/preferences", label: "Preferences", icon: Settings2 },
 ];
 
-/** Mobile bottom nav excludes Labels and Preferences to avoid overflow on narrow viewports */
-const MOBILE_NAV_ITEMS = NAV_ITEMS.filter((item) => item.href !== "/labels" && item.href !== "/preferences");
+/** Mobile bottom nav excludes Labels to avoid overflow on narrow viewports */
+const MOBILE_NAV_ITEMS = NAV_ITEMS.filter((item) => item.href !== "/labels");
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
