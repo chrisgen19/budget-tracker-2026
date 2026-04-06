@@ -2,6 +2,31 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-04-06 — Analytics Page (Phase 1)
+
+### Analytics & Reporting
+- Added dedicated Analytics page (`/analytics`) with top-level navigation
+- Income & Expenses bar chart with period bucketing (weekly/monthly/yearly)
+- Cash Flow area chart showing net flow per period (positive/negative fills) with cumulative trend line
+- Category Breakdown donut chart with full ranked list, transaction counts, and icons
+- Label Breakdown horizontal bar chart with progress bars and percentage
+- Summary cards row: total income, total expenses, net cash flow, transaction count
+- Time Range Picker: preset toggles (Weekly/Monthly/Yearly) with navigation arrows, plus Custom date range mode
+- Type Filter: segmented control (All/Expenses/Income) filters category and label breakdowns
+- Auto-granularity for custom ranges (< 3 months = weekly, < 2 years = monthly, else yearly)
+- Empty period buckets rendered for visual continuity
+- Privacy mode support — all amounts respect hide-amounts toggle
+- Loading skeleton matching full page layout
+- Staggered Framer Motion entrance animations
+- New API endpoint: `GET /api/analytics` with `granularity`, `from`, `to`, `tz`, `type` params
+- Single Prisma query with in-memory aggregation for all chart sections
+- React Query hook (`useAnalyticsQuery`) with cache invalidation on transaction mutations
+- Mobile-responsive: charts stack vertically, compact nav items
+
+### Navigation
+- Added Analytics to desktop sidebar and mobile bottom nav (BarChart3 icon)
+- Reduced mobile nav item padding to accommodate 5 items + scan button
+
 ## 2026-02-17 — Initial Build
 
 ### Project Initialization

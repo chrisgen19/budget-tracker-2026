@@ -128,6 +128,65 @@ export interface MultiScanItem {
   parentId?: string;
 }
 
+/** Analytics granularity for time bucketing */
+export type AnalyticsGranularity = "weekly" | "monthly" | "yearly";
+
+/** Analytics type filter */
+export type AnalyticsTypeFilter = "ALL" | "INCOME" | "EXPENSE";
+
+/** Single period bucket for income/expenses and cash flow */
+export interface AnalyticsPeriodItem {
+  period: string;       // "2026-W14", "2026-03", "2026"
+  periodLabel: string;  // "Apr 1–7", "Mar 2026", "2026"
+  income: number;
+  expenses: number;
+}
+
+/** Category breakdown item with richer data than dashboard */
+export interface AnalyticsCategoryItem {
+  id: string;
+  name: string;
+  color: string;
+  icon: string;
+  type: "INCOME" | "EXPENSE";
+  amount: number;
+  percentage: number;
+  transactionCount: number;
+}
+
+/** Label breakdown item */
+export interface AnalyticsLabelItem {
+  id: string;
+  name: string;
+  color: string;
+  amount: number;
+  percentage: number;
+  transactionCount: number;
+}
+
+/** Cash flow period (extends period item with net calculations) */
+export interface AnalyticsCashFlowItem extends AnalyticsPeriodItem {
+  net: number;
+  cumulativeNet: number;
+}
+
+/** Summary totals for the selected range */
+export interface AnalyticsSummary {
+  totalIncome: number;
+  totalExpenses: number;
+  netCashFlow: number;
+  transactionCount: number;
+}
+
+/** Full analytics API response */
+export interface AnalyticsData {
+  incomeExpenses: AnalyticsPeriodItem[];
+  categoryBreakdown: AnalyticsCategoryItem[];
+  labelBreakdown: AnalyticsLabelItem[];
+  cashFlow: AnalyticsCashFlowItem[];
+  summary: AnalyticsSummary;
+}
+
 /** Extend next-auth types */
 declare module "next-auth" {
   interface Session {

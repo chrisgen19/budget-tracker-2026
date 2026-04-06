@@ -155,6 +155,16 @@ export const resetPasswordSchema = z.object({
   path: ["confirmPassword"],
 });
 
+export const analyticsQuerySchema = z.object({
+  granularity: z.enum(["weekly", "monthly", "yearly"]),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)"),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)"),
+  tz: z.coerce.number().int(),
+  type: z.enum(["ALL", "INCOME", "EXPENSE"]).default("ALL"),
+});
+
+export type AnalyticsQueryInput = z.infer<typeof analyticsQuerySchema>;
+
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;

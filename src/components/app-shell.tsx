@@ -6,6 +6,7 @@ import Link from "next/link";
 import { signOut } from "next-auth/react";
 import {
   LayoutDashboard,
+  BarChart3,
   ArrowLeftRight,
   CalendarClock,
   Tags,
@@ -49,6 +50,7 @@ const withLocalTime = (dateStr: string): string => {
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
   { href: "/bills", label: "Bills", icon: CalendarClock },
   { href: "/categories", label: "Categories", icon: Tags },
@@ -607,7 +609,7 @@ export function AppShell({ children }: AppShellProps) {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all duration-200 min-w-[72px]",
+                  "flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all duration-200 min-w-[60px]",
                   isActive
                     ? "text-amber"
                     : "text-warm-300"
