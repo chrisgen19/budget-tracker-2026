@@ -188,8 +188,9 @@ export async function GET(request: Request) {
   let prevFrom: string;
   let prevTo: string;
 
-  if (fD === 1 && fY === tY && fM === tM) {
-    // Monthly: shift back one calendar month
+  const lastDayOfFromMonth = new Date(fY, fM, 0).getDate();
+  if (fD === 1 && fY === tY && fM === tM && tD === lastDayOfFromMonth) {
+    // Monthly (full month only): shift back one calendar month
     const pm = fM - 1 === 0 ? 12 : fM - 1;
     const py = fM - 1 === 0 ? fY - 1 : fY;
     const lastDay = new Date(py, pm, 0).getDate();

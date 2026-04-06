@@ -114,8 +114,10 @@ export function TimeRangePicker({
       sunday.setDate(sunday.getDate() + 6);
 
       // Only include weeks that overlap with the target month
-      if (monday.getMonth() > month && monday.getFullYear() >= year) break;
-      if (sunday.getMonth() < month && sunday.getFullYear() <= year) {
+      const monthEnd = new Date(year, month + 1, 0); // last day of target month
+      const monthStart = new Date(year, month, 1);
+      if (monday > monthEnd) break;
+      if (sunday < monthStart) {
         cursor.setDate(cursor.getDate() + 7);
         continue;
       }

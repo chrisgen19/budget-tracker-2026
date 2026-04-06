@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo } from "react";
+import type { AnalyticsCategoryItem, AnalyticsLabelItem } from "@/types";
 import { motion } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
 import { useUser } from "@/components/user-provider";
@@ -141,10 +142,24 @@ export default function AnalyticsPage() {
     granularity,
     from: dateRange.from,
     to: dateRange.to,
-    type: typeFilter,
-  }), [granularity, dateRange, typeFilter]);
+    type: "ALL" as const,
+  }), [granularity, dateRange]);
 
   const { data, isLoading, isError } = useAnalyticsQuery(params, tz);
+
+  const filteredCategories = useMemo((): AnalyticsCategoryItem[] => {
+    if (!data || typeFilter === "ALL") return data?.categoryBreakdown ?? [];
+    const filtered = data.categoryBreakdown.filter((c) => c.type === typeFilter);
+    const total = filtered.reduce((sum, c) => sum + c.amount, 0);
+    return filtered.map((c) => ({
+      ...c,
+      percentage: total > 0 ? Math.round((c.amount / total) * 100) : 0,
+    }));
+  }, [data, typeFilter]);
+
+  const filteredLabels = useMemo((): AnalyticsLabelItem[] => {
+    return data?.labelBreakdown ?? [];
+  }, [data]);
 
   const handlePeriodSelect = useCallback((type: PeriodType, from: string, to: string) => {
     setPeriodType(type);
@@ -242,13 +257,13 @@ export default function AnalyticsPage() {
                 </div>
                 <TypeFilter value={typeFilter} onChange={setTypeFilter} />
               </div>
-              <CategoryBreakdownChart data={data.categoryBreakdown} currency={currency} hideAmounts={hideAmounts} />
+              <CategoryBreakdownChart data={filteredCategories} currency={currency} hideAmounts={hideAmounts} />
             </motion.div>
 
             <motion.div variants={fadeUp} className="card p-5">
               <h2 className="font-serif text-lg text-warm-700">By Label</h2>
               <p className="text-xs text-warm-300 mb-4">Spending by label tags</p>
-              <LabelBreakdownChart data={data.labelBreakdown} currency={currency} hideAmounts={hideAmounts} />
+              <LabelBreakdownChart data={filteredLabels} currency={currency} hideAmounts={hideAmounts} />
             </motion.div>
           </div>
         </motion.div>
