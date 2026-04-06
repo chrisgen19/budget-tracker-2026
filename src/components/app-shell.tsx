@@ -275,7 +275,7 @@ export function AppShell({ children }: AppShellProps) {
                 type: input.type,
                 date: input.date,
                 categoryId: input.categoryId,
-                labelIds: input.labelIds,
+                labelIds: input.labelIds ?? item.data?.labelIds,
               },
             }
           : item
