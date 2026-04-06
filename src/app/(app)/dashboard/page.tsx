@@ -448,7 +448,7 @@ export default function DashboardPage() {
                                 </span>
                               )}
                             </div>
-                            <div className="flex items-center gap-1 min-w-0">
+                            <div className="flex items-center gap-1 min-w-0 overflow-hidden">
                               <p className="text-xs text-warm-300 truncate">
                                 {tx.category.name}
                               </p>
