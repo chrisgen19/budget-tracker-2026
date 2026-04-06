@@ -2,120 +2,110 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
-import { BarChart3 } from "lucide-react";
+import { BarChart3, AlertTriangle } from "lucide-react";
 import { useUser } from "@/components/user-provider";
 import { usePrivacy } from "@/components/privacy-provider";
 import { useAnalyticsQuery, type AnalyticsParams } from "@/hooks/use-analytics";
 import { TimeRangePicker } from "@/components/analytics/time-range-picker";
 import { TypeFilter } from "@/components/analytics/type-filter";
-import { IncomeExpensesChart } from "@/components/analytics/income-expenses-chart";
+import { IncomeExpensesReport } from "@/components/analytics/income-expenses-report";
 import { CashFlowChart } from "@/components/analytics/cash-flow-chart";
 import { CategoryBreakdownChart } from "@/components/analytics/category-breakdown-chart";
 import { LabelBreakdownChart } from "@/components/analytics/label-breakdown-chart";
 import { AnalyticsSummary } from "@/components/analytics/analytics-summary";
 import { AnalyticsSkeleton } from "@/components/analytics/analytics-skeleton";
-import { AlertTriangle } from "lucide-react";
 import type { AnalyticsGranularity, AnalyticsTypeFilter } from "@/types";
 
-/** Get "now" adjusted to the user's saved timezone offset (minutes). */
-const getUserNow = (tzOffset: number): Date => {
-  const utcNow = new Date();
-  // Shift UTC to the user's local time
-  return new Date(utcNow.getTime() - tzOffset * 60 * 1000);
-};
+type PeriodType = AnalyticsGranularity | "custom";
 
-/** Compute default date range for a given granularity using the user's timezone. */
-const getDefaultRange = (granularity: AnalyticsGranularity, tzOffset: number): { from: string; to: string } => {
-  const now = getUserNow(tzOffset);
-  // Use UTC methods since we already shifted to user-local time
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+/** Get current period boundaries using the user's saved timezone. */
+const getCurrentMonth = (tzOffset: number): { from: string; to: string; label: string } => {
+  const utcNow = new Date();
+  const now = new Date(utcNow.getTime() - tzOffset * 60 * 1000);
   const y = now.getUTCFullYear();
   const m = now.getUTCMonth();
-  const d = now.getUTCDate();
-  let fromDate: Date;
-  let toDate: Date;
-
-  switch (granularity) {
-    case "weekly": {
-      // End on Sunday of the current week
-      const todayDow = now.getUTCDay(); // 0=Sun
-      const sundayOffset = todayDow === 0 ? 0 : 7 - todayDow;
-      toDate = new Date(Date.UTC(y, m, d + sundayOffset));
-      // Start 8 weeks before the end (Mon of that week)
-      fromDate = new Date(toDate.getTime() - 8 * 7 * 24 * 60 * 60 * 1000 + 24 * 60 * 60 * 1000);
-      break;
-    }
-    case "monthly": {
-      // Last 6 months: 1st of (current - 5) to end of current month
-      fromDate = new Date(Date.UTC(y, m - 5, 1));
-      toDate = new Date(Date.UTC(y, m + 1, 0)); // End of current month
-      break;
-    }
-    case "yearly": {
-      // Last 3 years
-      fromDate = new Date(Date.UTC(y - 2, 0, 1));
-      toDate = new Date(Date.UTC(y, 11, 31));
-      break;
-    }
-  }
-
+  const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
   return {
-    from: formatDateStr(fromDate, true),
-    to: formatDateStr(toDate, true),
+    from: `${y}-${String(m + 1).padStart(2, "0")}-01`,
+    to: `${y}-${String(m + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+    label: `${MONTHS[m]} ${y}`,
   };
 };
 
-/** Navigate the range forward or backward by one "page".
- *  Custom ranges always shift by their exact day span to preserve the window size. */
-const navigateRange = (
+/** Format period label from from/to strings. */
+const formatPeriodLabel = (periodType: PeriodType, from: string, to: string): string => {
+  const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const [fY, fM, fD] = from.split("-").map(Number);
+  const [tY, tM, tD] = to.split("-").map(Number);
+
+  if (periodType === "monthly") {
+    return `${MONTHS[fM - 1]} ${fY}`;
+  }
+  if (periodType === "yearly") {
+    return `${fY}`;
+  }
+  if (periodType === "weekly") {
+    if (fY === tY) {
+      return `${MONTH_SHORT[fM - 1]} ${fD} – ${MONTH_SHORT[tM - 1]} ${tD}, ${tY}`;
+    }
+    return `${MONTH_SHORT[fM - 1]} ${fD}, ${fY} – ${MONTH_SHORT[tM - 1]} ${tD}, ${tY}`;
+  }
+  // Custom
+  if (fY === tY && fM === tM && fD === 1) {
+    return `${MONTHS[fM - 1]} ${fY}`;
+  }
+  if (fY === tY) {
+    return `${MONTH_SHORT[fM - 1]} ${fD} – ${MONTH_SHORT[tM - 1]} ${tD}, ${tY}`;
+  }
+  return `${MONTH_SHORT[fM - 1]} ${fD}, ${fY} – ${MONTH_SHORT[tM - 1]} ${tD}, ${tY}`;
+};
+
+/** Navigate to previous/next period. */
+const navigatePeriod = (
+  periodType: PeriodType,
   from: string,
   to: string,
-  granularity: AnalyticsGranularity,
   direction: "prev" | "next",
-  isCustom: boolean,
 ): { from: string; to: string } => {
-  const fromDate = parseLocalDate(from);
-  const toDate = parseLocalDate(to);
+  const [fY, fM, fD] = from.split("-").map(Number);
   const sign = direction === "next" ? 1 : -1;
-  const spanDays = Math.round((toDate.getTime() - fromDate.getTime()) / (24 * 60 * 60 * 1000)) + 1;
 
-  // Custom ranges always shift by exact day span regardless of granularity
-  if (isCustom || granularity === "weekly") {
-    fromDate.setDate(fromDate.getDate() + sign * spanDays);
-    toDate.setDate(toDate.getDate() + sign * spanDays);
-  } else if (granularity === "monthly") {
-    const months = (toDate.getFullYear() - fromDate.getFullYear()) * 12 + (toDate.getMonth() - fromDate.getMonth()) + 1;
-    fromDate.setMonth(fromDate.getMonth() + sign * months);
-    toDate.setMonth(toDate.getMonth() + sign * months);
-    // Fix end-of-month
-    toDate.setMonth(toDate.getMonth() + 1, 0);
-  } else {
-    const years = toDate.getFullYear() - fromDate.getFullYear() + 1;
-    fromDate.setFullYear(fromDate.getFullYear() + sign * years);
-    toDate.setFullYear(toDate.getFullYear() + sign * years);
+  if (periodType === "monthly") {
+    const d = new Date(fY, fM - 1 + sign, 1);
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    return {
+      from: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`,
+      to: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+    };
   }
 
-  return {
-    from: formatDateStr(fromDate),
-    to: formatDateStr(toDate),
-  };
+  if (periodType === "yearly") {
+    const y = fY + sign;
+    return { from: `${y}-01-01`, to: `${y}-12-31` };
+  }
+
+  // Weekly or custom: shift by exact day span
+  const fromDate = new Date(fY, fM - 1, fD);
+  const [tY, tM, tD] = to.split("-").map(Number);
+  const toDate = new Date(tY, tM - 1, tD);
+  const span = Math.round((toDate.getTime() - fromDate.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+  fromDate.setDate(fromDate.getDate() + sign * span);
+  toDate.setDate(toDate.getDate() + sign * span);
+
+  const fmtDate = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return { from: fmtDate(fromDate), to: fmtDate(toDate) };
 };
 
-const formatDateStr = (d: Date, utc = false): string => {
-  const y = utc ? d.getUTCFullYear() : d.getFullYear();
-  const m = String((utc ? d.getUTCMonth() : d.getMonth()) + 1).padStart(2, "0");
-  const day = String(utc ? d.getUTCDate() : d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-};
-
-/** Parse YYYY-MM-DD as a local date (not UTC midnight). */
-const parseLocalDate = (s: string): Date => {
-  const [y, m, d] = s.split("-").map(Number);
-  return new Date(y, m - 1, d);
-};
-
-/** Auto-pick granularity based on date span. */
-const autoGranularity = (from: string, to: string): AnalyticsGranularity => {
-  const days = (parseLocalDate(to).getTime() - parseLocalDate(from).getTime()) / (24 * 60 * 60 * 1000);
+/** Map period type to internal chart granularity. */
+const chartGranularity = (periodType: PeriodType, from: string, to: string): AnalyticsGranularity => {
+  if (periodType === "yearly") return "monthly";
+  if (periodType === "monthly") return "weekly";
+  if (periodType === "weekly") return "weekly";
+  // Custom: auto based on span
+  const days = (new Date(to).getTime() - new Date(from).getTime()) / (24 * 60 * 60 * 1000);
   if (days < 90) return "weekly";
   if (days < 730) return "monthly";
   return "yearly";
@@ -123,10 +113,7 @@ const autoGranularity = (from: string, to: string): AnalyticsGranularity => {
 
 const stagger = {
   hidden: { opacity: 0 },
-  show: {
-    opacity: 1,
-    transition: { staggerChildren: 0.06 },
-  },
+  show: { opacity: 1, transition: { staggerChildren: 0.06 } },
 };
 
 const fadeUp = {
@@ -138,12 +125,17 @@ export default function AnalyticsPage() {
   const { user } = useUser();
   const { hideAmounts } = usePrivacy();
   const currency = user.currency;
-
   const tz = user.timezoneOffset;
-  const [granularity, setGranularity] = useState<AnalyticsGranularity>("monthly");
-  const [isCustom, setIsCustom] = useState(false);
-  const [dateRange, setDateRange] = useState(() => getDefaultRange("monthly", tz));
+
+  const [periodType, setPeriodType] = useState<PeriodType>("monthly");
+  const [dateRange, setDateRange] = useState(() => {
+    const { from, to } = getCurrentMonth(tz);
+    return { from, to };
+  });
   const [typeFilter, setTypeFilter] = useState<AnalyticsTypeFilter>("ALL");
+
+  const periodLabel = formatPeriodLabel(periodType, dateRange.from, dateRange.to);
+  const granularity = chartGranularity(periodType, dateRange.from, dateRange.to);
 
   const params: AnalyticsParams = useMemo(() => ({
     granularity,
@@ -154,29 +146,14 @@ export default function AnalyticsPage() {
 
   const { data, isLoading, isError } = useAnalyticsQuery(params, tz);
 
-  const handleGranularityChange = useCallback((g: AnalyticsGranularity) => {
-    setGranularity(g);
-    setIsCustom(false);
-    setDateRange(getDefaultRange(g, tz));
-  }, [tz]);
-
-  const handleCustomToggle = useCallback(() => {
-    setIsCustom((prev) => !prev);
+  const handlePeriodSelect = useCallback((type: PeriodType, from: string, to: string) => {
+    setPeriodType(type);
+    setDateRange({ from, to });
   }, []);
 
-  const handleRangeChange = useCallback((from: string, to: string) => {
-    if (!from || !to) return;
-    // Auto-swap inverted ranges so from <= to
-    const [validFrom, validTo] = from <= to ? [from, to] : [to, from];
-    setDateRange({ from: validFrom, to: validTo });
-    if (isCustom) {
-      setGranularity(autoGranularity(validFrom, validTo));
-    }
-  }, [isCustom]);
-
   const handleNavigate = useCallback((direction: "prev" | "next") => {
-    setDateRange((prev) => navigateRange(prev.from, prev.to, granularity, direction, isCustom));
-  }, [granularity, isCustom]);
+    setDateRange((prev) => navigatePeriod(periodType, prev.from, prev.to, direction));
+  }, [periodType]);
 
   return (
     <div className="max-w-4xl mx-auto px-4 pt-6 pb-28 sm:pb-10">
@@ -191,19 +168,16 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* Controls */}
-      <div className="space-y-4 mb-6">
+      {/* Period Selector */}
+      <div className="mb-6">
         <TimeRangePicker
-          granularity={granularity}
+          periodType={periodType}
           from={dateRange.from}
           to={dateRange.to}
-          isCustom={isCustom}
-          onGranularityChange={handleGranularityChange}
-          onCustomToggle={handleCustomToggle}
-          onRangeChange={handleRangeChange}
+          label={periodLabel}
+          onPeriodSelect={handlePeriodSelect}
           onNavigate={handleNavigate}
         />
-        <TypeFilter value={typeFilter} onChange={setTypeFilter} />
       </div>
 
       {isLoading ? (
@@ -236,11 +210,20 @@ export default function AnalyticsPage() {
             <AnalyticsSummary data={data.summary} currency={currency} hideAmounts={hideAmounts} />
           </motion.div>
 
-          {/* Income & Expenses Chart */}
+          {/* Income & Expenses Report */}
           <motion.div variants={fadeUp} className="card p-5">
-            <h2 className="font-serif text-lg text-warm-700">Income & Expenses</h2>
-            <p className="text-xs text-warm-300 mb-4">How much am I earning vs spending?</p>
-            <IncomeExpensesChart data={data.incomeExpenses} currency={currency} hideAmounts={hideAmounts} />
+            <h2 className="font-serif text-lg text-warm-700">Incomes & Expenses Report</h2>
+            <p className="text-xs text-warm-300 mb-4">Current vs previous period by category</p>
+            <IncomeExpensesReport
+              periodLabel={data.periodLabel}
+              previousPeriodLabel={data.previousPeriodLabel}
+              summary={data.summary}
+              previousSummary={data.previousSummary}
+              categoryBreakdown={data.categoryBreakdown}
+              previousCategoryBreakdown={data.previousCategoryBreakdown}
+              currency={currency}
+              hideAmounts={hideAmounts}
+            />
           </motion.div>
 
           {/* Cash Flow Chart */}
@@ -255,8 +238,13 @@ export default function AnalyticsPage() {
           {/* Breakdowns */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <motion.div variants={fadeUp} className="card p-5">
-              <h2 className="font-serif text-lg text-warm-700">By Category</h2>
-              <p className="text-xs text-warm-300 mb-4">Where is my money going?</p>
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="font-serif text-lg text-warm-700">By Category</h2>
+                  <p className="text-xs text-warm-300">Where is my money going?</p>
+                </div>
+                <TypeFilter value={typeFilter} onChange={setTypeFilter} />
+              </div>
               <CategoryBreakdownChart data={data.categoryBreakdown} currency={currency} hideAmounts={hideAmounts} />
             </motion.div>
 

@@ -185,6 +185,11 @@ export interface AnalyticsData {
   labelBreakdown: AnalyticsLabelItem[];
   cashFlow: AnalyticsCashFlowItem[];
   summary: AnalyticsSummary;
+  /** Previous period data for comparison (income & expenses report) */
+  previousSummary: AnalyticsSummary;
+  previousCategoryBreakdown: AnalyticsCategoryItem[];
+  periodLabel: string;
+  previousPeriodLabel: string;
 }
 
 /** Extend next-auth types */

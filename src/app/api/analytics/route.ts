@@ -8,6 +8,7 @@ import type {
   AnalyticsLabelItem,
   AnalyticsCashFlowItem,
   AnalyticsGranularity,
+  AnalyticsSummary,
 } from "@/types";
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -22,7 +23,7 @@ const toBucketKey = (date: Date, granularity: AnalyticsGranularity, tzMs: number
   if (granularity === "yearly") return `${y}`;
   if (granularity === "monthly") return `${y}-${String(m + 1).padStart(2, "0")}`;
 
-  // Weekly: ISO week — find Monday of the week
+  // Weekly: find Monday of the week
   const dayOfWeek = local.getUTCDay(); // 0=Sun
   const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
   const monday = new Date(Date.UTC(y, m, d + mondayOffset));
@@ -58,7 +59,6 @@ const generateBucketKeys = (from: Date, to: Date, granularity: AnalyticsGranular
   const seen = new Set<string>();
   const cursor = new Date(from.getTime());
 
-  // Step by day for weekly, by month for monthly, by year for yearly
   const stepMs = granularity === "weekly" ? 24 * 60 * 60 * 1000 : 0;
 
   while (cursor <= to) {
@@ -79,6 +79,79 @@ const generateBucketKeys = (from: Date, to: Date, granularity: AnalyticsGranular
   }
 
   return keys;
+};
+
+/** Generate a human-readable label for a period's from/to range. */
+const formatPeriodLabel = (from: string, to: string): string => {
+  const [fY, fM, fD] = from.split("-").map(Number);
+  const [tY, tM, tD] = to.split("-").map(Number);
+
+  // Single month: "April 2026"
+  if (fD === 1 && fY === tY && fM === tM) {
+    return `${MONTH_NAMES[fM - 1]} ${fY}`;
+  }
+  // Full year: "2026"
+  if (fM === 1 && fD === 1 && tM === 12 && tD === 31 && fY === tY) {
+    return `${fY}`;
+  }
+  // Same year
+  if (fY === tY) {
+    return `${MONTH_NAMES[fM - 1]} ${fD} – ${MONTH_NAMES[tM - 1]} ${tD}, ${tY}`;
+  }
+  return `${MONTH_NAMES[fM - 1]} ${fD}, ${fY} – ${MONTH_NAMES[tM - 1]} ${tD}, ${tY}`;
+};
+
+/** Compute summary + category breakdown from a transaction set. */
+const computePeriodData = (
+  transactions: Array<{ amount: number; type: string; categoryId: string; category: { name: string; color: string; icon: string }; labels?: Array<{ labelId: string; label: { name: string; color: string } }> }>,
+  type: string,
+) => {
+  const totalIncome = transactions
+    .filter((t) => t.type === "INCOME")
+    .reduce((sum, t) => sum + t.amount, 0);
+  const totalExpenses = transactions
+    .filter((t) => t.type === "EXPENSE")
+    .reduce((sum, t) => sum + t.amount, 0);
+
+  const summary: AnalyticsSummary = {
+    totalIncome,
+    totalExpenses,
+    netCashFlow: totalIncome - totalExpenses,
+    transactionCount: transactions.length,
+  };
+
+  // Category breakdown
+  const filtered = type === "ALL" ? transactions : transactions.filter((t) => t.type === type);
+  const categoryMap = new Map<string, AnalyticsCategoryItem>();
+  const total = filtered.reduce((sum, t) => sum + t.amount, 0);
+
+  for (const t of filtered) {
+    const existing = categoryMap.get(t.categoryId);
+    if (existing) {
+      existing.amount += t.amount;
+      existing.transactionCount += 1;
+    } else {
+      categoryMap.set(t.categoryId, {
+        id: t.categoryId,
+        name: t.category.name,
+        color: t.category.color,
+        icon: t.category.icon,
+        type: t.type as "INCOME" | "EXPENSE",
+        amount: t.amount,
+        percentage: 0,
+        transactionCount: 1,
+      });
+    }
+  }
+
+  const categoryBreakdown = Array.from(categoryMap.values())
+    .sort((a, b) => b.amount - a.amount)
+    .map((item) => ({
+      ...item,
+      percentage: total > 0 ? Math.round((item.amount / total) * 100) : 0,
+    }));
+
+  return { summary, categoryBreakdown };
 };
 
 export async function GET(request: Request) {
@@ -107,23 +180,28 @@ export async function GET(request: Request) {
   const startDate = new Date(fromDate.getTime() + tzMs);
   const endDate = new Date(toDate.getTime() + tzMs);
 
-  // Single query for all transactions in range with relations
-  const transactions = await prisma.transaction.findMany({
-    where: {
-      userId,
-      date: { gte: startDate, lte: endDate },
-    },
-    include: {
-      category: true,
-      labels: { include: { label: true } },
-    },
-    orderBy: { date: "asc" },
-  });
+  // Compute previous period (same span, shifted back)
+  const spanMs = endDate.getTime() - startDate.getTime();
+  const prevEndDate = new Date(startDate.getTime() - 1); // 1ms before current start
+  const prevStartDate = new Date(prevEndDate.getTime() - spanMs);
 
-  // Generate all bucket keys for the range (ensures empty periods appear)
+  // Fetch current + previous period transactions in parallel
+  const [transactions, prevTransactions] = await Promise.all([
+    prisma.transaction.findMany({
+      where: { userId, date: { gte: startDate, lte: endDate } },
+      include: { category: true, labels: { include: { label: true } } },
+      orderBy: { date: "asc" },
+    }),
+    prisma.transaction.findMany({
+      where: { userId, date: { gte: prevStartDate, lte: prevEndDate } },
+      include: { category: true, labels: { include: { label: true } } },
+      orderBy: { date: "asc" },
+    }),
+  ]);
+
+  // --- Current period: time series ---
   const bucketKeys = generateBucketKeys(startDate, endDate, granularity, tzMs);
 
-  // --- Income & Expenses + Cash Flow ---
   const periodMap = new Map<string, { income: number; expenses: number }>();
   for (const key of bucketKeys) {
     periodMap.set(key, { income: 0, expenses: 0 });
@@ -148,66 +226,18 @@ export async function GET(request: Request) {
     const net = bucket.income - bucket.expenses;
     cumulativeNet += net;
 
-    incomeExpenses.push({
-      period: key,
-      periodLabel,
-      income: bucket.income,
-      expenses: bucket.expenses,
-    });
-
-    cashFlow.push({
-      period: key,
-      periodLabel,
-      income: bucket.income,
-      expenses: bucket.expenses,
-      net,
-      cumulativeNet,
-    });
+    incomeExpenses.push({ period: key, periodLabel, income: bucket.income, expenses: bucket.expenses });
+    cashFlow.push({ period: key, periodLabel, income: bucket.income, expenses: bucket.expenses, net, cumulativeNet });
   }
 
-  // --- Category Breakdown ---
-  const filteredForCategory = type === "ALL"
-    ? transactions
-    : transactions.filter((t) => t.type === type);
+  // --- Current period: summary + category breakdown ---
+  const { summary, categoryBreakdown } = computePeriodData(transactions, type);
 
-  const categoryMap = new Map<string, AnalyticsCategoryItem>();
-  const totalForCategoryPct = filteredForCategory.reduce((sum, t) => sum + t.amount, 0);
+  // --- Previous period: summary + category breakdown ---
+  const { summary: previousSummary, categoryBreakdown: previousCategoryBreakdown } = computePeriodData(prevTransactions, type);
 
-  for (const t of filteredForCategory) {
-    const existing = categoryMap.get(t.categoryId);
-    if (existing) {
-      existing.amount += t.amount;
-      existing.transactionCount += 1;
-    } else {
-      categoryMap.set(t.categoryId, {
-        id: t.categoryId,
-        name: t.category.name,
-        color: t.category.color,
-        icon: t.category.icon,
-        type: t.type as "INCOME" | "EXPENSE",
-        amount: t.amount,
-        percentage: 0,
-        transactionCount: 1,
-      });
-    }
-  }
-
-  const categoryBreakdown = Array.from(categoryMap.values())
-    .sort((a, b) => b.amount - a.amount)
-    .map((item) => ({
-      ...item,
-      percentage: totalForCategoryPct > 0
-        ? Math.round((item.amount / totalForCategoryPct) * 100)
-        : 0,
-    }));
-
-  // --- Label Breakdown ---
-  // For multi-label transactions, split the amount evenly across labels
-  // so percentages don't exceed 100%.
-  const filteredForLabel = type === "ALL"
-    ? transactions
-    : transactions.filter((t) => t.type === type);
-
+  // --- Label Breakdown (current period only) ---
+  const filteredForLabel = type === "ALL" ? transactions : transactions.filter((t) => t.type === type);
   const labelMap = new Map<string, AnalyticsLabelItem>();
   const totalForLabelPct = filteredForLabel.reduce((sum, t) => sum + t.amount, 0);
   let unlabeledAmount = 0;
@@ -242,44 +272,35 @@ export async function GET(request: Request) {
     .sort((a, b) => b.amount - a.amount)
     .map((item) => ({
       ...item,
-      percentage: totalForLabelPct > 0
-        ? Math.round((item.amount / totalForLabelPct) * 100)
-        : 0,
+      percentage: totalForLabelPct > 0 ? Math.round((item.amount / totalForLabelPct) * 100) : 0,
     }));
 
-  // Add unlabeled bucket at the end
   if (unlabeledCount > 0) {
     labelBreakdown.push({
       id: "unlabeled",
       name: "Unlabeled",
       color: "#9CA3AF",
       amount: unlabeledAmount,
-      percentage: totalForLabelPct > 0
-        ? Math.round((unlabeledAmount / totalForLabelPct) * 100)
-        : 0,
+      percentage: totalForLabelPct > 0 ? Math.round((unlabeledAmount / totalForLabelPct) * 100) : 0,
       transactionCount: unlabeledCount,
     });
   }
 
-  // --- Summary ---
-  const totalIncome = transactions
-    .filter((t) => t.type === "INCOME")
-    .reduce((sum, t) => sum + t.amount, 0);
-
-  const totalExpenses = transactions
-    .filter((t) => t.type === "EXPENSE")
-    .reduce((sum, t) => sum + t.amount, 0);
+  // --- Period labels ---
+  const periodLabel = formatPeriodLabel(from, to);
+  const prevFromStr = prevStartDate.toISOString().slice(0, 10);
+  const prevToStr = prevEndDate.toISOString().slice(0, 10);
+  const previousPeriodLabel = formatPeriodLabel(prevFromStr, prevToStr);
 
   return NextResponse.json({
     incomeExpenses,
     categoryBreakdown,
     labelBreakdown,
     cashFlow,
-    summary: {
-      totalIncome,
-      totalExpenses,
-      netCashFlow: totalIncome - totalExpenses,
-      transactionCount: transactions.length,
-    },
+    summary,
+    previousSummary,
+    previousCategoryBreakdown,
+    periodLabel,
+    previousPeriodLabel,
   });
 }
