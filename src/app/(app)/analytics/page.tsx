@@ -156,7 +156,7 @@ export default function AnalyticsPage() {
   }, [periodType]);
 
   return (
-    <div className="max-w-4xl mx-auto px-4 pt-6 pb-28 sm:pb-10">
+    <div>
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center">
