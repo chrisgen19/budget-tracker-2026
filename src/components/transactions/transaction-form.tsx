@@ -337,7 +337,8 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               // - the picker is visible but the user never interacted with labels
               //   (labelIds is still the default [] and no auto-label was applied/removed)
               const userInteractedWithLabels = userTouchedLabels.current
-                || userRemovedAutoLabels.current.size > 0;
+                || userRemovedAutoLabels.current.size > 0
+                || autoAppliedLabels.current.size > 0;
               const includeLabelIds = !hideLabelPicker && userInteractedWithLabels;
               return onSubmit(includeLabelIds ? { ...payload, labelIds } : payload);
             })}

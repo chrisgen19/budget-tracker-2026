@@ -50,7 +50,8 @@ export async function PUT(request: Request, { params }: RouteParams) {
       verifiedLabelIds.push(...compatible.map((l) => l.id));
     }
 
-    // Server-side label reconciliation when labelIds not provided (cold-cache edits, hidden-label flows)
+    // Server-side label reconciliation when labelIds not provided (cold-cache edits, hidden-label flows).
+    // Always runs to enforce type compatibility, even for users without schedules.
     if (!hasLabelIds) {
       const [ctx, existingLabels] = await Promise.all([
         getScheduleContext(userId),
@@ -60,22 +61,22 @@ export async function PUT(request: Request, { params }: RouteParams) {
         }),
       ]);
 
-      if (ctx) {
-        const scheduledId = matchScheduledLabel(new Date(validated.date), ctx, validated.type);
+      const scheduledId = ctx
+        ? matchScheduledLabel(new Date(validated.date), ctx, validated.type)
+        : null;
 
-        for (const el of existingLabels) {
-          const isScheduled = ctx.scheduledLabelIds.has(el.labelId);
-          // Drop stale scheduled labels (date moved outside window or lost overlap)
-          if (isScheduled && el.labelId !== scheduledId) continue;
-          // Drop labels incompatible with the (possibly changed) transaction type
-          if (el.label.applicableTo !== "BOTH" && el.label.applicableTo !== validated.type) continue;
-          verifiedLabelIds.push(el.labelId);
-        }
-        // Never auto-add scheduled labels on edits — absence of a scheduled label
-        // is treated as an intentional user override (e.g. quick-removed from list view).
-        // Scheduled labels are only auto-added on transaction *creation*.
-        shouldSyncLabels = true;
+      for (const el of existingLabels) {
+        const isScheduled = ctx?.scheduledLabelIds.has(el.labelId) ?? false;
+        // Drop stale scheduled labels (date moved outside window or lost overlap)
+        if (isScheduled && el.labelId !== scheduledId) continue;
+        // Drop labels incompatible with the (possibly changed) transaction type
+        if (el.label.applicableTo !== "BOTH" && el.label.applicableTo !== validated.type) continue;
+        verifiedLabelIds.push(el.labelId);
       }
+      // Never auto-add scheduled labels on edits — absence of a scheduled label
+      // is treated as an intentional user override (e.g. quick-removed from list view).
+      // Scheduled labels are only auto-added on transaction *creation*.
+      shouldSyncLabels = true;
     }
 
     const result = await prisma.$transaction(async (tx) => {
