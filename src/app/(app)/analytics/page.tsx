@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
-import { BarChart3, AlertTriangle } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { useUser } from "@/components/user-provider";
 import { usePrivacy } from "@/components/privacy-provider";
 import { useAnalyticsQuery, type AnalyticsParams } from "@/hooks/use-analytics";
@@ -157,14 +157,11 @@ export default function AnalyticsPage() {
 
   return (
     <div>
-      {/* Header */}
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center">
-          <BarChart3 className="w-5 h-5 text-amber-600" />
-        </div>
+      {/* Page Header */}
+      <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="font-serif text-2xl text-warm-800">Analytics</h1>
-          <p className="text-xs text-warm-400">Reports &amp; insights</p>
+          <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">Analytics</h1>
+          <p className="text-warm-400 text-sm mt-1">Reports &amp; insights</p>
         </div>
       </div>
 
