@@ -3,6 +3,8 @@ import type { TransactionWithCategory } from "@/types";
 export interface DateGroup {
   dateKey: string;
   dateLabel: string;
+  dayNameFull: string;
+  dayNameShort: string;
   transactions: TransactionWithCategory[];
   subtotal: number;
 }
@@ -18,6 +20,14 @@ export const formatDateLabel = (key: string) =>
     day: "numeric",
     year: "numeric",
   }).format(new Date(key + "T00:00:00"));
+
+/** "2026-02-18" → "Wednesday" */
+export const formatDayNameFull = (key: string) =>
+  new Intl.DateTimeFormat("en-US", { weekday: "long" }).format(new Date(key + "T00:00:00"));
+
+/** "2026-02-18" → "Wed" */
+export const formatDayNameShort = (key: string) =>
+  new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(new Date(key + "T00:00:00"));
 
 /** Date object → "3:27 PM" */
 export const formatTime = (date: string | Date) =>
@@ -42,6 +52,8 @@ export const groupByDate = (transactions: TransactionWithCategory[]): DateGroup[
     .map(([key, txs]) => ({
       dateKey: key,
       dateLabel: formatDateLabel(key),
+      dayNameFull: formatDayNameFull(key),
+      dayNameShort: formatDayNameShort(key),
       transactions: txs,
       subtotal: txs.reduce(
         (sum, t) => sum + (t.type === "INCOME" ? t.amount : -t.amount),

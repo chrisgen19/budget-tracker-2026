@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { User, Lock, Check, Loader2, Sparkles, ScanLine, Rows3, Target, Tag } from "lucide-react";
+import { User, Lock, Check, Loader2, Sparkles, ScanLine, Rows3, Target, Tag, Settings2, ChevronRight } from "lucide-react";
+import Link from "next/link";
 import {
   updateProfileSchema,
   changePasswordSchema,
@@ -204,6 +205,23 @@ export default function ProfilePage() {
         </div>
         <p className="text-warm-400 mt-1">Manage your account settings</p>
       </div>
+
+      {/* Mobile link to Preferences (not in bottom nav) */}
+      <Link
+        href="/preferences"
+        className="lg:hidden flex items-center justify-between gap-3 p-4 card hover:bg-cream-50 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center">
+            <Settings2 className="w-5 h-5 text-amber-dark" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-warm-600">Preferences</p>
+            <p className="text-xs text-warm-400">Display settings</p>
+          </div>
+        </div>
+        <ChevronRight className="w-4 h-4 text-warm-300" />
+      </Link>
 
       <div className="flex flex-col lg:flex-row gap-6">
         {/* Desktop Tab Nav */}
