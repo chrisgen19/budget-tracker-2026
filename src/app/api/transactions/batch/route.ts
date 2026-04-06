@@ -21,13 +21,54 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { transactions } = batchSchema.parse(body);
 
-    // Fetch schedule context for auto-tagging (short-circuits when no schedules exist)
-    const ctx = await getScheduleContext(userId);
+    // Collect all explicitly-provided label IDs for a single ownership query
+    const allExplicitLabelIds = [
+      ...new Set(transactions.flatMap((t) => t.labelIds ?? [])),
+    ];
+
+    // Validate ownership + fetch applicableTo in one query
+    let ownedLabelMap = new Map<string, string>();
+    if (allExplicitLabelIds.length > 0) {
+      const ownedLabels = await prisma.label.findMany({
+        where: { id: { in: allExplicitLabelIds }, userId },
+        select: { id: true, applicableTo: true },
+      });
+      if (ownedLabels.length !== allExplicitLabelIds.length) {
+        return NextResponse.json(
+          { error: "One or more labels are invalid or do not belong to you" },
+          { status: 400 }
+        );
+      }
+      ownedLabelMap = new Map(ownedLabels.map((l) => [l.id, l.applicableTo]));
+    }
+
+    // Fetch schedule context only when at least one item needs auto-tagging
+    const needsAutoLabel = transactions.some((t) => t.labelIds === undefined);
+    const ctx = needsAutoLabel ? await getScheduleContext(userId) : null;
 
     const created = await prisma.$transaction(
       transactions.map((t) => {
         const txDate = new Date(t.date);
-        const scheduledLabelId = ctx ? matchScheduledLabel(txDate, ctx, t.type) : null;
+
+        // Resolve labels per item:
+        // - labelIds === undefined → auto-apply from schedules
+        // - labelIds === [] → user opted out, no labels
+        // - labelIds === ['id1', ...] → use explicit labels (type-filtered)
+        let resolvedLabelIds: string[] = [];
+        if (t.labelIds === undefined) {
+          const scheduledLabelId = ctx
+            ? matchScheduledLabel(txDate, ctx, t.type)
+            : null;
+          if (scheduledLabelId) resolvedLabelIds = [scheduledLabelId];
+        } else if (t.labelIds.length > 0) {
+          const seen = new Set<string>();
+          resolvedLabelIds = t.labelIds.filter((id) => {
+            if (seen.has(id)) return false;
+            seen.add(id);
+            const applicableTo = ownedLabelMap.get(id);
+            return applicableTo === "BOTH" || applicableTo === t.type;
+          });
+        }
 
         return prisma.transaction.create({
           data: {
@@ -39,9 +80,11 @@ export async function POST(request: Request) {
             userId,
             ...(t.receiptGroupId && { receiptGroupId: t.receiptGroupId }),
             ...(t.receiptBreakdown && { receiptBreakdown: t.receiptBreakdown }),
-            ...(scheduledLabelId && {
+            ...(resolvedLabelIds.length > 0 && {
               labels: {
-                create: { labelId: scheduledLabelId },
+                createMany: {
+                  data: resolvedLabelIds.map((labelId) => ({ labelId })),
+                },
               },
             }),
           },
