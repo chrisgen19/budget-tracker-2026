@@ -33,8 +33,8 @@ const toBucketKey = (date: Date, granularity: AnalyticsGranularity, tzMs: number
   return `${mY}-${String(mM + 1).padStart(2, "0")}-${String(mD).padStart(2, "0")}`;
 };
 
-/** Generate a human-readable label for a bucket key. */
-const toBucketLabel = (key: string, granularity: AnalyticsGranularity): string => {
+/** Generate a human-readable label for a bucket key. Clamps weekly labels to rangeFrom/rangeTo. */
+const toBucketLabel = (key: string, granularity: AnalyticsGranularity, rangeFrom?: Date, rangeTo?: Date): string => {
   if (granularity === "yearly") return key;
 
   if (granularity === "monthly") {
@@ -42,15 +42,19 @@ const toBucketLabel = (key: string, granularity: AnalyticsGranularity): string =
     return `${MONTH_NAMES[m - 1]} ${y}`;
   }
 
-  // Weekly: show "Mon D – Mon D" range
+  // Weekly: show clamped date range
   const [y, m, d] = key.split("-").map(Number);
-  const monday = new Date(Date.UTC(y, m - 1, d));
-  const sunday = new Date(monday.getTime() + 6 * 24 * 60 * 60 * 1000);
-  const mLabel = `${MONTH_NAMES[monday.getUTCMonth()]} ${monday.getUTCDate()}`;
-  const sLabel = monday.getUTCMonth() === sunday.getUTCMonth()
-    ? `${sunday.getUTCDate()}`
-    : `${MONTH_NAMES[sunday.getUTCMonth()]} ${sunday.getUTCDate()}`;
-  return `${mLabel}–${sLabel}`;
+  let start = new Date(Date.UTC(y, m - 1, d));
+  let end = new Date(start.getTime() + 6 * 24 * 60 * 60 * 1000);
+
+  if (rangeFrom && start < rangeFrom) start = rangeFrom;
+  if (rangeTo && end > rangeTo) end = rangeTo;
+
+  const sLabel = `${MONTH_NAMES[start.getUTCMonth()]} ${start.getUTCDate()}`;
+  const eLabel = start.getUTCMonth() === end.getUTCMonth()
+    ? `${end.getUTCDate()}`
+    : `${MONTH_NAMES[end.getUTCMonth()]} ${end.getUTCDate()}`;
+  return `${sLabel}–${eLabel}`;
 };
 
 /** Generate all expected bucket keys between from and to dates. */
@@ -86,8 +90,9 @@ const formatPeriodLabel = (from: string, to: string): string => {
   const [fY, fM, fD] = from.split("-").map(Number);
   const [tY, tM, tD] = to.split("-").map(Number);
 
-  // Single month: "April 2026"
-  if (fD === 1 && fY === tY && fM === tM) {
+  // Single full month: "April 2026"
+  const lastDayOfMonth = new Date(fY, fM, 0).getDate();
+  if (fD === 1 && fY === tY && fM === tM && tD === lastDayOfMonth) {
     return `${MONTH_NAMES[fM - 1]} ${fY}`;
   }
   // Full year: "2026"
@@ -127,12 +132,13 @@ const computePeriodData = (
   const total = filtered.reduce((sum, t) => sum + t.amount, 0);
 
   for (const t of filtered) {
-    const existing = categoryMap.get(t.categoryId);
+    const mapKey = `${t.categoryId}:${t.type}`;
+    const existing = categoryMap.get(mapKey);
     if (existing) {
       existing.amount += t.amount;
       existing.transactionCount += 1;
     } else {
-      categoryMap.set(t.categoryId, {
+      categoryMap.set(mapKey, {
         id: t.categoryId,
         name: t.category.name,
         color: t.category.color,
@@ -255,7 +261,7 @@ export async function GET(request: Request) {
 
   for (const key of bucketKeys) {
     const bucket = periodMap.get(key)!;
-    const periodLabel = toBucketLabel(key, granularity);
+    const periodLabel = toBucketLabel(key, granularity, startDate, endDate);
     const net = bucket.income - bucket.expenses;
     cumulativeNet += net;
 

@@ -87,9 +87,27 @@ const navigatePeriod = (
     return { from: `${y}-01-01`, to: `${y}-12-31` };
   }
 
-  // Weekly or custom: shift by exact day span
-  const fromDate = new Date(fY, fM - 1, fD);
   const [tY, tM, tD] = to.split("-").map(Number);
+
+  // Custom range that matches a full calendar month — navigate by month
+  const lastDayOfFromMonth = new Date(fY, fM, 0).getDate();
+  if (periodType === "custom" && fD === 1 && fY === tY && fM === tM && tD === lastDayOfFromMonth) {
+    const d = new Date(fY, fM - 1 + sign, 1);
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    return {
+      from: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`,
+      to: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+    };
+  }
+
+  // Custom range that matches a full calendar year — navigate by year
+  if (periodType === "custom" && fM === 1 && fD === 1 && tM === 12 && tD === 31 && fY === tY) {
+    const y = fY + sign;
+    return { from: `${y}-01-01`, to: `${y}-12-31` };
+  }
+
+  // Weekly or other custom: shift by exact day span
+  const fromDate = new Date(fY, fM - 1, fD);
   const toDate = new Date(tY, tM - 1, tD);
   const span = Math.round((toDate.getTime() - fromDate.getTime()) / (24 * 60 * 60 * 1000)) + 1;
   fromDate.setDate(fromDate.getDate() + sign * span);
@@ -234,15 +252,14 @@ export default function AnalyticsPage() {
           </motion.div>
 
           {/* Breakdowns */}
+          <motion.div variants={fadeUp} className="flex items-center justify-between mb-1">
+            <h2 className="font-serif text-lg text-warm-700">Breakdowns</h2>
+            <TypeFilter value={typeFilter} onChange={setTypeFilter} />
+          </motion.div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <motion.div variants={fadeUp} className="card p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h2 className="font-serif text-lg text-warm-700">By Category</h2>
-                  <p className="text-xs text-warm-300">Where is my money going?</p>
-                </div>
-                <TypeFilter value={typeFilter} onChange={setTypeFilter} />
-              </div>
+              <h2 className="font-serif text-lg text-warm-700">By Category</h2>
+              <p className="text-xs text-warm-300 mb-4">Where is my money going?</p>
               <CategoryBreakdownChart data={data.categoryBreakdown} currency={currency} hideAmounts={hideAmounts} />
             </motion.div>
 
