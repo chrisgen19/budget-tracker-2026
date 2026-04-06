@@ -14,44 +14,53 @@ import { CategoryBreakdownChart } from "@/components/analytics/category-breakdow
 import { LabelBreakdownChart } from "@/components/analytics/label-breakdown-chart";
 import { AnalyticsSummary } from "@/components/analytics/analytics-summary";
 import { AnalyticsSkeleton } from "@/components/analytics/analytics-skeleton";
+import { AlertTriangle } from "lucide-react";
 import type { AnalyticsGranularity, AnalyticsTypeFilter } from "@/types";
 
-/** Compute default date range for a given granularity. */
-const getDefaultRange = (granularity: AnalyticsGranularity): { from: string; to: string } => {
-  const now = new Date();
-  const toDate = new Date(now);
+/** Get "now" adjusted to the user's saved timezone offset (minutes). */
+const getUserNow = (tzOffset: number): Date => {
+  const utcNow = new Date();
+  // Shift UTC to the user's local time
+  return new Date(utcNow.getTime() - tzOffset * 60 * 1000);
+};
+
+/** Compute default date range for a given granularity using the user's timezone. */
+const getDefaultRange = (granularity: AnalyticsGranularity, tzOffset: number): { from: string; to: string } => {
+  const now = getUserNow(tzOffset);
+  // Use UTC methods since we already shifted to user-local time
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  const d = now.getUTCDate();
   let fromDate: Date;
+  let toDate: Date;
 
   switch (granularity) {
     case "weekly": {
-      // Last 8 weeks
-      fromDate = new Date(now);
-      fromDate.setDate(fromDate.getDate() - 8 * 7);
-      // Align to Monday
-      const day = fromDate.getDay();
-      fromDate.setDate(fromDate.getDate() - (day === 0 ? 6 : day - 1));
-      // End on Sunday
-      const endDay = toDate.getDay();
-      toDate.setDate(toDate.getDate() + (endDay === 0 ? 0 : 7 - endDay));
+      // End on Sunday of the current week
+      const todayDow = now.getUTCDay(); // 0=Sun
+      const sundayOffset = todayDow === 0 ? 0 : 7 - todayDow;
+      toDate = new Date(Date.UTC(y, m, d + sundayOffset));
+      // Start 8 weeks before the end (Mon of that week)
+      fromDate = new Date(toDate.getTime() - 8 * 7 * 24 * 60 * 60 * 1000 + 24 * 60 * 60 * 1000);
       break;
     }
     case "monthly": {
-      // Last 6 months
-      fromDate = new Date(now.getFullYear(), now.getMonth() - 5, 1);
-      toDate.setMonth(toDate.getMonth() + 1, 0); // End of current month
+      // Last 6 months: 1st of (current - 5) to end of current month
+      fromDate = new Date(Date.UTC(y, m - 5, 1));
+      toDate = new Date(Date.UTC(y, m + 1, 0)); // End of current month
       break;
     }
     case "yearly": {
       // Last 3 years
-      fromDate = new Date(now.getFullYear() - 2, 0, 1);
-      toDate.setFullYear(toDate.getFullYear(), 11, 31);
+      fromDate = new Date(Date.UTC(y - 2, 0, 1));
+      toDate = new Date(Date.UTC(y, 11, 31));
       break;
     }
   }
 
   return {
-    from: formatDateStr(fromDate),
-    to: formatDateStr(toDate),
+    from: formatDateStr(fromDate, true),
+    to: formatDateStr(toDate, true),
   };
 };
 
@@ -95,10 +104,10 @@ const navigateRange = (
   };
 };
 
-const formatDateStr = (d: Date): string => {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+const formatDateStr = (d: Date, utc = false): string => {
+  const y = utc ? d.getUTCFullYear() : d.getFullYear();
+  const m = String((utc ? d.getUTCMonth() : d.getMonth()) + 1).padStart(2, "0");
+  const day = String(utc ? d.getUTCDate() : d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 };
 
@@ -134,9 +143,10 @@ export default function AnalyticsPage() {
   const { hideAmounts } = usePrivacy();
   const currency = user.currency;
 
+  const tz = user.timezoneOffset;
   const [granularity, setGranularity] = useState<AnalyticsGranularity>("monthly");
   const [isCustom, setIsCustom] = useState(false);
-  const [dateRange, setDateRange] = useState(() => getDefaultRange("monthly"));
+  const [dateRange, setDateRange] = useState(() => getDefaultRange("monthly", tz));
   const [typeFilter, setTypeFilter] = useState<AnalyticsTypeFilter>("ALL");
 
   const params: AnalyticsParams = useMemo(() => ({
@@ -146,13 +156,13 @@ export default function AnalyticsPage() {
     type: typeFilter,
   }), [granularity, dateRange, typeFilter]);
 
-  const { data, isLoading } = useAnalyticsQuery(params, user.timezoneOffset);
+  const { data, isLoading, isError } = useAnalyticsQuery(params, tz);
 
   const handleGranularityChange = useCallback((g: AnalyticsGranularity) => {
     setGranularity(g);
     setIsCustom(false);
-    setDateRange(getDefaultRange(g));
-  }, []);
+    setDateRange(getDefaultRange(g, tz));
+  }, [tz]);
 
   const handleCustomToggle = useCallback(() => {
     setIsCustom((prev) => !prev);
@@ -198,8 +208,24 @@ export default function AnalyticsPage() {
         <TypeFilter value={typeFilter} onChange={setTypeFilter} />
       </div>
 
-      {isLoading || !data ? (
+      {isLoading ? (
         <AnalyticsSkeleton />
+      ) : isError || !data ? (
+        <div className="card p-8 flex flex-col items-center gap-3 text-center">
+          <div className="w-12 h-12 rounded-xl bg-red-50 flex items-center justify-center">
+            <AlertTriangle className="w-6 h-6 text-red-400" />
+          </div>
+          <h3 className="font-serif text-lg text-warm-700">Failed to load analytics</h3>
+          <p className="text-sm text-warm-400 max-w-sm">
+            Something went wrong while fetching your data. Please try again.
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-2 px-4 py-2 rounded-lg bg-amber-50 text-amber-700 text-sm font-medium hover:bg-amber-100 transition-colors"
+          >
+            Reload page
+          </button>
+        </div>
       ) : (
         <motion.div
           variants={stagger}

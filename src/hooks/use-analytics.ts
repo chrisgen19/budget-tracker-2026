@@ -14,7 +14,7 @@ export interface AnalyticsParams {
 
 export const analyticsKeys = {
   all: ["analytics"] as const,
-  query: (params: AnalyticsParams) => ["analytics", params] as const,
+  query: (params: AnalyticsParams, tz: number) => ["analytics", params, tz] as const,
 };
 
 /* ------------------------------------------------------------------ */
@@ -40,7 +40,7 @@ const fetchAnalytics = async (params: AnalyticsParams, tz: number): Promise<Anal
 
 export function useAnalyticsQuery(params: AnalyticsParams, tz: number) {
   return useQuery({
-    queryKey: analyticsKeys.query(params),
+    queryKey: analyticsKeys.query(params, tz),
     queryFn: () => fetchAnalytics(params, tz),
   });
 }
