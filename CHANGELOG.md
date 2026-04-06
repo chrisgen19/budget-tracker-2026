@@ -806,6 +806,34 @@ All notable development history for the Budget Tracker app.
 - "Apply to existing" button on label cards with schedules
 - Confirmation modal + success toast with count of applied transactions
 
+---
+
+## 2026-04-06 — UI Fixes & Mobile Layout
+
+### Label Pills Overflow Fix
+- Fixed label pills overflowing into the time/amount column on mobile when 3+ labels are present
+- Added `overflow-hidden` to the category + labels flex container on both dashboard and transactions pages
+
+### Schedule Auto-Labeling Edit Fix
+- Scheduled labels no longer re-apply when editing existing transactions
+- Previously, editing a transaction would re-add a scheduled label the user had manually removed (e.g. removing "Work" on a holiday)
+- `useScheduledLabel` hook now skips matching entirely in edit mode
+- Removed dead edit-seeding logic and unused `getScheduleContext`/`matchScheduledLabel` imports from PUT route
+
+### Snooze Dropdown Fix
+- Fixed snooze dropdown on upcoming bills widget being invisible due to `overflow-hidden` on the animation container
+- Used framer-motion's `transitionEnd` to switch to `overflow: visible` after the expand animation completes
+
+### Bill Reminder Banner Mobile Layout
+- Fixed action buttons (Pay All, Pay, Pay & Edit, Snooze, Skip) overflowing on mobile when multiple reminders are present
+- Added `flex-wrap` to actions row so buttons wrap to a second line on narrow screens
+- Replaced hardcoded FAB offset (`BILL_REMINDER_STACK_OFFSET_REM = 7`) with dynamic `ResizeObserver` measurement
+- Banner reports its actual height to `BillReminderProvider` context via callback ref
+- `MobileFab` uses the measured height for proper clearance above the banner
+- Added `ResizeObserver` fallback for older browsers (mirrors install banner pattern)
+
+---
+
 ## 2026-04-04 — Upcoming Bills Timezone Fix
 
 ### Server-Side `daysUntilDue` Computation

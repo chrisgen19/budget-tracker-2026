@@ -30,7 +30,9 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **Privacy Mode** — One-tap toggle to hide all financial amounts across the app, persisted per-user in the database
 - **Responsive** — Sidebar navigation on desktop, bottom navigation on mobile; labeled floating action buttons on mobile; modal bottom sheets with drag-to-dismiss on mobile, centered cards on desktop; keyboard-aware modals on iOS Safari
 - **Dynamic Favicon** — Auto-generated favicon matching the app logo
-- **Scheduled Bills & Reminders** — Recurring bill management with configurable frequency (weekly, biweekly, monthly, quarterly, yearly); mobile toast reminders for upcoming and overdue bills; one-tap pay that auto-creates the expense transaction; bill history with links to past payments
+- **Transaction Labels** — User-created color-coded labels with optional type restriction (expense/income/both); label picker in transaction form; label pills on transaction lists (dashboard + transactions page); quick-remove from list view
+- **Label Schedules (Auto-Tagging)** — Time-of-day + day-of-week schedules per label for automatic tagging (e.g. "Work" on weekdays 9am–5pm); client-side reactive matching via `useScheduledLabel` hook; server-side auto-labeling on create/batch/bill-pay; retroactive apply to existing transactions; auto-labeling only on new transactions (edits preserve user's label choices)
+- **Scheduled Bills & Reminders** — Recurring bill management with configurable frequency (weekly, biweekly, monthly, quarterly, yearly); mobile toast reminders for upcoming and overdue bills; one-tap pay that auto-creates the expense transaction; snooze (1d/3d/1w) and skip actions; pay-all for batch payments; bill history with links to past payments
 - **Progressive Web App** — Installable PWA with offline support via Serwist service worker; install prompt banner (Android + iOS Safari guide); standalone mode with safe-area handling; smart caching for API responses and static assets
 - **Timezone-Aware Dates** — All date queries respect the user's local timezone offset for accurate day boundaries and month grouping
 - **MCP Server** — Local Model Context Protocol server for querying budget data from Claude Desktop; 8 read-only tools (spending by category, top expenses, monthly summary, spending trends, search transactions, budget overview, upcoming bills, category list); shared query library reusable for future in-app AI chat
@@ -290,7 +292,10 @@ prisma/
 
 ```
 User ──< Transaction >── Category
- │                          │
+ │           │              │
+ │           └──< TransactionLabel >── Label ──< LabelSchedule
+ │                                      │
+ ├────────< Label (per-user)            │
  ├────────< Category (custom, per-user)
  ├────────< Bill >── Category
  ├────────< ScanLog
@@ -301,8 +306,11 @@ AppSettings (per role: FREE, PAID)
 
 - **User** — id, name, email, emailVerified, password, role (ADMIN/FREE/PAID), currency, timezoneOffset, hide_amounts, quickExpenseCategories, quickIncomeCategories, receiptScanEnabled, transactionLayout
 - **Category** — id, name, type (INCOME/EXPENSE), icon, color, isDefault, userId (null for defaults)
-- **Transaction** — id, amount, description, type, date, categoryId, userId, receiptGroupId (links itemized siblings), receiptBreakdown (JSON — individual line items)
+- **Transaction** — id, amount, description, type, date, categoryId, userId, billId, receiptGroupId (links itemized siblings), receiptBreakdown (JSON — individual line items)
 - **Bill** — id, amount, description, frequency, nextDueDate, isActive, categoryId, userId (recurring scheduled transactions)
+- **Label** — id, name, color, applicableTo (EXPENSE/INCOME/BOTH), userId, createdAt
+- **LabelSchedule** — id, labelId, days (int[]), startTime, endTime (HH:mm strings)
+- **TransactionLabel** — id, transactionId, labelId (join table)
 - **AppSettings** — id, role (unique), receiptScanEnabled, maxUploadFiles, monthlyScanLimit
 - **ScanLog** — id, userId, createdAt (tracks scan usage for monthly limits)
 - **VerificationToken** — id, token, type (EMAIL_VERIFY/PASSWORD_RESET), userId, expiresAt
