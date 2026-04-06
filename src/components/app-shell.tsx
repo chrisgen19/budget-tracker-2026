@@ -406,7 +406,7 @@ export function AppShell({ children }: AppShellProps) {
           type: item.data!.type!,
           date: item.data!.date ? new Date(item.data!.date).toISOString() : new Date().toISOString(),
           categoryId: item.data!.categoryId!,
-          ...(item.data!.labelIds && { labelIds: item.data!.labelIds }),
+          ...(item.data!.labelIds !== undefined && { labelIds: item.data!.labelIds }),
           ...(item.data!.receiptGroupId && { receiptGroupId: item.data!.receiptGroupId }),
           ...(item.data!.receiptBreakdown && { receiptBreakdown: item.data!.receiptBreakdown }),
         }))
