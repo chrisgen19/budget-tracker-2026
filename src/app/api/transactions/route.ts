@@ -118,7 +118,7 @@ export async function POST(request: Request) {
     if (validated.labelIds === undefined) {
       const ctx = await getScheduleContext(userId);
       if (ctx) {
-        const scheduledId = matchScheduledLabel(new Date(validated.date), ctx);
+        const scheduledId = matchScheduledLabel(new Date(validated.date), ctx, validated.type);
         if (scheduledId) verifiedLabelIds.push(scheduledId);
       }
     }

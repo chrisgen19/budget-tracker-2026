@@ -15,6 +15,7 @@ export async function GET() {
       receiptScanEnabled: true,
       transactionLayout: true,
       transactionAmountAutofocus: true,
+      defaultLabelType: true,
     },
   });
 
@@ -25,6 +26,7 @@ export async function GET() {
     receiptScanEnabled: user?.receiptScanEnabled ?? false,
     transactionLayout: user?.transactionLayout ?? "infinite",
     transactionAmountAutofocus: user?.transactionAmountAutofocus ?? true,
+    defaultLabelType: user?.defaultLabelType ?? "EXPENSE",
   });
 }
 
@@ -83,6 +85,17 @@ export async function PATCH(request: Request) {
     data.transactionAmountAutofocus = Boolean(body.transactionAmountAutofocus);
   }
 
+  if ("defaultLabelType" in body) {
+    const val = body.defaultLabelType;
+    if (val !== "EXPENSE" && val !== "INCOME" && val !== "BOTH") {
+      return NextResponse.json(
+        { error: "defaultLabelType must be 'EXPENSE', 'INCOME', or 'BOTH'" },
+        { status: 400 }
+      );
+    }
+    data.defaultLabelType = val;
+  }
+
   const user = await prisma.user.update({
     where: { id: userId },
     data,
@@ -93,6 +106,7 @@ export async function PATCH(request: Request) {
       receiptScanEnabled: true,
       transactionLayout: true,
       transactionAmountAutofocus: true,
+      defaultLabelType: true,
     },
   });
 
@@ -103,5 +117,6 @@ export async function PATCH(request: Request) {
     receiptScanEnabled: user.receiptScanEnabled,
     transactionLayout: user.transactionLayout,
     transactionAmountAutofocus: user.transactionAmountAutofocus,
+    defaultLabelType: user.defaultLabelType,
   });
 }

@@ -57,7 +57,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
       ]);
 
       if (ctx) {
-        const scheduledId = matchScheduledLabel(new Date(validated.date), ctx);
+        const scheduledId = matchScheduledLabel(new Date(validated.date), ctx, validated.type);
         const existingLabelIdSet = new Set(existingLabels.map((el) => el.labelId));
 
         // Preserve all existing labels (both manual and scheduled) as-is.

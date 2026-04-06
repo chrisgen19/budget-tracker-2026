@@ -754,6 +754,31 @@ All notable development history for the Budget Tracker app.
 
 ---
 
+## 2026-04-06 — Label Type Restrictions
+
+### Label Type Configuration
+- Labels now have `applicableTo` field: "EXPENSE", "INCOME", or "BOTH" (default for existing labels)
+- New "Applies To" toggle section in label create/edit form with expense/income buttons
+- Labels page shows colored type badge (Expense/Income) when not "BOTH"
+
+### Type-Aware Filtering
+- LabelPicker filters dropdown to only show labels matching the current transaction type
+- Schedule auto-labeling (client + server) respects type restrictions across all 5 API paths
+- Retroactive "Apply to existing" only processes transactions matching the label's type
+- Incompatible labels are automatically stripped when switching transaction type in the form
+
+### Type Change Confirmation
+- Narrowing a label's type (e.g. BOTH → EXPENSE) triggers a 409 confirmation when income transactions would lose the label
+- Confirmation modal shows affected count before proceeding
+- On confirm, stale associations are removed in the same transaction as the update
+
+### User Preference
+- New "Default Label Type" setting in Profile > Features (Expense / Income / Both)
+- Controls the default `applicableTo` value for newly created labels
+- Defaults to "EXPENSE" for new users
+
+---
+
 ## 2026-04-05 — Label Schedules (Auto-Tagging)
 
 ### Label Schedule Configuration

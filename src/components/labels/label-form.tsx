@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Check, Clock, Plus, Trash2, X } from "lucide-react";
 import { labelSchema, type LabelInput } from "@/lib/validations";
 import { cn } from "@/lib/utils";
+import { useUser } from "@/components/user-provider";
 import type { LabelWithCountAndSchedules } from "@/types";
 
 const PRESET_COLORS = [
@@ -24,6 +25,7 @@ interface LabelFormProps {
 }
 
 export function LabelForm({ label, onSubmit, onCancel }: LabelFormProps) {
+  const { user } = useUser();
   const {
     register,
     handleSubmit,
@@ -36,6 +38,7 @@ export function LabelForm({ label, onSubmit, onCancel }: LabelFormProps) {
     defaultValues: {
       name: label?.name ?? "",
       color: label?.color ?? PRESET_COLORS[0],
+      applicableTo: (label?.applicableTo as "EXPENSE" | "INCOME" | "BOTH") ?? user.defaultLabelType,
       schedules: label?.schedules?.map((s) => ({
         id: s.id,
         days: s.days,
@@ -53,7 +56,7 @@ export function LabelForm({ label, onSubmit, onCancel }: LabelFormProps) {
   const selectedColor = watch("color");
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+    <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
       {/* Name */}
       <div>
         <label className="block text-sm font-medium text-warm-600 mb-1.5">
@@ -108,6 +111,47 @@ export function LabelForm({ label, onSubmit, onCancel }: LabelFormProps) {
         {errors.color && (
           <p className="text-expense text-sm mt-1">{errors.color.message}</p>
         )}
+      </div>
+
+      {/* Applies To */}
+      <div>
+        <p className="text-sm font-medium text-warm-600 mb-2">Applies To</p>
+        <div className="flex gap-2">
+          {(["EXPENSE", "INCOME"] as const).map((type) => {
+            const current = watch("applicableTo");
+            const isActive = current === "BOTH" || current === type;
+            return (
+              <button
+                key={type}
+                type="button"
+                onClick={() => {
+                  if (current === "BOTH") {
+                    // Uncheck this type → set to the other
+                    setValue("applicableTo", type === "EXPENSE" ? "INCOME" : "EXPENSE");
+                  } else if (current === type) {
+                    // Can't uncheck the only active type — do nothing
+                  } else {
+                    // Check this type → set to BOTH
+                    setValue("applicableTo", "BOTH");
+                  }
+                }}
+                className={cn(
+                  "flex-1 py-2.5 rounded-xl text-sm font-medium transition-all duration-150",
+                  isActive
+                    ? type === "EXPENSE"
+                      ? "bg-expense-light text-expense ring-2 ring-expense/30"
+                      : "bg-income-light text-income ring-2 ring-income/30"
+                    : "bg-cream-100 text-warm-400 hover:bg-cream-200"
+                )}
+              >
+                {type === "EXPENSE" ? "Expenses" : "Income"}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-[11px] text-warm-300 mt-1.5">
+          This label will only appear for the selected transaction types.
+        </p>
       </div>
 
       {/* Schedules */}

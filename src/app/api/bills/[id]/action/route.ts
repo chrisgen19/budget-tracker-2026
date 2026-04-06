@@ -33,7 +33,7 @@ export async function POST(
     if (action === "pay") {
       // Compute scheduled label for this bill payment date
       const ctx = await getScheduleContext(userId);
-      const scheduledLabelId = ctx ? matchScheduledLabel(dueDate, ctx) : null;
+      const scheduledLabelId = ctx ? matchScheduledLabel(dueDate, ctx, bill.type) : null;
 
       // Create the real transaction
       const transaction = await prisma.transaction.create({

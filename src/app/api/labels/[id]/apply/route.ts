@@ -46,11 +46,19 @@ export async function POST(_request: Request, { params }: RouteParams) {
 
   while (true) {
     const transactions = await prisma.transaction.findMany({
-      where: { userId },
+      where: {
+        userId,
+        // Only process transactions matching the label's type restriction
+        ...(label.applicableTo !== "BOTH" && { type: label.applicableTo as "INCOME" | "EXPENSE" }),
+      },
       select: {
         id: true,
         date: true,
-        labels: { where: { labelId: id }, select: { id: true } },
+        type: true,
+        labels: {
+          where: { labelId: id },
+          select: { id: true },
+        },
       },
       orderBy: { id: "asc" },
       take: BATCH_SIZE,
@@ -63,7 +71,7 @@ export async function POST(_request: Request, { params }: RouteParams) {
     const toRemoveIds: string[] = [];
 
     for (const tx of transactions) {
-      const matchedLabelId = matchScheduledLabel(tx.date, ctx);
+      const matchedLabelId = matchScheduledLabel(tx.date, ctx, tx.type);
       const hasLabel = tx.labels.length > 0;
 
       if (matchedLabelId === id && !hasLabel) {

@@ -13,6 +13,7 @@ import { useUser } from "@/components/user-provider";
 import { useCategoriesQuery, useQuickPreferencesQuery } from "@/hooks/use-categories";
 import { LabelPicker } from "@/components/transactions/label-picker";
 import { useScheduledLabel } from "@/hooks/use-scheduled-label";
+import { useLabelsQuery } from "@/hooks/use-labels";
 import type { Category, TransactionWithCategory, ReceiptBreakdownMeta } from "@/types";
 
 export interface InitialTransactionData {
@@ -107,7 +108,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   const watchedLabelIds = watch("labelIds") ?? [];
 
   // Auto-label scheduling
-  const { scheduledLabelId } = useScheduledLabel(watchedDate);
+  const { scheduledLabelId } = useScheduledLabel(watchedDate, selectedType);
   const userRemovedAutoLabels = useRef<Set<string>>(new Set());
   const autoAppliedLabels = useRef<Set<string>>(new Set());
   const prevScheduledLabelId = useRef<string | null>(null);
@@ -123,6 +124,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   });
 
   // TanStack Query hooks — cached across mounts
+  const { data: allLabels = [] } = useLabelsQuery();
   const { data: categories = [], isLoading: loadingCategories } = useCategoriesQuery(selectedType);
   const { data: quickPrefs } = useQuickPreferencesQuery();
 
@@ -218,6 +220,21 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     setAutoAppliedSnapshot([...autoAppliedLabels.current]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scheduledLabelId, hideLabelPicker]);
+
+  // Strip incompatible labels when the transaction type changes
+  useEffect(() => {
+    if (hideLabelPicker || allLabels.length === 0) return;
+    const currentIds = getValues("labelIds") ?? [];
+    if (currentIds.length === 0) return;
+    const compatible = currentIds.filter((id) => {
+      const label = allLabels.find((l) => l.id === id);
+      return !label || label.applicableTo === "BOTH" || label.applicableTo === selectedType;
+    });
+    if (compatible.length !== currentIds.length) {
+      setValue("labelIds", compatible);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedType]);
 
   const setDateToToday = () => {
     setDateMode("today");
@@ -523,6 +540,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                   setValue("labelIds", ids);
                 }}
                 autoAppliedIds={autoAppliedSnapshot}
+                transactionType={selectedType}
               />
             )}
 

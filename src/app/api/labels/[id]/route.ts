@@ -27,6 +27,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
 
     const body = await request.json();
     const validated = labelSchema.parse(body);
+    const confirmRemoval = body.confirmRemoval === true;
 
     // Check for duplicate name (excluding self)
     const duplicate = await prisma.label.findFirst({
@@ -40,7 +41,40 @@ export async function PUT(request: Request, { params }: RouteParams) {
       );
     }
 
+    // Check if type restriction is being narrowed (e.g. BOTH → EXPENSE)
+    // If so, count affected transactions and require confirmation
+    const oldApplicableTo = existing.applicableTo;
+    const newApplicableTo = validated.applicableTo;
+    let removedType: string | null = null;
+
+    if (oldApplicableTo !== newApplicableTo) {
+      if (oldApplicableTo === "BOTH" && newApplicableTo === "EXPENSE") removedType = "INCOME";
+      else if (oldApplicableTo === "BOTH" && newApplicableTo === "INCOME") removedType = "EXPENSE";
+      else if (oldApplicableTo === "INCOME" && newApplicableTo === "EXPENSE") removedType = "INCOME";
+      else if (oldApplicableTo === "EXPENSE" && newApplicableTo === "INCOME") removedType = "EXPENSE";
+    }
+
+    if (removedType) {
+      const affectedCount = await prisma.transactionLabel.count({
+        where: { labelId: id, transaction: { type: removedType as "INCOME" | "EXPENSE" } },
+      });
+
+      if (affectedCount > 0 && !confirmRemoval) {
+        return NextResponse.json(
+          { needsConfirmation: true, affectedCount, removedType },
+          { status: 409 }
+        );
+      }
+    }
+
     const label = await prisma.$transaction(async (tx) => {
+      // Remove associations for the excluded type if confirmed
+      if (removedType && confirmRemoval) {
+        await tx.transactionLabel.deleteMany({
+          where: { labelId: id, transaction: { type: removedType as "INCOME" | "EXPENSE" } },
+        });
+      }
+
       // Sync schedules: delete all existing, re-create from input
       if (validated.schedules !== undefined) {
         await tx.labelSchedule.deleteMany({ where: { labelId: id } });
@@ -62,6 +96,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
         data: {
           name: validated.name,
           color: validated.color,
+          applicableTo: validated.applicableTo,
         },
         include: {
           _count: { select: { transactions: true } },

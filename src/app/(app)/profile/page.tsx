@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { User, Lock, Check, Loader2, Sparkles, ScanLine, Rows3, Target } from "lucide-react";
+import { User, Lock, Check, Loader2, Sparkles, ScanLine, Rows3, Target, Tag } from "lucide-react";
 import {
   updateProfileSchema,
   changePasswordSchema,
@@ -496,6 +496,7 @@ function FeaturesForm() {
   const [saving, setSaving] = useState(false);
   const [savingLayout, setSavingLayout] = useState(false);
   const [savingAutofocus, setSavingAutofocus] = useState(false);
+  const [savingLabelType, setSavingLabelType] = useState(false);
 
   const handleToggle = async () => {
     const newValue = !user.receiptScanEnabled;
@@ -568,6 +569,30 @@ function FeaturesForm() {
       setUser({ transactionAmountAutofocus: oldValue });
     } finally {
       setSavingAutofocus(false);
+    }
+  };
+
+  const handleLabelTypeChange = async (newValue: "EXPENSE" | "INCOME" | "BOTH") => {
+    const oldValue = user.defaultLabelType;
+    if (newValue === oldValue) return;
+
+    setUser({ defaultLabelType: newValue });
+    setSavingLabelType(true);
+
+    try {
+      const res = await fetch("/api/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ defaultLabelType: newValue }),
+      });
+
+      if (!res.ok) {
+        setUser({ defaultLabelType: oldValue });
+      }
+    } catch {
+      setUser({ defaultLabelType: oldValue });
+    } finally {
+      setSavingLabelType(false);
     }
   };
 
@@ -690,6 +715,41 @@ function FeaturesForm() {
               )}
             />
           </button>
+        </div>
+
+        <div className="p-4 rounded-xl border border-cream-300 bg-cream-50/50">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center">
+              <Tag className="w-5 h-5 text-amber-dark" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-warm-600">
+                Default Label Type
+              </p>
+              <p className="text-xs text-warm-400">
+                Default transaction type restriction for newly created labels
+              </p>
+            </div>
+          </div>
+
+          <div className="flex gap-1.5 p-1 bg-cream-100 rounded-xl">
+            {(["EXPENSE", "INCOME", "BOTH"] as const).map((type) => (
+              <button
+                key={type}
+                type="button"
+                disabled={savingLabelType}
+                onClick={() => handleLabelTypeChange(type)}
+                className={cn(
+                  "flex-1 py-2 rounded-lg text-xs font-medium transition-all duration-200 disabled:opacity-50",
+                  user.defaultLabelType === type
+                    ? "bg-white text-warm-700 shadow-warm"
+                    : "text-warm-400 hover:text-warm-600"
+                )}
+              >
+                {type === "EXPENSE" ? "Expense" : type === "INCOME" ? "Income" : "Both"}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     </div>

@@ -51,6 +51,7 @@ model User {
   receiptScanEnabled      Boolean       @default(false) @map("receipt_scan_enabled")
   transactionLayout       String        @default("infinite") @map("transaction_layout")
   transactionAmountAutofocus Boolean    @default(true) @map("transaction_amount_autofocus")
+  defaultLabelType           String     @default("EXPENSE") @map("default_label_type")
   timezoneOffset          Int           @default(-480) @map("timezone_offset")
   transactions            Transaction[]
   categories              Category[]
@@ -188,6 +189,7 @@ model Label {
   id           String             @id @default(cuid())
   name         String
   color        String
+  applicableTo String             @default("BOTH") @map("applicable_to")
   userId       String             @map("user_id")
   user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions TransactionLabel[]

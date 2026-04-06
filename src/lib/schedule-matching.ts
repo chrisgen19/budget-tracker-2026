@@ -6,6 +6,7 @@
 export interface ScheduleRule {
   labelId: string;
   labelCreatedAt: Date | string;
+  applicableTo: string; // "EXPENSE" | "INCOME" | "BOTH"
   days: number[];
   startTime: string; // "HH:mm"
   endTime: string;   // "HH:mm"
@@ -35,15 +36,20 @@ const toLocalComponents = (dateUTC: Date, timezoneOffset: number) => {
 export const getScheduledLabelId = (
   transactionDateUTC: Date,
   timezoneOffset: number,
-  scheduleRules: ScheduleRule[]
+  scheduleRules: ScheduleRule[],
+  transactionType?: string
 ): string | null => {
   if (scheduleRules.length === 0) return null;
 
   const { day, time } = toLocalComponents(transactionDateUTC, timezoneOffset);
 
-  // Find all rules that match this day + time window
+  // Find all rules that match this day + time window + transaction type
   const matching = scheduleRules.filter(
-    (r) => r.days.includes(day) && r.startTime <= time && time < r.endTime
+    (r) =>
+      r.days.includes(day) &&
+      r.startTime <= time &&
+      time < r.endTime &&
+      (!transactionType || r.applicableTo === "BOTH" || r.applicableTo === transactionType)
   );
 
   if (matching.length === 0) return null;

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Plus, Pencil, Trash2, Tag, Clock, Play } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { cn } from "@/lib/utils";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -14,6 +15,7 @@ import {
   useUpdateLabel,
   useDeleteLabel,
   useApplyLabelSchedule,
+  type TypeChangeConfirmation,
 } from "@/hooks/use-labels";
 import type { LabelInput } from "@/lib/validations";
 import type { LabelWithCountAndSchedules } from "@/types";
@@ -25,6 +27,12 @@ export default function LabelsPage() {
   const [applyingLabel, setApplyingLabel] = useState<LabelWithCountAndSchedules | null>(null);
   const [applyResult, setApplyResult] = useState<{ applied: number; removed: number } | null>(null);
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [typeChangeConfirm, setTypeChangeConfirm] = useState<{
+    id: string;
+    input: LabelInput;
+    affectedCount: number;
+    removedType: string;
+  } | null>(null);
 
   const { data: labels = [], isLoading: loading } = useLabelsQuery();
   const createLabel = useCreateLabel();
@@ -49,7 +57,31 @@ export default function LabelsPage() {
 
   const handleUpdate = async (input: LabelInput) => {
     if (!editingLabel) return;
-    await updateLabel.mutateAsync({ id: editingLabel.id, input });
+    try {
+      await updateLabel.mutateAsync({ id: editingLabel.id, input });
+      setEditingLabel(null);
+    } catch (err) {
+      // Handle 409 confirmation for type narrowing
+      const error = err as Error & { data?: TypeChangeConfirmation };
+      if (error.message === "needs_confirmation" && error.data) {
+        setTypeChangeConfirm({
+          id: editingLabel.id,
+          input,
+          affectedCount: error.data.affectedCount,
+          removedType: error.data.removedType,
+        });
+      }
+    }
+  };
+
+  const handleTypeChangeConfirm = async () => {
+    if (!typeChangeConfirm) return;
+    await updateLabel.mutateAsync({
+      id: typeChangeConfirm.id,
+      input: typeChangeConfirm.input,
+      confirmRemoval: true,
+    });
+    setTypeChangeConfirm(null);
     setEditingLabel(null);
   };
 
@@ -155,6 +187,16 @@ export default function LabelsPage() {
                         </p>
                         {hasSchedules && (
                           <Clock className="w-3 h-3 text-amber shrink-0" />
+                        )}
+                        {lbl.applicableTo !== "BOTH" && (
+                          <span className={cn(
+                            "text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0",
+                            lbl.applicableTo === "EXPENSE"
+                              ? "bg-expense-light text-expense"
+                              : "bg-income-light text-income"
+                          )}>
+                            {lbl.applicableTo === "EXPENSE" ? "Expense" : "Income"}
+                          </span>
                         )}
                       </div>
                       <p className="text-xs text-warm-300">
@@ -273,6 +315,27 @@ export default function LabelsPage() {
           </p>
         }
         loading={applySchedule.isPending}
+      />
+
+      {/* Type Change Confirmation Modal */}
+      <ConfirmModal
+        open={!!typeChangeConfirm}
+        onClose={() => setTypeChangeConfirm(null)}
+        onConfirm={handleTypeChangeConfirm}
+        title="Remove Label from Transactions"
+        confirmLabel="Remove"
+        message={
+          <p>
+            This will remove the label from{" "}
+            <span className="font-medium text-warm-700">
+              {typeChangeConfirm?.affectedCount}{" "}
+              {typeChangeConfirm?.removedType?.toLowerCase()}{" "}
+              {typeChangeConfirm?.affectedCount === 1 ? "transaction" : "transactions"}
+            </span>
+            . This action cannot be undone.
+          </p>
+        }
+        loading={updateLabel.isPending}
       />
 
       {/* Apply Result / Error Toast */}
