@@ -106,6 +106,7 @@ const computePeriodData = (
   transactions: Array<{ amount: number; type: string; categoryId: string; category: { name: string; color: string; icon: string }; labels?: Array<{ labelId: string; label: { name: string; color: string } }> }>,
   type: string,
 ) => {
+  // Summary always uses all transactions (unfiltered) so totals stay consistent
   const totalIncome = transactions
     .filter((t) => t.type === "INCOME")
     .reduce((sum, t) => sum + t.amount, 0);
@@ -120,7 +121,7 @@ const computePeriodData = (
     transactionCount: transactions.length,
   };
 
-  // Category breakdown
+  // Category breakdown (filtered by type)
   const filtered = type === "ALL" ? transactions : transactions.filter((t) => t.type === type);
   const categoryMap = new Map<string, AnalyticsCategoryItem>();
   const total = filtered.reduce((sum, t) => sum + t.amount, 0);
@@ -180,10 +181,41 @@ export async function GET(request: Request) {
   const startDate = new Date(fromDate.getTime() + tzMs);
   const endDate = new Date(toDate.getTime() + tzMs);
 
-  // Compute previous period (same span, shifted back)
-  const spanMs = endDate.getTime() - startDate.getTime();
-  const prevEndDate = new Date(startDate.getTime() - 1); // 1ms before current start
-  const prevStartDate = new Date(prevEndDate.getTime() - spanMs);
+  // Compute previous period (calendar-aware shift)
+  const [fY, fM, fD] = from.split("-").map(Number);
+  const [tY, tM, tD] = to.split("-").map(Number);
+
+  let prevFrom: string;
+  let prevTo: string;
+
+  if (fD === 1 && fY === tY && fM === tM) {
+    // Monthly: shift back one calendar month
+    const pm = fM - 1 === 0 ? 12 : fM - 1;
+    const py = fM - 1 === 0 ? fY - 1 : fY;
+    const lastDay = new Date(py, pm, 0).getDate();
+    prevFrom = `${py}-${String(pm).padStart(2, "0")}-01`;
+    prevTo = `${py}-${String(pm).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+  } else if (fM === 1 && fD === 1 && tM === 12 && tD === 31 && fY === tY) {
+    // Yearly: shift back one calendar year
+    prevFrom = `${fY - 1}-01-01`;
+    prevTo = `${fY - 1}-12-31`;
+  } else {
+    // Weekly or custom: shift by exact day span
+    const fromD = new Date(fY, fM - 1, fD);
+    const toD = new Date(tY, tM - 1, tD);
+    const spanDays = Math.round((toD.getTime() - fromD.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+    const pFrom = new Date(fY, fM - 1, fD - spanDays);
+    const pTo = new Date(tY, tM - 1, tD - spanDays);
+    const fmtD = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    prevFrom = fmtD(pFrom);
+    prevTo = fmtD(pTo);
+  }
+
+  const prevFromDate = new Date(prevFrom + "T00:00:00.000Z");
+  const prevToDate = new Date(prevTo + "T23:59:59.999Z");
+  const prevStartDate = new Date(prevFromDate.getTime() + tzMs);
+  const prevEndDate = new Date(prevToDate.getTime() + tzMs);
 
   // Fetch current + previous period transactions in parallel
   const [transactions, prevTransactions] = await Promise.all([
@@ -288,9 +320,7 @@ export async function GET(request: Request) {
 
   // --- Period labels ---
   const periodLabel = formatPeriodLabel(from, to);
-  const prevFromStr = prevStartDate.toISOString().slice(0, 10);
-  const prevToStr = prevEndDate.toISOString().slice(0, 10);
-  const previousPeriodLabel = formatPeriodLabel(prevFromStr, prevToStr);
+  const previousPeriodLabel = formatPeriodLabel(prevFrom, prevTo);
 
   return NextResponse.json({
     incomeExpenses,

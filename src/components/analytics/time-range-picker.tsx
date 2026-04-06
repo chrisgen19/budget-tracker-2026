@@ -47,12 +47,14 @@ export function TimeRangePicker({
   const [customTo, setCustomTo] = useState(to);
   const ref = useRef<HTMLDivElement>(null);
 
-  // Sync display year/month when period changes externally
+  // Sync display year/month and custom inputs when period changes externally
   useEffect(() => {
     const [y, m] = from.split("-").map(Number);
     setDisplayYear(y);
     setDisplayMonth(m - 1);
-  }, [from]);
+    setCustomFrom(from);
+    setCustomTo(to);
+  }, [from, to]);
 
   // Close on outside click
   useEffect(() => {
