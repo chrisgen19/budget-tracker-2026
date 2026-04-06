@@ -15,6 +15,8 @@ interface BillReminderContextValue {
   handlePayAll: () => void;
   isActioning: boolean;
   payAllProgress: { current: number; total: number } | null;
+  bannerHeight: number;
+  setBannerHeight: (height: number) => void;
 }
 
 const BillReminderContext = createContext<BillReminderContextValue>({
@@ -27,6 +29,8 @@ const BillReminderContext = createContext<BillReminderContextValue>({
   handlePayAll: () => {},
   isActioning: false,
   payAllProgress: null,
+  bannerHeight: 0,
+  setBannerHeight: () => {},
 });
 
 export const useBillReminders = () => useContext(BillReminderContext);
@@ -90,6 +94,8 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
     );
   }, [billAction, showToast]);
 
+  const [bannerHeight, setBannerHeightRaw] = useState(0);
+  const setBannerHeight = useCallback((h: number) => setBannerHeightRaw(h), []);
   const [payAllProgress, setPayAllProgress] = useState<{ current: number; total: number } | null>(null);
 
   const handlePayAll = useCallback(async () => {
@@ -150,6 +156,8 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
         handlePayAll,
         isActioning: billAction.isPending,
         payAllProgress,
+        bannerHeight,
+        setBannerHeight,
       }}
     >
       {children}

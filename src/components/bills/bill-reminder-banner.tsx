@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, ChevronRight, Check, Clock, FastForward, Pencil, ChevronUp, CheckCheck } from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils";
@@ -47,10 +47,34 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
     handlePayAll,
     isActioning,
     payAllProgress,
+    setBannerHeight,
   } = useBillReminders();
 
   const [showSnoozeMenu, setShowSnoozeMenu] = useState(false);
   const snoozeRef = useRef<HTMLDivElement>(null);
+  const observerRef = useRef<ResizeObserver | null>(null);
+
+  // Callback ref to measure banner height dynamically via ResizeObserver
+  const bannerRef = useCallback((el: HTMLDivElement | null) => {
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+      observerRef.current = null;
+    }
+    if (!el) {
+      setBannerHeight(0);
+      return;
+    }
+    if (typeof ResizeObserver === "undefined") {
+      setBannerHeight(el.getBoundingClientRect().height);
+      return;
+    }
+    const observer = new ResizeObserver(([entry]) => {
+      const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.target.getBoundingClientRect().height;
+      setBannerHeight(height);
+    });
+    observer.observe(el);
+    observerRef.current = observer;
+  }, [setBannerHeight]);
 
   // Close snooze menu on outside click
   useEffect(() => {
@@ -98,6 +122,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
   return (
     <AnimatePresence>
       <motion.div
+        ref={bannerRef}
         initial={{ y: 100, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 100, opacity: 0 }}
@@ -149,10 +174,10 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
           </div>
 
           {/* Actions row */}
-          <div className="flex items-center gap-1.5 px-3 pb-3">
+          <div className="flex flex-wrap items-center gap-1.5 px-3 pb-3">
             {/* Navigation */}
             {pendingReminders.length > 1 && (
-              <div className="flex items-center gap-1 mr-1">
+              <div className="flex items-center gap-1 mr-1 shrink-0">
                 <button
                   onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))}
                   disabled={currentIndex === 0}
@@ -174,7 +199,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
             )}
 
             {/* Action buttons */}
-            <div className="flex items-center gap-1.5 ml-auto">
+            <div className="flex items-center gap-1.5 ml-auto flex-wrap justify-end">
               {/* Pay All — only when multiple reminders */}
               {pendingReminders.length > 1 && (
                 <button
