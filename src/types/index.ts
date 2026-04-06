@@ -136,7 +136,7 @@ export type AnalyticsTypeFilter = "ALL" | "INCOME" | "EXPENSE";
 
 /** Single period bucket for income/expenses and cash flow */
 export interface AnalyticsPeriodItem {
-  period: string;       // "2026-W14", "2026-03", "2026"
+  period: string;       // "2026-03-30", "2026-03", "2026"
   periodLabel: string;  // "Apr 1–7", "Mar 2026", "2026"
   income: number;
   expenses: number;
@@ -180,7 +180,6 @@ export interface AnalyticsSummary {
 
 /** Full analytics API response */
 export interface AnalyticsData {
-  incomeExpenses: AnalyticsPeriodItem[];
   categoryBreakdown: AnalyticsCategoryItem[];
   allCategoryBreakdown: AnalyticsCategoryItem[];
   labelBreakdown: AnalyticsLabelItem[];

@@ -3,7 +3,6 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { analyticsQuerySchema } from "@/lib/validations";
 import type {
-  AnalyticsPeriodItem,
   AnalyticsCategoryItem,
   AnalyticsLabelItem,
   AnalyticsCashFlowItem,
@@ -12,6 +11,7 @@ import type {
 } from "@/types";
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTH_FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 /** Convert a UTC date to a bucket key based on granularity (in user's local timezone). */
 const toBucketKey = (date: Date, granularity: AnalyticsGranularity, tzMs: number): string => {
@@ -93,7 +93,7 @@ const formatPeriodLabel = (from: string, to: string): string => {
   // Single full month: "April 2026"
   const lastDayOfMonth = new Date(fY, fM, 0).getDate();
   if (fD === 1 && fY === tY && fM === tM && tD === lastDayOfMonth) {
-    return `${MONTH_NAMES[fM - 1]} ${fY}`;
+    return `${MONTH_FULL[fM - 1]} ${fY}`;
   }
   // Full year: "2026"
   if (fM === 1 && fD === 1 && tM === 12 && tD === 31 && fY === tY) {
@@ -129,7 +129,8 @@ const computePeriodData = (
   // Category breakdown (filtered by type)
   const filtered = type === "ALL" ? transactions : transactions.filter((t) => t.type === type);
   const categoryMap = new Map<string, AnalyticsCategoryItem>();
-  const total = filtered.reduce((sum, t) => sum + t.amount, 0);
+  const incomeTotal = filtered.filter((t) => t.type === "INCOME").reduce((sum, t) => sum + t.amount, 0);
+  const expenseTotal = filtered.filter((t) => t.type === "EXPENSE").reduce((sum, t) => sum + t.amount, 0);
 
   for (const t of filtered) {
     const mapKey = `${t.categoryId}:${t.type}`;
@@ -155,7 +156,10 @@ const computePeriodData = (
     .sort((a, b) => b.amount - a.amount)
     .map((item) => ({
       ...item,
-      percentage: total > 0 ? Math.round((item.amount / total) * 100) : 0,
+      percentage: (() => {
+        const typeTotal = item.type === "INCOME" ? incomeTotal : expenseTotal;
+        return typeTotal > 0 ? Math.round((item.amount / typeTotal) * 100) : 0;
+      })(),
     }));
 
   return { summary, categoryBreakdown };
@@ -255,7 +259,6 @@ export async function GET(request: Request) {
     }
   }
 
-  const incomeExpenses: AnalyticsPeriodItem[] = [];
   const cashFlow: AnalyticsCashFlowItem[] = [];
   let cumulativeNet = 0;
 
@@ -265,7 +268,6 @@ export async function GET(request: Request) {
     const net = bucket.income - bucket.expenses;
     cumulativeNet += net;
 
-    incomeExpenses.push({ period: key, periodLabel, income: bucket.income, expenses: bucket.expenses });
     cashFlow.push({ period: key, periodLabel, income: bucket.income, expenses: bucket.expenses, net, cumulativeNet });
   }
 
@@ -338,7 +340,6 @@ export async function GET(request: Request) {
   const previousPeriodLabel = formatPeriodLabel(prevFrom, prevTo);
 
   return NextResponse.json({
-    incomeExpenses,
     categoryBreakdown,
     allCategoryBreakdown,
     labelBreakdown,

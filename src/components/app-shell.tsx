@@ -57,8 +57,8 @@ const NAV_ITEMS = [
   { href: "/labels", label: "Labels", icon: Tag },
 ];
 
-/** Mobile bottom nav excludes Labels and Categories to avoid overflow on narrow viewports */
-const MOBILE_NAV_ITEMS = NAV_ITEMS.filter((item) => item.href !== "/labels" && item.href !== "/categories");
+/** Mobile bottom nav excludes Labels to avoid overflow on narrow viewports */
+const MOBILE_NAV_ITEMS = NAV_ITEMS.filter((item) => item.href !== "/labels");
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
@@ -633,7 +633,7 @@ export function AppShell({ children }: AppShellProps) {
               onClick={() => setScanOpen(true)}
               disabled={scanLimitReached}
               className={cn(
-                "flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all duration-200 min-w-[72px] relative",
+                "flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all duration-200 min-w-[60px] relative",
                 scanLimitReached ? "text-warm-200 cursor-not-allowed" : "text-warm-300"
               )}
             >
