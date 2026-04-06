@@ -42,6 +42,7 @@ export const labelScheduleSchema = z.object({
 export const labelSchema = z.object({
   name: z.string().min(1, "Name is required").max(30),
   color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Invalid color format"),
+  applicableTo: z.enum(["EXPENSE", "INCOME", "BOTH"]).default("BOTH"),
   schedules: z.array(labelScheduleSchema).max(10, "Maximum 10 schedules per label").optional(),
 });
 

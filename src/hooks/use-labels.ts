@@ -61,16 +61,26 @@ export function useCreateLabel() {
   });
 }
 
+export interface TypeChangeConfirmation {
+  needsConfirmation: true;
+  affectedCount: number;
+  removedType: string;
+}
+
 export function useUpdateLabel() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ id, input }: { id: string; input: LabelInput }) => {
+    mutationFn: async ({ id, input, confirmRemoval }: { id: string; input: LabelInput; confirmRemoval?: boolean }) => {
       const res = await fetch(`/api/labels/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
+        body: JSON.stringify({ ...input, confirmRemoval }),
       });
+      if (res.status === 409) {
+        const body = await res.json() as TypeChangeConfirmation;
+        throw Object.assign(new Error("needs_confirmation"), { data: body });
+      }
       if (!res.ok) {
         const body = await res.json();
         throw new Error(body.error || "Failed to update label");

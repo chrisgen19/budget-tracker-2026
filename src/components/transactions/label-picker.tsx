@@ -9,14 +9,20 @@ interface LabelPickerProps {
   selectedIds: string[];
   onChange: (ids: string[]) => void;
   autoAppliedIds?: string[];
+  transactionType?: "INCOME" | "EXPENSE";
 }
 
-export function LabelPicker({ selectedIds, onChange, autoAppliedIds = [] }: LabelPickerProps) {
+export function LabelPicker({ selectedIds, onChange, autoAppliedIds = [], transactionType }: LabelPickerProps) {
   const [open, setOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const { data: labels = [] } = useLabelsQuery();
+
+  // Filter labels by transaction type (keep already-selected visible in pills)
+  const filteredLabels = transactionType
+    ? labels.filter((l) => l.applicableTo === "BOTH" || l.applicableTo === transactionType)
+    : labels;
 
   const checkPosition = useCallback(() => {
     if (!triggerRef.current) return;
@@ -49,7 +55,7 @@ export function LabelPicker({ selectedIds, onChange, autoAppliedIds = [] }: Labe
 
   const selectedLabels = labels.filter((l) => selectedIds.includes(l.id));
 
-  if (labels.length === 0) return null;
+  if (filteredLabels.length === 0 && selectedLabels.length === 0) return null;
 
   return (
     <div>
@@ -119,7 +125,7 @@ export function LabelPicker({ selectedIds, onChange, autoAppliedIds = [] }: Labe
                 openUpward ? "bottom-full mb-1.5" : "top-full mt-1.5"
               )}
             >
-              {labels.map((lbl) => {
+              {filteredLabels.map((lbl) => {
                 const isSelected = selectedIds.includes(lbl.id);
                 return (
                   <button

@@ -42,6 +42,7 @@ export async function POST(request: Request) {
       data: {
         name: validated.name,
         color: validated.color,
+        applicableTo: validated.applicableTo,
         userId,
         ...(validated.schedules && validated.schedules.length > 0 && {
           schedules: {

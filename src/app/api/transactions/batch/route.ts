@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     const created = await prisma.$transaction(
       transactions.map((t) => {
         const txDate = new Date(t.date);
-        const scheduledLabelId = ctx ? matchScheduledLabel(txDate, ctx) : null;
+        const scheduledLabelId = ctx ? matchScheduledLabel(txDate, ctx, t.type) : null;
 
         return prisma.transaction.create({
           data: {

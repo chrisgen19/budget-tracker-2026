@@ -4,10 +4,10 @@ import { useUser } from "@/components/user-provider";
 import { getScheduledLabelId, type ScheduleRule } from "@/lib/schedule-matching";
 
 /**
- * Computes the auto-matching scheduled label for a given transaction date.
+ * Computes the auto-matching scheduled label for a given transaction date and type.
  * Returns the labelId that should be auto-applied, or null if none match.
  */
-export function useScheduledLabel(transactionDate: string | undefined) {
+export function useScheduledLabel(transactionDate: string | undefined, transactionType?: string) {
   const { data: labels = [] } = useLabelsQuery();
   const { user } = useUser();
 
@@ -18,6 +18,7 @@ export function useScheduledLabel(transactionDate: string | undefined) {
         rules.push({
           labelId: label.id,
           labelCreatedAt: label.createdAt,
+          applicableTo: label.applicableTo,
           days: schedule.days,
           startTime: schedule.startTime,
           endTime: schedule.endTime,
@@ -31,8 +32,8 @@ export function useScheduledLabel(transactionDate: string | undefined) {
     if (!transactionDate || scheduleRules.length === 0) return null;
     const dateUTC = new Date(transactionDate);
     if (isNaN(dateUTC.getTime())) return null;
-    return getScheduledLabelId(dateUTC, user.timezoneOffset, scheduleRules);
-  }, [transactionDate, scheduleRules, user.timezoneOffset]);
+    return getScheduledLabelId(dateUTC, user.timezoneOffset, scheduleRules, transactionType);
+  }, [transactionDate, scheduleRules, user.timezoneOffset, transactionType]);
 
   return { scheduledLabelId };
 }

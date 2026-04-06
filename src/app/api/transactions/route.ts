@@ -97,12 +97,12 @@ export async function POST(request: Request) {
     const body = await request.json();
     const validated = transactionSchema.parse(body);
 
-    // Validate label ownership before writing
+    // Validate label ownership and type compatibility before writing
     const verifiedLabelIds: string[] = [];
     if (validated.labelIds && validated.labelIds.length > 0) {
       const ownedLabels = await prisma.label.findMany({
         where: { id: { in: validated.labelIds }, userId },
-        select: { id: true },
+        select: { id: true, applicableTo: true },
       });
       if (ownedLabels.length !== validated.labelIds.length) {
         return NextResponse.json(
@@ -110,7 +110,11 @@ export async function POST(request: Request) {
           { status: 400 }
         );
       }
-      verifiedLabelIds.push(...ownedLabels.map((l) => l.id));
+      // Only keep labels compatible with the transaction type
+      const compatible = ownedLabels.filter(
+        (l) => l.applicableTo === "BOTH" || l.applicableTo === validated.type
+      );
+      verifiedLabelIds.push(...compatible.map((l) => l.id));
     }
 
     // Server-side auto-label when labelIds not provided (hidden-label flows, external callers).
@@ -118,7 +122,7 @@ export async function POST(request: Request) {
     if (validated.labelIds === undefined) {
       const ctx = await getScheduleContext(userId);
       if (ctx) {
-        const scheduledId = matchScheduledLabel(new Date(validated.date), ctx);
+        const scheduledId = matchScheduledLabel(new Date(validated.date), ctx, validated.type);
         if (scheduledId) verifiedLabelIds.push(scheduledId);
       }
     }

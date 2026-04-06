@@ -92,7 +92,8 @@ src/
 - Default categories are seeded (15 total: 10 expense, 5 income)
 - Users can create custom categories on top of defaults
 - Key models: `User`, `Category`, `Transaction`, `Bill`, `Label`, `LabelSchedule`, `TransactionLabel`, `VerificationToken`
-- Notable columns: `users.hide_amounts`, `users.timezone_offset`, `users.email_verified`, `transactions.receipt_group_id`, `transactions.receipt_breakdown`, `transactions.bill_id`
+- Notable columns: `users.hide_amounts`, `users.timezone_offset`, `users.email_verified`, `users.default_label_type`, `transactions.receipt_group_id`, `transactions.receipt_breakdown`, `transactions.bill_id`
+- `Label.applicable_to` restricts labels to "EXPENSE", "INCOME", or "BOTH" (default); filters LabelPicker, schedule auto-labeling, and retroactive apply
 - `LabelSchedule` stores per-label auto-apply rules: `days` (int[]), `startTime`/`endTime` (HH:mm), linked to `Label` via `labelId`
 
 ## Key Patterns
@@ -109,6 +110,7 @@ src/
 - **TanStack React Query** — all data fetching uses React Query; `queryKeys` object in each query hook scopes cache invalidation; `query-client.ts` exports a factory (needed for server/client separation)
 - **Shared budget queries** (`src/lib/budget-queries.ts`) — dependency-injected Prisma functions shared between API routes and the MCP server
 - **Label schedules** — labels can have time-of-day + day-of-week schedules that auto-tag transactions; pure matching in `schedule-matching.ts`, server helpers in `schedule-server.ts`, client hook in `use-scheduled-label.ts`; first-created label wins on overlap; `labelIds: undefined` = server auto-applies, `labelIds: []` = user opted out
+- **Label type restrictions** — labels have `applicableTo` ("EXPENSE" | "INCOME" | "BOTH"); LabelPicker filters by transaction type; schedule auto-labeling respects type; narrowing type on edit triggers 409 confirmation to remove affected associations; default controlled by `users.default_label_type` preference
 - **Timezone offsets** — all date-range queries accept a `timezoneOffset` (minutes) for correct day/month boundaries; offset stored in `users.timezone_offset` and provided by `UserProvider`
 - **MCP server** (`mcp-server/`) — standalone package; runs via `tsx` over stdio; user ID injected via `BUDGET_USER_ID` env var; excluded from root `tsconfig.json`
 

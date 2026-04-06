@@ -13,6 +13,7 @@ import { useUser } from "@/components/user-provider";
 import { useCategoriesQuery, useQuickPreferencesQuery } from "@/hooks/use-categories";
 import { LabelPicker } from "@/components/transactions/label-picker";
 import { useScheduledLabel } from "@/hooks/use-scheduled-label";
+import { useLabelsQuery } from "@/hooks/use-labels";
 import type { Category, TransactionWithCategory, ReceiptBreakdownMeta } from "@/types";
 
 export interface InitialTransactionData {
@@ -107,22 +108,18 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   const watchedLabelIds = watch("labelIds") ?? [];
 
   // Auto-label scheduling
-  const { scheduledLabelId } = useScheduledLabel(watchedDate);
+  const { scheduledLabelId } = useScheduledLabel(watchedDate, selectedType);
   const userRemovedAutoLabels = useRef<Set<string>>(new Set());
   const autoAppliedLabels = useRef<Set<string>>(new Set());
   const prevScheduledLabelId = useRef<string | null>(null);
   // Tracks whether the user interacted with labels at all (add, remove, toggle)
   const userTouchedLabels = useRef(false);
-  // Seed initial snapshot: if editing and the transaction already has the scheduled
-  // label, show the clock icon immediately without waiting for the effect to run.
-  const [autoAppliedSnapshot, setAutoAppliedSnapshot] = useState<string[]>(() => {
-    if (!transaction || !scheduledLabelId) return [];
-    const existingIds = transaction.labels?.map((tl) => tl.labelId) ?? [];
-    if (existingIds.includes(scheduledLabelId)) return [scheduledLabelId];
-    return [];
-  });
+  // On edit, existing scheduled labels are treated as user-owned (no clock icon).
+  // Clock icon only shows for labels auto-applied during the current editing session.
+  const [autoAppliedSnapshot, setAutoAppliedSnapshot] = useState<string[]>([]);
 
   // TanStack Query hooks — cached across mounts
+  const { data: allLabels = [] } = useLabelsQuery();
   const { data: categories = [], isLoading: loadingCategories } = useCategoriesQuery(selectedType);
   const { data: quickPrefs } = useQuickPreferencesQuery();
 
@@ -173,17 +170,18 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
 
     // On first computation for edits: seed tracking refs from the transaction's
     // existing labels so the auto-label logic behaves correctly.
+    // We never seed autoAppliedLabels on edit — we can't distinguish "auto-applied
+    // earlier" from "user manually kept/re-added". Treating existing labels as
+    // user-owned means they won't be removed when the date moves outside the window.
     if (prev === null && transaction && scheduledLabelId) {
       const existingLabelIds = transaction.labels?.map((tl) => tl.labelId) ?? [];
-      if (existingLabelIds.includes(scheduledLabelId)) {
-        // Transaction has the scheduled label — mark as auto-applied so the
-        // removal branch can clean it up when the date moves outside the window.
-        autoAppliedLabels.current.add(scheduledLabelId);
-      } else {
+      if (!existingLabelIds.includes(scheduledLabelId)) {
         // Schedule matches but label is absent (e.g. quick-removed from list
         // view). Seed userRemovedAutoLabels so the effect doesn't re-add it.
         userRemovedAutoLabels.current.add(scheduledLabelId);
       }
+      // If the label IS present, leave it as user-owned (not in autoAppliedLabels).
+      // The user can still manually remove it via the picker if desired.
     }
 
     // When the scheduled label changes, reset removal tracking for the new label
@@ -218,6 +216,21 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     setAutoAppliedSnapshot([...autoAppliedLabels.current]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scheduledLabelId, hideLabelPicker]);
+
+  // Strip incompatible labels when the transaction type changes
+  useEffect(() => {
+    if (hideLabelPicker || allLabels.length === 0) return;
+    const currentIds = getValues("labelIds") ?? [];
+    if (currentIds.length === 0) return;
+    const compatible = currentIds.filter((id) => {
+      const label = allLabels.find((l) => l.id === id);
+      return !label || label.applicableTo === "BOTH" || label.applicableTo === selectedType;
+    });
+    if (compatible.length !== currentIds.length) {
+      setValue("labelIds", compatible);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedType]);
 
   const setDateToToday = () => {
     setDateMode("today");
@@ -320,7 +333,8 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               // - the picker is visible but the user never interacted with labels
               //   (labelIds is still the default [] and no auto-label was applied/removed)
               const userInteractedWithLabels = userTouchedLabels.current
-                || userRemovedAutoLabels.current.size > 0;
+                || userRemovedAutoLabels.current.size > 0
+                || autoAppliedLabels.current.size > 0;
               const includeLabelIds = !hideLabelPicker && userInteractedWithLabels;
               return onSubmit(includeLabelIds ? { ...payload, labelIds } : payload);
             })}
@@ -523,6 +537,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                   setValue("labelIds", ids);
                 }}
                 autoAppliedIds={autoAppliedSnapshot}
+                transactionType={selectedType}
               />
             )}
 

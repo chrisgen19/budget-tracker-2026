@@ -35,6 +35,7 @@ export const getScheduleContext = async (userId: string): Promise<ScheduleContex
     label.schedules.map((s) => ({
       labelId: label.id,
       labelCreatedAt: label.createdAt,
+      applicableTo: label.applicableTo,
       days: s.days,
       startTime: s.startTime,
       endTime: s.endTime,
@@ -53,7 +54,8 @@ export const getScheduleContext = async (userId: string): Promise<ScheduleContex
  */
 export const matchScheduledLabel = (
   date: Date,
-  ctx: ScheduleContext
+  ctx: ScheduleContext,
+  transactionType?: string
 ): string | null => {
-  return getScheduledLabelId(date, ctx.timezoneOffset, ctx.scheduleRules);
+  return getScheduledLabelId(date, ctx.timezoneOffset, ctx.scheduleRules, transactionType);
 };

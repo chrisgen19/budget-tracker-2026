@@ -35,7 +35,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
     if (hasLabelIds && validated.labelIds!.length > 0) {
       const ownedLabels = await prisma.label.findMany({
         where: { id: { in: validated.labelIds! }, userId },
-        select: { id: true },
+        select: { id: true, applicableTo: true },
       });
       if (ownedLabels.length !== validated.labelIds!.length) {
         return NextResponse.json(
@@ -43,48 +43,35 @@ export async function PUT(request: Request, { params }: RouteParams) {
           { status: 400 }
         );
       }
-      verifiedLabelIds.push(...ownedLabels.map((l) => l.id));
+      // Only keep labels compatible with the transaction type
+      const compatible = ownedLabels.filter(
+        (l) => l.applicableTo === "BOTH" || l.applicableTo === validated.type
+      );
+      verifiedLabelIds.push(...compatible.map((l) => l.id));
     }
 
-    // Server-side auto-label when labelIds not provided (cold-cache edits, hidden-label flows)
+    // Server-side label reconciliation when labelIds not provided (cold-cache edits, hidden-label flows).
+    // Always runs to enforce type compatibility, even for users without schedules.
     if (!hasLabelIds) {
       const [ctx, existingLabels] = await Promise.all([
         getScheduleContext(userId),
         prisma.transactionLabel.findMany({
           where: { transactionId: id },
-          select: { labelId: true },
+          include: { label: { select: { applicableTo: true } } },
         }),
       ]);
 
-      if (ctx) {
-        const scheduledId = matchScheduledLabel(new Date(validated.date), ctx);
-        const existingLabelIdSet = new Set(existingLabels.map((el) => el.labelId));
-
-        // Preserve all existing labels (both manual and scheduled) as-is.
-        // Only adjust the scheduled slot: add the computed match if absent,
-        // or remove a stale scheduled label if the match changed.
-        for (const el of existingLabels) {
-          const isScheduled = ctx.scheduledLabelIds.has(el.labelId);
-          if (isScheduled && el.labelId !== scheduledId) {
-            // Stale scheduled label (date moved outside window or lost overlap) — drop it
-            continue;
-          }
-          verifiedLabelIds.push(el.labelId);
-        }
-        // Add new scheduled label only if not already present (user may have
-        // quick-removed it — absence is treated as an intentional override)
-        if (scheduledId && !existingLabelIdSet.has(scheduledId)) {
-          // Only auto-add if no other scheduled label was present (fresh transaction).
-          // If the user removed it previously, the absence is the override.
-          const hadAnyScheduledLabel = existingLabels.some(
-            (el) => ctx.scheduledLabelIds.has(el.labelId)
-          );
-          if (!hadAnyScheduledLabel) {
-            verifiedLabelIds.push(scheduledId);
-          }
-        }
-        shouldSyncLabels = true;
+      // Preserve all existing labels, only dropping those incompatible with
+      // the (possibly changed) transaction type. We do NOT drop or re-add
+      // scheduled labels here — the client-side auto-label effect handles
+      // schedule changes during the editing session and sends explicit labelIds.
+      // When labelIds is omitted (cold-cache / hidden-label), preserving as-is
+      // respects prior user overrides (manual re-adds and quick-removes).
+      for (const el of existingLabels) {
+        if (el.label.applicableTo !== "BOTH" && el.label.applicableTo !== validated.type) continue;
+        verifiedLabelIds.push(el.labelId);
       }
+      shouldSyncLabels = true;
     }
 
     const result = await prisma.$transaction(async (tx) => {
