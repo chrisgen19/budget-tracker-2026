@@ -61,21 +61,16 @@ export async function PUT(request: Request, { params }: RouteParams) {
         }),
       ]);
 
-      const scheduledId = ctx
-        ? matchScheduledLabel(new Date(validated.date), ctx, validated.type)
-        : null;
-
+      // Preserve all existing labels, only dropping those incompatible with
+      // the (possibly changed) transaction type. We do NOT drop or re-add
+      // scheduled labels here — the client-side auto-label effect handles
+      // schedule changes during the editing session and sends explicit labelIds.
+      // When labelIds is omitted (cold-cache / hidden-label), preserving as-is
+      // respects prior user overrides (manual re-adds and quick-removes).
       for (const el of existingLabels) {
-        const isScheduled = ctx?.scheduledLabelIds.has(el.labelId) ?? false;
-        // Drop stale scheduled labels (date moved outside window or lost overlap)
-        if (isScheduled && el.labelId !== scheduledId) continue;
-        // Drop labels incompatible with the (possibly changed) transaction type
         if (el.label.applicableTo !== "BOTH" && el.label.applicableTo !== validated.type) continue;
         verifiedLabelIds.push(el.labelId);
       }
-      // Never auto-add scheduled labels on edits — absence of a scheduled label
-      // is treated as an intentional user override (e.g. quick-removed from list view).
-      // Scheduled labels are only auto-added on transaction *creation*.
       shouldSyncLabels = true;
     }
 
