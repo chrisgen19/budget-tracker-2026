@@ -27,6 +27,11 @@ export async function PUT(request: Request, { params }: RouteParams) {
 
     const body = await request.json();
     const validated = labelSchema.parse(body);
+    // If the client didn't send applicableTo, preserve the existing value
+    // (prevents older cached clients from silently widening the scope to BOTH)
+    if (!("applicableTo" in body)) {
+      validated.applicableTo = existing.applicableTo as "EXPENSE" | "INCOME" | "BOTH";
+    }
     const confirmRemoval = body.confirmRemoval === true;
 
     // Check for duplicate name (excluding self)
