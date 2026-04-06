@@ -64,38 +64,34 @@ const getDefaultRange = (granularity: AnalyticsGranularity, tzOffset: number): {
   };
 };
 
-/** Navigate the range forward or backward by one "page". */
+/** Navigate the range forward or backward by one "page".
+ *  Custom ranges always shift by their exact day span to preserve the window size. */
 const navigateRange = (
   from: string,
   to: string,
   granularity: AnalyticsGranularity,
-  direction: "prev" | "next"
+  direction: "prev" | "next",
+  isCustom: boolean,
 ): { from: string; to: string } => {
   const fromDate = parseLocalDate(from);
   const toDate = parseLocalDate(to);
   const sign = direction === "next" ? 1 : -1;
+  const spanDays = Math.round((toDate.getTime() - fromDate.getTime()) / (24 * 60 * 60 * 1000)) + 1;
 
-  switch (granularity) {
-    case "weekly": {
-      const spanDays = Math.round((toDate.getTime() - fromDate.getTime()) / (24 * 60 * 60 * 1000)) + 1;
-      fromDate.setDate(fromDate.getDate() + sign * spanDays);
-      toDate.setDate(toDate.getDate() + sign * spanDays);
-      break;
-    }
-    case "monthly": {
-      const months = (toDate.getFullYear() - fromDate.getFullYear()) * 12 + (toDate.getMonth() - fromDate.getMonth()) + 1;
-      fromDate.setMonth(fromDate.getMonth() + sign * months);
-      toDate.setMonth(toDate.getMonth() + sign * months);
-      // Fix end-of-month
-      toDate.setMonth(toDate.getMonth() + 1, 0);
-      break;
-    }
-    case "yearly": {
-      const years = toDate.getFullYear() - fromDate.getFullYear() + 1;
-      fromDate.setFullYear(fromDate.getFullYear() + sign * years);
-      toDate.setFullYear(toDate.getFullYear() + sign * years);
-      break;
-    }
+  // Custom ranges always shift by exact day span regardless of granularity
+  if (isCustom || granularity === "weekly") {
+    fromDate.setDate(fromDate.getDate() + sign * spanDays);
+    toDate.setDate(toDate.getDate() + sign * spanDays);
+  } else if (granularity === "monthly") {
+    const months = (toDate.getFullYear() - fromDate.getFullYear()) * 12 + (toDate.getMonth() - fromDate.getMonth()) + 1;
+    fromDate.setMonth(fromDate.getMonth() + sign * months);
+    toDate.setMonth(toDate.getMonth() + sign * months);
+    // Fix end-of-month
+    toDate.setMonth(toDate.getMonth() + 1, 0);
+  } else {
+    const years = toDate.getFullYear() - fromDate.getFullYear() + 1;
+    fromDate.setFullYear(fromDate.getFullYear() + sign * years);
+    toDate.setFullYear(toDate.getFullYear() + sign * years);
   }
 
   return {
@@ -170,15 +166,17 @@ export default function AnalyticsPage() {
 
   const handleRangeChange = useCallback((from: string, to: string) => {
     if (!from || !to) return;
-    setDateRange({ from, to });
+    // Auto-swap inverted ranges so from <= to
+    const [validFrom, validTo] = from <= to ? [from, to] : [to, from];
+    setDateRange({ from: validFrom, to: validTo });
     if (isCustom) {
-      setGranularity(autoGranularity(from, to));
+      setGranularity(autoGranularity(validFrom, validTo));
     }
   }, [isCustom]);
 
   const handleNavigate = useCallback((direction: "prev" | "next") => {
-    setDateRange((prev) => navigateRange(prev.from, prev.to, granularity, direction));
-  }, [granularity]);
+    setDateRange((prev) => navigateRange(prev.from, prev.to, granularity, direction, isCustom));
+  }, [granularity, isCustom]);
 
   return (
     <div className="max-w-4xl mx-auto px-4 pt-6 pb-28 sm:pb-10">
