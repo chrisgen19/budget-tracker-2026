@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { transactionSchema } from "@/lib/validations";
-import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -53,20 +52,14 @@ export async function PUT(request: Request, { params }: RouteParams) {
     // Server-side label reconciliation when labelIds not provided (cold-cache edits, hidden-label flows).
     // Always runs to enforce type compatibility, even for users without schedules.
     if (!hasLabelIds) {
-      const [ctx, existingLabels] = await Promise.all([
-        getScheduleContext(userId),
-        prisma.transactionLabel.findMany({
-          where: { transactionId: id },
-          include: { label: { select: { applicableTo: true } } },
-        }),
-      ]);
+      const existingLabels = await prisma.transactionLabel.findMany({
+        where: { transactionId: id },
+        include: { label: { select: { applicableTo: true } } },
+      });
 
-      // Preserve all existing labels, only dropping those incompatible with
-      // the (possibly changed) transaction type. We do NOT drop or re-add
-      // scheduled labels here — the client-side auto-label effect handles
-      // schedule changes during the editing session and sends explicit labelIds.
-      // When labelIds is omitted (cold-cache / hidden-label), preserving as-is
-      // respects prior user overrides (manual re-adds and quick-removes).
+      // Preserve existing labels, only dropping those incompatible with the
+      // (possibly changed) transaction type. We never re-apply scheduled labels
+      // on edit — preserving as-is respects prior user overrides.
       for (const el of existingLabels) {
         if (el.label.applicableTo !== "BOTH" && el.label.applicableTo !== validated.type) continue;
         verifiedLabelIds.push(el.labelId);

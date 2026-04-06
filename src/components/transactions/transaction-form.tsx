@@ -107,8 +107,12 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   const watchedDate = watch("date");
   const watchedLabelIds = watch("labelIds") ?? [];
 
-  // Auto-label scheduling
-  const { scheduledLabelId } = useScheduledLabel(watchedDate, selectedType);
+  // Auto-label scheduling — only for new transactions; edits preserve user's label choices
+  const isEditing = !!transaction;
+  const { scheduledLabelId } = useScheduledLabel(
+    isEditing ? undefined : watchedDate,
+    selectedType,
+  );
   const userRemovedAutoLabels = useRef<Set<string>>(new Set());
   const autoAppliedLabels = useRef<Set<string>>(new Set());
   const prevScheduledLabelId = useRef<string | null>(null);
@@ -167,22 +171,6 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
 
     // Read current label state imperatively to avoid stale closure issues
     const currentIds = getValues("labelIds") ?? [];
-
-    // On first computation for edits: seed tracking refs from the transaction's
-    // existing labels so the auto-label logic behaves correctly.
-    // We never seed autoAppliedLabels on edit — we can't distinguish "auto-applied
-    // earlier" from "user manually kept/re-added". Treating existing labels as
-    // user-owned means they won't be removed when the date moves outside the window.
-    if (prev === null && transaction && scheduledLabelId) {
-      const existingLabelIds = transaction.labels?.map((tl) => tl.labelId) ?? [];
-      if (!existingLabelIds.includes(scheduledLabelId)) {
-        // Schedule matches but label is absent (e.g. quick-removed from list
-        // view). Seed userRemovedAutoLabels so the effect doesn't re-add it.
-        userRemovedAutoLabels.current.add(scheduledLabelId);
-      }
-      // If the label IS present, leave it as user-owned (not in autoAppliedLabels).
-      // The user can still manually remove it via the picker if desired.
-    }
 
     // When the scheduled label changes, reset removal tracking for the new label
     if (scheduledLabelId !== prev && scheduledLabelId) {
