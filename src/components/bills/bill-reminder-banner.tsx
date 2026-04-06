@@ -64,6 +64,10 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
       setBannerHeight(0);
       return;
     }
+    if (typeof ResizeObserver === "undefined") {
+      setBannerHeight(el.getBoundingClientRect().height);
+      return;
+    }
     const observer = new ResizeObserver(([entry]) => {
       const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.target.getBoundingClientRect().height;
       setBannerHeight(height);
