@@ -166,10 +166,10 @@ export function UpcomingBillRow({
         {isExpanded && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto", transitionEnd: { overflow: "visible" } }}
+            exit={{ opacity: 0, height: 0, overflow: "hidden" }}
             transition={{ duration: 0.15 }}
-            className="overflow-hidden"
+            style={{ overflow: "hidden" }}
           >
             <div className="flex items-center gap-2 pt-2 pl-10">
               {/* Pay */}
