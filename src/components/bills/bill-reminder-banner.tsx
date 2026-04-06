@@ -149,10 +149,10 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
           </div>
 
           {/* Actions row */}
-          <div className="flex items-center gap-1.5 px-3 pb-3">
+          <div className="flex flex-wrap items-center gap-1.5 px-3 pb-3">
             {/* Navigation */}
             {pendingReminders.length > 1 && (
-              <div className="flex items-center gap-1 mr-1">
+              <div className="flex items-center gap-1 mr-1 shrink-0">
                 <button
                   onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))}
                   disabled={currentIndex === 0}
@@ -174,7 +174,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
             )}
 
             {/* Action buttons */}
-            <div className="flex items-center gap-1.5 ml-auto">
+            <div className="flex items-center gap-1.5 ml-auto flex-wrap justify-end">
               {/* Pay All — only when multiple reminders */}
               {pendingReminders.length > 1 && (
                 <button
