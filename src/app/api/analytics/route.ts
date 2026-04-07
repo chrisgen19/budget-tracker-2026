@@ -129,8 +129,7 @@ const computePeriodData = (
   // Category breakdown (filtered by type)
   const filtered = type === "ALL" ? transactions : transactions.filter((t) => t.type === type);
   const categoryMap = new Map<string, AnalyticsCategoryItem>();
-  const incomeTotal = filtered.filter((t) => t.type === "INCOME").reduce((sum, t) => sum + t.amount, 0);
-  const expenseTotal = filtered.filter((t) => t.type === "EXPENSE").reduce((sum, t) => sum + t.amount, 0);
+  const total = filtered.reduce((sum, t) => sum + t.amount, 0);
 
   for (const t of filtered) {
     const mapKey = `${t.categoryId}:${t.type}`;
@@ -156,10 +155,7 @@ const computePeriodData = (
     .sort((a, b) => b.amount - a.amount)
     .map((item) => ({
       ...item,
-      percentage: (() => {
-        const typeTotal = item.type === "INCOME" ? incomeTotal : expenseTotal;
-        return typeTotal > 0 ? Math.round((item.amount / typeTotal) * 100) : 0;
-      })(),
+      percentage: total > 0 ? Math.round((item.amount / total) * 100) : 0,
     }));
 
   return { summary, categoryBreakdown };

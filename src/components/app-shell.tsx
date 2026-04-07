@@ -609,7 +609,7 @@ export function AppShell({ children }: AppShellProps) {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all duration-200 min-w-[60px]",
+                  "flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all duration-200 min-w-[48px]",
                   isActive
                     ? "text-amber"
                     : "text-warm-300"
@@ -633,7 +633,7 @@ export function AppShell({ children }: AppShellProps) {
               onClick={() => setScanOpen(true)}
               disabled={scanLimitReached}
               className={cn(
-                "flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all duration-200 min-w-[60px] relative",
+                "flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all duration-200 min-w-[48px] relative",
                 scanLimitReached ? "text-warm-200 cursor-not-allowed" : "text-warm-300"
               )}
             >

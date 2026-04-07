@@ -161,7 +161,7 @@ export function TimeRangePicker({
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-[340px] bg-white rounded-xl shadow-lg border border-cream-200 z-50 overflow-hidden">
+        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-[340px] max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-lg border border-cream-200 z-50 overflow-hidden">
           {/* Tabs */}
           <div className="flex border-b border-cream-100 p-1.5 gap-0.5">
             {TABS.map((tab) => (

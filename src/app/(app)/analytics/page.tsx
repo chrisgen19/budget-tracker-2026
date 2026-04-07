@@ -57,6 +57,10 @@ const formatPeriodLabel = (periodType: PeriodType, from: string, to: string): st
   if (fY === tY && fM === tM && fD === 1 && tD === lastDayOfMonth) {
     return `${MONTHS[fM - 1]} ${fY}`;
   }
+  // Custom full year
+  if (fY === tY && fM === 1 && fD === 1 && tM === 12 && tD === 31) {
+    return `${fY}`;
+  }
   if (fY === tY) {
     return `${MONTH_SHORT[fM - 1]} ${fD} – ${MONTH_SHORT[tM - 1]} ${tD}, ${tY}`;
   }
