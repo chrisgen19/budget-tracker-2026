@@ -26,6 +26,7 @@ src/
 │   ├── (auth)/             # Login, Register, Forgot/Reset Password, Email Verify
 │   ├── (app)/              # Protected pages:
 │   │   ├── dashboard/      # Dashboard with charts + upcoming bills widget
+│   │   ├── analytics/      # Analytics page with reports + time range controls
 │   │   ├── transactions/   # Transaction list + CRUD
 │   │   ├── categories/     # Category management
 │   │   ├── bills/          # Recurring bills management
@@ -34,6 +35,7 @@ src/
 │   └── api/                # REST API routes
 ├── components/
 │   ├── ui/                 # Shared UI: Modal, EmptyState, IconMap, MobileFab, ConfirmModal, Toast, DropdownButton
+│   ├── analytics/          # Analytics charts (IncomeExpenses, CashFlow, CategoryBreakdown, LabelBreakdown)
 │   ├── dashboard/          # Chart components
 │   ├── transactions/       # Transaction form, LabelPicker, ReceiptBreakdown
 │   ├── labels/             # LabelForm (with schedule config)
@@ -118,6 +120,7 @@ src/
 - `POST /api/register` — registration with bcrypt + sends verification email
 - `GET/POST /api/transactions` — list (filters/pagination/timezone) + create
 - `PUT/DELETE /api/transactions/[id]` — update/delete (ownership check)
+- `GET /api/analytics` — analytics data (income/expenses, category/label breakdowns, cash flow) with granularity, date range, timezone, and type filter params
 - `GET /api/dashboard` — aggregated stats, category breakdown, monthly trends
 - `GET/POST /api/categories` — list (defaults + custom) + create
 - `PUT/DELETE /api/categories/[id]` — update/delete (custom only)

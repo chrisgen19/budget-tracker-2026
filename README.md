@@ -36,6 +36,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **Progressive Web App** — Installable PWA with offline support via Serwist service worker; install prompt banner (Android + iOS Safari guide); standalone mode with safe-area handling; smart caching for API responses and static assets
 - **Timezone-Aware Dates** — All date queries respect the user's local timezone offset for accurate day boundaries and month grouping
 - **MCP Server** — Local Model Context Protocol server for querying budget data from Claude Desktop; 8 read-only tools (spending by category, top expenses, monthly summary, spending trends, search transactions, budget overview, upcoming bills, category list); shared query library reusable for future in-app AI chat
+- **Analytics** — Dedicated reporting page with income vs expenses bar chart, cash flow area chart (net + cumulative), category breakdown donut chart, label breakdown horizontal bars, summary cards, and flexible time range controls (weekly/monthly/yearly/custom)
 - **Design** — Warm paper-ledger aesthetic with Young Serif + Outfit fonts, Plus Jakarta Sans for currency amounts, amber accents, and Framer Motion animations
 
 ## Tech Stack
@@ -241,6 +242,7 @@ src/
 │   │   └── register/
 │   ├── (app)/               # Protected pages (requires auth)
 │   │   ├── dashboard/       # Dashboard with charts & summaries
+│   │   ├── analytics/       # Analytics & reporting page
 │   │   ├── transactions/    # Transaction list with CRUD
 │   │   ├── categories/      # Category management
 │   │   ├── bills/           # Scheduled bills & reminders
@@ -252,6 +254,7 @@ src/
 │       ├── admin/           # Admin: users, roles, scan settings
 │       ├── transactions/    # Transaction CRUD
 │       ├── categories/      # Category CRUD
+│       ├── analytics/       # Analytics API (time range + breakdown)
 │       ├── dashboard/       # Dashboard stats + balance trend
 │       ├── bills/           # Scheduled bill CRUD + upcoming bills
 │       ├── preferences/     # User preferences (privacy, quick categories, features)
@@ -260,6 +263,7 @@ src/
 │       └── receipts/        # Receipt OCR + itemized breakdown via Gemini AI
 ├── components/
 │   ├── ui/                  # Shared UI (Modal, ConfirmModal, MobileFab, EmptyState, IconMap)
+│   ├── analytics/           # Analytics charts (IncomeExpenses, CashFlow, CategoryBreakdown, LabelBreakdown)
 │   ├── dashboard/           # Chart components (Trend, Spending, BalanceTrend)
 │   ├── transactions/        # Transaction form + receipt breakdown viewer
 │   ├── categories/          # Category form + quick category picker
@@ -314,6 +318,15 @@ AppSettings (per role: FREE, PAID)
 - **AppSettings** — id, role (unique), receiptScanEnabled, maxUploadFiles, monthlyScanLimit
 - **ScanLog** — id, userId, createdAt (tracks scan usage for monthly limits)
 - **VerificationToken** — id, token, type (EMAIL_VERIFY/PASSWORD_RESET), userId, expiresAt
+
+## Analytics Roadmap
+
+| Phase | Feature | Status |
+|-------|---------|--------|
+| 1 | Income & Expenses Report, Category Breakdown, Label Breakdown, Cash Flow, Time Range Controls | Done |
+| 2 | Period Comparison — compare two time ranges side by side | Planned |
+| 3 | Records & Statistics — biggest expense, avg daily spend, most used category, streaks | Planned |
+| 4 | Financial Health Score — savings rate, expense ratio, trend indicators | Planned |
 
 ## Changelog
 

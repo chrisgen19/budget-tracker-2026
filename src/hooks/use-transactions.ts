@@ -9,6 +9,7 @@ import type { TransactionInput } from "@/lib/validations";
 import type { TransactionWithCategory, DashboardStats } from "@/types";
 import type { TransactionFilters } from "@/components/transactions/transaction-filters";
 import { labelKeys } from "@/hooks/use-labels";
+import { analyticsKeys } from "@/hooks/use-analytics";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -239,10 +240,11 @@ export function useCreateTransaction() {
         queryKey: queryKeys.transactions.all,
       });
 
-      // Invalidate dashboard (triggers background refetch)
+      // Invalidate dashboard + analytics (triggers background refetch)
       queryClient.invalidateQueries({
         queryKey: queryKeys.dashboard.all,
       });
+      queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
 
       // Invalidate label counts
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
@@ -281,10 +283,11 @@ export function useUpdateTransaction() {
         queryKey: queryKeys.transactions.all,
       });
 
-      // Invalidate dashboard
+      // Invalidate dashboard + analytics
       queryClient.invalidateQueries({
         queryKey: queryKeys.dashboard.all,
       });
+      queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
 
       // Invalidate label counts
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
@@ -317,10 +320,11 @@ export function useDeleteTransaction() {
         refetchType: "none",
       });
 
-      // Invalidate dashboard
+      // Invalidate dashboard + analytics
       queryClient.invalidateQueries({
         queryKey: queryKeys.dashboard.all,
       });
+      queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
 
       // Invalidate label counts
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
@@ -360,10 +364,11 @@ export function useBulkDeleteTransactions() {
         refetchType: "none",
       });
 
-      // Invalidate dashboard
+      // Invalidate dashboard + analytics
       queryClient.invalidateQueries({
         queryKey: queryKeys.dashboard.all,
       });
+      queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
 
       // Invalidate label counts
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
@@ -414,10 +419,11 @@ export function useBatchCreateTransactions() {
         refetchType: "none",
       });
 
-      // Invalidate dashboard
+      // Invalidate dashboard + analytics
       queryClient.invalidateQueries({
         queryKey: queryKeys.dashboard.all,
       });
+      queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
     },
   });
 }
@@ -459,6 +465,7 @@ export function useRemoveTransactionLabel() {
       // common case; the invalidation ensures correctness for filtered views.
       queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
+      queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
     },
     onError: () => {

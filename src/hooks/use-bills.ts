@@ -5,6 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { queryKeys } from "@/hooks/use-transactions";
+import { analyticsKeys } from "@/hooks/use-analytics";
 import type { ScheduledTransactionInput, BillActionInput } from "@/lib/validations";
 import type { ScheduledTransactionWithCategory, PendingReminder } from "@/types";
 import type { ScheduledTransactionLog } from "@prisma/client";
@@ -238,10 +239,11 @@ export function useBillAction() {
       queryClient.invalidateQueries({ queryKey: billKeys.all });
       queryClient.invalidateQueries({ queryKey: billKeys.pending });
 
-      // If paid, also invalidate transactions and dashboard
+      // If paid, also invalidate transactions, dashboard, and analytics
       if (variables.input.action === "pay" || variables.input.action === "pay_existing") {
         queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all });
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
+        queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
       }
     },
   });
