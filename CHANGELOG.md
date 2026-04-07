@@ -2,6 +2,21 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-04-07 — Financial Health Score (Analytics Phase 4)
+
+### Financial Health Tab
+- Added third tab to Analytics page: **Financial Health** with composite score (0-100)
+- **SVG ring gauge** with animated fill, color-coded by score label
+- **5 weighted sub-scores**: Savings Rate (35%), Expense Trend (25%), Income Stability (15%), Category Diversification (15%), Spending Consistency (10%)
+- **Score labels**: Excellent (80-100), Good (60-79), Fair (40-59), Needs Attention (20-39), Critical (0-19)
+- **Trend indicators**: comparing current vs previous period (improving/declining/stable/new)
+- Savings Rate uses income-to-expense ratio with piecewise linear mapping
+- Category Diversification uses normalized Shannon entropy
+- Expense Trend and Income Stability compare period-over-period changes
+- Server-side `computeHealthScore()` — no extra DB queries, reuses existing computed data
+- Null-safe: handles zero income, zero expenses, and no previous period data gracefully
+- New types: `HealthTrend`, `HealthSubScore`, `AnalyticsHealthScore`
+
 ## 2026-04-07 — Records & Statistics (Analytics Phase 3)
 
 ### Records & Statistics Tab

@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
-import { AlertTriangle, BarChart3, Trophy } from "lucide-react";
+import { AlertTriangle, BarChart3, Heart, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
 import { usePrivacy } from "@/components/privacy-provider";
@@ -16,15 +16,17 @@ import { LabelBreakdownChart } from "@/components/analytics/label-breakdown-char
 import { AnalyticsSummary } from "@/components/analytics/analytics-summary";
 import { AnalyticsSkeleton } from "@/components/analytics/analytics-skeleton";
 import { RecordsStatistics } from "@/components/analytics/records-statistics";
+import { FinancialHealthScore } from "@/components/analytics/financial-health-score";
 import { stagger, fadeUp } from "@/components/analytics/motion-variants";
 import type { AnalyticsGranularity, AnalyticsTypeFilter } from "@/types";
 
 type PeriodType = AnalyticsGranularity | "custom";
-type AnalyticsTab = "reports" | "statistics";
+type AnalyticsTab = "reports" | "statistics" | "health";
 
 const ANALYTICS_TABS = [
   { id: "reports" as const, label: "Reports", icon: BarChart3 },
   { id: "statistics" as const, label: "Records & Statistics", icon: Trophy },
+  { id: "health" as const, label: "Financial Health", icon: Heart },
 ];
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -314,6 +316,13 @@ export default function AnalyticsPage() {
           {activeTab === "statistics" && (
             <div className="mt-4">
               <RecordsStatistics statistics={data.statistics} currency={currency} hideAmounts={hideAmounts} />
+            </div>
+          )}
+
+          {/* Financial Health Tab */}
+          {activeTab === "health" && (
+            <div className="mt-4">
+              <FinancialHealthScore healthScore={data.healthScore} currency={currency} hideAmounts={hideAmounts} />
             </div>
           )}
         </>
