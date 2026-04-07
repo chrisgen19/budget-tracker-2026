@@ -8,6 +8,8 @@ import type {
   AnalyticsCashFlowItem,
   AnalyticsGranularity,
   AnalyticsSummary,
+  AnalyticsStatistics,
+  AnalyticsTopRecord,
 } from "@/types";
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -160,6 +162,116 @@ const computePeriodData = (
     }));
 
   return { summary, categoryBreakdown };
+};
+
+/** Compute records & statistics from transactions. */
+const computeStatistics = (
+  transactions: Array<{ amount: number; type: string; description: string; date: Date; category: { name: string; color: string; icon: string } }>,
+  allCategoryBreakdown: AnalyticsCategoryItem[],
+  summary: AnalyticsSummary,
+  startDate: Date,
+  endDate: Date,
+  tzMs: number,
+): AnalyticsStatistics => {
+  const toLocalDate = (d: Date) => {
+    const local = new Date(d.getTime() - tzMs);
+    return `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, "0")}-${String(local.getUTCDate()).padStart(2, "0")}`;
+  };
+
+  const toDateLabel = (d: Date) => {
+    const local = new Date(d.getTime() - tzMs);
+    return `${MONTH_NAMES[local.getUTCMonth()]} ${local.getUTCDate()}`;
+  };
+
+  // Single pass: build day map + track top records
+  let biggestExpense: (typeof transactions)[0] | null = null;
+  let biggestIncome: (typeof transactions)[0] | null = null;
+  const dayMap = new Map<string, { expenses: number; count: number; hasExpense: boolean }>();
+
+  for (const t of transactions) {
+    const dayKey = toLocalDate(new Date(t.date));
+    const day = dayMap.get(dayKey) ?? { expenses: 0, count: 0, hasExpense: false };
+    day.count += 1;
+    if (t.type === "EXPENSE") {
+      day.expenses += t.amount;
+      day.hasExpense = true;
+      if (!biggestExpense || t.amount > biggestExpense.amount) biggestExpense = t;
+    } else {
+      if (!biggestIncome || t.amount > biggestIncome.amount) biggestIncome = t;
+    }
+    dayMap.set(dayKey, day);
+  }
+
+  // Top record formatters
+  const toRecord = (t: (typeof transactions)[0]): AnalyticsTopRecord => ({
+    amount: t.amount,
+    description: t.description || t.category.name,
+    date: toDateLabel(new Date(t.date)),
+    category: t.category.name,
+    categoryIcon: t.category.icon,
+    categoryColor: t.category.color,
+  });
+
+  // Most expensive day
+  let mostExpensiveDay: AnalyticsStatistics["mostExpensiveDay"] = null;
+  for (const [key, day] of dayMap) {
+    if (day.hasExpense && (!mostExpensiveDay || day.expenses > mostExpensiveDay.total)) {
+      const [y, m, d] = key.split("-").map(Number);
+      mostExpensiveDay = { date: `${MONTH_NAMES[m - 1]} ${d}`, total: day.expenses, count: day.count };
+    }
+  }
+
+  // Days in period
+  const totalDaysInPeriod = Math.round((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+  const expenseCount = transactions.filter((t) => t.type === "EXPENSE").length;
+  const incomeCount = transactions.filter((t) => t.type === "INCOME").length;
+
+  // Spending streak: longest consecutive days with expenses
+  const expenseDays = new Set<string>();
+  for (const [key, day] of dayMap) {
+    if (day.hasExpense) expenseDays.add(key);
+  }
+  let spendingStreak = 0;
+  let currentStreak = 0;
+  const cursor = new Date(startDate.getTime());
+  while (cursor <= endDate) {
+    if (expenseDays.has(toLocalDate(cursor))) {
+      currentStreak++;
+      if (currentStreak > spendingStreak) spendingStreak = currentStreak;
+    } else {
+      currentStreak = 0;
+    }
+    cursor.setTime(cursor.getTime() + 24 * 60 * 60 * 1000);
+  }
+
+  // Category insights from allCategoryBreakdown (already sorted by amount desc)
+  const expenseCategories = allCategoryBreakdown.filter((c) => c.type === "EXPENSE");
+  const mostExpensiveCategory = expenseCategories[0]
+    ? { name: expenseCategories[0].name, icon: expenseCategories[0].icon, color: expenseCategories[0].color, amount: expenseCategories[0].amount }
+    : null;
+
+  let mostUsedCategory: AnalyticsStatistics["mostUsedCategory"] = null;
+  for (const cat of allCategoryBreakdown) {
+    if (!mostUsedCategory || cat.transactionCount > mostUsedCategory.count) {
+      mostUsedCategory = { name: cat.name, icon: cat.icon, color: cat.color, count: cat.transactionCount };
+    }
+  }
+
+  return {
+    biggestExpense: biggestExpense ? toRecord(biggestExpense) : null,
+    biggestIncome: biggestIncome ? toRecord(biggestIncome) : null,
+    mostExpensiveDay,
+    avgDailySpend: totalDaysInPeriod > 0 ? summary.totalExpenses / totalDaysInPeriod : 0,
+    avgExpenseSize: expenseCount > 0 ? summary.totalExpenses / expenseCount : 0,
+    avgIncomeSize: incomeCount > 0 ? summary.totalIncome / incomeCount : 0,
+    totalTransactions: summary.transactionCount,
+    activeDays: dayMap.size,
+    totalDaysInPeriod,
+    spendingStreak,
+    mostUsedCategory,
+    mostExpensiveCategory,
+    categoriesUsed: allCategoryBreakdown.length,
+  };
 };
 
 export async function GET(request: Request) {
@@ -328,6 +440,9 @@ export async function GET(request: Request) {
 
   const labelBreakdown = [...labelEntries].sort((a, b) => b.amount - a.amount);
 
+  // --- Statistics ---
+  const statistics = computeStatistics(transactions, allCategoryBreakdown, summary, startDate, endDate, tzMs);
+
   // --- Period labels ---
   const periodLabel = formatPeriodLabel(from, to);
   const previousPeriodLabel = formatPeriodLabel(prevFrom, prevTo);
@@ -343,5 +458,6 @@ export async function GET(request: Request) {
     allPreviousCategoryBreakdown,
     periodLabel,
     previousPeriodLabel,
+    statistics,
   });
 }

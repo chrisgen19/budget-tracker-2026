@@ -2,6 +2,21 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-04-07 — Records & Statistics (Analytics Phase 3)
+
+### Records & Statistics Tab
+- Added tab navigation to Analytics page (Reports / Records & Statistics)
+- **Top Records**: Biggest expense, biggest income, most expensive day with transaction details
+- **Averages**: Daily spend, per-expense average, per-income average
+- **Activity**: Total transactions, active days ratio, longest spending streak
+- **Category Insights**: Most used category, most expensive category, categories used count
+- Server-side `computeStatistics()` — single-pass over existing transaction query, no extra DB calls
+- Spending streak algorithm: consecutive expense-day tracking with O(D+T) complexity
+- Privacy mode support — monetary values hidden, counts/streaks always visible
+- Null-safe display with "—" fallback for empty periods
+- Staggered Framer Motion entrance animations matching existing design
+- New types: `AnalyticsTopRecord`, `AnalyticsStatistics` added to `AnalyticsData` response
+
 ## 2026-04-06 — Analytics Page (Phase 1)
 
 ### Analytics & Reporting
