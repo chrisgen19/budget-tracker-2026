@@ -111,7 +111,8 @@ function TopRecordItem({
 
 export function RecordsStatistics({ statistics: s, currency, hideAmounts }: RecordsStatisticsProps) {
   const sym = getCurrencySymbol(currency);
-  const fmt = (v: number) => (hideAmounts ? `${sym} ••••••` : formatCurrency(v, currency));
+  const fmt = (v: number | null) =>
+    v === null ? "—" : hideAmounts ? `${sym} ••••••` : formatCurrency(v, currency);
 
   return (
     <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-4">
@@ -138,7 +139,7 @@ export function RecordsStatistics({ statistics: s, currency, hideAmounts }: Reco
         <h2 className="font-serif text-lg text-warm-700">Averages</h2>
         <p className="text-xs text-warm-300 mb-4">Per-day and per-transaction averages</p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <StatItem icon={Calculator} iconColor="text-expense" iconBg="bg-expense-light" label="Daily Spend" value={fmt(s.avgDailySpend)} subtitle={`Over ${s.totalDaysInPeriod} days`} />
+          <StatItem icon={Calculator} iconColor="text-expense" iconBg="bg-expense-light" label="Daily Spend" value={fmt(s.avgDailySpend)} subtitle={s.avgDailySpend !== null ? `Over ${s.totalDaysInPeriod} days` : undefined} />
           <StatItem icon={Receipt} iconColor="text-warm-500" iconBg="bg-cream-100" label="Per Expense" value={fmt(s.avgExpenseSize)} />
           <StatItem icon={Coins} iconColor="text-income" iconBg="bg-income-light" label="Per Income" value={fmt(s.avgIncomeSize)} />
         </div>

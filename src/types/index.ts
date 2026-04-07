@@ -193,9 +193,9 @@ export interface AnalyticsStatistics {
   biggestExpense: AnalyticsTopRecord | null;
   biggestIncome: AnalyticsTopRecord | null;
   mostExpensiveDay: { date: string; total: number; count: number } | null;
-  avgDailySpend: number;
-  avgExpenseSize: number;
-  avgIncomeSize: number;
+  avgDailySpend: number | null;
+  avgExpenseSize: number | null;
+  avgIncomeSize: number | null;
   totalTransactions: number;
   activeDays: number;
   totalDaysInPeriod: number;

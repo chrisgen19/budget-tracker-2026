@@ -178,9 +178,15 @@ const computeStatistics = (
     return `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, "0")}-${String(local.getUTCDate()).padStart(2, "0")}`;
   };
 
+  // Include year in labels when range spans multiple calendar years
+  const startLocal = new Date(startDate.getTime() - tzMs);
+  const endLocal = new Date(endDate.getTime() - tzMs);
+  const multiYear = startLocal.getUTCFullYear() !== endLocal.getUTCFullYear();
+
   const toDateLabel = (d: Date) => {
     const local = new Date(d.getTime() - tzMs);
-    return `${MONTH_NAMES[local.getUTCMonth()]} ${local.getUTCDate()}`;
+    const label = `${MONTH_NAMES[local.getUTCMonth()]} ${local.getUTCDate()}`;
+    return multiYear ? `${label}, ${local.getUTCFullYear()}` : label;
   };
 
   // Single pass: build day map + track top records
@@ -195,9 +201,9 @@ const computeStatistics = (
     if (t.type === "EXPENSE") {
       day.expenses += t.amount;
       day.hasExpense = true;
-      if (!biggestExpense || t.amount > biggestExpense.amount) biggestExpense = t;
+      if (!biggestExpense || t.amount >= biggestExpense.amount) biggestExpense = t;
     } else {
-      if (!biggestIncome || t.amount > biggestIncome.amount) biggestIncome = t;
+      if (!biggestIncome || t.amount >= biggestIncome.amount) biggestIncome = t;
     }
     dayMap.set(dayKey, day);
   }
@@ -215,9 +221,10 @@ const computeStatistics = (
   // Most expensive day
   let mostExpensiveDay: AnalyticsStatistics["mostExpensiveDay"] = null;
   for (const [key, day] of dayMap) {
-    if (day.hasExpense && (!mostExpensiveDay || day.expenses > mostExpensiveDay.total)) {
+    if (day.hasExpense && (!mostExpensiveDay || day.expenses >= mostExpensiveDay.total)) {
       const [y, m, d] = key.split("-").map(Number);
-      mostExpensiveDay = { date: `${MONTH_NAMES[m - 1]} ${d}`, total: day.expenses, count: day.count };
+      const dayLabel = `${MONTH_NAMES[m - 1]} ${d}`;
+      mostExpensiveDay = { date: multiYear ? `${dayLabel}, ${y}` : dayLabel, total: day.expenses, count: day.count };
     }
   }
 
@@ -261,9 +268,9 @@ const computeStatistics = (
     biggestExpense: biggestExpense ? toRecord(biggestExpense) : null,
     biggestIncome: biggestIncome ? toRecord(biggestIncome) : null,
     mostExpensiveDay,
-    avgDailySpend: totalDaysInPeriod > 0 ? summary.totalExpenses / totalDaysInPeriod : 0,
-    avgExpenseSize: expenseCount > 0 ? summary.totalExpenses / expenseCount : 0,
-    avgIncomeSize: incomeCount > 0 ? summary.totalIncome / incomeCount : 0,
+    avgDailySpend: totalDaysInPeriod > 0 ? summary.totalExpenses / totalDaysInPeriod : null,
+    avgExpenseSize: expenseCount > 0 ? summary.totalExpenses / expenseCount : null,
+    avgIncomeSize: incomeCount > 0 ? summary.totalIncome / incomeCount : null,
     totalTransactions: summary.transactionCount,
     activeDays: dayMap.size,
     totalDaysInPeriod,
