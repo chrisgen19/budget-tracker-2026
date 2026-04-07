@@ -10,7 +10,9 @@ interface LabelBreakdownChartProps {
 }
 
 export function LabelBreakdownChart({ data, currency, hideAmounts }: LabelBreakdownChartProps) {
-  if (data.length === 0) {
+  const labeled = data.filter((d) => d.id !== "unlabeled");
+
+  if (labeled.length === 0) {
     return (
       <div className="flex items-center justify-center h-[200px] text-warm-300 text-sm">
         No labeled transactions in this period
@@ -18,12 +20,12 @@ export function LabelBreakdownChart({ data, currency, hideAmounts }: LabelBreakd
     );
   }
 
-  const maxAmount = Math.max(...data.map((d) => d.amount));
+  const maxAmount = Math.max(...labeled.map((d) => d.amount));
   const sym = getCurrencySymbol(currency);
 
   return (
     <div className="space-y-3 max-h-[460px] overflow-y-auto">
-      {data.map((item) => {
+      {labeled.map((item) => {
         const barWidth = maxAmount > 0 ? (item.amount / maxAmount) * 100 : 0;
 
         return (
