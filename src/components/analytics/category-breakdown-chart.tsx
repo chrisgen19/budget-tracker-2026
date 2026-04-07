@@ -46,8 +46,8 @@ export function CategoryBreakdownChart({ data, currency, hideAmounts }: Category
                 paddingAngle={2}
                 strokeWidth={0}
               >
-                {data.map((entry, index) => (
-                  <Cell key={index} fill={entry.color} />
+                {data.map((entry) => (
+                  <Cell key={entry.id} fill={entry.color} />
                 ))}
               </Pie>
               <Tooltip

@@ -132,6 +132,7 @@ const computePeriodData = (
   const total = filtered.reduce((sum, t) => sum + t.amount, 0);
 
   for (const t of filtered) {
+    // Composite key: same categoryId can appear as both INCOME and EXPENSE in ALL mode
     const mapKey = `${t.categoryId}:${t.type}`;
     const existing = categoryMap.get(mapKey);
     if (existing) {
@@ -267,19 +268,16 @@ export async function GET(request: Request) {
     cashFlow.push({ period: key, periodLabel, income: bucket.income, expenses: bucket.expenses, net, cumulativeNet });
   }
 
-  // --- Current period: summary + category breakdown ---
-  const { summary, categoryBreakdown } = computePeriodData(transactions, type);
+  // --- Compute unfiltered (ALL) first, then derive filtered if needed ---
+  const { summary, categoryBreakdown: allCategoryBreakdown } = computePeriodData(transactions, "ALL");
+  const { summary: previousSummary, categoryBreakdown: allPreviousCategoryBreakdown } = computePeriodData(prevTransactions, "ALL");
 
-  // --- Previous period: summary + category breakdown ---
-  const { summary: previousSummary, categoryBreakdown: previousCategoryBreakdown } = computePeriodData(prevTransactions, type);
-
-  // --- Unfiltered category breakdowns for income/expenses report ---
-  const allCategoryBreakdown = type === "ALL"
-    ? categoryBreakdown
-    : computePeriodData(transactions, "ALL").categoryBreakdown;
-  const allPreviousCategoryBreakdown = type === "ALL"
-    ? previousCategoryBreakdown
-    : computePeriodData(prevTransactions, "ALL").categoryBreakdown;
+  const categoryBreakdown = type === "ALL"
+    ? allCategoryBreakdown
+    : computePeriodData(transactions, type).categoryBreakdown;
+  const previousCategoryBreakdown = type === "ALL"
+    ? allPreviousCategoryBreakdown
+    : computePeriodData(prevTransactions, type).categoryBreakdown;
 
   // --- Label Breakdown (current period only) ---
   const filteredForLabel = type === "ALL" ? transactions : transactions.filter((t) => t.type === type);
@@ -329,7 +327,7 @@ export async function GET(request: Request) {
     });
   }
 
-  const labelBreakdown = labelEntries.sort((a, b) => b.amount - a.amount);
+  const labelBreakdown = [...labelEntries].sort((a, b) => b.amount - a.amount);
 
   // --- Period labels ---
   const periodLabel = formatPeriodLabel(from, to);

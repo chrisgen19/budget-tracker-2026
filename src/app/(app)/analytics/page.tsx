@@ -157,7 +157,8 @@ export default function AnalyticsPage() {
   });
   const [typeFilter, setTypeFilter] = useState<AnalyticsTypeFilter>("ALL");
 
-  const periodLabel = formatPeriodLabel(periodType, dateRange.from, dateRange.to);
+  // Client-side label used for the picker before API data arrives
+  const clientPeriodLabel = formatPeriodLabel(periodType, dateRange.from, dateRange.to);
   const granularity = chartGranularity(periodType, dateRange.from, dateRange.to);
 
   const params: AnalyticsParams = useMemo(() => ({
@@ -167,7 +168,10 @@ export default function AnalyticsPage() {
     type: typeFilter,
   }), [granularity, dateRange, typeFilter]);
 
-  const { data, isLoading, isError } = useAnalyticsQuery(params, tz);
+  const { data, isLoading, isError, refetch } = useAnalyticsQuery(params, tz);
+
+  // Use API-provided label once loaded (authoritative), fall back to client-derived
+  const periodLabel = data?.periodLabel ?? clientPeriodLabel;
 
   const handlePeriodSelect = useCallback((type: PeriodType, from: string, to: string) => {
     setPeriodType(type);
@@ -212,10 +216,10 @@ export default function AnalyticsPage() {
             Something went wrong while fetching your data. Please try again.
           </p>
           <button
-            onClick={() => window.location.reload()}
+            onClick={() => refetch()}
             className="mt-2 px-4 py-2 rounded-lg bg-amber-50 text-amber-700 text-sm font-medium hover:bg-amber-100 transition-colors"
           >
-            Reload page
+            Try again
           </button>
         </div>
       ) : (

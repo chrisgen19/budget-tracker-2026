@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import {
   AreaChart,
   Area,
@@ -27,6 +28,11 @@ interface CashFlowChartProps {
 }
 
 export function CashFlowChart({ data, currency, hideAmounts }: CashFlowChartProps) {
+  const uid = useId();
+  const posId = `cfPos${uid}`;
+  const negId = `cfNeg${uid}`;
+  const cumId = `cfCum${uid}`;
+
   if (data.length === 0) {
     return (
       <div className="flex items-center justify-center h-[220px] text-warm-300 text-sm">
@@ -46,15 +52,15 @@ export function CashFlowChart({ data, currency, hideAmounts }: CashFlowChartProp
     <ResponsiveContainer width="100%" height={260}>
       <AreaChart data={chartData}>
         <defs>
-          <linearGradient id="cashFlowPositive" x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id={posId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#2D8B5A" stopOpacity={0.2} />
             <stop offset="100%" stopColor="#2D8B5A" stopOpacity={0} />
           </linearGradient>
-          <linearGradient id="cashFlowNegative" x1="0" y1="1" x2="0" y2="0">
+          <linearGradient id={negId} x1="0" y1="1" x2="0" y2="0">
             <stop offset="0%" stopColor="#C44B3F" stopOpacity={0.2} />
             <stop offset="100%" stopColor="#C44B3F" stopOpacity={0} />
           </linearGradient>
-          <linearGradient id="cumulativeGradient" x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id={cumId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.15} />
             <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
           </linearGradient>
@@ -112,14 +118,14 @@ export function CashFlowChart({ data, currency, hideAmounts }: CashFlowChartProp
           dataKey="netPositive"
           stroke="#2D8B5A"
           strokeWidth={2}
-          fill="url(#cashFlowPositive)"
+          fill={`url(#${posId})`}
         />
         <Area
           type="monotone"
           dataKey="netNegative"
           stroke="#C44B3F"
           strokeWidth={2}
-          fill="url(#cashFlowNegative)"
+          fill={`url(#${negId})`}
         />
         {/* Cumulative net line */}
         <Area
@@ -128,7 +134,7 @@ export function CashFlowChart({ data, currency, hideAmounts }: CashFlowChartProp
           stroke="#3b82f6"
           strokeWidth={1.5}
           strokeDasharray="6 4"
-          fill="url(#cumulativeGradient)"
+          fill={`url(#${cumId})`}
         />
       </AreaChart>
     </ResponsiveContainer>
