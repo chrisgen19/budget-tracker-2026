@@ -198,11 +198,39 @@ export interface AnalyticsStatistics {
   avgIncomeSize: number | null;
   totalTransactions: number;
   activeDays: number;
+  expenseDays: number;
   totalDaysInPeriod: number;
   spendingStreak: number;
   mostUsedCategory: { name: string; icon: string; color: string; count: number } | null;
   mostExpensiveCategory: { name: string; icon: string; color: string; amount: number } | null;
   categoriesUsed: number;
+}
+
+/** Trend direction for health score indicators */
+export type HealthTrend = "improving" | "declining" | "stable" | "new";
+
+/** Individual sub-score within the financial health composite */
+export interface HealthSubScore {
+  score: number;
+  label: string;
+  description: string;
+  trend: HealthTrend;
+  rawValue: number | null;
+}
+
+/** Financial health score composite */
+export interface AnalyticsHealthScore {
+  overallScore: number;
+  overallLabel: string;
+  overallTrend: HealthTrend;
+  savingsRate: number | null;
+  subScores: {
+    savingsRate: HealthSubScore;
+    expenseTrend: HealthSubScore;
+    incomeStability: HealthSubScore;
+    diversification: HealthSubScore;
+    consistency: HealthSubScore;
+  };
 }
 
 /** Full analytics API response */
@@ -219,6 +247,7 @@ export interface AnalyticsData {
   periodLabel: string;
   previousPeriodLabel: string;
   statistics: AnalyticsStatistics;
+  healthScore: AnalyticsHealthScore;
 }
 
 /** Extend next-auth types */

@@ -10,6 +10,9 @@ import type {
   AnalyticsSummary,
   AnalyticsStatistics,
   AnalyticsTopRecord,
+  AnalyticsHealthScore,
+  HealthSubScore,
+  HealthTrend,
 } from "@/types";
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -275,11 +278,246 @@ const computeStatistics = (
     avgIncomeSize: incomeCount > 0 ? summary.totalIncome / incomeCount : null,
     totalTransactions: summary.transactionCount,
     activeDays: dayMap.size,
+    expenseDays: expenseDays.size,
     totalDaysInPeriod,
     spendingStreak,
     mostUsedCategory,
     mostExpensiveCategory,
     categoriesUsed: allCategoryBreakdown.length,
+  };
+};
+
+/** Map a score (0-100) to a label and determine trend from sub-score trends. */
+const scoreLabel = (score: number): string => {
+  if (score >= 80) return "Excellent";
+  if (score >= 60) return "Good";
+  if (score >= 40) return "Fair";
+  if (score >= 20) return "Needs Attention";
+  return "Critical";
+};
+
+/** Clamp a value to [min, max]. */
+const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+
+/** Compute normalized Shannon entropy for expense categories (0-100). */
+const computeDiversificationScore = (categoryBreakdown: AnalyticsCategoryItem[]): number => {
+  const expCats = categoryBreakdown.filter((c) => c.type === "EXPENSE");
+  if (expCats.length === 0) return 50;
+  if (expCats.length === 1) return 20;
+  const total = expCats.reduce((s, c) => s + c.amount, 0);
+  let entropy = 0;
+  for (const cat of expCats) {
+    const p = cat.amount / total;
+    if (p > 0) entropy -= p * Math.log(p);
+  }
+  return clamp(Math.round((entropy / Math.log(expCats.length)) * 100), 0, 100);
+};
+
+/** Compute financial health score from existing analytics data. */
+const computeHealthScore = (
+  summary: AnalyticsSummary,
+  previousSummary: AnalyticsSummary,
+  allCategoryBreakdown: AnalyticsCategoryItem[],
+  allPreviousCategoryBreakdown: AnalyticsCategoryItem[],
+  statistics: AnalyticsStatistics,
+  previousExpenseDayRatio: number | null,
+  hasPreviousData: boolean,
+): AnalyticsHealthScore => {
+  const { totalIncome, totalExpenses } = summary;
+
+  // --- A. Savings Rate (weight 0.35) ---
+  let savingsRateValue: number | null = null;
+  let savingsScore: number;
+  if (totalIncome === 0 && totalExpenses === 0) {
+    savingsScore = 50;
+  } else if (totalIncome === 0) {
+    savingsScore = 0;
+  } else {
+    savingsRateValue = (totalIncome - totalExpenses) / totalIncome;
+    const r = savingsRateValue;
+    if (r >= 0.50) savingsScore = 100;
+    else if (r >= 0.20) savingsScore = 60 + ((r - 0.20) / 0.30) * 40;
+    else if (r >= 0) savingsScore = 20 + (r / 0.20) * 40;
+    else if (r >= -0.50) savingsScore = 20 + (r / 0.50) * 20;
+    else savingsScore = 0;
+  }
+  savingsScore = clamp(Math.round(savingsScore), 0, 100);
+
+  // Savings rate trend
+  let savingsTrend: HealthTrend = "new";
+  if (hasPreviousData && savingsRateValue !== null) {
+    const prevRate = previousSummary.totalIncome > 0
+      ? (previousSummary.totalIncome - previousSummary.totalExpenses) / previousSummary.totalIncome
+      : null;
+    if (prevRate !== null) {
+      if (savingsRateValue > prevRate + 0.02) savingsTrend = "improving";
+      else if (savingsRateValue < prevRate - 0.02) savingsTrend = "declining";
+      else savingsTrend = "stable";
+    }
+  }
+
+  const savingsDesc = savingsRateValue !== null
+    ? savingsRateValue >= 0
+      ? `Saving ${Math.round(savingsRateValue * 100)}% of income`
+      : `Spending ${Math.round(Math.abs(savingsRateValue) * 100)}% more than income`
+    : totalExpenses > 0
+      ? "No income this period"
+      : "No income or expenses";
+
+  // --- B. Expense Trend (weight 0.25) ---
+  let expenseTrendScore = 50;
+  let expenseTrendValue: number | null = null;
+  let expenseTrend: HealthTrend = "new";
+  if (hasPreviousData) {
+    const prev = previousSummary.totalExpenses;
+    const curr = totalExpenses;
+    if (prev === 0 && curr === 0) {
+      expenseTrendScore = 50;
+      expenseTrend = "stable";
+    } else if (prev === 0) {
+      expenseTrendScore = 30;
+      expenseTrend = "declining";
+    } else {
+      const change = (curr - prev) / prev;
+      expenseTrendValue = change;
+      if (change <= -0.30) expenseTrendScore = 100;
+      else if (change <= 0) expenseTrendScore = 70 + (-change / 0.30) * 30;
+      else if (change <= 0.30) expenseTrendScore = 40 + ((0.30 - change) / 0.30) * 30;
+      else if (change <= 1.0) expenseTrendScore = ((1.0 - change) / 0.70) * 40;
+      else expenseTrendScore = 0;
+
+      if (change < -0.02) expenseTrend = "improving";
+      else if (change > 0.02) expenseTrend = "declining";
+      else expenseTrend = "stable";
+    }
+  }
+  expenseTrendScore = clamp(Math.round(expenseTrendScore), 0, 100);
+
+  const expenseDesc = !hasPreviousData
+    ? "No previous period to compare"
+    : expenseTrendValue !== null
+      ? expenseTrendValue <= 0
+        ? `Expenses down ${Math.round(Math.abs(expenseTrendValue) * 100)}% vs last period`
+        : `Expenses up ${Math.round(expenseTrendValue * 100)}% vs last period`
+      : previousSummary.totalExpenses === 0 && totalExpenses > 0
+        ? "New expenses this period (none last period)"
+        : "No change in expenses";
+
+  // --- C. Income Stability (weight 0.15) ---
+  let incomeScore = 50;
+  let incomeValue: number | null = null;
+  let incomeTrend: HealthTrend = "new";
+  if (hasPreviousData) {
+    const prev = previousSummary.totalIncome;
+    const curr = totalIncome;
+    if (prev === 0 && curr === 0) {
+      incomeScore = 50;
+      incomeTrend = "stable";
+    } else if (prev === 0) {
+      incomeScore = 80;
+      incomeTrend = "improving";
+    } else {
+      const change = (curr - prev) / prev;
+      incomeValue = change;
+      if (change >= 0.20) incomeScore = 100;
+      else if (change >= 0) incomeScore = 70 + (change / 0.20) * 30;
+      else if (change >= -0.30) incomeScore = 30 + ((0.30 + change) / 0.30) * 40;
+      else if (change >= -1.0) incomeScore = ((1.0 + change) / 0.70) * 30;
+      else incomeScore = 0;
+
+      if (change > 0.02) incomeTrend = "improving";
+      else if (change < -0.02) incomeTrend = "declining";
+      else incomeTrend = "stable";
+    }
+  }
+  incomeScore = clamp(Math.round(incomeScore), 0, 100);
+
+  const incomeDesc = !hasPreviousData
+    ? "No previous period to compare"
+    : incomeValue !== null
+      ? incomeValue >= 0
+        ? `Income up ${Math.round(incomeValue * 100)}% vs last period`
+        : `Income down ${Math.round(Math.abs(incomeValue) * 100)}% vs last period`
+      : previousSummary.totalIncome === 0 && totalIncome > 0
+        ? "New income this period (none last period)"
+        : "No change in income";
+
+  // --- D. Category Diversification (weight 0.15) ---
+  const diversificationScore = computeDiversificationScore(allCategoryBreakdown);
+  const expenseCategoryCount = allCategoryBreakdown.filter((c) => c.type === "EXPENSE").length;
+
+  // Diversification trend: compare current vs previous entropy score
+  let divTrend: HealthTrend = "new";
+  if (hasPreviousData) {
+    const prevDivScore = computeDiversificationScore(allPreviousCategoryBreakdown);
+    if (diversificationScore > prevDivScore + 5) divTrend = "improving";
+    else if (diversificationScore < prevDivScore - 5) divTrend = "declining";
+    else divTrend = "stable";
+  }
+  const divDesc = expenseCategoryCount === 0
+    ? "No expenses to categorize"
+    : `Spending across ${expenseCategoryCount} categories`;
+
+  // --- E. Spending Consistency (weight 0.10) ---
+  // Use expense-only days, not all active days, to measure spending behavior
+  let consistencyScore: number;
+  const { expenseDays: expDays, totalDaysInPeriod } = statistics;
+  if (expDays === 0) {
+    consistencyScore = 0;
+  } else if (totalDaysInPeriod === 0) {
+    consistencyScore = 50;
+  } else {
+    const ratio = expDays / totalDaysInPeriod;
+    if (ratio >= 0.80) consistencyScore = 100;
+    else if (ratio >= 0.40) consistencyScore = 50 + ((ratio - 0.40) / 0.40) * 50;
+    else if (ratio >= 0.10) consistencyScore = ((ratio - 0.10) / 0.30) * 50;
+    else consistencyScore = 0;
+  }
+  consistencyScore = clamp(Math.round(consistencyScore), 0, 100);
+
+  // Consistency trend: compare current expense day ratio vs previous
+  let consistencyTrend: HealthTrend = "new";
+  if (hasPreviousData && previousExpenseDayRatio !== null) {
+    const currentRatio = totalDaysInPeriod > 0 ? expDays / totalDaysInPeriod : 0;
+    if (currentRatio > previousExpenseDayRatio + 0.05) consistencyTrend = "improving";
+    else if (currentRatio < previousExpenseDayRatio - 0.05) consistencyTrend = "declining";
+    else consistencyTrend = "stable";
+  }
+
+  const consistencyDesc = totalDaysInPeriod > 0
+    ? `Expenses on ${expDays} of ${totalDaysInPeriod} days (${Math.round((expDays / totalDaysInPeriod) * 100)}%)`
+    : "No data for this period";
+
+  // --- Composite score ---
+  const overallScore = clamp(Math.round(
+    savingsScore * 0.35 +
+    expenseTrendScore * 0.25 +
+    incomeScore * 0.15 +
+    diversificationScore * 0.15 +
+    consistencyScore * 0.10
+  ), 0, 100);
+
+  // Overall trend: majority of sub-score trends
+  const trends = [savingsTrend, expenseTrend, incomeTrend, divTrend, consistencyTrend];
+  const improving = trends.filter((t) => t === "improving").length;
+  const declining = trends.filter((t) => t === "declining").length;
+  const overallTrend: HealthTrend = !hasPreviousData ? "new" : improving > declining ? "improving" : declining > improving ? "declining" : "stable";
+
+  const makeSubScore = (score: number, label: string, description: string, trend: HealthTrend, rawValue: number | null): HealthSubScore =>
+    ({ score, label, description, trend, rawValue });
+
+  return {
+    overallScore,
+    overallLabel: scoreLabel(overallScore),
+    overallTrend,
+    savingsRate: savingsRateValue,
+    subScores: {
+      savingsRate: makeSubScore(savingsScore, "Savings Rate", savingsDesc, savingsTrend, savingsRateValue),
+      expenseTrend: makeSubScore(expenseTrendScore, "Expense Trend", expenseDesc, expenseTrend, expenseTrendValue),
+      incomeStability: makeSubScore(incomeScore, "Income Stability", incomeDesc, incomeTrend, incomeValue),
+      diversification: makeSubScore(diversificationScore, "Diversification", divDesc, divTrend, null),
+      consistency: makeSubScore(consistencyScore, "Consistency", consistencyDesc, consistencyTrend, null),
+    },
   };
 };
 
@@ -452,6 +690,25 @@ export async function GET(request: Request) {
   // --- Statistics ---
   const statistics = computeStatistics(transactions, allCategoryBreakdown, summary, startDate, endDate, tzMs);
 
+  // --- Health Score ---
+  const hasPreviousData = previousSummary.transactionCount > 0;
+  // Compute previous expense day ratio for consistency trend (uses previous transactions)
+  let previousExpenseDayRatio: number | null = null;
+  if (hasPreviousData) {
+    const prevTotalDays = Math.round((prevEndDate.getTime() - prevStartDate.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+    if (prevTotalDays > 0) {
+      const prevExpenseDaySet = new Set<string>();
+      for (const t of prevTransactions) {
+        if (t.type === "EXPENSE") {
+          const local = new Date(t.date.getTime() - tzMs);
+          prevExpenseDaySet.add(`${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, "0")}-${String(local.getUTCDate()).padStart(2, "0")}`);
+        }
+      }
+      previousExpenseDayRatio = prevExpenseDaySet.size / prevTotalDays;
+    }
+  }
+  const healthScore = computeHealthScore(summary, previousSummary, allCategoryBreakdown, allPreviousCategoryBreakdown, statistics, previousExpenseDayRatio, hasPreviousData);
+
   // --- Period labels ---
   const periodLabel = formatPeriodLabel(from, to);
   const previousPeriodLabel = formatPeriodLabel(prevFrom, prevTo);
@@ -468,5 +725,6 @@ export async function GET(request: Request) {
     periodLabel,
     previousPeriodLabel,
     statistics,
+    healthScore,
   });
 }
