@@ -376,7 +376,7 @@ const computeHealthScore = (
       expenseTrend = "stable";
     } else if (prev === 0) {
       expenseTrendScore = 30;
-      expenseTrend = "new";
+      expenseTrend = "declining";
     } else {
       const change = (curr - prev) / prev;
       expenseTrendValue = change;
@@ -503,7 +503,7 @@ const computeHealthScore = (
   const declining = trends.filter((t) => t === "declining").length;
   const overallTrend: HealthTrend = !hasPreviousData ? "new" : improving > declining ? "improving" : declining > improving ? "declining" : "stable";
 
-  const mkSub = (score: number, label: string, description: string, trend: HealthTrend, rawValue: number | null): HealthSubScore =>
+  const makeSubScore = (score: number, label: string, description: string, trend: HealthTrend, rawValue: number | null): HealthSubScore =>
     ({ score, label, description, trend, rawValue });
 
   return {
@@ -512,11 +512,11 @@ const computeHealthScore = (
     overallTrend,
     savingsRate: savingsRateValue,
     subScores: {
-      savingsRate: mkSub(savingsScore, "Savings Rate", savingsDesc, savingsTrend, savingsRateValue),
-      expenseTrend: mkSub(expenseTrendScore, "Expense Trend", expenseDesc, expenseTrend, expenseTrendValue),
-      incomeStability: mkSub(incomeScore, "Income Stability", incomeDesc, incomeTrend, incomeValue),
-      diversification: mkSub(diversificationScore, "Diversification", divDesc, divTrend, null),
-      consistency: mkSub(consistencyScore, "Consistency", consistencyDesc, consistencyTrend, null),
+      savingsRate: makeSubScore(savingsScore, "Savings Rate", savingsDesc, savingsTrend, savingsRateValue),
+      expenseTrend: makeSubScore(expenseTrendScore, "Expense Trend", expenseDesc, expenseTrend, expenseTrendValue),
+      incomeStability: makeSubScore(incomeScore, "Income Stability", incomeDesc, incomeTrend, incomeValue),
+      diversification: makeSubScore(diversificationScore, "Diversification", divDesc, divTrend, null),
+      consistency: makeSubScore(consistencyScore, "Consistency", consistencyDesc, consistencyTrend, null),
     },
   };
 };
