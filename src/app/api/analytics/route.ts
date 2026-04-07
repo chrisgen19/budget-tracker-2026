@@ -278,6 +278,7 @@ const computeStatistics = (
     avgIncomeSize: incomeCount > 0 ? summary.totalIncome / incomeCount : null,
     totalTransactions: summary.transactionCount,
     activeDays: dayMap.size,
+    expenseDays: expenseDays.size,
     totalDaysInPeriod,
     spendingStreak,
     mostUsedCategory,
@@ -298,12 +299,28 @@ const scoreLabel = (score: number): string => {
 /** Clamp a value to [min, max]. */
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
+/** Compute normalized Shannon entropy for expense categories (0-100). */
+const computeDiversificationScore = (categoryBreakdown: AnalyticsCategoryItem[]): number => {
+  const expCats = categoryBreakdown.filter((c) => c.type === "EXPENSE");
+  if (expCats.length === 0) return 50;
+  if (expCats.length === 1) return 20;
+  const total = expCats.reduce((s, c) => s + c.amount, 0);
+  let entropy = 0;
+  for (const cat of expCats) {
+    const p = cat.amount / total;
+    if (p > 0) entropy -= p * Math.log(p);
+  }
+  return clamp(Math.round((entropy / Math.log(expCats.length)) * 100), 0, 100);
+};
+
 /** Compute financial health score from existing analytics data. */
 const computeHealthScore = (
   summary: AnalyticsSummary,
   previousSummary: AnalyticsSummary,
   allCategoryBreakdown: AnalyticsCategoryItem[],
+  allPreviousCategoryBreakdown: AnalyticsCategoryItem[],
   statistics: AnalyticsStatistics,
+  previousExpenseDayRatio: number | null,
   hasPreviousData: boolean,
 ): AnalyticsHealthScore => {
   const { totalIncome, totalExpenses } = summary;
@@ -357,7 +374,6 @@ const computeHealthScore = (
       expenseTrend = "stable";
     } else if (prev === 0) {
       expenseTrendScore = 30;
-      expenseTrendValue = 1;
       expenseTrend = "declining";
     } else {
       const change = (curr - prev) / prev;
@@ -381,7 +397,9 @@ const computeHealthScore = (
       ? expenseTrendValue <= 0
         ? `Expenses down ${Math.round(Math.abs(expenseTrendValue) * 100)}% vs last period`
         : `Expenses up ${Math.round(expenseTrendValue * 100)}% vs last period`
-      : "No change in expenses";
+      : previousSummary.totalExpenses === 0 && totalExpenses > 0
+        ? "New expenses this period (none last period)"
+        : "No change in expenses";
 
   // --- C. Income Stability (weight 0.15) ---
   let incomeScore = 50;
@@ -395,7 +413,6 @@ const computeHealthScore = (
       incomeTrend = "stable";
     } else if (prev === 0) {
       incomeScore = 80;
-      incomeValue = 1;
       incomeTrend = "improving";
     } else {
       const change = (curr - prev) / prev;
@@ -419,42 +436,36 @@ const computeHealthScore = (
       ? incomeValue >= 0
         ? `Income up ${Math.round(incomeValue * 100)}% vs last period`
         : `Income down ${Math.round(Math.abs(incomeValue) * 100)}% vs last period`
-      : "No change in income";
+      : previousSummary.totalIncome === 0 && totalIncome > 0
+        ? "New income this period (none last period)"
+        : "No change in income";
 
   // --- D. Category Diversification (weight 0.15) ---
   const expenseCategories = allCategoryBreakdown.filter((c) => c.type === "EXPENSE");
-  let diversificationScore: number;
-  if (expenseCategories.length === 0) {
-    diversificationScore = 50;
-  } else if (expenseCategories.length === 1) {
-    diversificationScore = 20;
-  } else {
-    const total = expenseCategories.reduce((s, c) => s + c.amount, 0);
-    let entropy = 0;
-    for (const cat of expenseCategories) {
-      const p = cat.amount / total;
-      if (p > 0) entropy -= p * Math.log(p);
-    }
-    const maxEntropy = Math.log(expenseCategories.length);
-    diversificationScore = Math.round((entropy / maxEntropy) * 100);
-  }
-  diversificationScore = clamp(diversificationScore, 0, 100);
+  const diversificationScore = computeDiversificationScore(allCategoryBreakdown);
 
-  // Diversification trend
-  let divTrend: HealthTrend = "stable";
+  // Diversification trend: compare current vs previous entropy score
+  let divTrend: HealthTrend = "new";
+  if (hasPreviousData) {
+    const prevDivScore = computeDiversificationScore(allPreviousCategoryBreakdown);
+    if (diversificationScore > prevDivScore + 5) divTrend = "improving";
+    else if (diversificationScore < prevDivScore - 5) divTrend = "declining";
+    else divTrend = "stable";
+  }
   const divDesc = expenseCategories.length === 0
     ? "No expenses to categorize"
     : `Spending across ${expenseCategories.length} categories`;
 
   // --- E. Spending Consistency (weight 0.10) ---
+  // Use expense-only days, not all active days, to measure spending behavior
   let consistencyScore: number;
-  const { activeDays, totalDaysInPeriod, totalTransactions } = statistics;
-  if (totalTransactions === 0) {
+  const { expenseDays: expDays, totalDaysInPeriod } = statistics;
+  if (expDays === 0) {
     consistencyScore = 0;
   } else if (totalDaysInPeriod === 0) {
     consistencyScore = 50;
   } else {
-    const ratio = activeDays / totalDaysInPeriod;
+    const ratio = expDays / totalDaysInPeriod;
     if (ratio >= 0.80) consistencyScore = 100;
     else if (ratio >= 0.40) consistencyScore = 50 + ((ratio - 0.40) / 0.40) * 50;
     else if (ratio >= 0.10) consistencyScore = ((ratio - 0.10) / 0.30) * 50;
@@ -462,8 +473,17 @@ const computeHealthScore = (
   }
   consistencyScore = clamp(Math.round(consistencyScore), 0, 100);
 
+  // Consistency trend: compare current expense day ratio vs previous
+  let consistencyTrend: HealthTrend = "new";
+  if (hasPreviousData && previousExpenseDayRatio !== null) {
+    const currentRatio = totalDaysInPeriod > 0 ? expDays / totalDaysInPeriod : 0;
+    if (currentRatio > previousExpenseDayRatio + 0.05) consistencyTrend = "improving";
+    else if (currentRatio < previousExpenseDayRatio - 0.05) consistencyTrend = "declining";
+    else consistencyTrend = "stable";
+  }
+
   const consistencyDesc = totalDaysInPeriod > 0
-    ? `Active ${activeDays} of ${totalDaysInPeriod} days (${Math.round((activeDays / totalDaysInPeriod) * 100)}%)`
+    ? `Expenses on ${expDays} of ${totalDaysInPeriod} days (${Math.round((expDays / totalDaysInPeriod) * 100)}%)`
     : "No data for this period";
 
   // --- Composite score ---
@@ -476,7 +496,7 @@ const computeHealthScore = (
   ), 0, 100);
 
   // Overall trend: majority of sub-score trends
-  const trends = [savingsTrend, expenseTrend, incomeTrend, divTrend];
+  const trends = [savingsTrend, expenseTrend, incomeTrend, divTrend, consistencyTrend];
   const improving = trends.filter((t) => t === "improving").length;
   const declining = trends.filter((t) => t === "declining").length;
   const overallTrend: HealthTrend = !hasPreviousData ? "new" : improving > declining ? "improving" : declining > improving ? "declining" : "stable";
@@ -494,7 +514,7 @@ const computeHealthScore = (
       expenseTrend: mkSub(expenseTrendScore, "Expense Trend", expenseDesc, expenseTrend, expenseTrendValue),
       incomeStability: mkSub(incomeScore, "Income Stability", incomeDesc, incomeTrend, incomeValue),
       diversification: mkSub(diversificationScore, "Diversification", divDesc, divTrend, null),
-      consistency: mkSub(consistencyScore, "Consistency", consistencyDesc, "stable", null),
+      consistency: mkSub(consistencyScore, "Consistency", consistencyDesc, consistencyTrend, null),
     },
   };
 };
@@ -670,7 +690,22 @@ export async function GET(request: Request) {
 
   // --- Health Score ---
   const hasPreviousData = previousSummary.transactionCount > 0;
-  const healthScore = computeHealthScore(summary, previousSummary, allCategoryBreakdown, statistics, hasPreviousData);
+  // Compute previous expense day ratio for consistency trend (uses previous transactions)
+  let previousExpenseDayRatio: number | null = null;
+  if (hasPreviousData) {
+    const prevTotalDays = Math.round((prevEndDate.getTime() - prevStartDate.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+    if (prevTotalDays > 0) {
+      const prevExpenseDaySet = new Set<string>();
+      for (const t of prevTransactions) {
+        if (t.type === "EXPENSE") {
+          const local = new Date(new Date(t.date).getTime() - tzMs);
+          prevExpenseDaySet.add(`${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, "0")}-${String(local.getUTCDate()).padStart(2, "0")}`);
+        }
+      }
+      previousExpenseDayRatio = prevExpenseDaySet.size / prevTotalDays;
+    }
+  }
+  const healthScore = computeHealthScore(summary, previousSummary, allCategoryBreakdown, allPreviousCategoryBreakdown, statistics, previousExpenseDayRatio, hasPreviousData);
 
   // --- Period labels ---
   const periodLabel = formatPeriodLabel(from, to);

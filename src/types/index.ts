@@ -198,6 +198,7 @@ export interface AnalyticsStatistics {
   avgIncomeSize: number | null;
   totalTransactions: number;
   activeDays: number;
+  expenseDays: number;
   totalDaysInPeriod: number;
   spendingStreak: number;
   mostUsedCategory: { name: string; icon: string; color: string; count: number } | null;
