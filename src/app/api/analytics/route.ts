@@ -230,12 +230,10 @@ export async function GET(request: Request) {
     prisma.transaction.findMany({
       where: { userId, date: { gte: startDate, lte: endDate } },
       include: { category: true, labels: { include: { label: true } } },
-      orderBy: { date: "asc" },
     }),
     prisma.transaction.findMany({
       where: { userId, date: { gte: prevStartDate, lte: prevEndDate } },
       include: { category: true, labels: { include: { label: true } } },
-      orderBy: { date: "asc" },
     }),
   ]);
 
@@ -272,6 +270,7 @@ export async function GET(request: Request) {
   const { summary, categoryBreakdown: allCategoryBreakdown } = computePeriodData(transactions, "ALL");
   const { summary: previousSummary, categoryBreakdown: allPreviousCategoryBreakdown } = computePeriodData(prevTransactions, "ALL");
 
+  // Only need the filtered breakdown; summary comes from ALL above
   const categoryBreakdown = type === "ALL"
     ? allCategoryBreakdown
     : computePeriodData(transactions, type).categoryBreakdown;

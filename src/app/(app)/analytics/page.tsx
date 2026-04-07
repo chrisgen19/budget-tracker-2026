@@ -21,7 +21,7 @@ type PeriodType = AnalyticsGranularity | "custom";
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 /** Get current period boundaries using the user's saved timezone. */
-const getCurrentMonth = (tzOffset: number): { from: string; to: string; label: string } => {
+const getCurrentMonth = (tzOffset: number): { from: string; to: string } => {
   const utcNow = new Date();
   const now = new Date(utcNow.getTime() - tzOffset * 60 * 1000);
   const y = now.getUTCFullYear();
@@ -30,7 +30,6 @@ const getCurrentMonth = (tzOffset: number): { from: string; to: string; label: s
   return {
     from: `${y}-${String(m + 1).padStart(2, "0")}-01`,
     to: `${y}-${String(m + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
-    label: `${MONTHS[m]} ${y}`,
   };
 };
 
@@ -127,7 +126,7 @@ const chartGranularity = (periodType: PeriodType, from: string, to: string): Ana
   if (periodType === "yearly") return "monthly";
   if (periodType === "monthly") return "weekly";
   if (periodType === "weekly") return "weekly";
-  // Custom: auto based on span
+  // Custom: auto based on span (UTC midnight parse is intentional — only computing day count)
   const days = (new Date(to).getTime() - new Date(from).getTime()) / (24 * 60 * 60 * 1000);
   if (days < 90) return "weekly";
   if (days < 730) return "monthly";
