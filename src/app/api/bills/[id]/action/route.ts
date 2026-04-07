@@ -31,17 +31,18 @@ export async function POST(
     const originalStartDay = bill.startDate.getDate();
 
     if (action === "pay") {
-      // Compute scheduled label for this bill payment date
+      // Compute scheduled label based on actual payment date
+      const paymentDate = new Date();
       const ctx = await getScheduleContext(userId);
-      const scheduledLabelId = ctx ? matchScheduledLabel(dueDate, ctx, bill.type) : null;
+      const scheduledLabelId = ctx ? matchScheduledLabel(paymentDate, ctx, bill.type) : null;
 
-      // Create the real transaction
+      // Create the real transaction — use today's date (when the user actually paid)
       const transaction = await prisma.transaction.create({
         data: {
           amount: bill.amount,
           description: bill.description,
           type: bill.type,
-          date: dueDate,
+          date: paymentDate,
           categoryId: bill.categoryId,
           userId,
           billId: bill.id,
