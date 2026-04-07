@@ -189,20 +189,24 @@ const computeStatistics = (
     return multiYear ? `${label}, ${local.getUTCFullYear()}` : label;
   };
 
-  // Single pass: build day map + track top records
+  // Single pass: build day map + track top records + count by type
   let biggestExpense: (typeof transactions)[0] | null = null;
   let biggestIncome: (typeof transactions)[0] | null = null;
+  let expenseCount = 0;
+  let incomeCount = 0;
   const dayMap = new Map<string, { expenses: number; count: number; hasExpense: boolean }>();
 
   for (const t of transactions) {
-    const dayKey = toLocalDate(new Date(t.date));
+    const dayKey = toLocalDate(t.date);
     const day = dayMap.get(dayKey) ?? { expenses: 0, count: 0, hasExpense: false };
     day.count += 1;
     if (t.type === "EXPENSE") {
+      expenseCount++;
       day.expenses += t.amount;
       day.hasExpense = true;
       if (!biggestExpense || t.amount >= biggestExpense.amount) biggestExpense = t;
     } else {
+      incomeCount++;
       if (!biggestIncome || t.amount >= biggestIncome.amount) biggestIncome = t;
     }
     dayMap.set(dayKey, day);
@@ -212,7 +216,7 @@ const computeStatistics = (
   const toRecord = (t: (typeof transactions)[0]): AnalyticsTopRecord => ({
     amount: t.amount,
     description: t.description || t.category.name,
-    date: toDateLabel(new Date(t.date)),
+    date: toDateLabel(t.date),
     category: t.category.name,
     categoryIcon: t.category.icon,
     categoryColor: t.category.color,
@@ -230,8 +234,6 @@ const computeStatistics = (
 
   // Days in period
   const totalDaysInPeriod = Math.round((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)) + 1;
-  const expenseCount = transactions.filter((t) => t.type === "EXPENSE").length;
-  const incomeCount = transactions.filter((t) => t.type === "INCOME").length;
 
   // Spending streak: longest consecutive days with expenses
   const expenseDays = new Set<string>();
@@ -259,7 +261,7 @@ const computeStatistics = (
 
   let mostUsedCategory: AnalyticsStatistics["mostUsedCategory"] = null;
   for (const cat of allCategoryBreakdown) {
-    if (!mostUsedCategory || cat.transactionCount > mostUsedCategory.count) {
+    if (!mostUsedCategory || cat.transactionCount >= mostUsedCategory.count) {
       mostUsedCategory = { name: cat.name, icon: cat.icon, color: cat.color, count: cat.transactionCount };
     }
   }

@@ -17,6 +17,7 @@ import {
 import { motion } from "framer-motion";
 import { cn, formatCurrency, getCurrencySymbol } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
+import { stagger, fadeUp } from "@/components/analytics/motion-variants";
 import type { AnalyticsStatistics, AnalyticsTopRecord } from "@/types";
 
 interface RecordsStatisticsProps {
@@ -24,16 +25,6 @@ interface RecordsStatisticsProps {
   currency: string;
   hideAmounts: boolean;
 }
-
-const stagger = {
-  hidden: { opacity: 0 },
-  show: { opacity: 1, transition: { staggerChildren: 0.06 } },
-};
-
-const fadeUp = {
-  hidden: { opacity: 0, y: 12 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.3 } },
-};
 
 function StatItem({
   icon: Icon,

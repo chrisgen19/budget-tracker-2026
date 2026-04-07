@@ -16,6 +16,7 @@ import { LabelBreakdownChart } from "@/components/analytics/label-breakdown-char
 import { AnalyticsSummary } from "@/components/analytics/analytics-summary";
 import { AnalyticsSkeleton } from "@/components/analytics/analytics-skeleton";
 import { RecordsStatistics } from "@/components/analytics/records-statistics";
+import { stagger, fadeUp } from "@/components/analytics/motion-variants";
 import type { AnalyticsGranularity, AnalyticsTypeFilter } from "@/types";
 
 type PeriodType = AnalyticsGranularity | "custom";
@@ -141,16 +142,6 @@ const chartGranularity = (periodType: PeriodType, from: string, to: string): Ana
   return "yearly";
 };
 
-const stagger = {
-  hidden: { opacity: 0 },
-  show: { opacity: 1, transition: { staggerChildren: 0.06 } },
-};
-
-const fadeUp = {
-  hidden: { opacity: 0, y: 12 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.3 } },
-};
-
 export default function AnalyticsPage() {
   const { user } = useUser();
   const { hideAmounts } = usePrivacy();
@@ -213,10 +204,12 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Tab Bar */}
-      <div className="flex gap-1 p-1 bg-cream-100 rounded-xl mb-6 w-fit">
+      <div role="tablist" className="flex gap-1 p-1 bg-cream-100 rounded-xl mb-6 w-fit">
         {ANALYTICS_TABS.map((tab) => (
           <button
             key={tab.id}
+            role="tab"
+            aria-selected={activeTab === tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
