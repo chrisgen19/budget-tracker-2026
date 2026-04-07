@@ -178,6 +178,33 @@ export interface AnalyticsSummary {
   transactionCount: number;
 }
 
+/** A notable single transaction record */
+export interface AnalyticsTopRecord {
+  amount: number;
+  description: string;
+  date: string;
+  category: string;
+  categoryIcon: string;
+  categoryColor: string;
+}
+
+/** Records & statistics for the selected period */
+export interface AnalyticsStatistics {
+  biggestExpense: AnalyticsTopRecord | null;
+  biggestIncome: AnalyticsTopRecord | null;
+  mostExpensiveDay: { date: string; total: number; count: number } | null;
+  avgDailySpend: number | null;
+  avgExpenseSize: number | null;
+  avgIncomeSize: number | null;
+  totalTransactions: number;
+  activeDays: number;
+  totalDaysInPeriod: number;
+  spendingStreak: number;
+  mostUsedCategory: { name: string; icon: string; color: string; count: number } | null;
+  mostExpensiveCategory: { name: string; icon: string; color: string; amount: number } | null;
+  categoriesUsed: number;
+}
+
 /** Full analytics API response */
 export interface AnalyticsData {
   categoryBreakdown: AnalyticsCategoryItem[];
@@ -191,6 +218,7 @@ export interface AnalyticsData {
   allPreviousCategoryBreakdown: AnalyticsCategoryItem[];
   periodLabel: string;
   previousPeriodLabel: string;
+  statistics: AnalyticsStatistics;
 }
 
 /** Extend next-auth types */

@@ -2,7 +2,8 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, BarChart3, Trophy } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
 import { usePrivacy } from "@/components/privacy-provider";
 import { useAnalyticsQuery, type AnalyticsParams } from "@/hooks/use-analytics";
@@ -14,9 +15,17 @@ import { CategoryBreakdownChart } from "@/components/analytics/category-breakdow
 import { LabelBreakdownChart } from "@/components/analytics/label-breakdown-chart";
 import { AnalyticsSummary } from "@/components/analytics/analytics-summary";
 import { AnalyticsSkeleton } from "@/components/analytics/analytics-skeleton";
+import { RecordsStatistics } from "@/components/analytics/records-statistics";
+import { stagger, fadeUp } from "@/components/analytics/motion-variants";
 import type { AnalyticsGranularity, AnalyticsTypeFilter } from "@/types";
 
 type PeriodType = AnalyticsGranularity | "custom";
+type AnalyticsTab = "reports" | "statistics";
+
+const ANALYTICS_TABS = [
+  { id: "reports" as const, label: "Reports", icon: BarChart3 },
+  { id: "statistics" as const, label: "Records & Statistics", icon: Trophy },
+];
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
@@ -133,16 +142,6 @@ const chartGranularity = (periodType: PeriodType, from: string, to: string): Ana
   return "yearly";
 };
 
-const stagger = {
-  hidden: { opacity: 0 },
-  show: { opacity: 1, transition: { staggerChildren: 0.06 } },
-};
-
-const fadeUp = {
-  hidden: { opacity: 0, y: 12 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.3 } },
-};
-
 export default function AnalyticsPage() {
   const { user } = useUser();
   const { hideAmounts } = usePrivacy();
@@ -155,6 +154,7 @@ export default function AnalyticsPage() {
     return { from, to };
   });
   const [typeFilter, setTypeFilter] = useState<AnalyticsTypeFilter>("ALL");
+  const [activeTab, setActiveTab] = useState<AnalyticsTab>("reports");
 
   // Client-side label used for the picker before API data arrives
   const clientPeriodLabel = formatPeriodLabel(periodType, dateRange.from, dateRange.to);
@@ -192,7 +192,7 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Period Selector */}
-      <div className="mb-6">
+      <div className="mb-4">
         <TimeRangePicker
           periodType={periodType}
           from={dateRange.from}
@@ -201,6 +201,27 @@ export default function AnalyticsPage() {
           onPeriodSelect={handlePeriodSelect}
           onNavigate={handleNavigate}
         />
+      </div>
+
+      {/* Tab Bar */}
+      <div role="tablist" className="flex gap-1 p-1 bg-cream-100 rounded-xl mb-6 w-fit">
+        {ANALYTICS_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
+              activeTab === tab.id
+                ? "bg-white text-warm-700 shadow-sm"
+                : "text-warm-400 hover:text-warm-500"
+            )}
+          >
+            <tab.icon className="w-4 h-4" />
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {isLoading ? (
@@ -222,61 +243,80 @@ export default function AnalyticsPage() {
           </button>
         </div>
       ) : (
-        <motion.div
-          variants={stagger}
-          initial="hidden"
-          animate="show"
-          className="space-y-4"
-        >
-          {/* Summary Cards */}
-          <motion.div variants={fadeUp}>
-            <AnalyticsSummary data={data.summary} currency={currency} hideAmounts={hideAmounts} />
-          </motion.div>
-
-          {/* Income & Expenses Report */}
-          <motion.div variants={fadeUp} className="card p-5">
-            <h2 className="font-serif text-lg text-warm-700">Incomes & Expenses Report</h2>
-            <p className="text-xs text-warm-300 mb-4">Current vs previous period by category</p>
-            <IncomeExpensesReport
-              periodLabel={data.periodLabel}
-              previousPeriodLabel={data.previousPeriodLabel}
-              summary={data.summary}
-              previousSummary={data.previousSummary}
-              categoryBreakdown={data.allCategoryBreakdown}
-              previousCategoryBreakdown={data.allPreviousCategoryBreakdown}
-              currency={currency}
-              hideAmounts={hideAmounts}
-            />
-          </motion.div>
-
-          {/* Cash Flow Chart */}
-          <motion.div variants={fadeUp} className="card p-5">
-            <h2 className="font-serif text-lg text-warm-700">Cash Flow</h2>
-            <p className="text-xs text-warm-300 mb-4">
-              Net flow per period (solid) with cumulative trend (dashed)
-            </p>
-            <CashFlowChart data={data.cashFlow} currency={currency} hideAmounts={hideAmounts} />
-          </motion.div>
-
-          {/* Breakdowns */}
-          <motion.div variants={fadeUp} className="flex items-center justify-between mb-1">
-            <h2 className="font-serif text-lg text-warm-700">Breakdowns</h2>
-            <TypeFilter value={typeFilter} onChange={setTypeFilter} />
-          </motion.div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <motion.div variants={fadeUp} className="card p-5">
-              <h2 className="font-serif text-lg text-warm-700">By Category</h2>
-              <p className="text-xs text-warm-300 mb-4">Where is my money going?</p>
-              <CategoryBreakdownChart data={data.categoryBreakdown} currency={currency} hideAmounts={hideAmounts} />
+        <>
+          {/* Summary Cards (always visible) */}
+          <motion.div
+            variants={stagger}
+            initial="hidden"
+            animate="show"
+            className="space-y-4"
+          >
+            <motion.div variants={fadeUp}>
+              <AnalyticsSummary data={data.summary} currency={currency} hideAmounts={hideAmounts} />
             </motion.div>
+          </motion.div>
 
-            <motion.div variants={fadeUp} className="card p-5">
-              <h2 className="font-serif text-lg text-warm-700">By Label</h2>
-              <p className="text-xs text-warm-300 mb-4">Spending by label tags</p>
-              <LabelBreakdownChart data={data.labelBreakdown} currency={currency} hideAmounts={hideAmounts} />
+          {/* Reports Tab */}
+          {activeTab === "reports" && (
+            <motion.div
+              variants={stagger}
+              initial="hidden"
+              animate="show"
+              className="space-y-4 mt-4"
+            >
+              {/* Income & Expenses Report */}
+              <motion.div variants={fadeUp} className="card p-5">
+                <h2 className="font-serif text-lg text-warm-700">Incomes & Expenses Report</h2>
+                <p className="text-xs text-warm-300 mb-4">Current vs previous period by category</p>
+                <IncomeExpensesReport
+                  periodLabel={data.periodLabel}
+                  previousPeriodLabel={data.previousPeriodLabel}
+                  summary={data.summary}
+                  previousSummary={data.previousSummary}
+                  categoryBreakdown={data.allCategoryBreakdown}
+                  previousCategoryBreakdown={data.allPreviousCategoryBreakdown}
+                  currency={currency}
+                  hideAmounts={hideAmounts}
+                />
+              </motion.div>
+
+              {/* Cash Flow Chart */}
+              <motion.div variants={fadeUp} className="card p-5">
+                <h2 className="font-serif text-lg text-warm-700">Cash Flow</h2>
+                <p className="text-xs text-warm-300 mb-4">
+                  Net flow per period (solid) with cumulative trend (dashed)
+                </p>
+                <CashFlowChart data={data.cashFlow} currency={currency} hideAmounts={hideAmounts} />
+              </motion.div>
+
+              {/* Breakdowns */}
+              <motion.div variants={fadeUp} className="flex items-center justify-between mb-1">
+                <h2 className="font-serif text-lg text-warm-700">Breakdowns</h2>
+                <TypeFilter value={typeFilter} onChange={setTypeFilter} />
+              </motion.div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <motion.div variants={fadeUp} className="card p-5">
+                  <h2 className="font-serif text-lg text-warm-700">By Category</h2>
+                  <p className="text-xs text-warm-300 mb-4">Where is my money going?</p>
+                  <CategoryBreakdownChart data={data.categoryBreakdown} currency={currency} hideAmounts={hideAmounts} />
+                </motion.div>
+
+                <motion.div variants={fadeUp} className="card p-5">
+                  <h2 className="font-serif text-lg text-warm-700">By Label</h2>
+                  <p className="text-xs text-warm-300 mb-4">Spending by label tags</p>
+                  <LabelBreakdownChart data={data.labelBreakdown} currency={currency} hideAmounts={hideAmounts} />
+                </motion.div>
+              </div>
             </motion.div>
-          </div>
-        </motion.div>
+          )}
+
+          {/* Records & Statistics Tab */}
+          {activeTab === "statistics" && (
+            <div className="mt-4">
+              <RecordsStatistics statistics={data.statistics} currency={currency} hideAmounts={hideAmounts} />
+            </div>
+          )}
+        </>
       )}
     </div>
   );
