@@ -322,7 +322,7 @@ export default function AnalyticsPage() {
           {/* Financial Health Tab */}
           {activeTab === "health" && (
             <div className="mt-4">
-              <FinancialHealthScore healthScore={data.healthScore} currency={currency} hideAmounts={hideAmounts} />
+              <FinancialHealthScore healthScore={data.healthScore} />
             </div>
           )}
         </>

@@ -441,8 +441,8 @@ const computeHealthScore = (
         : "No change in income";
 
   // --- D. Category Diversification (weight 0.15) ---
-  const expenseCategories = allCategoryBreakdown.filter((c) => c.type === "EXPENSE");
   const diversificationScore = computeDiversificationScore(allCategoryBreakdown);
+  const expenseCategoryCount = allCategoryBreakdown.filter((c) => c.type === "EXPENSE").length;
 
   // Diversification trend: compare current vs previous entropy score
   let divTrend: HealthTrend = "new";
@@ -452,9 +452,9 @@ const computeHealthScore = (
     else if (diversificationScore < prevDivScore - 5) divTrend = "declining";
     else divTrend = "stable";
   }
-  const divDesc = expenseCategories.length === 0
+  const divDesc = expenseCategoryCount === 0
     ? "No expenses to categorize"
-    : `Spending across ${expenseCategories.length} categories`;
+    : `Spending across ${expenseCategoryCount} categories`;
 
   // --- E. Spending Consistency (weight 0.10) ---
   // Use expense-only days, not all active days, to measure spending behavior
@@ -698,7 +698,7 @@ export async function GET(request: Request) {
       const prevExpenseDaySet = new Set<string>();
       for (const t of prevTransactions) {
         if (t.type === "EXPENSE") {
-          const local = new Date(new Date(t.date).getTime() - tzMs);
+          const local = new Date(t.date.getTime() - tzMs);
           prevExpenseDaySet.add(`${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, "0")}-${String(local.getUTCDate()).padStart(2, "0")}`);
         }
       }

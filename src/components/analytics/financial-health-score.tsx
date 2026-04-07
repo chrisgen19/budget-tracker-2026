@@ -17,8 +17,6 @@ import type { AnalyticsHealthScore, HealthSubScore, HealthTrend } from "@/types"
 
 interface FinancialHealthScoreProps {
   healthScore: AnalyticsHealthScore;
-  currency: string;
-  hideAmounts: boolean;
 }
 
 const SCORE_COLORS: Record<string, { text: string; stroke: string; bg: string }> = {
