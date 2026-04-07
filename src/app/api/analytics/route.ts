@@ -331,7 +331,6 @@ const computeHealthScore = (
   if (totalIncome === 0 && totalExpenses === 0) {
     savingsScore = 50;
   } else if (totalIncome === 0) {
-    savingsRateValue = -1;
     savingsScore = 0;
   } else {
     savingsRateValue = (totalIncome - totalExpenses) / totalIncome;
@@ -346,21 +345,24 @@ const computeHealthScore = (
 
   // Savings rate trend
   let savingsTrend: HealthTrend = "new";
-  if (hasPreviousData) {
+  if (hasPreviousData && savingsRateValue !== null) {
     const prevRate = previousSummary.totalIncome > 0
       ? (previousSummary.totalIncome - previousSummary.totalExpenses) / previousSummary.totalIncome
-      : previousSummary.totalExpenses === 0 ? 0.5 : -1;
-    const currentRate = savingsRateValue ?? 0.5;
-    if (currentRate > prevRate + 0.02) savingsTrend = "improving";
-    else if (currentRate < prevRate - 0.02) savingsTrend = "declining";
-    else savingsTrend = "stable";
+      : null;
+    if (prevRate !== null) {
+      if (savingsRateValue > prevRate + 0.02) savingsTrend = "improving";
+      else if (savingsRateValue < prevRate - 0.02) savingsTrend = "declining";
+      else savingsTrend = "stable";
+    }
   }
 
   const savingsDesc = savingsRateValue !== null
     ? savingsRateValue >= 0
       ? `Saving ${Math.round(savingsRateValue * 100)}% of income`
       : `Spending ${Math.round(Math.abs(savingsRateValue) * 100)}% more than income`
-    : "No income or expenses";
+    : totalExpenses > 0
+      ? "No income this period"
+      : "No income or expenses";
 
   // --- B. Expense Trend (weight 0.25) ---
   let expenseTrendScore = 50;
@@ -374,7 +376,7 @@ const computeHealthScore = (
       expenseTrend = "stable";
     } else if (prev === 0) {
       expenseTrendScore = 30;
-      expenseTrend = "declining";
+      expenseTrend = "new";
     } else {
       const change = (curr - prev) / prev;
       expenseTrendValue = change;
