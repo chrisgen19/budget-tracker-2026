@@ -82,7 +82,8 @@ export async function GET(request: Request) {
       });
 
       emailsSent++;
-    } catch {
+    } catch (error) {
+      console.error(`[bill-reminders] Failed for user ${user.id}:`, error);
       errors++;
     }
   }
