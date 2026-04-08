@@ -1,4 +1,4 @@
-import type { BillFrequency, BillOccurrenceStatus } from "@prisma/client";
+import type { BillFrequency, BillOccurrenceStatus } from "@/types";
 
 /**
  * Advance a due date by the given frequency.
@@ -59,11 +59,13 @@ export const computeNextDueDate = (
  * should use this helper so the UI and the cron/email path stay in sync with
  * the actual payment history.
  *
- * The walk is bounded by:
- *  - an optional `endDate` (returns null if the next unpaid occurrence would
- *    be past the end)
- *  - `maxIterations` as a defensive stop (default 500; ~41 years of monthly
- *    bills, 1.3 years of daily)
+ * Returns `null` when:
+ *  - the next unpaid occurrence would fall past `endDate`, or
+ *  - the walk hits `maxIterations` without finding an unpaid date (defensive
+ *    stop — default 500, ~41 years of monthly bills, 1.3 years of daily)
+ *
+ * Callers should treat `null` as "no valid next occurrence" — the bill should
+ * typically be deactivated rather than have a bogus date written.
  */
 export const advanceToNextUnpaidOccurrence = (
   startingDueDate: Date,
@@ -95,7 +97,7 @@ export const advanceToNextUnpaidOccurrence = (
     candidate.setHours(0, 0, 0, 0);
   }
 
-  return candidate;
+  return null;
 };
 
 /** Format a BillFrequency enum value for display */

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { scheduledTransactionSchema } from "@/lib/validations";
 import { advanceToNextUnpaidOccurrence } from "@/lib/bill-utils";
+import type { BillOccurrenceStatus } from "@/types";
 
 export async function GET(request: Request) {
   const userId = await getAuthUserId();
@@ -39,10 +40,10 @@ export async function GET(request: Request) {
       })
     : [];
 
-  const logsByBillId = new Map<string, Array<{ dueDate: Date; status: "PAID" | "SKIPPED" }>>();
+  const logsByBillId = new Map<string, Array<{ dueDate: Date; status: BillOccurrenceStatus }>>();
   for (const log of logs) {
     const arr = logsByBillId.get(log.scheduledTransactionId) ?? [];
-    arr.push({ dueDate: log.dueDate, status: log.status as "PAID" | "SKIPPED" });
+    arr.push({ dueDate: log.dueDate, status: log.status });
     logsByBillId.set(log.scheduledTransactionId, arr);
   }
 
