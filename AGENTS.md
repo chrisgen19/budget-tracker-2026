@@ -88,7 +88,13 @@ src/
 - `RESEND_API_KEY` — Email sending (verification + password reset)
 - `RESEND_FROM_EMAIL` — Sender address (defaults to `onboarding@resend.dev` in dev)
 - `AUTH_URL` — Optional; used in preview/staging deployments
-- `CRON_SECRET` — Shared secret required by `/api/cron/bill-reminders`. Production (Coolify) is triggered by `.github/workflows/bill-reminders-cron.yml`; set `CRON_SECRET` in both the deployment environment and in the GitHub repo (Settings > Secrets and variables > Actions > Secrets). The production URL is hardcoded in the workflow file.
+- `CRON_SECRET` — Shared secret required by `/api/cron/bill-reminders`. Set in the production (Coolify) environment; a Coolify Scheduled Task reuses the same env var to call the endpoint daily (see **Cron Jobs** below).
+
+## Cron Jobs
+Production runs on Coolify. Schedules are configured in the Coolify dashboard under **Application > Scheduled Tasks** (not in the repo). Each task runs its command inside the running container, so it can hit the app at `http://localhost:3000` and reuse the container's env vars.
+
+Active tasks:
+- **Bill reminders** — daily at `0 8 * * *` UTC; command: `curl -sS -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/bill-reminders`
 
 ## Database
 - `DATABASE_URL` in `.env` points to local PostgreSQL
@@ -141,7 +147,7 @@ src/
 - `POST /api/email/forgot-password` — send password reset email
 - `POST /api/email/reset-password` — validate token + update password
 - `POST /api/resend-verification` — resend verification email
-- `GET /api/cron/bill-reminders` — sends email reminders for pending bills (secured with `CRON_SECRET`); triggered daily by `.github/workflows/bill-reminders-cron.yml`
+- `GET /api/cron/bill-reminders` — sends email reminders for pending bills (secured with `CRON_SECRET`); triggered daily by a Coolify Scheduled Task on production
 
 ## Design
 - "Light & Warm" aesthetic with cream/paper-like backgrounds
