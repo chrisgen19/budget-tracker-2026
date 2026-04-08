@@ -4,8 +4,13 @@ import { getPendingRemindersForUser } from "@/lib/pending-bills";
 import { sendBillReminderEmail } from "@/lib/email";
 
 export async function GET(request: Request) {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) {
+    return NextResponse.json({ error: "CRON_SECRET not configured" }, { status: 500 });
+  }
+
   const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -71,8 +76,7 @@ export async function GET(request: Request) {
         daysPastDue: r.daysPastDue,
       }));
 
-      await sendBillReminderEmail(user.email, billItems);
-
+      // Write log first to prevent duplicate emails if the send succeeds but DB fails after
       await prisma.billEmailLog.createMany({
         data: newReminders.map((r) => ({
           scheduledTransactionId: r.scheduledTransaction.id,
@@ -80,6 +84,8 @@ export async function GET(request: Request) {
         })),
         skipDuplicates: true,
       });
+
+      await sendBillReminderEmail(user.email, billItems);
 
       emailsSent++;
     } catch (error) {

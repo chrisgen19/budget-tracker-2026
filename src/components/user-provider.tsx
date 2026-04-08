@@ -15,6 +15,7 @@ interface UserInfo {
   showDayName: boolean;
   dayNameFormat: "FULL" | "SHORT";
   emailBillReminders: boolean;
+  emailVerified: boolean;
   role: UserRole;
   roleScanEnabled: boolean;
   maxUploadFiles: number;
@@ -30,7 +31,7 @@ interface UserContextValue {
 }
 
 const UserContext = createContext<UserContextValue>({
-  user: { name: "", email: "", currency: "PHP", timezoneOffset: -480, receiptScanEnabled: false, transactionLayout: "infinite", transactionAmountAutofocus: true, defaultLabelType: "EXPENSE", showDayName: true, dayNameFormat: "SHORT", emailBillReminders: false, role: "FREE", roleScanEnabled: false, maxUploadFiles: 10, monthlyScanLimit: 0, scansUsedThisMonth: 0 },
+  user: { name: "", email: "", currency: "PHP", timezoneOffset: -480, receiptScanEnabled: false, transactionLayout: "infinite", transactionAmountAutofocus: true, defaultLabelType: "EXPENSE", showDayName: true, dayNameFormat: "SHORT", emailBillReminders: false, emailVerified: false, role: "FREE", roleScanEnabled: false, maxUploadFiles: 10, monthlyScanLimit: 0, scansUsedThisMonth: 0 },
   setUser: () => {},
 });
 
