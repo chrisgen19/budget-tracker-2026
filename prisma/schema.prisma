@@ -59,6 +59,7 @@ model User {
   defaultLabelType           String     @default("EXPENSE") @map("default_label_type")
   showDayName                Boolean    @default(true) @map("show_day_name")
   dayNameFormat              DayNameFormat @default(SHORT) @map("day_name_format")
+  emailBillReminders         Boolean    @default(false) @map("email_bill_reminders")
   timezoneOffset          Int           @default(-480) @map("timezone_offset")
   transactions            Transaction[]
   categories              Category[]
@@ -153,6 +154,7 @@ model ScheduledTransaction {
   userId              String          @map("user_id")
   user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   occurrences         ScheduledTransactionLog[]
+  emailLogs           BillEmailLog[]
   transactions        Transaction[]
   createdAt           DateTime        @default(now()) @map("created_at")
   updatedAt           DateTime        @updatedAt @map("updated_at")
@@ -176,6 +178,18 @@ model ScheduledTransactionLog {
   @@index([scheduledTransactionId, dueDate])
   @@index([scheduledTransactionId, status])
   @@map("scheduled_transaction_logs")
+}
+
+model BillEmailLog {
+  id                      String               @id @default(cuid())
+  scheduledTransactionId  String               @map("scheduled_transaction_id")
+  scheduledTransaction    ScheduledTransaction @relation(fields: [scheduledTransactionId], references: [id], onDelete: Cascade)
+  dueDate                 DateTime             @map("due_date")
+  sentAt                  DateTime             @default(now()) @map("sent_at")
+
+  @@unique([scheduledTransactionId, dueDate])
+  @@index([scheduledTransactionId])
+  @@map("bill_email_logs")
 }
 
 model VerificationToken {
