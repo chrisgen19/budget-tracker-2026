@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { scheduledTransactionSchema } from "@/lib/validations";
+import { advanceToNextUnpaidOccurrence } from "@/lib/bill-utils";
 
 export async function PUT(
   request: Request,
@@ -22,12 +23,32 @@ export async function PUT(
     const validated = scheduledTransactionSchema.parse(body);
 
     const startDate = new Date(validated.startDate);
+    const endDate = validated.endDate ? new Date(validated.endDate) : null;
 
-    // Recalculate nextDueDate if frequency or startDate changed
+    // Recalculate nextDueDate if frequency or startDate changed. Walk forward
+    // from the new startDate past any PAID/SKIPPED logs so payment progress is
+    // preserved (fixes bug where editing a bill reset nextDueDate and
+    // resurrected already-paid occurrences).
     const frequencyChanged = validated.frequency !== existing.frequency
       || validated.customIntervalDays !== existing.customIntervalDays;
     const startDateChanged = startDate.getTime() !== existing.startDate.getTime();
     const needsRecalculate = frequencyChanged || startDateChanged;
+
+    let recalculatedNextDue: Date | null = null;
+    if (needsRecalculate) {
+      const logs = await prisma.scheduledTransactionLog.findMany({
+        where: { scheduledTransactionId: id },
+        select: { dueDate: true, status: true },
+      });
+      recalculatedNextDue = advanceToNextUnpaidOccurrence(
+        startDate,
+        validated.frequency,
+        startDate.getDate(),
+        validated.customIntervalDays ?? null,
+        logs,
+        { endDate },
+      );
+    }
 
     const bill = await prisma.scheduledTransaction.update({
       where: { id },
@@ -39,8 +60,9 @@ export async function PUT(
         customIntervalDays: validated.customIntervalDays ?? null,
         reminderDaysBefore: validated.reminderDaysBefore,
         startDate,
-        endDate: validated.endDate ? new Date(validated.endDate) : null,
-        ...(needsRecalculate && { nextDueDate: startDate }),
+        endDate,
+        ...(needsRecalculate && recalculatedNextDue && { nextDueDate: recalculatedNextDue }),
+        ...(needsRecalculate && !recalculatedNextDue && { isActive: false }),
         categoryId: validated.categoryId,
       },
       include: { category: true },
