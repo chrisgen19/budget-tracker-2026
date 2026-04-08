@@ -1,0 +1,95 @@
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { getPendingRemindersForUser } from "@/lib/pending-bills";
+import { sendBillReminderEmail } from "@/lib/email";
+
+export async function GET(request: Request) {
+  const authHeader = request.headers.get("authorization");
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const users = await prisma.user.findMany({
+    where: {
+      emailBillReminders: true,
+      emailVerified: true,
+    },
+    select: { id: true, email: true, currency: true },
+  });
+
+  let emailsSent = 0;
+  let errors = 0;
+
+  for (const user of users) {
+    try {
+      const reminders = await getPendingRemindersForUser(user.id);
+      if (reminders.length === 0) continue;
+
+      // Filter out reminders that already had an email sent
+      const reminderKeys = reminders.map((r) => ({
+        scheduledTransactionId: r.scheduledTransaction.id,
+        dueDate: new Date(r.dueDate),
+      }));
+
+      const existingLogs = await prisma.billEmailLog.findMany({
+        where: {
+          OR: reminderKeys.map((k) => ({
+            scheduledTransactionId: k.scheduledTransactionId,
+            dueDate: k.dueDate,
+          })),
+        },
+        select: { scheduledTransactionId: true, dueDate: true },
+      });
+
+      const sentSet = new Set(
+        existingLogs.map((l) => `${l.scheduledTransactionId}:${l.dueDate.getTime()}`),
+      );
+
+      const newReminders = reminders.filter(
+        (r) => !sentSet.has(`${r.scheduledTransaction.id}:${new Date(r.dueDate).getTime()}`),
+      );
+
+      if (newReminders.length === 0) continue;
+
+      const formatter = new Intl.NumberFormat("en", {
+        style: "currency",
+        currency: user.currency || "PHP",
+        minimumFractionDigits: 2,
+      });
+
+      const billItems = newReminders.map((r) => ({
+        name: r.scheduledTransaction.description || r.scheduledTransaction.category.name,
+        amount: formatter.format(r.scheduledTransaction.amount),
+        category: r.scheduledTransaction.category.name,
+        dueDate: new Date(r.dueDate).toLocaleDateString("en", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        }),
+        isOverdue: r.isOverdue,
+        daysUntilDue: r.daysUntilDue,
+        daysPastDue: r.daysPastDue,
+      }));
+
+      await sendBillReminderEmail(user.email, billItems);
+
+      await prisma.billEmailLog.createMany({
+        data: newReminders.map((r) => ({
+          scheduledTransactionId: r.scheduledTransaction.id,
+          dueDate: new Date(r.dueDate),
+        })),
+        skipDuplicates: true,
+      });
+
+      emailsSent++;
+    } catch {
+      errors++;
+    }
+  }
+
+  return NextResponse.json({
+    usersProcessed: users.length,
+    emailsSent,
+    errors,
+  });
+}

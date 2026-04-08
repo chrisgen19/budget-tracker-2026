@@ -43,6 +43,65 @@ export const sendVerificationEmail = async (email: string, token: string) => {
   });
 };
 
+interface BillReminderItem {
+  name: string;
+  amount: string;
+  category: string;
+  dueDate: string;
+  isOverdue: boolean;
+  daysUntilDue: number;
+  daysPastDue: number;
+}
+
+export const sendBillReminderEmail = async (email: string, bills: BillReminderItem[]) => {
+  const subject = bills.length === 1
+    ? `Bill reminder — ${APP_NAME}`
+    : `${bills.length} bills need attention — ${APP_NAME}`;
+
+  const billCards = bills.map((bill) => {
+    const statusText = bill.isOverdue
+      ? `${bill.daysPastDue} day${bill.daysPastDue !== 1 ? "s" : ""} overdue`
+      : bill.daysUntilDue === 0
+        ? "Due today"
+        : bill.daysUntilDue === 1
+          ? "Due tomorrow"
+          : `Due in ${bill.daysUntilDue} days`;
+
+    const statusColor = bill.isOverdue ? "#dc2626" : bill.daysUntilDue === 0 ? "#d97706" : "#78716c";
+
+    return `
+      <div style="padding: 12px 16px; border: 1px solid #e7e5e4; border-radius: 12px; margin-bottom: 8px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <p style="margin: 0; font-size: 15px; font-weight: 600; color: #44403c;">${bill.name}</p>
+            <p style="margin: 2px 0 0; font-size: 13px; color: #a8a29e;">${bill.category} · ${bill.dueDate}</p>
+          </div>
+          <p style="margin: 0; font-size: 15px; font-weight: 600; color: #44403c;">${bill.amount}</p>
+        </div>
+        <p style="margin: 8px 0 0; font-size: 13px; font-weight: 500; color: ${statusColor};">${statusText}</p>
+      </div>
+    `;
+  }).join("");
+
+  await getResend().emails.send({
+    from: getFrom(),
+    to: email,
+    subject,
+    html: `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
+        <h1 style="font-size: 24px; color: #44403c; margin-bottom: 8px;">Bill Reminder</h1>
+        <p style="font-size: 16px; color: #78716c; line-height: 1.5; margin-bottom: 24px;">
+          You have ${bills.length === 1 ? "a bill" : `${bills.length} bills`} that need${bills.length === 1 ? "s" : ""} your attention.
+        </p>
+        ${billCards}
+        <p style="font-size: 14px; color: #a8a29e; margin-top: 24px; line-height: 1.5;">
+          Open ${APP_NAME} to pay, snooze, or skip these bills. You can disable email reminders in your profile settings.
+        </p>
+      </div>
+    `,
+  });
+};
+
 export const sendPasswordResetEmail = async (email: string, token: string) => {
   const resetUrl = `${getBaseUrl()}/reset-password?token=${token}`;
 
