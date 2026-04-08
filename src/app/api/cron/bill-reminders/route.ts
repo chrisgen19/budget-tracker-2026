@@ -77,17 +77,28 @@ export async function GET(request: Request) {
       }));
 
       // Write log first to prevent duplicate emails if the send succeeds but DB fails after
-      await prisma.billEmailLog.createMany({
-        data: newReminders.map((r) => ({
-          scheduledTransactionId: r.scheduledTransaction.id,
-          dueDate: new Date(r.dueDate),
-        })),
-        skipDuplicates: true,
-      });
+      const logData = newReminders.map((r) => ({
+        scheduledTransactionId: r.scheduledTransaction.id,
+        dueDate: new Date(r.dueDate),
+      }));
 
-      await sendBillReminderEmail(user.email, billItems);
+      await prisma.billEmailLog.createMany({ data: logData, skipDuplicates: true });
 
-      emailsSent++;
+      try {
+        await sendBillReminderEmail(user.email, billItems);
+        emailsSent++;
+      } catch (sendError) {
+        // Email failed — delete logs so reminders are retried next run
+        await prisma.billEmailLog.deleteMany({
+          where: {
+            OR: logData.map((d) => ({
+              scheduledTransactionId: d.scheduledTransactionId,
+              dueDate: d.dueDate,
+            })),
+          },
+        });
+        throw sendError;
+      }
     } catch (error) {
       console.error(`[bill-reminders] Failed for user ${user.id}:`, error);
       errors++;

@@ -141,6 +141,7 @@ src/
 - `POST /api/email/forgot-password` — send password reset email
 - `POST /api/email/reset-password` — validate token + update password
 - `POST /api/resend-verification` — resend verification email
+- `GET /api/cron/bill-reminders` — daily cron: sends email reminders for pending bills (secured with `CRON_SECRET`)
 
 ## Design
 - "Light & Warm" aesthetic with cream/paper-like backgrounds

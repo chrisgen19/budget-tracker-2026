@@ -71,13 +71,17 @@ export const sendBillReminderEmail = async (email: string, bills: BillReminderIt
 
     return `
       <div style="padding: 12px 16px; border: 1px solid #e7e5e4; border-radius: 12px; margin-bottom: 8px;">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <div>
-            <p style="margin: 0; font-size: 15px; font-weight: 600; color: #44403c;">${bill.name}</p>
-            <p style="margin: 2px 0 0; font-size: 13px; color: #a8a29e;">${bill.category} · ${bill.dueDate}</p>
-          </div>
-          <p style="margin: 0; font-size: 15px; font-weight: 600; color: #44403c;">${bill.amount}</p>
-        </div>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td style="vertical-align: top;">
+              <p style="margin: 0; font-size: 15px; font-weight: 600; color: #44403c;">${bill.name}</p>
+              <p style="margin: 2px 0 0; font-size: 13px; color: #a8a29e;">${bill.category} · ${bill.dueDate}</p>
+            </td>
+            <td style="vertical-align: top; text-align: right; white-space: nowrap;">
+              <p style="margin: 0; font-size: 15px; font-weight: 600; color: #44403c;">${bill.amount}</p>
+            </td>
+          </tr>
+        </table>
         <p style="margin: 8px 0 0; font-size: 13px; font-weight: 500; color: ${statusColor};">${statusText}</p>
       </div>
     `;
