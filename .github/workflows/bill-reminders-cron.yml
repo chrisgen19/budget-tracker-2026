@@ -4,15 +4,17 @@ name: Bill Reminders Cron
 # Production runs on Coolify, which does not read vercel.json, so scheduling
 # is handled here. Also supports manual runs via workflow_dispatch.
 #
-# Required repo settings:
-#   - Secrets > CRON_SECRET   — must match the value set in the production environment
-#   - Variables > CRON_URL    — production base URL (e.g., https://budget.cgdev.site)
+# Required repo secret:
+#   - CRON_SECRET — must match the value set in the production environment
 
 on:
   schedule:
     # Daily at 08:00 UTC (16:00 Philippine Time)
     - cron: "0 8 * * *"
   workflow_dispatch:
+
+env:
+  PRODUCTION_URL: https://budget.cgdev.site
 
 jobs:
   trigger:
@@ -21,15 +23,10 @@ jobs:
     steps:
       - name: Call bill-reminders endpoint
         env:
-          CRON_URL: ${{ vars.CRON_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -euo pipefail
 
-          if [ -z "${CRON_URL:-}" ]; then
-            echo "::error::CRON_URL repo variable is not set"
-            exit 1
-          fi
           if [ -z "${CRON_SECRET:-}" ]; then
             echo "::error::CRON_SECRET repo secret is not set"
             exit 1
@@ -42,7 +39,7 @@ jobs:
             --write-out "%{http_code}" \
             --max-time 120 \
             --header "Authorization: Bearer ${CRON_SECRET}" \
-            "${CRON_URL}/api/cron/bill-reminders")
+            "${PRODUCTION_URL}/api/cron/bill-reminders")
 
           echo "HTTP ${http_code}"
           cat response.json || true

@@ -88,7 +88,7 @@ src/
 - `RESEND_API_KEY` — Email sending (verification + password reset)
 - `RESEND_FROM_EMAIL` — Sender address (defaults to `onboarding@resend.dev` in dev)
 - `AUTH_URL` — Optional; used in preview/staging deployments
-- `CRON_SECRET` — Shared secret required by `/api/cron/bill-reminders`. Production (Coolify) is triggered by a GitHub Actions scheduled workflow — set `CRON_SECRET` in both the deployment environment and in the GitHub repo (Settings > Secrets and variables > Actions). Also set repo variable `CRON_URL` to the production base URL.
+- `CRON_SECRET` — Shared secret required by `/api/cron/bill-reminders`. Production (Coolify) is triggered by `.github/workflows/bill-reminders-cron.yml`; set `CRON_SECRET` in both the deployment environment and in the GitHub repo (Settings > Secrets and variables > Actions > Secrets). The production URL is hardcoded in the workflow file.
 
 ## Database
 - `DATABASE_URL` in `.env` points to local PostgreSQL
