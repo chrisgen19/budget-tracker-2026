@@ -2,6 +2,14 @@ import { Resend } from "resend";
 
 const APP_NAME = "Budget Tracker";
 
+const escapeHtml = (str: string): string =>
+  str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
 let _resend: Resend | null = null;
 
 const getResend = () => {
@@ -74,11 +82,11 @@ export const sendBillReminderEmail = async (email: string, bills: BillReminderIt
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
           <tr>
             <td style="vertical-align: top;">
-              <p style="margin: 0; font-size: 15px; font-weight: 600; color: #44403c;">${bill.name}</p>
-              <p style="margin: 2px 0 0; font-size: 13px; color: #a8a29e;">${bill.category} · ${bill.dueDate}</p>
+              <p style="margin: 0; font-size: 15px; font-weight: 600; color: #44403c;">${escapeHtml(bill.name)}</p>
+              <p style="margin: 2px 0 0; font-size: 13px; color: #a8a29e;">${escapeHtml(bill.category)} · ${escapeHtml(bill.dueDate)}</p>
             </td>
             <td style="vertical-align: top; text-align: right; white-space: nowrap;">
-              <p style="margin: 0; font-size: 15px; font-weight: 600; color: #44403c;">${bill.amount}</p>
+              <p style="margin: 0; font-size: 15px; font-weight: 600; color: #44403c;">${escapeHtml(bill.amount)}</p>
             </td>
           </tr>
         </table>
