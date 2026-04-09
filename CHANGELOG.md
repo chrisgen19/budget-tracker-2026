@@ -723,7 +723,7 @@ All notable development history for the Budget Tracker app.
 
 ### Environment Variables
 - `RESEND_API_KEY` — required for sending verification and reset emails
-- `RESEND_FROM_EMAIL` — sender address (defaults to `onboarding@resend.dev` for development)
+- `EMAIL_FROM` — sender address (optional; defaults to `Budget Tracker <noreply@resend.dev>` for development)
 
 ---
 

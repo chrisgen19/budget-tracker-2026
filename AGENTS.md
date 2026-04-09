@@ -86,7 +86,7 @@ src/
 - `NEXTAUTH_SECRET` / `NEXTAUTH_URL` — NextAuth session config
 - `GEMINI_API_KEY` — Google Gemini AI for receipt scanning
 - `RESEND_API_KEY` — Email sending (verification + password reset)
-- `RESEND_FROM_EMAIL` — Sender address (defaults to `onboarding@resend.dev` in dev)
+- `EMAIL_FROM` — Sender address (optional; defaults to `Budget Tracker <noreply@resend.dev>` if unset). Use a verified Resend domain in production, e.g. `Budget Tracker <noreply@yourdomain.com>`.
 - `AUTH_URL` — Optional; used in preview/staging deployments
 - `CRON_SECRET` — Shared secret required by `/api/cron/bill-reminders`. Set in the production (Coolify) environment; a Coolify Scheduled Task reuses the same env var to call the endpoint daily (see **Cron Jobs** below).
 
