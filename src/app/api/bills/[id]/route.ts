@@ -35,23 +35,23 @@ export async function PUT(
     const startDateChanged = startDate.getTime() !== existing.startDate.getTime();
     const needsRecalculate = frequencyChanged || startDateChanged;
 
-    // Validate label ownership + type compatibility
-    let verifiedLabelIds: string[] | undefined;
-    if (labelIds !== undefined) {
-      if (labelIds.length > 0) {
-        const owned = await prisma.label.findMany({
-          where: { id: { in: labelIds }, userId },
-          select: { id: true, applicableTo: true },
-        });
-        verifiedLabelIds = owned
-          .filter((l) => l.applicableTo === "BOTH" || l.applicableTo === billData.type)
-          .map((l) => l.id);
-      } else {
-        verifiedLabelIds = [];
-      }
-    }
-
     const bill = await prisma.$transaction(async (tx) => {
+      // Validate label ownership + type compatibility
+      let verifiedLabelIds: string[] | undefined;
+      if (labelIds !== undefined) {
+        if (labelIds.length > 0) {
+          const owned = await tx.label.findMany({
+            where: { id: { in: labelIds }, userId },
+            select: { id: true, applicableTo: true },
+          });
+          verifiedLabelIds = owned
+            .filter((l) => l.applicableTo === "BOTH" || l.applicableTo === billData.type)
+            .map((l) => l.id);
+        } else {
+          verifiedLabelIds = [];
+        }
+      }
+
       const updated = await tx.scheduledTransaction.update({
         where: { id },
         data: {
