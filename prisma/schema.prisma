@@ -156,6 +156,7 @@ model ScheduledTransaction {
   occurrences         ScheduledTransactionLog[]
   emailLogs           BillEmailLog[]
   transactions        Transaction[]
+  labels              BillLabel[]
   createdAt           DateTime        @default(now()) @map("created_at")
   updatedAt           DateTime        @updatedAt @map("updated_at")
 
@@ -214,6 +215,7 @@ model Label {
   userId       String             @map("user_id")
   user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions TransactionLabel[]
+  bills        BillLabel[]
   schedules    LabelSchedule[]
   createdAt    DateTime           @default(now()) @map("created_at")
 
@@ -249,4 +251,18 @@ model TransactionLabel {
   @@index([transactionId])
   @@index([labelId])
   @@map("transaction_labels")
+}
+
+model BillLabel {
+  id                      String               @id @default(cuid())
+  scheduledTransactionId  String               @map("scheduled_transaction_id")
+  scheduledTransaction    ScheduledTransaction @relation(fields: [scheduledTransactionId], references: [id], onDelete: Cascade)
+  labelId                 String               @map("label_id")
+  label                   Label                @relation(fields: [labelId], references: [id], onDelete: Cascade)
+  createdAt               DateTime             @default(now()) @map("created_at")
+
+  @@unique([scheduledTransactionId, labelId])
+  @@index([scheduledTransactionId])
+  @@index([labelId])
+  @@map("bill_labels")
 }

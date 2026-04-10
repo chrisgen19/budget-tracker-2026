@@ -17,7 +17,7 @@ export async function POST(
   try {
     const bill = await prisma.scheduledTransaction.findUnique({
       where: { id },
-      include: { category: true },
+      include: { category: true, labels: { include: { label: true } } },
     });
 
     if (!bill || bill.userId !== userId) {
@@ -31,10 +31,20 @@ export async function POST(
     const originalStartDay = bill.startDate.getDate();
 
     if (action === "pay") {
-      // Compute scheduled label based on actual payment date
-      const paymentDate = new Date();
-      const ctx = await getScheduleContext(userId);
-      const scheduledLabelId = ctx ? matchScheduledLabel(paymentDate, ctx, bill.type) : null;
+      // Resolve labels: bill labels take priority over scheduled auto-labels
+      const billLabelIds = (bill.labels ?? [])
+        .filter((bl) => bl.label.applicableTo === "BOTH" || bl.label.applicableTo === bill.type)
+        .map((bl) => bl.labelId);
+      let transactionLabelIds: string[] = [];
+
+      if (billLabelIds.length > 0) {
+        transactionLabelIds = billLabelIds;
+      } else {
+        const paymentDate = new Date();
+        const ctx = await getScheduleContext(userId);
+        const scheduledLabelId = ctx ? matchScheduledLabel(paymentDate, ctx, bill.type) : null;
+        if (scheduledLabelId) transactionLabelIds = [scheduledLabelId];
+      }
 
       // Advance nextDueDate
       const nextDue = computeNextDueDate(dueDate, bill.frequency, originalStartDay, bill.customIntervalDays);
@@ -49,13 +59,13 @@ export async function POST(
             amount: bill.amount,
             description: bill.description,
             type: bill.type,
-            date: paymentDate,
+            date: new Date(),
             categoryId: bill.categoryId,
             userId,
             billId: bill.id,
-            ...(scheduledLabelId && {
+            ...(transactionLabelIds.length > 0 && {
               labels: {
-                create: { labelId: scheduledLabelId },
+                create: transactionLabelIds.map((labelId) => ({ labelId })),
               },
             }),
           },

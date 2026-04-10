@@ -4,6 +4,11 @@ import { getAuthUserId } from "@/lib/session";
 import { scheduledTransactionSchema } from "@/lib/validations";
 import { advanceToNextUnpaidOccurrence } from "@/lib/bill-utils";
 
+const billInclude = {
+  category: true,
+  labels: { include: { label: true } },
+} as const;
+
 export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -23,14 +28,15 @@ export async function PUT(
     const validated = scheduledTransactionSchema.parse(body);
 
     const startDate = new Date(validated.startDate);
-    const endDate = validated.endDate ? new Date(validated.endDate) : null;
+    const { labelIds, ...billData } = validated;
+    const endDate = billData.endDate ? new Date(billData.endDate) : null;
 
     // Recalculate nextDueDate if frequency or startDate changed. Walk forward
     // from the new startDate past any PAID/SKIPPED logs so payment progress is
     // preserved (fixes bug where editing a bill reset nextDueDate and
     // resurrected already-paid occurrences).
-    const frequencyChanged = validated.frequency !== existing.frequency
-      || validated.customIntervalDays !== existing.customIntervalDays;
+    const frequencyChanged = billData.frequency !== existing.frequency
+      || billData.customIntervalDays !== existing.customIntervalDays;
     const startDateChanged = startDate.getTime() !== existing.startDate.getTime();
     const needsRecalculate = frequencyChanged || startDateChanged;
 
@@ -42,30 +48,68 @@ export async function PUT(
       });
       recalculatedNextDue = advanceToNextUnpaidOccurrence(
         startDate,
-        validated.frequency,
+        billData.frequency,
         startDate.getDate(),
-        validated.customIntervalDays ?? null,
+        billData.customIntervalDays ?? null,
         logs,
         { endDate },
       );
     }
 
-    const bill = await prisma.scheduledTransaction.update({
-      where: { id },
-      data: {
-        amount: validated.amount,
-        description: validated.description,
-        type: validated.type,
-        frequency: validated.frequency,
-        customIntervalDays: validated.customIntervalDays ?? null,
-        reminderDaysBefore: validated.reminderDaysBefore,
-        startDate,
-        endDate,
-        ...(needsRecalculate && recalculatedNextDue && { nextDueDate: recalculatedNextDue }),
-        ...(needsRecalculate && !recalculatedNextDue && { isActive: false }),
-        categoryId: validated.categoryId,
-      },
-      include: { category: true },
+    const bill = await prisma.$transaction(async (tx) => {
+      // Validate label ownership + type compatibility
+      let verifiedLabelIds: string[] | undefined;
+      if (labelIds !== undefined) {
+        if (labelIds.length > 0) {
+          const owned = await tx.label.findMany({
+            where: { id: { in: labelIds }, userId },
+            select: { id: true, applicableTo: true },
+          });
+          verifiedLabelIds = owned
+            .filter((l) => l.applicableTo === "BOTH" || l.applicableTo === billData.type)
+            .map((l) => l.id);
+        } else {
+          verifiedLabelIds = [];
+        }
+      }
+
+      const updated = await tx.scheduledTransaction.update({
+        where: { id },
+        data: {
+          amount: billData.amount,
+          description: billData.description,
+          type: billData.type,
+          frequency: billData.frequency,
+          customIntervalDays: billData.customIntervalDays ?? null,
+          reminderDaysBefore: billData.reminderDaysBefore,
+          startDate,
+          endDate,
+          ...(needsRecalculate && recalculatedNextDue && { nextDueDate: recalculatedNextDue }),
+          ...(needsRecalculate && !recalculatedNextDue && { isActive: false }),
+          categoryId: billData.categoryId,
+        },
+        include: billInclude,
+      });
+
+      // Sync labels if explicitly provided
+      if (verifiedLabelIds !== undefined) {
+        await tx.billLabel.deleteMany({ where: { scheduledTransactionId: id } });
+        if (verifiedLabelIds.length > 0) {
+          await tx.billLabel.createMany({
+            data: verifiedLabelIds.map((labelId) => ({
+              scheduledTransactionId: id,
+              labelId,
+            })),
+          });
+        }
+        // Re-fetch to include updated labels
+        return tx.scheduledTransaction.findUniqueOrThrow({
+          where: { id },
+          include: billInclude,
+        });
+      }
+
+      return updated;
     });
 
     return NextResponse.json(bill);
@@ -107,7 +151,7 @@ export async function PATCH(
       nextDueDate,
       endDate: null,
     },
-    include: { category: true },
+    include: billInclude,
   });
 
   return NextResponse.json(bill);

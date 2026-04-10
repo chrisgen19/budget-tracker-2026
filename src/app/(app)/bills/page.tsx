@@ -219,6 +219,20 @@ export default function BillsPage() {
                             </span>
                           )}
                         </div>
+                        {bill.labels && bill.labels.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {bill.labels.map((bl) => (
+                              <span
+                                key={bl.id}
+                                className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full"
+                                style={{ backgroundColor: bl.label.color + "18", color: bl.label.color }}
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: bl.label.color }} />
+                                {bl.label.name}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
 
                       {/* Amount */}

@@ -5,6 +5,11 @@ import { scheduledTransactionSchema } from "@/lib/validations";
 import { advanceToNextUnpaidOccurrence } from "@/lib/bill-utils";
 import type { BillOccurrenceStatus } from "@/types";
 
+const billInclude = {
+  category: true,
+  labels: { include: { label: true } },
+} as const;
+
 export async function GET(request: Request) {
   const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
@@ -21,7 +26,7 @@ export async function GET(request: Request) {
 
   const bills = await prisma.scheduledTransaction.findMany({
     where,
-    include: { category: true },
+    include: billInclude,
     orderBy: { nextDueDate: "asc" },
   });
 
@@ -75,22 +80,42 @@ export async function POST(request: Request) {
     const validated = scheduledTransactionSchema.parse(body);
 
     const startDate = new Date(validated.startDate);
+    const { labelIds, ...billData } = validated;
 
-    const bill = await prisma.scheduledTransaction.create({
-      data: {
-        amount: validated.amount,
-        description: validated.description,
-        type: validated.type,
-        frequency: validated.frequency,
-        customIntervalDays: validated.customIntervalDays ?? null,
-        reminderDaysBefore: validated.reminderDaysBefore,
-        startDate,
-        endDate: validated.endDate ? new Date(validated.endDate) : null,
-        nextDueDate: startDate,
-        categoryId: validated.categoryId,
-        userId,
-      },
-      include: { category: true },
+    const bill = await prisma.$transaction(async (tx) => {
+      // Validate label ownership + type compatibility
+      let verifiedLabelIds: string[] = [];
+      if (labelIds && labelIds.length > 0) {
+        const owned = await tx.label.findMany({
+          where: { id: { in: labelIds }, userId },
+          select: { id: true, applicableTo: true },
+        });
+        verifiedLabelIds = owned
+          .filter((l) => l.applicableTo === "BOTH" || l.applicableTo === billData.type)
+          .map((l) => l.id);
+      }
+
+      return tx.scheduledTransaction.create({
+        data: {
+          amount: billData.amount,
+          description: billData.description,
+          type: billData.type,
+          frequency: billData.frequency,
+          customIntervalDays: billData.customIntervalDays ?? null,
+          reminderDaysBefore: billData.reminderDaysBefore,
+          startDate,
+          endDate: billData.endDate ? new Date(billData.endDate) : null,
+          nextDueDate: startDate,
+          categoryId: billData.categoryId,
+          userId,
+          ...(verifiedLabelIds.length > 0 && {
+            labels: {
+              create: verifiedLabelIds.map((id) => ({ labelId: id })),
+            },
+          }),
+        },
+        include: billInclude,
+      });
     });
 
     return NextResponse.json(bill, { status: 201 });

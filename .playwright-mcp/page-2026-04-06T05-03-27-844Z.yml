@@ -1,0 +1,47 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]:
+          - img [ref=e7]
+          - heading "Budget Tracker" [level=1] [ref=e10]
+        - link [ref=e11] [cursor=pointer]:
+          - /url: /profile
+          - img [ref=e12]
+    - navigation [ref=e15]:
+      - generic [ref=e16]:
+        - link "Dashboard" [ref=e17] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e18]
+          - generic [ref=e23]: Dashboard
+        - link "Transactions" [ref=e25] [cursor=pointer]:
+          - /url: /transactions
+          - img [ref=e26]
+          - generic [ref=e29]: Transactions
+        - link "Bills" [ref=e30] [cursor=pointer]:
+          - /url: /bills
+          - img [ref=e31]
+          - generic [ref=e35]: Bills
+        - link "Categories" [ref=e36] [cursor=pointer]:
+          - /url: /categories
+          - img [ref=e37]
+          - generic [ref=e41]: Categories
+        - button "Scan" [ref=e42] [cursor=pointer]:
+          - img [ref=e43]
+          - generic [ref=e48]: Scan
+    - main [ref=e49]:
+      - generic [ref=e51]:
+        - generic [ref=e52]:
+          - generic [ref=e53]:
+            - heading "Dashboard" [level=1] [ref=e54]
+            - paragraph [ref=e55]: Your financial overview at a glance.
+          - generic [ref=e57]:
+            - button [ref=e58] [cursor=pointer]:
+              - img [ref=e59]
+            - generic [ref=e61]: April 2026
+            - button [ref=e62] [cursor=pointer]:
+              - img [ref=e63]
+        - button "Transaction" [ref=e160] [cursor=pointer]:
+          - img [ref=e161]
+          - text: Transaction
+  - alert [ref=e162]

@@ -1,0 +1,96 @@
+[    1064ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[    1318ms] [INFO] Banner not shown: beforeinstallpromptevent.preventDefault() called. The page must call beforeinstallpromptevent.prompt() to show the banner. @ http://localhost:3000/dashboard:0
+[  106590ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  106900ms] [WARNING] [Fast Refresh] performing full reload
+
+Fast Refresh will perform a full reload when you edit a file that's imported by modules outside of the React rendering tree.
+You might have a file which exports a React component but also exports a value that is imported by a non-React component file.
+Consider migrating the non-React component export to a separate file and importing it into both files.
+
+It is also possible the parent component of the component you edited is a class component, which disables Fast Refresh.
+Fast Refresh requires at least one parent function component in your React tree. @ http://localhost:3000/_next/static/chunks/%5Bturbopack%5D_browser_dev_hmr-client_hmr-client_ts_c8c997ce._.js:34
+[  106904ms] [LOG] [Fast Refresh] done in 408ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[  107175ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  107265ms] [LOG] [Fast Refresh] done in 190ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[  107714ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[  108138ms] [INFO] Banner not shown: beforeinstallpromptevent.preventDefault() called. The page must call beforeinstallpromptevent.prompt() to show the banner. @ http://localhost:3000/dashboard:0
+[  111808ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  111929ms] [WARNING] [Fast Refresh] performing full reload
+
+Fast Refresh will perform a full reload when you edit a file that's imported by modules outside of the React rendering tree.
+You might have a file which exports a React component but also exports a value that is imported by a non-React component file.
+Consider migrating the non-React component export to a separate file and importing it into both files.
+
+It is also possible the parent component of the component you edited is a class component, which disables Fast Refresh.
+Fast Refresh requires at least one parent function component in your React tree. @ http://localhost:3000/_next/static/chunks/%5Bturbopack%5D_browser_dev_hmr-client_hmr-client_ts_c8c997ce._.js:34
+[  111949ms] [LOG] [Fast Refresh] done in 221ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[  112224ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  112253ms] [LOG] [Fast Refresh] done in 129ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[  112632ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[  113195ms] [INFO] Banner not shown: beforeinstallpromptevent.preventDefault() called. The page must call beforeinstallpromptevent.prompt() to show the banner. @ http://localhost:3000/dashboard:0
+[  121589ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  121683ms] [WARNING] [Fast Refresh] performing full reload
+
+Fast Refresh will perform a full reload when you edit a file that's imported by modules outside of the React rendering tree.
+You might have a file which exports a React component but also exports a value that is imported by a non-React component file.
+Consider migrating the non-React component export to a separate file and importing it into both files.
+
+It is also possible the parent component of the component you edited is a class component, which disables Fast Refresh.
+Fast Refresh requires at least one parent function component in your React tree. @ http://localhost:3000/_next/static/chunks/%5Bturbopack%5D_browser_dev_hmr-client_hmr-client_ts_c8c997ce._.js:34
+[  121710ms] [LOG] [Fast Refresh] done in 194ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[  121941ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  122039ms] [LOG] [Fast Refresh] done in 199ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[  122450ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[  122829ms] [INFO] Banner not shown: beforeinstallpromptevent.preventDefault() called. The page must call beforeinstallpromptevent.prompt() to show the banner. @ http://localhost:3000/dashboard:0
+[  125723ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  125794ms] [WARNING] [Fast Refresh] performing full reload
+
+Fast Refresh will perform a full reload when you edit a file that's imported by modules outside of the React rendering tree.
+You might have a file which exports a React component but also exports a value that is imported by a non-React component file.
+Consider migrating the non-React component export to a separate file and importing it into both files.
+
+It is also possible the parent component of the component you edited is a class component, which disables Fast Refresh.
+Fast Refresh requires at least one parent function component in your React tree. @ http://localhost:3000/_next/static/chunks/%5Bturbopack%5D_browser_dev_hmr-client_hmr-client_ts_c8c997ce._.js:34
+[  125821ms] [LOG] [Fast Refresh] done in 172ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[  126268ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  126333ms] [LOG] [Fast Refresh] done in 166ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[  126744ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[  127141ms] [INFO] Banner not shown: beforeinstallpromptevent.preventDefault() called. The page must call beforeinstallpromptevent.prompt() to show the banner. @ http://localhost:3000/dashboard:0
+[  134358ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  134502ms] [LOG] [Fast Refresh] done in 230ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[  140985ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  141238ms] [LOG] [Fast Refresh] done in 333ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[  146280ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  146429ms] ReferenceError: BILL_REMINDER_STACK_OFFSET_REM is not defined
+    at MobileFab (http://localhost:3000/_next/static/chunks/src_56d24df4._.js?id=%255Bproject%255D%252Fsrc%252Fcomponents%252Fui%252Fmobile-fab.tsx+%255Bapp-client%255D+%2528ecmascript%2529:25:54)
+    at Object.react_stack_bottom_frame (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:13072:24)
+    at renderWithHooks (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:4091:24)
+    at updateFunctionComponent (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:5523:21)
+    at beginWork (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:6111:24)
+    at runWithFiberInDEV (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:886:74)
+    at performUnitOfWork (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:8298:97)
+    at workLoopSync (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:8190:40)
+    at renderRootSync (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:8173:13)
+    at performWorkOnRoot (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:7932:56)
+    at performSyncWorkOnRoot (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:8890:9)
+    at flushSyncWorkAcrossRoots_impl (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:8809:316)
+    at flushSyncWork$1 (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:8048:86)
+    at Object.scheduleRefresh (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:294:13)
+    at http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:391:33
+    at Set.forEach (<anonymous>)
+    at Object.performReactRefresh (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:384:38)
+    at applyUpdate (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:878:31)
+    at http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:886:13
+[  146478ms] [LOG] [Fast Refresh] done in 205ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[  146610ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  146658ms] [LOG] [Fast Refresh] done in 149ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[  153785ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  153937ms] [WARNING] [Fast Refresh] performing full reload because your application had an unrecoverable error @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:6282
+[  154071ms] [LOG] [Fast Refresh] done in 252ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[  154932ms] [ERROR] [next-auth][error][CLIENT_FETCH_ERROR] 
+https://next-auth.js.org/errors#client_fetch_error Failed to fetch {error: Object, url: /api/auth/session, message: Failed to fetch} @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_a61b97c1._.js:2359
+[  154938ms] [WARNING] Error while trying to use the following icon from the Manifest: http://localhost:3000/icon-192x192.png (Download error or resource isn't a valid image) @ http://localhost:3000/dashboard:0
+[  155127ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[  155606ms] [INFO] Banner not shown: beforeinstallpromptevent.preventDefault() called. The page must call beforeinstallpromptevent.prompt() to show the banner. @ http://localhost:3000/dashboard:0
+[  162193ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  162348ms] [LOG] [Fast Refresh] done in 224ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809

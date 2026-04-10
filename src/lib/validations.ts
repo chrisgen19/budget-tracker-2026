@@ -121,6 +121,7 @@ export const scheduledTransactionSchema = z.object({
   reminderDaysBefore: z.number().int().min(0).max(30).default(0),
   startDate: z.string().min(1, "Start date is required"),
   endDate: z.string().optional(),
+  labelIds: z.array(z.string()).optional(),
 }).refine(
   (data) => data.frequency !== "CUSTOM" || (data.customIntervalDays != null && data.customIntervalDays >= 1),
   { message: "Custom interval is required for custom frequency", path: ["customIntervalDays"] }

@@ -1,0 +1,38 @@
+[     261ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[     348ms] [LOG] [Fast Refresh] done in 187ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[    1026ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[    1319ms] [INFO] Banner not shown: beforeinstallpromptevent.preventDefault() called. The page must call beforeinstallpromptevent.prompt() to show the banner. @ http://localhost:3000/dashboard:0
+[   56486ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[   56633ms] ReferenceError: useCallback is not defined
+    at BillReminderBanner (http://localhost:3000/_next/static/chunks/src_c2457b15._.js?id=%255Bproject%255D%252Fsrc%252Fcomponents%252Fbills%252Fbill-reminder-banner.tsx+%255Bapp-client%255D+%2528ecmascript%2529:54:23)
+    at Object.react_stack_bottom_frame (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:13072:24)
+    at renderWithHooks (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:4091:24)
+    at updateFunctionComponent (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:5523:21)
+    at beginWork (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:6111:24)
+    at runWithFiberInDEV (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:886:74)
+    at performUnitOfWork (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:8298:97)
+    at workLoopSync (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:8190:40)
+    at renderRootSync (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:8173:13)
+    at performWorkOnRoot (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:7932:56)
+    at performSyncWorkOnRoot (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:8890:9)
+    at flushSyncWorkAcrossRoots_impl (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:8809:316)
+    at flushSyncWork$1 (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:8048:86)
+    at Object.scheduleRefresh (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:294:13)
+    at http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:391:33
+    at Set.forEach (<anonymous>)
+    at Object.performReactRefresh (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:384:38)
+    at applyUpdate (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:878:31)
+    at http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:886:13
+[   56643ms] [LOG] [Fast Refresh] done in 229ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[   56775ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[   56784ms] [LOG] [Fast Refresh] done in 118ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[   60744ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[   61244ms] [WARNING] [Fast Refresh] performing full reload because your application had an unrecoverable error @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:6282
+[   61373ms] [LOG] [Fast Refresh] done in 598ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[   61488ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[   61712ms] [LOG] [Fast Refresh] done in 326ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[   62130ms] [ERROR] [next-auth][error][CLIENT_FETCH_ERROR] 
+https://next-auth.js.org/errors#client_fetch_error Failed to fetch {error: Object, url: /api/auth/session, message: Failed to fetch} @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_a61b97c1._.js:2359
+[   62134ms] [WARNING] Error while trying to use the following icon from the Manifest: http://localhost:3000/icon-192x192.png (Download error or resource isn't a valid image) @ http://localhost:3000/dashboard:0
+[   62351ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[   62801ms] [INFO] Banner not shown: beforeinstallpromptevent.preventDefault() called. The page must call beforeinstallpromptevent.prompt() to show the banner. @ http://localhost:3000/dashboard:0

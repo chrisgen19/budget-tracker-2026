@@ -1,0 +1,65 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]:
+          - img [ref=e7]
+          - heading "Budget Tracker" [level=1] [ref=e10]
+        - link [ref=e11] [cursor=pointer]:
+          - /url: /profile
+          - img [ref=e12]
+    - navigation [ref=e15]:
+      - generic [ref=e16]:
+        - link "Dashboard" [ref=e17] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e18]
+          - generic [ref=e23]: Dashboard
+        - link "Transactions" [ref=e24] [cursor=pointer]:
+          - /url: /transactions
+          - img [ref=e25]
+          - generic [ref=e28]: Transactions
+        - link "Bills" [ref=e29] [cursor=pointer]:
+          - /url: /bills
+          - img [ref=e30]
+          - generic [ref=e34]: Bills
+        - link "Categories" [ref=e35] [cursor=pointer]:
+          - /url: /categories
+          - img [ref=e36]
+          - generic [ref=e40]: Categories
+        - button "Scan" [ref=e41] [cursor=pointer]:
+          - img [ref=e42]
+          - generic [ref=e47]: Scan
+    - main [ref=e48]:
+      - generic [ref=e50]:
+        - generic [ref=e51]:
+          - heading "Preferences" [level=1] [ref=e52]
+          - paragraph [ref=e53]: Customize how your data is displayed.
+        - generic [ref=e54]:
+          - generic [ref=e55]:
+            - heading "Display" [level=2] [ref=e56]
+            - paragraph [ref=e57]: Date headers and formatting options
+          - generic [ref=e58]:
+            - generic [ref=e59]:
+              - generic [ref=e60]:
+                - img [ref=e62]
+                - generic [ref=e64]:
+                  - paragraph [ref=e65]: Show Day Name
+                  - paragraph [ref=e66]: Display the day of the week on date headers
+              - switch [checked] [ref=e67] [cursor=pointer]
+            - generic [ref=e68]:
+              - generic [ref=e69]:
+                - img [ref=e71]
+                - generic [ref=e73]:
+                  - paragraph [ref=e74]: Day Name Format
+                  - paragraph [ref=e75]: Choose between short or full day names
+              - generic [ref=e76]:
+                - button "Mon" [ref=e77] [cursor=pointer]
+                - button "Monday" [ref=e78] [cursor=pointer]
+            - generic [ref=e79]:
+              - paragraph [ref=e80]: Preview
+              - generic [ref=e82]:
+                - text: April 6, 2026
+                - generic [ref=e83]: · Sun
+  - button "Open Next.js Dev Tools" [ref=e89] [cursor=pointer]:
+    - img [ref=e90]
+  - alert [ref=e93]

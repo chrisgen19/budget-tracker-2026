@@ -1,0 +1,6 @@
+[     213ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[     848ms] [LOG] [Fast Refresh] done in 735ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[     950ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[     963ms] [LOG] [Fast Refresh] done in 114ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[    1212ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[    1541ms] [INFO] Banner not shown: beforeinstallpromptevent.preventDefault() called. The page must call beforeinstallpromptevent.prompt() to show the banner. @ http://localhost:3000/preferences:0
