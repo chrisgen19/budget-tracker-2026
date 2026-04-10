@@ -42,38 +42,40 @@ export async function POST(request: Request) {
     const startDate = new Date(validated.startDate);
     const { labelIds, ...billData } = validated;
 
-    // Validate label ownership + type compatibility
-    let verifiedLabelIds: string[] = [];
-    if (labelIds && labelIds.length > 0) {
-      const owned = await prisma.label.findMany({
-        where: { id: { in: labelIds }, userId },
-        select: { id: true, applicableTo: true },
-      });
-      verifiedLabelIds = owned
-        .filter((l) => l.applicableTo === "BOTH" || l.applicableTo === billData.type)
-        .map((l) => l.id);
-    }
+    const bill = await prisma.$transaction(async (tx) => {
+      // Validate label ownership + type compatibility
+      let verifiedLabelIds: string[] = [];
+      if (labelIds && labelIds.length > 0) {
+        const owned = await tx.label.findMany({
+          where: { id: { in: labelIds }, userId },
+          select: { id: true, applicableTo: true },
+        });
+        verifiedLabelIds = owned
+          .filter((l) => l.applicableTo === "BOTH" || l.applicableTo === billData.type)
+          .map((l) => l.id);
+      }
 
-    const bill = await prisma.scheduledTransaction.create({
-      data: {
-        amount: billData.amount,
-        description: billData.description,
-        type: billData.type,
-        frequency: billData.frequency,
-        customIntervalDays: billData.customIntervalDays ?? null,
-        reminderDaysBefore: billData.reminderDaysBefore,
-        startDate,
-        endDate: billData.endDate ? new Date(billData.endDate) : null,
-        nextDueDate: startDate,
-        categoryId: billData.categoryId,
-        userId,
-        ...(verifiedLabelIds.length > 0 && {
-          labels: {
-            create: verifiedLabelIds.map((id) => ({ labelId: id })),
-          },
-        }),
-      },
-      include: billInclude,
+      return tx.scheduledTransaction.create({
+        data: {
+          amount: billData.amount,
+          description: billData.description,
+          type: billData.type,
+          frequency: billData.frequency,
+          customIntervalDays: billData.customIntervalDays ?? null,
+          reminderDaysBefore: billData.reminderDaysBefore,
+          startDate,
+          endDate: billData.endDate ? new Date(billData.endDate) : null,
+          nextDueDate: startDate,
+          categoryId: billData.categoryId,
+          userId,
+          ...(verifiedLabelIds.length > 0 && {
+            labels: {
+              create: verifiedLabelIds.map((id) => ({ labelId: id })),
+            },
+          }),
+        },
+        include: billInclude,
+      });
     });
 
     return NextResponse.json(bill, { status: 201 });

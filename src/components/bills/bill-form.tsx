@@ -133,7 +133,8 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
     }
   }, [categories, selectedType, setValue, bill]);
 
-  // Filter out incompatible labels when type changes
+  // Filter out incompatible labels when type changes.
+  // Uses getValues (not watched value) so this only fires on selectedType/allLabels changes.
   useEffect(() => {
     if (allLabels.length === 0) return;
     const currentIds = getValues("labelIds") ?? [];

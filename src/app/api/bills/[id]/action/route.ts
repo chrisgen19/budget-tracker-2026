@@ -17,7 +17,7 @@ export async function POST(
   try {
     const bill = await prisma.scheduledTransaction.findUnique({
       where: { id },
-      include: { category: true, labels: true },
+      include: { category: true, labels: { include: { label: true } } },
     });
 
     if (!bill || bill.userId !== userId) {
@@ -32,7 +32,9 @@ export async function POST(
 
     if (action === "pay") {
       // Resolve labels: bill labels take priority over scheduled auto-labels
-      const billLabelIds = bill.labels?.map((bl) => bl.labelId) ?? [];
+      const billLabelIds = (bill.labels ?? [])
+        .filter((bl) => bl.label.applicableTo === "BOTH" || bl.label.applicableTo === bill.type)
+        .map((bl) => bl.labelId);
       let transactionLabelIds: string[] = [];
 
       if (billLabelIds.length > 0) {
