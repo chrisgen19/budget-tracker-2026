@@ -388,17 +388,11 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
             </div>
 
             {/* Labels */}
-            <div>
-              <p className="text-sm font-semibold text-warm-600 mb-2">
-                Labels{" "}
-                <span className="font-normal text-warm-300">(Optional)</span>
-              </p>
-              <LabelPicker
-                selectedIds={watchedLabelIds}
-                onChange={(ids) => setValue("labelIds", ids)}
-                transactionType={selectedType}
-              />
-            </div>
+            <LabelPicker
+              selectedIds={watchedLabelIds}
+              onChange={(ids) => setValue("labelIds", ids)}
+              transactionType={selectedType}
+            />
 
             {/* Description */}
             <div>
