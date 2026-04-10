@@ -3,6 +3,11 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { scheduledTransactionSchema } from "@/lib/validations";
 
+const billInclude = {
+  category: true,
+  labels: { include: { label: true } },
+} as const;
+
 export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -22,28 +27,67 @@ export async function PUT(
     const validated = scheduledTransactionSchema.parse(body);
 
     const startDate = new Date(validated.startDate);
+    const { labelIds, ...billData } = validated;
 
     // Recalculate nextDueDate if frequency or startDate changed
-    const frequencyChanged = validated.frequency !== existing.frequency
-      || validated.customIntervalDays !== existing.customIntervalDays;
+    const frequencyChanged = billData.frequency !== existing.frequency
+      || billData.customIntervalDays !== existing.customIntervalDays;
     const startDateChanged = startDate.getTime() !== existing.startDate.getTime();
     const needsRecalculate = frequencyChanged || startDateChanged;
 
-    const bill = await prisma.scheduledTransaction.update({
-      where: { id },
-      data: {
-        amount: validated.amount,
-        description: validated.description,
-        type: validated.type,
-        frequency: validated.frequency,
-        customIntervalDays: validated.customIntervalDays ?? null,
-        reminderDaysBefore: validated.reminderDaysBefore,
-        startDate,
-        endDate: validated.endDate ? new Date(validated.endDate) : null,
-        ...(needsRecalculate && { nextDueDate: startDate }),
-        categoryId: validated.categoryId,
-      },
-      include: { category: true },
+    // Validate label ownership + type compatibility
+    let verifiedLabelIds: string[] | undefined;
+    if (labelIds !== undefined) {
+      if (labelIds.length > 0) {
+        const owned = await prisma.label.findMany({
+          where: { id: { in: labelIds }, userId },
+          select: { id: true, applicableTo: true },
+        });
+        verifiedLabelIds = owned
+          .filter((l) => l.applicableTo === "BOTH" || l.applicableTo === billData.type)
+          .map((l) => l.id);
+      } else {
+        verifiedLabelIds = [];
+      }
+    }
+
+    const bill = await prisma.$transaction(async (tx) => {
+      const updated = await tx.scheduledTransaction.update({
+        where: { id },
+        data: {
+          amount: billData.amount,
+          description: billData.description,
+          type: billData.type,
+          frequency: billData.frequency,
+          customIntervalDays: billData.customIntervalDays ?? null,
+          reminderDaysBefore: billData.reminderDaysBefore,
+          startDate,
+          endDate: billData.endDate ? new Date(billData.endDate) : null,
+          ...(needsRecalculate && { nextDueDate: startDate }),
+          categoryId: billData.categoryId,
+        },
+        include: billInclude,
+      });
+
+      // Sync labels if explicitly provided
+      if (verifiedLabelIds !== undefined) {
+        await tx.billLabel.deleteMany({ where: { scheduledTransactionId: id } });
+        if (verifiedLabelIds.length > 0) {
+          await tx.billLabel.createMany({
+            data: verifiedLabelIds.map((labelId) => ({
+              scheduledTransactionId: id,
+              labelId,
+            })),
+          });
+        }
+        // Re-fetch to include updated labels
+        return tx.scheduledTransaction.findUniqueOrThrow({
+          where: { id },
+          include: billInclude,
+        });
+      }
+
+      return updated;
     });
 
     return NextResponse.json(bill);
@@ -85,7 +129,7 @@ export async function PATCH(
       nextDueDate,
       endDate: null,
     },
-    include: { category: true },
+    include: billInclude,
   });
 
   return NextResponse.json(bill);

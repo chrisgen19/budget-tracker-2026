@@ -8,8 +8,10 @@ import { ArrowLeft, CalendarDays, ChevronRight, Plus } from "lucide-react";
 import { scheduledTransactionSchema, type ScheduledTransactionInput } from "@/lib/validations";
 import { formatDateInput, getCurrencySymbol, cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
+import { LabelPicker } from "@/components/transactions/label-picker";
 import { useUser } from "@/components/user-provider";
 import { useCategoriesQuery, useQuickPreferencesQuery } from "@/hooks/use-categories";
+import { useLabelsQuery } from "@/hooks/use-labels";
 import type { Category, ScheduledTransactionWithCategory } from "@/types";
 
 interface BillFormProps {
@@ -65,6 +67,7 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
     handleSubmit,
     watch,
     setValue,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<ScheduledTransactionInput>({
     resolver: zodResolver(scheduledTransactionSchema),
@@ -82,16 +85,19 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
       endDate: bill?.endDate
         ? formatDateInput(bill.endDate).slice(0, 10)
         : undefined,
+      labelIds: bill?.labels?.map((bl) => bl.labelId) ?? [],
     },
   });
 
   const selectedType = watch("type");
   const watchedCategoryId = watch("categoryId");
   const watchedFrequency = watch("frequency");
+  const watchedLabelIds = watch("labelIds") ?? [];
 
   // TanStack Query hooks
   const { data: categories = [], isLoading: loadingCategories } = useCategoriesQuery(selectedType);
   const { data: quickPrefs } = useQuickPreferencesQuery();
+  const { data: allLabels = [] } = useLabelsQuery();
 
   const selectedCategory = categories.find((c) => c.id === watchedCategoryId);
 
@@ -126,6 +132,20 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
       setValue("categoryId", "");
     }
   }, [categories, selectedType, setValue, bill]);
+
+  // Filter out incompatible labels when type changes
+  useEffect(() => {
+    if (allLabels.length === 0) return;
+    const currentIds = getValues("labelIds") ?? [];
+    if (currentIds.length === 0) return;
+    const compatible = currentIds.filter((id) => {
+      const label = allLabels.find((l) => l.id === id);
+      return !label || label.applicableTo === "BOTH" || label.applicableTo === selectedType;
+    });
+    if (compatible.length !== currentIds.length) {
+      setValue("labelIds", compatible);
+    }
+  }, [selectedType, allLabels, getValues, setValue]);
 
   return (
     <AnimatePresence mode="wait" initial={false}>
@@ -365,6 +385,19 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
               {errors.categoryId && (
                 <p className="text-expense text-sm mt-1.5">{errors.categoryId.message}</p>
               )}
+            </div>
+
+            {/* Labels */}
+            <div>
+              <p className="text-sm font-semibold text-warm-600 mb-2">
+                Labels{" "}
+                <span className="font-normal text-warm-300">(Optional)</span>
+              </p>
+              <LabelPicker
+                selectedIds={watchedLabelIds}
+                onChange={(ids) => setValue("labelIds", ids)}
+                transactionType={selectedType}
+              />
             </div>
 
             {/* Description */}

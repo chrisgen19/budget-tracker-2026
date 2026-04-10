@@ -9,6 +9,7 @@ import type {
   Label,
   LabelSchedule,
   TransactionLabel,
+  BillLabel,
 } from "@prisma/client";
 
 export type {
@@ -22,6 +23,7 @@ export type {
   Label,
   LabelSchedule,
   TransactionLabel,
+  BillLabel,
 };
 
 /** Transaction with its category (and optional bill) relation */
@@ -77,6 +79,7 @@ export interface BalanceTrendItem {
 /** Scheduled transaction with its category relation */
 export type ScheduledTransactionWithCategory = ScheduledTransaction & {
   category: Category;
+  labels?: (BillLabel & { label: Label })[];
 };
 
 /** A pending bill reminder for the banner */

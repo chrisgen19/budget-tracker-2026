@@ -17,7 +17,7 @@ export async function POST(
   try {
     const bill = await prisma.scheduledTransaction.findUnique({
       where: { id },
-      include: { category: true },
+      include: { category: true, labels: true },
     });
 
     if (!bill || bill.userId !== userId) {
@@ -31,9 +31,17 @@ export async function POST(
     const originalStartDay = bill.startDate.getDate();
 
     if (action === "pay") {
-      // Compute scheduled label for this bill payment date
-      const ctx = await getScheduleContext(userId);
-      const scheduledLabelId = ctx ? matchScheduledLabel(dueDate, ctx, bill.type) : null;
+      // Resolve labels: bill labels take priority over scheduled auto-labels
+      const billLabelIds = bill.labels?.map((bl) => bl.labelId) ?? [];
+      let transactionLabelIds: string[] = [];
+
+      if (billLabelIds.length > 0) {
+        transactionLabelIds = billLabelIds;
+      } else {
+        const ctx = await getScheduleContext(userId);
+        const scheduledLabelId = ctx ? matchScheduledLabel(dueDate, ctx, bill.type) : null;
+        if (scheduledLabelId) transactionLabelIds = [scheduledLabelId];
+      }
 
       // Create the real transaction
       const transaction = await prisma.transaction.create({
@@ -45,9 +53,9 @@ export async function POST(
           categoryId: bill.categoryId,
           userId,
           billId: bill.id,
-          ...(scheduledLabelId && {
+          ...(transactionLabelIds.length > 0 && {
             labels: {
-              create: { labelId: scheduledLabelId },
+              create: transactionLabelIds.map((labelId) => ({ labelId })),
             },
           }),
         },
