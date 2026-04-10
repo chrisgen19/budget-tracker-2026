@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ScanLine, Rows3, Target, Tag } from "lucide-react";
+import { ScanLine, Mail, Rows3, Target, Tag } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
 
@@ -11,6 +11,7 @@ export function FeaturesForm() {
   const [savingLayout, setSavingLayout] = useState(false);
   const [savingAutofocus, setSavingAutofocus] = useState(false);
   const [savingLabelType, setSavingLabelType] = useState(false);
+  const [savingEmailReminders, setSavingEmailReminders] = useState(false);
 
   const handleToggle = async () => {
     const newValue = !user.receiptScanEnabled;
@@ -32,6 +33,29 @@ export function FeaturesForm() {
       setUser({ receiptScanEnabled: !newValue });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleEmailRemindersToggle = async () => {
+    const newValue = !user.emailBillReminders;
+
+    setUser({ emailBillReminders: newValue });
+    setSavingEmailReminders(true);
+
+    try {
+      const res = await fetch("/api/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emailBillReminders: newValue }),
+      });
+
+      if (!res.ok) {
+        setUser({ emailBillReminders: !newValue });
+      }
+    } catch {
+      setUser({ emailBillReminders: !newValue });
+    } finally {
+      setSavingEmailReminders(false);
     }
   };
 
@@ -154,6 +178,47 @@ export function FeaturesForm() {
           ) : (
             <span className="text-xs text-warm-400 bg-cream-200 px-3 py-1 rounded-full">
               Not available
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-4 p-4 rounded-xl border border-cream-300 bg-cream-50/50">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center">
+              <Mail className="w-5 h-5 text-amber-dark" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-warm-600">
+                Email Bill Reminders
+              </p>
+              <p className="text-xs text-warm-400">
+                Receive an email when bills are due based on your reminder settings
+              </p>
+            </div>
+          </div>
+
+          {user.emailVerified ? (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={user.emailBillReminders}
+              disabled={savingEmailReminders}
+              onClick={handleEmailRemindersToggle}
+              className={cn(
+                "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/30 disabled:opacity-50 disabled:cursor-not-allowed",
+                user.emailBillReminders ? "bg-amber" : "bg-cream-300"
+              )}
+            >
+              <span
+                className={cn(
+                  "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200",
+                  user.emailBillReminders ? "translate-x-5" : "translate-x-0"
+                )}
+              />
+            </button>
+          ) : (
+            <span className="text-xs text-warm-400 bg-cream-200 px-3 py-1 rounded-full">
+              Verify email
             </span>
           )}
         </div>

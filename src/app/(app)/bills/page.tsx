@@ -75,7 +75,10 @@ export default function BillsPage() {
   };
 
   const getDueDateLabel = (bill: ScheduledTransactionWithCategory) => {
-    const due = new Date(bill.nextDueDate);
+    // Prefer the server-computed displayNextDueDate, which walks past
+    // PAID/SKIPPED logs. Fall back to nextDueDate for safety if the field
+    // is missing (older API responses / cached data).
+    const due = new Date(bill.displayNextDueDate ?? bill.nextDueDate);
     due.setHours(0, 0, 0, 0);
     const today = new Date();
     today.setHours(0, 0, 0, 0);

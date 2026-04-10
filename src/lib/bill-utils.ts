@@ -1,4 +1,4 @@
-import type { BillFrequency } from "@/types";
+import type { BillFrequency, BillOccurrenceStatus } from "@/types";
 
 /**
  * Advance a due date by the given frequency.
@@ -48,6 +48,56 @@ export const computeNextDueDate = (
   }
 
   return next;
+};
+
+/**
+ * Walk a bill's due date forward past any PAID or SKIPPED occurrences so the
+ * displayed/next due date reflects the true next unpaid occurrence.
+ *
+ * Why: editing a bill (frequency/startDate) or partial write failures can leave
+ * `nextDueDate` pointing at a date that already has a terminal log. Callers
+ * should use this helper so the UI and the cron/email path stay in sync with
+ * the actual payment history.
+ *
+ * Returns `null` when:
+ *  - the next unpaid occurrence would fall past `endDate`, or
+ *  - the walk hits `maxIterations` without finding an unpaid date (defensive
+ *    stop — default 500, ~41 years of monthly bills, 1.3 years of daily)
+ *
+ * Callers should treat `null` as "no valid next occurrence" — the bill should
+ * typically be deactivated rather than have a bogus date written.
+ */
+export const advanceToNextUnpaidOccurrence = (
+  startingDueDate: Date,
+  frequency: BillFrequency,
+  originalStartDay: number,
+  customIntervalDays: number | null | undefined,
+  logs: ReadonlyArray<{ dueDate: Date; status: BillOccurrenceStatus }>,
+  options: { endDate?: Date | null; maxIterations?: number } = {},
+): Date | null => {
+  const { endDate = null, maxIterations = 500 } = options;
+
+  const terminalDueDates = new Set(
+    logs
+      .filter((log) => log.status === "PAID" || log.status === "SKIPPED")
+      .map((log) => {
+        const d = new Date(log.dueDate);
+        d.setHours(0, 0, 0, 0);
+        return d.getTime();
+      }),
+  );
+
+  let candidate = new Date(startingDueDate);
+  candidate.setHours(0, 0, 0, 0);
+
+  for (let i = 0; i < maxIterations; i++) {
+    if (endDate && candidate > endDate) return null;
+    if (!terminalDueDates.has(candidate.getTime())) return candidate;
+    candidate = computeNextDueDate(candidate, frequency, originalStartDay, customIntervalDays);
+    candidate.setHours(0, 0, 0, 0);
+  }
+
+  return null;
 };
 
 /** Format a BillFrequency enum value for display */

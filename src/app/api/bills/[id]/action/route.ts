@@ -40,55 +40,59 @@ export async function POST(
       if (billLabelIds.length > 0) {
         transactionLabelIds = billLabelIds;
       } else {
+        const paymentDate = new Date();
         const ctx = await getScheduleContext(userId);
-        const scheduledLabelId = ctx ? matchScheduledLabel(dueDate, ctx, bill.type) : null;
+        const scheduledLabelId = ctx ? matchScheduledLabel(paymentDate, ctx, bill.type) : null;
         if (scheduledLabelId) transactionLabelIds = [scheduledLabelId];
       }
 
-      // Create the real transaction
-      const transaction = await prisma.transaction.create({
-        data: {
-          amount: bill.amount,
-          description: bill.description,
-          type: bill.type,
-          date: dueDate,
-          categoryId: bill.categoryId,
-          userId,
-          billId: bill.id,
-          ...(transactionLabelIds.length > 0 && {
-            labels: {
-              create: transactionLabelIds.map((labelId) => ({ labelId })),
-            },
-          }),
-        },
-      });
-
-      // Log the payment
-      await prisma.scheduledTransactionLog.create({
-        data: {
-          scheduledTransactionId: bill.id,
-          dueDate,
-          status: "PAID",
-          actionDate: new Date(),
-          transactionId: transaction.id,
-        },
-      });
-
       // Advance nextDueDate
       const nextDue = computeNextDueDate(dueDate, bill.frequency, originalStartDay, bill.customIntervalDays);
-
       // If past endDate, deactivate
       const shouldDeactivate = bill.endDate && nextDue > bill.endDate;
 
-      await prisma.scheduledTransaction.update({
-        where: { id },
-        data: {
-          nextDueDate: nextDue,
-          ...(shouldDeactivate && { isActive: false }),
-        },
+      // Atomic: create transaction, log payment, advance bill. Prevents
+      // partial writes that leave nextDueDate stale or logs orphaned.
+      const transactionId = await prisma.$transaction(async (tx) => {
+        const transaction = await tx.transaction.create({
+          data: {
+            amount: bill.amount,
+            description: bill.description,
+            type: bill.type,
+            date: new Date(),
+            categoryId: bill.categoryId,
+            userId,
+            billId: bill.id,
+            ...(transactionLabelIds.length > 0 && {
+              labels: {
+                create: transactionLabelIds.map((labelId) => ({ labelId })),
+              },
+            }),
+          },
+        });
+
+        await tx.scheduledTransactionLog.create({
+          data: {
+            scheduledTransactionId: bill.id,
+            dueDate,
+            status: "PAID",
+            actionDate: new Date(),
+            transactionId: transaction.id,
+          },
+        });
+
+        await tx.scheduledTransaction.update({
+          where: { id },
+          data: {
+            nextDueDate: nextDue,
+            ...(shouldDeactivate && { isActive: false }),
+          },
+        });
+
+        return transaction.id;
       });
 
-      return NextResponse.json({ message: "Bill paid", transactionId: transaction.id });
+      return NextResponse.json({ message: "Bill paid", transactionId });
     }
 
     if (action === "pay_existing") {
@@ -101,9 +105,12 @@ export async function POST(
         return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
       }
 
-      // Log payment and link bill to the transaction
-      await prisma.$transaction([
-        prisma.scheduledTransactionLog.create({
+      const nextDue = computeNextDueDate(dueDate, bill.frequency, originalStartDay, bill.customIntervalDays);
+      const shouldDeactivate = bill.endDate && nextDue > bill.endDate;
+
+      // Atomic: log payment, link txn to bill, advance bill — one commit.
+      await prisma.$transaction(async (tx) => {
+        await tx.scheduledTransactionLog.create({
           data: {
             scheduledTransactionId: bill.id,
             dueDate,
@@ -111,23 +118,18 @@ export async function POST(
             actionDate: new Date(),
             transactionId: existingTx.id,
           },
-        }),
-        prisma.transaction.update({
+        });
+        await tx.transaction.update({
           where: { id: existingTx.id },
           data: { billId: bill.id },
-        }),
-      ]);
-
-      // Advance nextDueDate
-      const nextDue = computeNextDueDate(dueDate, bill.frequency, originalStartDay, bill.customIntervalDays);
-      const shouldDeactivate = bill.endDate && nextDue > bill.endDate;
-
-      await prisma.scheduledTransaction.update({
-        where: { id },
-        data: {
-          nextDueDate: nextDue,
-          ...(shouldDeactivate && { isActive: false }),
-        },
+        });
+        await tx.scheduledTransaction.update({
+          where: { id },
+          data: {
+            nextDueDate: nextDue,
+            ...(shouldDeactivate && { isActive: false }),
+          },
+        });
       });
 
       return NextResponse.json({ message: "Bill marked as paid" });
@@ -154,27 +156,26 @@ export async function POST(
     }
 
     if (action === "skip") {
-      // Log the skip
-      await prisma.scheduledTransactionLog.create({
-        data: {
-          scheduledTransactionId: bill.id,
-          dueDate,
-          status: "SKIPPED",
-          actionDate: new Date(),
-        },
-      });
-
-      // Advance nextDueDate to next occurrence
       const nextDue = computeNextDueDate(dueDate, bill.frequency, originalStartDay, bill.customIntervalDays);
-
       const shouldDeactivate = bill.endDate && nextDue > bill.endDate;
 
-      await prisma.scheduledTransaction.update({
-        where: { id },
-        data: {
-          nextDueDate: nextDue,
-          ...(shouldDeactivate && { isActive: false }),
-        },
+      // Atomic: log skip + advance bill together.
+      await prisma.$transaction(async (tx) => {
+        await tx.scheduledTransactionLog.create({
+          data: {
+            scheduledTransactionId: bill.id,
+            dueDate,
+            status: "SKIPPED",
+            actionDate: new Date(),
+          },
+        });
+        await tx.scheduledTransaction.update({
+          where: { id },
+          data: {
+            nextDueDate: nextDue,
+            ...(shouldDeactivate && { isActive: false }),
+          },
+        });
       });
 
       return NextResponse.json({ message: "Bill skipped" });

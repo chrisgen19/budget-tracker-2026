@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { scheduledTransactionSchema } from "@/lib/validations";
+import { advanceToNextUnpaidOccurrence } from "@/lib/bill-utils";
 
 const billInclude = {
   category: true,
@@ -28,12 +29,32 @@ export async function PUT(
 
     const startDate = new Date(validated.startDate);
     const { labelIds, ...billData } = validated;
+    const endDate = billData.endDate ? new Date(billData.endDate) : null;
 
-    // Recalculate nextDueDate if frequency or startDate changed
+    // Recalculate nextDueDate if frequency or startDate changed. Walk forward
+    // from the new startDate past any PAID/SKIPPED logs so payment progress is
+    // preserved (fixes bug where editing a bill reset nextDueDate and
+    // resurrected already-paid occurrences).
     const frequencyChanged = billData.frequency !== existing.frequency
       || billData.customIntervalDays !== existing.customIntervalDays;
     const startDateChanged = startDate.getTime() !== existing.startDate.getTime();
     const needsRecalculate = frequencyChanged || startDateChanged;
+
+    let recalculatedNextDue: Date | null = null;
+    if (needsRecalculate) {
+      const logs = await prisma.scheduledTransactionLog.findMany({
+        where: { scheduledTransactionId: id },
+        select: { dueDate: true, status: true },
+      });
+      recalculatedNextDue = advanceToNextUnpaidOccurrence(
+        startDate,
+        billData.frequency,
+        startDate.getDate(),
+        billData.customIntervalDays ?? null,
+        logs,
+        { endDate },
+      );
+    }
 
     const bill = await prisma.$transaction(async (tx) => {
       // Validate label ownership + type compatibility
@@ -62,8 +83,9 @@ export async function PUT(
           customIntervalDays: billData.customIntervalDays ?? null,
           reminderDaysBefore: billData.reminderDaysBefore,
           startDate,
-          endDate: billData.endDate ? new Date(billData.endDate) : null,
-          ...(needsRecalculate && { nextDueDate: startDate }),
+          endDate,
+          ...(needsRecalculate && recalculatedNextDue && { nextDueDate: recalculatedNextDue }),
+          ...(needsRecalculate && !recalculatedNextDue && { isActive: false }),
           categoryId: billData.categoryId,
         },
         include: billInclude,

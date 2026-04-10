@@ -86,8 +86,15 @@ src/
 - `NEXTAUTH_SECRET` / `NEXTAUTH_URL` — NextAuth session config
 - `GEMINI_API_KEY` — Google Gemini AI for receipt scanning
 - `RESEND_API_KEY` — Email sending (verification + password reset)
-- `RESEND_FROM_EMAIL` — Sender address (defaults to `onboarding@resend.dev` in dev)
+- `EMAIL_FROM` — Sender address (optional; defaults to `Budget Tracker <noreply@resend.dev>` if unset). Use a verified Resend domain in production, e.g. `Budget Tracker <noreply@yourdomain.com>`.
 - `AUTH_URL` — Optional; used in preview/staging deployments
+- `CRON_SECRET` — Shared secret required by `/api/cron/bill-reminders`. Set in the production (Coolify) environment; a Coolify Scheduled Task reuses the same env var to call the endpoint daily (see **Cron Jobs** below).
+
+## Cron Jobs
+Production runs on Coolify. Schedules are configured in the Coolify dashboard under **Application > Scheduled Tasks** (not in the repo). Each task runs its command inside the running container, so it can hit the app at `http://localhost:3000` and reuse the container's env vars.
+
+Active tasks:
+- **Bill reminders** — daily at `0 21 * * *` UTC (05:00 Asia/Manila); command: `curl -sS -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/bill-reminders`
 
 ## Database
 - `DATABASE_URL` in `.env` points to local PostgreSQL
@@ -140,6 +147,7 @@ src/
 - `POST /api/email/forgot-password` — send password reset email
 - `POST /api/email/reset-password` — validate token + update password
 - `POST /api/resend-verification` — resend verification email
+- `GET /api/cron/bill-reminders` — sends email reminders for pending bills (secured with `CRON_SECRET`); triggered daily by a Coolify Scheduled Task on production
 
 ## Design
 - "Light & Warm" aesthetic with cream/paper-like backgrounds

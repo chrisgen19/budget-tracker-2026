@@ -1,0 +1,566 @@
+[     403ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[     663ms] [INFO] Banner not shown: beforeinstallpromptevent.preventDefault() called. The page must call beforeinstallpromptevent.prompt() to show the banner. @ http://localhost:3000/dashboard:0
+[  265380ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  265614ms] [LOG] [Fast Refresh] done in 316ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[  382815ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  383366ms] [WARNING] [Fast Refresh] performing full reload
+
+Fast Refresh will perform a full reload when you edit a file that's imported by modules outside of the React rendering tree.
+You might have a file which exports a React component but also exports a value that is imported by a non-React component file.
+Consider migrating the non-React component export to a separate file and importing it into both files.
+
+It is also possible the parent component of the component you edited is a class component, which disables Fast Refresh.
+Fast Refresh requires at least one parent function component in your React tree. @ http://localhost:3000/_next/static/chunks/%5Bturbopack%5D_browser_dev_hmr-client_hmr-client_ts_c8c997ce._.js:34
+[  383388ms] [LOG] [Fast Refresh] done in 650ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[  384964ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[  386901ms] [INFO] Banner not shown: beforeinstallpromptevent.preventDefault() called. The page must call beforeinstallpromptevent.prompt() to show the banner. @ http://localhost:3000/dashboard:0
+[  484524ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  485841ms] [LOG] [Fast Refresh] done in 1417ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[  485943ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  486073ms] [LOG] [Fast Refresh] done in 230ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[  486326ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  486629ms] [LOG] [Fast Refresh] done in 405ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[  492567ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[  492628ms] [LOG] [Fast Refresh] done in 163ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1019333ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1019431ms] [WARNING] [Fast Refresh] performing full reload
+
+Fast Refresh will perform a full reload when you edit a file that's imported by modules outside of the React rendering tree.
+You might have a file which exports a React component but also exports a value that is imported by a non-React component file.
+Consider migrating the non-React component export to a separate file and importing it into both files.
+
+It is also possible the parent component of the component you edited is a class component, which disables Fast Refresh.
+Fast Refresh requires at least one parent function component in your React tree. @ http://localhost:3000/_next/static/chunks/%5Bturbopack%5D_browser_dev_hmr-client_hmr-client_ts_c8c997ce._.js:34
+[ 1019451ms] [LOG] [Fast Refresh] done in 197ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1020888ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[ 1021757ms] [INFO] Banner not shown: beforeinstallpromptevent.preventDefault() called. The page must call beforeinstallpromptevent.prompt() to show the banner. @ http://localhost:3000/dashboard:0
+[ 1027349ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1027449ms] [WARNING] [Fast Refresh] performing full reload
+
+Fast Refresh will perform a full reload when you edit a file that's imported by modules outside of the React rendering tree.
+You might have a file which exports a React component but also exports a value that is imported by a non-React component file.
+Consider migrating the non-React component export to a separate file and importing it into both files.
+
+It is also possible the parent component of the component you edited is a class component, which disables Fast Refresh.
+Fast Refresh requires at least one parent function component in your React tree. @ http://localhost:3000/_next/static/chunks/%5Bturbopack%5D_browser_dev_hmr-client_hmr-client_ts_c8c997ce._.js:34
+[ 1027471ms] [LOG] [Fast Refresh] done in 202ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1027793ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1027835ms] [LOG] [Fast Refresh] done in 143ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1028276ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[ 1028978ms] [INFO] Banner not shown: beforeinstallpromptevent.preventDefault() called. The page must call beforeinstallpromptevent.prompt() to show the banner. @ http://localhost:3000/dashboard:0
+[ 1031710ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1031774ms] [LOG] [Fast Refresh] done in 138ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1031944ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1032005ms] [LOG] [Fast Refresh] done in 162ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1032407ms] PrismaClientValidationError: 
+Invalid `__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique()` invocation in
+/Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/[root-of-the-server]__acdcd91d._.js:446:158
+
+  443     (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$next$40$15$2e$5$2e$12_react$2d$dom$40$19$2e$2$2e$4_react$40$19$2e$2$2e$4_$5f$react$40$19$2e$2$2e$4$2f$node_modules$2f$next$2f$dist$2f$client$2f$components$2f$navigation$2e$react$2d$server$2e$js__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["redirect"])("/login");
+  444 }
+  445 // Fetch user preferences and role-based settings from DB
+→ 446 const dbUser = await __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique({
+        where: {
+          id: "cmlqo5m520000mr0ka4ie8ew7"
+        },
+        select: {
+          currency: true,
+          receiptScanEnabled: true,
+          transactionLayout: true,
+          transactionAmountAutofocus: true,
+          defaultLabelType: true,
+          showDayName: true,
+          ~~~~~~~~~~~
+          dayNameFormat: true,
+          timezoneOffset: true,
+          role: true,
+      ?   id?: true,
+      ?   name?: true,
+      ?   email?: true,
+      ?   password?: true,
+      ?   hideAmounts?: true,
+      ?   quickExpenseCategories?: true,
+      ?   quickIncomeCategories?: true,
+      ?   emailVerified?: true,
+      ?   createdAt?: true,
+      ?   updatedAt?: true,
+      ?   transactions?: true,
+      ?   categories?: true,
+      ?   scanLogs?: true,
+      ?   scheduledTransactions?: true,
+      ?   verificationTokens?: true,
+      ?   labels?: true,
+      ?   _count?: true
+        }
+      })
+
+Unknown field `showDayName` for select statement on model `User`. Available options are marked with ?.
+    at  AppLayout (about://React/Server/file:///Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/%5Broot-of-the-server%5D__acdcd91d._.js?15:446:20)
+    at resolveErrorDev (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4306:48)
+    at processFullStringRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4554:29)
+    at processFullBinaryRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4513:9)
+    at processBinaryChunk (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4622:98)
+    at progress (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4790:25)
+[ 1032461ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1032570ms] [LOG] [Fast Refresh] done in 210ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1037374ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1037467ms] [LOG] [Fast Refresh] done in 158ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1037584ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1038255ms] [LOG] [Fast Refresh] done in 771ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1038356ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1038358ms] [LOG] [Fast Refresh] done in 103ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1038384ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/dashboard:0
+[ 1038501ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[ 1038585ms] PrismaClientValidationError: 
+Invalid `__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique()` invocation in
+/Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/[root-of-the-server]__acdcd91d._.js:446:158
+
+  443     (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$next$40$15$2e$5$2e$12_react$2d$dom$40$19$2e$2$2e$4_react$40$19$2e$2$2e$4_$5f$react$40$19$2e$2$2e$4$2f$node_modules$2f$next$2f$dist$2f$client$2f$components$2f$navigation$2e$react$2d$server$2e$js__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["redirect"])("/login");
+  444 }
+  445 // Fetch user preferences and role-based settings from DB
+→ 446 const dbUser = await __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique({
+        where: {
+          id: "cmlqo5m520000mr0ka4ie8ew7"
+        },
+        select: {
+          currency: true,
+          receiptScanEnabled: true,
+          transactionLayout: true,
+          transactionAmountAutofocus: true,
+          defaultLabelType: true,
+          showDayName: true,
+          ~~~~~~~~~~~
+          dayNameFormat: true,
+          timezoneOffset: true,
+          role: true,
+      ?   id?: true,
+      ?   name?: true,
+      ?   email?: true,
+      ?   password?: true,
+      ?   hideAmounts?: true,
+      ?   quickExpenseCategories?: true,
+      ?   quickIncomeCategories?: true,
+      ?   emailVerified?: true,
+      ?   createdAt?: true,
+      ?   updatedAt?: true,
+      ?   transactions?: true,
+      ?   categories?: true,
+      ?   scanLogs?: true,
+      ?   scheduledTransactions?: true,
+      ?   verificationTokens?: true,
+      ?   labels?: true,
+      ?   _count?: true
+        }
+      })
+
+Unknown field `showDayName` for select statement on model `User`. Available options are marked with ?.
+    at  AppLayout (about://React/Server/file:///Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/%5Broot-of-the-server%5D__acdcd91d._.js?9:446:20)
+    at resolveErrorDev (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4306:48)
+    at processFullStringRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4554:29)
+    at processFullBinaryRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4513:9)
+    at processBinaryChunk (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4622:98)
+    at progress (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4790:25)
+[ 1038655ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:3000/favicon.ico:0
+[ 1044646ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1044707ms] [LOG] [Fast Refresh] done in 162ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1053555ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1053647ms] [LOG] [Fast Refresh] done in 194ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1059179ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1059295ms] [LOG] [Fast Refresh] done in 218ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1067967ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1068017ms] [LOG] [Fast Refresh] done in 151ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1074989ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1075053ms] [WARNING] [Fast Refresh] performing full reload because your application had an unrecoverable error @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:6282
+[ 1075060ms] [LOG] [Fast Refresh] done in 162ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1075304ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1075407ms] [LOG] [Fast Refresh] done in 204ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1075752ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/dashboard:0
+[ 1075810ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[ 1075903ms] PrismaClientValidationError: 
+Invalid `__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique()` invocation in
+/Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/[root-of-the-server]__acdcd91d._.js:446:158
+
+  443     (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$next$40$15$2e$5$2e$12_react$2d$dom$40$19$2e$2$2e$4_react$40$19$2e$2$2e$4_$5f$react$40$19$2e$2$2e$4$2f$node_modules$2f$next$2f$dist$2f$client$2f$components$2f$navigation$2e$react$2d$server$2e$js__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["redirect"])("/login");
+  444 }
+  445 // Fetch user preferences and role-based settings from DB
+→ 446 const dbUser = await __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique({
+        where: {
+          id: "cmlqo5m520000mr0ka4ie8ew7"
+        },
+        select: {
+          currency: true,
+          receiptScanEnabled: true,
+          transactionLayout: true,
+          transactionAmountAutofocus: true,
+          defaultLabelType: true,
+          showDayName: true,
+          ~~~~~~~~~~~
+          dayNameFormat: true,
+          timezoneOffset: true,
+          role: true,
+      ?   id?: true,
+      ?   name?: true,
+      ?   email?: true,
+      ?   password?: true,
+      ?   hideAmounts?: true,
+      ?   quickExpenseCategories?: true,
+      ?   quickIncomeCategories?: true,
+      ?   emailVerified?: true,
+      ?   createdAt?: true,
+      ?   updatedAt?: true,
+      ?   transactions?: true,
+      ?   categories?: true,
+      ?   scanLogs?: true,
+      ?   scheduledTransactions?: true,
+      ?   verificationTokens?: true,
+      ?   labels?: true,
+      ?   _count?: true
+        }
+      })
+
+Unknown field `showDayName` for select statement on model `User`. Available options are marked with ?.
+    at  AppLayout (about://React/Server/file:///Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/%5Broot-of-the-server%5D__acdcd91d._.js?9:446:20)
+    at resolveErrorDev (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4306:48)
+    at processFullStringRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4554:29)
+    at processFullBinaryRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4513:9)
+    at processBinaryChunk (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4622:98)
+    at progress (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4790:25)
+[ 1079307ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1079308ms] [WARNING] [Fast Refresh] performing full reload because your application had an unrecoverable error @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:6282
+[ 1079334ms] [LOG] [Fast Refresh] done in 29ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1079474ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1079513ms] [LOG] [Fast Refresh] done in 139ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1079952ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/dashboard:0
+[ 1080111ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[ 1080216ms] PrismaClientValidationError: 
+Invalid `__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique()` invocation in
+/Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/[root-of-the-server]__acdcd91d._.js:446:158
+
+  443     (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$next$40$15$2e$5$2e$12_react$2d$dom$40$19$2e$2$2e$4_react$40$19$2e$2$2e$4_$5f$react$40$19$2e$2$2e$4$2f$node_modules$2f$next$2f$dist$2f$client$2f$components$2f$navigation$2e$react$2d$server$2e$js__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["redirect"])("/login");
+  444 }
+  445 // Fetch user preferences and role-based settings from DB
+→ 446 const dbUser = await __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique({
+        where: {
+          id: "cmlqo5m520000mr0ka4ie8ew7"
+        },
+        select: {
+          currency: true,
+          receiptScanEnabled: true,
+          transactionLayout: true,
+          transactionAmountAutofocus: true,
+          defaultLabelType: true,
+          showDayName: true,
+          ~~~~~~~~~~~
+          dayNameFormat: true,
+          timezoneOffset: true,
+          role: true,
+      ?   id?: true,
+      ?   name?: true,
+      ?   email?: true,
+      ?   password?: true,
+      ?   hideAmounts?: true,
+      ?   quickExpenseCategories?: true,
+      ?   quickIncomeCategories?: true,
+      ?   emailVerified?: true,
+      ?   createdAt?: true,
+      ?   updatedAt?: true,
+      ?   transactions?: true,
+      ?   categories?: true,
+      ?   scanLogs?: true,
+      ?   scheduledTransactions?: true,
+      ?   verificationTokens?: true,
+      ?   labels?: true,
+      ?   _count?: true
+        }
+      })
+
+Unknown field `showDayName` for select statement on model `User`. Available options are marked with ?.
+    at  AppLayout (about://React/Server/file:///Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/%5Broot-of-the-server%5D__acdcd91d._.js?9:446:20)
+    at resolveErrorDev (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4306:48)
+    at processFullStringRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4554:29)
+    at processFullBinaryRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4513:9)
+    at processBinaryChunk (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4622:98)
+    at progress (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4790:25)
+[ 1097360ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1097762ms] [WARNING] [Fast Refresh] performing full reload because your application had an unrecoverable error @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:6282
+[ 1097768ms] [LOG] [Fast Refresh] done in 496ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1098611ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/dashboard:0
+[ 1098748ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[ 1098826ms] PrismaClientValidationError: 
+Invalid `__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique()` invocation in
+/Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/[root-of-the-server]__acdcd91d._.js:446:158
+
+  443     (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$next$40$15$2e$5$2e$12_react$2d$dom$40$19$2e$2$2e$4_react$40$19$2e$2$2e$4_$5f$react$40$19$2e$2$2e$4$2f$node_modules$2f$next$2f$dist$2f$client$2f$components$2f$navigation$2e$react$2d$server$2e$js__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["redirect"])("/login");
+  444 }
+  445 // Fetch user preferences and role-based settings from DB
+→ 446 const dbUser = await __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique({
+        where: {
+          id: "cmlqo5m520000mr0ka4ie8ew7"
+        },
+        select: {
+          currency: true,
+          receiptScanEnabled: true,
+          transactionLayout: true,
+          transactionAmountAutofocus: true,
+          defaultLabelType: true,
+          showDayName: true,
+          ~~~~~~~~~~~
+          dayNameFormat: true,
+          timezoneOffset: true,
+          role: true,
+      ?   id?: true,
+      ?   name?: true,
+      ?   email?: true,
+      ?   password?: true,
+      ?   hideAmounts?: true,
+      ?   quickExpenseCategories?: true,
+      ?   quickIncomeCategories?: true,
+      ?   emailVerified?: true,
+      ?   createdAt?: true,
+      ?   updatedAt?: true,
+      ?   transactions?: true,
+      ?   categories?: true,
+      ?   scanLogs?: true,
+      ?   scheduledTransactions?: true,
+      ?   verificationTokens?: true,
+      ?   labels?: true,
+      ?   _count?: true
+        }
+      })
+
+Unknown field `showDayName` for select statement on model `User`. Available options are marked with ?.
+    at  AppLayout (about://React/Server/file:///Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/%5Broot-of-the-server%5D__acdcd91d._.js?9:446:20)
+    at resolveErrorDev (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4306:48)
+    at processFullStringRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4554:29)
+    at processFullBinaryRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4513:9)
+    at processBinaryChunk (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4622:98)
+    at progress (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4790:25)
+[ 1102983ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1103050ms] [LOG] [Fast Refresh] done in 168ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1128798ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1128961ms] [LOG] [Fast Refresh] done in 265ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1153956ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1154240ms] [LOG] [Fast Refresh] done in 291ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1154253ms] [WARNING] [Fast Refresh] performing full reload because your application had an unrecoverable error @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:6282
+[ 1154476ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1154574ms] [LOG] [Fast Refresh] done in 198ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1155120ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/dashboard:0
+[ 1155194ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[ 1155277ms] PrismaClientValidationError: 
+Invalid `__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique()` invocation in
+/Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/[root-of-the-server]__acdcd91d._.js:446:158
+
+  443     (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$next$40$15$2e$5$2e$12_react$2d$dom$40$19$2e$2$2e$4_react$40$19$2e$2$2e$4_$5f$react$40$19$2e$2$2e$4$2f$node_modules$2f$next$2f$dist$2f$client$2f$components$2f$navigation$2e$react$2d$server$2e$js__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["redirect"])("/login");
+  444 }
+  445 // Fetch user preferences and role-based settings from DB
+→ 446 const dbUser = await __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique({
+        where: {
+          id: "cmlqo5m520000mr0ka4ie8ew7"
+        },
+        select: {
+          currency: true,
+          receiptScanEnabled: true,
+          transactionLayout: true,
+          transactionAmountAutofocus: true,
+          defaultLabelType: true,
+          showDayName: true,
+          ~~~~~~~~~~~
+          dayNameFormat: true,
+          timezoneOffset: true,
+          role: true,
+      ?   id?: true,
+      ?   name?: true,
+      ?   email?: true,
+      ?   password?: true,
+      ?   hideAmounts?: true,
+      ?   quickExpenseCategories?: true,
+      ?   quickIncomeCategories?: true,
+      ?   emailVerified?: true,
+      ?   createdAt?: true,
+      ?   updatedAt?: true,
+      ?   transactions?: true,
+      ?   categories?: true,
+      ?   scanLogs?: true,
+      ?   scheduledTransactions?: true,
+      ?   verificationTokens?: true,
+      ?   labels?: true,
+      ?   _count?: true
+        }
+      })
+
+Unknown field `showDayName` for select statement on model `User`. Available options are marked with ?.
+    at  AppLayout (about://React/Server/file:///Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/%5Broot-of-the-server%5D__acdcd91d._.js?9:446:20)
+    at resolveErrorDev (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4306:48)
+    at processFullStringRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4554:29)
+    at processFullBinaryRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4513:9)
+    at processBinaryChunk (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4622:98)
+    at progress (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4790:25)
+[ 1172250ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1172392ms] [WARNING] [Fast Refresh] performing full reload because your application had an unrecoverable error @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:6282
+[ 1172401ms] [LOG] [Fast Refresh] done in 241ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1172618ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1172813ms] [LOG] [Fast Refresh] done in 295ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1173347ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/dashboard:0
+[ 1173473ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[ 1173570ms] PrismaClientValidationError: 
+Invalid `__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique()` invocation in
+/Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/[root-of-the-server]__acdcd91d._.js:446:158
+
+  443     (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$next$40$15$2e$5$2e$12_react$2d$dom$40$19$2e$2$2e$4_react$40$19$2e$2$2e$4_$5f$react$40$19$2e$2$2e$4$2f$node_modules$2f$next$2f$dist$2f$client$2f$components$2f$navigation$2e$react$2d$server$2e$js__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["redirect"])("/login");
+  444 }
+  445 // Fetch user preferences and role-based settings from DB
+→ 446 const dbUser = await __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique({
+        where: {
+          id: "cmlqo5m520000mr0ka4ie8ew7"
+        },
+        select: {
+          currency: true,
+          receiptScanEnabled: true,
+          transactionLayout: true,
+          transactionAmountAutofocus: true,
+          defaultLabelType: true,
+          showDayName: true,
+          ~~~~~~~~~~~
+          dayNameFormat: true,
+          timezoneOffset: true,
+          role: true,
+      ?   id?: true,
+      ?   name?: true,
+      ?   email?: true,
+      ?   password?: true,
+      ?   hideAmounts?: true,
+      ?   quickExpenseCategories?: true,
+      ?   quickIncomeCategories?: true,
+      ?   emailVerified?: true,
+      ?   createdAt?: true,
+      ?   updatedAt?: true,
+      ?   transactions?: true,
+      ?   categories?: true,
+      ?   scanLogs?: true,
+      ?   scheduledTransactions?: true,
+      ?   verificationTokens?: true,
+      ?   labels?: true,
+      ?   _count?: true
+        }
+      })
+
+Unknown field `showDayName` for select statement on model `User`. Available options are marked with ?.
+    at  AppLayout (about://React/Server/file:///Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/%5Broot-of-the-server%5D__acdcd91d._.js?9:446:20)
+    at resolveErrorDev (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4306:48)
+    at processFullStringRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4554:29)
+    at processFullBinaryRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4513:9)
+    at processBinaryChunk (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4622:98)
+    at progress (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4790:25)
+[ 1173674ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1173697ms] [LOG] [Fast Refresh] done in 125ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1177993ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1178578ms] [WARNING] [Fast Refresh] performing full reload because your application had an unrecoverable error @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:6282
+[ 1178722ms] [WARNING] [Fast Refresh] performing full reload because your application had an unrecoverable error @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:6282
+[ 1178723ms] [LOG] [Fast Refresh] done in 822ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1179608ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/dashboard:0
+[ 1179746ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[ 1179927ms] PrismaClientValidationError: 
+Invalid `__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique()` invocation in
+/Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/[root-of-the-server]__acdcd91d._.js:446:158
+
+  443     (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$next$40$15$2e$5$2e$12_react$2d$dom$40$19$2e$2$2e$4_react$40$19$2e$2$2e$4_$5f$react$40$19$2e$2$2e$4$2f$node_modules$2f$next$2f$dist$2f$client$2f$components$2f$navigation$2e$react$2d$server$2e$js__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["redirect"])("/login");
+  444 }
+  445 // Fetch user preferences and role-based settings from DB
+→ 446 const dbUser = await __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique({
+        where: {
+          id: "cmlqo5m520000mr0ka4ie8ew7"
+        },
+        select: {
+          currency: true,
+          receiptScanEnabled: true,
+          transactionLayout: true,
+          transactionAmountAutofocus: true,
+          defaultLabelType: true,
+          showDayName: true,
+          ~~~~~~~~~~~
+          dayNameFormat: true,
+          timezoneOffset: true,
+          role: true,
+      ?   id?: true,
+      ?   name?: true,
+      ?   email?: true,
+      ?   password?: true,
+      ?   hideAmounts?: true,
+      ?   quickExpenseCategories?: true,
+      ?   quickIncomeCategories?: true,
+      ?   emailVerified?: true,
+      ?   createdAt?: true,
+      ?   updatedAt?: true,
+      ?   transactions?: true,
+      ?   categories?: true,
+      ?   scanLogs?: true,
+      ?   scheduledTransactions?: true,
+      ?   verificationTokens?: true,
+      ?   labels?: true,
+      ?   _count?: true
+        }
+      })
+
+Unknown field `showDayName` for select statement on model `User`. Available options are marked with ?.
+    at  AppLayout (about://React/Server/file:///Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/%5Broot-of-the-server%5D__acdcd91d._.js?9:446:20)
+    at resolveErrorDev (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4306:48)
+    at processFullStringRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4554:29)
+    at processFullBinaryRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4513:9)
+    at processBinaryChunk (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4622:98)
+    at progress (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4790:25)
+[ 1180089ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1180228ms] [LOG] [Fast Refresh] done in 241ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1184979ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5949
+[ 1185048ms] [WARNING] [Fast Refresh] performing full reload because your application had an unrecoverable error @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:6282
+[ 1185059ms] [LOG] [Fast Refresh] done in 168ms @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_client_ccc97b1d._.js:5809
+[ 1185995ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/dashboard:0
+[ 1186153ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[ 1186267ms] PrismaClientValidationError: 
+Invalid `__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique()` invocation in
+/Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/[root-of-the-server]__acdcd91d._.js:446:158
+
+  443     (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$next$40$15$2e$5$2e$12_react$2d$dom$40$19$2e$2$2e$4_react$40$19$2e$2$2e$4_$5f$react$40$19$2e$2$2e$4$2f$node_modules$2f$next$2f$dist$2f$client$2f$components$2f$navigation$2e$react$2d$server$2e$js__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["redirect"])("/login");
+  444 }
+  445 // Fetch user preferences and role-based settings from DB
+→ 446 const dbUser = await __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique({
+        where: {
+          id: "cmlqo5m520000mr0ka4ie8ew7"
+        },
+        select: {
+          currency: true,
+          receiptScanEnabled: true,
+          transactionLayout: true,
+          transactionAmountAutofocus: true,
+          defaultLabelType: true,
+          showDayName: true,
+          ~~~~~~~~~~~
+          dayNameFormat: true,
+          timezoneOffset: true,
+          role: true,
+      ?   id?: true,
+      ?   name?: true,
+      ?   email?: true,
+      ?   password?: true,
+      ?   hideAmounts?: true,
+      ?   quickExpenseCategories?: true,
+      ?   quickIncomeCategories?: true,
+      ?   emailVerified?: true,
+      ?   createdAt?: true,
+      ?   updatedAt?: true,
+      ?   transactions?: true,
+      ?   categories?: true,
+      ?   scanLogs?: true,
+      ?   scheduledTransactions?: true,
+      ?   verificationTokens?: true,
+      ?   labels?: true,
+      ?   _count?: true
+        }
+      })
+
+Unknown field `showDayName` for select statement on model `User`. Available options are marked with ?.
+    at  AppLayout (about://React/Server/file:///Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/%5Broot-of-the-server%5D__acdcd91d._.js?9:446:20)
+    at resolveErrorDev (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4306:48)
+    at processFullStringRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4554:29)
+    at processFullBinaryRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4513:9)
+    at processBinaryChunk (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4622:98)
+    at progress (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4790:25)

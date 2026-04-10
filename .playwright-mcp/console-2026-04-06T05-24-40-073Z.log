@@ -1,0 +1,51 @@
+[     349ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/dashboard:0
+[     411ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_react-dom_3bef5fa5._.js:14537
+[     488ms] PrismaClientValidationError: 
+Invalid `__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique()` invocation in
+/Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/[root-of-the-server]__acdcd91d._.js:446:158
+
+  443     (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$next$40$15$2e$5$2e$12_react$2d$dom$40$19$2e$2$2e$4_react$40$19$2e$2$2e$4_$5f$react$40$19$2e$2$2e$4$2f$node_modules$2f$next$2f$dist$2f$client$2f$components$2f$navigation$2e$react$2d$server$2e$js__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["redirect"])("/login");
+  444 }
+  445 // Fetch user preferences and role-based settings from DB
+→ 446 const dbUser = await __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$prisma$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["prisma"].user.findUnique({
+        where: {
+          id: "cmlqo5m520000mr0ka4ie8ew7"
+        },
+        select: {
+          currency: true,
+          receiptScanEnabled: true,
+          transactionLayout: true,
+          transactionAmountAutofocus: true,
+          defaultLabelType: true,
+          showDayName: true,
+          ~~~~~~~~~~~
+          dayNameFormat: true,
+          timezoneOffset: true,
+          role: true,
+      ?   id?: true,
+      ?   name?: true,
+      ?   email?: true,
+      ?   password?: true,
+      ?   hideAmounts?: true,
+      ?   quickExpenseCategories?: true,
+      ?   quickIncomeCategories?: true,
+      ?   emailVerified?: true,
+      ?   createdAt?: true,
+      ?   updatedAt?: true,
+      ?   transactions?: true,
+      ?   categories?: true,
+      ?   scanLogs?: true,
+      ?   scheduledTransactions?: true,
+      ?   verificationTokens?: true,
+      ?   labels?: true,
+      ?   _count?: true
+        }
+      })
+
+Unknown field `showDayName` for select statement on model `User`. Available options are marked with ?.
+    at  AppLayout (about://React/Server/file:///Users/chrisgen19/projects/budgettracker/.next/server/chunks/ssr/%5Broot-of-the-server%5D__acdcd91d._.js?9:446:20)
+    at resolveErrorDev (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4306:48)
+    at processFullStringRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4554:29)
+    at processFullBinaryRow (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4513:9)
+    at processBinaryChunk (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4622:98)
+    at progress (http://localhost:3000/_next/static/chunks/9ea42_next_dist_compiled_8cf71ef8._.js:4790:25)

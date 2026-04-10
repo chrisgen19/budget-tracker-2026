@@ -1,0 +1,56 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - img [ref=e7]
+        - heading "Budget Tracker" [level=1] [ref=e10]
+      - link [ref=e11] [cursor=pointer]:
+        - /url: /profile
+        - img [ref=e12]
+  - navigation [ref=e15]:
+    - generic [ref=e16]:
+      - link "Dashboard" [ref=e17] [cursor=pointer]:
+        - /url: /dashboard
+        - img [ref=e18]
+        - generic [ref=e23]: Dashboard
+      - link "Transactions" [ref=e24] [cursor=pointer]:
+        - /url: /transactions
+        - img [ref=e25]
+        - generic [ref=e28]: Transactions
+      - link "Bills" [ref=e30] [cursor=pointer]:
+        - /url: /bills
+        - img [ref=e31]
+        - generic [ref=e35]: Bills
+      - link "Categories" [ref=e36] [cursor=pointer]:
+        - /url: /categories
+        - img [ref=e37]
+        - generic [ref=e41]: Categories
+      - button "Scan" [ref=e42] [cursor=pointer]:
+        - img [ref=e43]
+        - generic [ref=e48]: Scan
+  - main [ref=e49]:
+    - generic [ref=e51]:
+      - generic [ref=e53]:
+        - heading "Transactions" [level=1] [ref=e54]
+        - paragraph [ref=e55]: Loading...
+      - generic [ref=e57]:
+        - generic [ref=e58]:
+          - generic [ref=e59]:
+            - img [ref=e60]
+            - textbox "Search transactions..." [ref=e63]
+          - generic [ref=e64]:
+            - button "All" [ref=e65] [cursor=pointer]
+            - button "Income" [ref=e66] [cursor=pointer]
+            - button "Expenses" [ref=e67] [cursor=pointer]
+        - generic [ref=e68]:
+          - generic [ref=e69]:
+            - button [ref=e70] [cursor=pointer]:
+              - img [ref=e71]
+            - generic [ref=e73]: April 2026
+            - button [ref=e74] [cursor=pointer]:
+              - img [ref=e75]
+          - button [ref=e77] [cursor=pointer]:
+            - img [ref=e78]
+      - button "Transaction" [ref=e116] [cursor=pointer]:
+        - img [ref=e117]
+        - text: Transaction

@@ -18,6 +18,7 @@ export async function GET() {
       defaultLabelType: true,
       showDayName: true,
       dayNameFormat: true,
+      emailBillReminders: true,
     },
   });
 
@@ -31,6 +32,7 @@ export async function GET() {
     defaultLabelType: user?.defaultLabelType ?? "EXPENSE",
     showDayName: user?.showDayName ?? true,
     dayNameFormat: user?.dayNameFormat ?? "SHORT",
+    emailBillReminders: user?.emailBillReminders ?? false,
   });
 }
 
@@ -104,6 +106,10 @@ export async function PATCH(request: Request) {
     data.showDayName = Boolean(body.showDayName);
   }
 
+  if ("emailBillReminders" in body) {
+    data.emailBillReminders = Boolean(body.emailBillReminders);
+  }
+
   if ("dayNameFormat" in body) {
     const val = body.dayNameFormat;
     if (val !== "FULL" && val !== "SHORT") {
@@ -128,6 +134,7 @@ export async function PATCH(request: Request) {
       defaultLabelType: true,
       showDayName: true,
       dayNameFormat: true,
+      emailBillReminders: true,
     },
   });
 
@@ -141,5 +148,6 @@ export async function PATCH(request: Request) {
     defaultLabelType: user.defaultLabelType,
     showDayName: user.showDayName,
     dayNameFormat: user.dayNameFormat,
+    emailBillReminders: user.emailBillReminders,
   });
 }

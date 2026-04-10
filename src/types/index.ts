@@ -80,6 +80,14 @@ export interface BalanceTrendItem {
 export type ScheduledTransactionWithCategory = ScheduledTransaction & {
   category: Category;
   labels?: (BillLabel & { label: Label })[];
+  /**
+   * Computed next unpaid due date — walks forward past any PAID/SKIPPED logs.
+   * Use this for UI "overdue"/"due today" labels instead of `nextDueDate`,
+   * which may lag behind due to partial writes or legacy data.
+   * Returned as an ISO string by the API; falls back to `nextDueDate` when
+   * the display field isn't present.
+   */
+  displayNextDueDate?: string;
 };
 
 /** A pending bill reminder for the banner */
