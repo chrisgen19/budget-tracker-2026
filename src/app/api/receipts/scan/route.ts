@@ -37,14 +37,21 @@ const stripCodeFences = (text: string): string =>
 
 /** Normalize receipt date and flag when the year differs from today.
  *  Extracts the date portion to handle both "YYYY-MM-DD" and full ISO timestamps.
- *  Never modifies the date — returns a warning flag instead so the UI can
- *  prompt the user to confirm or correct it. */
-const checkReceiptDate = (dateStr: string, fallback: string): { date: string; dateWarning: boolean } => {
+ *  Uses photoFallback (the photo's capture date) when Gemini's date is unparseable
+ *  or when the parsed year differs from today — preserving the warning flag for the UI. */
+const checkReceiptDate = (
+  dateStr: string,
+  todayStr: string,
+  photoFallback: string,
+): { date: string; dateWarning: boolean } => {
   const dateOnly = dateStr.slice(0, 10); // normalize "2024-03-14T13:45" → "2024-03-14"
   const parsed = new Date(dateOnly + "T00:00:00");
-  if (isNaN(parsed.getTime())) return { date: fallback, dateWarning: false };
-  const todayYear = new Date(fallback + "T00:00:00").getFullYear();
-  return { date: dateOnly, dateWarning: parsed.getFullYear() !== todayYear };
+  if (isNaN(parsed.getTime())) return { date: photoFallback, dateWarning: false };
+  const todayYear = new Date(todayStr + "T00:00:00").getFullYear();
+  if (parsed.getFullYear() !== todayYear) {
+    return { date: photoFallback, dateWarning: true };
+  }
+  return { date: dateOnly, dateWarning: false };
 };
 
 export async function POST(request: Request) {
@@ -144,6 +151,15 @@ export async function POST(request: Request) {
       typeof localDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(localDate)
         ? localDate
         : new Date().toISOString().slice(0, 10);
+
+    // Photo capture date from the original (uncompressed) File on the client.
+    // Used as the fallback when Gemini's date is unreadable or has a wrong year.
+    // Falls back to todayStr when missing/invalid so behavior is unchanged for older clients.
+    const photoDate = formData.get("photoDate");
+    const photoDateStr =
+      typeof photoDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(photoDate)
+        ? photoDate
+        : todayStr;
 
     // Convert file to base64
     const arrayBuffer = await file.arrayBuffer();
@@ -245,7 +261,7 @@ or when multiCategory is true:
     }
 
     // Normalize date and flag suspicious year for the UI
-    const { date: normalizedDate, dateWarning } = checkReceiptDate(result.data.date, todayStr);
+    const { date: normalizedDate, dateWarning } = checkReceiptDate(result.data.date, todayStr, photoDateStr);
     result.data.date = normalizedDate;
 
     // Verify the categoryId actually exists in user's categories
