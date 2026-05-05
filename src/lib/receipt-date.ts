@@ -15,10 +15,16 @@ export const checkReceiptDate = (
   dateStr: string,
   todayStr: string,
   photoFallback: string,
-): { date: string; dateWarning: boolean } => {
+): { date: string; dateWarning: boolean; usedPhotoFallback: boolean } => {
   const dateOnly = dateStr.slice(0, 10); // normalize "2024-03-14T13:45" → "2024-03-14"
   const parsed = new Date(dateOnly + "T00:00:00");
-  if (isNaN(parsed.getTime())) return { date: photoFallback, dateWarning: false };
+  if (isNaN(parsed.getTime())) {
+    return { date: photoFallback, dateWarning: false, usedPhotoFallback: true };
+  }
   const todayYear = new Date(todayStr + "T00:00:00").getFullYear();
-  return { date: dateOnly, dateWarning: parsed.getFullYear() !== todayYear };
+  return {
+    date: dateOnly,
+    dateWarning: parsed.getFullYear() !== todayYear,
+    usedPhotoFallback: false,
+  };
 };

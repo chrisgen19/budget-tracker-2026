@@ -233,7 +233,7 @@ RULES:
     }
 
     // Normalize date and flag suspicious year for the UI
-    const { date: normalizedDate, dateWarning } = checkReceiptDate(result.data.date, todayStr, photoDateStr);
+    const { date: normalizedDate, dateWarning, usedPhotoFallback } = checkReceiptDate(result.data.date, todayStr, photoDateStr);
     result.data.date = normalizedDate;
 
     // Verify each categoryId exists, fall back to "Other" if not
@@ -250,7 +250,7 @@ RULES:
     // Log 1 scan credit for the breakdown (fire-and-forget)
     prisma.scanLog.create({ data: { userId } }).catch(() => {});
 
-    return NextResponse.json({ ...result.data, dateWarning });
+    return NextResponse.json({ ...result.data, dateWarning, usedPhotoFallback });
   } catch {
     return NextResponse.json(
       { error: "Failed to break down receipt. Please try again." },

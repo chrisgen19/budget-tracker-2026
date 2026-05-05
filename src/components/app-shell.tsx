@@ -95,10 +95,10 @@ export function AppShell({ children }: AppShellProps) {
     setScanError(null);
 
     try {
-      // Capture photoDate BEFORE compression — canvas re-encoding loses File metadata
-      const photoDate = toLocalDateString(
-        file.lastModified ? new Date(file.lastModified) : new Date()
-      );
+      // Capture photo timestamp BEFORE compression — canvas re-encoding loses File metadata
+      const photoMoment = file.lastModified ? new Date(file.lastModified) : new Date();
+      const photoDate = toLocalDateString(photoMoment);
+      const photoDateTime = formatDateInput(photoMoment);
       const compressed = await compressImage(file);
       const formData = new FormData();
       formData.append("receipt", compressed);
@@ -129,7 +129,7 @@ export function AppShell({ children }: AppShellProps) {
             amount: data.amount,
             description: data.description,
             type: data.type,
-            date: withLocalTime(data.date),
+            date: data.usedPhotoFallback ? photoDateTime : withLocalTime(data.date),
             categoryId: data.categoryId,
             multiCategory: data.multiCategory,
             breakdown: data.breakdown,
@@ -174,10 +174,10 @@ export function AppShell({ children }: AppShellProps) {
       setMultiScanItems(initialItems);
       setShowMultiScanReview(true);
 
-      // Capture photoDate per file BEFORE compression — canvas re-encoding loses File metadata
-      const photoDates = files.map((f) =>
-        toLocalDateString(f.lastModified ? new Date(f.lastModified) : new Date())
-      );
+      // Capture photo timestamps per file BEFORE compression — canvas re-encoding loses File metadata
+      const photoMoments = files.map((f) => (f.lastModified ? new Date(f.lastModified) : new Date()));
+      const photoDates = photoMoments.map(toLocalDateString);
+      const photoDateTimes = photoMoments.map(formatDateInput);
 
       // Compress all files in parallel (client-side only, no API cost)
       const compressed = await Promise.all(
@@ -228,7 +228,7 @@ export function AppShell({ children }: AppShellProps) {
                         amount: data.amount,
                         description: data.description,
                         type: data.type,
-                        date: withLocalTime(data.date),
+                        date: data.usedPhotoFallback ? photoDateTimes[i] : withLocalTime(data.date),
                         categoryId: data.categoryId,
                         multiCategory: data.multiCategory,
                         breakdown: data.breakdown,
@@ -375,13 +375,12 @@ export function AppShell({ children }: AppShellProps) {
       const formData = new FormData();
       formData.append("receipt", item.imageFile);
       formData.append("localDate", toLocalDateString(new Date()));
-      // Photo date sourced from the compressed file's preserved lastModified
-      formData.append(
-        "photoDate",
-        toLocalDateString(
-          item.imageFile.lastModified ? new Date(item.imageFile.lastModified) : new Date()
-        )
-      );
+      // Photo timestamp sourced from the compressed file's preserved lastModified
+      const photoMoment = item.imageFile.lastModified
+        ? new Date(item.imageFile.lastModified)
+        : new Date();
+      const photoDateTime = formatDateInput(photoMoment);
+      formData.append("photoDate", toLocalDateString(photoMoment));
 
       const res = await fetch("/api/receipts/breakdown", {
         method: "POST",
@@ -398,7 +397,8 @@ export function AppShell({ children }: AppShellProps) {
         return;
       }
 
-      expandBreakdown(id, item.fileName, withLocalTime(data.date), data.items, data.dateWarning);
+      const finalDate = data.usedPhotoFallback ? photoDateTime : withLocalTime(data.date);
+      expandBreakdown(id, item.fileName, finalDate, data.items, data.dateWarning);
 
       // Increment local scan count (breakdown = 1 additional credit)
       setUser((prev) => ({ scansUsedThisMonth: prev.scansUsedThisMonth + 1 }));

@@ -237,7 +237,7 @@ or when multiCategory is true:
     }
 
     // Normalize date and flag suspicious year for the UI
-    const { date: normalizedDate, dateWarning } = checkReceiptDate(result.data.date, todayStr, photoDateStr);
+    const { date: normalizedDate, dateWarning, usedPhotoFallback } = checkReceiptDate(result.data.date, todayStr, photoDateStr);
     result.data.date = normalizedDate;
 
     // Verify the categoryId actually exists in user's categories
@@ -261,7 +261,7 @@ or when multiCategory is true:
     // Log successful scan for monthly limit tracking (fire-and-forget)
     prisma.scanLog.create({ data: { userId } }).catch(() => {});
 
-    return NextResponse.json({ ...result.data, dateWarning });
+    return NextResponse.json({ ...result.data, dateWarning, usedPhotoFallback });
   } catch {
     return NextResponse.json(
       { error: "Failed to scan receipt. Please try again." },
