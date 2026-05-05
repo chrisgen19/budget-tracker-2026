@@ -374,6 +374,14 @@ export function AppShell({ children }: AppShellProps) {
     try {
       const formData = new FormData();
       formData.append("receipt", item.imageFile);
+      formData.append("localDate", toLocalDateString(new Date()));
+      // Photo date sourced from the compressed file's preserved lastModified
+      formData.append(
+        "photoDate",
+        toLocalDateString(
+          item.imageFile.lastModified ? new Date(item.imageFile.lastModified) : new Date()
+        )
+      );
 
       const res = await fetch("/api/receipts/breakdown", {
         method: "POST",

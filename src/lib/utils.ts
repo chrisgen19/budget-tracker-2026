@@ -108,6 +108,7 @@ export const compressImage = (file: File): Promise<File> => {
           }
           resolve(new File([blob], file.name.replace(/\.\w+$/, ".jpg"), {
             type: "image/jpeg",
+            lastModified: file.lastModified, // preserve original capture time for downstream date inference
           }));
         },
         "image/jpeg",
