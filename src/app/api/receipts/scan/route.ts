@@ -2,13 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { gemini, GEMINI_MODEL } from "@/lib/gemini";
 import { getAuthUserId } from "@/lib/session";
-import { receiptScanResultSchema, validDateString } from "@/lib/validations";
-
-/** Parse a YYYY-MM-DD string with calendar validation. Returns the input on success, fallback otherwise. */
-const parseLocalDate = (raw: FormDataEntryValue | null, fallback: string): string => {
-  if (typeof raw !== "string") return fallback;
-  return validDateString.safeParse(raw).success ? raw : fallback;
-};
+import { receiptScanResultSchema } from "@/lib/validations";
+import { parseLocalDate, checkReceiptDate } from "@/lib/receipt-date";
 
 const ALLOWED_TYPES = new Set([
   "image/jpeg",
@@ -40,25 +35,6 @@ const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB
 /** Strip markdown code fences that Gemini sometimes wraps around JSON */
 const stripCodeFences = (text: string): string =>
   text.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "");
-
-/** Normalize receipt date and flag when the year differs from today.
- *  Extracts the date portion to handle both "YYYY-MM-DD" and full ISO timestamps.
- *  Uses photoFallback (the photo's capture date) when Gemini's date is unparseable
- *  or when the parsed year differs from today — preserving the warning flag for the UI. */
-const checkReceiptDate = (
-  dateStr: string,
-  todayStr: string,
-  photoFallback: string,
-): { date: string; dateWarning: boolean } => {
-  const dateOnly = dateStr.slice(0, 10); // normalize "2024-03-14T13:45" → "2024-03-14"
-  const parsed = new Date(dateOnly + "T00:00:00");
-  if (isNaN(parsed.getTime())) return { date: photoFallback, dateWarning: false };
-  const todayYear = new Date(todayStr + "T00:00:00").getFullYear();
-  if (parsed.getFullYear() !== todayYear) {
-    return { date: photoFallback, dateWarning: true };
-  }
-  return { date: dateOnly, dateWarning: false };
-};
 
 export async function POST(request: Request) {
   const userId = await getAuthUserId();
