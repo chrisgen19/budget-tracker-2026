@@ -7,8 +7,10 @@ export const parseLocalDate = (raw: FormDataEntryValue | null, fallback: string)
 };
 
 /** Normalize a receipt date returned by Gemini and flag when the year differs from today.
- *  Uses photoFallback (the photo's capture date) when Gemini's date is unparseable
- *  or when the parsed year differs from today — preserving the warning flag for the UI. */
+ *  Uses photoFallback (the photo's capture date) only when parsing fails — preserving
+ *  legitimate cross-year OCR dates (e.g. a 2025 receipt scanned in early 2026).
+ *  When the year is suspicious, the OCR date is kept and dateWarning is raised so the UI
+ *  can prompt the user to confirm or correct it. */
 export const checkReceiptDate = (
   dateStr: string,
   todayStr: string,
@@ -18,8 +20,5 @@ export const checkReceiptDate = (
   const parsed = new Date(dateOnly + "T00:00:00");
   if (isNaN(parsed.getTime())) return { date: photoFallback, dateWarning: false };
   const todayYear = new Date(todayStr + "T00:00:00").getFullYear();
-  if (parsed.getFullYear() !== todayYear) {
-    return { date: photoFallback, dateWarning: true };
-  }
-  return { date: dateOnly, dateWarning: false };
+  return { date: dateOnly, dateWarning: parsed.getFullYear() !== todayYear };
 };
