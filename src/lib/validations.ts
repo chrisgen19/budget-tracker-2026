@@ -89,8 +89,13 @@ export const receiptBreakdownItemSchema = z.object({
   lineItems: z.array(receiptBreakdownLineItemSchema).min(1).max(50),
 });
 
+/** Signal from Gemini distinguishing "date read off the receipt" from "date is the photo-fallback we instructed".
+ *  Defaults to OCR for back-compat when older models omit the field. */
+const dateSourceSchema = z.enum(["OCR", "PHOTO_FALLBACK"]).default("OCR");
+
 export const receiptBreakdownResultSchema = z.object({
   date: z.string().min(1),
+  dateSource: dateSourceSchema,
   items: z.array(receiptBreakdownItemSchema).min(1).max(20),
 });
 
@@ -98,6 +103,7 @@ export const receiptScanResultSchema = z.object({
   amount: z.number().positive(),
   categoryId: z.string().min(1),
   date: z.string().min(1),
+  dateSource: dateSourceSchema,
   description: z.string().max(255),
   type: z.literal("EXPENSE"),
   multiCategory: z.boolean(),
