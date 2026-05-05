@@ -36,6 +36,14 @@ export const formatDateInput = (date: Date | string): string => {
   return `${year}-${month}-${day}T${hours}:${minutes}`;
 };
 
+/** Format a Date as local YYYY-MM-DD (no UTC conversion) */
+export const toLocalDateString = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
 /** Get month name from date */
 export const getMonthName = (date: Date | string): string =>
   new Intl.DateTimeFormat("en-US", { month: "long" }).format(new Date(date));
@@ -100,6 +108,7 @@ export const compressImage = (file: File): Promise<File> => {
           }
           resolve(new File([blob], file.name.replace(/\.\w+$/, ".jpg"), {
             type: "image/jpeg",
+            lastModified: file.lastModified, // preserve original capture time for downstream date inference
           }));
         },
         "image/jpeg",

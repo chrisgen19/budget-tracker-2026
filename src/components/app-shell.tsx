@@ -18,7 +18,7 @@ import {
   Shield,
   AlertTriangle,
 } from "lucide-react";
-import { cn, compressImage, formatDateInput } from "@/lib/utils";
+import { cn, compressImage, formatDateInput, toLocalDateString } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { useUser } from "@/components/user-provider";
 import { ScanProvider } from "@/components/scan-provider";
@@ -95,11 +95,15 @@ export function AppShell({ children }: AppShellProps) {
     setScanError(null);
 
     try {
+      // Capture photoDate BEFORE compression — canvas re-encoding loses File metadata
+      const photoDate = toLocalDateString(
+        file.lastModified ? new Date(file.lastModified) : new Date()
+      );
       const compressed = await compressImage(file);
       const formData = new FormData();
       formData.append("receipt", compressed);
-      const now = new Date();
-      formData.append("localDate", `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`);
+      formData.append("localDate", toLocalDateString(new Date()));
+      formData.append("photoDate", photoDate);
 
       const res = await fetch("/api/receipts/scan", {
         method: "POST",
@@ -170,6 +174,11 @@ export function AppShell({ children }: AppShellProps) {
       setMultiScanItems(initialItems);
       setShowMultiScanReview(true);
 
+      // Capture photoDate per file BEFORE compression — canvas re-encoding loses File metadata
+      const photoDates = files.map((f) =>
+        toLocalDateString(f.lastModified ? new Date(f.lastModified) : new Date())
+      );
+
       // Compress all files in parallel (client-side only, no API cost)
       const compressed = await Promise.all(
         files.map((f) => compressImage(f).catch(() => f))
@@ -188,8 +197,8 @@ export function AppShell({ children }: AppShellProps) {
           try {
             const formData = new FormData();
             formData.append("receipt", file);
-            const n = new Date();
-            formData.append("localDate", `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`);
+            formData.append("localDate", toLocalDateString(new Date()));
+            formData.append("photoDate", photoDates[i]);
 
             const res = await fetch("/api/receipts/scan", {
               method: "POST",
@@ -365,6 +374,14 @@ export function AppShell({ children }: AppShellProps) {
     try {
       const formData = new FormData();
       formData.append("receipt", item.imageFile);
+      formData.append("localDate", toLocalDateString(new Date()));
+      // Photo date sourced from the compressed file's preserved lastModified
+      formData.append(
+        "photoDate",
+        toLocalDateString(
+          item.imageFile.lastModified ? new Date(item.imageFile.lastModified) : new Date()
+        )
+      );
 
       const res = await fetch("/api/receipts/breakdown", {
         method: "POST",

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { gemini, GEMINI_MODEL } from "@/lib/gemini";
 import { getAuthUserId } from "@/lib/session";
 import { receiptBreakdownResultSchema } from "@/lib/validations";
+import { parseLocalDate, checkReceiptDate } from "@/lib/receipt-date";
 
 const ALLOWED_TYPES = new Set([
   "image/jpeg",
@@ -32,18 +33,6 @@ const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB
 /** Strip markdown code fences that Gemini sometimes wraps around JSON */
 const stripCodeFences = (text: string): string =>
   text.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "");
-
-/** Normalize receipt date and flag when the year differs from today.
- *  Extracts the date portion to handle both "YYYY-MM-DD" and full ISO timestamps.
- *  Never modifies the date — returns a warning flag instead so the UI can
- *  prompt the user to confirm or correct it. */
-const checkReceiptDate = (dateStr: string, fallback: string): { date: string; dateWarning: boolean } => {
-  const dateOnly = dateStr.slice(0, 10); // normalize "2024-03-14T13:45" → "2024-03-14"
-  const parsed = new Date(dateOnly + "T00:00:00");
-  if (isNaN(parsed.getTime())) return { date: fallback, dateWarning: false };
-  const todayYear = new Date(fallback + "T00:00:00").getFullYear();
-  return { date: dateOnly, dateWarning: parsed.getFullYear() !== todayYear };
-};
 
 export async function POST(request: Request) {
   const userId = await getAuthUserId();
@@ -129,8 +118,11 @@ export async function POST(request: Request) {
       .map((c) => `- "${c.name}" (id: "${c.id}")`)
       .join("\n");
 
-    // Date-only fallback — time is appended on the client using the user's local clock
-    const todayStr = new Date().toISOString().slice(0, 10);
+    // Date-only fallback — prefer client's local date to avoid UTC offset issues.
+    const serverToday = new Date().toISOString().slice(0, 10);
+    const todayStr = parseLocalDate(formData.get("localDate"), serverToday);
+    // Photo capture date from the original (uncompressed) File on the client.
+    const photoDateStr = parseLocalDate(formData.get("photoDate"), todayStr);
 
     const arrayBuffer = await file.arrayBuffer();
     const base64 = Buffer.from(arrayBuffer).toString("base64");
@@ -159,7 +151,7 @@ CATEGORY RULES:
 
 RESPONSE FORMAT — return ONLY valid JSON, no markdown or explanation:
 {
-  "date": "<YYYY-MM-DD — the TRANSACTION/purchase date, usually near the top of the receipt next to the time. IGNORE any 'Date of Issuance', PTU accreditation, permit, or BIR registration dates. Use ${todayStr} if unreadable>",
+  "date": "<YYYY-MM-DD — the TRANSACTION/purchase date, usually near the top of the receipt next to the time. IGNORE any 'Date of Issuance', PTU accreditation, permit, or BIR registration dates. Use ${photoDateStr} if unreadable>",
   "items": [
     {
       "amount": <sum of items in this category>,
@@ -241,7 +233,7 @@ RULES:
     }
 
     // Normalize date and flag suspicious year for the UI
-    const { date: normalizedDate, dateWarning } = checkReceiptDate(result.data.date, todayStr);
+    const { date: normalizedDate, dateWarning } = checkReceiptDate(result.data.date, todayStr, photoDateStr);
     result.data.date = normalizedDate;
 
     // Verify each categoryId exists, fall back to "Other" if not

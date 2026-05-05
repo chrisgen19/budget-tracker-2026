@@ -156,7 +156,7 @@ export const resetPasswordSchema = z.object({
   path: ["confirmPassword"],
 });
 
-const validDateString = z
+export const validDateString = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)")
   .refine((s) => {
