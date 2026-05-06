@@ -152,6 +152,7 @@ CATEGORY RULES:
 RESPONSE FORMAT — return ONLY valid JSON, no markdown or explanation:
 {
   "date": "<YYYY-MM-DD — the TRANSACTION/purchase date, usually near the top of the receipt next to the time. IGNORE any 'Date of Issuance', PTU accreditation, permit, or BIR registration dates. Use ${photoDateStr} if unreadable>",
+  "dateSource": "<\"OCR\" if you read the date from the receipt, or \"PHOTO_FALLBACK\" if you used the fallback ${photoDateStr} because the date was unreadable. Always include this field.>",
   "items": [
     {
       "amount": <sum of items in this category>,
@@ -233,7 +234,9 @@ RULES:
     }
 
     // Normalize date and flag suspicious year for the UI
-    const { date: normalizedDate, dateWarning } = checkReceiptDate(result.data.date, todayStr, photoDateStr);
+    const { date: normalizedDate, dateWarning, usedPhotoFallback: parseFailed } = checkReceiptDate(result.data.date, todayStr, photoDateStr);
+    // Trust Gemini's explicit signal first; fall back to parse-failure detection.
+    const usedPhotoFallback = result.data.dateSource === "PHOTO_FALLBACK" || parseFailed;
     result.data.date = normalizedDate;
 
     // Verify each categoryId exists, fall back to "Other" if not
@@ -250,7 +253,7 @@ RULES:
     // Log 1 scan credit for the breakdown (fire-and-forget)
     prisma.scanLog.create({ data: { userId } }).catch(() => {});
 
-    return NextResponse.json({ ...result.data, dateWarning });
+    return NextResponse.json({ ...result.data, dateWarning, usedPhotoFallback });
   } catch {
     return NextResponse.json(
       { error: "Failed to break down receipt. Please try again." },

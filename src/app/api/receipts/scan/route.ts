@@ -149,6 +149,7 @@ Return a JSON object with these fields:
 - "amount": the grand total / total due including tax, tips, and service charges (number). Use the largest final amount on the receipt.
 - "categoryId": pick the best category ID using the rules below.
 - "date": the TRANSACTION date (the date of purchase, usually near the top of the receipt next to the time). Use "YYYY-MM-DD" format (date only, no time). IMPORTANT: Ignore any "Date of Issuance", PTU accreditation dates, permit dates, or BIR registration dates — these are regulatory dates, NOT the purchase date. If the transaction date is unreadable, use "${photoDateStr}".
+- "dateSource": "OCR" if you read the date from the receipt itself, or "PHOTO_FALLBACK" if you used the fallback "${photoDateStr}" because the date was unreadable. Always include this field.
 - "description": merchant name + short summary of purchase (max 100 chars).
 - "multiCategory": true if the receipt contains items that span 2 or more DIFFERENT categories from the list below, false if all items belong to a single category. For example, a grocery receipt with food AND cleaning supplies = true, a restaurant bill with only food = false, a single ride receipt = false.
 - "breakdown": ONLY include this field when "multiCategory" is true. Read every line item on the receipt and group them by category. Each entry has: "amount" (sum for that category), "categoryId", "description" (store name + category + 1-2 sample items, max 80 chars), and "lineItems" (array of {"name": "<item name>", "amount": <price>}). The sum of all breakdown amounts should approximately equal the receipt total. Distribute tax/service proportionally or into the largest group. Do NOT include breakdown when multiCategory is false.
@@ -170,9 +171,9 @@ CATEGORY RULES (pick categoryId by matching the merchant/items to these rules):
 11. When in doubt about a food-adjacent item (e.g. plastic wrap, aluminum foil), put it in Household.
 
 Respond with ONLY valid JSON, no markdown or explanation:
-{"amount": <number>, "categoryId": "<id>", "date": "<YYYY-MM-DD>", "description": "<text>", "multiCategory": <boolean>}
+{"amount": <number>, "categoryId": "<id>", "date": "<YYYY-MM-DD>", "dateSource": "OCR" | "PHOTO_FALLBACK", "description": "<text>", "multiCategory": <boolean>}
 or when multiCategory is true:
-{"amount": <number>, "categoryId": "<id>", "date": "<YYYY-MM-DD>", "description": "<text>", "multiCategory": true, "breakdown": [{"amount": <number>, "categoryId": "<id>", "description": "<text>", "lineItems": [{"name": "<text>", "amount": <number>}]}]}`;
+{"amount": <number>, "categoryId": "<id>", "date": "<YYYY-MM-DD>", "dateSource": "OCR" | "PHOTO_FALLBACK", "description": "<text>", "multiCategory": true, "breakdown": [{"amount": <number>, "categoryId": "<id>", "description": "<text>", "lineItems": [{"name": "<text>", "amount": <number>}]}]}`;
 
     const response = await gemini.models.generateContent({
       model: GEMINI_MODEL,
@@ -237,7 +238,9 @@ or when multiCategory is true:
     }
 
     // Normalize date and flag suspicious year for the UI
-    const { date: normalizedDate, dateWarning } = checkReceiptDate(result.data.date, todayStr, photoDateStr);
+    const { date: normalizedDate, dateWarning, usedPhotoFallback: parseFailed } = checkReceiptDate(result.data.date, todayStr, photoDateStr);
+    // Trust Gemini's explicit signal first; fall back to parse-failure detection.
+    const usedPhotoFallback = result.data.dateSource === "PHOTO_FALLBACK" || parseFailed;
     result.data.date = normalizedDate;
 
     // Verify the categoryId actually exists in user's categories
@@ -261,7 +264,7 @@ or when multiCategory is true:
     // Log successful scan for monthly limit tracking (fire-and-forget)
     prisma.scanLog.create({ data: { userId } }).catch(() => {});
 
-    return NextResponse.json({ ...result.data, dateWarning });
+    return NextResponse.json({ ...result.data, dateWarning, usedPhotoFallback });
   } catch {
     return NextResponse.json(
       { error: "Failed to scan receipt. Please try again." },
