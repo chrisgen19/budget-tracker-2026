@@ -39,6 +39,26 @@
   "lint-staged": {
     "*.{ts,tsx}": "eslint --max-warnings 0"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "prisma",
+      "@prisma/engines",
+      "sharp",
+      "@img/sharp-darwin-arm64",
+      "@img/sharp-darwin-x64",
+      "@img/sharp-linux-arm",
+      "@img/sharp-linux-arm64",
+      "@img/sharp-linux-x64",
+      "@img/sharp-linuxmusl-arm64",
+      "@img/sharp-linuxmusl-x64",
+      "@img/sharp-win32-arm64",
+      "@img/sharp-win32-x64",
+      "@next/swc",
+      "esbuild",
+      "bcrypt"
+    ]
+  },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
     "@types/bcryptjs": "^2.4.6",
