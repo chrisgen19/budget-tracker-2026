@@ -16,9 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # pnpm version is read from the "packageManager" field in package.json.
+      # It must stay >=10.16 so the .npmrc hardening (minimum-release-age,
+      # block-exotic-subdeps) is actually enforced here.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
