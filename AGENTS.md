@@ -85,6 +85,11 @@ src/
 - `DATABASE_URL` — PostgreSQL connection string
 - `NEXTAUTH_SECRET` / `NEXTAUTH_URL` — NextAuth session config
 - `GEMINI_API_KEY` — Google Gemini AI for receipt scanning
+- `GEMINI_MODEL` — Optional; Gemini model for receipt scanning (defaults to `gemini-2.5-flash`)
+- `GEMINI_FALLBACK_MODEL` — Optional; model retried once when the primary stays overloaded (503) after retries (defaults to `gemini-2.5-flash`; `""` disables fallback)
+- `GEMINI_THINKING_BUDGET` — Optional; thinking budget for **Gemini 2.x** models. `0` = off (fastest, default, recommended for OCR), `-1` = dynamic thinking, `128`-`24576` = fixed token budget
+- `GEMINI_THINKING_LEVEL` — Optional; thinking level for **Gemini 3+** models (they use `thinkingLevel`, not `thinkingBudget`): `minimal` (fastest, default, recommended for OCR) | `low` | `medium` | `high`
+- `GEMINI_TIMEOUT_MS` — Optional; per-attempt request timeout in ms (default `30000`, `0` disables). Timed-out attempts are retried like 503s. Raise it when enabling deeper thinking
 - `RESEND_API_KEY` — Email sending (verification + password reset)
 - `EMAIL_FROM` — Sender address (optional; defaults to `Budget Tracker <noreply@resend.dev>` if unset). Use a verified Resend domain in production, e.g. `Budget Tracker <noreply@yourdomain.com>`.
 - `AUTH_URL` — Optional; used in preview/staging deployments
