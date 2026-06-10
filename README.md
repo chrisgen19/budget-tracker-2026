@@ -95,11 +95,28 @@ NEXTAUTH_URL="http://localhost:3000"
 # Google Gemini (optional — enables receipt scanning)
 GEMINI_API_KEY=""
 GEMINI_MODEL="gemini-2.5-flash"
+
+# Gemini tuning (all optional — these are the defaults used when unset)
+GEMINI_FALLBACK_MODEL="gemini-2.5-flash"   # "" disables fallback
+GEMINI_THINKING_LEVEL="minimal"            # used by Gemini 3+ models
+GEMINI_THINKING_BUDGET="0"                 # used by Gemini 2.x models
+GEMINI_TIMEOUT_MS="30000"                  # per-attempt timeout; 0 disables
 ```
 
 > **Note:** Generate a secure `NEXTAUTH_SECRET` for production with `openssl rand -base64 32`
 >
 > **Receipt Scanning:** The `GEMINI_API_KEY` is only required if you enable the receipt scanning feature. Get one from [Google AI Studio](https://aistudio.google.com/apikey).
+
+#### Gemini tuning options
+
+All four are optional — when unset, the defaults shown above apply. The right thinking knob is picked automatically from the model generation.
+
+| Variable | Possible values | Notes |
+|---|---|---|
+| `GEMINI_FALLBACK_MODEL` | any Gemini model id, or `""` | Tried once when `GEMINI_MODEL` stays overloaded (503/504) after retries. `""` disables fallback. Fast alternative: `gemini-2.5-flash-lite` |
+| `GEMINI_THINKING_LEVEL` | `minimal` \| `low` \| `medium` \| `high` | **Gemini 3+ models only** (e.g. `gemini-3.5-flash`). `minimal` is fastest and recommended for OCR; `medium` is the model's own default |
+| `GEMINI_THINKING_BUDGET` | `0` \| `-1` \| `128`–`24576` | **Gemini 2.x models only** (e.g. `gemini-2.5-flash`). `0` = thinking off (fastest), `-1` = dynamic (model decides), number = fixed token budget. Valid range varies per model |
+| `GEMINI_TIMEOUT_MS` | milliseconds, or `0` | Aborts hung attempts so retry/fallback kicks in sooner; timed-out attempts are retried like 503s. `0` disables. Raise it (e.g. `60000`) if you enable deeper thinking |
 
 ### 4. Create the database and run migrations
 
