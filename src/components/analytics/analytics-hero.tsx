@@ -80,7 +80,6 @@ export function AnalyticsHero({
             <DeltaBadge
               current={summary.netCashFlow}
               previous={previousSummary.netCashFlow}
-              hasPrevious={hasPrevious}
             />
           </div>
           {hasPrevious && (
@@ -129,7 +128,6 @@ export function AnalyticsHero({
             <DeltaBadge
               current={summary.totalIncome}
               previous={previousSummary.totalIncome}
-              hasPrevious={hasPrevious}
             />
           }
         />
@@ -142,7 +140,6 @@ export function AnalyticsHero({
             <DeltaBadge
               current={summary.totalExpenses}
               previous={previousSummary.totalExpenses}
-              hasPrevious={hasPrevious}
               invert
             />
           }
@@ -156,7 +153,6 @@ export function AnalyticsHero({
             <DeltaBadge
               current={summary.transactionCount}
               previous={previousSummary.transactionCount}
-              hasPrevious={hasPrevious}
               neutral
             />
           }

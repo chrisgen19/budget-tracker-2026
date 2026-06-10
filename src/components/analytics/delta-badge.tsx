@@ -6,8 +6,6 @@ import { cn } from "@/lib/utils";
 interface DeltaBadgeProps {
   current: number;
   previous: number;
-  /** True when a previous period exists at all (e.g. previousSummary.transactionCount > 0) */
-  hasPrevious: boolean;
   /** Flip good/bad semantics — an increase in expenses is bad */
   invert?: boolean;
   /** No good/bad coloring (e.g. transaction counts) */
@@ -15,9 +13,7 @@ interface DeltaBadgeProps {
 }
 
 /** Period-over-period % change pill. Percentages are relative, so they stay visible under hideAmounts. */
-export function DeltaBadge({ current, previous, hasPrevious, invert = false, neutral = false }: DeltaBadgeProps) {
-  if (!hasPrevious) return null;
-
+export function DeltaBadge({ current, previous, invert = false, neutral = false }: DeltaBadgeProps) {
   const base = "inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-medium tabular-nums";
 
   if (previous === 0) {
