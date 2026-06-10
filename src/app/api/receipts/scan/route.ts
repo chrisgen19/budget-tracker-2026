@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { gemini, GEMINI_MODEL } from "@/lib/gemini";
+import { GEMINI_MODEL, generateContentWithRetry, isGeminiOverloaded } from "@/lib/gemini";
 import { getAuthUserId } from "@/lib/session";
 import { receiptScanResultSchema } from "@/lib/validations";
 import { parseLocalDate, checkReceiptDate } from "@/lib/receipt-date";
@@ -175,7 +175,7 @@ Respond with ONLY valid JSON, no markdown or explanation:
 or when multiCategory is true:
 {"amount": <number>, "categoryId": "<id>", "date": "<YYYY-MM-DD>", "dateSource": "OCR" | "PHOTO_FALLBACK", "description": "<text>", "multiCategory": true, "breakdown": [{"amount": <number>, "categoryId": "<id>", "description": "<text>", "lineItems": [{"name": "<text>", "amount": <number>}]}]}`;
 
-    const response = await gemini.models.generateContent({
+    const response = await generateContentWithRetry({
       model: GEMINI_MODEL,
       contents: [
         {
@@ -265,7 +265,14 @@ or when multiCategory is true:
     prisma.scanLog.create({ data: { userId } }).catch(() => {});
 
     return NextResponse.json({ ...result.data, dateWarning, usedPhotoFallback });
-  } catch {
+  } catch (error) {
+    console.error("[receipts/scan] Scan failed:", error);
+    if (isGeminiOverloaded(error)) {
+      return NextResponse.json(
+        { error: "The AI scanning service is busy right now. Please try again in a minute." },
+        { status: 503 }
+      );
+    }
     return NextResponse.json(
       { error: "Failed to scan receipt. Please try again." },
       { status: 500 }
