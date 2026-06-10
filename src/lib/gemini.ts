@@ -58,8 +58,11 @@ export const receiptScanConfig = (model: string = GEMINI_MODEL) => ({
   ...(GEMINI_TIMEOUT_MS > 0 && { httpOptions: { timeout: GEMINI_TIMEOUT_MS } }),
 });
 
-/** Transient Gemini errors worth retrying: 429 (rate limit) and 503 (model overloaded) */
-const RETRYABLE_STATUSES = new Set([429, 503]);
+/** Transient Gemini errors worth retrying, per Google's error guidance:
+ *  429 (rate limit), 500 (INTERNAL — unexpected error on Google's side),
+ *  503 (UNAVAILABLE — model overloaded), 504 (DEADLINE_EXCEEDED — Google's
+ *  server-side deadline expired before the request finished) */
+const RETRYABLE_STATUSES = new Set([429, 500, 503, 504]);
 
 /** True when Gemini rejected the call due to temporary overload or rate limiting */
 export const isGeminiOverloaded = (error: unknown): boolean =>
