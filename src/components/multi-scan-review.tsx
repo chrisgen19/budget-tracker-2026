@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Pencil, Trash2, AlertCircle, CheckCircle2, Loader2, Rows3 } from "lucide-react";
 import { CategoryIcon } from "@/components/ui/icon-map";
+import { ReceiptBreakdown } from "@/components/transactions/receipt-breakdown";
 import { formatCurrency, cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
 import type { Category, MultiScanItem } from "@/types";
@@ -152,90 +153,101 @@ export function MultiScanReview({
           return (
             <div
               key={item.id}
-              className="flex items-center gap-3 p-4 rounded-xl border border-cream-200 bg-white"
+              className="p-4 rounded-xl border border-cream-200 bg-white space-y-3"
             >
-              {/* Category icon */}
-              <div
-                className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-                style={{
-                  backgroundColor: category ? category.color + "18" : "#f5f0eb",
-                }}
-              >
-                {category ? (
-                  <CategoryIcon
-                    name={category.icon}
-                    className="w-5 h-5"
-                    style={{ color: category.color }}
-                  />
-                ) : (
-                  <CheckCircle2 className="w-5 h-5 text-income" />
-                )}
-              </div>
-
-              {/* Details */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <p className="text-sm font-medium text-warm-700 truncate">
-                    {item.data?.description || "No description"}
-                  </p>
-                  {isItemizedChild && (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-light/60 text-amber-dark shrink-0">
-                      Itemized
-                    </span>
+              <div className="flex items-center gap-3">
+                {/* Category icon */}
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                  style={{
+                    backgroundColor: category ? category.color + "18" : "#f5f0eb",
+                  }}
+                >
+                  {category ? (
+                    <CategoryIcon
+                      name={category.icon}
+                      className="w-5 h-5"
+                      style={{ color: category.color }}
+                    />
+                  ) : (
+                    <CheckCircle2 className="w-5 h-5 text-income" />
                   )}
                 </div>
-                <div className="flex items-center gap-2 mt-0.5">
-                  {category && (
-                    <span className="text-xs text-warm-400">{category.name}</span>
-                  )}
-                  {category && formattedDate && (
-                    <span className="text-xs text-warm-200">&middot;</span>
-                  )}
-                  {formattedDate && (
-                    <span className={cn("text-xs", item.data?.dateWarning ? "text-amber-600 font-medium" : "text-warm-400")}>
-                      {item.data?.dateWarning && "⚠ "}{formattedDate}
-                      {item.data?.dateWarning && (
-                        <span className="text-[10px] text-amber-500 ml-1">(check year)</span>
-                      )}
-                    </span>
-                  )}
+
+                {/* Details */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-sm font-medium text-warm-700 truncate">
+                      {item.data?.description || "No description"}
+                    </p>
+                    {isItemizedChild && (
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-light/60 text-amber-dark shrink-0">
+                        Itemized
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {category && (
+                      <span className="text-xs text-warm-400">{category.name}</span>
+                    )}
+                    {category && formattedDate && (
+                      <span className="text-xs text-warm-200">&middot;</span>
+                    )}
+                    {formattedDate && (
+                      <span className={cn("text-xs", item.data?.dateWarning ? "text-amber-600 font-medium" : "text-warm-400")}>
+                        {item.data?.dateWarning && "⚠ "}{formattedDate}
+                        {item.data?.dateWarning && (
+                          <span className="text-[10px] text-amber-500 ml-1">(check year)</span>
+                        )}
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
 
-              {/* Amount */}
-              <p className="text-sm font-semibold text-warm-700 tabular-nums shrink-0">
-                {item.data?.amount
-                  ? formatCurrency(item.data.amount, user.currency)
-                  : "—"}
-              </p>
+                {/* Amount */}
+                <p className="text-sm font-semibold text-warm-700 tabular-nums shrink-0">
+                  {item.data?.amount
+                    ? formatCurrency(item.data.amount, user.currency)
+                    : "—"}
+                </p>
 
-              {/* Actions */}
-              <div className="flex items-center gap-1 shrink-0">
-                {canItemize && (
+                {/* Actions */}
+                <div className="flex items-center gap-1 shrink-0">
+                  {canItemize && (
+                    <button
+                      type="button"
+                      onClick={() => onItemize(item.id)}
+                      title="Itemize receipt"
+                      className="p-2 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors"
+                    >
+                      <Rows3 className="w-4 h-4" />
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={() => onItemize(item.id)}
-                    title="Itemize receipt"
-                    className="p-2 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors"
+                    onClick={() => onEdit(item.id)}
+                    className="p-2 rounded-lg text-warm-300 hover:text-amber-dark hover:bg-amber-light transition-colors"
                   >
-                    <Rows3 className="w-4 h-4" />
+                    <Pencil className="w-4 h-4" />
                   </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => onEdit(item.id)}
-                  className="p-2 rounded-lg text-warm-300 hover:text-amber-dark hover:bg-amber-light transition-colors"
-                >
-                  <Pencil className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onRemove(item.id)}
-                  className="p-2 rounded-lg text-warm-300 hover:text-expense hover:bg-expense-light transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => onRemove(item.id)}
+                    className="p-2 rounded-lg text-warm-300 hover:text-expense hover:bg-expense-light transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
+
+              {/* Line items from itemized receipts — collapsed to keep the list compact */}
+              {item.data?.receiptBreakdown && (
+                <ReceiptBreakdown
+                  breakdown={item.data.receiptBreakdown}
+                  currency={user.currency}
+                  defaultExpanded={false}
+                />
+              )}
             </div>
           );
         })}
