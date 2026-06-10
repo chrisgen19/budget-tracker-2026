@@ -46,8 +46,8 @@ export function SpendingHeatmap({ data, currency, hideAmounts }: SpendingHeatmap
   const byWeekday = useMemo(() => (mode === "weekday" ? weekdayAverages(data) : []), [data, mode]);
   const weekdayIntensity = useMemo(() => intensityScale(byWeekday.map((s) => s.avg)), [byWeekday]);
 
-  if (data.length === 0 || data.every((d) => d.count === 0)) {
-    return <ChartEmptyState message="No activity in this period" hint="Add transactions to see your spending pattern" />;
+  if (data.length === 0 || data.every((d) => d.expenses === 0)) {
+    return <ChartEmptyState message="No spending in this period" hint="Add expense transactions to see your spending pattern" />;
   }
 
   const sym = getCurrencySymbol(currency);

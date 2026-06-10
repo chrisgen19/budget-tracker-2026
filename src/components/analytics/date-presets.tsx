@@ -14,6 +14,7 @@ export function DatePresets({ tz, onSelect }: DatePresetsProps) {
       {DATE_PRESETS.map((preset) => (
         <button
           key={preset.id}
+          type="button"
           onClick={() => {
             const { from, to } = preset.getRange(tz);
             onSelect(from, to);

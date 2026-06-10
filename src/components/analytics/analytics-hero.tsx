@@ -47,6 +47,77 @@ function StatRow({
   );
 }
 
+/** Edge-bleed net-flow sparkline across the bottom of the hero card. */
+function HeroSparkline({ cashFlow, color }: { cashFlow: AnalyticsCashFlowItem[]; color: string }) {
+  const uid = useId();
+  const sparkId = `heroSpark${uid}`;
+
+  return (
+    <motion.div
+      variants={fadeIn}
+      initial="hidden"
+      animate="show"
+      className="-mx-5 lg:-mx-6 -mb-5 lg:-mb-6 mt-4 h-14 lg:h-16"
+    >
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={cashFlow} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
+          <defs>
+            <linearGradient id={sparkId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity={0.18} />
+              <stop offset="100%" stopColor={color} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <Area
+            type="monotone"
+            dataKey="net"
+            stroke={color}
+            strokeWidth={2}
+            fill={`url(#${sparkId})`}
+            isAnimationActive={false}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </motion.div>
+  );
+}
+
+/** Income / Expenses / Transactions rows with period-over-period deltas. */
+function SecondaryStats({
+  summary,
+  previousSummary,
+  fmt,
+}: {
+  summary: AnalyticsSummary;
+  previousSummary: AnalyticsSummary;
+  fmt: (v: number) => string;
+}) {
+  return (
+    <div className="card p-5 divide-y divide-cream-100">
+      <StatRow
+        icon={TrendingUp}
+        tint="bg-income-light text-income"
+        label="Income"
+        value={fmt(summary.totalIncome)}
+        delta={<DeltaBadge current={summary.totalIncome} previous={previousSummary.totalIncome} />}
+      />
+      <StatRow
+        icon={TrendingDown}
+        tint="bg-expense-light text-expense"
+        label="Expenses"
+        value={fmt(summary.totalExpenses)}
+        delta={<DeltaBadge current={summary.totalExpenses} previous={previousSummary.totalExpenses} invert />}
+      />
+      <StatRow
+        icon={Hash}
+        tint="bg-cream-100 text-warm-500"
+        label="Transactions"
+        value={summary.transactionCount.toLocaleString()}
+        delta={<DeltaBadge current={summary.transactionCount} previous={previousSummary.transactionCount} neutral />}
+      />
+    </div>
+  );
+}
+
 export function AnalyticsHero({
   summary,
   previousSummary,
@@ -56,14 +127,11 @@ export function AnalyticsHero({
   currency,
   hideAmounts,
 }: AnalyticsHeroProps) {
-  const uid = useId();
-  const sparkId = `heroSpark${uid}`;
   const sym = getCurrencySymbol(currency);
   const fmt = (v: number) => (hideAmounts ? `${sym} ••••••` : formatCurrency(v, currency));
 
   const hasPrevious = previousSummary.transactionCount > 0;
   const isPositive = summary.netCashFlow >= 0;
-  const sparkColor = isPositive ? INCOME_COLOR : EXPENSE_COLOR;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -77,87 +145,18 @@ export function AnalyticsHero({
             <span className={cn("font-serif text-3xl lg:text-4xl", isPositive ? "text-income" : "text-expense")}>
               {fmt(summary.netCashFlow)}
             </span>
-            <DeltaBadge
-              current={summary.netCashFlow}
-              previous={previousSummary.netCashFlow}
-            />
+            <DeltaBadge current={summary.netCashFlow} previous={previousSummary.netCashFlow} />
           </div>
           {hasPrevious && (
             <p className="text-xs text-warm-300 mt-1">vs {previousPeriodLabel}</p>
           )}
         </div>
-
-        {/* Edge-bleed sparkline of net flow per bucket */}
         {cashFlow.length > 1 && (
-          <motion.div
-            variants={fadeIn}
-            initial="hidden"
-            animate="show"
-            className="-mx-5 lg:-mx-6 -mb-5 lg:-mb-6 mt-4 h-14 lg:h-16"
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={cashFlow} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
-                <defs>
-                  <linearGradient id={sparkId} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={sparkColor} stopOpacity={0.18} />
-                    <stop offset="100%" stopColor={sparkColor} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <Area
-                  type="monotone"
-                  dataKey="net"
-                  stroke={sparkColor}
-                  strokeWidth={2}
-                  fill={`url(#${sparkId})`}
-                  isAnimationActive={false}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </motion.div>
+          <HeroSparkline cashFlow={cashFlow} color={isPositive ? INCOME_COLOR : EXPENSE_COLOR} />
         )}
       </div>
 
-      {/* Secondary stats */}
-      <div className="card p-5 divide-y divide-cream-100">
-        <StatRow
-          icon={TrendingUp}
-          tint="bg-income-light text-income"
-          label="Income"
-          value={fmt(summary.totalIncome)}
-          delta={
-            <DeltaBadge
-              current={summary.totalIncome}
-              previous={previousSummary.totalIncome}
-            />
-          }
-        />
-        <StatRow
-          icon={TrendingDown}
-          tint="bg-expense-light text-expense"
-          label="Expenses"
-          value={fmt(summary.totalExpenses)}
-          delta={
-            <DeltaBadge
-              current={summary.totalExpenses}
-              previous={previousSummary.totalExpenses}
-              invert
-            />
-          }
-        />
-        <StatRow
-          icon={Hash}
-          tint="bg-cream-100 text-warm-500"
-          label="Transactions"
-          value={summary.transactionCount.toLocaleString()}
-          delta={
-            <DeltaBadge
-              current={summary.transactionCount}
-              previous={previousSummary.transactionCount}
-              neutral
-            />
-          }
-        />
-      </div>
+      <SecondaryStats summary={summary} previousSummary={previousSummary} fmt={fmt} />
     </div>
   );
 }

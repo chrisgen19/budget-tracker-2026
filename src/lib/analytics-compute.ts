@@ -17,16 +17,15 @@ interface TrendTransaction {
   category: { name: string; color: string; icon: string };
 }
 
-/** Per-bucket amounts for the top expense categories, with the rest rolled into "Other". */
-export const computeCategoryTrends = (
+type CategoryTotals = Map<string, { meta: TrendTransaction["category"]; total: number }>;
+
+/** Single pass over expenses: per-category totals + per-bucket per-category amounts. */
+const aggregateExpenses = (
   transactions: TrendTransaction[],
-  bucketKeys: string[],
-  bucketLabels: Map<string, string>,
   granularity: AnalyticsGranularity,
   tzMs: number,
-  topN = 5,
-): AnalyticsCategoryTrends => {
-  const totals = new Map<string, { meta: TrendTransaction["category"]; total: number }>();
+): { totals: CategoryTotals; byBucket: Map<string, Map<string, number>> } => {
+  const totals: CategoryTotals = new Map();
   const byBucket = new Map<string, Map<string, number>>();
 
   for (const t of transactions) {
@@ -41,6 +40,14 @@ export const computeCategoryTrends = (
     byBucket.set(key, bucket);
   }
 
+  return { totals, byBucket };
+};
+
+/** Top N categories by total become series; the rest roll into one "Other" series. */
+const buildSeries = (
+  totals: CategoryTotals,
+  topN: number,
+): { series: AnalyticsCategoryTrendSeries[]; otherIds: Set<string> } => {
   const ranked = Array.from(totals.entries()).sort((a, b) => b[1].total - a[1].total);
   const top = ranked.slice(0, topN);
   const rest = ranked.slice(topN);
@@ -63,6 +70,21 @@ export const computeCategoryTrends = (
     });
   }
 
+  return { series, otherIds };
+};
+
+/** Per-bucket amounts for the top expense categories, with the rest rolled into "Other". */
+export const computeCategoryTrends = (
+  transactions: TrendTransaction[],
+  bucketKeys: string[],
+  bucketLabels: Map<string, string>,
+  granularity: AnalyticsGranularity,
+  tzMs: number,
+  topN = 5,
+): AnalyticsCategoryTrends => {
+  const { totals, byBucket } = aggregateExpenses(transactions, granularity, tzMs);
+  const { series, otherIds } = buildSeries(totals, topN);
+
   const points: AnalyticsCategoryTrendPoint[] = bucketKeys.map((key) => {
     const values: Record<string, number> = {};
     for (const s of series) values[s.id] = 0;
@@ -82,7 +104,7 @@ export const computeCategoryTrends = (
 interface TopTransactionInput {
   id: string;
   amount: number;
-  type: string;
+  type: "INCOME" | "EXPENSE";
   description: string;
   date: Date;
   category: { name: string; color: string; icon: string };
@@ -107,7 +129,7 @@ export const selectTopTransactions = (
       return {
         id: t.id,
         amount: t.amount,
-        type: t.type as "INCOME" | "EXPENSE",
+        type: t.type,
         description: t.description || t.category.name,
         date,
         dateLabel: multiYear ? `${dayLabel}, ${y}` : dayLabel,
