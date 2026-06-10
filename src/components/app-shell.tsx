@@ -180,19 +180,18 @@ export function AppShell({ children }: AppShellProps) {
       const photoDates = photoMoments.map(toLocalDateString);
       const photoDateTimes = photoMoments.map(formatDateInput);
 
-      // Compress all files in parallel (client-side only, no API cost)
-      const compressed = await Promise.all(
-        files.map((f) => compressImage(f).catch(() => f))
-      );
+      // Start compressing all files in parallel (client-side only, no API cost).
+      // Each upload starts as soon as its own compression finishes — no barrier.
+      const compressedPromises = files.map((f) => compressImage(f).catch(() => f));
 
-      // Process API calls with max 2 concurrent requests
+      // Process API calls with limited concurrency
       const CONCURRENCY = 3;
       let nextIndex = 0;
 
       const processNext = async (): Promise<void> => {
-        while (nextIndex < compressed.length) {
+        while (nextIndex < compressedPromises.length) {
           const i = nextIndex++;
-          const file = compressed[i];
+          const file = await compressedPromises[i];
           const itemId = initialItems[i].id;
 
           try {
@@ -257,7 +256,7 @@ export function AppShell({ children }: AppShellProps) {
 
       // Start concurrent workers
       await Promise.all(
-        Array.from({ length: Math.min(CONCURRENCY, compressed.length) }, () =>
+        Array.from({ length: Math.min(CONCURRENCY, compressedPromises.length) }, () =>
           processNext()
         )
       );

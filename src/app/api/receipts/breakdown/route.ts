@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { GEMINI_MODEL, generateContentWithRetry, isGeminiOverloaded } from "@/lib/gemini";
+import { GEMINI_MODEL, RECEIPT_SCAN_CONFIG, generateContentWithRetry, isGeminiOverloaded } from "@/lib/gemini";
 import { getAuthUserId } from "@/lib/session";
 import { receiptBreakdownResultSchema } from "@/lib/validations";
 import { parseLocalDate, checkReceiptDate } from "@/lib/receipt-date";
@@ -190,6 +190,7 @@ RULES:
           ],
         },
       ],
+      config: RECEIPT_SCAN_CONFIG,
     });
 
     const rawText = response.text?.trim();

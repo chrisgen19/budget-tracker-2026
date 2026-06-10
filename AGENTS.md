@@ -85,6 +85,8 @@ src/
 - `DATABASE_URL` — PostgreSQL connection string
 - `NEXTAUTH_SECRET` / `NEXTAUTH_URL` — NextAuth session config
 - `GEMINI_API_KEY` — Google Gemini AI for receipt scanning
+- `GEMINI_MODEL` — Optional; Gemini model for receipt scanning (defaults to `gemini-2.5-flash`)
+- `GEMINI_THINKING_BUDGET` — Optional; thinking budget for receipt scans. `0` = off (fastest, default, recommended for OCR), `-1` = dynamic thinking, `128`-`24576` = fixed token budget
 - `RESEND_API_KEY` — Email sending (verification + password reset)
 - `EMAIL_FROM` — Sender address (optional; defaults to `Budget Tracker <noreply@resend.dev>` if unset). Use a verified Resend domain in production, e.g. `Budget Tracker <noreply@yourdomain.com>`.
 - `AUTH_URL` — Optional; used in preview/staging deployments

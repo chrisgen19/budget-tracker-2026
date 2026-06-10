@@ -11,6 +11,19 @@ if (process.env.NODE_ENV !== "production") globalForGemini.gemini = gemini;
 
 export const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 
+/** Thinking budget for receipt extraction — 0 disables thinking (fastest, recommended for OCR),
+ *  -1 enables dynamic thinking (model decides), 128-24576 sets a fixed token budget.
+ *  Configured via GEMINI_THINKING_BUDGET; defaults to 0. */
+const parsedThinkingBudget = Number.parseInt(process.env.GEMINI_THINKING_BUDGET ?? "", 10);
+export const GEMINI_THINKING_BUDGET = Number.isNaN(parsedThinkingBudget) ? 0 : parsedThinkingBudget;
+
+/** Shared generation config for receipt scanning: JSON-only responses (no markdown fences)
+ *  + env-configurable thinking budget */
+export const RECEIPT_SCAN_CONFIG = {
+  responseMimeType: "application/json",
+  thinkingConfig: { thinkingBudget: GEMINI_THINKING_BUDGET },
+} as const;
+
 /** Transient Gemini errors worth retrying: 429 (rate limit) and 503 (model overloaded) */
 const RETRYABLE_STATUSES = new Set([429, 503]);
 
