@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, ChevronsUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DatePresets } from "@/components/analytics/date-presets";
 import type { AnalyticsGranularity } from "@/types";
 
 type PeriodType = AnalyticsGranularity | "custom";
@@ -12,6 +13,7 @@ interface TimeRangePickerProps {
   from: string;
   to: string;
   label: string;
+  tz: number;
   onPeriodSelect: (type: PeriodType, from: string, to: string) => void;
   onNavigate: (direction: "prev" | "next") => void;
 }
@@ -30,6 +32,7 @@ export function TimeRangePicker({
   from,
   to,
   label,
+  tz,
   onPeriodSelect,
   onNavigate,
 }: TimeRangePickerProps) {
@@ -179,6 +182,15 @@ export function TimeRangePicker({
               </button>
             ))}
           </div>
+
+          {/* Quick presets (visible on every tab) */}
+          <DatePresets
+            tz={tz}
+            onSelect={(presetFrom, presetTo) => {
+              onPeriodSelect("custom", presetFrom, presetTo);
+              setOpen(false);
+            }}
+          />
 
           <div className="p-3">
             {/* Months tab */}

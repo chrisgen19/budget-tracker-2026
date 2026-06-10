@@ -2,147 +2,53 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
-import { AlertTriangle, BarChart3, Heart, Trophy } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  ArrowLeftRight,
+  BarChart3,
+  CalendarDays,
+  Heart,
+  Layers,
+  PieChart,
+  Tags,
+  Trophy,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
 import { usePrivacy } from "@/components/privacy-provider";
 import { useAnalyticsQuery, type AnalyticsParams } from "@/hooks/use-analytics";
+import {
+  type PeriodType,
+  getCurrentMonth,
+  formatPeriodLabel,
+  navigatePeriod,
+  chartGranularity,
+} from "@/lib/analytics-period";
+import { CardHeader } from "@/components/ui/card-header";
 import { TimeRangePicker } from "@/components/analytics/time-range-picker";
 import { TypeFilter } from "@/components/analytics/type-filter";
 import { IncomeExpensesReport } from "@/components/analytics/income-expenses-report";
 import { CashFlowChart } from "@/components/analytics/cash-flow-chart";
 import { CategoryBreakdownChart } from "@/components/analytics/category-breakdown-chart";
+import { CategoryTrendsChart } from "@/components/analytics/category-trends-chart";
 import { LabelBreakdownChart } from "@/components/analytics/label-breakdown-chart";
-import { AnalyticsSummary } from "@/components/analytics/analytics-summary";
+import { SpendingHeatmap } from "@/components/analytics/spending-heatmap";
+import { TopTransactions } from "@/components/analytics/top-transactions";
+import { AnalyticsHero } from "@/components/analytics/analytics-hero";
 import { AnalyticsSkeleton } from "@/components/analytics/analytics-skeleton";
 import { RecordsStatistics } from "@/components/analytics/records-statistics";
 import { FinancialHealthScore } from "@/components/analytics/financial-health-score";
 import { stagger, fadeUp } from "@/components/analytics/motion-variants";
-import type { AnalyticsGranularity, AnalyticsTypeFilter } from "@/types";
+import type { AnalyticsTypeFilter } from "@/types";
 
-type PeriodType = AnalyticsGranularity | "custom";
 type AnalyticsTab = "reports" | "statistics" | "health";
 
 const ANALYTICS_TABS = [
-  { id: "reports" as const, label: "Reports", icon: BarChart3 },
-  { id: "statistics" as const, label: "Records & Statistics", icon: Trophy },
-  { id: "health" as const, label: "Financial Health", icon: Heart },
+  { id: "reports" as const, label: "Reports", shortLabel: "Reports", icon: BarChart3 },
+  { id: "statistics" as const, label: "Records & Statistics", shortLabel: "Stats", icon: Trophy },
+  { id: "health" as const, label: "Financial Health", shortLabel: "Health", icon: Heart },
 ];
-
-const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-
-/** Get current period boundaries using the user's saved timezone. */
-const getCurrentMonth = (tzOffset: number): { from: string; to: string } => {
-  const utcNow = new Date();
-  const now = new Date(utcNow.getTime() - tzOffset * 60 * 1000);
-  const y = now.getUTCFullYear();
-  const m = now.getUTCMonth();
-  const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
-  return {
-    from: `${y}-${String(m + 1).padStart(2, "0")}-01`,
-    to: `${y}-${String(m + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
-  };
-};
-
-/** Format period label from from/to strings. */
-const formatPeriodLabel = (periodType: PeriodType, from: string, to: string): string => {
-  const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const [fY, fM, fD] = from.split("-").map(Number);
-  const [tY, tM, tD] = to.split("-").map(Number);
-
-  if (periodType === "monthly") {
-    return `${MONTHS[fM - 1]} ${fY}`;
-  }
-  if (periodType === "yearly") {
-    return `${fY}`;
-  }
-  if (periodType === "weekly") {
-    if (fY === tY) {
-      return `${MONTH_SHORT[fM - 1]} ${fD} – ${MONTH_SHORT[tM - 1]} ${tD}, ${tY}`;
-    }
-    return `${MONTH_SHORT[fM - 1]} ${fD}, ${fY} – ${MONTH_SHORT[tM - 1]} ${tD}, ${tY}`;
-  }
-  // Custom — only show full month label if range covers the entire month
-  const lastDayOfMonth = new Date(fY, fM, 0).getDate();
-  if (fY === tY && fM === tM && fD === 1 && tD === lastDayOfMonth) {
-    return `${MONTHS[fM - 1]} ${fY}`;
-  }
-  // Custom full year
-  if (fY === tY && fM === 1 && fD === 1 && tM === 12 && tD === 31) {
-    return `${fY}`;
-  }
-  if (fY === tY) {
-    return `${MONTH_SHORT[fM - 1]} ${fD} – ${MONTH_SHORT[tM - 1]} ${tD}, ${tY}`;
-  }
-  return `${MONTH_SHORT[fM - 1]} ${fD}, ${fY} – ${MONTH_SHORT[tM - 1]} ${tD}, ${tY}`;
-};
-
-/** Navigate to previous/next period. */
-const navigatePeriod = (
-  periodType: PeriodType,
-  from: string,
-  to: string,
-  direction: "prev" | "next",
-): { from: string; to: string } => {
-  const [fY, fM, fD] = from.split("-").map(Number);
-  const sign = direction === "next" ? 1 : -1;
-
-  if (periodType === "monthly") {
-    const d = new Date(fY, fM - 1 + sign, 1);
-    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-    return {
-      from: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`,
-      to: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
-    };
-  }
-
-  if (periodType === "yearly") {
-    const y = fY + sign;
-    return { from: `${y}-01-01`, to: `${y}-12-31` };
-  }
-
-  const [tY, tM, tD] = to.split("-").map(Number);
-
-  // Custom range that matches a full calendar month — navigate by month
-  const lastDayOfFromMonth = new Date(fY, fM, 0).getDate();
-  if (periodType === "custom" && fD === 1 && fY === tY && fM === tM && tD === lastDayOfFromMonth) {
-    const d = new Date(fY, fM - 1 + sign, 1);
-    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-    return {
-      from: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`,
-      to: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
-    };
-  }
-
-  // Custom range that matches a full calendar year — navigate by year
-  if (periodType === "custom" && fM === 1 && fD === 1 && tM === 12 && tD === 31 && fY === tY) {
-    const y = fY + sign;
-    return { from: `${y}-01-01`, to: `${y}-12-31` };
-  }
-
-  // Weekly or other custom: shift by exact day span
-  const fromDate = new Date(fY, fM - 1, fD);
-  const toDate = new Date(tY, tM - 1, tD);
-  const span = Math.round((toDate.getTime() - fromDate.getTime()) / (24 * 60 * 60 * 1000)) + 1;
-  fromDate.setDate(fromDate.getDate() + sign * span);
-  toDate.setDate(toDate.getDate() + sign * span);
-
-  const fmtDate = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  return { from: fmtDate(fromDate), to: fmtDate(toDate) };
-};
-
-/** Map period type to internal chart granularity. */
-const chartGranularity = (periodType: PeriodType, from: string, to: string): AnalyticsGranularity => {
-  if (periodType === "yearly") return "monthly";
-  if (periodType === "monthly") return "weekly";
-  if (periodType === "weekly") return "weekly";
-  // Custom: auto based on span (UTC midnight parse is intentional — only computing day count)
-  const days = (new Date(to).getTime() - new Date(from).getTime()) / (24 * 60 * 60 * 1000);
-  if (days < 90) return "weekly";
-  if (days < 730) return "monthly";
-  return "yearly";
-};
 
 export default function AnalyticsPage() {
   const { user } = useUser();
@@ -185,28 +91,25 @@ export default function AnalyticsPage() {
 
   return (
     <div>
-      {/* Page Header */}
-      <div className="flex items-center justify-between mb-8">
+      {/* Page Header + Period Selector */}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between mb-6">
         <div>
           <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">Analytics</h1>
           <p className="text-warm-400 text-sm mt-1">Reports &amp; insights</p>
         </div>
-      </div>
-
-      {/* Period Selector */}
-      <div className="mb-4">
         <TimeRangePicker
           periodType={periodType}
           from={dateRange.from}
           to={dateRange.to}
           label={periodLabel}
+          tz={tz}
           onPeriodSelect={handlePeriodSelect}
           onNavigate={handleNavigate}
         />
       </div>
 
       {/* Tab Bar */}
-      <div role="tablist" className="flex gap-1 p-1 bg-cream-100 rounded-xl mb-6 w-fit">
+      <div role="tablist" className="grid grid-cols-3 sm:flex gap-1 p-1 bg-cream-100 rounded-xl mb-6 sm:w-fit">
         {ANALYTICS_TABS.map((tab) => (
           <button
             key={tab.id}
@@ -214,14 +117,22 @@ export default function AnalyticsPage() {
             aria-selected={activeTab === tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={cn(
-              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
-              activeTab === tab.id
-                ? "bg-white text-warm-700 shadow-sm"
-                : "text-warm-400 hover:text-warm-500"
+              "relative flex items-center justify-center gap-1.5 px-3 py-2.5 sm:py-1.5 rounded-lg text-sm font-medium transition-colors",
+              activeTab === tab.id ? "text-warm-700" : "text-warm-400 hover:text-warm-500"
             )}
           >
-            <tab.icon className="w-4 h-4" />
-            {tab.label}
+            {activeTab === tab.id && (
+              <motion.span
+                layoutId="analytics-tab"
+                className="absolute inset-0 bg-white rounded-lg shadow-sm"
+                transition={{ type: "spring", bounce: 0.2, duration: 0.4 }}
+              />
+            )}
+            <tab.icon className="relative w-4 h-4" />
+            <span className="relative">
+              <span className="hidden sm:inline">{tab.label}</span>
+              <span className="sm:hidden">{tab.shortLabel}</span>
+            </span>
           </button>
         ))}
       </div>
@@ -246,30 +157,80 @@ export default function AnalyticsPage() {
         </div>
       ) : (
         <>
-          {/* Summary Cards (always visible) */}
-          <motion.div
-            variants={stagger}
-            initial="hidden"
-            animate="show"
-            className="space-y-4"
-          >
+          {/* Hero overview (always visible) */}
+          <motion.div variants={stagger} initial="hidden" animate="show">
             <motion.div variants={fadeUp}>
-              <AnalyticsSummary data={data.summary} currency={currency} hideAmounts={hideAmounts} />
+              <AnalyticsHero
+                summary={data.summary}
+                previousSummary={data.previousSummary}
+                cashFlow={data.cashFlow}
+                periodLabel={data.periodLabel}
+                previousPeriodLabel={data.previousPeriodLabel}
+                currency={currency}
+                hideAmounts={hideAmounts}
+              />
             </motion.div>
           </motion.div>
 
           {/* Reports Tab */}
           {activeTab === "reports" && (
             <motion.div
+              key="reports"
               variants={stagger}
               initial="hidden"
               animate="show"
               className="space-y-4 mt-4"
             >
+              {/* Cash Flow */}
+              <motion.div variants={fadeUp} className="card p-5">
+                <CardHeader
+                  icon={Activity}
+                  title="Cash Flow"
+                  subtitle="Net flow per period with cumulative trend"
+                />
+                <CashFlowChart data={data.cashFlow} currency={currency} hideAmounts={hideAmounts} />
+              </motion.div>
+
+              {/* Breakdowns */}
+              <motion.div variants={fadeUp} className="flex items-center justify-between mb-1">
+                <h2 className="font-serif text-lg text-warm-700">Breakdowns</h2>
+                <TypeFilter value={typeFilter} onChange={setTypeFilter} />
+              </motion.div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <motion.div variants={fadeUp} className="card p-5">
+                  <CardHeader icon={PieChart} title="By Category" subtitle="Where is my money going?" />
+                  <CategoryBreakdownChart data={data.categoryBreakdown} currency={currency} hideAmounts={hideAmounts} />
+                </motion.div>
+
+                <motion.div variants={fadeUp} className="card p-5">
+                  <CardHeader icon={Layers} title="Category Trends" subtitle="Top spending categories over time" />
+                  <CategoryTrendsChart data={data.categoryTrends} currency={currency} hideAmounts={hideAmounts} />
+                </motion.div>
+
+                <motion.div variants={fadeUp} className="card p-5">
+                  <CardHeader icon={CalendarDays} title="Spending Heatmap" subtitle="Which days do you spend most?" />
+                  <SpendingHeatmap data={data.daily} currency={currency} hideAmounts={hideAmounts} />
+                </motion.div>
+
+                <motion.div variants={fadeUp} className="card p-5">
+                  <CardHeader icon={Trophy} title="Top Transactions" subtitle="Largest transactions this period" />
+                  <TopTransactions data={data.topTransactions} currency={currency} hideAmounts={hideAmounts} />
+                </motion.div>
+              </div>
+
+              {/* Label Breakdown */}
+              <motion.div variants={fadeUp} className="card p-5">
+                <CardHeader icon={Tags} title="By Label" subtitle="Spending by label tags" />
+                <LabelBreakdownChart data={data.labelBreakdown} currency={currency} hideAmounts={hideAmounts} />
+              </motion.div>
+
               {/* Income & Expenses Report */}
               <motion.div variants={fadeUp} className="card p-5">
-                <h2 className="font-serif text-lg text-warm-700">Incomes & Expenses Report</h2>
-                <p className="text-xs text-warm-300 mb-4">Current vs previous period by category</p>
+                <CardHeader
+                  icon={ArrowLeftRight}
+                  title="Incomes & Expenses Report"
+                  subtitle="Current vs previous period by category"
+                />
                 <IncomeExpensesReport
                   periodLabel={data.periodLabel}
                   previousPeriodLabel={data.previousPeriodLabel}
@@ -281,49 +242,21 @@ export default function AnalyticsPage() {
                   hideAmounts={hideAmounts}
                 />
               </motion.div>
-
-              {/* Cash Flow Chart */}
-              <motion.div variants={fadeUp} className="card p-5">
-                <h2 className="font-serif text-lg text-warm-700">Cash Flow</h2>
-                <p className="text-xs text-warm-300 mb-4">
-                  Net flow per period (solid) with cumulative trend (dashed)
-                </p>
-                <CashFlowChart data={data.cashFlow} currency={currency} hideAmounts={hideAmounts} />
-              </motion.div>
-
-              {/* Breakdowns */}
-              <motion.div variants={fadeUp} className="flex items-center justify-between mb-1">
-                <h2 className="font-serif text-lg text-warm-700">Breakdowns</h2>
-                <TypeFilter value={typeFilter} onChange={setTypeFilter} />
-              </motion.div>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <motion.div variants={fadeUp} className="card p-5">
-                  <h2 className="font-serif text-lg text-warm-700">By Category</h2>
-                  <p className="text-xs text-warm-300 mb-4">Where is my money going?</p>
-                  <CategoryBreakdownChart data={data.categoryBreakdown} currency={currency} hideAmounts={hideAmounts} />
-                </motion.div>
-
-                <motion.div variants={fadeUp} className="card p-5">
-                  <h2 className="font-serif text-lg text-warm-700">By Label</h2>
-                  <p className="text-xs text-warm-300 mb-4">Spending by label tags</p>
-                  <LabelBreakdownChart data={data.labelBreakdown} currency={currency} hideAmounts={hideAmounts} />
-                </motion.div>
-              </div>
             </motion.div>
           )}
 
           {/* Records & Statistics Tab */}
           {activeTab === "statistics" && (
-            <div className="mt-4">
+            <motion.div key="statistics" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mt-4">
               <RecordsStatistics statistics={data.statistics} currency={currency} hideAmounts={hideAmounts} />
-            </div>
+            </motion.div>
           )}
 
           {/* Financial Health Tab */}
           {activeTab === "health" && (
-            <div className="mt-4">
+            <motion.div key="health" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mt-4">
               <FinancialHealthScore healthScore={data.healthScore} />
-            </div>
+            </motion.div>
           )}
         </>
       )}
