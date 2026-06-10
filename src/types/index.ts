@@ -181,6 +181,50 @@ export interface AnalyticsCashFlowItem extends AnalyticsPeriodItem {
   cumulativeNet: number;
 }
 
+/** One day of activity for the spending heatmap (dense; every day in range) */
+export interface AnalyticsDailyItem {
+  date: string;      // "YYYY-MM-DD" in the user's local timezone
+  income: number;
+  expenses: number;
+  count: number;     // transactions that day
+}
+
+/** Legend entry for category trends (top expense categories + "other" rollup) */
+export interface AnalyticsCategoryTrendSeries {
+  id: string;        // categoryId, or "other"
+  name: string;
+  color: string;
+  icon: string;
+  total: number;
+}
+
+/** One time bucket of per-category expense amounts (zero-filled for all series) */
+export interface AnalyticsCategoryTrendPoint {
+  period: string;       // same keys as cashFlow buckets
+  periodLabel: string;
+  values: Record<string, number>;  // seriesId -> amount
+}
+
+/** Category trends: top expense categories per time bucket */
+export interface AnalyticsCategoryTrends {
+  series: AnalyticsCategoryTrendSeries[];  // sorted by total desc, "other" last
+  points: AnalyticsCategoryTrendPoint[];
+}
+
+/** A top transaction for the largest-transactions widget */
+export interface AnalyticsTopTransaction {
+  id: string;
+  amount: number;
+  type: "INCOME" | "EXPENSE";
+  description: string;        // falls back to category name
+  date: string;               // "YYYY-MM-DD" local
+  dateLabel: string;          // "Apr 12" / "Apr 12, 2025" (multi-year aware)
+  categoryName: string;
+  categoryIcon: string;
+  categoryColor: string;
+  labels: Array<{ id: string; name: string; color: string }>;
+}
+
 /** Summary totals for the selected range */
 export interface AnalyticsSummary {
   totalIncome: number;
@@ -259,6 +303,12 @@ export interface AnalyticsData {
   previousPeriodLabel: string;
   statistics: AnalyticsStatistics;
   healthScore: AnalyticsHealthScore;
+  /** Dense per-day series for the spending heatmap */
+  daily: AnalyticsDailyItem[];
+  /** Top expense categories per time bucket */
+  categoryTrends: AnalyticsCategoryTrends;
+  /** Largest transactions in the period (respects the type filter) */
+  topTransactions: AnalyticsTopTransaction[];
 }
 
 /** Extend next-auth types */
