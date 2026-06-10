@@ -28,15 +28,12 @@ export const generateContentWithRetry = async (
   params: GenerateContentParameters,
   maxAttempts = 3
 ) => {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  for (let attempt = 1; ; attempt++) {
     try {
       return await gemini.models.generateContent(params);
     } catch (error) {
-      lastError = error;
-      if (!isGeminiOverloaded(error) || attempt === maxAttempts) throw error;
+      if (!isGeminiOverloaded(error) || attempt >= maxAttempts) throw error;
       await sleep(attempt * 1000);
     }
   }
-  throw lastError; // unreachable — loop always returns or throws
 };
