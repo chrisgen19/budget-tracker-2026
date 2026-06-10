@@ -36,7 +36,10 @@ function Legend() {
 }
 
 export function SpendingHeatmap({ data, currency, hideAmounts }: SpendingHeatmapProps) {
-  const [selected, setSelected] = useState<AnalyticsDailyItem | null>(null);
+  // Store only the date string; derive the item from current data so a stale
+  // selection can't outlive a period change (it resolves to null instead)
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const selected = selectedDate ? data.find((d) => d.date === selectedDate) ?? null : null;
   const mode = heatmapMode(data.length);
   const intensity = useMemo(() => intensityScale(data.map((d) => d.expenses)), [data]);
   const weeks = useMemo(() => (mode === "weekday" ? [] : groupIntoWeeks(data)), [data, mode]);
@@ -57,7 +60,7 @@ export function SpendingHeatmap({ data, currency, hideAmounts }: SpendingHeatmap
     return (
       <button
         key={day.date}
-        onClick={() => setSelected(isSelected ? null : day)}
+        onClick={() => setSelectedDate(isSelected ? null : day.date)}
         aria-label={formatDayLabel(day.date, multiYear)}
         className={cn(
           "aspect-square transition-shadow",
