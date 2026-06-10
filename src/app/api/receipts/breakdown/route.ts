@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { GEMINI_MODEL, RECEIPT_SCAN_CONFIG, generateContentWithRetry, isGeminiOverloaded } from "@/lib/gemini";
+import { GEMINI_MODEL, receiptScanConfig, generateContentWithRetry, isGeminiUnavailable } from "@/lib/gemini";
 import { getAuthUserId } from "@/lib/session";
 import { receiptBreakdownResultSchema } from "@/lib/validations";
 import { parseLocalDate, checkReceiptDate } from "@/lib/receipt-date";
@@ -190,7 +190,7 @@ RULES:
           ],
         },
       ],
-      config: RECEIPT_SCAN_CONFIG,
+      config: receiptScanConfig(),
     });
 
     const rawText = response.text?.trim();
@@ -257,7 +257,7 @@ RULES:
     return NextResponse.json({ ...result.data, dateWarning, usedPhotoFallback });
   } catch (error) {
     console.error("[receipts/breakdown] Breakdown failed:", error);
-    if (isGeminiOverloaded(error)) {
+    if (isGeminiUnavailable(error)) {
       return NextResponse.json(
         { error: "The AI scanning service is busy right now. Please try again in a minute." },
         { status: 503 }
