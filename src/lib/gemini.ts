@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { ApiError, GoogleGenAI, type GenerateContentParameters } from "@google/genai";
 
 const globalForGemini = globalThis as unknown as {
   gemini: GoogleGenAI | undefined;
@@ -10,3 +10,30 @@ export const gemini =
 if (process.env.NODE_ENV !== "production") globalForGemini.gemini = gemini;
 
 export const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+
+/** Transient Gemini errors worth retrying: 429 (rate limit) and 503 (model overloaded) */
+const RETRYABLE_STATUSES = new Set([429, 503]);
+
+/** True when Gemini rejected the call due to temporary overload or rate limiting */
+export const isGeminiOverloaded = (error: unknown): boolean =>
+  error instanceof ApiError && RETRYABLE_STATUSES.has(error.status);
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Call Gemini with automatic retries on transient 429/503 errors.
+ * Backs off 1s, then 2s between attempts. Non-retryable errors are rethrown immediately.
+ */
+export const generateContentWithRetry = async (
+  params: GenerateContentParameters,
+  maxAttempts = 3
+) => {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await gemini.models.generateContent(params);
+    } catch (error) {
+      if (!isGeminiOverloaded(error) || attempt >= maxAttempts) throw error;
+      await sleep(attempt * 1000);
+    }
+  }
+};

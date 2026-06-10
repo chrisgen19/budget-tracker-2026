@@ -63,6 +63,7 @@ const MOBILE_NAV_ITEMS = NAV_ITEMS.filter((item) => item.href !== "/labels");
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const { user, setUser } = useUser();
+  const { showToast } = useToast();
   const batchCreateMutation = useBatchCreateTransactions();
   const createTransactionMutation = useCreateTransaction();
   const billActionMutation = useBillAction();
@@ -390,10 +391,11 @@ export function AppShell({ children }: AppShellProps) {
       const data = await res.json();
 
       if (!res.ok) {
-        // Revert to success on error
+        // Revert to success (keeps the scanned data savable) and surface the reason
         setMultiScanItems((prev) =>
           prev.map((i) => (i.id === id ? { ...i, status: "success" as const } : i))
         );
+        showToast(data.error ?? "Failed to itemize receipt. Please try again.", "error");
         return;
       }
 
@@ -403,10 +405,11 @@ export function AppShell({ children }: AppShellProps) {
       // Increment local scan count (breakdown = 1 additional credit)
       setUser((prev) => ({ scansUsedThisMonth: prev.scansUsedThisMonth + 1 }));
     } catch {
-      // Revert to success on network error
+      // Revert to success on network error and surface the reason
       setMultiScanItems((prev) =>
         prev.map((i) => (i.id === id ? { ...i, status: "success" as const } : i))
       );
+      showToast("Network error. Please check your connection and try again.", "error");
     }
   };
 
@@ -458,8 +461,6 @@ export function AppShell({ children }: AppShellProps) {
     setMultiScanItems([]);
     setEditingItemId(null);
   };
-
-  const { showToast } = useToast();
 
   const handleBillPayAndEditSubmit = async (input: TransactionInput) => {
     const newTx = await createTransactionMutation.mutateAsync(input);

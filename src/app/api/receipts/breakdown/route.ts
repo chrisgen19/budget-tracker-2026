@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { gemini, GEMINI_MODEL } from "@/lib/gemini";
+import { GEMINI_MODEL, generateContentWithRetry, isGeminiOverloaded } from "@/lib/gemini";
 import { getAuthUserId } from "@/lib/session";
 import { receiptBreakdownResultSchema } from "@/lib/validations";
 import { parseLocalDate, checkReceiptDate } from "@/lib/receipt-date";
@@ -174,7 +174,7 @@ RULES:
 - All amounts must be positive numbers
 - Do NOT include tax/service charge as a separate item — distribute proportionally or include in the largest group`;
 
-    const response = await gemini.models.generateContent({
+    const response = await generateContentWithRetry({
       model: GEMINI_MODEL,
       contents: [
         {
@@ -254,7 +254,14 @@ RULES:
     prisma.scanLog.create({ data: { userId } }).catch(() => {});
 
     return NextResponse.json({ ...result.data, dateWarning, usedPhotoFallback });
-  } catch {
+  } catch (error) {
+    console.error("[receipts/breakdown] Breakdown failed:", error);
+    if (isGeminiOverloaded(error)) {
+      return NextResponse.json(
+        { error: "The AI scanning service is busy right now. Please try again in a minute." },
+        { status: 503 }
+      );
+    }
     return NextResponse.json(
       { error: "Failed to break down receipt. Please try again." },
       { status: 500 }

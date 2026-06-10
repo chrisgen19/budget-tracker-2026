@@ -8,10 +8,12 @@ import type { ReceiptBreakdownMeta } from "@/types";
 interface ReceiptBreakdownProps {
   breakdown: ReceiptBreakdownMeta;
   currency: string;
+  /** Initial expanded state — defaults to open (transaction form); lists may start collapsed */
+  defaultExpanded?: boolean;
 }
 
-export function ReceiptBreakdown({ breakdown, currency }: ReceiptBreakdownProps) {
-  const [expanded, setExpanded] = useState(true);
+export function ReceiptBreakdown({ breakdown, currency, defaultExpanded = true }: ReceiptBreakdownProps) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
 
   return (
     <div className="rounded-xl border border-cream-200 bg-cream-50/60">
