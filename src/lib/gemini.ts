@@ -16,15 +16,17 @@ export const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 export const GEMINI_FALLBACK_MODEL =
   process.env.GEMINI_FALLBACK_MODEL ?? "gemini-2.5-flash";
 
-/** Thinking budget for Gemini 2.x models — 0 disables thinking (fastest, recommended for OCR),
- *  -1 enables dynamic thinking (model decides), 128-24576 sets a fixed token budget.
- *  Configured via GEMINI_THINKING_BUDGET; defaults to 0. */
+/** Thinking budget for Gemini 2.x models — -1 enables dynamic thinking (model decides,
+ *  best extraction quality), 0 disables thinking (fastest "speed mode"),
+ *  128-24576 sets a fixed token budget.
+ *  Configured via GEMINI_THINKING_BUDGET; defaults to -1. */
 const parsedThinkingBudget = Number.parseInt(process.env.GEMINI_THINKING_BUDGET ?? "", 10);
-export const GEMINI_THINKING_BUDGET = Number.isNaN(parsedThinkingBudget) ? 0 : parsedThinkingBudget;
+export const GEMINI_THINKING_BUDGET = Number.isNaN(parsedThinkingBudget) ? -1 : parsedThinkingBudget;
 
 /** Thinking level for Gemini 3+ models (they use thinkingLevel, not thinkingBudget) —
- *  "minimal" is fastest (recommended for OCR); "medium" is the model default for 3.5 Flash.
- *  Configured via GEMINI_THINKING_LEVEL; defaults to minimal. */
+ *  "medium" is the model default for 3.5 Flash (best extraction quality);
+ *  "minimal" is the fastest "speed mode".
+ *  Configured via GEMINI_THINKING_LEVEL; defaults to medium. */
 const THINKING_LEVELS: Record<string, ThinkingLevel> = {
   minimal: ThinkingLevel.MINIMAL,
   low: ThinkingLevel.LOW,
@@ -32,15 +34,15 @@ const THINKING_LEVELS: Record<string, ThinkingLevel> = {
   high: ThinkingLevel.HIGH,
 };
 export const GEMINI_THINKING_LEVEL =
-  THINKING_LEVELS[(process.env.GEMINI_THINKING_LEVEL ?? "minimal").toLowerCase()] ??
-  ThinkingLevel.MINIMAL;
+  THINKING_LEVELS[(process.env.GEMINI_THINKING_LEVEL ?? "medium").toLowerCase()] ??
+  ThinkingLevel.MEDIUM;
 
 /** Per-attempt request timeout — overloaded Gemini attempts can hang 40-70s before
  *  failing; aborting early lets retries/fallback kick in sooner.
- *  Configured via GEMINI_TIMEOUT_MS; defaults to 30s. Raise it if you enable
- *  deeper thinking (dynamic budget or medium/high level). */
+ *  Configured via GEMINI_TIMEOUT_MS; defaults to 60s, generous enough for
+ *  thinking-enabled scans. Lower it (e.g. 30000) when running in speed mode. */
 const parsedTimeout = Number.parseInt(process.env.GEMINI_TIMEOUT_MS ?? "", 10);
-export const GEMINI_TIMEOUT_MS = Number.isNaN(parsedTimeout) ? 30_000 : parsedTimeout;
+export const GEMINI_TIMEOUT_MS = Number.isNaN(parsedTimeout) ? 60_000 : parsedTimeout;
 
 /** Pick the right thinking knob per model generation:
  *  Gemini 1.x/2.x use thinkingBudget; Gemini 3+ use thinkingLevel

@@ -98,9 +98,9 @@ GEMINI_MODEL="gemini-2.5-flash"
 
 # Gemini tuning (all optional — these are the defaults used when unset)
 GEMINI_FALLBACK_MODEL="gemini-2.5-flash"   # "" disables fallback
-GEMINI_THINKING_LEVEL="minimal"            # used by Gemini 3+ models
-GEMINI_THINKING_BUDGET="0"                 # used by Gemini 2.x models
-GEMINI_TIMEOUT_MS="30000"                  # per-attempt timeout; 0 disables
+GEMINI_THINKING_LEVEL="medium"             # used by Gemini 3+ models
+GEMINI_THINKING_BUDGET="-1"                # used by Gemini 2.x models
+GEMINI_TIMEOUT_MS="60000"                  # per-attempt timeout; 0 disables
 ```
 
 > **Note:** Generate a secure `NEXTAUTH_SECRET` for production with `openssl rand -base64 32`
@@ -109,14 +109,14 @@ GEMINI_TIMEOUT_MS="30000"                  # per-attempt timeout; 0 disables
 
 #### Gemini tuning options
 
-All four are optional — when unset, the defaults shown above apply. The right thinking knob is picked automatically from the model generation.
+All four are optional — when unset, the defaults shown above apply. The right thinking knob is picked automatically from the model generation. Defaults favor **extraction quality** (thinking enabled); switch to **speed mode** (`minimal` / `0`) for ~3x faster scans at the cost of reasoning on tricky receipts.
 
 | Variable | Possible values | Notes |
 |---|---|---|
 | `GEMINI_FALLBACK_MODEL` | any Gemini model id, or `""` | Tried once when `GEMINI_MODEL` stays overloaded (503/504) after retries. `""` disables fallback. Fast alternative: `gemini-2.5-flash-lite` |
-| `GEMINI_THINKING_LEVEL` | `minimal` \| `low` \| `medium` \| `high` | **Gemini 3+ models only** (e.g. `gemini-3.5-flash`). `minimal` is fastest and recommended for OCR; `medium` is the model's own default |
-| `GEMINI_THINKING_BUDGET` | `0` \| `-1` \| `128`–`24576` | **Gemini 2.x models only** (e.g. `gemini-2.5-flash`). `0` = thinking off (fastest), `-1` = dynamic (model decides), number = fixed token budget. Valid range varies per model |
-| `GEMINI_TIMEOUT_MS` | milliseconds, or `0` | Aborts hung attempts so retry/fallback kicks in sooner; timed-out attempts are retried like 503s. `0` disables. Raise it (e.g. `60000`) if you enable deeper thinking |
+| `GEMINI_THINKING_LEVEL` | `minimal` \| `low` \| `medium` \| `high` | **Gemini 3+ models only** (e.g. `gemini-3.5-flash`). `medium` (default) = model's native reasoning; `minimal` = speed mode |
+| `GEMINI_THINKING_BUDGET` | `-1` \| `0` \| `128`–`24576` | **Gemini 2.x models only** (e.g. `gemini-2.5-flash`). `-1` (default) = dynamic thinking, `0` = speed mode, number = fixed token budget. Valid range varies per model |
+| `GEMINI_TIMEOUT_MS` | milliseconds, or `0` | Aborts hung attempts so retry/fallback kicks in sooner; timed-out attempts are retried like 503s. `0` disables. Default `60000` suits thinking-enabled scans; `30000` suits speed mode |
 
 ### 4. Create the database and run migrations
 
