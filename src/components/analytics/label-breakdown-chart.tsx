@@ -1,7 +1,13 @@
 "use client";
 
+import { useState } from "react";
+import { motion } from "framer-motion";
+import { Tags } from "lucide-react";
 import type { AnalyticsLabelItem } from "@/types";
 import { formatCurrency, getCurrencySymbol } from "@/lib/utils";
+import { ChartEmptyState } from "@/components/analytics/chart-empty-state";
+
+const VISIBLE_COUNT = 8;
 
 interface LabelBreakdownChartProps {
   data: AnalyticsLabelItem[];
@@ -10,22 +16,21 @@ interface LabelBreakdownChartProps {
 }
 
 export function LabelBreakdownChart({ data, currency, hideAmounts }: LabelBreakdownChartProps) {
+  const [showAll, setShowAll] = useState(false);
   const labeled = data.filter((d) => d.id !== "unlabeled");
 
   if (labeled.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-[200px] text-warm-300 text-sm">
-        No labeled transactions in this period
-      </div>
-    );
+    return <ChartEmptyState icon={Tags} message="No labeled transactions in this period" hint="Add labels to transactions to break down spending" />;
   }
 
   const maxAmount = Math.max(...labeled.map((d) => d.amount));
   const sym = getCurrencySymbol(currency);
+  const visible = showAll ? labeled : labeled.slice(0, VISIBLE_COUNT);
+  const hiddenCount = labeled.length - VISIBLE_COUNT;
 
   return (
-    <div className="space-y-3 max-h-[460px] overflow-y-auto">
-      {labeled.map((item) => {
+    <div className="space-y-3">
+      {visible.map((item) => {
         const barWidth = maxAmount > 0 ? (item.amount / maxAmount) * 100 : 0;
 
         return (
@@ -52,19 +57,28 @@ export function LabelBreakdownChart({ data, currency, hideAmounts }: LabelBreakd
               </div>
             </div>
 
-            {/* Progress bar */}
-            <div className="h-2 bg-cream-100 rounded-full overflow-hidden">
-              <div
-                className="h-full rounded-full transition-all duration-500"
-                style={{
-                  width: `${barWidth}%`,
-                  backgroundColor: item.color,
-                }}
+            {/* Progress bar (animates in on mount) */}
+            <div className="h-2.5 bg-cream-100 rounded-full overflow-hidden border border-cream-200/60">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${barWidth}%` }}
+                transition={{ duration: 0.5, ease: "easeOut" }}
+                className="h-full rounded-full"
+                style={{ backgroundColor: item.color }}
               />
             </div>
           </div>
         );
       })}
+
+      {hiddenCount > 0 && (
+        <button
+          onClick={() => setShowAll((v) => !v)}
+          className="w-full py-2.5 px-3 rounded-lg text-xs text-amber hover:text-amber-dark hover:bg-cream-50 font-medium transition-colors"
+        >
+          {showAll ? "Show less" : `Show ${hiddenCount} more`}
+        </button>
+      )}
     </div>
   );
 }

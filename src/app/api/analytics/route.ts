@@ -6,7 +6,7 @@ import type {
   AnalyticsCategoryItem,
   AnalyticsLabelItem,
   AnalyticsCashFlowItem,
-  AnalyticsGranularity,
+  AnalyticsDailyItem,
   AnalyticsSummary,
   AnalyticsStatistics,
   AnalyticsTopRecord,
@@ -14,81 +14,8 @@ import type {
   HealthSubScore,
   HealthTrend,
 } from "@/types";
-
-const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const MONTH_FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-
-/** Convert a UTC date to a bucket key based on granularity (in user's local timezone). */
-const toBucketKey = (date: Date, granularity: AnalyticsGranularity, tzMs: number): string => {
-  const local = new Date(date.getTime() - tzMs);
-  const y = local.getUTCFullYear();
-  const m = local.getUTCMonth();
-  const d = local.getUTCDate();
-
-  if (granularity === "yearly") return `${y}`;
-  if (granularity === "monthly") return `${y}-${String(m + 1).padStart(2, "0")}`;
-
-  // Weekly: find Monday of the week
-  const dayOfWeek = local.getUTCDay(); // 0=Sun
-  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-  const monday = new Date(Date.UTC(y, m, d + mondayOffset));
-  const mY = monday.getUTCFullYear();
-  const mM = monday.getUTCMonth();
-  const mD = monday.getUTCDate();
-  return `${mY}-${String(mM + 1).padStart(2, "0")}-${String(mD).padStart(2, "0")}`;
-};
-
-/** Generate a human-readable label for a bucket key. Clamps weekly labels to rangeFrom/rangeTo. */
-const toBucketLabel = (key: string, granularity: AnalyticsGranularity, rangeFrom?: Date, rangeTo?: Date): string => {
-  if (granularity === "yearly") return key;
-
-  if (granularity === "monthly") {
-    const [y, m] = key.split("-").map(Number);
-    return `${MONTH_NAMES[m - 1]} ${y}`;
-  }
-
-  // Weekly: show clamped date range
-  const [y, m, d] = key.split("-").map(Number);
-  let start = new Date(Date.UTC(y, m - 1, d));
-  let end = new Date(start.getTime() + 6 * 24 * 60 * 60 * 1000);
-
-  if (rangeFrom && start < rangeFrom) start = rangeFrom;
-  if (rangeTo && end > rangeTo) end = rangeTo;
-
-  const sLabel = `${MONTH_NAMES[start.getUTCMonth()]} ${start.getUTCDate()}`;
-  const eLabel = start.getUTCMonth() === end.getUTCMonth()
-    ? `${end.getUTCDate()}`
-    : `${MONTH_NAMES[end.getUTCMonth()]} ${end.getUTCDate()}`;
-  return `${sLabel}–${eLabel}`;
-};
-
-/** Generate all expected bucket keys between from and to dates. */
-const generateBucketKeys = (from: Date, to: Date, granularity: AnalyticsGranularity, tzMs: number): string[] => {
-  const keys: string[] = [];
-  const seen = new Set<string>();
-  const cursor = new Date(from.getTime());
-
-  const stepMs = granularity === "weekly" ? 24 * 60 * 60 * 1000 : 0;
-
-  while (cursor <= to) {
-    const key = toBucketKey(cursor, granularity, tzMs);
-    if (!seen.has(key)) {
-      seen.add(key);
-      keys.push(key);
-    }
-
-    if (granularity === "yearly") {
-      cursor.setUTCFullYear(cursor.getUTCFullYear() + 1);
-      cursor.setUTCMonth(0, 1);
-    } else if (granularity === "monthly") {
-      cursor.setUTCMonth(cursor.getUTCMonth() + 1, 1);
-    } else {
-      cursor.setTime(cursor.getTime() + stepMs);
-    }
-  }
-
-  return keys;
-};
+import { MONTH_NAMES, MONTH_FULL, toBucketKey, toBucketLabel, generateBucketKeys } from "@/lib/analytics-buckets";
+import { computeCategoryTrends, selectTopTransactions } from "@/lib/analytics-compute";
 
 /** Generate a human-readable label for a period's from/to range. */
 const formatPeriodLabel = (from: string, to: string): string => {
@@ -167,7 +94,7 @@ const computePeriodData = (
   return { summary, categoryBreakdown };
 };
 
-/** Compute records & statistics from transactions. */
+/** Compute records & statistics from transactions, plus the dense per-day series. */
 const computeStatistics = (
   transactions: Array<{ amount: number; type: string; description: string; date: Date; category: { name: string; color: string; icon: string } }>,
   allCategoryBreakdown: AnalyticsCategoryItem[],
@@ -175,7 +102,7 @@ const computeStatistics = (
   startDate: Date,
   endDate: Date,
   tzMs: number,
-): AnalyticsStatistics => {
+): { statistics: AnalyticsStatistics; daily: AnalyticsDailyItem[] } => {
   const toLocalDate = (d: Date) => {
     const local = new Date(d.getTime() - tzMs);
     return `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, "0")}-${String(local.getUTCDate()).padStart(2, "0")}`;
@@ -197,11 +124,11 @@ const computeStatistics = (
   let biggestIncome: (typeof transactions)[0] | null = null;
   let expenseCount = 0;
   let incomeCount = 0;
-  const dayMap = new Map<string, { expenses: number; count: number; hasExpense: boolean }>();
+  const dayMap = new Map<string, { income: number; expenses: number; count: number; hasExpense: boolean }>();
 
   for (const t of transactions) {
     const dayKey = toLocalDate(t.date);
-    const day = dayMap.get(dayKey) ?? { expenses: 0, count: 0, hasExpense: false };
+    const day = dayMap.get(dayKey) ?? { income: 0, expenses: 0, count: 0, hasExpense: false };
     day.count += 1;
     if (t.type === "EXPENSE") {
       expenseCount++;
@@ -210,6 +137,7 @@ const computeStatistics = (
       if (!biggestExpense || t.amount >= biggestExpense.amount) biggestExpense = t;
     } else {
       incomeCount++;
+      day.income += t.amount;
       if (!biggestIncome || t.amount >= biggestIncome.amount) biggestIncome = t;
     }
     dayMap.set(dayKey, day);
@@ -245,14 +173,18 @@ const computeStatistics = (
   }
   let spendingStreak = 0;
   let currentStreak = 0;
+  const daily: AnalyticsDailyItem[] = [];
   const cursor = new Date(startDate.getTime());
   while (cursor <= endDate) {
-    if (expenseDays.has(toLocalDate(cursor))) {
+    const dayKey = toLocalDate(cursor);
+    if (expenseDays.has(dayKey)) {
       currentStreak++;
       if (currentStreak > spendingStreak) spendingStreak = currentStreak;
     } else {
       currentStreak = 0;
     }
+    const day = dayMap.get(dayKey);
+    daily.push({ date: dayKey, income: day?.income ?? 0, expenses: day?.expenses ?? 0, count: day?.count ?? 0 });
     cursor.setTime(cursor.getTime() + 24 * 60 * 60 * 1000);
   }
 
@@ -269,7 +201,7 @@ const computeStatistics = (
     }
   }
 
-  return {
+  const statistics: AnalyticsStatistics = {
     biggestExpense: biggestExpense ? toRecord(biggestExpense) : null,
     biggestIncome: biggestIncome ? toRecord(biggestIncome) : null,
     mostExpensiveDay,
@@ -285,6 +217,8 @@ const computeStatistics = (
     mostExpensiveCategory,
     categoriesUsed: allCategoryBreakdown.length,
   };
+
+  return { statistics, daily };
 };
 
 /** Map a score (0-100) to a label and determine trend from sub-score trends. */
@@ -625,6 +559,10 @@ export async function GET(request: Request) {
     cashFlow.push({ period: key, periodLabel, income: bucket.income, expenses: bucket.expenses, net, cumulativeNet });
   }
 
+  // --- Category trends (top expense categories per bucket) ---
+  const bucketLabels = new Map(cashFlow.map((item) => [item.period, item.periodLabel]));
+  const categoryTrends = computeCategoryTrends(transactions, bucketKeys, bucketLabels, granularity, tzMs);
+
   // --- Compute unfiltered (ALL) first, then derive filtered if needed ---
   const { summary, categoryBreakdown: allCategoryBreakdown } = computePeriodData(transactions, "ALL");
   const { summary: previousSummary, categoryBreakdown: allPreviousCategoryBreakdown } = computePeriodData(prevTransactions, "ALL");
@@ -687,8 +625,13 @@ export async function GET(request: Request) {
 
   const labelBreakdown = [...labelEntries].sort((a, b) => b.amount - a.amount);
 
-  // --- Statistics ---
-  const statistics = computeStatistics(transactions, allCategoryBreakdown, summary, startDate, endDate, tzMs);
+  // --- Top transactions (respects the type filter, like the breakdowns) ---
+  const multiYear =
+    new Date(startDate.getTime() - tzMs).getUTCFullYear() !== new Date(endDate.getTime() - tzMs).getUTCFullYear();
+  const topTransactions = selectTopTransactions(filteredForLabel, tzMs, multiYear);
+
+  // --- Statistics + daily series ---
+  const { statistics, daily } = computeStatistics(transactions, allCategoryBreakdown, summary, startDate, endDate, tzMs);
 
   // --- Health Score ---
   const hasPreviousData = previousSummary.transactionCount > 0;
@@ -726,5 +669,8 @@ export async function GET(request: Request) {
     previousPeriodLabel,
     statistics,
     healthScore,
+    daily,
+    categoryTrends,
+    topTransactions,
   });
 }
