@@ -155,7 +155,7 @@ export default function LabelsPage() {
             <Zap className="w-4 h-4 text-amber" />
             <h2 className="font-serif text-lg text-warm-700">Quick Access</h2>
           </div>
-          {labels.length > 0 && (
+          {labels.length > 0 && !quickLoading && (
             <button
               onClick={() => setShowQuickPicker(true)}
               className="text-xs text-amber hover:text-amber-dark font-medium transition-colors"
