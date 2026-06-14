@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronLeft, ChevronRight, Check, Clock, FastForward, Pencil, ChevronUp, CheckCheck } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, Clock, FastForward, Pencil, ChevronUp, CheckCheck, X } from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { usePrivacy } from "@/components/privacy-provider";
@@ -48,6 +48,8 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
     isActioning,
     payAllProgress,
     setBannerHeight,
+    dismissedForToday,
+    dismissForToday,
   } = useBillReminders();
 
   const [showSnoozeMenu, setShowSnoozeMenu] = useState(false);
@@ -91,7 +93,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
   const { hideAmounts } = usePrivacy();
   const { user } = useUser();
 
-  if (pendingReminders.length === 0) return null;
+  if (pendingReminders.length === 0 || dismissedForToday) return null;
 
   const reminder = pendingReminders[currentIndex];
   if (!reminder) return null;
@@ -171,6 +173,16 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
             )}>
               {hideAmounts ? "***" : formatCurrency(bill.amount, user.currency)}
             </span>
+
+            {/* Dismiss for the day */}
+            <button
+              onClick={dismissForToday}
+              aria-label="Dismiss for today"
+              title="Dismiss for today"
+              className="p-1 -mr-1 rounded-lg text-warm-300 hover:text-warm-600 hover:bg-cream-100 transition-colors shrink-0"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
 
           {/* Actions row */}

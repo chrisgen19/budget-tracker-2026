@@ -1,8 +1,9 @@
 "use client";
 
-import { createContext, useContext, useState, useCallback } from "react";
+import { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
 import { usePendingRemindersQuery, useBillAction } from "@/hooks/use-bills";
 import { useToast } from "@/components/ui/toast";
+import { useUser } from "@/components/user-provider";
 import type { PendingReminder } from "@/types";
 
 interface BillReminderContextValue {
@@ -17,6 +18,10 @@ interface BillReminderContextValue {
   payAllProgress: { current: number; total: number } | null;
   bannerHeight: number;
   setBannerHeight: (height: number) => void;
+  /** True when the user dismissed the banner for the current day. */
+  dismissedForToday: boolean;
+  /** Hide the banner until the next calendar day (client-side only — does not change any bill). */
+  dismissForToday: () => void;
 }
 
 const BillReminderContext = createContext<BillReminderContextValue>({
@@ -31,13 +36,39 @@ const BillReminderContext = createContext<BillReminderContextValue>({
   payAllProgress: null,
   bannerHeight: 0,
   setBannerHeight: () => {},
+  dismissedForToday: false,
+  dismissForToday: () => {},
 });
 
 export const useBillReminders = () => useContext(BillReminderContext);
 
+/** Per-user storage key so a dismissal doesn't leak across accounts in a shared browser. */
+const dismissStorageKey = (email: string) => `bill-reminder-dismissed-date:${email}`;
+
+/** Local calendar date as YYYY-MM-DD (used to scope the dismissal to "today"). */
+const getLocalDateKey = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+/** True when this user dismissed the banner for the current local day. */
+const readDismissed = (email: string) => {
+  if (typeof window === "undefined" || !email) return false;
+  try {
+    return localStorage.getItem(dismissStorageKey(email)) === getLocalDateKey();
+  } catch {
+    return false;
+  }
+};
+
 export function BillReminderProvider({ children }: { children: React.ReactNode }) {
   const { data: pendingReminders = [] } = usePendingRemindersQuery();
   const billAction = useBillAction();
+  const { user } = useUser();
+  const email = user.email;
   const { showToast } = useToast();
   const [currentIndex, setCurrentIndex] = useState(0);
 
@@ -96,6 +127,66 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
 
   const [bannerHeight, setBannerHeightRaw] = useState(0);
   const setBannerHeight = useCallback((h: number) => setBannerHeightRaw(h), []);
+
+  // In-session fallback for when localStorage can't persist (private mode/quota):
+  // remembers the dismissal so a focus/visibility resync doesn't flip it back today.
+  const sessionDismissRef = useRef<{ email: string; date: string } | null>(null);
+
+  // Dismissed if persisted today OR dismissed in-session for this user/day.
+  const computeDismissed = useCallback(() => {
+    if (readDismissed(email)) return true;
+    const s = sessionDismissRef.current;
+    return !!s && s.email === email && s.date === getLocalDateKey();
+  }, [email]);
+
+  // Hide the banner for the rest of the day (client-side only). Initialised
+  // lazily from localStorage so a refresh keeps it dismissed without a flash.
+  const [dismissedForToday, setDismissedForToday] = useState(() => readDismissed(email));
+
+  // Re-evaluate when the account changes, when the tab regains focus, and at the
+  // next local midnight — so the banner returns the next day whether the tab was
+  // backgrounded/refocused or left continuously open across the day boundary.
+  useEffect(() => {
+    const sync = () => setDismissedForToday(computeDismissed());
+    sync();
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") sync();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", sync);
+
+    // Self-rescheduling timer that fires just after each local midnight.
+    let timer: ReturnType<typeof setTimeout>;
+    const scheduleMidnight = () => {
+      const now = new Date();
+      // 5s past midnight to avoid landing on the previous day due to timer skew
+      const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5);
+      timer = setTimeout(() => {
+        sync();
+        scheduleMidnight();
+      }, nextMidnight.getTime() - now.getTime());
+    };
+    scheduleMidnight();
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", sync);
+      clearTimeout(timer);
+    };
+  }, [computeDismissed]);
+
+  const dismissForToday = useCallback(() => {
+    if (!email) return;
+    // Record the in-session dismissal first so it survives even if the write fails.
+    sessionDismissRef.current = { email, date: getLocalDateKey() };
+    try {
+      localStorage.setItem(dismissStorageKey(email), getLocalDateKey());
+    } catch {
+      // persistence unavailable — the in-session ref above keeps it hidden today
+    }
+    setDismissedForToday(true);
+  }, [email]);
   const [payAllProgress, setPayAllProgress] = useState<{ current: number; total: number } | null>(null);
 
   const handlePayAll = useCallback(async () => {
@@ -158,6 +249,8 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
         payAllProgress,
         bannerHeight,
         setBannerHeight,
+        dismissedForToday,
+        dismissForToday,
       }}
     >
       {children}
