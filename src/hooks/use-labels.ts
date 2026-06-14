@@ -12,6 +12,7 @@ import type { LabelWithCountAndSchedules } from "@/types";
 
 export const labelKeys = {
   all: ["labels"] as const,
+  quick: ["preferences", "quickLabels"] as const,
 };
 
 /* ------------------------------------------------------------------ */
@@ -32,6 +33,44 @@ export function useLabelsQuery() {
   return useQuery({
     queryKey: labelKeys.all,
     queryFn: fetchLabels,
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/*  Quick-access label preferences (mirrors quick categories)          */
+/* ------------------------------------------------------------------ */
+
+const fetchQuickLabels = async (): Promise<string[]> => {
+  const res = await fetch("/api/preferences");
+  if (!res.ok) throw new Error("Failed to fetch preferences");
+  const data = await res.json();
+  return data.quickLabels ?? [];
+};
+
+/** Ordered list of label IDs the user pinned as quick-access (max 4). */
+export function useQuickLabelsQuery() {
+  return useQuery({
+    queryKey: labelKeys.quick,
+    queryFn: fetchQuickLabels,
+  });
+}
+
+export function useSaveQuickLabels() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      const res = await fetch("/api/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quickLabels: ids }),
+      });
+      if (!res.ok) throw new Error("Failed to save quick labels");
+      return ids;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: labelKeys.quick });
+    },
   });
 }
 

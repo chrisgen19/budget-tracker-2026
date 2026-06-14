@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Clock, Check, ChevronRight, ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useLabelsQuery } from "@/hooks/use-labels";
+import { useLabelsQuery, useQuickLabelsQuery } from "@/hooks/use-labels";
 import type { LabelWithCountAndSchedules } from "@/types";
 
 /** Number of labels shown before the "More labels..." expander (mirrors Category quick picks). */
@@ -19,6 +19,7 @@ interface LabelPickerProps {
 export function LabelPicker({ selectedIds, onChange, autoAppliedIds = [], transactionType }: LabelPickerProps) {
   const [showAll, setShowAll] = useState(false);
   const { data: labels = [] } = useLabelsQuery();
+  const { data: quickLabelIds = [] } = useQuickLabelsQuery();
 
   // Filter labels by transaction type (keep already-selected visible so they can be removed)
   const filteredLabels = transactionType
@@ -33,10 +34,16 @@ export function LabelPicker({ selectedIds, onChange, autoAppliedIds = [], transa
     );
   };
 
-  // Selected first (incl. any type-incompatible so they stay removable), then the rest.
+  // Order: selected first (incl. any type-incompatible so they stay removable),
+  // then user-pinned "quick" labels, then everything else.
   const selectedLabels = labels.filter((l) => selectedIds.includes(l.id));
   const unselectedLabels = filteredLabels.filter((l) => !selectedIds.includes(l.id));
-  const orderedLabels = [...selectedLabels, ...unselectedLabels];
+  const pinnedUnselected = quickLabelIds
+    .map((id) => unselectedLabels.find((l) => l.id === id))
+    .filter((l): l is LabelWithCountAndSchedules => l != null);
+  const pinnedSet = new Set(pinnedUnselected.map((l) => l.id));
+  const restUnselected = unselectedLabels.filter((l) => !pinnedSet.has(l.id));
+  const orderedLabels = [...selectedLabels, ...pinnedUnselected, ...restUnselected];
 
   if (orderedLabels.length === 0) return null;
 
