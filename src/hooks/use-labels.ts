@@ -5,6 +5,7 @@ import {
 } from "@tanstack/react-query";
 import type { LabelInput } from "@/lib/validations";
 import type { LabelWithCountAndSchedules } from "@/types";
+import { usePreferencesQuery, preferencesKeys } from "@/hooks/use-preferences";
 
 /* ------------------------------------------------------------------ */
 /*  Query key factory                                                  */
@@ -12,7 +13,6 @@ import type { LabelWithCountAndSchedules } from "@/types";
 
 export const labelKeys = {
   all: ["labels"] as const,
-  quick: ["preferences", "quickLabels"] as const,
 };
 
 /* ------------------------------------------------------------------ */
@@ -40,19 +40,9 @@ export function useLabelsQuery() {
 /*  Quick-access label preferences (mirrors quick categories)          */
 /* ------------------------------------------------------------------ */
 
-const fetchQuickLabels = async (): Promise<string[]> => {
-  const res = await fetch("/api/preferences");
-  if (!res.ok) throw new Error("Failed to fetch preferences");
-  const data = await res.json();
-  return data.quickLabels ?? [];
-};
-
-/** Ordered list of label IDs the user pinned as quick-access (max 4). */
+/** Ordered list of label IDs the user pinned as quick-access. Derived from the shared preferences query. */
 export function useQuickLabelsQuery() {
-  return useQuery({
-    queryKey: labelKeys.quick,
-    queryFn: fetchQuickLabels,
-  });
+  return usePreferencesQuery((p) => p.quickLabels ?? []);
 }
 
 export function useSaveQuickLabels() {
@@ -72,7 +62,7 @@ export function useSaveQuickLabels() {
       return ids;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: labelKeys.quick });
+      queryClient.invalidateQueries({ queryKey: preferencesKeys.all });
     },
   });
 }

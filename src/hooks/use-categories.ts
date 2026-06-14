@@ -5,6 +5,7 @@ import {
 } from "@tanstack/react-query";
 import type { CategoryInput } from "@/lib/validations";
 import type { Category } from "@/types";
+import { usePreferencesQuery, preferencesKeys } from "@/hooks/use-preferences";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -22,9 +23,6 @@ export interface QuickPreferences {
 export const categoryKeys = {
   all: ["categories"] as const,
   byType: (type?: "INCOME" | "EXPENSE") => ["categories", type] as const,
-  preferences: {
-    quick: ["preferences", "quick"] as const,
-  },
 };
 
 /* ------------------------------------------------------------------ */
@@ -36,16 +34,6 @@ const fetchCategories = async (type?: "INCOME" | "EXPENSE"): Promise<Category[]>
   const res = await fetch(`/api/categories${params}`);
   if (!res.ok) throw new Error("Failed to fetch categories");
   return res.json();
-};
-
-const fetchQuickPreferences = async (): Promise<QuickPreferences> => {
-  const res = await fetch("/api/preferences");
-  if (!res.ok) throw new Error("Failed to fetch preferences");
-  const data = await res.json();
-  return {
-    quickExpenseCategories: data.quickExpenseCategories ?? [],
-    quickIncomeCategories: data.quickIncomeCategories ?? [],
-  };
 };
 
 /* ------------------------------------------------------------------ */
@@ -60,12 +48,12 @@ export function useCategoriesQuery(type?: "INCOME" | "EXPENSE") {
   });
 }
 
-/** Cached quick-access category preferences */
+/** Quick-access category preferences, derived from the shared preferences query. */
 export function useQuickPreferencesQuery() {
-  return useQuery({
-    queryKey: categoryKeys.preferences.quick,
-    queryFn: fetchQuickPreferences,
-  });
+  return usePreferencesQuery<QuickPreferences>((p) => ({
+    quickExpenseCategories: p.quickExpenseCategories ?? [],
+    quickIncomeCategories: p.quickIncomeCategories ?? [],
+  }));
 }
 
 /* ------------------------------------------------------------------ */
@@ -155,7 +143,7 @@ export function useSaveQuickPreferences() {
       return payload;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: categoryKeys.preferences.quick });
+      queryClient.invalidateQueries({ queryKey: preferencesKeys.all });
     },
   });
 }
