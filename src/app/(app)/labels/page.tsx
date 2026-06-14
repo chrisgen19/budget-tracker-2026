@@ -50,9 +50,15 @@ export default function LabelsPage() {
   const quickLabels = quickLabelIds
     .map((id) => labels.find((l) => l.id === id))
     .filter((l): l is LabelWithCountAndSchedules => l != null);
+  // Only pass resolvable IDs to the picker so stale/deleted IDs can't make it appear "full"
+  const resolvedQuickLabelIds = quickLabels.map((l) => l.id);
 
   const handleQuickSave = (ids: string[]) => {
-    saveQuickLabels.mutate(ids, { onSuccess: () => setShowQuickPicker(false) });
+    saveQuickLabels.mutate(ids, {
+      onSuccess: () => setShowQuickPicker(false),
+      onError: (err) =>
+        setApplyError(err instanceof Error ? err.message : "Failed to save quick labels"),
+    });
   };
 
   // Auto-dismiss apply result/error toast after 3 seconds
@@ -322,7 +328,7 @@ export default function LabelsPage() {
         title="Quick Access Labels"
       >
         <QuickLabelPicker
-          selectedIds={quickLabelIds}
+          selectedIds={resolvedQuickLabelIds}
           allLabels={labels}
           onSave={handleQuickSave}
           onCancel={() => setShowQuickPicker(false)}

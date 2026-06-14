@@ -65,7 +65,10 @@ export function useSaveQuickLabels() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ quickLabels: ids }),
       });
-      if (!res.ok) throw new Error("Failed to save quick labels");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to save quick labels");
+      }
       return ids;
     },
     onSuccess: () => {
