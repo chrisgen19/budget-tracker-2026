@@ -143,19 +143,36 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
   // lazily from localStorage so a refresh keeps it dismissed without a flash.
   const [dismissedForToday, setDismissedForToday] = useState(() => readDismissed(email));
 
-  // Re-evaluate when the account changes and when the tab regains focus, so the
-  // banner returns after midnight (or for a different user) without a full reload.
+  // Re-evaluate when the account changes, when the tab regains focus, and at the
+  // next local midnight — so the banner returns the next day whether the tab was
+  // backgrounded/refocused or left continuously open across the day boundary.
   useEffect(() => {
     const sync = () => setDismissedForToday(computeDismissed());
     sync();
+
     const onVisible = () => {
       if (document.visibilityState === "visible") sync();
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", sync);
+
+    // Self-rescheduling timer that fires just after each local midnight.
+    let timer: ReturnType<typeof setTimeout>;
+    const scheduleMidnight = () => {
+      const now = new Date();
+      // 5s past midnight to avoid landing on the previous day due to timer skew
+      const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5);
+      timer = setTimeout(() => {
+        sync();
+        scheduleMidnight();
+      }, nextMidnight.getTime() - now.getTime());
+    };
+    scheduleMidnight();
+
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", sync);
+      clearTimeout(timer);
     };
   }, [computeDismissed]);
 
