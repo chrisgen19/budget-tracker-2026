@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useCallback } from "react";
+import { createContext, useContext, useState, useCallback, useEffect } from "react";
 import { usePendingRemindersQuery, useBillAction } from "@/hooks/use-bills";
 import { useToast } from "@/components/ui/toast";
 import type { PendingReminder } from "@/types";
@@ -17,6 +17,10 @@ interface BillReminderContextValue {
   payAllProgress: { current: number; total: number } | null;
   bannerHeight: number;
   setBannerHeight: (height: number) => void;
+  /** True when the user dismissed the banner for the current day. */
+  dismissedForToday: boolean;
+  /** Hide the banner until the next calendar day (client-side only — does not change any bill). */
+  dismissForToday: () => void;
 }
 
 const BillReminderContext = createContext<BillReminderContextValue>({
@@ -31,9 +35,22 @@ const BillReminderContext = createContext<BillReminderContextValue>({
   payAllProgress: null,
   bannerHeight: 0,
   setBannerHeight: () => {},
+  dismissedForToday: false,
+  dismissForToday: () => {},
 });
 
 export const useBillReminders = () => useContext(BillReminderContext);
+
+const DISMISS_STORAGE_KEY = "bill-reminder-dismissed-date";
+
+/** Local calendar date as YYYY-MM-DD (used to scope the dismissal to "today"). */
+const getLocalDateKey = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
 
 export function BillReminderProvider({ children }: { children: React.ReactNode }) {
   const { data: pendingReminders = [] } = usePendingRemindersQuery();
@@ -96,6 +113,26 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
 
   const [bannerHeight, setBannerHeightRaw] = useState(0);
   const setBannerHeight = useCallback((h: number) => setBannerHeightRaw(h), []);
+
+  // Hide the banner for the rest of the day (client-side only). Rehydrate from
+  // localStorage on mount so a refresh keeps it dismissed until tomorrow.
+  const [dismissedForToday, setDismissedForToday] = useState(false);
+  useEffect(() => {
+    try {
+      setDismissedForToday(localStorage.getItem(DISMISS_STORAGE_KEY) === getLocalDateKey());
+    } catch {
+      // localStorage unavailable (e.g. privacy mode) — banner just stays visible
+    }
+  }, []);
+
+  const dismissForToday = useCallback(() => {
+    try {
+      localStorage.setItem(DISMISS_STORAGE_KEY, getLocalDateKey());
+    } catch {
+      // ignore write failures; still hide for this session
+    }
+    setDismissedForToday(true);
+  }, []);
   const [payAllProgress, setPayAllProgress] = useState<{ current: number; total: number } | null>(null);
 
   const handlePayAll = useCallback(async () => {
@@ -158,6 +195,8 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
         payAllProgress,
         bannerHeight,
         setBannerHeight,
+        dismissedForToday,
+        dismissForToday,
       }}
     >
       {children}
