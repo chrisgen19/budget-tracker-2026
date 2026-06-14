@@ -5,6 +5,8 @@ import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { LabelWithCountAndSchedules } from "@/types";
 
+const MAX_QUICK_LABELS = 6;
+
 interface QuickLabelPickerProps {
   selectedIds: string[];
   allLabels: LabelWithCountAndSchedules[];
@@ -21,33 +23,40 @@ export function QuickLabelPicker({
   saving = false,
 }: QuickLabelPickerProps) {
   const [selectedIds, setSelectedIds] = useState<string[]>(initialIds);
+  const isFull = selectedIds.length >= MAX_QUICK_LABELS;
 
   const toggleLabel = (id: string) => {
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
-    );
+    setSelectedIds((prev) => {
+      if (prev.includes(id)) return prev.filter((i) => i !== id);
+      if (prev.length >= MAX_QUICK_LABELS) return prev;
+      return [...prev, id];
+    });
   };
 
   return (
     <div>
       <p className="text-sm text-warm-400 mb-4">
-        Tap to pin labels for quick access. Pinned labels appear first when adding transactions.
+        Pin up to {MAX_QUICK_LABELS} labels for quick access. Pinned labels appear first when adding transactions.
       </p>
 
       <div className="flex flex-wrap gap-2 mb-6">
         {allLabels.map((lbl) => {
           const order = selectedIds.indexOf(lbl.id);
           const isSelected = order !== -1;
+          const isDisabled = !isSelected && isFull;
 
           return (
             <button
               key={lbl.id}
               type="button"
               onClick={() => toggleLabel(lbl.id)}
+              disabled={isDisabled}
               className={cn(
                 "relative inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-full border-2 transition-colors",
                 !isSelected &&
-                  "border-dashed border-cream-300 text-warm-400 hover:border-warm-400 hover:text-warm-500"
+                  (isDisabled
+                    ? "border-cream-200 text-warm-300 opacity-40 cursor-not-allowed"
+                    : "border-dashed border-cream-300 text-warm-400 hover:border-warm-400 hover:text-warm-500")
               )}
               style={
                 isSelected
