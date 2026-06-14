@@ -78,12 +78,12 @@ export async function PATCH(request: Request) {
     data.quickIncomeCategories = ids;
   }
 
-  // Handle quick label preferences (single list, max 4)
+  // Handle quick label preferences (single list, no fixed cap)
   if ("quickLabels" in body) {
     const ids = body.quickLabels;
-    if (!Array.isArray(ids) || ids.length > 4 || !ids.every((id: unknown) => typeof id === "string")) {
+    if (!Array.isArray(ids) || !ids.every((id: unknown) => typeof id === "string")) {
       return NextResponse.json(
-        { error: "quickLabels must be a string array with max 4 items" },
+        { error: "quickLabels must be a string array" },
         { status: 400 }
       );
     }

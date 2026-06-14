@@ -47,8 +47,10 @@ export function LabelPicker({ selectedIds, onChange, autoAppliedIds = [], transa
 
   if (orderedLabels.length === 0) return null;
 
-  // Quick view always shows every selected label + enough suggestions to reach QUICK_LABEL_COUNT.
-  const quickLabels = orderedLabels.slice(0, Math.max(QUICK_LABEL_COUNT, selectedLabels.length));
+  // Quick view shows every selected + every pinned label, backfilled with
+  // suggestions up to at least QUICK_LABEL_COUNT.
+  const priorityCount = selectedLabels.length + pinnedUnselected.length;
+  const quickLabels = orderedLabels.slice(0, Math.max(QUICK_LABEL_COUNT, priorityCount));
   const hasMore = orderedLabels.length > quickLabels.length;
 
   const renderChip = (lbl: LabelWithCountAndSchedules) => {
