@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Plus, Pencil, Trash2, Tag, Clock, Play } from "lucide-react";
+import { Plus, Pencil, Trash2, Tag, Clock, Play, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LabelForm } from "@/components/labels/label-form";
+import { QuickLabelPicker } from "@/components/labels/quick-label-picker";
 import { MobileFab } from "@/components/ui/mobile-fab";
 import {
   useLabelsQuery,
@@ -15,6 +16,8 @@ import {
   useUpdateLabel,
   useDeleteLabel,
   useApplyLabelSchedule,
+  useQuickLabelsQuery,
+  useSaveQuickLabels,
   type TypeChangeConfirmation,
 } from "@/hooks/use-labels";
 import type { LabelInput } from "@/lib/validations";
@@ -22,6 +25,7 @@ import type { LabelWithCountAndSchedules } from "@/types";
 
 export default function LabelsPage() {
   const [showForm, setShowForm] = useState(false);
+  const [showQuickPicker, setShowQuickPicker] = useState(false);
   const [editingLabel, setEditingLabel] = useState<LabelWithCountAndSchedules | null>(null);
   const [deletingLabel, setDeletingLabel] = useState<LabelWithCountAndSchedules | null>(null);
   const [applyingLabel, setApplyingLabel] = useState<LabelWithCountAndSchedules | null>(null);
@@ -35,10 +39,27 @@ export default function LabelsPage() {
   } | null>(null);
 
   const { data: labels = [], isLoading: loading } = useLabelsQuery();
+  const { data: quickLabelIds = [], isLoading: quickLoading } = useQuickLabelsQuery();
   const createLabel = useCreateLabel();
   const updateLabel = useUpdateLabel();
   const deleteLabel = useDeleteLabel();
   const applySchedule = useApplyLabelSchedule();
+  const saveQuickLabels = useSaveQuickLabels();
+
+  // Resolve stored quick-label IDs to labels (drop any that no longer exist), preserving order
+  const quickLabels = quickLabelIds
+    .map((id) => labels.find((l) => l.id === id))
+    .filter((l): l is LabelWithCountAndSchedules => l != null);
+  // Only pass resolvable IDs to the picker so stale/deleted IDs can't make it appear "full"
+  const resolvedQuickLabelIds = quickLabels.map((l) => l.id);
+
+  const handleQuickSave = (ids: string[]) => {
+    saveQuickLabels.mutate(ids, {
+      onSuccess: () => setShowQuickPicker(false),
+      onError: (err) =>
+        setApplyError(err instanceof Error ? err.message : "Failed to save quick labels"),
+    });
+  };
 
   // Auto-dismiss apply result/error toast after 3 seconds
   useEffect(() => {
@@ -125,6 +146,57 @@ export default function LabelsPage() {
           <Plus className="w-4 h-4" />
           New Label
         </button>
+      </div>
+
+      {/* Quick Access Section */}
+      <div className="card p-5 mb-6">
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-2">
+            <Zap className="w-4 h-4 text-amber" />
+            <h2 className="font-serif text-lg text-warm-700">Quick Access</h2>
+          </div>
+          {labels.length > 0 && !quickLoading && (
+            <button
+              onClick={() => setShowQuickPicker(true)}
+              className="text-xs text-amber hover:text-amber-dark font-medium transition-colors"
+            >
+              Edit
+            </button>
+          )}
+        </div>
+        <p className="text-xs text-warm-400 mb-4">
+          Labels that appear first when adding transactions.
+        </p>
+
+        {quickLoading || loading ? (
+          <div className="flex flex-wrap gap-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="w-24 h-9 rounded-full animate-shimmer" />
+            ))}
+          </div>
+        ) : quickLabels.length === 0 ? (
+          <button
+            onClick={() => setShowQuickPicker(true)}
+            disabled={labels.length === 0}
+            className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-full border-2 border-dashed border-cream-300 text-warm-400 hover:border-amber/40 hover:text-warm-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Choose quick labels
+          </button>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {quickLabels.map((lbl) => (
+              <span
+                key={lbl.id}
+                className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-full"
+                style={{ backgroundColor: lbl.color + "18", color: lbl.color }}
+              >
+                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: lbl.color }} />
+                {lbl.name}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {loading ? (
@@ -246,6 +318,21 @@ export default function LabelsPage() {
         <LabelForm
           onSubmit={handleCreate}
           onCancel={() => setShowForm(false)}
+        />
+      </Modal>
+
+      {/* Quick Label Picker Modal */}
+      <Modal
+        open={showQuickPicker}
+        onClose={() => setShowQuickPicker(false)}
+        title="Quick Access Labels"
+      >
+        <QuickLabelPicker
+          selectedIds={resolvedQuickLabelIds}
+          allLabels={labels}
+          onSave={handleQuickSave}
+          onCancel={() => setShowQuickPicker(false)}
+          saving={saveQuickLabels.isPending}
         />
       </Modal>
 

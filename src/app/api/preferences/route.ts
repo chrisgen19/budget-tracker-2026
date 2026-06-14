@@ -12,6 +12,7 @@ export async function GET() {
       hideAmounts: true,
       quickExpenseCategories: true,
       quickIncomeCategories: true,
+      quickLabels: true,
       receiptScanEnabled: true,
       transactionLayout: true,
       transactionAmountAutofocus: true,
@@ -26,6 +27,7 @@ export async function GET() {
     hideAmounts: user?.hideAmounts ?? false,
     quickExpenseCategories: user?.quickExpenseCategories ?? [],
     quickIncomeCategories: user?.quickIncomeCategories ?? [],
+    quickLabels: user?.quickLabels ?? [],
     receiptScanEnabled: user?.receiptScanEnabled ?? false,
     transactionLayout: user?.transactionLayout ?? "infinite",
     transactionAmountAutofocus: user?.transactionAmountAutofocus ?? true,
@@ -74,6 +76,18 @@ export async function PATCH(request: Request) {
       );
     }
     data.quickIncomeCategories = ids;
+  }
+
+  // Handle quick label preferences (single list, max 6)
+  if ("quickLabels" in body) {
+    const ids = body.quickLabels;
+    if (!Array.isArray(ids) || ids.length > 6 || !ids.every((id: unknown) => typeof id === "string")) {
+      return NextResponse.json(
+        { error: "quickLabels must be a string array with max 6 items" },
+        { status: 400 }
+      );
+    }
+    data.quickLabels = ids;
   }
 
   if ("transactionLayout" in body) {
@@ -128,6 +142,7 @@ export async function PATCH(request: Request) {
       hideAmounts: true,
       quickExpenseCategories: true,
       quickIncomeCategories: true,
+      quickLabels: true,
       receiptScanEnabled: true,
       transactionLayout: true,
       transactionAmountAutofocus: true,
@@ -142,6 +157,7 @@ export async function PATCH(request: Request) {
     hideAmounts: user.hideAmounts,
     quickExpenseCategories: user.quickExpenseCategories,
     quickIncomeCategories: user.quickIncomeCategories,
+    quickLabels: user.quickLabels,
     receiptScanEnabled: user.receiptScanEnabled,
     transactionLayout: user.transactionLayout,
     transactionAmountAutofocus: user.transactionAmountAutofocus,
