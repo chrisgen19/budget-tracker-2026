@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useCallback, useEffect } from "react";
 import { usePendingRemindersQuery, useBillAction } from "@/hooks/use-bills";
 import { useToast } from "@/components/ui/toast";
+import { useUser } from "@/components/user-provider";
 import type { PendingReminder } from "@/types";
 
 interface BillReminderContextValue {
@@ -41,7 +42,8 @@ const BillReminderContext = createContext<BillReminderContextValue>({
 
 export const useBillReminders = () => useContext(BillReminderContext);
 
-const DISMISS_STORAGE_KEY = "bill-reminder-dismissed-date";
+/** Per-user storage key so a dismissal doesn't leak across accounts in a shared browser. */
+const dismissStorageKey = (email: string) => `bill-reminder-dismissed-date:${email}`;
 
 /** Local calendar date as YYYY-MM-DD (used to scope the dismissal to "today"). */
 const getLocalDateKey = () => {
@@ -52,9 +54,21 @@ const getLocalDateKey = () => {
   return `${year}-${month}-${day}`;
 };
 
+/** True when this user dismissed the banner for the current local day. */
+const readDismissed = (email: string) => {
+  if (typeof window === "undefined" || !email) return false;
+  try {
+    return localStorage.getItem(dismissStorageKey(email)) === getLocalDateKey();
+  } catch {
+    return false;
+  }
+};
+
 export function BillReminderProvider({ children }: { children: React.ReactNode }) {
   const { data: pendingReminders = [] } = usePendingRemindersQuery();
   const billAction = useBillAction();
+  const { user } = useUser();
+  const email = user.email;
   const { showToast } = useToast();
   const [currentIndex, setCurrentIndex] = useState(0);
 
@@ -114,25 +128,35 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
   const [bannerHeight, setBannerHeightRaw] = useState(0);
   const setBannerHeight = useCallback((h: number) => setBannerHeightRaw(h), []);
 
-  // Hide the banner for the rest of the day (client-side only). Rehydrate from
-  // localStorage on mount so a refresh keeps it dismissed until tomorrow.
-  const [dismissedForToday, setDismissedForToday] = useState(false);
+  // Hide the banner for the rest of the day (client-side only). Initialised
+  // lazily from localStorage so a refresh keeps it dismissed without a flash.
+  const [dismissedForToday, setDismissedForToday] = useState(() => readDismissed(email));
+
+  // Re-evaluate when the account changes and when the tab regains focus, so the
+  // banner returns after midnight (or for a different user) without a full reload.
   useEffect(() => {
-    try {
-      setDismissedForToday(localStorage.getItem(DISMISS_STORAGE_KEY) === getLocalDateKey());
-    } catch {
-      // localStorage unavailable (e.g. privacy mode) — banner just stays visible
-    }
-  }, []);
+    const sync = () => setDismissedForToday(readDismissed(email));
+    sync();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") sync();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", sync);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", sync);
+    };
+  }, [email]);
 
   const dismissForToday = useCallback(() => {
+    if (!email) return;
     try {
-      localStorage.setItem(DISMISS_STORAGE_KEY, getLocalDateKey());
+      localStorage.setItem(dismissStorageKey(email), getLocalDateKey());
     } catch {
       // ignore write failures; still hide for this session
     }
     setDismissedForToday(true);
-  }, []);
+  }, [email]);
   const [payAllProgress, setPayAllProgress] = useState<{ current: number; total: number } | null>(null);
 
   const handlePayAll = useCallback(async () => {
