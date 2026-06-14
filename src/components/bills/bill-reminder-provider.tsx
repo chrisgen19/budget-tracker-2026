@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useCallback, useEffect } from "react";
+import { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
 import { usePendingRemindersQuery, useBillAction } from "@/hooks/use-bills";
 import { useToast } from "@/components/ui/toast";
 import { useUser } from "@/components/user-provider";
@@ -128,6 +128,17 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
   const [bannerHeight, setBannerHeightRaw] = useState(0);
   const setBannerHeight = useCallback((h: number) => setBannerHeightRaw(h), []);
 
+  // In-session fallback for when localStorage can't persist (private mode/quota):
+  // remembers the dismissal so a focus/visibility resync doesn't flip it back today.
+  const sessionDismissRef = useRef<{ email: string; date: string } | null>(null);
+
+  // Dismissed if persisted today OR dismissed in-session for this user/day.
+  const computeDismissed = useCallback(() => {
+    if (readDismissed(email)) return true;
+    const s = sessionDismissRef.current;
+    return !!s && s.email === email && s.date === getLocalDateKey();
+  }, [email]);
+
   // Hide the banner for the rest of the day (client-side only). Initialised
   // lazily from localStorage so a refresh keeps it dismissed without a flash.
   const [dismissedForToday, setDismissedForToday] = useState(() => readDismissed(email));
@@ -135,7 +146,7 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
   // Re-evaluate when the account changes and when the tab regains focus, so the
   // banner returns after midnight (or for a different user) without a full reload.
   useEffect(() => {
-    const sync = () => setDismissedForToday(readDismissed(email));
+    const sync = () => setDismissedForToday(computeDismissed());
     sync();
     const onVisible = () => {
       if (document.visibilityState === "visible") sync();
@@ -146,14 +157,16 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", sync);
     };
-  }, [email]);
+  }, [computeDismissed]);
 
   const dismissForToday = useCallback(() => {
     if (!email) return;
+    // Record the in-session dismissal first so it survives even if the write fails.
+    sessionDismissRef.current = { email, date: getLocalDateKey() };
     try {
       localStorage.setItem(dismissStorageKey(email), getLocalDateKey());
     } catch {
-      // ignore write failures; still hide for this session
+      // persistence unavailable — the in-session ref above keeps it hidden today
     }
     setDismissedForToday(true);
   }, [email]);
