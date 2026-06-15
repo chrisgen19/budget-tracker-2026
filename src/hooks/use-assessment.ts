@@ -16,8 +16,13 @@ export interface AssessmentPeriod {
 export const assessmentKeys = {
   all: ["assessment"] as const,
   report: (userKey: string, p: AssessmentPeriod) => ["assessment", "report", userKey, p] as const,
-  dailyTip: (userKey: string) => ["assessment", "daily-tip", userKey] as const,
+  // localDate in the key so the tip naturally refetches once the user crosses local midnight.
+  dailyTip: (userKey: string, localDate: string) => ["assessment", "daily-tip", userKey, localDate] as const,
 };
+
+/** The user's current calendar date (YYYY-MM-DD) given their tz offset in minutes. */
+export const localDateFor = (timezoneOffset: number): string =>
+  new Date(Date.now() - timezoneOffset * 60_000).toISOString().slice(0, 10);
 
 /* ------------------------------------------------------------------ */
 /*  Cached report (GET)                                                */
@@ -52,7 +57,7 @@ const fetchDailyTip = async (): Promise<AiDailyTipResponse> => {
 export function useDailyTipQuery() {
   const { user } = useUser();
   return useQuery({
-    queryKey: assessmentKeys.dailyTip(user.email),
+    queryKey: assessmentKeys.dailyTip(user.email, localDateFor(user.timezoneOffset)),
     queryFn: fetchDailyTip,
     staleTime: Infinity,
   });

@@ -55,17 +55,15 @@ export const assessmentPayloadSchema = z.object({
       consistency: subScoreSchema,
     }),
   }),
+  // All-types only — the Reports type filter must not skew the assessment, and the
+  // cache key is type-independent, so type-filtered fields (labels, top transactions)
+  // are intentionally excluded. The statistics block below carries the all-types highlights.
   categoryBreakdown: z.array(z.object({
     name: NAME,
     type: z.enum(["INCOME", "EXPENSE"]),
     amount: z.number(),
     percentage: z.number(),
     transactionCount: z.number(),
-  })).max(100).default([]),
-  labelBreakdown: z.array(z.object({
-    name: NAME,
-    amount: z.number(),
-    percentage: z.number(),
   })).max(100).default([]),
   statistics: z.object({
     avgDailySpend: z.number().nullable(),
@@ -78,13 +76,6 @@ export const assessmentPayloadSchema = z.object({
     mostUsedCategory: z.object({ name: NAME, count: z.number() }).nullable(),
     mostExpensiveCategory: z.object({ name: NAME, amount: z.number() }).nullable(),
   }),
-  topTransactions: z.array(z.object({
-    description: z.string().max(200),
-    amount: z.number(),
-    type: z.enum(["INCOME", "EXPENSE"]),
-    categoryName: NAME,
-    dateLabel: LABEL,
-  })).max(50).default([]),
 });
 
 export type AssessmentPayload = z.infer<typeof assessmentPayloadSchema>;
@@ -191,7 +182,6 @@ const buildDataSnapshot = (p: AssessmentPayload, bills: UpcomingBillsContext): s
       pctOfSpend: Math.round(c.percentage),
       count: c.transactionCount,
     })),
-    topLabels: p.labelBreakdown.slice(0, 5).map((l) => ({ name: l.name, amount: l.amount, pct: Math.round(l.percentage) })),
     stats: {
       avgDailySpend: p.statistics.avgDailySpend,
       avgExpenseSize: p.statistics.avgExpenseSize,
@@ -202,13 +192,6 @@ const buildDataSnapshot = (p: AssessmentPayload, bills: UpcomingBillsContext): s
       mostUsedCategory: p.statistics.mostUsedCategory?.name ?? null,
       mostExpensiveCategory: p.statistics.mostExpensiveCategory?.name ?? null,
     },
-    biggestTransactions: p.topTransactions.slice(0, 5).map((t) => ({
-      description: t.description,
-      amount: t.amount,
-      type: t.type,
-      category: t.categoryName,
-      when: t.dateLabel,
-    })),
     upcomingBills: {
       count: bills.count,
       total: bills.totalAmount,

@@ -70,7 +70,6 @@ const buildPayload = (data: AnalyticsData, currency: string, granularity: string
     categoryBreakdown: data.allCategoryBreakdown.map((c) => ({
       name: c.name, type: c.type, amount: c.amount, percentage: c.percentage, transactionCount: c.transactionCount,
     })),
-    labelBreakdown: data.labelBreakdown.map((l) => ({ name: l.name, amount: l.amount, percentage: l.percentage })),
     statistics: {
       avgDailySpend: data.statistics.avgDailySpend,
       avgExpenseSize: data.statistics.avgExpenseSize,
@@ -86,9 +85,6 @@ const buildPayload = (data: AnalyticsData, currency: string, granularity: string
         ? { name: data.statistics.mostExpensiveCategory.name, amount: data.statistics.mostExpensiveCategory.amount }
         : null,
     },
-    topTransactions: data.topTransactions.map((t) => ({
-      description: t.description, amount: t.amount, type: t.type, categoryName: t.categoryName, dateLabel: t.dateLabel,
-    })),
   };
 };
 

@@ -58,6 +58,12 @@ export async function POST(request: Request) {
 
   const periodKey = `${payload.granularity}:${from}:${to}`;
 
+  // Reserve quota BEFORE the expensive Gemini calls (mirrors the bill-reminders
+  // log-then-delete-on-failure pattern). This shrinks the cap race window from the
+  // full ~10s generation to the few ms between the count() above and this write,
+  // so concurrent requests can't each run two Gemini calls. Rolled back on failure.
+  const usageLog = await prisma.aiUsageLog.create({ data: { userId, kind: "REPORT" } });
+
   try {
     const billsResult = await getUpcomingBills(prisma, userId, { days: 14 });
     const bills: UpcomingBillsContext = {
@@ -77,14 +83,15 @@ export async function POST(request: Request) {
       update: { content, sources: sourcesJson, model, generatedAt: new Date() },
     });
 
-    await prisma.aiUsageLog.create({ data: { userId, kind: "REPORT" } });
-
     return NextResponse.json({
       report,
       generatedAt: row.generatedAt.toISOString(),
       model,
     });
   } catch (error) {
+    // Generation failed — release the reserved quota so the user isn't charged for it.
+    await prisma.aiUsageLog.delete({ where: { id: usageLog.id } }).catch(() => {});
+
     if (isGeminiUnavailable(error)) {
       return NextResponse.json(
         { error: "The AI service is busy right now. Please try again in a minute." },
