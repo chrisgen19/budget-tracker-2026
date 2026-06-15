@@ -597,7 +597,7 @@ export function AppShell({ children }: AppShellProps) {
 
       {/* Mobile Bottom Navigation */}
       <nav className="lg:hidden fixed bottom-0 inset-x-0 bg-white/90 backdrop-blur-md border-t border-cream-300/60 z-30 px-2 pb-[env(safe-area-inset-bottom)]">
-        <div className="flex items-center justify-around py-2">
+        <div className="flex items-start justify-around py-2">
           {MOBILE_NAV_ITEMS.map((item) => {
             const isActive = pathname === item.href;
             return (
@@ -605,14 +605,16 @@ export function AppShell({ children }: AppShellProps) {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all duration-200 min-w-[48px]",
+                  "flex flex-col items-center gap-1 px-1 py-2 rounded-xl transition-all duration-200 flex-1 basis-0 min-w-0",
                   isActive
                     ? "text-amber"
                     : "text-warm-300"
                 )}
               >
-                <item.icon className="w-5 h-5" />
-                <span className="text-[10px] font-medium">{item.label}</span>
+                <item.icon className="w-5 h-5 shrink-0" />
+                <span className="text-[10px] font-medium truncate w-full text-center">
+                  {item.label}
+                </span>
                 {isActive && (
                   <motion.div
                     layoutId="mobile-active"
@@ -629,12 +631,12 @@ export function AppShell({ children }: AppShellProps) {
               onClick={() => setScanOpen(true)}
               disabled={scanLimitReached}
               className={cn(
-                "flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all duration-200 min-w-[48px] relative",
+                "flex flex-col items-center gap-1 px-1 py-2 rounded-xl transition-all duration-200 flex-1 basis-0 min-w-0 relative",
                 scanLimitReached ? "text-warm-200 cursor-not-allowed" : "text-warm-300"
               )}
             >
-              <ScanLine className="w-5 h-5" />
-              <span className="text-[10px] font-medium">Scan</span>
+              <ScanLine className="w-5 h-5 shrink-0" />
+              <span className="text-[10px] font-medium truncate w-full text-center">Scan</span>
               {hasLimit && (
                 <span className={cn(
                   "text-[9px] font-medium",

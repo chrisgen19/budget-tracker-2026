@@ -157,12 +157,14 @@ function MobileMenu({
         className={cn(
           "transition-colors",
           triggerStyle === "tab"
-            ? "flex flex-col items-center gap-1 px-3 py-2 rounded-xl min-w-[48px] text-warm-300 hover:text-warm-600"
+            ? "flex flex-col items-center gap-1 px-1 py-2 rounded-xl flex-1 basis-0 min-w-0 text-warm-300 hover:text-warm-600"
             : "p-2 rounded-xl text-warm-400 hover:text-warm-600 hover:bg-cream-100"
         )}
       >
-        <User className="w-5 h-5" />
-        {triggerStyle === "tab" && <span className="text-[10px] font-medium">Profile</span>}
+        <User className="w-5 h-5 shrink-0" />
+        {triggerStyle === "tab" && (
+          <span className="text-[10px] font-medium truncate w-full text-center">Profile</span>
+        )}
       </Drawer.Trigger>
       <Drawer.Portal>
         <Drawer.Overlay className="fixed inset-0 bg-warm-900/30 backdrop-blur-sm z-50" />
