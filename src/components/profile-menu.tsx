@@ -7,6 +7,7 @@ import {
   useState,
   type ComponentType,
   type Dispatch,
+  type RefObject,
   type SetStateAction,
 } from "react";
 import { useRouter } from "next/navigation";
@@ -56,20 +57,21 @@ interface MenuViewProps {
   onSelect: (item: MenuItem) => void;
 }
 
-/** Account + quick-nav menu. Renders a bottom sheet (Vaul) on mobile and an
- *  anchored dropdown on desktop, sharing one item list. */
-export function ProfileMenu({
-  variant,
-  name,
-  email,
-  isAdmin,
-  triggerStyle = "icon",
-}: ProfileMenuProps) {
-  const [open, setOpen] = useState(false);
-  const router = useRouter();
-  const { hideAmounts, toggleHideAmounts } = usePrivacy();
+interface BuildMenuItemsArgs {
+  isAdmin: boolean;
+  hideAmounts: boolean;
+  router: ReturnType<typeof useRouter>;
+  toggleHideAmounts: () => void;
+}
 
-  const items: MenuItem[] = [
+/** Builds the shared menu item list (data only — no rendering). */
+function buildMenuItems({
+  isAdmin,
+  hideAmounts,
+  router,
+  toggleHideAmounts,
+}: BuildMenuItemsArgs): MenuItem[] {
+  return [
     { key: "profile", label: "My Profile", icon: User, onSelect: () => router.push("/profile") },
     { key: "bills", label: "Bills", icon: CalendarClock, onSelect: () => router.push("/bills"), mobileOnly: true },
     { key: "categories", label: "Categories", icon: Tags, onSelect: () => router.push("/categories"), mobileOnly: true },
@@ -91,6 +93,63 @@ export function ProfileMenu({
       danger: true,
     },
   ];
+}
+
+/** Closes the mobile sheet once the viewport reaches the desktop (lg) breakpoint.
+ *  Vaul portals the sheet onto document.body, so `lg:hidden` on the trigger won't
+ *  unmount or hide an already-open sheet after a resize/rotation. */
+function useCloseOnDesktop(setOpen: Dispatch<SetStateAction<boolean>>) {
+  useEffect(() => {
+    const mql = window.matchMedia("(min-width: 1024px)");
+    const handler = (e: MediaQueryListEvent) => {
+      if (e.matches) setOpen(false);
+    };
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, [setOpen]);
+}
+
+/** Closes the desktop dropdown on outside-click or Escape. */
+function useDesktopDismiss(
+  open: boolean,
+  setOpen: Dispatch<SetStateAction<boolean>>,
+  containerRef: RefObject<HTMLDivElement | null>
+) {
+  useEffect(() => {
+    if (!open) return;
+
+    const handleMouseDown = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+
+    document.addEventListener("mousedown", handleMouseDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open, setOpen, containerRef]);
+}
+
+/** Account + quick-nav menu. Renders a bottom sheet (Vaul) on mobile and an
+ *  anchored dropdown on desktop, sharing one item list. */
+export function ProfileMenu({
+  variant,
+  name,
+  email,
+  isAdmin,
+  triggerStyle = "icon",
+}: ProfileMenuProps) {
+  const [open, setOpen] = useState(false);
+  const router = useRouter();
+  const { hideAmounts, toggleHideAmounts } = usePrivacy();
+
+  const items = buildMenuItems({ isAdmin, hideAmounts, router, toggleHideAmounts });
 
   const handleSelect = (item: MenuItem) => {
     item.onSelect();
@@ -141,6 +200,30 @@ function MenuRow({
   );
 }
 
+/** Renders the item list with a divider before "Log out". */
+function MenuList({
+  items,
+  onSelect,
+  size,
+}: {
+  items: MenuItem[];
+  onSelect: (item: MenuItem) => void;
+  size: "sm" | "lg";
+}) {
+  return (
+    <>
+      {items.map((item) => (
+        <Fragment key={item.key}>
+          {item.key === "logout" && (
+            <div className={cn("border-t border-cream-200/80", size === "lg" && "my-2")} />
+          )}
+          <MenuRow item={item} onSelect={onSelect} size={size} />
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
 function MobileMenu({
   open,
   setOpen,
@@ -150,6 +233,8 @@ function MobileMenu({
   onSelect,
   triggerStyle,
 }: MenuViewProps & { triggerStyle: "icon" | "tab" }) {
+  useCloseOnDesktop(setOpen);
+
   return (
     <Drawer.Root open={open} onOpenChange={setOpen}>
       <Drawer.Trigger
@@ -187,12 +272,7 @@ function MobileMenu({
             </div>
           </div>
           <div className="py-2">
-            {items.map((item) => (
-              <Fragment key={item.key}>
-                {item.key === "logout" && <div className="my-2 border-t border-cream-200/80" />}
-                <MenuRow item={item} onSelect={onSelect} size="lg" />
-              </Fragment>
-            ))}
+            <MenuList items={items} onSelect={onSelect} size="lg" />
           </div>
         </Drawer.Content>
       </Drawer.Portal>
@@ -202,26 +282,7 @@ function MobileMenu({
 
 function DesktopMenu({ open, setOpen, name, email, items, onSelect }: MenuViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-
-    const handleMouseDown = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-
-    document.addEventListener("mousedown", handleMouseDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handleMouseDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open, setOpen]);
+  useDesktopDismiss(open, setOpen, containerRef);
 
   return (
     <div ref={containerRef} className="relative">
@@ -248,12 +309,7 @@ function DesktopMenu({ open, setOpen, name, email, items, onSelect }: MenuViewPr
             transition={{ duration: 0.15 }}
             className="absolute bottom-full left-0 right-0 mb-2 bg-white rounded-xl shadow-soft-lg border border-cream-300/60 overflow-hidden z-50"
           >
-            {items.map((item) => (
-              <Fragment key={item.key}>
-                {item.key === "logout" && <div className="border-t border-cream-200/80" />}
-                <MenuRow item={item} onSelect={onSelect} size="sm" />
-              </Fragment>
-            ))}
+            <MenuList items={items} onSelect={onSelect} size="sm" />
           </motion.div>
         )}
       </AnimatePresence>
