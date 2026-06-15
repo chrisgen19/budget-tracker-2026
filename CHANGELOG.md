@@ -2,6 +2,17 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-06-15 — Analytics Stats & Health mobile redesign
+
+### Stats (Records & Statistics) tab
+- Replaced the uniform 3-box grid with a content-fit layout: **Top Records** now shows Biggest Expense & Income as two featured tiles plus a full-width "Most Expensive Day" banner; Averages, Activity, and Category Insights render as clean **list rows** (icon + label left, value right) with dividers
+- Tighter card padding on mobile (`p-4 sm:p-5`); long category/description text truncates gracefully
+
+### Health (Financial Health) tab
+- Overall score is now a horizontal **gauge + text hero** on mobile (was a tall centered stack); faint band-colored halo behind the ring gauge
+- Sub-scores use a **2-up grid** on mobile (5th spans full width) with a **mini progress bar** (score/100, color-banded) under each score and 2-line clamped descriptions
+- Privacy masking, empty-state `—` handling, and tablet/desktop layouts unchanged
+
 ## 2026-06-15 — Profile Menu
 
 ### Account & Quick-Nav Menu
