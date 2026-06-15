@@ -2,6 +2,19 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-06-15 — Profile Menu
+
+### Account & Quick-Nav Menu
+- Tapping the profile icon now opens a menu instead of navigating straight to `/profile`
+- **Mobile**: native-style bottom sheet (drag-to-dismiss) built with the `vaul` library
+- **Desktop**: anchored dropdown opening upward from the sidebar profile row (Framer Motion)
+- Items: My Profile, Admin (admins only), Hide/Show amounts toggle, Log out; plus Bills & Categories on mobile only (desktop already lists them in the sidebar)
+- Hide-amounts toggle flips inline via `usePrivacy()` and keeps the menu open for feedback
+- Standalone desktop "Sign Out" button folded into the menu
+- Mobile bottom nav: Dashboard / Transactions / Analytics (+ Scan) + a **Profile** tab that opens the sheet — Bills & Categories moved into the menu (desktop sidebar unchanged)
+- Profile trigger moved out of the top mobile header (now logo/title only) into the bottom nav tab
+- New component: `src/components/profile-menu.tsx`; new dependency: `vaul@1.1.2`
+
 ## 2026-04-07 — Financial Health Score (Analytics Phase 4)
 
 ### Financial Health Tab
