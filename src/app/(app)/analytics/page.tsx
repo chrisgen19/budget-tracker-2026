@@ -224,7 +224,32 @@ export default function AnalyticsPage() {
   // tab collapses the page and clamps the scroll, bringing the in-page controls back.
   const recomputeToken = `${activeTab}:${isLoading}`;
   const periodNavInView = useVisibleBelowOffset(periodNavRef, topOffset, recomputeToken);
-  const tabBarInView = useVisibleBelowOffset(tabBarRef, topOffset, recomputeToken);
+
+  // Distance from the sticky bar's top to the bottom of the pinned period row
+  // (its offsetTop within the fixed bar + its height, so the bar's own padding is
+  // included). The tab sentinel uses this so the in-page tab bar counts as "out of
+  // view" the moment it slides under that fixed row — otherwise there's a band where
+  // the period row covers the in-page tabs but the sticky tabs row hasn't appeared.
+  const periodRowRef = useRef<HTMLDivElement>(null);
+  const [periodRowExtent, setPeriodRowExtent] = useState(0);
+  useIsomorphicLayoutEffect(() => {
+    const el = periodRowRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    // Keep the last non-zero value: the row is display:none (extent 0) while hidden,
+    // so caching avoids a 1-frame wrong offset when it re-appears.
+    const measure = () => {
+      const extent = el.offsetTop + el.offsetHeight;
+      if (el.offsetHeight > 0) setPeriodRowExtent(extent);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  // When the period row is pinned, the tab bar must clear below it; otherwise just the header.
+  const tabTopOffset = topOffset + (periodNavInView ? 0 : periodRowExtent);
+  const tabBarInView = useVisibleBelowOffset(tabBarRef, tabTopOffset, recomputeToken);
+
   // Each in-page control is inert exactly when its sticky row is shown; derived
   // directly from visibility so it can never get stuck. The bar itself is active
   // whenever either row is shown.
@@ -270,7 +295,7 @@ export default function AnalyticsPage() {
           {/* Each row is always mounted and shown via `hidden` (no mount churn) so a
               momentarily-stale measure can't cause a flicker; the matching in-page
               control is hidden whenever its sticky row is visible. */}
-          <div className={cn(periodNavInView && "hidden")}>
+          <div ref={periodRowRef} className={cn(periodNavInView && "hidden")}>
             <TimeRangePicker
               periodType={periodType}
               from={dateRange.from}
