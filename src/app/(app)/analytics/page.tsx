@@ -36,7 +36,7 @@ import { LabelBreakdownChart } from "@/components/analytics/label-breakdown-char
 import { SpendingHeatmap } from "@/components/analytics/spending-heatmap";
 import { TopTransactions } from "@/components/analytics/top-transactions";
 import { AnalyticsHero } from "@/components/analytics/analytics-hero";
-import { AnalyticsSkeleton } from "@/components/analytics/analytics-skeleton";
+import { AnalyticsHeroSkeleton, AnalyticsContentSkeleton } from "@/components/analytics/analytics-skeleton";
 import { RecordsStatistics } from "@/components/analytics/records-statistics";
 import { FinancialHealthScore } from "@/components/analytics/financial-health-score";
 import { stagger, fadeUp } from "@/components/analytics/motion-variants";
@@ -192,6 +192,28 @@ export default function AnalyticsPage() {
         )}
       </AnimatePresence>
 
+      {/* Hero overview — above the tabs: it's tab-independent and changes only
+          with the selected period, so it stays put while the tabs switch below. */}
+      {isLoading ? (
+        <div className="mb-6">
+          <AnalyticsHeroSkeleton />
+        </div>
+      ) : isError || !data ? null : (
+        <motion.div variants={stagger} initial="hidden" animate="show" className="mb-6">
+          <motion.div variants={fadeUp}>
+            <AnalyticsHero
+              summary={data.summary}
+              previousSummary={data.previousSummary}
+              cashFlow={data.cashFlow}
+              periodLabel={data.periodLabel}
+              previousPeriodLabel={data.previousPeriodLabel}
+              currency={currency}
+              hideAmounts={hideAmounts}
+            />
+          </motion.div>
+        </motion.div>
+      )}
+
       {/* Tab Bar */}
       <div role="tablist" className="grid grid-cols-3 sm:flex gap-1 p-1 bg-cream-100 rounded-xl mb-6 sm:w-fit">
         {ANALYTICS_TABS.map((tab) => (
@@ -222,7 +244,7 @@ export default function AnalyticsPage() {
       </div>
 
       {isLoading ? (
-        <AnalyticsSkeleton />
+        <AnalyticsContentSkeleton />
       ) : isError || !data ? (
         <div className="card p-8 flex flex-col items-center gap-3 text-center">
           <div className="w-12 h-12 rounded-xl bg-red-50 flex items-center justify-center">
@@ -241,21 +263,6 @@ export default function AnalyticsPage() {
         </div>
       ) : (
         <>
-          {/* Hero overview (always visible) */}
-          <motion.div variants={stagger} initial="hidden" animate="show">
-            <motion.div variants={fadeUp}>
-              <AnalyticsHero
-                summary={data.summary}
-                previousSummary={data.previousSummary}
-                cashFlow={data.cashFlow}
-                periodLabel={data.periodLabel}
-                previousPeriodLabel={data.previousPeriodLabel}
-                currency={currency}
-                hideAmounts={hideAmounts}
-              />
-            </motion.div>
-          </motion.div>
-
           {/* Reports Tab */}
           {activeTab === "reports" && (
             <motion.div
@@ -263,7 +270,7 @@ export default function AnalyticsPage() {
               variants={stagger}
               initial="hidden"
               animate="show"
-              className="space-y-4 mt-4"
+              className="space-y-4"
             >
               {/* Cash Flow */}
               <motion.div variants={fadeUp} className="card p-5">
@@ -331,14 +338,14 @@ export default function AnalyticsPage() {
 
           {/* Records & Statistics Tab */}
           {activeTab === "statistics" && (
-            <motion.div key="statistics" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mt-4">
+            <motion.div key="statistics" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
               <RecordsStatistics statistics={data.statistics} currency={currency} hideAmounts={hideAmounts} />
             </motion.div>
           )}
 
           {/* Financial Health Tab */}
           {activeTab === "health" && (
-            <motion.div key="health" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mt-4">
+            <motion.div key="health" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
               <FinancialHealthScore healthScore={data.healthScore} />
             </motion.div>
           )}
