@@ -87,6 +87,7 @@ export async function POST(request: Request) {
         { status: 503 }
       );
     }
+    console.error("[assessment/generate] failed:", error instanceof Error ? error.message : error);
     return NextResponse.json(
       { error: "Failed to generate assessment. Please try again." },
       { status: 500 }

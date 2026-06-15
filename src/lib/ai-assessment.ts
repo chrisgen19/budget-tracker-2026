@@ -246,8 +246,17 @@ Respond with ONLY valid JSON (no markdown), shape:
     config: receiptScanConfig(),
   });
   const parsed = assessmentReportSchema.safeParse(parseJsonObject(response.text));
-  if (!parsed.success) throw new Error("Failed to parse AI assessment response");
-  return parsed.data;
+  if (!parsed.success) {
+    console.error("[ai-assessment] report parse failed:", parsed.error.issues.map((i) => i.path.join(".")).join(", ") || "non-object response");
+    throw new Error("Failed to parse AI assessment response");
+  }
+  const r = parsed.data;
+  const isEmpty =
+    !r.summary && !r.scoreCommentary &&
+    r.watchList.length === 0 && r.cutBack.length === 0 &&
+    r.boostSavings.length === 0 && r.earnIdeas.length === 0 && r.quickActions.length === 0;
+  if (isEmpty) throw new Error("AI returned an empty assessment");
+  return r;
 };
 
 /** Grounded web tips + sources (Google Search). Degrades to empty on failure. */
