@@ -91,7 +91,10 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     // Generation failed — release the reserved quota so the user isn't charged for it.
-    await prisma.aiUsageLog.delete({ where: { id: usageLog.id } }).catch(() => {});
+    // Log if the rollback itself fails (the row would otherwise stay counted toward the cap).
+    await prisma.aiUsageLog
+      .delete({ where: { id: usageLog.id } })
+      .catch((e) => console.error("[assessment/generate] quota rollback failed:", e instanceof Error ? e.message : e));
 
     if (isGeminiUnavailable(error)) {
       return NextResponse.json(

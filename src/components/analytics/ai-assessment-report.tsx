@@ -286,9 +286,9 @@ export function AiAssessmentReport({ data, period, currency, hideAmounts }: AiAs
             </Section>
           )}
 
-          {report.webTips.length > 0 && (
+          {(report.webTips.length > 0 || report.sources.length > 0) && (
             <Section icon={Globe} title="Tips from the web">
-              <TipList items={report.webTips} />
+              {report.webTips.length > 0 && <TipList items={report.webTips} />}
               {report.sources.length > 0 && (
                 <div className="mt-4 pt-3 border-t border-cream-200/70">
                   <p className="text-[10px] font-medium tracking-wider text-warm-400 uppercase mb-2">Sources</p>
