@@ -134,7 +134,7 @@ function AnalyticsTabBar({
   className?: string;
 }) {
   return (
-    <div role="tablist" className={cn("grid grid-cols-3 sm:flex gap-1 p-1 bg-cream-100 rounded-xl", className)}>
+    <div role="tablist" className={cn("grid grid-cols-2 sm:flex gap-1 p-1 bg-cream-100 rounded-xl", className)}>
       {ANALYTICS_TABS.map((tab) => (
         <button
           key={tab.id}
