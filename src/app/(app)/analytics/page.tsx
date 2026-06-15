@@ -122,7 +122,11 @@ export default function AnalyticsPage() {
   // Below `lg` the app shell has a fixed 4rem header, so offset the observer by it
   // (the in-page nav is unusable once it slides under that header); no offset on desktop.
   const headerNavRef = useRef<HTMLDivElement>(null);
-  const [headerTopOffset, setHeaderTopOffset] = useState(0);
+  // Seed the offset from the current viewport so the first (synchronous) measure
+  // already uses the right value on mobile, before the resize listener runs.
+  const [headerTopOffset, setHeaderTopOffset] = useState(() =>
+    typeof window !== "undefined" && !window.matchMedia("(min-width: 1024px)").matches ? 64 : 0,
+  );
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1024px)");
     const apply = () => setHeaderTopOffset(mq.matches ? 0 : 64);
@@ -132,6 +136,14 @@ export default function AnalyticsPage() {
   }, []);
   const headerNavInView = useVisibleBelowOffset(headerNavRef, headerTopOffset);
 
+  // The sticky copy stays mounted through its exit animation, so track its real
+  // presence and keep the original inert until it's fully gone — otherwise both
+  // pickers are briefly interactive while scrolling back up.
+  const [stickyMounted, setStickyMounted] = useState(false);
+  useEffect(() => {
+    if (!headerNavInView) setStickyMounted(true);
+  }, [headerNavInView]);
+
   return (
     <div>
       {/* Page Header + Period Selector */}
@@ -140,9 +152,9 @@ export default function AnalyticsPage() {
           <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">Analytics</h1>
           <p className="text-warm-400 text-sm mt-1">Reports &amp; insights</p>
         </div>
-        {/* When the sticky copy is shown, mark this off-screen original inert so
-            keyboard/screen-reader users don't hit duplicate, hidden controls. */}
-        <div ref={headerNavRef} inert={!headerNavInView}>
+        {/* Inert while the sticky copy is mounted (incl. its exit), so keyboard /
+            screen-reader users never hit two interactive period pickers. */}
+        <div ref={headerNavRef} inert={stickyMounted}>
           <TimeRangePicker
             periodType={periodType}
             from={dateRange.from}
@@ -156,7 +168,7 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Sticky period bar — appears when the header nav scrolls out of view */}
-      <AnimatePresence>
+      <AnimatePresence onExitComplete={() => setStickyMounted(false)}>
         {!headerNavInView && (
           <motion.div
             initial={{ y: -16, opacity: 0 }}
