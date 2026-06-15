@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo, useRef, useEffect, type RefObject } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useIsomorphicLayoutEffect } from "framer-motion";
 import {
   Activity,
   AlertTriangle,
@@ -51,23 +51,31 @@ const ANALYTICS_TABS = [
 ];
 
 /**
- * Like framer-motion's `useInView`, but (1) assumes in-view until the observer
- * first measures — avoiding a first-paint flash of the sticky bar — and (2) takes
- * a `rootMargin` so a fixed header overlapping the viewport top doesn't keep a
- * covered element counted as "in view".
+ * Tracks whether `ref` is visible below a `topOffset` (px) from the viewport top —
+ * used to know when the in-page period nav has scrolled under the fixed header.
+ *
+ * Measures synchronously before paint so the initial value is correct whether the
+ * page mounts at the top (no sticky-bar flash) or already scrolled (restored scroll
+ * / bfcache — bar shown immediately, no lag), then keeps it updated via an observer.
  */
-function useInViewWithMargin<T extends Element>(ref: RefObject<T | null>, rootMargin: string) {
+function useVisibleBelowOffset<T extends Element>(ref: RefObject<T | null>, topOffset: number) {
   const [inView, setInView] = useState(true);
-  useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const el = ref.current;
-    if (!el || typeof IntersectionObserver === "undefined") return;
+    if (!el) return;
+    const measure = () => {
+      const rect = el.getBoundingClientRect();
+      setInView(rect.bottom > topOffset && rect.top < window.innerHeight);
+    };
+    measure();
+    if (typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(
       ([entry]) => setInView(entry.isIntersecting),
-      { rootMargin },
+      { rootMargin: `-${topOffset}px 0px 0px 0px` },
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [ref, rootMargin]);
+  }, [ref, topOffset]);
   return inView;
 }
 
@@ -114,15 +122,15 @@ export default function AnalyticsPage() {
   // Below `lg` the app shell has a fixed 4rem header, so offset the observer by it
   // (the in-page nav is unusable once it slides under that header); no offset on desktop.
   const headerNavRef = useRef<HTMLDivElement>(null);
-  const [navRootMargin, setNavRootMargin] = useState("0px");
+  const [headerTopOffset, setHeaderTopOffset] = useState(0);
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1024px)");
-    const apply = () => setNavRootMargin(mq.matches ? "0px" : "-64px 0px 0px 0px");
+    const apply = () => setHeaderTopOffset(mq.matches ? 0 : 64);
     apply();
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
   }, []);
-  const headerNavInView = useInViewWithMargin(headerNavRef, navRootMargin);
+  const headerNavInView = useVisibleBelowOffset(headerNavRef, headerTopOffset);
 
   return (
     <div>
@@ -132,7 +140,9 @@ export default function AnalyticsPage() {
           <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">Analytics</h1>
           <p className="text-warm-400 text-sm mt-1">Reports &amp; insights</p>
         </div>
-        <div ref={headerNavRef}>
+        {/* When the sticky copy is shown, mark this off-screen original inert so
+            keyboard/screen-reader users don't hit duplicate, hidden controls. */}
+        <div ref={headerNavRef} inert={!headerNavInView}>
           <TimeRangePicker
             periodType={periodType}
             from={dateRange.from}
