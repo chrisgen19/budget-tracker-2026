@@ -51,7 +51,12 @@ export function useAssessmentQuery(p: AssessmentPeriod) {
 const fetchDailyTip = async (): Promise<AiDailyTipResponse> => {
   const res = await fetch("/api/assessment/daily-tip");
   if (!res.ok) throw new Error("Failed to load daily tip");
-  return res.json();
+  const data: AiDailyTipResponse = await res.json();
+  // The route returns 200 { tip: null } when generation transiently fails (it degrades
+  // gracefully). Treat that as an error so React Query doesn't cache the failure for the
+  // whole local day (staleTime: Infinity) — it retries on the next visit and caches once it succeeds.
+  if (!data.tip) throw new Error("Daily tip unavailable");
+  return data;
 };
 
 export function useDailyTipQuery() {
