@@ -101,6 +101,7 @@ function buildMenuItems({
 function useCloseOnDesktop(setOpen: Dispatch<SetStateAction<boolean>>) {
   useEffect(() => {
     const mql = window.matchMedia("(min-width: 1024px)");
+    if (mql.matches) setOpen(false);
     const handler = (e: MediaQueryListEvent) => {
       if (e.matches) setOpen(false);
     };
@@ -289,6 +290,8 @@ function DesktopMenu({ open, setOpen, name, email, items, onSelect }: MenuViewPr
       <button
         type="button"
         onClick={() => setOpen((prev) => !prev)}
+        aria-haspopup="menu"
+        aria-expanded={open}
         className="flex items-center gap-3 w-full px-2 py-1 rounded-xl text-left hover:bg-cream-100 transition-colors"
       >
         <div className="w-9 h-9 rounded-full bg-cream-200 flex items-center justify-center shrink-0">
