@@ -16,11 +16,8 @@ import {
 } from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils";
 import { stagger, fadeUp } from "@/components/analytics/motion-variants";
-import {
-  useAssessmentQuery,
-  useGenerateAssessment,
-  useDailyTipQuery,
-} from "@/hooks/use-assessment";
+import { useAssessmentQuery, useDailyTipQuery } from "@/hooks/use-assessment";
+import { useAssessment, periodKeyOf } from "@/components/assessment-provider";
 import type { AnalyticsData, AiWatchSeverity } from "@/types";
 import type { AssessmentPayload } from "@/lib/ai-assessment";
 
@@ -127,15 +124,17 @@ function DailyTipCard() {
 
 export function AiAssessmentReport({ data, period, currency, hideAmounts }: AiAssessmentReportProps) {
   const { data: reportData, isLoading } = useAssessmentQuery(period);
-  const generate = useGenerateAssessment();
+  const { isGenerating, generate } = useAssessment();
 
   const payload = useMemo(() => buildPayload(data, currency, period.granularity), [data, currency, period.granularity]);
   const fmt = (n: number | null) => (n === null ? "—" : hideAmounts ? "•••" : formatCurrency(n, currency));
 
   const report = reportData?.report;
   const hasData = data.summary.transactionCount > 0;
+  const pending = isGenerating(periodKeyOf(period.granularity, period.from, period.to));
 
-  const handleGenerate = () => generate.mutate({ from: period.from, to: period.to, payload });
+  const handleGenerate = () =>
+    generate({ from: period.from, to: period.to, granularity: period.granularity, payload });
 
   return (
     <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-4">
@@ -159,30 +158,32 @@ export function AiAssessmentReport({ data, period, currency, hideAmounts }: AiAs
             <button
               type="button"
               onClick={handleGenerate}
-              disabled={generate.isPending}
+              disabled={pending}
               className="inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-4 py-2 rounded-xl transition-colors shadow-soft disabled:opacity-60 shrink-0"
             >
-              {generate.isPending ? (
+              {pending ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : report ? (
                 <RefreshCw className="w-4 h-4" />
               ) : (
                 <Sparkles className="w-4 h-4" />
               )}
-              {generate.isPending ? "Analyzing…" : report ? "Refresh" : "Generate"}
+              {pending ? "Analyzing…" : report ? "Refresh" : "Generate"}
             </button>
           )}
         </div>
 
-        {generate.isError && (
-          <p className="text-xs text-expense mt-3">{(generate.error as Error).message}</p>
+        {pending && (
+          <p className="text-xs text-warm-400 mt-3">
+            Analyzing in the background — feel free to browse; we&apos;ll notify you when it&apos;s ready.
+          </p>
         )}
 
         {!hasData && (
           <p className="text-sm text-warm-400 mt-3">Add some transactions for this period to get an AI assessment.</p>
         )}
 
-        {hasData && !report && !generate.isPending && !isLoading && (
+        {hasData && !report && !pending && !isLoading && (
           <p className="text-sm text-warm-500 mt-3">
             Tap <span className="font-medium">Generate</span> to have AI analyze your spending and suggest where to cut back, how to save more, and ways to earn.
           </p>

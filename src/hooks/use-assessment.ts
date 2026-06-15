@@ -1,5 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AssessmentPayload } from "@/lib/ai-assessment";
+import { useQuery } from "@tanstack/react-query";
 import type { AiAssessmentResponse, AiDailyTipResponse } from "@/types";
 
 /* ------------------------------------------------------------------ */
@@ -34,41 +33,6 @@ export function useAssessmentQuery(p: AssessmentPeriod) {
     queryKey: assessmentKeys.report(p),
     queryFn: () => fetchReport(p),
     staleTime: Infinity, // cached server-side per period; only refetch on explicit generate
-  });
-}
-
-/* ------------------------------------------------------------------ */
-/*  Generate / refresh (POST)                                          */
-/* ------------------------------------------------------------------ */
-
-interface GenerateArgs {
-  from: string;
-  to: string;
-  payload: AssessmentPayload;
-}
-
-export function useGenerateAssessment() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ from, to, payload }: GenerateArgs): Promise<AiAssessmentResponse> => {
-      const res = await fetch("/api/assessment/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ from, to, payload }),
-      });
-      if (!res.ok) {
-        const data = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(data?.error ?? "Failed to generate assessment");
-      }
-      return res.json();
-    },
-    onSuccess: (data, { from, to, payload }) => {
-      queryClient.setQueryData(
-        assessmentKeys.report({ granularity: payload.granularity, from, to }),
-        data
-      );
-    },
   });
 }
 
