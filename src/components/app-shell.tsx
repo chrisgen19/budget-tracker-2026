@@ -3,7 +3,6 @@
 import { useState, useCallback } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { signOut } from "next-auth/react";
 import {
   LayoutDashboard,
   BarChart3,
@@ -11,9 +10,7 @@ import {
   CalendarClock,
   Tags,
   Tag,
-  LogOut,
   Wallet,
-  User,
   ScanLine,
   Shield,
   AlertTriangle,
@@ -21,6 +18,7 @@ import {
 import { cn, compressImage, formatDateInput, toLocalDateString } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { useUser } from "@/components/user-provider";
+import { ProfileMenu } from "@/components/profile-menu";
 import { ScanProvider } from "@/components/scan-provider";
 import { ScanReceiptSheet } from "@/components/scan-receipt-sheet";
 import { Modal } from "@/components/ui/modal";
@@ -57,8 +55,12 @@ const NAV_ITEMS = [
   { href: "/labels", label: "Labels", icon: Tag },
 ];
 
-/** Mobile bottom nav excludes Labels to avoid overflow on narrow viewports */
-const MOBILE_NAV_ITEMS = NAV_ITEMS.filter((item) => item.href !== "/labels");
+/** Hidden from the mobile bottom nav — reachable via the profile menu instead.
+ *  Labels avoids overflow; Bills/Categories live in the profile menu. */
+const MOBILE_NAV_EXCLUDED = ["/labels", "/bills", "/categories"];
+const MOBILE_NAV_ITEMS = NAV_ITEMS.filter(
+  (item) => !MOBILE_NAV_EXCLUDED.includes(item.href)
+);
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
@@ -574,51 +576,28 @@ export function AppShell({ children }: AppShellProps) {
               </span>
             </div>
           )}
-          <Link
-            href="/profile"
-            className="flex items-center gap-3 px-2 mb-3 rounded-xl py-1 -mx-0 hover:bg-cream-100 transition-colors"
-          >
-            <div className="w-9 h-9 rounded-full bg-cream-200 flex items-center justify-center">
-              <User className="w-4 h-4 text-warm-400" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-warm-600 truncate">
-                {user.name}
-              </p>
-              <p className="text-xs text-warm-400 truncate">{user.email}</p>
-            </div>
-          </Link>
-          <button
-            onClick={() => signOut({ callbackUrl: "/login" })}
-            className="flex items-center gap-2 w-full px-4 py-2.5 rounded-xl text-sm text-warm-400 hover:text-expense hover:bg-expense-light transition-all duration-200"
-          >
-            <LogOut className="w-4 h-4" />
-            Sign Out
-          </button>
+          <ProfileMenu
+            variant="desktop"
+            name={user.name}
+            email={user.email}
+            isAdmin={user.role === "ADMIN"}
+          />
         </div>
       </aside>
 
       {/* Mobile Header */}
       <header className="lg:hidden fixed top-0 inset-x-0 bg-white/90 backdrop-blur-md border-b border-cream-300/60 z-30 px-4 py-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-amber text-white flex items-center justify-center shadow-soft">
-              <Wallet className="w-4 h-4" />
-            </div>
-            <h1 className="font-serif text-lg text-warm-700">Budget Tracker</h1>
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-xl bg-amber text-white flex items-center justify-center shadow-soft">
+            <Wallet className="w-4 h-4" />
           </div>
-          <Link
-            href="/profile"
-            className="p-2 rounded-xl text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors"
-          >
-            <User className="w-5 h-5" />
-          </Link>
+          <h1 className="font-serif text-lg text-warm-700">Budget Tracker</h1>
         </div>
       </header>
 
       {/* Mobile Bottom Navigation */}
       <nav className="lg:hidden fixed bottom-0 inset-x-0 bg-white/90 backdrop-blur-md border-t border-cream-300/60 z-30 px-2 pb-[env(safe-area-inset-bottom)]">
-        <div className="flex items-center justify-around py-2">
+        <div className="flex items-start justify-around py-2">
           {MOBILE_NAV_ITEMS.map((item) => {
             const isActive = pathname === item.href;
             return (
@@ -626,14 +605,16 @@ export function AppShell({ children }: AppShellProps) {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all duration-200 min-w-[48px]",
+                  "flex flex-col items-center gap-1 px-1 py-2 rounded-xl transition-all duration-200 flex-1 basis-0 min-w-0",
                   isActive
                     ? "text-amber"
                     : "text-warm-300"
                 )}
               >
-                <item.icon className="w-5 h-5" />
-                <span className="text-[10px] font-medium">{item.label}</span>
+                <item.icon className="w-5 h-5 shrink-0" />
+                <span className="text-[10px] font-medium truncate w-full text-center">
+                  {item.label}
+                </span>
                 {isActive && (
                   <motion.div
                     layoutId="mobile-active"
@@ -650,12 +631,12 @@ export function AppShell({ children }: AppShellProps) {
               onClick={() => setScanOpen(true)}
               disabled={scanLimitReached}
               className={cn(
-                "flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all duration-200 min-w-[48px] relative",
+                "flex flex-col items-center gap-1 px-1 py-2 rounded-xl transition-all duration-200 flex-1 basis-0 min-w-0 relative",
                 scanLimitReached ? "text-warm-200 cursor-not-allowed" : "text-warm-300"
               )}
             >
-              <ScanLine className="w-5 h-5" />
-              <span className="text-[10px] font-medium">Scan</span>
+              <ScanLine className="w-5 h-5 shrink-0" />
+              <span className="text-[10px] font-medium truncate w-full text-center">Scan</span>
               {hasLimit && (
                 <span className={cn(
                   "text-[9px] font-medium",
@@ -666,6 +647,13 @@ export function AppShell({ children }: AppShellProps) {
               )}
             </button>
           )}
+          <ProfileMenu
+            variant="mobile"
+            triggerStyle="tab"
+            name={user.name}
+            email={user.email}
+            isAdmin={user.role === "ADMIN"}
+          />
         </div>
       </nav>
 
