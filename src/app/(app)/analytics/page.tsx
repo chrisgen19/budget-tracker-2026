@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
-import { motion } from "framer-motion";
+import { useState, useCallback, useMemo, useRef, useEffect, type RefObject } from "react";
+import { motion, AnimatePresence, useIsomorphicLayoutEffect } from "framer-motion";
 import {
   Activity,
   AlertTriangle,
@@ -50,6 +50,35 @@ const ANALYTICS_TABS = [
   { id: "health" as const, label: "Financial Health", shortLabel: "Health", icon: Heart },
 ];
 
+/**
+ * Tracks whether `ref` is visible below a `topOffset` (px) from the viewport top —
+ * used to know when the in-page period nav has scrolled under the fixed header.
+ *
+ * Measures synchronously before paint so the initial value is correct whether the
+ * page mounts at the top (no sticky-bar flash) or already scrolled (restored scroll
+ * / bfcache — bar shown immediately, no lag), then keeps it updated via an observer.
+ */
+function useVisibleBelowOffset<T extends Element>(ref: RefObject<T | null>, topOffset: number) {
+  const [inView, setInView] = useState(true);
+  useIsomorphicLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const rect = el.getBoundingClientRect();
+      setInView(rect.bottom > topOffset && rect.top < window.innerHeight);
+    };
+    measure();
+    if (typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setInView(entry.isIntersecting),
+      { rootMargin: `-${topOffset}px 0px 0px 0px` },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [ref, topOffset]);
+  return inView;
+}
+
 export default function AnalyticsPage() {
   const { user } = useUser();
   const { hideAmounts } = usePrivacy();
@@ -89,6 +118,32 @@ export default function AnalyticsPage() {
     setDateRange((prev) => navigatePeriod(periodType, prev.from, prev.to, direction));
   }, [periodType]);
 
+  // Sticky period bar: appears once the header period nav scrolls out of view.
+  // Below `lg` the app shell has a fixed 4rem header, so offset the observer by it
+  // (the in-page nav is unusable once it slides under that header); no offset on desktop.
+  const headerNavRef = useRef<HTMLDivElement>(null);
+  // Seed the offset from the current viewport so the first (synchronous) measure
+  // already uses the right value on mobile, before the resize listener runs.
+  const [headerTopOffset, setHeaderTopOffset] = useState(() =>
+    typeof window !== "undefined" && !window.matchMedia("(min-width: 1024px)").matches ? 64 : 0,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const apply = () => setHeaderTopOffset(mq.matches ? 0 : 64);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+  const headerNavInView = useVisibleBelowOffset(headerNavRef, headerTopOffset);
+
+  // The sticky copy stays mounted through its exit animation, so track its real
+  // presence and keep the original inert until it's fully gone — otherwise both
+  // pickers are briefly interactive while scrolling back up.
+  const [stickyMounted, setStickyMounted] = useState(false);
+  useEffect(() => {
+    if (!headerNavInView) setStickyMounted(true);
+  }, [headerNavInView]);
+
   return (
     <div>
       {/* Page Header + Period Selector */}
@@ -97,16 +152,45 @@ export default function AnalyticsPage() {
           <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">Analytics</h1>
           <p className="text-warm-400 text-sm mt-1">Reports &amp; insights</p>
         </div>
-        <TimeRangePicker
-          periodType={periodType}
-          from={dateRange.from}
-          to={dateRange.to}
-          label={periodLabel}
-          tz={tz}
-          onPeriodSelect={handlePeriodSelect}
-          onNavigate={handleNavigate}
-        />
+        {/* Inert while the sticky copy is mounted (incl. its exit), so keyboard /
+            screen-reader users never hit two interactive period pickers. */}
+        <div ref={headerNavRef} inert={stickyMounted}>
+          <TimeRangePicker
+            periodType={periodType}
+            from={dateRange.from}
+            to={dateRange.to}
+            label={periodLabel}
+            tz={tz}
+            onPeriodSelect={handlePeriodSelect}
+            onNavigate={handleNavigate}
+          />
+        </div>
       </div>
+
+      {/* Sticky period bar — appears when the header nav scrolls out of view */}
+      <AnimatePresence onExitComplete={() => setStickyMounted(false)}>
+        {!headerNavInView && (
+          <motion.div
+            initial={{ y: -16, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -16, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed top-16 lg:top-0 left-0 right-0 lg:left-64 z-30 bg-cream-100/90 backdrop-blur-md border-b border-cream-300/60"
+          >
+            <div className="max-w-6xl mx-auto px-4 lg:px-8 py-2.5">
+              <TimeRangePicker
+                periodType={periodType}
+                from={dateRange.from}
+                to={dateRange.to}
+                label={periodLabel}
+                tz={tz}
+                onPeriodSelect={handlePeriodSelect}
+                onNavigate={handleNavigate}
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Tab Bar */}
       <div role="tablist" className="grid grid-cols-3 sm:flex gap-1 p-1 bg-cream-100 rounded-xl mb-6 sm:w-fit">
