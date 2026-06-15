@@ -29,18 +29,23 @@ const subScoreSchema = z.object({
   trend: z.string(),
 });
 
+/* Bounds on the client-supplied payload so a crafted request can't blow up the
+ * prompt size / token cost. The snapshot only uses the top handful anyway. */
+const NAME = z.string().max(120);
+const LABEL = z.string().max(60);
+
 /** The slice of AnalyticsData the AI needs, sent by the client for the selected period. */
 export const assessmentPayloadSchema = z.object({
-  currency: z.string().default("PHP"),
+  currency: z.string().max(10).default("PHP"),
   granularity: z.enum(["weekly", "monthly", "yearly"]),
-  periodLabel: z.string().default(""),
-  previousPeriodLabel: z.string().default(""),
+  periodLabel: z.string().max(120).default(""),
+  previousPeriodLabel: z.string().max(120).default(""),
   summary: summarySchema,
   previousSummary: summarySchema,
   healthScore: z.object({
     overallScore: z.number(),
-    overallLabel: z.string(),
-    overallTrend: z.string(),
+    overallLabel: LABEL,
+    overallTrend: LABEL,
     savingsRate: z.number().nullable(),
     subScores: z.object({
       savingsRate: subScoreSchema,
@@ -51,17 +56,17 @@ export const assessmentPayloadSchema = z.object({
     }),
   }),
   categoryBreakdown: z.array(z.object({
-    name: z.string(),
+    name: NAME,
     type: z.enum(["INCOME", "EXPENSE"]),
     amount: z.number(),
     percentage: z.number(),
     transactionCount: z.number(),
-  })).default([]),
+  })).max(100).default([]),
   labelBreakdown: z.array(z.object({
-    name: z.string(),
+    name: NAME,
     amount: z.number(),
     percentage: z.number(),
-  })).default([]),
+  })).max(100).default([]),
   statistics: z.object({
     avgDailySpend: z.number().nullable(),
     avgExpenseSize: z.number().nullable(),
@@ -70,16 +75,16 @@ export const assessmentPayloadSchema = z.object({
     totalDaysInPeriod: z.number(),
     totalTransactions: z.number(),
     categoriesUsed: z.number(),
-    mostUsedCategory: z.object({ name: z.string(), count: z.number() }).nullable(),
-    mostExpensiveCategory: z.object({ name: z.string(), amount: z.number() }).nullable(),
+    mostUsedCategory: z.object({ name: NAME, count: z.number() }).nullable(),
+    mostExpensiveCategory: z.object({ name: NAME, amount: z.number() }).nullable(),
   }),
   topTransactions: z.array(z.object({
-    description: z.string(),
+    description: z.string().max(200),
     amount: z.number(),
     type: z.enum(["INCOME", "EXPENSE"]),
-    categoryName: z.string(),
-    dateLabel: z.string(),
-  })).default([]),
+    categoryName: NAME,
+    dateLabel: LABEL,
+  })).max(50).default([]),
 });
 
 export type AssessmentPayload = z.infer<typeof assessmentPayloadSchema>;
@@ -137,7 +142,8 @@ const extractSources = (response: { candidates?: Array<{ groundingMetadata?: { g
   const sources: AiSource[] = [];
   for (const chunk of chunks) {
     const uri = chunk.web?.uri;
-    if (uri && !seen.has(uri)) {
+    // Only trust http(s) links — the URI comes from the model; block javascript:/data: etc.
+    if (uri && /^https?:\/\//i.test(uri) && !seen.has(uri)) {
       seen.add(uri);
       sources.push({ title: chunk.web?.title ?? uri, url: uri });
     }

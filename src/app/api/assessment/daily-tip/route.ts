@@ -62,25 +62,21 @@ export async function GET() {
       upcomingBills: bills,
     };
 
-    const { tip } = await generateDailyTip(input);
+    const { tip, model } = await generateDailyTip(input);
 
+    const content = tip as unknown as Prisma.InputJsonValue;
     const row = await prisma.aiAssessment.upsert({
       where: { userId_kind_periodKey: { userId, kind: "DAILY_TIP", periodKey } },
-      create: {
-        userId,
-        kind: "DAILY_TIP",
-        periodKey,
-        content: tip as unknown as Prisma.InputJsonValue,
-        model: process.env.GEMINI_MODEL ?? "gemini-2.5-flash",
-      },
-      update: { content: tip as unknown as Prisma.InputJsonValue, generatedAt: new Date() },
+      create: { userId, kind: "DAILY_TIP", periodKey, content, model },
+      update: { content, model, generatedAt: new Date() },
     });
     await prisma.aiUsageLog.create({ data: { userId, kind: "DAILY_TIP" } });
 
     const body: AiDailyTipResponse = { tip, generatedAt: row.generatedAt.toISOString() };
     return NextResponse.json(body);
-  } catch {
-    // Non-blocking: the daily tip is a nicety — degrade silently to "no tip".
+  } catch (error) {
+    // Non-blocking: the daily tip is a nicety — degrade to "no tip", but log so failures are visible.
+    console.error("[assessment/daily-tip] failed:", error instanceof Error ? error.message : error);
     const body: AiDailyTipResponse = { tip: null, generatedAt: null };
     return NextResponse.json(body);
   }

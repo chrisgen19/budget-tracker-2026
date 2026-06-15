@@ -123,7 +123,7 @@ function DailyTipCard() {
 }
 
 export function AiAssessmentReport({ data, period, currency, hideAmounts }: AiAssessmentReportProps) {
-  const { data: reportData, isLoading } = useAssessmentQuery(period);
+  const { data: reportData, isLoading, isError: reportError } = useAssessmentQuery(period);
   const { isGenerating, generate } = useAssessment();
 
   const payload = useMemo(() => buildPayload(data, currency, period.granularity), [data, currency, period.granularity]);
@@ -177,6 +177,10 @@ export function AiAssessmentReport({ data, period, currency, hideAmounts }: AiAs
           <p className="text-xs text-warm-400 mt-3">
             Analyzing in the background — feel free to browse; we&apos;ll notify you when it&apos;s ready.
           </p>
+        )}
+
+        {reportError && !pending && (
+          <p className="text-xs text-expense mt-3">Couldn&apos;t load your saved assessment. Tap Generate to try again.</p>
         )}
 
         {!hasData && (

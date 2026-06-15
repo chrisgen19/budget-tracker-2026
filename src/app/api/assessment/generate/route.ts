@@ -39,9 +39,13 @@ export async function POST(request: Request) {
   }
   const { from, to, payload } = parsed.data;
 
-  // Daily generation cap
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
+  // Daily generation cap — anchored to the user's local midnight, not the server's.
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { timezoneOffset: true } });
+  const tzOffset = user?.timezoneOffset ?? 0;
+  const localNow = new Date(Date.now() - tzOffset * 60_000);
+  const startOfDay = new Date(
+    Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), localNow.getUTCDate()) + tzOffset * 60_000
+  );
   const usedToday = await prisma.aiUsageLog.count({
     where: { userId, kind: "REPORT", createdAt: { gte: startOfDay } },
   });

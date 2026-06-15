@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
+import { useUser } from "@/components/user-provider";
 import type { AiAssessmentResponse, AiDailyTipResponse } from "@/types";
 
 /* ------------------------------------------------------------------ */
-/*  Keys                                                               */
+/*  Keys — scoped by user so a shared queryClient can't leak cached    */
+/*  reports/tips across accounts on the same browser session.          */
 /* ------------------------------------------------------------------ */
 
 export interface AssessmentPeriod {
@@ -13,8 +15,8 @@ export interface AssessmentPeriod {
 
 export const assessmentKeys = {
   all: ["assessment"] as const,
-  report: (p: AssessmentPeriod) => ["assessment", "report", p] as const,
-  dailyTip: ["assessment", "daily-tip"] as const,
+  report: (userKey: string, p: AssessmentPeriod) => ["assessment", "report", userKey, p] as const,
+  dailyTip: (userKey: string) => ["assessment", "daily-tip", userKey] as const,
 };
 
 /* ------------------------------------------------------------------ */
@@ -29,8 +31,9 @@ const fetchReport = async (p: AssessmentPeriod): Promise<AiAssessmentResponse> =
 };
 
 export function useAssessmentQuery(p: AssessmentPeriod) {
+  const { user } = useUser();
   return useQuery({
-    queryKey: assessmentKeys.report(p),
+    queryKey: assessmentKeys.report(user.email, p),
     queryFn: () => fetchReport(p),
     staleTime: Infinity, // cached server-side per period; only refetch on explicit generate
   });
@@ -47,8 +50,9 @@ const fetchDailyTip = async (): Promise<AiDailyTipResponse> => {
 };
 
 export function useDailyTipQuery() {
+  const { user } = useUser();
   return useQuery({
-    queryKey: assessmentKeys.dailyTip,
+    queryKey: assessmentKeys.dailyTip(user.email),
     queryFn: fetchDailyTip,
     staleTime: Infinity,
   });
