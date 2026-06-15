@@ -11,6 +11,7 @@ import {
   Heart,
   Layers,
   PieChart,
+  Sparkles,
   Tags,
   Trophy,
 } from "lucide-react";
@@ -39,15 +40,17 @@ import { AnalyticsHero } from "@/components/analytics/analytics-hero";
 import { AnalyticsHeroSkeleton, AnalyticsContentSkeleton } from "@/components/analytics/analytics-skeleton";
 import { RecordsStatistics } from "@/components/analytics/records-statistics";
 import { FinancialHealthScore } from "@/components/analytics/financial-health-score";
+import { AiAssessmentReport } from "@/components/analytics/ai-assessment-report";
 import { stagger, fadeUp } from "@/components/analytics/motion-variants";
 import type { AnalyticsTypeFilter } from "@/types";
 
-type AnalyticsTab = "reports" | "statistics" | "health";
+type AnalyticsTab = "reports" | "statistics" | "health" | "ai-assessment";
 
 const ANALYTICS_TABS = [
   { id: "reports" as const, label: "Reports", shortLabel: "Reports", icon: BarChart3 },
   { id: "statistics" as const, label: "Records & Statistics", shortLabel: "Stats", icon: Trophy },
   { id: "health" as const, label: "Financial Health", shortLabel: "Health", icon: Heart },
+  { id: "ai-assessment" as const, label: "AI Assessment", shortLabel: "AI", icon: Sparkles },
 ];
 
 /**
@@ -453,6 +456,18 @@ export default function AnalyticsPage() {
           {activeTab === "health" && (
             <motion.div key="health" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
               <FinancialHealthScore healthScore={data.healthScore} />
+            </motion.div>
+          )}
+
+          {/* AI Assessment Tab */}
+          {activeTab === "ai-assessment" && (
+            <motion.div key="ai-assessment" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+              <AiAssessmentReport
+                data={data}
+                period={{ granularity: params.granularity, from: params.from, to: params.to }}
+                currency={currency}
+                hideAmounts={hideAmounts}
+              />
             </motion.div>
           )}
         </>

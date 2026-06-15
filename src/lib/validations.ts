@@ -185,6 +185,54 @@ export const analyticsQuerySchema = z.object({
 
 export type AnalyticsQueryInput = z.infer<typeof analyticsQuerySchema>;
 
+/* ------------------------------------------------------------------ */
+/*  AI Assessment                                                      */
+/* ------------------------------------------------------------------ */
+
+/** Validates the structured-JSON assessment returned by the data-analysis Gemini call. */
+export const assessmentReportSchema = z.object({
+  summary: z.string().min(1).max(1200),
+  scoreCommentary: z.string().min(1).max(800),
+  watchList: z.array(z.object({
+    title: z.string().min(1).max(120),
+    detail: z.string().min(1).max(600),
+    severity: z.enum(["high", "medium", "low"]),
+  })).max(6).default([]),
+  cutBack: z.array(z.object({
+    title: z.string().min(1).max(120),
+    reason: z.string().min(1).max(600),
+    suggestion: z.string().min(1).max(600),
+    estimatedMonthlySaving: z.number().nonnegative().nullable().default(null),
+  })).max(6).default([]),
+  boostSavings: z.array(z.object({
+    title: z.string().min(1).max(120),
+    detail: z.string().min(1).max(600),
+  })).max(6).default([]),
+  earnIdeas: z.array(z.object({
+    title: z.string().min(1).max(120),
+    detail: z.string().min(1).max(600),
+  })).max(6).default([]),
+  quickActions: z.array(z.string().min(1).max(200)).max(6).default([]),
+});
+
+/** Validates the grounded web-tips JSON (sources come separately from grounding metadata). */
+export const webTipsSchema = z.object({
+  webTips: z.array(z.object({
+    title: z.string().min(1).max(160),
+    detail: z.string().min(1).max(600),
+  })).max(8).default([]),
+});
+
+/** Validates the lightweight daily tip JSON. */
+export const dailyTipSchema = z.object({
+  tip: z.string().min(1).max(400),
+  rationale: z.string().min(1).max(400),
+});
+
+export type AssessmentReportResult = z.infer<typeof assessmentReportSchema>;
+export type WebTipsResult = z.infer<typeof webTipsSchema>;
+export type DailyTipResult = z.infer<typeof dailyTipSchema>;
+
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;

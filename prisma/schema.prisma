@@ -42,6 +42,11 @@ enum TokenType {
   PASSWORD_RESET
 }
 
+enum AiInsightKind {
+  REPORT
+  DAILY_TIP
+}
+
 model User {
   id           String        @id @default(cuid())
   name         String
@@ -68,6 +73,8 @@ model User {
   scheduledTransactions   ScheduledTransaction[]
   verificationTokens      VerificationToken[]
   labels                  Label[]
+  aiAssessments           AiAssessment[]
+  aiUsageLogs             AiUsageLog[]
   createdAt    DateTime      @default(now()) @map("created_at")
   updatedAt    DateTime      @updatedAt @map("updated_at")
 
@@ -136,6 +143,34 @@ model ScanLog {
 
   @@index([userId, createdAt])
   @@map("scan_logs")
+}
+
+model AiAssessment {
+  id          String        @id @default(cuid())
+  userId      String        @map("user_id")
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind        AiInsightKind
+  periodKey   String        @map("period_key")
+  content     Json
+  sources     Json?
+  model       String
+  generatedAt DateTime      @default(now()) @map("generated_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  @@unique([userId, kind, periodKey])
+  @@index([userId])
+  @@map("ai_assessments")
+}
+
+model AiUsageLog {
+  id        String        @id @default(cuid())
+  userId    String        @map("user_id")
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      AiInsightKind
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  @@index([userId, createdAt])
+  @@map("ai_usage_logs")
 }
 
 model ScheduledTransaction {
