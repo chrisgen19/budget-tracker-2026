@@ -134,7 +134,13 @@ function AnalyticsTabBar({
   className?: string;
 }) {
   return (
-    <div role="tablist" className={cn("grid grid-cols-2 sm:flex gap-1 p-1 bg-cream-100 rounded-xl", className)}>
+    <div
+      role="tablist"
+      className={cn(
+        "flex w-full gap-1 overflow-x-auto snap-x snap-mandatory scrollbar-hide p-1 bg-cream-100 rounded-xl sm:w-fit sm:overflow-visible",
+        className
+      )}
+    >
       {ANALYTICS_TABS.map((tab) => (
         <button
           key={tab.id}
@@ -142,7 +148,7 @@ function AnalyticsTabBar({
           aria-selected={activeTab === tab.id}
           onClick={() => onSelect(tab.id)}
           className={cn(
-            "relative flex items-center justify-center gap-1.5 px-3 py-2.5 sm:py-1.5 rounded-lg text-sm font-medium transition-colors",
+            "relative flex items-center justify-center gap-1.5 shrink-0 snap-start px-3 py-2.5 sm:py-1.5 rounded-lg text-sm font-medium transition-colors",
             activeTab === tab.id ? "text-warm-700" : "text-warm-400 hover:text-warm-500"
           )}
         >
@@ -153,8 +159,8 @@ function AnalyticsTabBar({
               transition={{ type: "spring", bounce: 0.2, duration: 0.4 }}
             />
           )}
-          <tab.icon className="relative w-4 h-4" />
-          <span className="relative">
+          <tab.icon className="relative w-4 h-4 shrink-0" />
+          <span className="relative whitespace-nowrap">
             <span className="hidden sm:inline">{tab.label}</span>
             <span className="sm:hidden">{tab.shortLabel}</span>
           </span>
