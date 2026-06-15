@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
-import { motion } from "framer-motion";
+import { useState, useCallback, useMemo, useRef } from "react";
+import { motion, AnimatePresence, useInView } from "framer-motion";
 import {
   Activity,
   AlertTriangle,
@@ -89,6 +89,10 @@ export default function AnalyticsPage() {
     setDateRange((prev) => navigatePeriod(periodType, prev.from, prev.to, direction));
   }, [periodType]);
 
+  // Sticky period bar: appears once the header period nav scrolls out of view
+  const headerNavRef = useRef<HTMLDivElement>(null);
+  const headerNavInView = useInView(headerNavRef);
+
   return (
     <div>
       {/* Page Header + Period Selector */}
@@ -97,16 +101,43 @@ export default function AnalyticsPage() {
           <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">Analytics</h1>
           <p className="text-warm-400 text-sm mt-1">Reports &amp; insights</p>
         </div>
-        <TimeRangePicker
-          periodType={periodType}
-          from={dateRange.from}
-          to={dateRange.to}
-          label={periodLabel}
-          tz={tz}
-          onPeriodSelect={handlePeriodSelect}
-          onNavigate={handleNavigate}
-        />
+        <div ref={headerNavRef}>
+          <TimeRangePicker
+            periodType={periodType}
+            from={dateRange.from}
+            to={dateRange.to}
+            label={periodLabel}
+            tz={tz}
+            onPeriodSelect={handlePeriodSelect}
+            onNavigate={handleNavigate}
+          />
+        </div>
       </div>
+
+      {/* Sticky period bar — appears when the header nav scrolls out of view */}
+      <AnimatePresence>
+        {!headerNavInView && (
+          <motion.div
+            initial={{ y: -16, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -16, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed top-16 lg:top-0 left-0 right-0 lg:left-64 z-30 bg-cream-100/90 backdrop-blur-md border-b border-cream-300/60"
+          >
+            <div className="max-w-6xl mx-auto px-4 lg:px-8 py-2.5">
+              <TimeRangePicker
+                periodType={periodType}
+                from={dateRange.from}
+                to={dateRange.to}
+                label={periodLabel}
+                tz={tz}
+                onPeriodSelect={handlePeriodSelect}
+                onNavigate={handleNavigate}
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Tab Bar */}
       <div role="tablist" className="grid grid-cols-3 sm:flex gap-1 p-1 bg-cream-100 rounded-xl mb-6 sm:w-fit">
