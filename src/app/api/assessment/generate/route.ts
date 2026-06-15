@@ -66,7 +66,7 @@ export async function POST(request: Request) {
   const usageLog = await prisma.aiUsageLog.create({ data: { userId, kind: "REPORT" } });
 
   try {
-    const billsResult = await getUpcomingBills(prisma, userId, { days: 14 });
+    const billsResult = await getUpcomingBills(prisma, userId, { days: 14, timezoneOffset: tzOffset });
     const bills: UpcomingBillsContext = {
       count: billsResult.count,
       totalAmount: billsResult.totalAmount,

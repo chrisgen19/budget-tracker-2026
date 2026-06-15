@@ -149,6 +149,9 @@ export interface BudgetOverview {
 export interface UpcomingBillsParams {
   /** Number of days to look ahead. Defaults to 7 */
   days?: number;
+  /** User's timezone offset in minutes; when set, "today"/overdue are computed in the
+   *  user's local day (matching /api/bills/upcoming). Omit to use the server's local day. */
+  timezoneOffset?: number;
 }
 
 export interface UpcomingBill {

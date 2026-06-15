@@ -44,7 +44,7 @@ export async function GET() {
     const [overview, spending, billsResult] = await Promise.all([
       getBudgetOverview(prisma, userId, { month: monthStr }),
       getSpendingByCategory(prisma, userId, { month: monthStr }),
-      getUpcomingBills(prisma, userId, { days: 14 }),
+      getUpcomingBills(prisma, userId, { days: 14, timezoneOffset: user.timezoneOffset }),
     ]);
 
     const bills: UpcomingBillsContext = {
