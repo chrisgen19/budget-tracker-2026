@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo, useRef, useEffect, type RefObject } from "react";
-import { motion, AnimatePresence, useIsomorphicLayoutEffect } from "framer-motion";
+import { motion, useIsomorphicLayoutEffect } from "framer-motion";
 import {
   Activity,
   AlertTriangle,
@@ -36,7 +36,7 @@ import { LabelBreakdownChart } from "@/components/analytics/label-breakdown-char
 import { SpendingHeatmap } from "@/components/analytics/spending-heatmap";
 import { TopTransactions } from "@/components/analytics/top-transactions";
 import { AnalyticsHero } from "@/components/analytics/analytics-hero";
-import { AnalyticsSkeleton } from "@/components/analytics/analytics-skeleton";
+import { AnalyticsHeroSkeleton, AnalyticsContentSkeleton } from "@/components/analytics/analytics-skeleton";
 import { RecordsStatistics } from "@/components/analytics/records-statistics";
 import { FinancialHealthScore } from "@/components/analytics/financial-health-score";
 import { stagger, fadeUp } from "@/components/analytics/motion-variants";
@@ -52,31 +52,113 @@ const ANALYTICS_TABS = [
 
 /**
  * Tracks whether `ref` is visible below a `topOffset` (px) from the viewport top —
- * used to know when the in-page period nav has scrolled under the fixed header.
+ * used to know when the in-page controls have scrolled under the fixed header.
  *
  * Measures synchronously before paint so the initial value is correct whether the
  * page mounts at the top (no sticky-bar flash) or already scrolled (restored scroll
- * / bfcache — bar shown immediately, no lag), then keeps it updated via an observer.
+ * / bfcache — bar shown immediately, no lag). Re-measures on scroll, on resize, and
+ * when the page height changes (ResizeObserver) — always on the next animation frame
+ * so the browser has settled layout/scroll first. This matters when switching to a
+ * shorter tab: the page shrinks and the scroll position clamps without firing a
+ * scroll event, which an IntersectionObserver alone can miss (leaving the bar stuck).
  */
-function useVisibleBelowOffset<T extends Element>(ref: RefObject<T | null>, topOffset: number) {
+function useVisibleBelowOffset<T extends Element>(
+  ref: RefObject<T | null>,
+  topOffset: number,
+  /** Changes to this re-measure on the next frame (e.g. a tab switch that changes
+   *  page height and clamps the scroll without firing a scroll event). */
+  recomputeToken?: unknown,
+) {
   const [inView, setInView] = useState(true);
+
   useIsomorphicLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
+    let raf = 0;
     const measure = () => {
       const rect = el.getBoundingClientRect();
       setInView(rect.bottom > topOffset && rect.top < window.innerHeight);
     };
+    // Defer to the next frame so scroll-clamping from a height change has applied.
+    const schedule = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(measure);
+    };
+
     measure();
-    if (typeof IntersectionObserver === "undefined") return;
-    const observer = new IntersectionObserver(
-      ([entry]) => setInView(entry.isIntersecting),
-      { rootMargin: `-${topOffset}px 0px 0px 0px` },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(schedule) : null;
+    ro?.observe(document.documentElement);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      ro?.disconnect();
+    };
   }, [ref, topOffset]);
+
+  // Re-measure when content that affects page height changes. The scroll can clamp
+  // without a scroll event, so do it on the next frame once layout has settled.
+  useIsomorphicLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const raf = requestAnimationFrame(() => {
+      const rect = el.getBoundingClientRect();
+      setInView(rect.bottom > topOffset && rect.top < window.innerHeight);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [ref, topOffset, recomputeToken]);
+
   return inView;
+}
+
+/**
+ * Tab switcher. `layoutId` must be unique per rendered instance — the in-page and
+ * sticky copies are mounted at once, and a shared id would make the active pill
+ * animate across the two bars.
+ */
+function AnalyticsTabBar({
+  activeTab,
+  onSelect,
+  layoutId,
+  className,
+}: {
+  activeTab: AnalyticsTab;
+  onSelect: (tab: AnalyticsTab) => void;
+  layoutId: string;
+  className?: string;
+}) {
+  return (
+    <div role="tablist" className={cn("grid grid-cols-3 sm:flex gap-1 p-1 bg-cream-100 rounded-xl", className)}>
+      {ANALYTICS_TABS.map((tab) => (
+        <button
+          key={tab.id}
+          role="tab"
+          aria-selected={activeTab === tab.id}
+          onClick={() => onSelect(tab.id)}
+          className={cn(
+            "relative flex items-center justify-center gap-1.5 px-3 py-2.5 sm:py-1.5 rounded-lg text-sm font-medium transition-colors",
+            activeTab === tab.id ? "text-warm-700" : "text-warm-400 hover:text-warm-500"
+          )}
+        >
+          {activeTab === tab.id && (
+            <motion.span
+              layoutId={layoutId}
+              className="absolute inset-0 bg-white rounded-lg shadow-sm"
+              transition={{ type: "spring", bounce: 0.2, duration: 0.4 }}
+            />
+          )}
+          <tab.icon className="relative w-4 h-4" />
+          <span className="relative">
+            <span className="hidden sm:inline">{tab.label}</span>
+            <span className="sm:hidden">{tab.shortLabel}</span>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
 }
 
 export default function AnalyticsPage() {
@@ -118,31 +200,60 @@ export default function AnalyticsPage() {
     setDateRange((prev) => navigatePeriod(periodType, prev.from, prev.to, direction));
   }, [periodType]);
 
-  // Sticky period bar: appears once the header period nav scrolls out of view.
-  // Below `lg` the app shell has a fixed 4rem header, so offset the observer by it
-  // (the in-page nav is unusable once it slides under that header); no offset on desktop.
-  const headerNavRef = useRef<HTMLDivElement>(null);
+  // Sticky controls bar: a combined period-nav + tabs bar whose two rows are revealed
+  // independently — each row appears as soon as its in-page counterpart scrolls out of
+  // view, so the period picker is reachable the moment the header nav leaves (not only
+  // once the tabs leave) while never duplicating a control that's still on screen.
+  // Below `lg` the app shell has a fixed 4rem header, so offset the observers by it
+  // (the controls are unusable once they slide under that header); no offset on desktop.
+  const periodNavRef = useRef<HTMLDivElement>(null);
+  const tabBarRef = useRef<HTMLDivElement>(null);
   // Seed the offset from the current viewport so the first (synchronous) measure
   // already uses the right value on mobile, before the resize listener runs.
-  const [headerTopOffset, setHeaderTopOffset] = useState(() =>
+  const [topOffset, setTopOffset] = useState(() =>
     typeof window !== "undefined" && !window.matchMedia("(min-width: 1024px)").matches ? 64 : 0,
   );
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1024px)");
-    const apply = () => setHeaderTopOffset(mq.matches ? 0 : 64);
+    const apply = () => setTopOffset(mq.matches ? 0 : 64);
     apply();
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
   }, []);
-  const headerNavInView = useVisibleBelowOffset(headerNavRef, headerTopOffset);
+  // Re-measure when the active tab or load state changes — switching to a shorter
+  // tab collapses the page and clamps the scroll, bringing the in-page controls back.
+  const recomputeToken = `${activeTab}:${isLoading}`;
+  const periodNavInView = useVisibleBelowOffset(periodNavRef, topOffset, recomputeToken);
 
-  // The sticky copy stays mounted through its exit animation, so track its real
-  // presence and keep the original inert until it's fully gone — otherwise both
-  // pickers are briefly interactive while scrolling back up.
-  const [stickyMounted, setStickyMounted] = useState(false);
-  useEffect(() => {
-    if (!headerNavInView) setStickyMounted(true);
-  }, [headerNavInView]);
+  // Distance from the sticky bar's top to the bottom of the pinned period row
+  // (its offsetTop within the fixed bar + its height, so the bar's own padding is
+  // included). The tab sentinel uses this so the in-page tab bar counts as "out of
+  // view" the moment it slides under that fixed row — otherwise there's a band where
+  // the period row covers the in-page tabs but the sticky tabs row hasn't appeared.
+  const periodRowRef = useRef<HTMLDivElement>(null);
+  const [periodRowExtent, setPeriodRowExtent] = useState(0);
+  useIsomorphicLayoutEffect(() => {
+    const el = periodRowRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    // Keep the last non-zero value: the row is display:none (extent 0) while hidden,
+    // so caching avoids a 1-frame wrong offset when it re-appears.
+    const measure = () => {
+      const extent = el.offsetTop + el.offsetHeight;
+      if (el.offsetHeight > 0) setPeriodRowExtent(extent);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  // When the period row is pinned, the tab bar must clear below it; otherwise just the header.
+  const tabTopOffset = topOffset + (periodNavInView ? 0 : periodRowExtent);
+  const tabBarInView = useVisibleBelowOffset(tabBarRef, tabTopOffset, recomputeToken);
+
+  // Each in-page control is inert exactly when its sticky row is shown; derived
+  // directly from visibility so it can never get stuck. The bar itself is active
+  // whenever either row is shown.
+  const stickyActive = !periodNavInView || !tabBarInView;
 
   return (
     <div>
@@ -152,9 +263,9 @@ export default function AnalyticsPage() {
           <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">Analytics</h1>
           <p className="text-warm-400 text-sm mt-1">Reports &amp; insights</p>
         </div>
-        {/* Inert while the sticky copy is mounted (incl. its exit), so keyboard /
-            screen-reader users never hit two interactive period pickers. */}
-        <div ref={headerNavRef} inert={stickyMounted}>
+        {/* Inert once its sticky row is shown, so keyboard / screen-reader users
+            never hit two interactive period pickers. */}
+        <div ref={periodNavRef} inert={!periodNavInView}>
           <TimeRangePicker
             periodType={periodType}
             from={dateRange.from}
@@ -167,62 +278,79 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* Sticky period bar — appears when the header nav scrolls out of view */}
-      <AnimatePresence onExitComplete={() => setStickyMounted(false)}>
-        {!headerNavInView && (
-          <motion.div
-            initial={{ y: -16, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: -16, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="fixed top-16 lg:top-0 left-0 right-0 lg:left-64 z-30 bg-cream-100/90 backdrop-blur-md border-b border-cream-300/60"
-          >
-            <div className="max-w-6xl mx-auto px-4 lg:px-8 py-2.5">
-              <TimeRangePicker
-                periodType={periodType}
-                from={dateRange.from}
-                to={dateRange.to}
-                label={periodLabel}
-                tz={tz}
-                onPeriodSelect={handlePeriodSelect}
-                onNavigate={handleNavigate}
-              />
-            </div>
-          </motion.div>
+      {/* Sticky controls bar — combined period nav + tabs. Each row is shown only when
+          its in-page counterpart has scrolled out of view, so a control is pinned the
+          moment it leaves (and never duplicated while still on screen). Always mounted
+          and toggled with CSS + inert (no mount/unmount race) so it can't leave a hidden
+          click-catching ghost. */}
+      <div
+        inert={!stickyActive}
+        aria-hidden={!stickyActive}
+        className={cn(
+          "fixed top-16 lg:top-0 left-0 right-0 lg:left-64 z-30 bg-cream-100/90 backdrop-blur-md border-b border-cream-300/60 transition-[opacity,transform] duration-200",
+          stickyActive ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2 pointer-events-none"
         )}
-      </AnimatePresence>
+      >
+        <div className="max-w-6xl mx-auto px-4 lg:px-8 py-2.5 space-y-2">
+          {/* Each row is always mounted and shown via `hidden` (no mount churn) so a
+              momentarily-stale measure can't cause a flicker; the matching in-page
+              control is hidden whenever its sticky row is visible. */}
+          <div ref={periodRowRef} className={cn(periodNavInView && "hidden")}>
+            <TimeRangePicker
+              periodType={periodType}
+              from={dateRange.from}
+              to={dateRange.to}
+              label={periodLabel}
+              tz={tz}
+              onPeriodSelect={handlePeriodSelect}
+              onNavigate={handleNavigate}
+            />
+          </div>
+          <div className={cn("justify-center", tabBarInView ? "hidden" : "flex")}>
+            <AnalyticsTabBar
+              activeTab={activeTab}
+              onSelect={setActiveTab}
+              layoutId="analytics-tab-sticky"
+              className="sm:w-fit"
+            />
+          </div>
+        </div>
+      </div>
 
-      {/* Tab Bar */}
-      <div role="tablist" className="grid grid-cols-3 sm:flex gap-1 p-1 bg-cream-100 rounded-xl mb-6 sm:w-fit">
-        {ANALYTICS_TABS.map((tab) => (
-          <button
-            key={tab.id}
-            role="tab"
-            aria-selected={activeTab === tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={cn(
-              "relative flex items-center justify-center gap-1.5 px-3 py-2.5 sm:py-1.5 rounded-lg text-sm font-medium transition-colors",
-              activeTab === tab.id ? "text-warm-700" : "text-warm-400 hover:text-warm-500"
-            )}
-          >
-            {activeTab === tab.id && (
-              <motion.span
-                layoutId="analytics-tab"
-                className="absolute inset-0 bg-white rounded-lg shadow-sm"
-                transition={{ type: "spring", bounce: 0.2, duration: 0.4 }}
-              />
-            )}
-            <tab.icon className="relative w-4 h-4" />
-            <span className="relative">
-              <span className="hidden sm:inline">{tab.label}</span>
-              <span className="sm:hidden">{tab.shortLabel}</span>
-            </span>
-          </button>
-        ))}
+      {/* Hero overview — above the tabs: it's tab-independent and changes only
+          with the selected period, so it stays put while the tabs switch below. */}
+      {isLoading ? (
+        <div className="mb-6">
+          <AnalyticsHeroSkeleton />
+        </div>
+      ) : isError || !data ? null : (
+        <motion.div variants={stagger} initial="hidden" animate="show" className="mb-6">
+          <motion.div variants={fadeUp}>
+            <AnalyticsHero
+              summary={data.summary}
+              previousSummary={data.previousSummary}
+              cashFlow={data.cashFlow}
+              periodLabel={data.periodLabel}
+              previousPeriodLabel={data.previousPeriodLabel}
+              currency={currency}
+              hideAmounts={hideAmounts}
+            />
+          </motion.div>
+        </motion.div>
+      )}
+
+      {/* Tab Bar — sticky-bar sentinel; inert once its sticky row is shown */}
+      <div ref={tabBarRef} inert={!tabBarInView} className="mb-6">
+        <AnalyticsTabBar
+          activeTab={activeTab}
+          onSelect={setActiveTab}
+          layoutId="analytics-tab"
+          className="sm:w-fit"
+        />
       </div>
 
       {isLoading ? (
-        <AnalyticsSkeleton />
+        <AnalyticsContentSkeleton />
       ) : isError || !data ? (
         <div className="card p-8 flex flex-col items-center gap-3 text-center">
           <div className="w-12 h-12 rounded-xl bg-red-50 flex items-center justify-center">
@@ -241,21 +369,6 @@ export default function AnalyticsPage() {
         </div>
       ) : (
         <>
-          {/* Hero overview (always visible) */}
-          <motion.div variants={stagger} initial="hidden" animate="show">
-            <motion.div variants={fadeUp}>
-              <AnalyticsHero
-                summary={data.summary}
-                previousSummary={data.previousSummary}
-                cashFlow={data.cashFlow}
-                periodLabel={data.periodLabel}
-                previousPeriodLabel={data.previousPeriodLabel}
-                currency={currency}
-                hideAmounts={hideAmounts}
-              />
-            </motion.div>
-          </motion.div>
-
           {/* Reports Tab */}
           {activeTab === "reports" && (
             <motion.div
@@ -263,7 +376,7 @@ export default function AnalyticsPage() {
               variants={stagger}
               initial="hidden"
               animate="show"
-              className="space-y-4 mt-4"
+              className="space-y-4"
             >
               {/* Cash Flow */}
               <motion.div variants={fadeUp} className="card p-5">
@@ -331,14 +444,14 @@ export default function AnalyticsPage() {
 
           {/* Records & Statistics Tab */}
           {activeTab === "statistics" && (
-            <motion.div key="statistics" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mt-4">
+            <motion.div key="statistics" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
               <RecordsStatistics statistics={data.statistics} currency={currency} hideAmounts={hideAmounts} />
             </motion.div>
           )}
 
           {/* Financial Health Tab */}
           {activeTab === "health" && (
-            <motion.div key="health" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mt-4">
+            <motion.div key="health" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
               <FinancialHealthScore healthScore={data.healthScore} />
             </motion.div>
           )}
