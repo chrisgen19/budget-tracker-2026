@@ -200,11 +200,13 @@ export default function AnalyticsPage() {
     setDateRange((prev) => navigatePeriod(periodType, prev.from, prev.to, direction));
   }, [periodType]);
 
-  // Sticky controls bar: a combined period-nav + tabs bar that appears once the
-  // in-page tab bar (the lower of the two controls) scrolls out of view, so both
-  // controls stay reachable while reading the long content below.
-  // Below `lg` the app shell has a fixed 4rem header, so offset the observer by it
+  // Sticky controls bar: a combined period-nav + tabs bar whose two rows are revealed
+  // independently — each row appears as soon as its in-page counterpart scrolls out of
+  // view, so the period picker is reachable the moment the header nav leaves (not only
+  // once the tabs leave) while never duplicating a control that's still on screen.
+  // Below `lg` the app shell has a fixed 4rem header, so offset the observers by it
   // (the controls are unusable once they slide under that header); no offset on desktop.
+  const periodNavRef = useRef<HTMLDivElement>(null);
   const tabBarRef = useRef<HTMLDivElement>(null);
   // Seed the offset from the current viewport so the first (synchronous) measure
   // already uses the right value on mobile, before the resize listener runs.
@@ -220,11 +222,13 @@ export default function AnalyticsPage() {
   }, []);
   // Re-measure when the active tab or load state changes — switching to a shorter
   // tab collapses the page and clamps the scroll, bringing the in-page controls back.
-  const controlsInView = useVisibleBelowOffset(tabBarRef, topOffset, `${activeTab}:${isLoading}`);
-  // The sticky copy is shown exactly when the in-page controls are out of view, so
-  // the in-page copies are inert then — derived directly so it can never get stuck
-  // (a separate "mounted until exit" flag could deadlock the tabs if its reset missed).
-  const controlsInert = !controlsInView;
+  const recomputeToken = `${activeTab}:${isLoading}`;
+  const periodNavInView = useVisibleBelowOffset(periodNavRef, topOffset, recomputeToken);
+  const tabBarInView = useVisibleBelowOffset(tabBarRef, topOffset, recomputeToken);
+  // Each in-page control is inert exactly when its sticky row is shown; derived
+  // directly from visibility so it can never get stuck. The bar itself is active
+  // whenever either row is shown.
+  const stickyActive = !periodNavInView || !tabBarInView;
 
   return (
     <div>
@@ -234,9 +238,9 @@ export default function AnalyticsPage() {
           <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">Analytics</h1>
           <p className="text-warm-400 text-sm mt-1">Reports &amp; insights</p>
         </div>
-        {/* Inert while the sticky copy is shown, so keyboard / screen-reader users
+        {/* Inert once its sticky row is shown, so keyboard / screen-reader users
             never hit two interactive period pickers. */}
-        <div inert={controlsInert}>
+        <div ref={periodNavRef} inert={!periodNavInView}>
           <TimeRangePicker
             periodType={periodType}
             from={dateRange.from}
@@ -249,29 +253,35 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* Sticky controls bar — combined period nav + tabs, revealed once the in-page
-          tab bar scrolls out of view so both stay reachable while scrolling content.
-          Always mounted and toggled with CSS + inert (no mount/unmount race): when the
-          in-page controls are visible this is hidden, inert, and click-through. */}
+      {/* Sticky controls bar — combined period nav + tabs. Each row is shown only when
+          its in-page counterpart has scrolled out of view, so a control is pinned the
+          moment it leaves (and never duplicated while still on screen). Always mounted
+          and toggled with CSS + inert (no mount/unmount race) so it can't leave a hidden
+          click-catching ghost. */}
       <div
-        inert={controlsInView}
-        aria-hidden={controlsInView}
+        inert={!stickyActive}
+        aria-hidden={!stickyActive}
         className={cn(
           "fixed top-16 lg:top-0 left-0 right-0 lg:left-64 z-30 bg-cream-100/90 backdrop-blur-md border-b border-cream-300/60 transition-[opacity,transform] duration-200",
-          controlsInView ? "opacity-0 -translate-y-2 pointer-events-none" : "opacity-100 translate-y-0"
+          stickyActive ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2 pointer-events-none"
         )}
       >
         <div className="max-w-6xl mx-auto px-4 lg:px-8 py-2.5 space-y-2">
-          <TimeRangePicker
-            periodType={periodType}
-            from={dateRange.from}
-            to={dateRange.to}
-            label={periodLabel}
-            tz={tz}
-            onPeriodSelect={handlePeriodSelect}
-            onNavigate={handleNavigate}
-          />
-          <div className="flex justify-center">
+          {/* Each row is always mounted and shown via `hidden` (no mount churn) so a
+              momentarily-stale measure can't cause a flicker; the matching in-page
+              control is hidden whenever its sticky row is visible. */}
+          <div className={cn(periodNavInView && "hidden")}>
+            <TimeRangePicker
+              periodType={periodType}
+              from={dateRange.from}
+              to={dateRange.to}
+              label={periodLabel}
+              tz={tz}
+              onPeriodSelect={handlePeriodSelect}
+              onNavigate={handleNavigate}
+            />
+          </div>
+          <div className={cn("justify-center", tabBarInView ? "hidden" : "flex")}>
             <AnalyticsTabBar
               activeTab={activeTab}
               onSelect={setActiveTab}
@@ -304,8 +314,8 @@ export default function AnalyticsPage() {
         </motion.div>
       )}
 
-      {/* Tab Bar — the sticky-bar sentinel; inert while the sticky copy is shown */}
-      <div ref={tabBarRef} inert={controlsInert} className="mb-6">
+      {/* Tab Bar — sticky-bar sentinel; inert once its sticky row is shown */}
+      <div ref={tabBarRef} inert={!tabBarInView} className="mb-6">
         <AnalyticsTabBar
           activeTab={activeTab}
           onSelect={setActiveTab}
