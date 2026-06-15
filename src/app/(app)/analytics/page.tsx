@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef } from "react";
-import { motion, AnimatePresence, useInView } from "framer-motion";
+import { useState, useCallback, useMemo, useRef, useEffect, type RefObject } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Activity,
   AlertTriangle,
@@ -50,6 +50,27 @@ const ANALYTICS_TABS = [
   { id: "health" as const, label: "Financial Health", shortLabel: "Health", icon: Heart },
 ];
 
+/**
+ * Like framer-motion's `useInView`, but (1) assumes in-view until the observer
+ * first measures — avoiding a first-paint flash of the sticky bar — and (2) takes
+ * a `rootMargin` so a fixed header overlapping the viewport top doesn't keep a
+ * covered element counted as "in view".
+ */
+function useInViewWithMargin<T extends Element>(ref: RefObject<T | null>, rootMargin: string) {
+  const [inView, setInView] = useState(true);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setInView(entry.isIntersecting),
+      { rootMargin },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [ref, rootMargin]);
+  return inView;
+}
+
 export default function AnalyticsPage() {
   const { user } = useUser();
   const { hideAmounts } = usePrivacy();
@@ -89,9 +110,19 @@ export default function AnalyticsPage() {
     setDateRange((prev) => navigatePeriod(periodType, prev.from, prev.to, direction));
   }, [periodType]);
 
-  // Sticky period bar: appears once the header period nav scrolls out of view
+  // Sticky period bar: appears once the header period nav scrolls out of view.
+  // Below `lg` the app shell has a fixed 4rem header, so offset the observer by it
+  // (the in-page nav is unusable once it slides under that header); no offset on desktop.
   const headerNavRef = useRef<HTMLDivElement>(null);
-  const headerNavInView = useInView(headerNavRef);
+  const [navRootMargin, setNavRootMargin] = useState("0px");
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const apply = () => setNavRootMargin(mq.matches ? "0px" : "-64px 0px 0px 0px");
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+  const headerNavInView = useInViewWithMargin(headerNavRef, navRootMargin);
 
   return (
     <div>
