@@ -378,8 +378,16 @@ export const getUpcomingBills = async (
 ): Promise<UpcomingBillsResult> => {
   const days = params.days ?? 7;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // When a timezone offset is given, anchor "today" to the user's local day (mirrors
+  // /api/bills/upcoming) so AI bill context matches what the user sees on the dashboard.
+  let today: Date;
+  if (params.timezoneOffset !== undefined) {
+    const localNow = new Date(Date.now() - params.timezoneOffset * 60 * 1000);
+    today = new Date(Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), localNow.getUTCDate()));
+  } else {
+    today = new Date();
+    today.setHours(0, 0, 0, 0);
+  }
 
   const cutoff = new Date(today);
   cutoff.setDate(cutoff.getDate() + days);

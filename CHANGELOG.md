@@ -2,6 +2,18 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-06-15 — AI Assessment tab (Analytics)
+
+### AI-powered financial assessment
+- New **AI Assessment** tab on the Analytics page — Gemini analyzes the selected period's already-computed data and returns a personalized report: Summary + score commentary, **Watch list**, **Cut back** (with est. monthly savings), **Boost savings**, **Ways to earn**, and **Quick actions**
+- **Tips from the web** section uses **Gemini Google Search grounding** (localized to the user's currency/region) with linked sources
+- **Daily tip** card: a lightweight save/earn nudge, lazily generated once per local day and cached
+- **On-demand + cached**: a "Generate / Refresh" button calls the AI; results are cached per period (`granularity:from:to`) so revisits don't re-call. Privacy by construction — prose uses relative/percentage terms; numeric fields respect Hide Amounts
+- Report = two parallel Gemini calls (structured data analysis + grounded web tips); reuses `generateContentWithRetry`/retry/fallback from `src/lib/gemini.ts`
+- New routes: `GET /api/assessment`, `POST /api/assessment/generate`, `GET /api/assessment/daily-tip`
+- New models: `AiAssessment` (cache) + `AiUsageLog` (per-day generation cap, default 10 via `AI_ASSESSMENT_DAILY_LIMIT`); migration `20260615120000_add_ai_assessment`
+- Available to all signed-in users for v1; role/feature gating (like receipt scan) is a future option
+
 ## 2026-06-15 — Analytics Stats & Health mobile redesign
 
 ### Stats (Records & Statistics) tab

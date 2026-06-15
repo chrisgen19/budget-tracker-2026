@@ -185,6 +185,77 @@ export const analyticsQuerySchema = z.object({
 
 export type AnalyticsQueryInput = z.infer<typeof analyticsQuerySchema>;
 
+/* ------------------------------------------------------------------ */
+/*  AI Assessment                                                      */
+/* ------------------------------------------------------------------ */
+
+/* LLM output is variable — these helpers normalize common quirks so valid-but-messy
+ * responses still parse instead of failing the whole generation. */
+
+/** Accepts "High"/"moderate"/etc. → high|medium|low, defaulting to "medium". */
+const severityField = z
+  .preprocess((v) => {
+    if (typeof v !== "string") return "medium";
+    const s = v.toLowerCase();
+    if (s.startsWith("h") || s.includes("critical") || s.includes("urgent")) return "high";
+    if (s.startsWith("l") || s.includes("minor")) return "low";
+    return "medium";
+  }, z.enum(["high", "medium", "low"]))
+  .catch("medium");
+
+/** Accepts a number, "₱9,000", "9000", null/"" → number | null. */
+const moneyField = z
+  .preprocess((v) => {
+    if (typeof v === "number") return Number.isFinite(v) ? v : null;
+    if (typeof v === "string") {
+      const n = Number(v.replace(/[^0-9.]/g, ""));
+      return Number.isFinite(n) && v.trim() !== "" ? n : null;
+    }
+    return null;
+  }, z.number().nonnegative().nullable())
+  .catch(null);
+
+const tipField = z.object({
+  title: z.string().catch(""),
+  detail: z.string().catch(""),
+});
+
+/** Validates the structured-JSON assessment. Resilient: bad/extra fields fall back
+ *  to safe defaults rather than failing the whole parse. */
+export const assessmentReportSchema = z.object({
+  summary: z.string().catch(""),
+  scoreCommentary: z.string().catch(""),
+  watchList: z.array(z.object({
+    title: z.string().catch(""),
+    detail: z.string().catch(""),
+    severity: severityField,
+  })).catch([]),
+  cutBack: z.array(z.object({
+    title: z.string().catch(""),
+    reason: z.string().catch(""),
+    suggestion: z.string().catch(""),
+    estimatedMonthlySaving: moneyField,
+  })).catch([]),
+  boostSavings: z.array(tipField).catch([]),
+  earnIdeas: z.array(tipField).catch([]),
+  quickActions: z.array(z.string()).catch([]),
+});
+
+/** Validates the grounded web-tips JSON (sources come separately from grounding metadata). */
+export const webTipsSchema = z.object({
+  webTips: z.array(tipField).catch([]),
+});
+
+/** Validates the lightweight daily tip JSON. */
+export const dailyTipSchema = z.object({
+  tip: z.string().min(1).max(400),
+  rationale: z.string().min(1).max(400),
+});
+
+export type AssessmentReportResult = z.infer<typeof assessmentReportSchema>;
+export type WebTipsResult = z.infer<typeof webTipsSchema>;
+export type DailyTipResult = z.infer<typeof dailyTipSchema>;
+
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;

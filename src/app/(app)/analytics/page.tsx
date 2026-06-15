@@ -11,6 +11,7 @@ import {
   Heart,
   Layers,
   PieChart,
+  Sparkles,
   Tags,
   Trophy,
 } from "lucide-react";
@@ -39,15 +40,17 @@ import { AnalyticsHero } from "@/components/analytics/analytics-hero";
 import { AnalyticsHeroSkeleton, AnalyticsContentSkeleton } from "@/components/analytics/analytics-skeleton";
 import { RecordsStatistics } from "@/components/analytics/records-statistics";
 import { FinancialHealthScore } from "@/components/analytics/financial-health-score";
+import { AiAssessmentReport } from "@/components/analytics/ai-assessment-report";
 import { stagger, fadeUp } from "@/components/analytics/motion-variants";
 import type { AnalyticsTypeFilter } from "@/types";
 
-type AnalyticsTab = "reports" | "statistics" | "health";
+type AnalyticsTab = "reports" | "statistics" | "health" | "ai-assessment";
 
 const ANALYTICS_TABS = [
   { id: "reports" as const, label: "Reports", shortLabel: "Reports", icon: BarChart3 },
   { id: "statistics" as const, label: "Records & Statistics", shortLabel: "Stats", icon: Trophy },
   { id: "health" as const, label: "Financial Health", shortLabel: "Health", icon: Heart },
+  { id: "ai-assessment" as const, label: "AI Assessment", shortLabel: "AI", icon: Sparkles },
 ];
 
 /**
@@ -131,7 +134,13 @@ function AnalyticsTabBar({
   className?: string;
 }) {
   return (
-    <div role="tablist" className={cn("grid grid-cols-3 sm:flex gap-1 p-1 bg-cream-100 rounded-xl", className)}>
+    <div
+      role="tablist"
+      className={cn(
+        "grid grid-cols-4 w-full gap-1 p-1 bg-cream-100 rounded-xl sm:flex sm:w-fit",
+        className
+      )}
+    >
       {ANALYTICS_TABS.map((tab) => (
         <button
           key={tab.id}
@@ -139,7 +148,7 @@ function AnalyticsTabBar({
           aria-selected={activeTab === tab.id}
           onClick={() => onSelect(tab.id)}
           className={cn(
-            "relative flex items-center justify-center gap-1.5 px-3 py-2.5 sm:py-1.5 rounded-lg text-sm font-medium transition-colors",
+            "relative flex items-center justify-center gap-1 sm:gap-1.5 min-w-0 px-2 sm:px-3 py-2.5 sm:py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors",
             activeTab === tab.id ? "text-warm-700" : "text-warm-400 hover:text-warm-500"
           )}
         >
@@ -150,8 +159,8 @@ function AnalyticsTabBar({
               transition={{ type: "spring", bounce: 0.2, duration: 0.4 }}
             />
           )}
-          <tab.icon className="relative w-4 h-4" />
-          <span className="relative">
+          <tab.icon className="relative w-4 h-4 shrink-0" />
+          <span className="relative truncate">
             <span className="hidden sm:inline">{tab.label}</span>
             <span className="sm:hidden">{tab.shortLabel}</span>
           </span>
@@ -453,6 +462,18 @@ export default function AnalyticsPage() {
           {activeTab === "health" && (
             <motion.div key="health" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
               <FinancialHealthScore healthScore={data.healthScore} />
+            </motion.div>
+          )}
+
+          {/* AI Assessment Tab */}
+          {activeTab === "ai-assessment" && (
+            <motion.div key="ai-assessment" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+              <AiAssessmentReport
+                data={data}
+                period={{ granularity: params.granularity, from: params.from, to: params.to }}
+                currency={currency}
+                hideAmounts={hideAmounts}
+              />
             </motion.div>
           )}
         </>

@@ -311,6 +311,80 @@ export interface AnalyticsData {
   topTransactions: AnalyticsTopTransaction[];
 }
 
+/* ------------------------------------------------------------------ */
+/*  AI Assessment                                                      */
+/* ------------------------------------------------------------------ */
+
+/** Severity for a "watch list" item in the AI assessment */
+export type AiWatchSeverity = "high" | "medium" | "low";
+
+/** A flagged area the user should keep an eye on */
+export interface AiWatchItem {
+  title: string;
+  detail: string;
+  severity: AiWatchSeverity;
+}
+
+/** A category/habit the AI suggests cutting back, with an optional est. monthly saving */
+export interface AiCutBackItem {
+  title: string;
+  reason: string;
+  suggestion: string;
+  /** Estimated monthly saving in the user's currency (number; masked client-side) */
+  estimatedMonthlySaving: number | null;
+}
+
+/** A titled tip with a short body (used for savings strategy & earn ideas) */
+export interface AiTip {
+  title: string;
+  detail: string;
+}
+
+/** A web-informed tip surfaced via Google Search grounding */
+export interface AiWebTip {
+  title: string;
+  detail: string;
+}
+
+/** A grounding source (from Gemini grounding metadata) backing the web tips */
+export interface AiSource {
+  title: string;
+  url: string;
+}
+
+/** Full AI assessment report content (stored as JSON, validated by Zod) */
+export interface AiAssessmentReport {
+  summary: string;
+  scoreCommentary: string;
+  watchList: AiWatchItem[];
+  cutBack: AiCutBackItem[];
+  boostSavings: AiTip[];
+  earnIdeas: AiTip[];
+  quickActions: string[];
+  webTips: AiWebTip[];
+  /** Grounding sources backing the web tips (may be empty) */
+  sources: AiSource[];
+}
+
+/** Lightweight daily save/earn micro-tip */
+export interface AiDailyTip {
+  tip: string;
+  rationale: string;
+}
+
+/** GET /api/assessment response: the cached report (or null) + when it was made */
+export interface AiAssessmentResponse {
+  report: AiAssessmentReport | null;
+  generatedAt: string | null;
+  model: string | null;
+}
+
+/** GET /api/assessment/daily-tip response */
+export interface AiDailyTipResponse {
+  tip: AiDailyTip | null;
+  generatedAt: string | null;
+}
+
 /** Extend next-auth types */
 declare module "next-auth" {
   interface Session {
