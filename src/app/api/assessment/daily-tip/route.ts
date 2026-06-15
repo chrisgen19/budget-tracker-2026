@@ -70,7 +70,11 @@ export async function GET() {
       create: { userId, kind: "DAILY_TIP", periodKey, content, model },
       update: { content, model, generatedAt: new Date() },
     });
-    await prisma.aiUsageLog.create({ data: { userId, kind: "DAILY_TIP" } });
+    // Best-effort metering — must not blank the already-saved tip (which would then be
+    // cached empty for the rest of the local day) if this write fails.
+    await prisma.aiUsageLog
+      .create({ data: { userId, kind: "DAILY_TIP" } })
+      .catch((e) => console.error("[assessment/daily-tip] usage log failed:", e instanceof Error ? e.message : e));
 
     const body: AiDailyTipResponse = { tip, generatedAt: row.generatedAt.toISOString() };
     return NextResponse.json(body);

@@ -43,6 +43,13 @@ const relativeTime = (iso: string): string => {
   return `${Math.round(hrs / 24)}d ago`;
 };
 
+/** Masks currency amounts (e.g. "₱1,200", "PHP 500", "$50.25") in AI prose so a
+ *  non-compliant model response can't leak figures when Hide Amounts is on.
+ *  Leaves percentages and bare counts intact. */
+const CURRENCY_IN_PROSE = /(?:[₱$€£¥]|\b(?:PHP|USD|EUR|GBP|AUD|CAD|SGD|INR|JPY))\s?\d[\d,]*(?:\.\d+)?/gi;
+const maskProse = (text: string, hide: boolean): string =>
+  hide ? text.replace(CURRENCY_IN_PROSE, "•••") : text;
+
 /** Build the AI payload from the already-computed analytics data. */
 const buildPayload = (data: AnalyticsData, currency: string, granularity: string): AssessmentPayload => {
   const sub = data.healthScore.subScores;
@@ -100,7 +107,7 @@ function Section({ icon: Icon, title, children }: { icon: typeof Sparkles; title
   );
 }
 
-function DailyTipCard() {
+function DailyTipCard({ hideAmounts }: { hideAmounts: boolean }) {
   const { data, isLoading } = useDailyTipQuery();
   if (isLoading) {
     return <div className="card p-4 sm:p-5 animate-pulse h-20 bg-cream-50/60" />;
@@ -112,8 +119,8 @@ function DailyTipCard() {
         <Sparkles className="w-4 h-4 text-amber-dark" />
         <h3 className="text-[11px] font-medium tracking-wider text-amber-dark uppercase">Today&apos;s Tip</h3>
       </div>
-      <p className="text-sm font-medium text-warm-700">{data.tip.tip}</p>
-      <p className="text-xs text-warm-400 mt-1">{data.tip.rationale}</p>
+      <p className="text-sm font-medium text-warm-700">{maskProse(data.tip.tip, hideAmounts)}</p>
+      <p className="text-xs text-warm-400 mt-1">{maskProse(data.tip.rationale, hideAmounts)}</p>
     </motion.div>
   );
 }
@@ -125,7 +132,23 @@ export function AiAssessmentReport({ data, period, currency, hideAmounts }: AiAs
   const payload = useMemo(() => buildPayload(data, currency, period.granularity), [data, currency, period.granularity]);
   const fmt = (n: number | null) => (n === null ? "—" : hideAmounts ? "•••" : formatCurrency(n, currency));
 
-  const report = reportData?.report;
+  const rawReport = reportData?.report;
+  // Mask any currency figures the model may have written into prose when Hide Amounts is on.
+  const report = useMemo(() => {
+    if (!rawReport || !hideAmounts) return rawReport;
+    const m = (s: string) => maskProse(s, true);
+    return {
+      ...rawReport,
+      summary: m(rawReport.summary),
+      scoreCommentary: m(rawReport.scoreCommentary),
+      watchList: rawReport.watchList.map((w) => ({ ...w, title: m(w.title), detail: m(w.detail) })),
+      cutBack: rawReport.cutBack.map((c) => ({ ...c, title: m(c.title), reason: m(c.reason), suggestion: m(c.suggestion) })),
+      boostSavings: rawReport.boostSavings.map((t) => ({ ...t, title: m(t.title), detail: m(t.detail) })),
+      earnIdeas: rawReport.earnIdeas.map((t) => ({ ...t, title: m(t.title), detail: m(t.detail) })),
+      quickActions: rawReport.quickActions.map(m),
+      webTips: rawReport.webTips.map((t) => ({ ...t, title: m(t.title), detail: m(t.detail) })),
+    };
+  }, [rawReport, hideAmounts]);
   const hasData = data.summary.transactionCount > 0;
   const pending = isGenerating(periodKeyOf(period.granularity, period.from, period.to));
 
@@ -134,7 +157,7 @@ export function AiAssessmentReport({ data, period, currency, hideAmounts }: AiAs
 
   return (
     <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-4">
-      <DailyTipCard />
+      <DailyTipCard hideAmounts={hideAmounts} />
 
       {/* Header + generate/refresh */}
       <motion.div variants={fadeUp} className="card p-4 sm:p-5">
