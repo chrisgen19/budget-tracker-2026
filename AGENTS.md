@@ -158,6 +158,7 @@ Active tasks:
 - `POST /api/email/reset-password` — validate token + update password
 - `POST /api/resend-verification` — resend verification email
 - `GET /api/cron/bill-reminders` — sends email reminders for pending bills (secured with `CRON_SECRET`); triggered daily by a Coolify Scheduled Task on production
+- `GET /api/health` — container liveness probe for the Coolify/Docker healthcheck; unauthenticated and deliberately touches no database (a deep check would restart every app on the shared Postgres during one blip)
 
 ## Design
 - "Light & Warm" aesthetic with cream/paper-like backgrounds
