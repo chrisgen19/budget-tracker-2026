@@ -2,6 +2,15 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-07-28 — Container Liveness Endpoint
+
+### Health Check
+- Added `GET /api/health` returning `{ status: "ok" }` for the Coolify/Docker container healthcheck
+- Probe is shallow by design: no database and no auth. Every app on this host shares one Postgres instance, so a deep check would mark them all unhealthy during a single database blip and restart the lot at once
+- `dynamic = "force-dynamic"` pinned so the probe always executes at request time rather than being statically optimized
+- Unaffected by `middleware.ts`, whose matcher covers only page routes
+- Coolify config: path `/api/health`, port 3000, interval 30s, timeout 5s, retries 3, start period 40s
+
 ## 2026-06-15 — AI Assessment tab (Analytics)
 
 ### AI-powered financial assessment
