@@ -91,6 +91,16 @@ export function InstallPromptBanner() {
     }
   }, [canInstall, isInstalled, setVisible]);
 
+  // Another entry point (the profile card) claimed the prompt and the user
+  // dismissed the native dialog, so nothing was installed but there is no
+  // longer anything to offer here. Only hides, so it cannot fight the effect
+  // above. No dismissal is recorded -- the user never dismissed this banner.
+  useEffect(() => {
+    if (visible && !showIOSGuide && !canInstall && !isInstalled) {
+      setVisible(false);
+    }
+  }, [visible, showIOSGuide, canInstall, isInstalled, setVisible]);
+
   useEffect(() => {
     if (!visible) return;
 
