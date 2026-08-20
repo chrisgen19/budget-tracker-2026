@@ -366,6 +366,108 @@ describe("batch idempotency key", () => {
     expect(bodyOf(saves[1]).clientBatchId).toBe(bodyOf(saves[0]).clientBatchId);
   });
 
+  it("resends the original rows, not a grown queue, when a failed save is retried", async () => {
+    // The reported sequence: a mixed batch is submitted, the server commits it but the
+    // response is lost, the user retries the failed scan, then saves again. Rebuilding the
+    // payload from the live queue under the same key made the server replay only the
+    // original rows while the client marked the newly scanned one saved — losing it.
+    fetchMock
+      .mockResolvedValueOnce(scanOk())
+      .mockResolvedValueOnce(scanErr(503, "Busy"));
+    const { result } = setup();
+    await act(async () => {
+      await result.current.scanMultiple([receipt("a.jpg"), receipt("b.jpg")]);
+    });
+    expect(result.current.unsavedCount).toBe(1);
+
+    // Save the one good row. It commits server-side but the response is lost.
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) });
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    // The user retries the failed scan and it now succeeds, so the queue has grown.
+    fetchMock.mockResolvedValueOnce(scanOk());
+    await act(async () => {
+      await result.current.retryItem(
+        result.current.items.find((i) => i.status === "error")!.id,
+      );
+    });
+    expect(result.current.unsavedCount).toBe(2);
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ transactions: [] }),
+    });
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    const saves = fetchMock.mock.calls.filter(
+      (c) => (c[0] as string) === "/api/transactions/batch",
+    );
+    const firstBody = JSON.parse((saves[0][1] as { body: string }).body);
+    const retryBody = JSON.parse((saves[1][1] as { body: string }).body);
+
+    // Same key, and the same single row it originally carried.
+    expect(retryBody.clientBatchId).toBe(firstBody.clientBatchId);
+    expect(retryBody.transactions).toHaveLength(1);
+
+    // The receipt scanned after the batch went out is still queued, not silently dropped.
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    expect(result.current.unsavedCount).toBe(1);
+    expect(result.current.showReview).toBe(true);
+  });
+
+  it("gives the leftover rows a fresh key on the following save", async () => {
+    fetchMock.mockResolvedValueOnce(scanOk()).mockResolvedValueOnce(scanOk());
+    const { result } = setup();
+    await act(async () => {
+      await result.current.scanMultiple([receipt("a.jpg"), receipt("b.jpg")]);
+    });
+
+    // Remove one so the first save carries a single row, then fail it ambiguously.
+    act(() => {
+      result.current.removeItem(result.current.items[1].id);
+    });
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) });
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    // Replay acknowledges the pinned batch and clears the queue.
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ transactions: [] }),
+    });
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    // A subsequent save must not reuse the acknowledged key, or it would replay as a no-op.
+    fetchMock.mockResolvedValueOnce(scanOk());
+    await act(async () => {
+      await result.current.scanMultiple([receipt("c.jpg")]);
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({ transactions: [] }),
+    });
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    const saves = fetchMock.mock.calls.filter(
+      (c) => (c[0] as string) === "/api/transactions/batch",
+    );
+    const keys = saves.map((c) => JSON.parse((c[1] as { body: string }).body).clientBatchId);
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[2]).not.toBe(keys[1]);
+  });
+
   it("uses a fresh key for a save that follows a successful one", async () => {
     fetchMock.mockResolvedValueOnce(scanOk());
     const { result } = setup();
