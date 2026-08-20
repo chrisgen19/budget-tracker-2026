@@ -16,10 +16,10 @@ shipped and were caught only by review.
 - Dependency versions were chosen to clear the repo's 7-day `minimum-release-age` quarantine rather than bypassing it, so the newest release of three of them is intentionally not used
 
 ### Coverage
-Twenty tests over the two areas that actually regressed. Each was checked by reverting the
+Twenty-four tests over the two areas that actually regressed. Each was checked by reverting the
 fix it covers and confirming it fails:
 - `src/components/ui/modal.test.tsx` — the ref-counted body scroll lock, including two modals closing in the same commit (the case that left the page unscrollable) and restoring a pre-existing `overflow` value
-- `src/hooks/use-multi-scan.test.tsx` — `scanSingle` returning its outcome instead of reading stale state, unreadable images vs network failures, non-JSON error responses, malformed 200 responses, retained images on failed rows, retry, a failed save leaving the queue intact, failed rows surviving a partial save, itemising being frozen while a save is in flight (which otherwise creates the receipt twice), and the discard accounting for retryable rows
+- `src/hooks/use-multi-scan.test.tsx` — `scanSingle` returning its outcome instead of reading stale state, unreadable images vs network failures, non-JSON error responses, malformed 200 responses, retained images on failed rows, retry, a failed save leaving the queue intact, failed rows surviving a partial save, itemising being frozen while a save is in flight (which otherwise creates the receipt twice), the batch idempotency key surviving a failed save and rotating after a successful one, labels surviving a second edit, and the discard accounting for retryable rows
 
 `scripts/verify-scan-quota.ts` stays as it is: it exercises Postgres advisory locks and
 transaction isolation, which jsdom cannot provide.

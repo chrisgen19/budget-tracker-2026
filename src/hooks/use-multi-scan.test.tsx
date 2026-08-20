@@ -331,6 +331,136 @@ describe("compression failures in a batch", () => {
   });
 });
 
+describe("batch idempotency key", () => {
+  const bodyOf = (call: unknown[]) =>
+    JSON.parse((call[1] as { body: string }).body) as { clientBatchId?: string };
+
+  it("reuses the key when a failed save is retried, so the retry replays", async () => {
+    fetchMock.mockResolvedValueOnce(scanOk());
+    const { result } = setup();
+    await act(async () => {
+      await result.current.scanMultiple([receipt()]);
+    });
+
+    // A batch can commit and still lose its response. Retrying with a fresh key would
+    // post the same receipts a second time.
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) });
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ transactions: [] }),
+    });
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    const saves = fetchMock.mock.calls.filter(
+      (c) => (c[0] as string) === "/api/transactions/batch",
+    );
+    expect(saves).toHaveLength(2);
+    expect(bodyOf(saves[0]).clientBatchId).toBeTruthy();
+    expect(bodyOf(saves[1]).clientBatchId).toBe(bodyOf(saves[0]).clientBatchId);
+  });
+
+  it("uses a fresh key for a save that follows a successful one", async () => {
+    fetchMock.mockResolvedValueOnce(scanOk());
+    const { result } = setup();
+    await act(async () => {
+      await result.current.scanMultiple([receipt()]);
+    });
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({ transactions: [] }),
+    });
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    fetchMock.mockResolvedValueOnce(scanOk());
+    await act(async () => {
+      await result.current.scanMultiple([receipt("second.jpg")]);
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({ transactions: [] }),
+    });
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    const saves = fetchMock.mock.calls.filter(
+      (c) => (c[0] as string) === "/api/transactions/batch",
+    );
+    expect(saves).toHaveLength(2);
+    // A distinct save is a distinct intent; sharing the key would make the second a replay
+    // of the first and silently drop the receipt.
+    expect(bodyOf(saves[1]).clientBatchId).not.toBe(bodyOf(saves[0]).clientBatchId);
+  });
+});
+
+describe("labels survive a second edit", () => {
+  it("keeps labels when a later edit omits labelIds", async () => {
+    fetchMock.mockResolvedValueOnce(scanOk());
+    const { result } = setup();
+    await act(async () => {
+      await result.current.scanMultiple([receipt()]);
+    });
+    const id = result.current.items[0].id;
+
+    act(() => {
+      result.current.updateItem(id, { ...result.current.items[0].data, labelIds: ["lbl-1"] });
+    });
+    expect(result.current.items[0].data?.labelIds).toEqual(["lbl-1"]);
+
+    // TransactionForm omits labelIds entirely when the picker was not touched, and
+    // AppShell applies `input.labelIds ?? current.labelIds` before calling updateItem.
+    const formPayload: { description: string; labelIds?: string[] } = { description: "Renamed" };
+    const current = result.current.items[0].data;
+    act(() => {
+      result.current.updateItem(id, {
+        ...current,
+        description: formPayload.description,
+        labelIds: formPayload.labelIds ?? current?.labelIds,
+      });
+    });
+
+    expect(result.current.items[0].data?.description).toBe("Renamed");
+    expect(result.current.items[0].data?.labelIds).toEqual(["lbl-1"]);
+  });
+
+  it("keeps an explicit opt-out distinct from never choosing", async () => {
+    fetchMock.mockResolvedValueOnce(scanOk());
+    const { result } = setup();
+    await act(async () => {
+      await result.current.scanMultiple([receipt()]);
+    });
+    const id = result.current.items[0].id;
+
+    // [] means the user opted out; undefined means the server auto-applies. `??` must not
+    // collapse the two.
+    act(() => {
+      result.current.updateItem(id, { ...result.current.items[0].data, labelIds: [] });
+    });
+    const formPayload: { labelIds?: string[] } = {};
+    const current = result.current.items[0].data;
+    act(() => {
+      result.current.updateItem(id, {
+        ...current,
+        labelIds: formPayload.labelIds ?? current?.labelIds,
+      });
+    });
+
+    expect(result.current.items[0].data?.labelIds).toEqual([]);
+  });
+});
+
 describe("queue is frozen during a save", () => {
   const multiCategoryScan = () =>
     scanOk({
