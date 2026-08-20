@@ -10,6 +10,11 @@ All notable development history for the Budget Tracker app.
 - **Closing the review modal confirms first.** Escape, an overlay click, or a mobile swipe-down silently discarded every scanned receipt. It now names how many rows would be lost and that re-scanning spends the allowance again
 - **Failed scans can be retried.** Error rows offered only Delete, so a single Gemini 503 in a ten-file batch permanently lost that receipt. The compressed image is now kept on the row as soon as compression finishes rather than only on success, so Retry re-scans the same photo -- and the failed attempt was already refunded server-side
 
+### Review follow-ups
+- **Nested modals left the page unscrollable.** Each `Modal` snapshotted and restored `body.style.overflow` itself, so the discard confirmation opening over the review sheet captured the review's own `"hidden"`. Closing both in one commit ran the cleanups in tree order: the review restored the real value, then the confirmation restored `"hidden"` over it, and nothing could scroll until a reload. Scroll locking is now ref-counted across all mounted modals, so only the last unlock restores and the order stops mattering. Affects every modal in the app, not just this flow
+- **A partial save discarded the rows that failed.** Save All posted the successful rows and then reset the whole queue, so in a mixed batch the failed scans vanished along with the retry path added in this same change. Only the saved rows are removed now; failures keep their retained image and stay in the review, with a toast naming what still needs attention
+- **Closing skipped the confirmation when every scan had failed.** The discard check counted only savable rows, so an all-failed batch reset silently on Escape or a swipe-down and destroyed the retry queue. Retryable rows are counted too, worded separately because their attempts were refunded and re-scanning costs only the trouble of picking the photos again
+
 ### Correctness
 - A compression failure reported itself as "Network error. Please check your connection", sending the user to debug a connection over an image that never left the device. It now says the image could not be read
 - Error responses are parsed defensively. An unhandled server fault returns HTML, and `res.json()` rejecting on it made every such failure look like a network problem

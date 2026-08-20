@@ -124,10 +124,11 @@ export function AppShell({ children }: AppShellProps) {
     setEditingItemId(null);
   };
 
-  /** Closing discards every reviewed row, so confirm when there is anything to lose. */
+  /** Closing discards every reviewed row, so confirm when there is anything to lose —
+   *  scanned rows waiting to be saved, or failed rows still holding a retryable image. */
   const handleMultiScanClose = () => {
     if (scan.isBusy || scan.isSavingAll) return;
-    if (scan.unsavedCount > 0) {
+    if (scan.unsavedCount > 0 || scan.retryableCount > 0) {
       setConfirmDiscard(true);
       return;
     }
@@ -406,8 +407,8 @@ export function AppShell({ children }: AppShellProps) {
         )}
       </Modal>
 
-      {/* Discard confirmation — closing the review drops every reviewed row, and the scan
-          credits behind them are already spent. */}
+      {/* Discard confirmation — closing the review drops every row. Scanned rows cost
+          allowance to reproduce; failed rows were refunded but still hold the photo. */}
       <ConfirmModal
         open={confirmDiscard}
         onClose={() => setConfirmDiscard(false)}
@@ -415,10 +416,20 @@ export function AppShell({ children }: AppShellProps) {
         title="Discard scanned receipts?"
         message={
           <>
-            You have {scan.unsavedCount} scanned receipt
-            {scan.unsavedCount === 1 ? "" : "s"} that {scan.unsavedCount === 1 ? "has" : "have"} not
-            been saved. Closing now discards {scan.unsavedCount === 1 ? "it" : "them"}, and
-            re-scanning will use your scan allowance again.
+            {scan.unsavedCount > 0 && (
+              <p>
+                {scan.unsavedCount} scanned receipt{scan.unsavedCount === 1 ? "" : "s"}{" "}
+                {scan.unsavedCount === 1 ? "has" : "have"} not been saved. Re-scanning{" "}
+                {scan.unsavedCount === 1 ? "it" : "them"} will use your scan allowance again.
+              </p>
+            )}
+            {scan.retryableCount > 0 && (
+              <p className={scan.unsavedCount > 0 ? "mt-2" : undefined}>
+                {scan.retryableCount} receipt{scan.retryableCount === 1 ? "" : "s"} failed to
+                scan and can still be retried. Closing means picking{" "}
+                {scan.retryableCount === 1 ? "that photo" : "those photos"} again.
+              </p>
+            )}
           </>
         }
         confirmLabel="Discard"

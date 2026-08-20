@@ -369,6 +369,11 @@ export function useMultiScan() {
    * A failure leaves the queue exactly as it was. It used to flip every row to `error`,
    * which stranded the data behind a UI that only offered deletion — losing the scan
    * credits along with the work, for what is usually a transient error.
+   *
+   * On success only the saved rows are removed. Rows that failed to scan keep their
+   * retained image and stay in the review, because clearing the whole queue would throw
+   * away the retry path for a mixed batch: save the three that worked and the two 503s
+   * disappear with no way back to them short of re-picking the files.
    */
   const saveAll = useCallback(async () => {
     const successItems = itemsRef.current.filter((i) => i.status === "success" && i.data);
@@ -405,14 +410,31 @@ export function useMultiScan() {
       setIsSavingAll(false);
     }
 
-    reset();
+    const savedIds = new Set(successItems.map((i) => i.id));
+    const remaining = itemsRef.current.filter((i) => !savedIds.has(i.id));
+
+    if (remaining.length === 0) {
+      reset();
+      return;
+    }
+
+    // Keep the review open on whatever could not be scanned, so Retry is still reachable.
+    setItems(remaining);
+    showToast(
+      `Saved ${savedIds.size} transaction${savedIds.size === 1 ? "" : "s"}. ${remaining.length} receipt${remaining.length === 1 ? "" : "s"} still need attention.`,
+    );
   }, [batchCreateMutation, reset, showToast]);
 
   /** True while any row is mid-flight; closing or saving must wait for these. */
   const isBusy = items.some((i) => i.status === "scanning" || i.status === "breaking_down");
 
-  /** Reviewed rows that would be discarded by closing without saving. */
+  /** Scanned rows that would be discarded by closing without saving. */
   const unsavedCount = items.filter((i) => i.status === "success" && i.data).length;
+
+  /** Failed rows that still hold their image and could be retried. Closing loses that,
+   *  so it needs confirming too — worded separately, since the failed attempts were
+   *  refunded and re-scanning them costs nothing but re-picking the files. */
+  const retryableCount = items.filter((i) => i.status === "error" && i.imageFile).length;
 
   return {
     items,
@@ -422,6 +444,7 @@ export function useMultiScan() {
     isSavingAll,
     isBusy,
     unsavedCount,
+    retryableCount,
     setScanError,
     scanSingle,
     scanMultiple,

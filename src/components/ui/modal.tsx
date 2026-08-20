@@ -63,6 +63,36 @@ const useVisualViewport = (enabled: boolean) => {
   return viewport;
 };
 
+/**
+ * Body scroll lock, ref-counted across every mounted Modal.
+ *
+ * Each instance used to snapshot and restore `body.style.overflow` itself. With two modals
+ * open (a ConfirmModal over the review sheet), the second snapshots the first's `"hidden"`,
+ * and when both close in one commit the cleanups run in tree order -- the outer restores the
+ * real value, then the inner restores `"hidden"` over it, leaving the page unscrollable until
+ * a reload. Counting makes the restore order-independent: only the last unlock restores.
+ */
+let scrollLockCount = 0;
+let savedOverflow = "";
+let savedScrollY = 0;
+
+const lockBodyScroll = () => {
+  if (scrollLockCount === 0) {
+    savedScrollY = window.scrollY;
+    savedOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+  }
+  scrollLockCount += 1;
+};
+
+const unlockBodyScroll = () => {
+  scrollLockCount = Math.max(0, scrollLockCount - 1);
+  if (scrollLockCount === 0) {
+    document.body.style.overflow = savedOverflow;
+    window.scrollTo(0, savedScrollY);
+  }
+};
+
 const desktopVariants = {
   initial: { opacity: 0, scale: 0.95, y: 10 },
   animate: { opacity: 1, scale: 1, y: 0 },
@@ -97,9 +127,7 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
   useEffect(() => {
     if (!open) return;
 
-    const scrollY = window.scrollY;
-    const originalOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    lockBodyScroll();
 
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape") onCloseRef.current();
@@ -119,8 +147,7 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
     return () => {
       clearTimeout(focusTimer);
       document.removeEventListener("keydown", handleEscape);
-      document.body.style.overflow = originalOverflow;
-      window.scrollTo(0, scrollY);
+      unlockBodyScroll();
     };
   }, [open]);
 
