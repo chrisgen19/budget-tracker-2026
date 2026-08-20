@@ -14,6 +14,7 @@ shipped and were caught only by review.
 - `pnpm test` and `pnpm test:watch`; `pnpm test` added to the CI workflow after type-check
 - Tests colocated as `src/**/*.test.ts(x)`. Nothing imports them, so they stay out of the Next.js bundle
 - Dependency versions were chosen to clear the repo's 7-day `minimum-release-age` quarantine rather than bypassing it, so the newest release of three of them is intentionally not used
+- `jsdom` is pinned to the 29.x line, not 30.x. jsdom 30 requires Node `^22.22.2 || ^24.15.0 || >=26`, and both CI and production run Node 20 (`nixpacks.toml` pins `nodejs_20`). Pinning the test runner rather than moving the runtime keeps the decision to upgrade Node a separate, deliberate one
 
 ### Coverage
 Twenty-eight tests over the two areas that actually regressed. Each was checked by reverting the
