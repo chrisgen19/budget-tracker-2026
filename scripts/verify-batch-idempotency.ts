@@ -112,7 +112,36 @@ async function main() {
   check("keyless submits are unchanged (not deduped)", await countRows(), 4);
   await reset();
 
-  // 5. A malformed key is rejected rather than silently treated as keyless.
+  // 5. A replay must not be judged on inputs it will never use. If a label from the
+  //    original batch is deleted before the retry lands, validating it first returns 400 —
+  //    and a 400 tells the client nothing was written, which would let a corrected
+  //    resubmit duplicate an already-committed batch.
+  const label = await prisma.label.create({
+    data: { name: "Probe label", color: "#000", userId: user.id },
+  });
+  const labelledKey = randomUUID();
+  const labelledRows = rows(2).map((r) => ({ ...r, labelIds: [label.id] }));
+
+  const withLabel = await post(labelledRows, labelledKey);
+  check("labelled batch creates", withLabel.status, 201);
+
+  await prisma.transactionLabel.deleteMany({ where: { labelId: label.id } });
+  await prisma.label.delete({ where: { id: label.id } });
+
+  const replayAfterLabelGone = await post(labelledRows, labelledKey);
+  check("replay survives a label deleted since", replayAfterLabelGone.status, 200);
+  check("rows after that replay", await countRows(), 2);
+  await reset();
+
+  // A first attempt with a bad label is still rejected — nothing exists to replay.
+  const badLabelFirst = await post(
+    rows(1).map((r) => ({ ...r, labelIds: [randomUUID()] })),
+    randomUUID(),
+  );
+  check("unknown label on a first attempt is rejected", badLabelFirst.status, 400);
+  check("rejected first attempt created nothing", await countRows(), 0);
+
+  // 6. A malformed key is rejected rather than silently treated as keyless.
   const bad = await post(rows(1), "not-a-uuid");
   check("malformed key is rejected", bad.status, 400);
   check("malformed key created nothing", await countRows(), 0);

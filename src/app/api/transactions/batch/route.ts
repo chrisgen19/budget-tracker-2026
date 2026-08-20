@@ -22,6 +22,10 @@ const batchSchema = z.object({
  *  failure large batches were raised to allow. */
 const BATCH_TX_OPTIONS = { maxWait: 10_000, timeout: 60_000 };
 
+/** Shape returned for created and replayed rows alike, so a replay is indistinguishable
+ *  from the original response. */
+const TX_INCLUDE = { category: true, labels: { include: { label: true } } } as const;
+
 const batchDeleteSchema = z.object({
   ids: z.array(z.string()).min(1),
 });
@@ -33,6 +37,23 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { transactions, clientBatchId } = batchSchema.parse(body);
+
+    // A replay creates nothing, so it must not be judged on the validity of inputs it will
+    // never use. Checked ahead of the label ownership query below: if a label included in
+    // the original batch is deleted before the retry arrives, validating first returns 400
+    // for a batch that is already committed — and a 400 tells the client nothing was
+    // written, which would unfreeze the rows and let a corrected resubmit duplicate them.
+    // The authoritative dedupe still happens under the advisory lock further down; this is
+    // the same check without the preconditions, not a replacement for it.
+    if (clientBatchId) {
+      const alreadySaved = await prisma.transaction.findMany({
+        where: { userId, clientBatchId },
+        include: TX_INCLUDE,
+      });
+      if (alreadySaved.length > 0) {
+        return NextResponse.json({ transactions: alreadySaved }, { status: 200 });
+      }
+    }
 
     // Collect all explicitly-provided label IDs for a single ownership query
     const allExplicitLabelIds = [
@@ -102,7 +123,7 @@ export async function POST(request: Request) {
               },
             }),
           },
-          include: { category: true, labels: { include: { label: true } } },
+          include: TX_INCLUDE,
         });
       });
 
@@ -122,7 +143,7 @@ export async function POST(request: Request) {
 
       const existing = await tx.transaction.findMany({
         where: { userId, clientBatchId },
-        include: { category: true, labels: { include: { label: true } } },
+        include: TX_INCLUDE,
       });
       if (existing.length > 0) return { transactions: existing, replayed: true };
 
