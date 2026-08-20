@@ -4,6 +4,7 @@ import {
   useMutation,
   useQueryClient,
 } from "@tanstack/react-query";
+import { useCallback } from "react";
 import { queryKeys } from "@/hooks/use-transactions";
 import { analyticsKeys } from "@/hooks/use-analytics";
 import type { ScheduledTransactionInput, BillActionInput } from "@/lib/validations";
@@ -220,11 +221,24 @@ export function useReactivateBill() {
   });
 }
 
+/** Invalidate everything a bill payment touches. Exported so batch callers can
+ *  run it once instead of per payment. */
+export function useInvalidateBillPayment() {
+  const queryClient = useQueryClient();
+  return useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: billKeys.all });
+    queryClient.invalidateQueries({ queryKey: billKeys.pendingAll });
+    queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all });
+    queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
+    queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
+  }, [queryClient]);
+}
+
 export function useBillAction() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ id, input }: { id: string; input: BillActionInput }) => {
+    mutationFn: async ({ id, input }: { id: string; input: BillActionInput; skipInvalidate?: boolean }) => {
       const res = await fetch(`/api/bills/${id}/action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -237,6 +251,10 @@ export function useBillAction() {
       return res.json() as Promise<{ message: string; transactionId?: string }>;
     },
     onSuccess: (_data, variables) => {
+      // Pay All opts out and invalidates once at the end: otherwise a 23-bill
+      // run fires ~100 refetches that queue up against the payments themselves.
+      if (variables.skipInvalidate) return;
+
       queryClient.invalidateQueries({ queryKey: billKeys.all });
       queryClient.invalidateQueries({ queryKey: billKeys.pendingAll });
 
