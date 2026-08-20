@@ -82,6 +82,16 @@ export const receiptBreakdownLineItemSchema = z.object({
   amount: z.number().positive(),
 });
 
+/** Ceiling on one batch-create request. Multi-scan Save All sends every reviewed row in a
+ *  single atomic request, and one upload can expand well past the old cap of 50 once
+ *  receipts are itemised into per-category children. Overflowing it failed the whole save
+ *  with a generic "Invalid input" after the scan credits had already been spent. */
+export const MAX_BATCH_TRANSACTIONS = 200;
+
+/** Idempotency key accepted by POST /api/transactions/batch, so an ambiguous failure
+ *  (committed, response lost) can be retried without creating the receipts twice. */
+export const clientBatchIdSchema = z.string().uuid();
+
 export const receiptBreakdownItemSchema = z.object({
   amount: z.number().positive(),
   categoryId: z.string().min(1),

@@ -2,6 +2,63 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-20 - Receipt Scan Save & Recovery
+
+### Data loss
+- **A failed Save All no longer destroys the queue.** The catch flipped every reviewed row to `error`, a state whose only action is Delete, stranding the data behind a UI that could not save it -- and taking the already-spent scan credits with it, usually for a transient error. A failure now leaves the queue untouched and surfaces a toast, so pressing Save again is all that is needed
+- **Save All could exceed the batch cap and fail every row.** `POST /api/transactions/batch` capped at 50 while one upload can expand well past that once receipts are itemised into per-category children, turning the overflow into a generic `Invalid input` -> "Failed to save." The cap is now a shared `MAX_BATCH_TRANSACTIONS` of 200, and the client checks the count first with a message naming the actual number
+- **Closing the review modal confirms first.** Escape, an overlay click, or a mobile swipe-down silently discarded every scanned receipt. It now names how many rows would be lost and that re-scanning spends the allowance again
+- **Failed scans can be retried.** Error rows offered only Delete, so a single Gemini 503 in a ten-file batch permanently lost that receipt. The compressed image is now kept on the row as soon as compression finishes rather than only on success, so Retry re-scans the same photo -- and the failed attempt was already refunded server-side
+
+### Review follow-ups
+- **Nested modals left the page unscrollable.** Each `Modal` snapshotted and restored `body.style.overflow` itself, so the discard confirmation opening over the review sheet captured the review's own `"hidden"`. Closing both in one commit ran the cleanups in tree order: the review restored the real value, then the confirmation restored `"hidden"` over it, and nothing could scroll until a reload. Scroll locking is now ref-counted across all mounted modals, so only the last unlock restores and the order stops mattering. Affects every modal in the app, not just this flow
+- **A partial save discarded the rows that failed.** Save All posted the successful rows and then reset the whole queue, so in a mixed batch the failed scans vanished along with the retry path added in this same change. Only the saved rows are removed now; failures keep their retained image and stay in the review, with a toast naming what still needs attention
+- **Closing skipped the confirmation when every scan had failed.** The discard check counted only savable rows, so an all-failed batch reset silently on Escape or a swipe-down and destroyed the retry queue. Retryable rows are counted too, worded separately because their attempts were refunded and re-scanning costs only the trouble of picking the photos again
+
+### Review follow-ups (second round)
+- **Itemising during a save created duplicate transactions.** Save All snapshots the rows it submits; expanding a submitted parent into per-category children mid-flight left those children outside `savedIds`, so they survived the save and the next one recreated the same expenses. Queue mutations are now frozen while a save is in flight, guarded in the hook and disabled in the UI
+- **A malformed scan response could poison the whole batch.** Every field was cast with `as` and none was checked, so a 200 missing `amount` or `categoryId` produced a `success` row holding `undefined`; `saveAll` then asserted them non-null and the server rejected the entire atomic batch with `Invalid input` — exactly the batch-wide failure this change exists to remove. Required fields are validated and a malformed body becomes a retryable per-row error. It also stops `withLocalTime(undefined)` throwing on `.slice` and being reported as a network problem
+- `itemsRef` is synced in an effect rather than written during render. React may discard a render, and a ref written in one can leak a queue that was never committed into `saveAll` and `retryItem`
+- The batch path reported compression failures on the row instead of uploading the original, which usually tripped the server's 4 MB limit and reported a misleading cause. Matches what the single-capture path already did. HEIC is unaffected: `compressImage` resolves with the original there rather than rejecting
+- The success-row Remove button gained the `aria-label` the changelog already claimed for it, the category-load warning is a `role="status"` live region since it can appear after the modal opens, and the error row uses `gap-2` so Retry is not flush against a destructive Remove
+- Removed a dead copy of `withLocalTime` left in `AppShell` when the logic moved to the hook
+
+### Review follow-ups (third round)
+- **Retrying an ambiguous save could duplicate every transaction.** `POST /api/transactions/batch` carried no idempotency key and always created new rows, so a batch that committed but whose response was lost (a dropped mobile connection, a proxy timeout) looked exactly like one that never ran — and this change's own failure toast invites the user to retry. The route now accepts a `clientBatchId` and replays instead of re-creating, serialised with a `pg_advisory_xact_lock` on the key so a double submit cannot race the existence check. The client holds the key across a failure and clears it once a save lands. Verified end-to-end in `scripts/verify-batch-idempotency.ts`: without the key a retry of three rows creates six
+- **Editing a scanned row twice dropped its labels.** `TransactionForm` omits `labelIds` when the picker was not touched, so a second edit of any other field passed `undefined` straight through and wiped the labels chosen in the first. Save All then omitted the field entirely, and the server auto-applied schedule labels over the user's choice. Restores the `?? existing` fallback that the pre-refactor handler had, keeping an explicit `[]` (opted out) distinct from `undefined` (auto-apply)
+- **Not every scan 403 is a spent allowance.** `receipt-guard` also returns 403 when scanning is off for the user or their role, and treating all of them as quota exhaustion pinned the local count to the limit and showed a false, sticky "No scans remaining this month". The 403s now carry a machine-readable `code`, and only `LIMIT_REACHED` mirrors the exhausted allowance
+
+### Review follow-ups (fourth round)
+- **A retried save could silently drop a receipt.** The idempotency key survived a failed save but the payload was rebuilt from the live queue, so retrying a failed scan and saving again resent a *grown* batch under the same key. The server replays only what that key already created, while the client marked everything it submitted as saved — so the newly scanned receipt was removed from the review without ever being created. An unacknowledged attempt now pins its rows alongside its key and resends exactly those; anything scanned since stays queued for the next save, which gets a fresh key
+
+### Review follow-ups (fifth round)
+- **Pinning the payload made corrections silently ineffective.** Pinning stopped a grown queue losing receipts, but the review still offered Edit and Remove on those rows while the retry replayed the pinned copy — so a corrected amount was discarded without a word, and a removed row was created anyway. Failures are now classified by whether anything could have been written: every 4xx the route returns is raised before it opens a transaction, so nothing was, and the pin is dropped for a corrected resubmission. A 5xx or a lost response is genuinely unknown, so the rows stay pinned, are frozen in the review behind an "Unconfirmed" badge, and the Save button becomes "Finish Saving N Receipts". Editing what a replay would ignore is no longer offered
+- **A full 200-row keyed save could exceed Prisma's transaction deadline.** The keyed path awaits each create in turn, so a maximum batch is 200 sequential round trips plus label associations against a default 5s timeout. Blowing it rolls the batch back and returns a generic 500 — the exact failure the raised batch cap exists to allow. Explicit bounds of 10s wait / 60s duration
+
+### Review follow-ups (sixth round)
+- **A replay was judged on inputs it never uses.** The route validated explicit-label ownership before checking for an already-committed batch, so a retry whose label had since been deleted returned 400 for a batch that existed. The client reads 400 as proof that nothing was written, which unfroze the rows and let a corrected resubmit duplicate them under a fresh key. The existence check now runs before that validation: a replay creates nothing, so the validity of its creation inputs is irrelevant to it. The authoritative dedupe still happens under the advisory lock, unchanged. `scripts/verify-batch-idempotency.ts` covers a replay whose label was deleted since, and a first attempt with an unknown label still being rejected
+
+### Correctness
+- A compression failure reported itself as "Network error. Please check your connection", sending the user to debug a connection over an image that never left the device. It now says the image could not be read
+- Error responses are parsed defensively. An unhandled server fault returns HTML, and `res.json()` rejecting on it made every such failure look like a network problem
+- A 403 syncs the local remaining-scans count to the enforced limit, instead of leaving the banner claiming scans that the API will refuse
+- `scanSingle` returns its outcome rather than reading the row back out of state. `patchItem` only schedules a render, so awaiting it and then inspecting the item saw the stale `scanning` status and opened the review modal even after a failure
+- Closing the scan sheet and opening the review modal batch into one render. Split across renders both modals are mounted for a frame, and the sheet's unmount cleanup then restores `body.overflow` and drops the review modal's scroll lock
+
+### Loading and error states
+- `MultiScanReview` uses the shared `useCategoriesQuery` instead of a raw `fetch` with no error handling, where an error response would be assigned straight into `categories` and throw on `.find`. It also stops refetching on every open. A failed category load now degrades to a notice and leaves the receipts savable, since categories only drive the per-row icon and name
+- Retry, Remove, and Edit buttons carry `aria-label`s
+
+### Structure
+- Scan orchestration moved out of `AppShell` (760 lines) into `src/hooks/use-multi-scan.ts`: capture, the review queue, itemisation, retry, and the atomic save. `AppShell` is down to 460 lines
+
+### Files
+- `src/hooks/use-multi-scan.ts` -- new; all receipt scan orchestration
+- `src/components/app-shell.tsx` -- consumes the hook; adds the discard confirmation
+- `src/components/multi-scan-review.tsx` -- retry action, React Query categories, category-load error state
+- `src/lib/validations.ts` -- `MAX_BATCH_TRANSACTIONS`
+- `src/types/index.ts` -- `MultiScanItem` carries `photoDate`/`photoDateTime` so a retry can rebuild its request
+
 ## 2026-08-20 - Receipt Scan Quota Enforcement
 
 ### Cost and abuse control

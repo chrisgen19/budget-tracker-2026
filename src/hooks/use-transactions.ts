@@ -376,11 +376,29 @@ export function useBulkDeleteTransactions() {
   });
 }
 
+/**
+ * Whether a failed batch save could have written anything.
+ *
+ * `"no"` means the server definitively rejected it before any write, so the queue is free
+ * to be corrected and resubmitted as a new intent. `"unknown"` means the batch may have
+ * committed with its response lost, so the retry has to replay the same idempotency key
+ * with the same rows rather than whatever the queue holds now.
+ */
+export class BatchSaveError extends Error {
+  constructor(readonly committed: "no" | "unknown") {
+    super(`Batch save failed (committed: ${committed})`);
+    this.name = "BatchSaveError";
+  }
+}
+
 export function useBatchCreateTransactions() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (
+    mutationFn: async ({
+      transactions,
+      clientBatchId,
+    }: {
       transactions: Array<{
         amount: number;
         description: string;
@@ -389,15 +407,36 @@ export function useBatchCreateTransactions() {
         categoryId: string;
         receiptGroupId?: string;
         receiptBreakdown?: unknown;
-      }>
-    ) => {
-      const res = await fetch("/api/transactions/batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transactions }),
-      });
-      if (!res.ok) throw new Error("Failed to create transactions");
-      return res.json() as Promise<{ transactions: TransactionWithCategory[] }>;
+      }>;
+      /** Idempotency key so retrying an ambiguous failure cannot double-post. */
+      clientBatchId?: string;
+    }) => {
+      let res: Response;
+      try {
+        res = await fetch("/api/transactions/batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ transactions, clientBatchId }),
+        });
+      } catch {
+        // No response at all: the request may or may not have reached the server.
+        throw new BatchSaveError("unknown");
+      }
+
+      if (!res.ok) {
+        // Every 4xx the route returns is raised before it opens a transaction (schema
+        // rejection, label ownership), so nothing was written. A 5xx may come from our
+        // own handler after a rollback, but it may equally be a proxy that lost the
+        // response of a batch that committed — which is not safe to assume away.
+        throw new BatchSaveError(res.status >= 400 && res.status < 500 ? "no" : "unknown");
+      }
+
+      try {
+        return (await res.json()) as { transactions: TransactionWithCategory[] };
+      } catch {
+        // 2xx with an unreadable body: the write landed but we cannot read what it made.
+        throw new BatchSaveError("unknown");
+      }
     },
     onSuccess: (data) => {
       // Directly insert all new transactions into infinite query caches

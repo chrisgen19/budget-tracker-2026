@@ -1,21 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Pencil, Trash2, AlertCircle, CheckCircle2, Loader2, Rows3 } from "lucide-react";
+import { Pencil, Trash2, AlertCircle, CheckCircle2, Loader2, Rows3, RotateCw } from "lucide-react";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { ReceiptBreakdown } from "@/components/transactions/receipt-breakdown";
 import { formatCurrency, cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
-import type { Category, MultiScanItem } from "@/types";
+import { useCategoriesQuery } from "@/hooks/use-categories";
+import type { MultiScanItem } from "@/types";
 
 interface MultiScanReviewProps {
   items: MultiScanItem[];
   onEdit: (id: string) => void;
   onRemove: (id: string) => void;
   onItemize: (id: string) => void;
+  onRetry: (id: string) => void;
   onSaveAll: () => void;
   onClose: () => void;
   isSaving: boolean;
+  /** Rows sitting in a batch whose outcome is unknown. Frozen until a retry settles it. */
+  unconfirmedIds: ReadonlySet<string>;
 }
 
 export function MultiScanReview({
@@ -23,21 +26,16 @@ export function MultiScanReview({
   onEdit,
   onRemove,
   onItemize,
+  onRetry,
   onSaveAll,
   onClose,
   isSaving,
+  unconfirmedIds,
 }: MultiScanReviewProps) {
   const { user } = useUser();
-  const [categories, setCategories] = useState<Category[]>([]);
-
-  useEffect(() => {
-    const fetchCategories = async () => {
-      const res = await fetch("/api/categories");
-      const data = await res.json();
-      setCategories(data);
-    };
-    fetchCategories();
-  }, []);
+  // Shares the cached categories query with the rest of the app rather than refetching on
+  // every open, and gives the lookup a defined shape when the request is loading or failed.
+  const { data: categories = [], isError: categoriesFailed } = useCategoriesQuery();
 
   const resolveCategory = (categoryId?: string) =>
     categories.find((c) => c.id === categoryId);
@@ -67,6 +65,35 @@ export function MultiScanReview({
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Categories drive only the icon and name shown per row, so a failed load degrades
+          the display without blocking the save. */}
+      {categoriesFailed && (
+        <div
+          role="status"
+          className="flex items-center gap-2 p-3 rounded-xl bg-cream-100 border border-cream-200"
+        >
+          <AlertCircle className="w-4 h-4 text-warm-400 shrink-0" />
+          <p className="text-xs text-warm-500">
+            Category names could not be loaded. Your receipts are still safe to save.
+          </p>
+        </div>
+      )}
+
+      {/* An unacknowledged batch: the rows are frozen because a retry replays exactly what
+          was sent, so an edit made now would be discarded without a word. */}
+      {unconfirmedIds.size > 0 && (
+        <div
+          role="status"
+          className="flex items-start gap-2 p-3 rounded-xl bg-amber-light/50 border border-amber/20"
+        >
+          <AlertCircle className="w-4 h-4 text-amber-dark shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-dark">
+            {unconfirmedIds.size} receipt{unconfirmedIds.size === 1 ? "" : "s"} may already
+            have been saved. Press Save again to finish — it will not create duplicates.
+          </p>
+        </div>
+      )}
+
       {/* Progress indicator */}
       {isStillScanning && (
         <div className="flex items-center gap-3 p-3 rounded-xl bg-amber-light/50 border border-amber/20">
@@ -127,13 +154,34 @@ export function MultiScanReview({
                   <p className="text-sm text-warm-600 truncate">{item.fileName}</p>
                   <p className="text-xs text-expense">{item.error ?? "Failed to scan"}</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => onRemove(item.id)}
-                  className="p-2 rounded-lg text-warm-300 hover:text-expense hover:bg-expense-light transition-colors shrink-0"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                {/* gap-2 rather than gap-1: Retry sits beside a destructive Remove on the
+                    recovery path, so the mis-tap costs the receipt. */}
+                <div className="flex items-center gap-2 shrink-0">
+                  {/* The image is still in memory, and the failed attempt was refunded,
+                      so a transient failure does not cost the user the receipt. */}
+                  {item.imageFile && (
+                    <button
+                      type="button"
+                      onClick={() => onRetry(item.id)}
+                      disabled={isSaving}
+                      title="Retry scan"
+                      aria-label={`Retry scanning ${item.fileName}`}
+                      className="p-2 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <RotateCw className="w-4 h-4" />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onRemove(item.id)}
+                    disabled={isSaving}
+                    title="Remove"
+                    aria-label={`Remove ${item.fileName}`}
+                    className="p-2 rounded-lg text-warm-300 hover:text-expense hover:bg-expense-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             );
           }
@@ -149,6 +197,8 @@ export function MultiScanReview({
             : "";
           const canItemize = !!item.imageFile && !item.parentId && !!item.data?.multiCategory;
           const isItemizedChild = !!item.parentId;
+          const isUnconfirmed = unconfirmedIds.has(item.id);
+          const actionsDisabled = isSaving || isUnconfirmed;
 
           return (
             <div
@@ -185,6 +235,11 @@ export function MultiScanReview({
                         Itemized
                       </span>
                     )}
+                    {isUnconfirmed && (
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber/20 text-amber-dark shrink-0">
+                        Unconfirmed
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     {category && (
@@ -217,8 +272,10 @@ export function MultiScanReview({
                     <button
                       type="button"
                       onClick={() => onItemize(item.id)}
+                      disabled={actionsDisabled}
                       title="Itemize receipt"
-                      className="p-2 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors"
+                      aria-label={`Itemize ${item.data?.description || item.fileName}`}
+                      className="p-2 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <Rows3 className="w-4 h-4" />
                     </button>
@@ -226,14 +283,20 @@ export function MultiScanReview({
                   <button
                     type="button"
                     onClick={() => onEdit(item.id)}
-                    className="p-2 rounded-lg text-warm-300 hover:text-amber-dark hover:bg-amber-light transition-colors"
+                    disabled={actionsDisabled}
+                    title="Edit"
+                    aria-label={`Edit ${item.data?.description || item.fileName}`}
+                    className="p-2 rounded-lg text-warm-300 hover:text-amber-dark hover:bg-amber-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <Pencil className="w-4 h-4" />
                   </button>
                   <button
                     type="button"
                     onClick={() => onRemove(item.id)}
-                    className="p-2 rounded-lg text-warm-300 hover:text-expense hover:bg-expense-light transition-colors"
+                    disabled={actionsDisabled}
+                    title="Remove"
+                    aria-label={`Remove ${item.data?.description || item.fileName}`}
+                    className="p-2 rounded-lg text-warm-300 hover:text-expense hover:bg-expense-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -264,6 +327,8 @@ export function MultiScanReview({
           >
             {isSaving ? (
               <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            ) : unconfirmedIds.size > 0 ? (
+              `Finish Saving ${unconfirmedIds.size} Receipt${unconfirmedIds.size !== 1 ? "s" : ""}`
             ) : (
               `Add ${successCount} Transaction${successCount !== 1 ? "s" : ""}`
             )}
