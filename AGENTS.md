@@ -17,6 +17,7 @@ Personal budget tracker app for managing income and expenses with dashboard anal
 - **PWA:** Serwist (`@serwist/next`) — service worker, offline support, install prompt
 - **Icons:** Lucide React
 - **Animation:** Framer Motion
+- **Testing:** Vitest + React Testing Library (jsdom)
 - **Pre-commit:** Husky + lint-staged (ESLint, `--max-warnings 0`)
 
 ## Project Structure
@@ -78,6 +79,8 @@ src/
 - `pnpm build` — Production build (generates Prisma client + runs migrations + Next.js build)
 - `pnpm lint` — Run ESLint
 - `pnpm type-check` — Run TypeScript type checker
+- `pnpm test` — Run the test suite once (CI mode)
+- `pnpm test:watch` — Run tests in watch mode
 - `pnpm db:migrate` — Run Prisma migrations (dev)
 - `pnpm db:push` — Push schema changes without migration file
 - `pnpm db:seed` — Seed default categories
@@ -112,6 +115,13 @@ Active tasks:
 - Notable columns: `users.hide_amounts`, `users.timezone_offset`, `users.email_verified`, `users.default_label_type`, `transactions.receipt_group_id`, `transactions.receipt_breakdown`, `transactions.bill_id`, `transactions.client_batch_id`
 - `Label.applicable_to` restricts labels to "EXPENSE", "INCOME", or "BOTH" (default); filters LabelPicker, schedule auto-labeling, and retroactive apply
 - `LabelSchedule` stores per-label auto-apply rules: `days` (int[]), `startTime`/`endTime` (HH:mm), linked to `Label` via `labelId`
+
+## Testing
+- **Vitest + React Testing Library**, jsdom environment. Config in `vitest.config.mts`, global setup in `vitest.setup.ts` (jest-dom matchers, RTL cleanup, and `matchMedia`/`scrollTo` stubs jsdom lacks)
+- Tests are colocated: `src/**/*.test.ts(x)`. Nothing imports them, so they stay out of the Next.js bundle
+- Import test globals explicitly (`import { describe, it, expect } from "vitest"`) rather than enabling `globals`
+- A test should fail if you revert the fix it covers. When adding one for a bug, confirm that before committing
+- `scripts/verify-scan-quota.ts` remains separate: it needs a real PostgreSQL database (advisory locks, transaction isolation) that jsdom cannot provide. Run it directly with `pnpm exec tsx`
 
 ## Key Patterns
 - **PrivacyProvider** (`src/components/privacy-provider.tsx`) — shared hide-amounts state across all app pages, persisted in DB via `/api/preferences`
@@ -180,16 +190,16 @@ Active tasks:
 - No `console.log` in commits. Handle loading/error/empty states
 - Tailwind CSS utility classes directly — avoid `@apply` unless necessary
 - `pnpm` as package manager. Node 20+
-- Run `pnpm lint` and `pnpm type-check` before finishing any code changes
+- Run `pnpm lint`, `pnpm type-check`, and `pnpm test` before finishing any code changes
 
 ## Rule Strictness
-- **Hard requirements** (must pass): TypeScript, naming conventions, no `console.log` in commits (CLI scripts under `scripts/` may print — they have no other output channel; see `heal-bill-next-due-dates.ts`, `generate-pwa-icons.ts`, `prisma/seed.ts`), `pnpm` usage, and successful `pnpm lint` + `pnpm type-check`
+- **Hard requirements** (must pass): TypeScript, naming conventions, no `console.log` in commits (CLI scripts under `scripts/` may print — they have no other output channel; see `heal-bill-next-due-dates.ts`, `generate-pwa-icons.ts`, `prisma/seed.ts`), `pnpm` usage, and successful `pnpm lint` + `pnpm type-check` + `pnpm test`
 - **Strong preferences** (use judgment): function/component size targets (≤ 50/150 lines), utility style choices, and minimizing `@apply`
 - If a strong preference conflicts with clarity or maintainability, prefer clearer code and document the tradeoff in your PR notes
 
 ## PR Checklist
-- Lint and type-check pass locally (`pnpm lint` and `pnpm type-check`)
-- New/changed behavior includes tests or a short manual test plan
+- Lint, type-check, and tests pass locally (`pnpm lint`, `pnpm type-check`, `pnpm test`)
+- New/changed behavior includes tests, or a short manual test plan where a test is impractical
 - No secrets or local-only environment values are committed
 - Loading, error, and empty states are handled for affected UI
 - Update docs/changelog when behavior, routes, or setup changes
