@@ -12,15 +12,16 @@
  *
  *   pnpm exec tsx scripts/verify-scan-quota.ts
  */
+import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import {
   reserveScanCredit,
   settleScanReservation,
   countScansUsed,
   monthStartForUser,
-  RESERVATION_TTL_MS,
+  reservationTtlMs,
 } from "../src/lib/scan-quota";
-import { GEMINI_WORST_CASE_MS } from "../src/lib/gemini-limits";
+import { geminiWorstCaseMs } from "../src/lib/gemini-limits";
 
 const prisma = new PrismaClient();
 const EMAIL = "quota-probe@scratch.invalid";
@@ -125,11 +126,29 @@ async function main() {
 
   // 9. A reservation must outlive the slowest legitimate Gemini call, or a still-running
   //    request could have its credit taken and then settle SUCCESS over the limit.
-  check(
-    "reservation TTL outlives worst-case Gemini call",
-    GEMINI_WORST_CASE_MS === null || RESERVATION_TTL_MS > GEMINI_WORST_CASE_MS,
-    true,
-  );
+  //    Swept across configurations rather than read off the ambient env: an earlier version
+  //    capped the TTL at an hour, which held at the 60s default and broke above ~12 minutes,
+  //    so a single-config assertion would have passed while the invariant was violated.
+  for (const timeoutMs of [1_000, 30_000, 60_000, 120_000, 900_000, 3_600_000]) {
+    const worstCase = geminiWorstCaseMs(timeoutMs);
+    check(
+      `TTL outlives worst-case Gemini call (GEMINI_TIMEOUT_MS=${timeoutMs})`,
+      worstCase !== null && reservationTtlMs(worstCase) > worstCase,
+      true,
+    );
+  }
+  // Untimed calls have no worst case to derive from; the TTL is a documented accepted limit.
+  check("untimed config still gets a TTL", reservationTtlMs(null) > 0, true);
+
+  // 10. Settling must never throw, or a completed scan would surface to the user as a 500.
+  //     A missing row (P2025) is the common case: the account was deleted mid-scan.
+  let settleThrew = false;
+  try {
+    await settleScanReservation(randomUUID(), "SUCCESS");
+  } catch {
+    settleThrew = true;
+  }
+  check("settling a missing reservation does not throw", settleThrew, false);
 }
 
 main()

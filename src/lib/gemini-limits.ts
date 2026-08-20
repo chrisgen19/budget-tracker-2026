@@ -21,14 +21,21 @@ export const GEMINI_FALLBACK_ATTEMPTS = 2;
 const backoffMs = (attempts: number) => ((attempts - 1) * attempts * 1000) / 2;
 
 /**
- * Worst-case wall time for one `generateContentWithRetry` call: every primary attempt
- * timing out, then every fallback attempt timing out, plus the backoff between them.
+ * Worst-case wall time for one `generateContentWithRetry` call at a given per-attempt
+ * timeout: every primary attempt timing out, then every fallback attempt timing out, plus
+ * the backoff between them.
  *
- * `null` when GEMINI_TIMEOUT_MS is 0, because an untimed request has no bound at all.
+ * `null` when the timeout is 0, because an untimed request has no bound at all.
+ *
+ * Exported as a function, not just the derived constant, so callers can verify their own
+ * timing assumptions across configurations rather than only the one this process booted with.
  */
-export const GEMINI_WORST_CASE_MS: number | null =
-  GEMINI_TIMEOUT_MS > 0
-    ? GEMINI_TIMEOUT_MS * (GEMINI_MAX_ATTEMPTS + GEMINI_FALLBACK_ATTEMPTS) +
+export const geminiWorstCaseMs = (timeoutMs: number): number | null =>
+  timeoutMs > 0
+    ? timeoutMs * (GEMINI_MAX_ATTEMPTS + GEMINI_FALLBACK_ATTEMPTS) +
       backoffMs(GEMINI_MAX_ATTEMPTS) +
       backoffMs(GEMINI_FALLBACK_ATTEMPTS)
     : null;
+
+/** Worst case for this process's configured timeout. */
+export const GEMINI_WORST_CASE_MS: number | null = geminiWorstCaseMs(GEMINI_TIMEOUT_MS);
