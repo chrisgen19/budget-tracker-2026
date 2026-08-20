@@ -93,7 +93,12 @@ export async function POST(
         originalStartDay,
         bill.customIntervalDays,
         logs,
-        { endDate: bill.endDate },
+        // advanceToNextUnpaidOccurrence returns null both when the walk passes
+        // endDate and when it exhausts its budget, and this route deactivates
+        // the bill on null. The default budget of 500 would deactivate a daily
+        // bill with 500 consecutive settled occurrences, so it is raised until
+        // exhaustion is implausible and null means endDate in practice.
+        { endDate: bill.endDate, maxIterations: 20_000 },
       );
     };
 

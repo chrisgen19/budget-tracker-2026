@@ -25,6 +25,9 @@ const prisma = new PrismaClient();
 
 const apply = process.argv.includes("--apply");
 
+/** Upper bound on the unreachable-occurrence walk. See the note at its loop. */
+const MAX_SCAN_ITERATIONS = 20_000;
+
 async function main() {
   console.log(`[heal-bill-next-due-dates] mode: ${apply ? "APPLY" : "DRY RUN"}`);
 
@@ -135,6 +138,7 @@ async function reportUnreachable(
 
   let affectedBills = 0;
   let total = 0;
+  let truncatedBills = 0;
 
   for (const bill of bills) {
     const logs = await prisma.scheduledTransactionLog.findMany({
@@ -157,17 +161,48 @@ async function reportUnreachable(
     cursor.setHours(0, 0, 0, 0);
 
     const missing: string[] = [];
-    for (let i = 0; i < 500 && cursor.getTime() < next.getTime(); i++) {
+    let scannedTo = new Date(cursor);
+    let truncated = false;
+
+    // 20k covers ~55 years of a daily bill. The cap cannot be dropped entirely:
+    // computeNextDueDate uses `customIntervalDays ?? 1`, which does not catch a
+    // stored 0, so a CUSTOM bill with a zero interval would never advance.
+    for (let i = 0; ; i++) {
+      if (cursor.getTime() >= next.getTime()) break;
+      if (i >= MAX_SCAN_ITERATIONS) {
+        truncated = true;
+        break;
+      }
+
       if (!terminal.has(cursor.getTime())) missing.push(cursor.toISOString().slice(0, 10));
-      cursor = computeNextDueDate(cursor, bill.frequency, bill.startDate.getDate(), bill.customIntervalDays);
-      cursor.setHours(0, 0, 0, 0);
+
+      const advanced = computeNextDueDate(cursor, bill.frequency, bill.startDate.getDate(), bill.customIntervalDays);
+      advanced.setHours(0, 0, 0, 0);
+
+      if (advanced.getTime() <= cursor.getTime()) {
+        // Zero/negative interval: bail rather than spin forever
+        truncated = true;
+        break;
+      }
+
+      cursor = advanced;
+      scannedTo = new Date(cursor);
+    }
+
+    const label = bill.description || `(bill ${bill.id})`;
+
+    if (truncated) {
+      truncatedBills++;
+      console.log(
+        `  [truncated] ${label} user=${bill.userId} nextDueDate=${next.toISOString().slice(0, 10)}\n` +
+        `      scan stopped at ${scannedTo.toISOString().slice(0, 10)} -- result for this bill is INCOMPLETE`,
+      );
     }
 
     if (missing.length === 0) continue;
 
     affectedBills++;
     total += missing.length;
-    const label = bill.description || `(bill ${bill.id})`;
     console.log(
       `  [unreachable] ${label} user=${bill.userId} nextDueDate=${next.toISOString().slice(0, 10)}\n` +
       `      ${missing.length} occurrence(s): ${missing.slice(0, 12).join(", ")}` +
@@ -175,10 +210,18 @@ async function reportUnreachable(
     );
   }
 
-  if (affectedBills === 0) {
+  if (affectedBills === 0 && truncatedBills === 0) {
     console.log("  none — every occurrence before nextDueDate has a PAID or SKIPPED log");
+  } else if (affectedBills === 0) {
+    console.log(
+      `\n  No unreachable occurrences found, but ${truncatedBills} bill(s) were only scanned partially.` +
+      "\n  This is NOT a clean result — re-check those bills before concluding no backfill is needed.",
+    );
   } else {
     console.log(`\n  ${total} unreachable occurrence(s) across ${affectedBills} bill(s). Nothing was changed.`);
+    if (truncatedBills > 0) {
+      console.log(`  ${truncatedBills} bill(s) were scanned only partially — the real count may be higher.`);
+    }
   }
 }
 
