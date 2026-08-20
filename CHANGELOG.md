@@ -2,6 +2,28 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-20 - Receipt Scan Quota Enforcement
+
+### Cost and abuse control
+- **Failed scans no longer cost the user a credit, and no longer cost nothing to an abuser.** `scanLog.create` ran only on the success path, so every unreadable image, non-receipt, and malformed Gemini response consumed real API budget while consuming no quota -- and `generateContentWithRetry` can spend up to five Gemini calls per request (three attempts plus a fallback model). Credits are now *reserved* before the Gemini call and refunded on any failure, so the user is only charged for output they can use. Because the monthly limit therefore no longer bounds spend, a rolling per-user rate limit on scan *attempts* now does: 120 attempts per 15 minutes, sized so a 50-image upload plus itemising every one of them stays under it. Rate-limited requests return 429 with `Retry-After`
+- **The monthly limit could be overshot by concurrent requests.** The check was `count`, compare, then insert after the Gemini round trip, which is not atomic -- and the client makes it reachable in normal use, since multi-scan uploads run three requests in parallel. Reservations are now serialised per user with a transaction-scoped Postgres advisory lock. An `INSERT ... SELECT ... WHERE (count) < limit` was tried first and silently enforced nothing, because under READ COMMITTED every concurrent statement reads the same pre-insert snapshot
+- **Oversized uploads are rejected before they are buffered.** The 4 MB check ran after `request.formData()` had already read the whole multipart body into memory; App Router route handlers have no default body limit. `Content-Length` is now checked up front and refused with 413
+
+### Access control
+- **A deleted account with a live session could scan without limit.** Sessions are JWTs, so the token outlives the user row; both routes gated their entire permission block on `if (!isAdmin && user)`, and a null `user` skipped scan-enabled checks and the monthly limit together. Missing users now get 401
+- **The per-user Receipt Scanning toggle is enforced server-side.** Only the role-level `AppSettings` flag was checked, so a user who turned the feature off in Profile > Features could still call both endpoints directly
+
+### Correctness
+- The quota month is computed in the user's timezone via `users.timezone_offset`, matching how the rest of the app handles date boundaries. It previously followed the container clock, so an Asia/Manila user's allowance reset at 08:00 local on the 1st
+- The scan route and the breakdown route had drifted to *different* month boundaries -- one server-local, one UTC. Both now share one definition, along with the upload validation and permission checks they had each copied, in the new `src/lib/receipt-guard.ts`
+- The "N scans remaining" banner counts what the API enforces. `(app)/layout.tsx` had its own third copy of the month-window query, which would have reported refunded failures as spent
+
+### Files
+- `src/lib/scan-quota.ts` -- new; reserve/settle/count credits, month window, rate limit
+- `src/lib/receipt-guard.ts` -- new; shared upload validation, permission checks, and credit reservation for both receipt routes
+- `scripts/verify-scan-quota.ts` -- new; runnable checks for the concurrency, refund, stale-reservation, timezone, and rate-limit rules
+- `prisma/migrations/20260820120000_add_scan_log_status/` -- adds `ScanStatus` to `scan_logs` (existing rows backfilled `SUCCESS`)
+
 ## 2026-08-20 - Bill Reminder Correctness
 
 ### Data integrity

@@ -9,6 +9,7 @@ import { AppShell } from "@/components/app-shell";
 import { BillReminderProvider } from "@/components/bills/bill-reminder-provider";
 import { ToastProvider } from "@/components/ui/toast";
 import { AssessmentProvider } from "@/components/assessment-provider";
+import { countScansUsed, monthStartForUser } from "@/lib/scan-quota";
 
 export default async function AppLayout({
   children,
@@ -55,16 +56,12 @@ export default async function AppLayout({
     maxUploadFiles = roleSettings?.maxUploadFiles ?? 10;
     monthlyScanLimit = roleSettings?.monthlyScanLimit ?? 0;
 
-    // Count scans used this month (only when there's a limit)
+    // Count scans used this month (only when there's a limit).
+    // Shares countScansUsed with the API so the banner and the enforced quota agree:
+    // failed scans are refunded and must not show as consumed.
     if (monthlyScanLimit > 0) {
-      const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      scansUsedThisMonth = await prisma.scanLog.count({
-        where: {
-          userId: session.user.id,
-          createdAt: { gte: monthStart },
-        },
-      });
+      const monthStart = monthStartForUser(dbUser?.timezoneOffset ?? -480);
+      scansUsedThisMonth = await countScansUsed(session.user.id, monthStart);
     }
   }
 
