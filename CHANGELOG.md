@@ -16,10 +16,10 @@ shipped and were caught only by review.
 - Dependency versions were chosen to clear the repo's 7-day `minimum-release-age` quarantine rather than bypassing it, so the newest release of three of them is intentionally not used
 
 ### Coverage
-Twenty-six tests over the two areas that actually regressed. Each was checked by reverting the
+Twenty-eight tests over the two areas that actually regressed. Each was checked by reverting the
 fix it covers and confirming it fails:
 - `src/components/ui/modal.test.tsx` — the ref-counted body scroll lock, including two modals closing in the same commit (the case that left the page unscrollable) and restoring a pre-existing `overflow` value
-- `src/hooks/use-multi-scan.test.tsx` — `scanSingle` returning its outcome instead of reading stale state, unreadable images vs network failures, non-JSON error responses, malformed 200 responses, retained images on failed rows, retry, a failed save leaving the queue intact, failed rows surviving a partial save, itemising being frozen while a save is in flight (which otherwise creates the receipt twice), the batch idempotency key surviving a failed save, staying pinned to the rows it was sent with, and rotating after a successful one, labels surviving a second edit, and the discard accounting for retryable rows
+- `src/hooks/use-multi-scan.test.tsx` — `scanSingle` returning its outcome instead of reading stale state, unreadable images vs network failures, non-JSON error responses, malformed 200 responses, retained images on failed rows, retry, a failed save leaving the queue intact, failed rows surviving a partial save, itemising being frozen while a save is in flight (which otherwise creates the receipt twice), the batch idempotency key surviving a failed save, staying pinned to the rows it was sent with, and rotating after a successful one, failures being classified as definitive or unknown, rows staying frozen while unconfirmed, labels surviving a second edit, and the discard accounting for retryable rows
 
 `scripts/verify-scan-quota.ts` stays as it is: it exercises Postgres advisory locks and
 transaction isolation, which jsdom cannot provide.
@@ -44,9 +44,6 @@ transaction isolation, which jsdom cannot provide.
 - The batch path reported compression failures on the row instead of uploading the original, which usually tripped the server's 4 MB limit and reported a misleading cause. Matches what the single-capture path already did. HEIC is unaffected: `compressImage` resolves with the original there rather than rejecting
 - The success-row Remove button gained the `aria-label` the changelog already claimed for it, the category-load warning is a `role="status"` live region since it can appear after the modal opens, and the error row uses `gap-2` so Retry is not flush against a destructive Remove
 - Removed a dead copy of `withLocalTime` left in `AppShell` when the logic moved to the hook
-
-### Review follow-ups (fourth round)
-- **A retried save could silently drop a receipt.** The idempotency key survived a failed save but the payload was rebuilt from the live queue, so retrying a failed scan and saving again resent a *grown* batch under the same key. The server replays only what that key already created, while the client marked everything it submitted as saved — so the newly scanned receipt was removed from the review without ever being created. An unacknowledged attempt now pins its rows alongside its key and resends exactly those; anything scanned since stays queued for the next save, which gets a fresh key. This also removes the "an edit after an ambiguous failure is silently lost" caveat noted in the previous round, since the retry no longer pretends to carry the newer state
 
 ### Review follow-ups (third round)
 - **Retrying an ambiguous save could duplicate every transaction.** `POST /api/transactions/batch` carried no idempotency key and always created new rows, so a batch that committed but whose response was lost (a dropped mobile connection, a proxy timeout) looked exactly like one that never ran — and this change's own failure toast invites the user to retry. The route now accepts a `clientBatchId` and replays instead of re-creating, serialised with a `pg_advisory_xact_lock` on the key so a double submit cannot race the existence check. The client holds the key across a failure and clears it once a save lands. Verified end-to-end in `scripts/verify-batch-idempotency.ts`: without the key a retry of three rows creates six

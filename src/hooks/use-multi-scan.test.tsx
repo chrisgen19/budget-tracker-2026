@@ -626,24 +626,85 @@ describe("queue is frozen during a save", () => {
     expect(result.current.showReview).toBe(false);
   });
 
-  it("allows itemize again once the save has settled", async () => {
+  it("allows itemize again after a save that definitively wrote nothing", async () => {
     fetchMock.mockResolvedValueOnce(multiCategoryScan());
     const { result } = setup();
     await act(async () => {
       await result.current.scanMultiple([receipt()]);
     });
 
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) });
+    // 4xx is raised before the route opens a transaction, so nothing was written and the
+    // queue is free to be corrected.
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({}) });
     await act(async () => {
       await result.current.saveAll();
     });
+    expect(result.current.unconfirmedIds.size).toBe(0);
 
-    // The save failed, so the queue is intact and the freeze must have lifted.
     await act(async () => {
       await result.current.itemizeItem(result.current.items[0].id);
     });
     expect(result.current.items).toHaveLength(2);
     expect(result.current.items.every((i) => i.parentId !== undefined)).toBe(true);
+  });
+
+  it("keeps rows frozen after a save whose outcome is unknown", async () => {
+    fetchMock.mockResolvedValueOnce(multiCategoryScan());
+    const { result } = setup();
+    await act(async () => {
+      await result.current.scanMultiple([receipt()]);
+    });
+    const id = result.current.items[0].id;
+
+    // A 5xx may be our own rollback or a proxy that lost the response of a committed
+    // batch. The retry replays these exact rows, so editing them would be discarded.
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 502, json: async () => ({}) });
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    expect(result.current.unconfirmedIds.has(id)).toBe(true);
+
+    await act(async () => {
+      await result.current.itemizeItem(id);
+    });
+    expect(result.current.items).toHaveLength(1);
+
+    act(() => {
+      result.current.updateItem(id, { ...result.current.items[0].data, amount: 999 });
+    });
+    expect(result.current.items[0].data?.amount).not.toBe(999);
+
+    act(() => {
+      result.current.removeItem(id);
+    });
+    expect(result.current.items).toHaveLength(1);
+  });
+
+  it("unfreezes the rows once the replay is acknowledged", async () => {
+    fetchMock.mockResolvedValueOnce(scanOk());
+    const { result } = setup();
+    await act(async () => {
+      await result.current.scanMultiple([receipt()]);
+    });
+
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 502, json: async () => ({}) });
+    await act(async () => {
+      await result.current.saveAll();
+    });
+    expect(result.current.unconfirmedIds.size).toBe(1);
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ transactions: [] }),
+    });
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    expect(result.current.unconfirmedIds.size).toBe(0);
+    expect(result.current.items).toHaveLength(0);
   });
 });
 
