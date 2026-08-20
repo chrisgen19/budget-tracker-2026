@@ -2,6 +2,39 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-20 - Receipt Scan Quota Enforcement
+
+### Cost and abuse control
+- **Failed scans no longer cost the user a credit, and no longer cost nothing to an abuser.** `scanLog.create` ran only on the success path, so every unreadable image, non-receipt, and malformed Gemini response consumed real API budget while consuming no quota -- and `generateContentWithRetry` can spend up to five Gemini calls per request (three attempts plus a fallback model). Credits are now *reserved* before the Gemini call and refunded on any failure, so the user is only charged for output they can use. Because the monthly limit therefore no longer bounds spend, a rolling per-user rate limit on scan *attempts* now does: 120 attempts per 15 minutes, sized so a 50-image upload plus itemising every one of them stays under it. Rate-limited requests return 429 with `Retry-After`
+- **The monthly limit could be overshot by concurrent requests.** The check was `count`, compare, then insert after the Gemini round trip, which is not atomic -- and the client makes it reachable in normal use, since multi-scan uploads run three requests in parallel. Reservations are now serialised per user with a transaction-scoped Postgres advisory lock. An `INSERT ... SELECT ... WHERE (count) < limit` was tried first and silently enforced nothing, because under READ COMMITTED every concurrent statement reads the same pre-insert snapshot
+- **Oversized uploads are rejected before they are buffered.** The 4 MB check ran after `request.formData()` had already read the whole multipart body into memory; App Router route handlers have no default body limit. `Content-Length` is now checked up front and refused with 413
+
+### Review follow-ups
+- **The rate limit had the same race the monthly limit did.** The attempt count ran before the transaction and outside the advisory lock, and unlimited plans never took the lock at all, so a concurrent burst slipped past the one control that now bounds Gemini spend. Both checks moved inside the locked transaction, and every plan takes the lock -- unlimited plans skip only the monthly check
+- **Reservation TTL is derived from the Gemini retry policy** instead of a fixed 10 minutes. Worst case on default settings is ~5m04s (three primary attempts plus two fallback attempts at `GEMINI_TIMEOUT_MS` each, plus backoff), but raising or disabling that timeout could let a live request outlive its own reservation, letting another request take the last credit before the original settled `SUCCESS`. New `src/lib/gemini-limits.ts` holds the timing policy so callers can reason about call duration without importing the Gemini client
+- Reservation transactions set explicit `maxWait`/`timeout`. Prisma's 2s/5s defaults are tight once concurrent uploads serialise on one user's advisory lock, and exceeding them throws instead of returning a clean quota denial
+- Both routes call the guard inside their `try`. It reads the multipart body and hits the database, so a rejection escaped the handler and returned an HTML 500 the client could not parse as JSON, surfacing as a misleading "Network error"
+- `guardReceiptRequest` split into `checkBodySize`, `resolvePermissions`, and `validateUpload`, keeping each unit inside the size target
+- **The reservation TTL is no longer capped below the worst case it is meant to exceed.** Capping at an hour held at the 60s default but broke once `GEMINI_TIMEOUT_MS` went above ~12 minutes, where the worst case reaches 75 minutes -- reintroducing the exact expiry-while-running bug the derivation was added to prevent. Uncapped for timed configs; the hour now applies only to untimed ones, where no worst case exists to derive from and a single credit of overshoot is an accepted, documented limit
+- The TTL invariant is verified across a sweep of `GEMINI_TIMEOUT_MS` values rather than whichever one the process booted with. The single-config assertion passed while the invariant was violated
+- The harness's stale-reservation checks derive their window from `RESERVATION_TTL_MS` instead of a hard-coded 30 minutes, and a matching check confirms a reservation just *inside* the TTL still holds its credit. The fixed window reported false failures on correct code at longer timeouts, which is worse than no check: a verification script that cries wolf under a supported configuration stops being trusted
+- `settleScanReservation` retries before giving up. A lost settlement skews the quota in both directions: an unsettled `SUCCESS` expires at the TTL and silently refunds a scan the user did receive, while an unsettled `FAILED` holds a credit until then. It still never throws, since a completed scan becoming a 500 is worse than a miscounted credit
+
+### Access control
+- **A deleted account with a live session could scan without limit.** Sessions are JWTs, so the token outlives the user row; both routes gated their entire permission block on `if (!isAdmin && user)`, and a null `user` skipped scan-enabled checks and the monthly limit together. Missing users now get 401
+- **The per-user Receipt Scanning toggle is enforced server-side.** Only the role-level `AppSettings` flag was checked, so a user who turned the feature off in Profile > Features could still call both endpoints directly
+
+### Correctness
+- The quota month is computed in the user's timezone via `users.timezone_offset`, matching how the rest of the app handles date boundaries. It previously followed the container clock, so an Asia/Manila user's allowance reset at 08:00 local on the 1st
+- The scan route and the breakdown route had drifted to *different* month boundaries -- one server-local, one UTC. Both now share one definition, along with the upload validation and permission checks they had each copied, in the new `src/lib/receipt-guard.ts`
+- The "N scans remaining" banner counts what the API enforces. `(app)/layout.tsx` had its own third copy of the month-window query, which would have reported refunded failures as spent
+
+### Files
+- `src/lib/scan-quota.ts` -- new; reserve/settle/count credits, month window, rate limit
+- `src/lib/receipt-guard.ts` -- new; shared upload validation, permission checks, and credit reservation for both receipt routes
+- `scripts/verify-scan-quota.ts` -- new; runnable checks for the concurrency, refund, stale-reservation, timezone, and rate-limit rules
+- `prisma/migrations/20260820120000_add_scan_log_status/` -- adds `ScanStatus` to `scan_logs` (existing rows backfilled `SUCCESS`)
+
 ## 2026-08-20 - Bill Reminder Correctness
 
 ### Data integrity

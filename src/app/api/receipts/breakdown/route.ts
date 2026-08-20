@@ -1,122 +1,34 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { GEMINI_MODEL, receiptScanConfig, generateContentWithRetry, isGeminiUnavailable } from "@/lib/gemini";
 import { getAuthUserId } from "@/lib/session";
 import { receiptBreakdownResultSchema } from "@/lib/validations";
 import { parseLocalDate, checkReceiptDate } from "@/lib/receipt-date";
-
-const ALLOWED_TYPES = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/heic",
-  "image/heif",
-]);
-
-const EXTENSION_MIME_MAP: Record<string, string> = {
-  heic: "image/heic",
-  heif: "image/heif",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  png: "image/png",
-  webp: "image/webp",
-};
-
-const resolveMimeType = (file: File): string => {
-  if (file.type && file.type !== "application/octet-stream") return file.type;
-  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-  return EXTENSION_MIME_MAP[ext] ?? file.type;
-};
-
-const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB
-
-/** Strip markdown code fences that Gemini sometimes wraps around JSON */
-const stripCodeFences = (text: string): string =>
-  text.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "");
+import { guardReceiptRequest, stripCodeFences } from "@/lib/receipt-guard";
+import { settleScanReservation } from "@/lib/scan-quota";
 
 export async function POST(request: Request) {
   const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
 
+  // Set once the guard reserves a credit, so `fail` knows whether there is one to refund.
+  let reservationId: string | null = null;
+
+  /** Refund any reserved credit and return the error. We absorb the cost of every failed
+   *  itemisation rather than charging the user for output they never got. */
+  const fail = async (message: string, status: number) => {
+    if (reservationId) await settleScanReservation(reservationId, "FAILED");
+    return NextResponse.json({ error: message }, { status });
+  };
+
+  // The guard reads the multipart body and hits the database, so it must run inside the
+  // try: an escaping rejection would return an HTML 500 the client cannot parse as JSON,
+  // surfacing to the user as a misleading "Network error".
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { role: true },
-    });
+    const guard = await guardReceiptRequest(request, userId);
+    if (guard instanceof NextResponse) return guard;
 
-    const formData = await request.formData();
-    const file = formData.get("receipt");
-
-    if (!(file instanceof File)) {
-      return NextResponse.json(
-        { error: "No receipt image provided" },
-        { status: 400 }
-      );
-    }
-
-    const mimeType = resolveMimeType(file);
-    if (!ALLOWED_TYPES.has(mimeType)) {
-      return NextResponse.json(
-        { error: "Invalid file type. Please upload a JPEG, PNG, WebP, or HEIC image." },
-        { status: 400 }
-      );
-    }
-
-    if (file.size > MAX_FILE_SIZE) {
-      return NextResponse.json(
-        { error: "File too large. Maximum size is 4 MB." },
-        { status: 400 }
-      );
-    }
-
-    const isAdmin = user?.role === "ADMIN";
-    const now = new Date();
-    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-
-    const [roleSettings, scansThisMonth, categories] = await Promise.all([
-      !isAdmin && user
-        ? prisma.appSettings.findUnique({ where: { role: user.role } })
-        : null,
-      !isAdmin
-        ? prisma.scanLog.count({
-            where: { userId, createdAt: { gte: monthStart } },
-          })
-        : 0,
-      prisma.category.findMany({
-        where: {
-          type: "EXPENSE",
-          OR: [{ isDefault: true }, { userId }],
-        },
-        orderBy: [{ isDefault: "desc" }, { name: "asc" }],
-        select: { id: true, name: true },
-      }),
-    ]);
-
-    // Enforce role-based scan permissions for non-admins
-    if (!isAdmin && user) {
-      if (!roleSettings?.receiptScanEnabled) {
-        return NextResponse.json(
-          { error: "Receipt scanning is not available for your account." },
-          { status: 403 }
-        );
-      }
-
-      if (
-        roleSettings.monthlyScanLimit > 0 &&
-        scansThisMonth >= roleSettings.monthlyScanLimit
-      ) {
-        return NextResponse.json(
-          {
-            error: `Monthly scan limit reached (${scansThisMonth}/${roleSettings.monthlyScanLimit}). Limit resets next month.`,
-          },
-          { status: 403 }
-        );
-      }
-    }
-
-    const categoryList = categories
-      .map((c) => `- "${c.name}" (id: "${c.id}")`)
-      .join("\n");
+    const { formData, file, mimeType, categories, categoryList } = guard;
+    reservationId = guard.reservationId;
 
     // Date-only fallback — prefer client's local date to avoid UTC offset issues.
     const serverToday = new Date().toISOString().slice(0, 10);
@@ -195,10 +107,7 @@ RULES:
 
     const rawText = response.text?.trim();
     if (!rawText) {
-      return NextResponse.json(
-        { error: "Could not read the receipt. Please try a clearer photo." },
-        { status: 422 }
-      );
+      return await fail("Could not read the receipt. Please try a clearer photo.", 422);
     }
 
     const cleanJson = stripCodeFences(rawText);
@@ -206,10 +115,7 @@ RULES:
     try {
       parsed = JSON.parse(cleanJson);
     } catch {
-      return NextResponse.json(
-        { error: "Could not read the receipt. Please try a clearer photo." },
-        { status: 422 }
-      );
+      return await fail("Could not read the receipt. Please try a clearer photo.", 422);
     }
 
     // Handle non-receipt images
@@ -219,19 +125,16 @@ RULES:
       "error" in parsed &&
       (parsed as Record<string, unknown>).error === "NOT_A_RECEIPT"
     ) {
-      return NextResponse.json(
-        { error: "This doesn't look like a receipt. Please upload a receipt image." },
-        { status: 422 }
+      return await fail(
+        "This doesn't look like a receipt. Please upload a receipt image.",
+        422
       );
     }
 
     const result = receiptBreakdownResultSchema.safeParse(parsed);
 
     if (!result.success) {
-      return NextResponse.json(
-        { error: "Could not extract item details from this receipt." },
-        { status: 422 }
-      );
+      return await fail("Could not extract item details from this receipt.", 422);
     }
 
     // Normalize date and flag suspicious year for the UI
@@ -251,21 +154,18 @@ RULES:
       }
     }
 
-    // Log 1 scan credit for the breakdown (fire-and-forget)
-    prisma.scanLog.create({ data: { userId } }).catch(() => {});
+    // Only an itemisation the user can actually use consumes their monthly credit.
+    await settleScanReservation(guard.reservationId, "SUCCESS");
 
     return NextResponse.json({ ...result.data, dateWarning, usedPhotoFallback });
   } catch (error) {
     console.error("[receipts/breakdown] Breakdown failed:", error);
     if (isGeminiUnavailable(error)) {
-      return NextResponse.json(
-        { error: "The AI scanning service is busy right now. Please try again in a minute." },
-        { status: 503 }
+      return await fail(
+        "The AI scanning service is busy right now. Please try again in a minute.",
+        503
       );
     }
-    return NextResponse.json(
-      { error: "Failed to break down receipt. Please try again." },
-      { status: 500 }
-    );
+    return await fail("Failed to break down receipt. Please try again.", 500);
   }
 }

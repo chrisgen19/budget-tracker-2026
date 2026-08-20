@@ -47,6 +47,16 @@ enum AiInsightKind {
   DAILY_TIP
 }
 
+/// Lifecycle of a single receipt scan attempt.
+/// PENDING is the in-flight reservation that makes the quota check atomic;
+/// only PENDING and SUCCESS consume a monthly credit. FAILED rows are kept
+/// (not deleted) so a refunded attempt still counts against the rate limit.
+enum ScanStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
 model User {
   id           String        @id @default(cuid())
   name         String
@@ -136,12 +146,14 @@ model AppSettings {
 }
 
 model ScanLog {
-  id        String   @id @default(cuid())
-  userId    String   @map("user_id")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now()) @map("created_at")
+  id        String     @id @default(cuid())
+  userId    String     @map("user_id")
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status    ScanStatus @default(SUCCESS)
+  createdAt DateTime   @default(now()) @map("created_at")
 
   @@index([userId, createdAt])
+  @@index([userId, status, createdAt])
   @@map("scan_logs")
 }
 
