@@ -12,7 +12,7 @@ declare global {
     /**
      * Set by the inline capture script in the root layout. Chrome fires
      * `beforeinstallprompt` once, shortly after load and often before React has
-     * hydrated — the event never replays, so it is stashed here at parse time.
+     * hydrated. The event never replays, so it is stashed here at parse time.
      */
     __bipEvent?: BeforeInstallPromptEvent | null;
   }
@@ -76,7 +76,7 @@ export function useInstallPrompt() {
 
   const promptInstall = useCallback(async () => {
     if (!deferredPrompt) return false;
-    // Drop the reference first — the event is spent the moment prompt() runs,
+    // Drop the reference first: the event is spent the moment prompt() runs,
     // so a second caller must not be able to reuse it.
     setDeferredPrompt(null);
     clearStashedPrompt();

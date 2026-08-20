@@ -2,6 +2,23 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-20 - PWA Install Prompt Fixes
+
+### Install prompt reliability
+- **Root cause fix**: Chrome fires `beforeinstallprompt` once, shortly after load, and the only listener lived inside a `useEffect`. On the authenticated shell, hydration often finished after the event fired, and the event never replays, so `canInstall` stayed `false` for the whole session and the banner never appeared. The event is now captured by an inline script in the root layout at parse time and adopted by `useInstallPrompt` via a `bip-ready` event
+- The stashed prompt is cleared as soon as it is consumed or the app is installed, since `prompt()` throws if called twice
+- Banner now hides when the app is installed from the browser's own menu. `appinstalled` previously left a visible banner on screen
+- Installed-PWA detection adds `navigator.standalone`, so iOS before 16.4 no longer shows the "Add to Home Screen" guide inside the installed app
+
+### Layout and robustness
+- Install banner no longer paints over the bill reminder. Both were fixed to the same corner (install `4.5rem`/`z-40`, bill `5rem`/`z-20`); the install card now offsets by the bill banner height, which is what `MobileFab` already assumed. Clearance passes as a CSS variable so the `lg:` breakpoint keeps its own base offset
+- `localStorage` access is guarded. It throws in embedded webviews and when site data is blocked, and these calls run in effects inside `AppShell`, so an uncaught throw took down the whole authenticated shell for a cosmetic nudge
+
+### Accessibility and access
+- Banner is a labelled `region` instead of an `aria-live` status: a live region announced the text but gave screen reader users no route to the buttons inside it. Escape now dismisses it, cooldown included
+- New **Install App** row in Profile > Features (`src/components/pwa/install-app-card.tsx`), the way back in after the banner's 14-day dismissal. Handles installed / installable / iOS / unsupported states
+- `manifest.ts` pins `id: "/dashboard"` (the current implicit value) so future `start_url` changes cannot orphan existing installs
+
 ## 2026-07-28 — Container Liveness Endpoint
 
 ### Health Check

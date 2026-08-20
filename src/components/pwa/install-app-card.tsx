@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 function isIOS() {
   if (typeof navigator === "undefined") return false;
   if (/iPhone|iPod|iPad/.test(navigator.userAgent)) return true;
-  // iPadOS 13+ reports as Macintosh — detect via multi-touch support
+  // iPadOS 13+ reports as Macintosh, so detect via multi-touch support
   return /Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1;
 }
 
