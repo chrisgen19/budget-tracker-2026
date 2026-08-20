@@ -2,6 +2,25 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-20 - Bill Reminder Correctness
+
+### Data integrity
+- **Out-of-order pay/skip no longer discards unpaid occurrences.** `getPendingRemindersForUser` only walks forward from `nextDueDate`, but `pay`, `skip`, and `pay_existing` advanced it from the occurrence that was acted on. Paying the third card in the banner jumped `nextDueDate` past the first two, which had no terminal log and could never be regenerated. Each action now resolves `nextDueDate` with `advanceToNextUnpaidOccurrence`, running on the transaction client after the log insert so it sees its own write and cannot race a concurrent action
+- `scripts/heal-bill-next-due-dates.ts` gained a read-only pass reporting occurrences stranded before `nextDueDate` by the old behaviour. It never rewinds automatically: bills whose `startDate` predates their first payment have legitimately unpaid early occurrences
+
+### Correctness
+- Pending reminders are computed in the user's timezone. The server used the container clock, so a UTC host showed an Asia/Manila user the previous day for the first eight hours of every local day: `daysPastDue` was off by one and bills due today read "Due tomorrow". The cron path uses the stored `users.timezone_offset` so reminder emails agree with the app
+- **Pay & Edit** prefilled a date one day early for anyone behind UTC; it now reads the calendar date directly off the ISO string
+
+### Safety and performance
+- **Pay All now confirms first**, naming the count and total. It previously wrote N real transactions on a single unguarded click, while deleting one category shows a `ConfirmModal`
+- Pay All invalidates once per run instead of once per payment. A 23-bill run previously fired roughly a hundred refetches that queued against the payments still in flight
+- Failed pay/snooze/skip actions surface a toast. They passed only `onSuccess` and the mutation has no global error handler, so failures were entirely silent
+
+### Banner UI
+- The dismiss animation runs again: the component returned `null` outside `AnimatePresence`, so the exit transition never played
+- Accessibility: the prev/next arrows were unlabelled buttons wrapping an SVG, the position counter is announced, and the snooze trigger gained `aria-haspopup`, `aria-expanded`, menu roles, and Escape to close
+
 ## 2026-08-20 - PWA Install Prompt Fixes
 
 ### Install prompt reliability
