@@ -88,6 +88,10 @@ export const receiptBreakdownLineItemSchema = z.object({
  *  with a generic "Invalid input" after the scan credits had already been spent. */
 export const MAX_BATCH_TRANSACTIONS = 200;
 
+/** Idempotency key accepted by POST /api/transactions/batch, so an ambiguous failure
+ *  (committed, response lost) can be retried without creating the receipts twice. */
+export const clientBatchIdSchema = z.string().uuid();
+
 export const receiptBreakdownItemSchema = z.object({
   amount: z.number().positive(),
   categoryId: z.string().min(1),

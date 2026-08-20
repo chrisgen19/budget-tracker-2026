@@ -380,7 +380,10 @@ export function useBatchCreateTransactions() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (
+    mutationFn: async ({
+      transactions,
+      clientBatchId,
+    }: {
       transactions: Array<{
         amount: number;
         description: string;
@@ -389,12 +392,14 @@ export function useBatchCreateTransactions() {
         categoryId: string;
         receiptGroupId?: string;
         receiptBreakdown?: unknown;
-      }>
-    ) => {
+      }>;
+      /** Idempotency key so retrying an ambiguous failure cannot double-post. */
+      clientBatchId?: string;
+    }) => {
       const res = await fetch("/api/transactions/batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transactions }),
+        body: JSON.stringify({ transactions, clientBatchId }),
       });
       if (!res.ok) throw new Error("Failed to create transactions");
       return res.json() as Promise<{ transactions: TransactionWithCategory[] }>;

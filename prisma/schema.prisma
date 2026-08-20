@@ -120,6 +120,10 @@ model Transaction {
   user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   receiptGroupId   String?                @map("receipt_group_id")
   receiptBreakdown Json?                  @map("receipt_breakdown")
+  /// Idempotency key for POST /api/transactions/batch. A batch that commits but whose
+  /// response is lost looks identical to one that never ran, and the review modal invites
+  /// the user to retry — which would post the same receipts a second time.
+  clientBatchId    String?                @map("client_batch_id")
   billId           String?                @map("bill_id")
   bill             ScheduledTransaction?  @relation(fields: [billId], references: [id], onDelete: SetNull)
   labels           TransactionLabel[]
@@ -130,6 +134,7 @@ model Transaction {
   @@index([userId, type])
   @@index([receiptGroupId])
   @@index([billId])
+  @@index([userId, clientBatchId])
   @@map("transactions")
 }
 

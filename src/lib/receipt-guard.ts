@@ -57,13 +57,19 @@ interface ScanPermissions {
 const denialResponse = (denial: ScanQuotaDenial): NextResponse => {
   if (denial.reason === "RATE_LIMITED") {
     return NextResponse.json(
-      { error: "Too many scans in a short time. Please wait a few minutes and try again." },
+      {
+        error: "Too many scans in a short time. Please wait a few minutes and try again.",
+        code: "RATE_LIMITED",
+      },
       { status: 429, headers: { "Retry-After": String(denial.retryAfterSeconds) } },
     );
   }
   return NextResponse.json(
     {
       error: `Monthly scan limit reached (${denial.used}/${denial.limit}). Limit resets next month.`,
+      // Three different conditions return 403 here. The client mirrors the exhausted
+      // allowance locally, and must not do that when the feature is merely switched off.
+      code: "LIMIT_REACHED",
     },
     { status: 403 },
   );
@@ -101,7 +107,7 @@ async function resolvePermissions(userId: string): Promise<NextResponse | ScanPe
   // The user's own Profile > Features toggle, which the API never used to check.
   if (!user.receiptScanEnabled) {
     return NextResponse.json(
-      { error: "Receipt scanning is turned off for your account." },
+      { error: "Receipt scanning is turned off for your account.", code: "SCAN_DISABLED" },
       { status: 403 },
     );
   }
@@ -113,7 +119,7 @@ async function resolvePermissions(userId: string): Promise<NextResponse | ScanPe
   const roleSettings = await prisma.appSettings.findUnique({ where: { role: user.role } });
   if (!roleSettings?.receiptScanEnabled) {
     return NextResponse.json(
-      { error: "Receipt scanning is not available for your account." },
+      { error: "Receipt scanning is not available for your account.", code: "SCAN_DISABLED" },
       { status: 403 },
     );
   }

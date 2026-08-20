@@ -65,6 +65,12 @@ export function useMultiScan() {
   // rather than a render later.
   const savingRef = useRef(false);
 
+  // Idempotency key for the batch save. Held across a failure so an immediate retry is a
+  // replay rather than a second insert: a batch can commit and still have its response
+  // lost, and the failure toast invites the user to try again. Cleared once a save lands,
+  // so the next distinct save gets a fresh key.
+  const batchIdRef = useRef<string | null>(null);
+
   // Mirrors `items` so callbacks can read the current queue without being re-created on
   // every state change, and so retry never closes over a stale array. Synced after commit
   // rather than during render: React may discard a render, and a ref written in one would
@@ -101,7 +107,9 @@ export function useMultiScan() {
         const data = await readJson(res);
 
         if (!res.ok) {
-          if (res.status === 403) syncQuotaExhausted();
+          // Not every 403 is a spent allowance: the feature can be off for the user or
+          // their role. Mirroring those as "no scans remaining" is both wrong and sticky.
+          if (data.code === "LIMIT_REACHED") syncQuotaExhausted();
           const error = errorFrom(data, "Failed to scan receipt.");
           patchItem(itemId, { status: "error", error });
           return { ok: false, error };
@@ -366,7 +374,7 @@ export function useMultiScan() {
         const data = await readJson(res);
 
         if (!res.ok) {
-          if (res.status === 403) syncQuotaExhausted();
+          if (data.code === "LIMIT_REACHED") syncQuotaExhausted();
           // Revert to success so the scanned row stays savable, and say why it failed.
           patchItem(id, { status: "success" });
           showToast(errorFrom(data, "Failed to itemize receipt. Please try again."), "error");
@@ -436,9 +444,12 @@ export function useMultiScan() {
 
     savingRef.current = true;
     setIsSavingAll(true);
+    batchIdRef.current ??= crypto.randomUUID();
+
     try {
-      await batchCreateMutation.mutateAsync(
-        successItems.map((item) => ({
+      await batchCreateMutation.mutateAsync({
+        clientBatchId: batchIdRef.current,
+        transactions: successItems.map((item) => ({
           amount: item.data!.amount!,
           description: item.data!.description!,
           type: item.data!.type!,
@@ -450,7 +461,7 @@ export function useMultiScan() {
           ...(item.data!.receiptGroupId && { receiptGroupId: item.data!.receiptGroupId }),
           ...(item.data!.receiptBreakdown && { receiptBreakdown: item.data!.receiptBreakdown }),
         })),
-      );
+      });
     } catch {
       showToast("Could not save your receipts. Your scans are still here — try again.", "error");
       return;
@@ -458,6 +469,9 @@ export function useMultiScan() {
       savingRef.current = false;
       setIsSavingAll(false);
     }
+
+    // Landed, so the next save is a new intent and needs its own key.
+    batchIdRef.current = null;
 
     const savedIds = new Set(successItems.map((i) => i.id));
     const remaining = itemsRef.current.filter((i) => !savedIds.has(i.id));
