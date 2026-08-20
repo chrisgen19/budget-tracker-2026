@@ -133,8 +133,15 @@ export interface MultiScanItem {
     dateWarning?: boolean;
   };
   error?: string;
-  /** Compressed image kept in memory for breakdown requests */
+  /** Compressed image kept in memory for breakdown and retry requests. Set as soon as
+   *  compression finishes, including for items whose scan then failed, so a failed row
+   *  can be retried without asking the user to pick the photo again. */
   imageFile?: File;
+  /** Photo capture date (YYYY-MM-DD) sent to the scan API as the OCR date fallback. */
+  photoDate?: string;
+  /** Photo capture timestamp in datetime-local form, used when the API reports it fell
+   *  back to the photo date rather than reading one off the receipt. */
+  photoDateTime?: string;
   /** Set on breakdown children — prevents re-breakdown, enables "Itemized" badge */
   parentId?: string;
 }

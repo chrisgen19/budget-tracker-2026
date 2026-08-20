@@ -2,6 +2,35 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-20 - Receipt Scan Save & Recovery
+
+### Data loss
+- **A failed Save All no longer destroys the queue.** The catch flipped every reviewed row to `error`, a state whose only action is Delete, stranding the data behind a UI that could not save it -- and taking the already-spent scan credits with it, usually for a transient error. A failure now leaves the queue untouched and surfaces a toast, so pressing Save again is all that is needed
+- **Save All could exceed the batch cap and fail every row.** `POST /api/transactions/batch` capped at 50 while one upload can expand well past that once receipts are itemised into per-category children, turning the overflow into a generic `Invalid input` -> "Failed to save." The cap is now a shared `MAX_BATCH_TRANSACTIONS` of 200, and the client checks the count first with a message naming the actual number
+- **Closing the review modal confirms first.** Escape, an overlay click, or a mobile swipe-down silently discarded every scanned receipt. It now names how many rows would be lost and that re-scanning spends the allowance again
+- **Failed scans can be retried.** Error rows offered only Delete, so a single Gemini 503 in a ten-file batch permanently lost that receipt. The compressed image is now kept on the row as soon as compression finishes rather than only on success, so Retry re-scans the same photo -- and the failed attempt was already refunded server-side
+
+### Correctness
+- A compression failure reported itself as "Network error. Please check your connection", sending the user to debug a connection over an image that never left the device. It now says the image could not be read
+- Error responses are parsed defensively. An unhandled server fault returns HTML, and `res.json()` rejecting on it made every such failure look like a network problem
+- A 403 syncs the local remaining-scans count to the enforced limit, instead of leaving the banner claiming scans that the API will refuse
+- `scanSingle` returns its outcome rather than reading the row back out of state. `patchItem` only schedules a render, so awaiting it and then inspecting the item saw the stale `scanning` status and opened the review modal even after a failure
+- Closing the scan sheet and opening the review modal batch into one render. Split across renders both modals are mounted for a frame, and the sheet's unmount cleanup then restores `body.overflow` and drops the review modal's scroll lock
+
+### Loading and error states
+- `MultiScanReview` uses the shared `useCategoriesQuery` instead of a raw `fetch` with no error handling, where an error response would be assigned straight into `categories` and throw on `.find`. It also stops refetching on every open. A failed category load now degrades to a notice and leaves the receipts savable, since categories only drive the per-row icon and name
+- Retry, Remove, and Edit buttons carry `aria-label`s
+
+### Structure
+- Scan orchestration moved out of `AppShell` (760 lines) into `src/hooks/use-multi-scan.ts`: capture, the review queue, itemisation, retry, and the atomic save. `AppShell` is down to 454 lines
+
+### Files
+- `src/hooks/use-multi-scan.ts` -- new; all receipt scan orchestration
+- `src/components/app-shell.tsx` -- consumes the hook; adds the discard confirmation
+- `src/components/multi-scan-review.tsx` -- retry action, React Query categories, category-load error state
+- `src/lib/validations.ts` -- `MAX_BATCH_TRANSACTIONS`
+- `src/types/index.ts` -- `MultiScanItem` carries `photoDate`/`photoDateTime` so a retry can rebuild its request
+
 ## 2026-08-20 - Receipt Scan Quota Enforcement
 
 ### Cost and abuse control

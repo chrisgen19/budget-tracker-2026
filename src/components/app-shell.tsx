@@ -15,7 +15,7 @@ import {
   Shield,
   AlertTriangle,
 } from "lucide-react";
-import { cn, compressImage, formatDateInput, toLocalDateString } from "@/lib/utils";
+import { cn, formatDateInput } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { useUser } from "@/components/user-provider";
 import { ProfileMenu } from "@/components/profile-menu";
@@ -24,7 +24,9 @@ import { ScanReceiptSheet } from "@/components/scan-receipt-sheet";
 import { Modal } from "@/components/ui/modal";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import { MultiScanReview } from "@/components/multi-scan-review";
-import { useBatchCreateTransactions, useCreateTransaction } from "@/hooks/use-transactions";
+import { useCreateTransaction } from "@/hooks/use-transactions";
+import { useMultiScan } from "@/hooks/use-multi-scan";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { BillReminderBanner, type PayAndEditData } from "@/components/bills/bill-reminder-banner";
 import { InstallBannerProvider } from "@/components/pwa/install-banner-context";
 import { InstallPromptBanner } from "@/components/pwa/install-prompt-banner";
@@ -64,9 +66,8 @@ const MOBILE_NAV_ITEMS = NAV_ITEMS.filter(
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
-  const { user, setUser } = useUser();
+  const { user } = useUser();
   const { showToast } = useToast();
-  const batchCreateMutation = useBatchCreateTransactions();
   const createTransactionMutation = useCreateTransaction();
   const billActionMutation = useBillAction();
   const [scanOpen, setScanOpen] = useState(false);
@@ -74,15 +75,9 @@ export function AppShell({ children }: AppShellProps) {
   // Bill reminder "Pay & Edit" state
   const [billEditData, setBillEditData] = useState<PayAndEditData | null>(null);
 
-  // Single-scan OCR state
-  const [isScanning, setIsScanning] = useState(false);
-  const [scanError, setScanError] = useState<string | null>(null);
-
-  // Multi-scan state
-  const [multiScanItems, setMultiScanItems] = useState<MultiScanItem[]>([]);
-  const [showMultiScanReview, setShowMultiScanReview] = useState(false);
+  const scan = useMultiScan();
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
-  const [isSavingAll, setIsSavingAll] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   // Scan limit calculations
   const hasLimit = user.monthlyScanLimit > 0;
@@ -94,372 +89,55 @@ export function AppShell({ children }: AppShellProps) {
   const showScanNotice = user.receiptScanEnabled && user.roleScanEnabled && (scanLimitReached || scansRunningLow);
 
   const handleReceiptFileSelected = async (file: File) => {
-    setIsScanning(true);
-    setScanError(null);
-
-    try {
-      // Capture photo timestamp BEFORE compression — canvas re-encoding loses File metadata
-      const photoMoment = file.lastModified ? new Date(file.lastModified) : new Date();
-      const photoDate = toLocalDateString(photoMoment);
-      const photoDateTime = formatDateInput(photoMoment);
-      const compressed = await compressImage(file);
-      const formData = new FormData();
-      formData.append("receipt", compressed);
-      formData.append("localDate", toLocalDateString(new Date()));
-      formData.append("photoDate", photoDate);
-
-      const res = await fetch("/api/receipts/scan", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setScanError(data.error ?? "Failed to scan receipt.");
-        setIsScanning(false);
-        return;
-      }
-
-      // Success — push into review modal (same flow as multi-scan)
-      const itemId = `${Date.now()}-single`;
-      setMultiScanItems([
-        {
-          id: itemId,
-          fileName: file.name,
-          status: "success" as const,
-          data: {
-            amount: data.amount,
-            description: data.description,
-            type: data.type,
-            date: data.usedPhotoFallback ? photoDateTime : withLocalTime(data.date),
-            categoryId: data.categoryId,
-            multiCategory: data.multiCategory,
-            breakdown: data.breakdown,
-            dateWarning: data.dateWarning,
-          },
-          imageFile: compressed,
-        },
-      ]);
-      setIsScanning(false);
-      setScanOpen(false);
-      setShowMultiScanReview(true);
-
-      // Increment local scan count
-      setUser((prev) => ({ scansUsedThisMonth: prev.scansUsedThisMonth + 1 }));
-    } catch {
-      setScanError("Network error. Please check your connection and try again.");
-      setIsScanning(false);
-    }
-  };
-
-  const handleScanSheetClose = () => {
-    // Prevent closing while scanning
-    if (isScanning) return;
+    // On failure the sheet stays open so the error sits beside the buttons that retry it.
+    if (!(await scan.scanSingle(file))) return;
+    // Batched into one render so the sheet never overlaps the review modal.
     setScanOpen(false);
-    setScanError(null);
+    scan.openReview();
   };
-
-  // -- Multi-scan handlers --
 
   const handleMultipleFilesSelected = useCallback(
     async (files: File[]) => {
-      // Close the scan sheet, init items, open review modal
       setScanOpen(false);
-      setScanError(null);
-
-      const initialItems: MultiScanItem[] = files.map((f, i) => ({
-        id: `${Date.now()}-${i}`,
-        fileName: f.name,
-        status: "scanning" as const,
-      }));
-
-      setMultiScanItems(initialItems);
-      setShowMultiScanReview(true);
-
-      // Capture photo timestamps per file BEFORE compression — canvas re-encoding loses File metadata
-      const photoMoments = files.map((f) => (f.lastModified ? new Date(f.lastModified) : new Date()));
-      const photoDates = photoMoments.map(toLocalDateString);
-      const photoDateTimes = photoMoments.map(formatDateInput);
-
-      // Start compressing all files in parallel (client-side only, no API cost).
-      // Each upload starts as soon as its own compression finishes — no barrier.
-      const compressedPromises = files.map((f) => compressImage(f).catch(() => f));
-
-      // Process API calls with limited concurrency
-      const CONCURRENCY = 3;
-      let nextIndex = 0;
-
-      const processNext = async (): Promise<void> => {
-        while (nextIndex < compressedPromises.length) {
-          const i = nextIndex++;
-          const file = await compressedPromises[i];
-          const itemId = initialItems[i].id;
-
-          try {
-            const formData = new FormData();
-            formData.append("receipt", file);
-            formData.append("localDate", toLocalDateString(new Date()));
-            formData.append("photoDate", photoDates[i]);
-
-            const res = await fetch("/api/receipts/scan", {
-              method: "POST",
-              body: formData,
-            });
-
-            const data = await res.json();
-
-            if (!res.ok) {
-              setMultiScanItems((prev) =>
-                prev.map((item) =>
-                  item.id === itemId
-                    ? { ...item, status: "error" as const, error: data.error ?? "Failed to scan receipt." }
-                    : item
-                )
-              );
-              continue;
-            }
-
-            setMultiScanItems((prev) =>
-              prev.map((item) =>
-                item.id === itemId
-                  ? {
-                      ...item,
-                      status: "success" as const,
-                      data: {
-                        amount: data.amount,
-                        description: data.description,
-                        type: data.type,
-                        date: data.usedPhotoFallback ? photoDateTimes[i] : withLocalTime(data.date),
-                        categoryId: data.categoryId,
-                        multiCategory: data.multiCategory,
-                        breakdown: data.breakdown,
-                        dateWarning: data.dateWarning,
-                      },
-                      imageFile: file instanceof File ? file : undefined,
-                    }
-                  : item
-              )
-            );
-
-            // Increment local scan count
-            setUser((prev) => ({ scansUsedThisMonth: prev.scansUsedThisMonth + 1 }));
-          } catch {
-            setMultiScanItems((prev) =>
-              prev.map((item) =>
-                item.id === itemId
-                  ? { ...item, status: "error" as const, error: "Network error. Please try again." }
-                  : item
-              )
-            );
-          }
-        }
-      };
-
-      // Start concurrent workers
-      await Promise.all(
-        Array.from({ length: Math.min(CONCURRENCY, compressedPromises.length) }, () =>
-          processNext()
-        )
-      );
+      await scan.scanMultiple(files);
     },
-    [setUser]
+    [scan],
   );
 
-  const handleMultiScanEdit = (id: string) => {
-    setEditingItemId(id);
+  const handleScanSheetClose = () => {
+    // Prevent closing while scanning
+    if (scan.isScanning) return;
+    setScanOpen(false);
+    scan.setScanError(null);
   };
 
   const handleMultiScanEditSubmit = async (input: TransactionInput) => {
     if (!editingItemId) return;
-
-    // Update item data in state — no API call yet
-    setMultiScanItems((prev) =>
-      prev.map((item) =>
-        item.id === editingItemId
-          ? {
-              ...item,
-              data: {
-                ...item.data,
-                amount: input.amount,
-                description: input.description,
-                type: input.type,
-                date: input.date,
-                categoryId: input.categoryId,
-                labelIds: input.labelIds ?? item.data?.labelIds,
-              },
-            }
-          : item
-      )
-    );
+    scan.updateItem(editingItemId, {
+      amount: input.amount,
+      description: input.description,
+      type: input.type,
+      date: input.date,
+      categoryId: input.categoryId,
+      labelIds: input.labelIds,
+    });
     setEditingItemId(null);
   };
 
-  const handleMultiScanRemove = (id: string) => {
-    setMultiScanItems((prev) => prev.filter((item) => item.id !== id));
-  };
-
-  /** Expand a multi-category receipt into per-category breakdown items */
-  const expandBreakdown = useCallback(
-    (
-      id: string,
-      fileName: string,
-      date: string,
-      items: Array<{
-        amount: number;
-        categoryId: string;
-        description: string;
-        lineItems: Array<{ name: string; amount: number }>;
-      }>,
-      dateWarning?: boolean
-    ) => {
-      const receiptGroupId = crypto.randomUUID();
-
-      const breakdownItems: MultiScanItem[] = items.map((bi, idx) => ({
-        id: `${id}-breakdown-${idx}`,
-        fileName,
-        status: "success" as const,
-        data: {
-          amount: bi.amount,
-          description: bi.description,
-          type: "EXPENSE" as const,
-          date,
-          categoryId: bi.categoryId,
-          receiptGroupId,
-          dateWarning,
-          receiptBreakdown: {
-            total: bi.amount,
-            items: bi.lineItems.map((li) => ({
-              name: li.name,
-              amount: li.amount,
-            })),
-          },
-        },
-        parentId: id,
-      }));
-
-      setMultiScanItems((prev) => {
-        const index = prev.findIndex((i) => i.id === id);
-        if (index === -1) return prev;
-        const next = [...prev];
-        next.splice(index, 1, ...breakdownItems);
-        return next;
-      });
-    },
-    []
-  );
-
-  const handleItemize = async (id: string) => {
-    const item = multiScanItems.find((i) => i.id === id);
-    if (!item) return;
-
-    // Use pre-loaded breakdown from combined scan (no API call, no extra credit)
-    if (item.data?.breakdown?.length) {
-      expandBreakdown(
-        id,
-        item.fileName,
-        item.data.date ?? new Date().toISOString(),
-        item.data.breakdown,
-        item.data.dateWarning
-      );
-      return;
-    }
-
-    // Fallback: fetch breakdown from API (requires imageFile)
-    if (!item.imageFile) return;
-
-    // Set status to breaking_down
-    setMultiScanItems((prev) =>
-      prev.map((i) => (i.id === id ? { ...i, status: "breaking_down" as const } : i))
-    );
-
-    try {
-      const formData = new FormData();
-      formData.append("receipt", item.imageFile);
-      formData.append("localDate", toLocalDateString(new Date()));
-      // Photo timestamp sourced from the compressed file's preserved lastModified
-      const photoMoment = item.imageFile.lastModified
-        ? new Date(item.imageFile.lastModified)
-        : new Date();
-      const photoDateTime = formatDateInput(photoMoment);
-      formData.append("photoDate", toLocalDateString(photoMoment));
-
-      const res = await fetch("/api/receipts/breakdown", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        // Revert to success (keeps the scanned data savable) and surface the reason
-        setMultiScanItems((prev) =>
-          prev.map((i) => (i.id === id ? { ...i, status: "success" as const } : i))
-        );
-        showToast(data.error ?? "Failed to itemize receipt. Please try again.", "error");
-        return;
-      }
-
-      const finalDate = data.usedPhotoFallback ? photoDateTime : withLocalTime(data.date);
-      expandBreakdown(id, item.fileName, finalDate, data.items, data.dateWarning);
-
-      // Increment local scan count (breakdown = 1 additional credit)
-      setUser((prev) => ({ scansUsedThisMonth: prev.scansUsedThisMonth + 1 }));
-    } catch {
-      // Revert to success on network error and surface the reason
-      setMultiScanItems((prev) =>
-        prev.map((i) => (i.id === id ? { ...i, status: "success" as const } : i))
-      );
-      showToast("Network error. Please check your connection and try again.", "error");
-    }
-  };
-
-  const handleMultiScanSaveAll = async () => {
-    setIsSavingAll(true);
-
-    const successItems = multiScanItems.filter((i) => i.status === "success" && i.data);
-
-    try {
-      await batchCreateMutation.mutateAsync(
-        successItems.map((item) => ({
-          amount: item.data!.amount!,
-          description: item.data!.description!,
-          type: item.data!.type!,
-          date: item.data!.date ? new Date(item.data!.date).toISOString() : new Date().toISOString(),
-          categoryId: item.data!.categoryId!,
-          ...(item.data!.labelIds !== undefined && { labelIds: item.data!.labelIds }),
-          ...(item.data!.receiptGroupId && { receiptGroupId: item.data!.receiptGroupId }),
-          ...(item.data!.receiptBreakdown && { receiptBreakdown: item.data!.receiptBreakdown }),
-        }))
-      );
-    } catch {
-      const failedIds = new Set(successItems.map((i) => i.id));
-      setMultiScanItems((prev) =>
-        prev.map((i) =>
-          failedIds.has(i.id)
-            ? { ...i, status: "error" as const, error: "Failed to save." }
-            : i
-        )
-      );
-      setIsSavingAll(false);
-      return;
-    }
-
-    setIsSavingAll(false);
-    setShowMultiScanReview(false);
-    setMultiScanItems([]);
-    setEditingItemId(null);
-  };
-
+  /** Closing discards every reviewed row, so confirm when there is anything to lose. */
   const handleMultiScanClose = () => {
-    // Block closing while scanning, breaking down, or saving
-    const isStillScanning = multiScanItems.some(
-      (i) => i.status === "scanning" || i.status === "breaking_down"
-    );
-    if (isStillScanning || isSavingAll) return;
+    if (scan.isBusy || scan.isSavingAll) return;
+    if (scan.unsavedCount > 0) {
+      setConfirmDiscard(true);
+      return;
+    }
+    scan.reset();
+    setEditingItemId(null);
+  };
 
-    setShowMultiScanReview(false);
-    setMultiScanItems([]);
+  const handleConfirmDiscard = () => {
+    setConfirmDiscard(false);
+    scan.reset();
     setEditingItemId(null);
   };
 
@@ -702,30 +380,49 @@ export function AppShell({ children }: AppShellProps) {
         onClose={handleScanSheetClose}
         onFileSelected={handleReceiptFileSelected}
         onMultipleFilesSelected={handleMultipleFilesSelected}
-        isScanning={isScanning}
-        error={scanError}
+        isScanning={scan.isScanning}
+        error={scan.scanError}
         maxUploadFiles={user.maxUploadFiles}
         scansRemaining={scansRemaining}
       />
 
       {/* Multi-Scan Review Modal */}
       <Modal
-        open={showMultiScanReview && editingItemId === null}
+        open={scan.showReview && editingItemId === null}
         onClose={handleMultiScanClose}
         title="Review Scanned Receipts"
       >
-        {showMultiScanReview && editingItemId === null && (
+        {scan.showReview && editingItemId === null && (
           <MultiScanReview
-            items={multiScanItems}
-            onEdit={handleMultiScanEdit}
-            onRemove={handleMultiScanRemove}
-            onItemize={handleItemize}
-            onSaveAll={handleMultiScanSaveAll}
+            items={scan.items}
+            onEdit={setEditingItemId}
+            onRemove={scan.removeItem}
+            onItemize={scan.itemizeItem}
+            onRetry={scan.retryItem}
+            onSaveAll={scan.saveAll}
             onClose={handleMultiScanClose}
-            isSaving={isSavingAll}
+            isSaving={scan.isSavingAll}
           />
         )}
       </Modal>
+
+      {/* Discard confirmation — closing the review drops every reviewed row, and the scan
+          credits behind them are already spent. */}
+      <ConfirmModal
+        open={confirmDiscard}
+        onClose={() => setConfirmDiscard(false)}
+        onConfirm={handleConfirmDiscard}
+        title="Discard scanned receipts?"
+        message={
+          <>
+            You have {scan.unsavedCount} scanned receipt
+            {scan.unsavedCount === 1 ? "" : "s"} that {scan.unsavedCount === 1 ? "has" : "have"} not
+            been saved. Closing now discards {scan.unsavedCount === 1 ? "it" : "them"}, and
+            re-scanning will use your scan allowance again.
+          </>
+        }
+        confirmLabel="Discard"
+      />
 
       {/* Multi-Scan Edit Modal */}
       <Modal
@@ -735,7 +432,7 @@ export function AppShell({ children }: AppShellProps) {
       >
         {editingItemId !== null &&
           (() => {
-            const editItem = multiScanItems.find((i) => i.id === editingItemId);
+            const editItem = scan.items.find((i) => i.id === editingItemId);
             if (!editItem?.data) return null;
             return (
               <TransactionForm

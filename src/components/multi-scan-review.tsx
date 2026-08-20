@@ -1,18 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Pencil, Trash2, AlertCircle, CheckCircle2, Loader2, Rows3 } from "lucide-react";
+import { Pencil, Trash2, AlertCircle, CheckCircle2, Loader2, Rows3, RotateCw } from "lucide-react";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { ReceiptBreakdown } from "@/components/transactions/receipt-breakdown";
 import { formatCurrency, cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
-import type { Category, MultiScanItem } from "@/types";
+import { useCategoriesQuery } from "@/hooks/use-categories";
+import type { MultiScanItem } from "@/types";
 
 interface MultiScanReviewProps {
   items: MultiScanItem[];
   onEdit: (id: string) => void;
   onRemove: (id: string) => void;
   onItemize: (id: string) => void;
+  onRetry: (id: string) => void;
   onSaveAll: () => void;
   onClose: () => void;
   isSaving: boolean;
@@ -23,21 +24,15 @@ export function MultiScanReview({
   onEdit,
   onRemove,
   onItemize,
+  onRetry,
   onSaveAll,
   onClose,
   isSaving,
 }: MultiScanReviewProps) {
   const { user } = useUser();
-  const [categories, setCategories] = useState<Category[]>([]);
-
-  useEffect(() => {
-    const fetchCategories = async () => {
-      const res = await fetch("/api/categories");
-      const data = await res.json();
-      setCategories(data);
-    };
-    fetchCategories();
-  }, []);
+  // Shares the cached categories query with the rest of the app rather than refetching on
+  // every open, and gives the lookup a defined shape when the request is loading or failed.
+  const { data: categories = [], isError: categoriesFailed } = useCategoriesQuery();
 
   const resolveCategory = (categoryId?: string) =>
     categories.find((c) => c.id === categoryId);
@@ -67,6 +62,17 @@ export function MultiScanReview({
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Categories drive only the icon and name shown per row, so a failed load degrades
+          the display without blocking the save. */}
+      {categoriesFailed && (
+        <div className="flex items-center gap-2 p-3 rounded-xl bg-cream-100 border border-cream-200">
+          <AlertCircle className="w-4 h-4 text-warm-400 shrink-0" />
+          <p className="text-xs text-warm-500">
+            Category names could not be loaded. Your receipts are still safe to save.
+          </p>
+        </div>
+      )}
+
       {/* Progress indicator */}
       {isStillScanning && (
         <div className="flex items-center gap-3 p-3 rounded-xl bg-amber-light/50 border border-amber/20">
@@ -127,13 +133,30 @@ export function MultiScanReview({
                   <p className="text-sm text-warm-600 truncate">{item.fileName}</p>
                   <p className="text-xs text-expense">{item.error ?? "Failed to scan"}</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => onRemove(item.id)}
-                  className="p-2 rounded-lg text-warm-300 hover:text-expense hover:bg-expense-light transition-colors shrink-0"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  {/* The image is still in memory, and the failed attempt was refunded,
+                      so a transient failure does not cost the user the receipt. */}
+                  {item.imageFile && (
+                    <button
+                      type="button"
+                      onClick={() => onRetry(item.id)}
+                      title="Retry scan"
+                      aria-label={`Retry scanning ${item.fileName}`}
+                      className="p-2 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors"
+                    >
+                      <RotateCw className="w-4 h-4" />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onRemove(item.id)}
+                    title="Remove"
+                    aria-label={`Remove ${item.fileName}`}
+                    className="p-2 rounded-lg text-warm-300 hover:text-expense hover:bg-expense-light transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             );
           }
@@ -226,6 +249,8 @@ export function MultiScanReview({
                   <button
                     type="button"
                     onClick={() => onEdit(item.id)}
+                    title="Edit"
+                    aria-label={`Edit ${item.data?.description || item.fileName}`}
                     className="p-2 rounded-lg text-warm-300 hover:text-amber-dark hover:bg-amber-light transition-colors"
                   >
                     <Pencil className="w-4 h-4" />

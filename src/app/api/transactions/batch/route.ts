@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
-import { batchTransactionSchema } from "@/lib/validations";
+import { batchTransactionSchema, MAX_BATCH_TRANSACTIONS } from "@/lib/validations";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 
 const batchSchema = z.object({
-  transactions: z.array(batchTransactionSchema).min(1).max(50),
+  transactions: z.array(batchTransactionSchema).min(1).max(MAX_BATCH_TRANSACTIONS),
 });
 
 const batchDeleteSchema = z.object({
