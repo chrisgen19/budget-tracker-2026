@@ -2,6 +2,9 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
+    // Matches the current implicit id (which defaults to start_url), so already
+    // installed apps keep their identity. Changing this orphans them.
+    id: "/dashboard",
     name: "Budget Tracker",
     short_name: "Budget",
     description: "Track your income and expenses with ease",

@@ -1,15 +1,45 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Download, X, Share } from "lucide-react";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import { useInstallBanner } from "@/components/pwa/install-banner-context";
+import { useBillReminders } from "@/components/bills/bill-reminder-provider";
 import { cn } from "@/lib/utils";
 
 const DISMISS_KEY = "pwa-install-dismissed-at";
 const MIN_VISITS_KEY = "pwa-visit-count";
 const MIN_VISITS = 3;
 const DISMISS_DAYS = 14;
+const BILL_BANNER_GAP_PX = 12;
+
+// Storage access throws in embedded webviews and when site data is blocked, and
+// writes can throw in Safari private mode. This banner is cosmetic, so a storage
+// failure must degrade to "never shown" rather than take down the app shell.
+const safeGet = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const safeSet = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // ignore
+  }
+};
+
+const safeRemove = (key: string) => {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+};
 
 // navigator.userAgent is deprecated but navigator.userAgentData is not yet
 // supported on iOS Safari, so UA sniffing remains the pragmatic choice here.
@@ -25,27 +55,32 @@ function isIOS() {
 export function InstallPromptBanner() {
   const { canInstall, isInstalled, promptInstall } = useInstallPrompt();
   const { bannerVisible: visible, setBannerVisible: setVisible, setBannerHeight } = useInstallBanner();
+  const { bannerHeight: billBannerHeight } = useBillReminders();
   const [showIOSGuide, setShowIOSGuide] = useState(false);
   const bannerRef = useRef<HTMLDivElement | null>(null);
 
   // Track visits on mount only — not on canInstall/isInstalled changes
   useEffect(() => {
-    const visits = parseInt(localStorage.getItem(MIN_VISITS_KEY) || "0", 10) + 1;
-    localStorage.setItem(MIN_VISITS_KEY, String(visits));
+    const visits = parseInt(safeGet(MIN_VISITS_KEY) || "0", 10) + 1;
+    safeSet(MIN_VISITS_KEY, String(visits));
   }, []);
 
   // Show banner when conditions are met
   useEffect(() => {
-    if (isInstalled) return;
+    // Also covers installing from the browser's own menu while the banner is up
+    if (isInstalled) {
+      setVisible(false);
+      return;
+    }
 
-    const dismissedAt = localStorage.getItem(DISMISS_KEY);
+    const dismissedAt = safeGet(DISMISS_KEY);
     if (dismissedAt) {
       const daysSince = (Date.now() - parseInt(dismissedAt, 10)) / (1000 * 60 * 60 * 24);
       if (daysSince < DISMISS_DAYS) return;
-      localStorage.removeItem(DISMISS_KEY);
+      safeRemove(DISMISS_KEY);
     }
 
-    const visits = parseInt(localStorage.getItem(MIN_VISITS_KEY) || "0", 10);
+    const visits = parseInt(safeGet(MIN_VISITS_KEY) || "0", 10);
     if (visits < MIN_VISITS) return;
 
     if (canInstall) {
@@ -55,6 +90,16 @@ export function InstallPromptBanner() {
       setVisible(true);
     }
   }, [canInstall, isInstalled, setVisible]);
+
+  // Another entry point (the profile card) claimed the prompt and the user
+  // dismissed the native dialog, so nothing was installed but there is no
+  // longer anything to offer here. Only hides, so it cannot fight the effect
+  // above. No dismissal is recorded -- the user never dismissed this banner.
+  useEffect(() => {
+    if (visible && !showIOSGuide && !canInstall && !isInstalled) {
+      setVisible(false);
+    }
+  }, [visible, showIOSGuide, canInstall, isInstalled, setVisible]);
 
   useEffect(() => {
     if (!visible) return;
@@ -86,9 +131,16 @@ export function InstallPromptBanner() {
     };
   }, [visible, setBannerHeight]);
 
-  const handleDismiss = () => {
+  const handleDismiss = useCallback(() => {
     setVisible(false);
-    localStorage.setItem(DISMISS_KEY, String(Date.now()));
+    safeSet(DISMISS_KEY, String(Date.now()));
+  }, [setVisible]);
+
+  // Scoped to the banner, not the document: Modal already closes on a document
+  // Escape listener, and a global handler here would silently start the 14-day
+  // cooldown every time the user escaped an unrelated dialog.
+  const handleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Escape") handleDismiss();
   };
 
   const handleInstall = async () => {
@@ -99,8 +151,19 @@ export function InstallPromptBanner() {
 
   if (!visible) return null;
 
+  // Sit above the bill reminder rather than over it -- MobileFab already sums
+  // both clearances, so it assumes the two banners stack.
+  const billClearance = billBannerHeight > 0 ? billBannerHeight + BILL_BANNER_GAP_PX : 0;
+
   return (
-    <div ref={bannerRef} role="status" aria-live="polite" className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] lg:bottom-6 left-4 right-4 lg:left-auto lg:right-6 lg:w-80 z-40 animate-fade-in-up">
+    <div
+      ref={bannerRef}
+      onKeyDown={handleKeyDown}
+      role="region"
+      aria-label="Install Budget Tracker"
+      style={{ "--bill-clearance": `${billClearance}px` } as CSSProperties}
+      className="fixed bottom-[calc(4.5rem+var(--bill-clearance)+env(safe-area-inset-bottom))] lg:bottom-[calc(1.5rem+var(--bill-clearance))] left-4 right-4 lg:left-auto lg:right-6 lg:w-80 z-40 animate-fade-in-up"
+    >
       <div className="bg-white rounded-2xl shadow-soft-md border border-cream-300/50 p-4">
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center shrink-0">
