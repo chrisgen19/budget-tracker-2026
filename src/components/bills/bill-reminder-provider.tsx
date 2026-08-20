@@ -242,8 +242,14 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
     } else {
       showToast(`${succeeded} paid, ${failed} failed`);
     }
-    // One refetch for the whole run rather than one per payment
-    invalidateBillPayment();
+    // One refetch for the whole run rather than one per payment. Awaited so the
+    // buttons stay disabled until the banner stops showing the bills just paid:
+    // clicking Pay against a stale reminder would submit its due date again.
+    try {
+      await invalidateBillPayment();
+    } catch {
+      // A failed refetch must not strand the UI in the paying state
+    }
     setPayAllProgress(null);
     setCurrentIndex(0);
   }, [pendingReminders, billAction, showToast, invalidateBillPayment]);

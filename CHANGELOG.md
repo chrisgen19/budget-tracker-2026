@@ -5,7 +5,7 @@ All notable development history for the Budget Tracker app.
 ## 2026-08-20 - Bill Reminder Correctness
 
 ### Data integrity
-- **Out-of-order pay/skip no longer discards unpaid occurrences.** `getPendingRemindersForUser` only walks forward from `nextDueDate`, but `pay`, `skip`, and `pay_existing` advanced it from the occurrence that was acted on. Paying the third card in the banner jumped `nextDueDate` past the first two, which had no terminal log and could never be regenerated. Each action now resolves `nextDueDate` with `advanceToNextUnpaidOccurrence`, running on the transaction client after the log insert so it sees its own write, and behind a `SELECT ... FOR UPDATE` on the bill row so concurrent actions on the same bill serialise instead of clobbering each other under Postgres READ COMMITTED
+- **Out-of-order pay/skip no longer discards unpaid occurrences.** `getPendingRemindersForUser` only walks forward from `nextDueDate`, but `pay`, `skip`, and `pay_existing` advanced it from the occurrence that was acted on. Paying the third card in the banner jumped `nextDueDate` past the first two, which had no terminal log and could never be regenerated. Each action now resolves `nextDueDate` with `advanceToNextUnpaidOccurrence`, running on the transaction client after the log insert so it sees its own write. Every transaction opens with a `SELECT ... FOR UPDATE` on the bill row so concurrent actions serialise instead of clobbering each other under Postgres READ COMMITTED. The lock is taken *before* any row referencing the bill is inserted: those inserts hold a `FOR KEY SHARE` lock via their foreign keys, and two transactions upgrading KEY SHARE to `FOR UPDATE` would deadlock
 - `scripts/heal-bill-next-due-dates.ts` gained a read-only pass reporting occurrences stranded before `nextDueDate` by the old behaviour. It never rewinds automatically: bills whose `startDate` predates their first payment have legitimately unpaid early occurrences
 
 ### Correctness
@@ -15,6 +15,8 @@ All notable development history for the Budget Tracker app.
 ### Safety and performance
 - **Pay All now confirms first**, naming the count and total. It previously wrote N real transactions on a single unguarded click, while deleting one category shows a `ConfirmModal`
 - Pay All invalidates once per run instead of once per payment. A 23-bill run previously fired roughly a hundred refetches that queued against the payments still in flight
+- Terminal actions are idempotent per occurrence. There is no unique constraint on `(scheduled_transaction_id, due_date)`, so a resubmit -- a double click, or a click against a reminder list that has not refetched yet -- wrote a second transaction and paid the same occurrence twice. Each action now returns 409 if the occurrence already has a `PAID`/`SKIPPED` log, checked under the row lock so the guard cannot race
+- Pay All awaits the refetch before re-enabling its buttons, so the banner stops offering bills that were just paid
 - Failed pay/snooze/skip actions surface a toast. They passed only `onSuccess` and the mutation has no global error handler, so failures were entirely silent
 
 ### Banner UI

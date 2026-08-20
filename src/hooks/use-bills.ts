@@ -225,13 +225,19 @@ export function useReactivateBill() {
  *  run it once instead of per payment. */
 export function useInvalidateBillPayment() {
   const queryClient = useQueryClient();
-  return useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: billKeys.all });
-    queryClient.invalidateQueries({ queryKey: billKeys.pendingAll });
-    queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all });
-    queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
-    queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
-  }, [queryClient]);
+  // Returns a promise so callers can wait for the refetch to land before
+  // re-enabling controls that act on the now-stale list.
+  return useCallback(
+    () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: billKeys.all }),
+        queryClient.invalidateQueries({ queryKey: billKeys.pendingAll }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
+        queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
+      ]),
+    [queryClient],
+  );
 }
 
 export function useBillAction() {
