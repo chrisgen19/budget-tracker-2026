@@ -256,6 +256,165 @@ describe("saveAll", () => {
   });
 });
 
+describe("response validation", () => {
+  it("rejects a 200 that is missing required fields instead of marking it success", async () => {
+    // An unchecked cast let this become a success row holding undefined, which saveAll then
+    // asserted non-null and posted — and the server rejected the whole atomic batch.
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ description: "Merchant", type: "EXPENSE", usedPhotoFallback: false }),
+    });
+    const { result } = setup();
+
+    let ok: boolean | undefined;
+    await act(async () => {
+      ok = await result.current.scanSingle(receipt());
+    });
+
+    expect(ok).toBe(false);
+    expect(result.current.scanError).toMatch(/unexpected result/i);
+  });
+
+  it("does not throw on a missing date when the photo fallback was not used", async () => {
+    // withLocalTime(undefined) threw on .slice and surfaced as a network error.
+    fetchMock.mockResolvedValue(
+      scanOk({ date: undefined, usedPhotoFallback: false }),
+    );
+    const { result } = setup();
+
+    await act(async () => {
+      await result.current.scanSingle(receipt());
+    });
+
+    expect(result.current.scanError).not.toMatch(/network/i);
+    expect(result.current.scanError).toMatch(/unexpected result/i);
+  });
+
+  it("accepts a response whose date is supplied by the photo fallback", async () => {
+    fetchMock.mockResolvedValue(scanOk({ date: undefined, usedPhotoFallback: true }));
+    const { result } = setup();
+
+    let ok: boolean | undefined;
+    await act(async () => {
+      ok = await result.current.scanSingle(receipt());
+    });
+
+    expect(ok).toBe(true);
+    expect(result.current.items[0].data?.date).toBeTruthy();
+  });
+});
+
+describe("compression failures in a batch", () => {
+  it("marks the row unreadable rather than uploading the original", async () => {
+    const { compressImage } = await import("@/lib/utils");
+    vi.mocked(compressImage)
+      .mockRejectedValueOnce(new Error("decode failed"))
+      .mockImplementationOnce(async (f: File) => f);
+    fetchMock.mockResolvedValue(scanOk());
+    const { result } = setup();
+
+    await act(async () => {
+      await result.current.scanMultiple([receipt("broken.jpg"), receipt("ok.jpg")]);
+    });
+
+    const broken = result.current.items.find((i) => i.fileName === "broken.jpg");
+    expect(broken!.status).toBe("error");
+    expect(broken!.error).toMatch(/could not be read/i);
+    // No image retained, so no Retry is offered: re-compressing it would fail identically.
+    expect(broken!.imageFile).toBeUndefined();
+    expect(result.current.retryableCount).toBe(0);
+
+    // The healthy file still scanned, and only it was uploaded.
+    expect(result.current.items.find((i) => i.fileName === "ok.jpg")!.status).toBe("success");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("queue is frozen during a save", () => {
+  const multiCategoryScan = () =>
+    scanOk({
+      multiCategory: true,
+      breakdown: [
+        {
+          amount: 70,
+          categoryId: "cat-food",
+          description: "Groceries",
+          lineItems: [{ name: "Rice", amount: 70 }],
+        },
+        {
+          amount: 50,
+          categoryId: "cat-household",
+          description: "Cleaning",
+          lineItems: [{ name: "Bleach", amount: 50 }],
+        },
+      ],
+    });
+
+  it("ignores itemize while Save All is in flight, so the receipt is not created twice", async () => {
+    fetchMock.mockResolvedValueOnce(multiCategoryScan());
+    const { result } = setup();
+    await act(async () => {
+      await result.current.scanMultiple([receipt()]);
+    });
+
+    const parentId = result.current.items[0].id;
+    expect(result.current.items[0].data?.multiCategory).toBe(true);
+
+    // Hold the batch request open so the save is genuinely mid-flight.
+    let release!: () => void;
+    const inFlight = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    fetchMock.mockImplementationOnce(async () => {
+      await inFlight;
+      return { ok: true, status: 201, json: async () => ({ transactions: [] }) };
+    });
+
+    let savePromise!: Promise<void>;
+    await act(async () => {
+      savePromise = result.current.saveAll();
+      await Promise.resolve();
+    });
+
+    // Expanding the submitted parent here would leave its children outside savedIds, so
+    // they would survive the save and the next Save All would recreate the same expenses.
+    await act(async () => {
+      await result.current.itemizeItem(parentId);
+    });
+    expect(result.current.items.map((i) => i.id)).toEqual([parentId]);
+
+    await act(async () => {
+      release();
+      await savePromise;
+    });
+
+    // The parent saved and nothing was left behind to be posted a second time.
+    expect(result.current.items).toHaveLength(0);
+    expect(result.current.showReview).toBe(false);
+  });
+
+  it("allows itemize again once the save has settled", async () => {
+    fetchMock.mockResolvedValueOnce(multiCategoryScan());
+    const { result } = setup();
+    await act(async () => {
+      await result.current.scanMultiple([receipt()]);
+    });
+
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) });
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    // The save failed, so the queue is intact and the freeze must have lifted.
+    await act(async () => {
+      await result.current.itemizeItem(result.current.items[0].id);
+    });
+    expect(result.current.items).toHaveLength(2);
+    expect(result.current.items.every((i) => i.parentId !== undefined)).toBe(true);
+  });
+});
+
 describe("discard accounting", () => {
   it("counts retryable rows, so an all-failed batch still warns before closing", async () => {
     fetchMock.mockResolvedValue(scanErr(503, "Busy"));
