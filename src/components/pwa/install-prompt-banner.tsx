@@ -36,7 +36,11 @@ export function InstallPromptBanner() {
 
   // Show banner when conditions are met
   useEffect(() => {
-    if (isInstalled) return;
+    // Also covers installing from the browser's own menu while the banner is up
+    if (isInstalled) {
+      setVisible(false);
+      return;
+    }
 
     const dismissedAt = localStorage.getItem(DISMISS_KEY);
     if (dismissedAt) {
