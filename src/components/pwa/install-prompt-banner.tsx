@@ -14,6 +14,33 @@ const MIN_VISITS = 3;
 const DISMISS_DAYS = 14;
 const BILL_BANNER_GAP_PX = 12;
 
+// Storage access throws in embedded webviews and when site data is blocked, and
+// writes can throw in Safari private mode. This banner is cosmetic, so a storage
+// failure must degrade to "never shown" rather than take down the app shell.
+const safeGet = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const safeSet = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // ignore
+  }
+};
+
+const safeRemove = (key: string) => {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+};
+
 // navigator.userAgent is deprecated but navigator.userAgentData is not yet
 // supported on iOS Safari, so UA sniffing remains the pragmatic choice here.
 function isIOS() {
@@ -34,8 +61,8 @@ export function InstallPromptBanner() {
 
   // Track visits on mount only — not on canInstall/isInstalled changes
   useEffect(() => {
-    const visits = parseInt(localStorage.getItem(MIN_VISITS_KEY) || "0", 10) + 1;
-    localStorage.setItem(MIN_VISITS_KEY, String(visits));
+    const visits = parseInt(safeGet(MIN_VISITS_KEY) || "0", 10) + 1;
+    safeSet(MIN_VISITS_KEY, String(visits));
   }, []);
 
   // Show banner when conditions are met
@@ -46,14 +73,14 @@ export function InstallPromptBanner() {
       return;
     }
 
-    const dismissedAt = localStorage.getItem(DISMISS_KEY);
+    const dismissedAt = safeGet(DISMISS_KEY);
     if (dismissedAt) {
       const daysSince = (Date.now() - parseInt(dismissedAt, 10)) / (1000 * 60 * 60 * 24);
       if (daysSince < DISMISS_DAYS) return;
-      localStorage.removeItem(DISMISS_KEY);
+      safeRemove(DISMISS_KEY);
     }
 
-    const visits = parseInt(localStorage.getItem(MIN_VISITS_KEY) || "0", 10);
+    const visits = parseInt(safeGet(MIN_VISITS_KEY) || "0", 10);
     if (visits < MIN_VISITS) return;
 
     if (canInstall) {
@@ -96,7 +123,7 @@ export function InstallPromptBanner() {
 
   const handleDismiss = () => {
     setVisible(false);
-    localStorage.setItem(DISMISS_KEY, String(Date.now()));
+    safeSet(DISMISS_KEY, String(Date.now()));
   };
 
   const handleInstall = async () => {
