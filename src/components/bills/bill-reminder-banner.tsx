@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, ChevronRight, Check, Clock, FastForward, Pencil, ChevronUp, CheckCheck, X } from "lucide-react";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { cn, formatCurrency } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { usePrivacy } from "@/components/privacy-provider";
@@ -53,6 +54,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
   } = useBillReminders();
 
   const [showSnoozeMenu, setShowSnoozeMenu] = useState(false);
+  const [confirmPayAll, setConfirmPayAll] = useState(false);
   const snoozeRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
 
@@ -86,27 +88,35 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
         setShowSnoozeMenu(false);
       }
     };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowSnoozeMenu(false);
+    };
     document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
   }, [showSnoozeMenu]);
 
   const { hideAmounts } = usePrivacy();
   const { user } = useUser();
 
-  if (pendingReminders.length === 0 || dismissedForToday) return null;
-
-  const reminder = pendingReminders[currentIndex];
-  if (!reminder) return null;
-
-  const { scheduledTransaction: bill, isOverdue, daysPastDue, daysUntilDue } = reminder;
-  const dueDateDisplay = formatDueDateDisplay(isOverdue, daysPastDue, daysUntilDue);
+  const visible = pendingReminders.length > 0 && !dismissedForToday;
+  const reminder = visible ? pendingReminders[currentIndex] : undefined;
+  const bill = reminder?.scheduledTransaction;
+  const dueDateDisplay = reminder
+    ? formatDueDateDisplay(reminder.isOverdue, reminder.daysPastDue, reminder.daysUntilDue)
+    : "";
+  const payAllTotal = pendingReminders.reduce((sum, r) => sum + r.scheduledTransaction.amount, 0);
 
   const handlePayAndEditClick = () => {
-    // Format dueDate to datetime-local format for the transaction form
-    const dueDate = new Date(reminder.dueDate);
-    const year = dueDate.getFullYear();
-    const month = String(dueDate.getMonth() + 1).padStart(2, "0");
-    const day = String(dueDate.getDate()).padStart(2, "0");
+    if (!reminder || !bill) return;
+
+    // Take the calendar date straight off the ISO string. Reading local
+    // getFullYear/getMonth/getDate shifted the prefilled date back a day for
+    // anyone behind UTC.
+    const datePart = reminder.dueDate.slice(0, 10);
     const hours = String(new Date().getHours()).padStart(2, "0");
     const minutes = String(new Date().getMinutes()).padStart(2, "0");
 
@@ -114,7 +124,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
       amount: bill.amount,
       description: bill.description,
       type: bill.type,
-      date: `${year}-${month}-${day}T${hours}:${minutes}`,
+      date: `${datePart}T${hours}:${minutes}`,
       categoryId: bill.categoryId,
       billId: bill.id,
       billDueDate: reminder.dueDate,
@@ -122,8 +132,11 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
   };
 
   return (
+    <>
     <AnimatePresence>
+      {reminder && bill && (
       <motion.div
+        key="bill-reminder-banner"
         ref={bannerRef}
         initial={{ y: 100, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
@@ -154,11 +167,11 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
               <div className="flex items-center gap-2 mt-0.5">
                 <span className={cn(
                   "text-xs font-medium",
-                  isOverdue ? "text-expense" : "text-warm-400"
+                  reminder.isOverdue ? "text-expense" : "text-warm-400"
                 )}>
                   {dueDateDisplay}
                 </span>
-                {isOverdue && daysPastDue > 0 && (
+                {reminder.isOverdue && reminder.daysPastDue > 0 && (
                   <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-expense-light text-expense">
                     OVERDUE
                   </span>
@@ -193,16 +206,21 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
                 <button
                   onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))}
                   disabled={currentIndex === 0}
+                  aria-label="Previous bill reminder"
                   className="p-1 rounded-lg text-warm-300 hover:text-warm-600 disabled:opacity-30 transition-colors"
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </button>
-                <span className="text-[10px] text-warm-400 tabular-nums min-w-[32px] text-center">
+                <span
+                  aria-label={`Bill ${currentIndex + 1} of ${pendingReminders.length}`}
+                  className="text-[10px] text-warm-400 tabular-nums min-w-[32px] text-center"
+                >
                   {currentIndex + 1}/{pendingReminders.length}
                 </span>
                 <button
                   onClick={() => setCurrentIndex(Math.min(pendingReminders.length - 1, currentIndex + 1))}
                   disabled={currentIndex === pendingReminders.length - 1}
+                  aria-label="Next bill reminder"
                   className="p-1 rounded-lg text-warm-300 hover:text-warm-600 disabled:opacity-30 transition-colors"
                 >
                   <ChevronRight className="w-4 h-4" />
@@ -215,7 +233,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
               {/* Pay All — only when multiple reminders */}
               {pendingReminders.length > 1 && (
                 <button
-                  onClick={handlePayAll}
+                  onClick={() => setConfirmPayAll(true)}
                   disabled={isActioning || payAllProgress !== null}
                   className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-income/10 text-income hover:bg-income/20 text-xs font-medium transition-colors disabled:opacity-50"
                 >
@@ -247,6 +265,8 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
                 <button
                   onClick={() => setShowSnoozeMenu((prev) => !prev)}
                   disabled={isActioning || payAllProgress !== null}
+                  aria-haspopup="menu"
+                  aria-expanded={showSnoozeMenu}
                   className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cream-100 text-warm-500 hover:bg-cream-200 text-xs font-medium transition-colors disabled:opacity-50"
                 >
                   <Clock className="w-3 h-3" />
@@ -260,6 +280,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: 4 }}
                       transition={{ duration: 0.15 }}
+                      role="menu"
                       className="absolute bottom-full mb-1 right-0 bg-white rounded-lg shadow-soft-lg border border-cream-200 overflow-hidden min-w-[120px] z-30"
                     >
                       {([
@@ -269,6 +290,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
                       ] as const).map((option) => (
                         <button
                           key={option.days}
+                          role="menuitem"
                           onClick={() => {
                             handleSnooze(reminder, option.days);
                             setShowSnoozeMenu(false);
@@ -295,6 +317,28 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
           </div>
         </div>
       </motion.div>
+      )}
     </AnimatePresence>
+
+    <ConfirmModal
+      open={confirmPayAll}
+      onClose={() => setConfirmPayAll(false)}
+      onConfirm={() => {
+        setConfirmPayAll(false);
+        handlePayAll();
+      }}
+      title={`Pay all ${pendingReminders.length} bills?`}
+      confirmLabel="Pay all"
+      confirmIcon={CheckCheck}
+      loading={payAllProgress !== null}
+      message={
+        <>
+          This creates {pendingReminders.length} transactions
+          {hideAmounts ? "" : ` totalling ${formatCurrency(payAllTotal, user.currency)}`} and
+          advances every bill to its next due date. It cannot be undone from here.
+        </>
+      }
+    />
+    </>
   );
 }
