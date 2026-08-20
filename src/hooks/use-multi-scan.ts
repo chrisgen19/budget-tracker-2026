@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { compressImage, formatDateInput, toLocalDateString } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
 import { useToast } from "@/components/ui/toast";
-import { useBatchCreateTransactions } from "@/hooks/use-transactions";
+import { BatchSaveError, useBatchCreateTransactions } from "@/hooks/use-transactions";
 import { MAX_BATCH_TRANSACTIONS } from "@/lib/validations";
 import type { MultiScanItem } from "@/types";
 
@@ -74,6 +74,10 @@ export function useMultiScan() {
   // key would return only the original rows while the client marked the additions saved,
   // dropping them silently. Cleared once a save is acknowledged.
   const pendingSaveRef = useRef<{ key: string; items: MultiScanItem[] } | null>(null);
+
+  // Ids of rows sitting in an unacknowledged batch. Mirrored into state so the review can
+  // stop offering edits that a replay would silently ignore.
+  const [unconfirmedIds, setUnconfirmedIds] = useState<ReadonlySet<string>>(new Set());
 
   // Mirrors `items` so callbacks can read the current queue without being re-created on
   // every state change, and so retry never closes over a stale array. Synced after commit
@@ -344,7 +348,7 @@ export function useMultiScan() {
       // mid-flight leaves those children outside `savedIds`, so they survive the save and
       // the next one recreates the same expenses. The UI disables this too; the guard here
       // is what actually holds.
-      if (savingRef.current) return;
+      if (savingRef.current || unconfirmedIds.has(id)) return;
       const item = itemsRef.current.find((i) => i.id === id);
       if (!item) return;
 
@@ -402,23 +406,38 @@ export function useMultiScan() {
         showToast("Network error. Please check your connection and try again.", "error");
       }
     },
-    [expandBreakdown, patchItem, setUser, showToast, syncQuotaExhausted],
+    [expandBreakdown, patchItem, setUser, showToast, syncQuotaExhausted, unconfirmedIds],
   );
 
-  const removeItem = useCallback((id: string) => {
-    setItems((prev) => prev.filter((item) => item.id !== id));
-  }, []);
+  const isUnconfirmed = useCallback(
+    (id: string) => unconfirmedIds.has(id),
+    [unconfirmedIds],
+  );
 
-  const updateItem = useCallback((id: string, data: ScanData) => {
-    setItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, data: { ...item.data, ...data } } : item)),
-    );
-  }, []);
+  const removeItem = useCallback(
+    (id: string) => {
+      if (savingRef.current || unconfirmedIds.has(id)) return;
+      setItems((prev) => prev.filter((item) => item.id !== id));
+    },
+    [unconfirmedIds],
+  );
+
+  const updateItem = useCallback(
+    (id: string, data: ScanData) => {
+      // An edit here would be silently discarded: the retry replays the pinned rows.
+      if (savingRef.current || unconfirmedIds.has(id)) return;
+      setItems((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, data: { ...item.data, ...data } } : item)),
+      );
+    },
+    [unconfirmedIds],
+  );
 
   const openReview = useCallback(() => setShowReview(true), []);
 
   const reset = useCallback(() => {
     pendingSaveRef.current = null;
+    setUnconfirmedIds(new Set());
     setShowReview(false);
     setItems([]);
   }, []);
@@ -471,8 +490,24 @@ export function useMultiScan() {
           ...(item.data!.receiptBreakdown && { receiptBreakdown: item.data!.receiptBreakdown }),
         })),
       });
-    } catch {
-      showToast("Could not save your receipts. Your scans are still here — try again.", "error");
+    } catch (error) {
+      // A definitive rejection wrote nothing, so the pin is dropped and the user's
+      // corrections take effect on the next attempt as a fresh intent. Anything less
+      // certain keeps the pin: the retry must replay these exact rows under the same key.
+      const definitelyNotCommitted =
+        error instanceof BatchSaveError && error.committed === "no";
+
+      if (definitelyNotCommitted) {
+        pendingSaveRef.current = null;
+        setUnconfirmedIds(new Set());
+        showToast("Could not save your receipts. Your scans are still here — try again.", "error");
+      } else {
+        setUnconfirmedIds(new Set(submitItems.map((i) => i.id)));
+        showToast(
+          "We could not confirm that save. Press Save again to finish it safely — it will not create duplicates.",
+          "error",
+        );
+      }
       return;
     } finally {
       savingRef.current = false;
@@ -481,6 +516,7 @@ export function useMultiScan() {
 
     // Acknowledged, so the next save is a new intent and needs its own key.
     pendingSaveRef.current = null;
+    setUnconfirmedIds(new Set());
 
     // Only the rows actually submitted are removed. Anything added while the save was
     // unacknowledged is still unsaved and stays in the queue for the next attempt.
@@ -523,6 +559,8 @@ export function useMultiScan() {
     isBusy,
     unsavedCount,
     retryableCount,
+    unconfirmedIds,
+    isUnconfirmed,
     setScanError,
     scanSingle,
     scanMultiple,

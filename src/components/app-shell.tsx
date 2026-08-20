@@ -399,6 +399,7 @@ export function AppShell({ children }: AppShellProps) {
             onSaveAll={scan.saveAll}
             onClose={handleMultiScanClose}
             isSaving={scan.isSavingAll}
+            unconfirmedIds={scan.unconfirmedIds}
           />
         )}
       </Modal>

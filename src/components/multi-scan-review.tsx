@@ -17,6 +17,8 @@ interface MultiScanReviewProps {
   onSaveAll: () => void;
   onClose: () => void;
   isSaving: boolean;
+  /** Rows sitting in a batch whose outcome is unknown. Frozen until a retry settles it. */
+  unconfirmedIds: ReadonlySet<string>;
 }
 
 export function MultiScanReview({
@@ -28,6 +30,7 @@ export function MultiScanReview({
   onSaveAll,
   onClose,
   isSaving,
+  unconfirmedIds,
 }: MultiScanReviewProps) {
   const { user } = useUser();
   // Shares the cached categories query with the rest of the app rather than refetching on
@@ -72,6 +75,21 @@ export function MultiScanReview({
           <AlertCircle className="w-4 h-4 text-warm-400 shrink-0" />
           <p className="text-xs text-warm-500">
             Category names could not be loaded. Your receipts are still safe to save.
+          </p>
+        </div>
+      )}
+
+      {/* An unacknowledged batch: the rows are frozen because a retry replays exactly what
+          was sent, so an edit made now would be discarded without a word. */}
+      {unconfirmedIds.size > 0 && (
+        <div
+          role="status"
+          className="flex items-start gap-2 p-3 rounded-xl bg-amber-light/50 border border-amber/20"
+        >
+          <AlertCircle className="w-4 h-4 text-amber-dark shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-dark">
+            {unconfirmedIds.size} receipt{unconfirmedIds.size === 1 ? "" : "s"} may already
+            have been saved. Press Save again to finish — it will not create duplicates.
           </p>
         </div>
       )}
@@ -179,6 +197,8 @@ export function MultiScanReview({
             : "";
           const canItemize = !!item.imageFile && !item.parentId && !!item.data?.multiCategory;
           const isItemizedChild = !!item.parentId;
+          const isUnconfirmed = unconfirmedIds.has(item.id);
+          const actionsDisabled = isSaving || isUnconfirmed;
 
           return (
             <div
@@ -215,6 +235,11 @@ export function MultiScanReview({
                         Itemized
                       </span>
                     )}
+                    {isUnconfirmed && (
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber/20 text-amber-dark shrink-0">
+                        Unconfirmed
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     {category && (
@@ -247,7 +272,7 @@ export function MultiScanReview({
                     <button
                       type="button"
                       onClick={() => onItemize(item.id)}
-                      disabled={isSaving}
+                      disabled={actionsDisabled}
                       title="Itemize receipt"
                       aria-label={`Itemize ${item.data?.description || item.fileName}`}
                       className="p-2 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -258,7 +283,7 @@ export function MultiScanReview({
                   <button
                     type="button"
                     onClick={() => onEdit(item.id)}
-                    disabled={isSaving}
+                    disabled={actionsDisabled}
                     title="Edit"
                     aria-label={`Edit ${item.data?.description || item.fileName}`}
                     className="p-2 rounded-lg text-warm-300 hover:text-amber-dark hover:bg-amber-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -268,7 +293,7 @@ export function MultiScanReview({
                   <button
                     type="button"
                     onClick={() => onRemove(item.id)}
-                    disabled={isSaving}
+                    disabled={actionsDisabled}
                     title="Remove"
                     aria-label={`Remove ${item.data?.description || item.fileName}`}
                     className="p-2 rounded-lg text-warm-300 hover:text-expense hover:bg-expense-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -302,6 +327,8 @@ export function MultiScanReview({
           >
             {isSaving ? (
               <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            ) : unconfirmedIds.size > 0 ? (
+              `Finish Saving ${unconfirmedIds.size} Receipt${unconfirmedIds.size !== 1 ? "s" : ""}`
             ) : (
               `Add ${successCount} Transaction${successCount !== 1 ? "s" : ""}`
             )}

@@ -15,6 +15,13 @@ const batchSchema = z.object({
   clientBatchId: clientBatchIdSchema.optional(),
 });
 
+/** Bounds for the keyed batch transaction. Prisma defaults to 5s, which a full
+ *  MAX_BATCH_TRANSACTIONS batch can exceed: the keyed path awaits each create in turn, so a
+ *  200-row save is 200 sequential round trips plus their label associations. Blowing the
+ *  deadline rolls the whole batch back and returns a generic 500, which is precisely the
+ *  failure large batches were raised to allow. */
+const BATCH_TX_OPTIONS = { maxWait: 10_000, timeout: 60_000 };
+
 const batchDeleteSchema = z.object({
   ids: z.array(z.string()).min(1),
 });
@@ -122,7 +129,7 @@ export async function POST(request: Request) {
       const rows = [];
       for (const create of buildCreates(tx)) rows.push(await create);
       return { transactions: rows, replayed: false };
-    });
+    }, BATCH_TX_OPTIONS);
 
     // 200 rather than 201 on a replay: this request created nothing.
     return NextResponse.json({ transactions: created }, { status: replayed ? 200 : 201 });
