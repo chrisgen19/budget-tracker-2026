@@ -18,7 +18,8 @@ export const billKeys = {
   all: ["bills"] as const,
   list: (filters?: { active?: boolean; type?: string }) =>
     ["bills", "list", filters] as const,
-  pending: ["bills", "pending"] as const,
+  pending: (tz: number) => ["bills", "pending", tz] as const,
+  pendingAll: ["bills", "pending"] as const,
   upcoming: (tz: number) => ["bills", "upcoming", tz] as const,
   history: (id: string) => ["bills", "history", id] as const,
 };
@@ -40,8 +41,8 @@ const fetchBills = async (filters?: {
   return res.json();
 };
 
-const fetchPendingReminders = async (): Promise<PendingReminder[]> => {
-  const res = await fetch("/api/bills/pending");
+const fetchPendingReminders = async (tz: number): Promise<PendingReminder[]> => {
+  const res = await fetch(`/api/bills/pending?tz=${tz}`);
   if (!res.ok) throw new Error("Failed to fetch pending reminders");
   return res.json();
 };
@@ -103,10 +104,10 @@ export function useBillsQuery(filters?: { active?: boolean; type?: string }) {
   });
 }
 
-export function usePendingRemindersQuery() {
+export function usePendingRemindersQuery(tz: number) {
   return useQuery({
-    queryKey: billKeys.pending,
-    queryFn: fetchPendingReminders,
+    queryKey: billKeys.pending(tz),
+    queryFn: () => fetchPendingReminders(tz),
     // refetchOnWindowFocus is already the default — staleTime prevents
     // rapid-fire refetches when the user alt-tabs frequently.
     staleTime: 60_000,
@@ -214,7 +215,7 @@ export function useReactivateBill() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: billKeys.all });
-      queryClient.invalidateQueries({ queryKey: billKeys.pending });
+      queryClient.invalidateQueries({ queryKey: billKeys.pendingAll });
     },
   });
 }
@@ -237,7 +238,7 @@ export function useBillAction() {
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: billKeys.all });
-      queryClient.invalidateQueries({ queryKey: billKeys.pending });
+      queryClient.invalidateQueries({ queryKey: billKeys.pendingAll });
 
       // If paid, also invalidate transactions, dashboard, and analytics
       if (variables.input.action === "pay" || variables.input.action === "pay_existing") {

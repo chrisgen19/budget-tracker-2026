@@ -2,9 +2,19 @@ import { prisma } from "@/lib/prisma";
 import { computeNextDueDate } from "@/lib/bill-utils";
 import type { PendingReminder, ScheduledTransactionWithCategory } from "@/types";
 
-export async function getPendingRemindersForUser(userId: string): Promise<PendingReminder[]> {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+/**
+ * @param timezoneOffset  Minutes from `Date.getTimezoneOffset()`, so "today" is
+ *   the user's calendar day rather than the container's. Without it a UTC server
+ *   reports the previous day for the first 8 hours of an Asia/Manila day, which
+ *   shifts every daysPastDue and flips "Due today" to "Due tomorrow".
+ */
+export async function getPendingRemindersForUser(
+  userId: string,
+  timezoneOffset = 0,
+): Promise<PendingReminder[]> {
+  const tzMs = timezoneOffset * 60 * 1000;
+  const localNow = new Date(Date.now() - tzMs);
+  const today = new Date(Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), localNow.getUTCDate()));
 
   const bills = await prisma.scheduledTransaction.findMany({
     where: { userId, isActive: true },

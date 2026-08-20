@@ -65,9 +65,9 @@ const readDismissed = (email: string) => {
 };
 
 export function BillReminderProvider({ children }: { children: React.ReactNode }) {
-  const { data: pendingReminders = [] } = usePendingRemindersQuery();
-  const billAction = useBillAction();
   const { user } = useUser();
+  const { data: pendingReminders = [] } = usePendingRemindersQuery(user.timezoneOffset);
+  const billAction = useBillAction();
   const email = user.email;
   const { showToast } = useToast();
   const [currentIndex, setCurrentIndex] = useState(0);
