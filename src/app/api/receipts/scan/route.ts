@@ -10,19 +10,26 @@ export async function POST(request: Request) {
   const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
 
-  const guard = await guardReceiptRequest(request, userId);
-  if (guard instanceof NextResponse) return guard;
+  // Set once the guard reserves a credit, so `fail` knows whether there is one to refund.
+  let reservationId: string | null = null;
 
-  const { formData, file, mimeType, categories, categoryList, reservationId } = guard;
-
-  /** Refund the reserved credit and return the error. We absorb the cost of every failed
+  /** Refund any reserved credit and return the error. We absorb the cost of every failed
    *  scan rather than charging the user for output they never got. */
   const fail = async (message: string, status: number) => {
-    await settleScanReservation(reservationId, "FAILED");
+    if (reservationId) await settleScanReservation(reservationId, "FAILED");
     return NextResponse.json({ error: message }, { status });
   };
 
+  // The guard reads the multipart body and hits the database, so it must run inside the
+  // try: an escaping rejection would return an HTML 500 the client cannot parse as JSON,
+  // surfacing to the user as a misleading "Network error".
   try {
+    const guard = await guardReceiptRequest(request, userId);
+    if (guard instanceof NextResponse) return guard;
+
+    const { formData, file, mimeType, categories, categoryList } = guard;
+    reservationId = guard.reservationId;
+
     // Date-only fallback — prefer client's local date to avoid UTC offset issues.
     // Calendar-valid (rejects e.g. "2024-13-40") to keep server output trustworthy.
     const serverToday = new Date().toISOString().slice(0, 10);
@@ -150,7 +157,7 @@ or when multiCategory is true:
     }
 
     // Only a scan the user can actually use consumes their monthly credit.
-    await settleScanReservation(reservationId, "SUCCESS");
+    await settleScanReservation(guard.reservationId, "SUCCESS");
 
     return NextResponse.json({ ...result.data, dateWarning, usedPhotoFallback });
   } catch (error) {

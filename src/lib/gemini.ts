@@ -1,4 +1,5 @@
 import { ApiError, GoogleGenAI, ThinkingLevel, type GenerateContentParameters, type ThinkingConfig } from "@google/genai";
+import { GEMINI_FALLBACK_ATTEMPTS, GEMINI_MAX_ATTEMPTS, GEMINI_TIMEOUT_MS } from "@/lib/gemini-limits";
 
 const globalForGemini = globalThis as unknown as {
   gemini: GoogleGenAI | undefined;
@@ -40,9 +41,10 @@ export const GEMINI_THINKING_LEVEL =
 /** Per-attempt request timeout — overloaded Gemini attempts can hang 40-70s before
  *  failing; aborting early lets retries/fallback kick in sooner.
  *  Configured via GEMINI_TIMEOUT_MS; defaults to 60s, generous enough for
- *  thinking-enabled scans. Lower it (e.g. 30000) when running in speed mode. */
-const parsedTimeout = Number.parseInt(process.env.GEMINI_TIMEOUT_MS ?? "", 10);
-export const GEMINI_TIMEOUT_MS = Number.isNaN(parsedTimeout) ? 60_000 : parsedTimeout;
+ *  thinking-enabled scans. Lower it (e.g. 30000) when running in speed mode.
+ *  Lives in gemini-limits.ts so callers can reason about call duration without
+ *  importing this module's client. */
+export { GEMINI_TIMEOUT_MS };
 
 /** Pick the right thinking knob per model generation:
  *  Gemini 1.x/2.x use thinkingBudget; Gemini 3+ use thinkingLevel
@@ -102,7 +104,7 @@ const attemptWithRetries = async (
  */
 export const generateContentWithRetry = async (
   params: GenerateContentParameters,
-  maxAttempts = 3
+  maxAttempts = GEMINI_MAX_ATTEMPTS
 ) => {
   try {
     return await attemptWithRetries(params, maxAttempts);
@@ -123,7 +125,7 @@ export const generateContentWithRetry = async (
         model: GEMINI_FALLBACK_MODEL,
         config: { ...params.config, thinkingConfig: thinkingConfigFor(GEMINI_FALLBACK_MODEL) },
       },
-      2
+      GEMINI_FALLBACK_ATTEMPTS
     );
   }
 };

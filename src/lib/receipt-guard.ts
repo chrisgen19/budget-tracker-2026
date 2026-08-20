@@ -48,6 +48,12 @@ export interface ReceiptScanContext {
   reservationId: string;
 }
 
+interface ScanPermissions {
+  monthlyScanLimit: number;
+  timezoneOffset: number;
+  categories: Array<{ id: string; name: string }>;
+}
+
 const denialResponse = (denial: ScanQuotaDenial): NextResponse => {
   if (denial.reason === "RATE_LIMITED") {
     return NextResponse.json(
@@ -63,29 +69,17 @@ const denialResponse = (denial: ScanQuotaDenial): NextResponse => {
   );
 };
 
-/**
- * Shared entry guard for both receipt routes: validates the upload, enforces scan
- * permissions, and atomically reserves one scan credit.
- *
- * Both routes previously carried their own copy of this preamble, which had already
- * drifted (one computed the quota month in server-local time, the other in UTC).
- *
- * On success the caller owns the returned `reservationId` and MUST settle it via
- * `settleScanReservation`.
- */
-export async function guardReceiptRequest(
-  request: Request,
-  userId: string,
-): Promise<NextResponse | ReceiptScanContext> {
-  // Reject oversized bodies before request.formData() buffers them into memory.
+/** Reject oversized bodies before request.formData() buffers them into memory. */
+const checkBodySize = (request: Request): NextResponse | null => {
   const declaredLength = Number(request.headers.get("content-length") ?? "");
   if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_SIZE) {
-    return NextResponse.json(
-      { error: "File too large. Maximum size is 4 MB." },
-      { status: 413 },
-    );
+    return NextResponse.json({ error: "File too large. Maximum size is 4 MB." }, { status: 413 });
   }
+  return null;
+};
 
+/** Resolve whether this user may scan at all, and under what monthly allowance. */
+async function resolvePermissions(userId: string): Promise<NextResponse | ScanPermissions> {
   const [user, categories] = await Promise.all([
     prisma.user.findUnique({
       where: { id: userId },
@@ -112,23 +106,28 @@ export async function guardReceiptRequest(
     );
   }
 
-  const isAdmin = user.role === "ADMIN";
-  let monthlyScanLimit = 0; // 0 = unlimited, matching AppSettings
-
-  if (!isAdmin) {
-    const roleSettings = await prisma.appSettings.findUnique({ where: { role: user.role } });
-    if (!roleSettings?.receiptScanEnabled) {
-      return NextResponse.json(
-        { error: "Receipt scanning is not available for your account." },
-        { status: 403 },
-      );
-    }
-    monthlyScanLimit = roleSettings.monthlyScanLimit;
+  if (user.role === "ADMIN") {
+    return { monthlyScanLimit: 0, timezoneOffset: user.timezoneOffset, categories };
   }
 
-  const formData = await request.formData();
-  const file = formData.get("receipt");
+  const roleSettings = await prisma.appSettings.findUnique({ where: { role: user.role } });
+  if (!roleSettings?.receiptScanEnabled) {
+    return NextResponse.json(
+      { error: "Receipt scanning is not available for your account." },
+      { status: 403 },
+    );
+  }
 
+  return {
+    monthlyScanLimit: roleSettings.monthlyScanLimit,
+    timezoneOffset: user.timezoneOffset,
+    categories,
+  };
+}
+
+/** Validate the uploaded image itself. */
+function validateUpload(formData: FormData): NextResponse | { file: File; mimeType: string } {
+  const file = formData.get("receipt");
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "No receipt image provided" }, { status: 400 });
   }
@@ -145,19 +144,50 @@ export async function guardReceiptRequest(
     return NextResponse.json({ error: "File too large. Maximum size is 4 MB." }, { status: 400 });
   }
 
+  return { file, mimeType };
+}
+
+/**
+ * Shared entry guard for both receipt routes: validates the upload, enforces scan
+ * permissions, and atomically reserves one scan credit.
+ *
+ * Both routes previously carried their own copy of this preamble, which had already
+ * drifted (one computed the quota month in server-local time, the other in UTC).
+ *
+ * Callers must invoke this inside their handler's try/catch: it performs I/O that can
+ * reject. On success the caller owns the returned `reservationId` and MUST settle it via
+ * `settleScanReservation`. Nothing after the reservation can throw, so a rejection here
+ * never strands a credit.
+ */
+export async function guardReceiptRequest(
+  request: Request,
+  userId: string,
+): Promise<NextResponse | ReceiptScanContext> {
+  const oversized = checkBodySize(request);
+  if (oversized) return oversized;
+
+  const permissions = await resolvePermissions(userId);
+  if (permissions instanceof NextResponse) return permissions;
+
+  const formData = await request.formData();
+  const upload = validateUpload(formData);
+  if (upload instanceof NextResponse) return upload;
+
   // Reserved last, so a rejected upload never consumes a credit.
-  const reservation = await reserveScanCredit(userId, monthlyScanLimit, user.timezoneOffset);
-  if (!reservation.ok) {
-    return denialResponse(reservation.denial);
-  }
+  const reservation = await reserveScanCredit(
+    userId,
+    permissions.monthlyScanLimit,
+    permissions.timezoneOffset,
+  );
+  if (!reservation.ok) return denialResponse(reservation.denial);
 
   return {
     formData,
-    file,
-    mimeType,
-    categories,
-    categoryList: categories.map((c) => `- "${c.name}" (id: "${c.id}")`).join("\n"),
-    timezoneOffset: user.timezoneOffset,
+    file: upload.file,
+    mimeType: upload.mimeType,
+    categories: permissions.categories,
+    categoryList: permissions.categories.map((c) => `- "${c.name}" (id: "${c.id}")`).join("\n"),
+    timezoneOffset: permissions.timezoneOffset,
     reservationId: reservation.reservationId,
   };
 }

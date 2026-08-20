@@ -18,7 +18,9 @@ import {
   settleScanReservation,
   countScansUsed,
   monthStartForUser,
+  RESERVATION_TTL_MS,
 } from "../src/lib/scan-quota";
+import { GEMINI_WORST_CASE_MS } from "../src/lib/gemini-limits";
 
 const prisma = new PrismaClient();
 const EMAIL = "quota-probe@scratch.invalid";
@@ -101,9 +103,45 @@ async function main() {
   check("rate limited after 120 attempts", limited.ok === false && limited.denial.reason, "RATE_LIMITED");
   check("refunded attempts still count toward rate limit", await countScansUsed(uid, monthStart), 0);
 
-  await prisma.user.delete({ where: { id: uid } });
-  console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`);
-  process.exit(failures === 0 ? 0 : 1);
+  // 8. The rate limit must hold against a concurrent burst too, on both limited and
+  //    unlimited plans. It is the only ceiling on Gemini spend once failures are refunded,
+  //    so a burst that slips past it is the whole abuse vector reopening.
+  for (const plan of [0, 5]) {
+    await prisma.scanLog.deleteMany({ where: { userId: uid } });
+    await prisma.scanLog.createMany({
+      data: Array.from({ length: 119 }, () => ({ userId: uid, status: "FAILED" as const })),
+    });
+    const burst = await Promise.all(
+      Array.from({ length: 10 }, () => reserveScanCredit(uid, plan, tz)),
+    );
+    check(
+      `concurrent burst at rate limit boundary (limit ${plan || "unlimited"})`,
+      burst.filter((r) => r.ok).length,
+      1,
+    );
+    for (const r of burst) if (r.ok) await settleScanReservation(r.reservationId, "FAILED");
+  }
+
+
+  // 9. A reservation must outlive the slowest legitimate Gemini call, or a still-running
+  //    request could have its credit taken and then settle SUCCESS over the limit.
+  check(
+    "reservation TTL outlives worst-case Gemini call",
+    GEMINI_WORST_CASE_MS === null || RESERVATION_TTL_MS > GEMINI_WORST_CASE_MS,
+    true,
+  );
 }
 
-main().finally(() => prisma.$disconnect());
+main()
+  .catch((error) => {
+    console.error(error);
+    failures++;
+  })
+  .finally(async () => {
+    // Cleanup lives here so a throwing check cannot leave the probe user and its scan_logs
+    // behind, and so $disconnect always runs: process.exit would preempt it otherwise.
+    await prisma.user.deleteMany({ where: { email: EMAIL } });
+    await prisma.$disconnect();
+    console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`);
+    process.exit(failures === 0 ? 0 : 1);
+  });

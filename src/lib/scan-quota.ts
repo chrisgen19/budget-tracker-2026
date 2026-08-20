@@ -1,12 +1,32 @@
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { GEMINI_WORST_CASE_MS } from "@/lib/gemini-limits";
 
-/** How long an in-flight PENDING reservation holds a credit before it is treated as
- *  abandoned. Longer than the worst-case Gemini path (3 attempts + fallback, each
- *  capped by GEMINI_TIMEOUT_MS) so a slow scan is never refunded out from under itself,
- *  short enough that a crashed request does not strand a credit for the rest of the month. */
-const RESERVATION_TTL_MINUTES = 10;
+/** Floor and ceiling for the reservation TTL. The ceiling applies when Gemini calls are
+ *  untimed (GEMINI_TIMEOUT_MS=0), where there is no worst case to derive one from. */
+const RESERVATION_TTL_FLOOR_MS = 10 * 60 * 1000;
+const RESERVATION_TTL_CEILING_MS = 60 * 60 * 1000;
+
+/** How long an in-flight PENDING reservation holds a credit before it is treated as abandoned.
+ *
+ *  Derived from the Gemini retry policy rather than fixed, with 2x headroom: a request that is
+ *  still legitimately running must never have its reservation expire, or another request could
+ *  take the last credit and the original would then settle SUCCESS over the limit. A fixed
+ *  10 minutes was safe on default settings (worst case is ~5m04s) but not if GEMINI_TIMEOUT_MS
+ *  is raised or disabled. */
+export const RESERVATION_TTL_MS = Math.min(
+  RESERVATION_TTL_CEILING_MS,
+  Math.max(
+    RESERVATION_TTL_FLOOR_MS,
+    GEMINI_WORST_CASE_MS === null ? RESERVATION_TTL_CEILING_MS : GEMINI_WORST_CASE_MS * 2,
+  ),
+);
+
+/** Bounds on how long a reservation may wait for the per-user advisory lock. Prisma defaults
+ *  (2s wait / 5s duration) are tight for a burst of concurrent uploads all serialising on the
+ *  same user, and exceeding them throws instead of returning a clean quota denial. */
+const RESERVATION_TX_OPTIONS = { maxWait: 10_000, timeout: 15_000 };
 
 /** Rolling-window rate limit on scan *attempts*, regardless of outcome.
  *  Because failures are refunded, the monthly limit no longer bounds Gemini spend on its
@@ -37,37 +57,37 @@ export const monthStartForUser = (timezoneOffset: number, now = new Date()): Dat
   return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), 1) + tzMs);
 };
 
-/** Attempts in the rolling window, counting every outcome including refunded failures. */
-const countRecentAttempts = (userId: string, now: Date) =>
-  prisma.scanLog.count({
-    where: {
-      userId,
-      createdAt: { gte: new Date(now.getTime() - RATE_LIMIT_WINDOW_MINUTES * 60 * 1000) },
-    },
-  });
-
 /** Credits consumed this month: successes plus reservations still in flight. */
 export const countScansUsed = (userId: string, monthStart: Date, now = new Date()) =>
   prisma.scanLog.count({
-    where: {
-      userId,
-      createdAt: { gte: monthStart },
-      OR: [
-        { status: "SUCCESS" },
-        {
-          status: "PENDING",
-          createdAt: { gt: new Date(now.getTime() - RESERVATION_TTL_MINUTES * 60 * 1000) },
-        },
-      ],
-    },
+    where: consumedCreditsWhere(userId, monthStart, now),
   });
+
+/** Credits that count against the monthly limit: successes, plus reservations still live. */
+const consumedCreditsWhere = (userId: string, monthStart: Date, now: Date) => ({
+  userId,
+  createdAt: { gte: monthStart },
+  OR: [
+    { status: "SUCCESS" as const },
+    {
+      status: "PENDING" as const,
+      createdAt: { gt: new Date(now.getTime() - RESERVATION_TTL_MS) },
+    },
+  ],
+});
 
 /**
  * Atomically claim one scan credit before calling Gemini.
  *
- * The insert and the limit check are a single statement, so concurrent requests cannot
- * both observe the same pre-insert count and overshoot the limit. The client itself makes
- * this reachable in normal use: multi-scan uploads run three requests in parallel.
+ * Both the rate limit and the monthly limit are checked under a per-user advisory lock,
+ * in the same transaction as the insert. Neither check can be done outside it: under
+ * READ COMMITTED, concurrent requests all read the same pre-insert snapshot and all pass.
+ * The client makes this reachable in ordinary use, not just under attack, since multi-scan
+ * uploads run three requests in parallel.
+ *
+ * The lock is taken for every plan including unlimited ones. Unlimited plans skip only the
+ * monthly check, never the rate limit, which is the sole ceiling on Gemini spend once
+ * failed scans are refunded.
  *
  * A reservation must always be settled by `settleScanReservation`.
  *
@@ -79,51 +99,36 @@ export async function reserveScanCredit(
   timezoneOffset: number,
 ): Promise<ScanReservation> {
   const now = new Date();
-
-  const recentAttempts = await countRecentAttempts(userId, now);
-  if (recentAttempts >= RATE_LIMIT_MAX_ATTEMPTS) {
-    return {
-      ok: false,
-      denial: { reason: "RATE_LIMITED", retryAfterSeconds: RATE_LIMIT_WINDOW_MINUTES * 60 },
-    };
-  }
-
   const reservationId = randomUUID();
   const monthStart = monthStartForUser(timezoneOffset, now);
+  const windowStart = new Date(now.getTime() - RATE_LIMIT_WINDOW_MINUTES * 60 * 1000);
 
-  // Unlimited plans still get a row, so rate limiting and usage reporting stay accurate.
-  if (monthlyScanLimit <= 0) {
-    await prisma.scanLog.create({ data: { id: reservationId, userId, status: "PENDING" } });
-    return { ok: true, reservationId };
-  }
-
-  // A plain "count, compare, insert" cannot enforce this even inside one statement: under
-  // READ COMMITTED every concurrent request reads the same pre-insert snapshot and they all
-  // pass the check. The advisory lock serialises reservations per user so each one counts
-  // rows the previous one already committed. It is transaction-scoped, so it always releases.
-  const used = await prisma.$transaction(async (tx) => {
+  const denial = await prisma.$transaction(async (tx): Promise<ScanQuotaDenial | null> => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
 
-    const staleBefore = new Date(now.getTime() - RESERVATION_TTL_MINUTES * 60 * 1000);
-    const consumed = await tx.scanLog.count({
-      where: {
-        userId,
-        createdAt: { gte: monthStart },
-        OR: [{ status: "SUCCESS" }, { status: "PENDING", createdAt: { gt: staleBefore } }],
-      },
+    // Every attempt counts here regardless of outcome, so refunded failures still throttle.
+    const recentAttempts = await tx.scanLog.count({
+      where: { userId, createdAt: { gte: windowStart } },
     });
+    if (recentAttempts >= RATE_LIMIT_MAX_ATTEMPTS) {
+      return { reason: "RATE_LIMITED", retryAfterSeconds: RATE_LIMIT_WINDOW_MINUTES * 60 };
+    }
 
-    if (consumed >= monthlyScanLimit) return consumed;
+    if (monthlyScanLimit > 0) {
+      const used = await tx.scanLog.count({
+        where: consumedCreditsWhere(userId, monthStart, now),
+      });
+      if (used >= monthlyScanLimit) {
+        return { reason: "LIMIT_REACHED", used, limit: monthlyScanLimit };
+      }
+    }
 
+    // Unlimited plans still get a row, so rate limiting and usage reporting stay accurate.
     await tx.scanLog.create({ data: { id: reservationId, userId, status: "PENDING" } });
     return null;
-  });
+  }, RESERVATION_TX_OPTIONS);
 
-  if (used !== null) {
-    return { ok: false, denial: { reason: "LIMIT_REACHED", used, limit: monthlyScanLimit } };
-  }
-
-  return { ok: true, reservationId };
+  return denial ? { ok: false, denial } : { ok: true, reservationId };
 }
 
 /**
