@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
-import { usePendingRemindersQuery, useBillAction } from "@/hooks/use-bills";
+import { usePendingRemindersQuery, useBillAction, useInvalidateBillPayment } from "@/hooks/use-bills";
 import { useToast } from "@/components/ui/toast";
 import { useUser } from "@/components/user-provider";
 import type { PendingReminder } from "@/types";
@@ -65,9 +65,10 @@ const readDismissed = (email: string) => {
 };
 
 export function BillReminderProvider({ children }: { children: React.ReactNode }) {
-  const { data: pendingReminders = [] } = usePendingRemindersQuery();
-  const billAction = useBillAction();
   const { user } = useUser();
+  const { data: pendingReminders = [] } = usePendingRemindersQuery(user.timezoneOffset);
+  const billAction = useBillAction();
+  const invalidateBillPayment = useInvalidateBillPayment();
   const email = user.email;
   const { showToast } = useToast();
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -91,6 +92,9 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
           setCurrentIndex((prev) => Math.max(0, prev - 1));
           showToast(`${getBillLabel(reminder)} paid`);
         },
+        onError: (error) => {
+          showToast(error instanceof Error ? error.message : `Could not pay ${getBillLabel(reminder)}`);
+        },
       },
     );
   }, [billAction, showToast]);
@@ -106,6 +110,9 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
         onSuccess: () => {
           showToast(`${getBillLabel(reminder)} snoozed for ${days} day${days > 1 ? "s" : ""}`);
         },
+        onError: (error) => {
+          showToast(error instanceof Error ? error.message : `Could not snooze ${getBillLabel(reminder)}`);
+        },
       },
     );
   }, [billAction, showToast]);
@@ -120,6 +127,9 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
         onSuccess: () => {
           setCurrentIndex((prev) => Math.max(0, prev - 1));
           showToast(`${getBillLabel(reminder)} skipped`);
+        },
+        onError: (error) => {
+          showToast(error instanceof Error ? error.message : `Could not skip ${getBillLabel(reminder)}`);
         },
       },
     );
@@ -206,6 +216,7 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
             {
               id: reminder.scheduledTransaction.id,
               input: { action: "pay", dueDate: reminder.dueDate },
+              skipInvalidate: true,
             },
             {
               onSuccess: () => {
@@ -231,9 +242,17 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
     } else {
       showToast(`${succeeded} paid, ${failed} failed`);
     }
+    // One refetch for the whole run rather than one per payment. Awaited so the
+    // buttons stay disabled until the banner stops showing the bills just paid:
+    // clicking Pay against a stale reminder would submit its due date again.
+    try {
+      await invalidateBillPayment();
+    } catch {
+      // A failed refetch must not strand the UI in the paying state
+    }
     setPayAllProgress(null);
     setCurrentIndex(0);
-  }, [pendingReminders, billAction, showToast]);
+  }, [pendingReminders, billAction, showToast, invalidateBillPayment]);
 
   return (
     <BillReminderContext.Provider

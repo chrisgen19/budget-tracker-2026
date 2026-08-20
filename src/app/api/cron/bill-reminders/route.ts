@@ -19,7 +19,7 @@ export async function GET(request: Request) {
       emailBillReminders: true,
       emailVerified: true,
     },
-    select: { id: true, email: true, currency: true },
+    select: { id: true, email: true, currency: true, timezoneOffset: true },
   });
 
   let emailsSent = 0;
@@ -27,7 +27,9 @@ export async function GET(request: Request) {
 
   for (const user of users) {
     try {
-      const reminders = await getPendingRemindersForUser(user.id);
+      // Use the stored offset so "overdue" in the email matches what the user
+      // sees in the app, rather than the container's timezone
+      const reminders = await getPendingRemindersForUser(user.id, user.timezoneOffset ?? 0);
       if (reminders.length === 0) continue;
 
       // Filter out reminders that already had an email sent
