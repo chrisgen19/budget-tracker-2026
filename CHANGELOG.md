@@ -2,6 +2,28 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-20 - Test Infrastructure (Vitest + React Testing Library)
+
+Added because the review rounds on the receipt scan work kept finding the same class of
+defect: React lifecycle interactions that lint and `tsc` cannot see. Stale reads after an
+`await`, state updates split across renders, and effect cleanup ordering. Four of those
+shipped and were caught only by review.
+
+### Setup
+- **Vitest 4 + React Testing Library 16** on jsdom. `vitest.config.mts` (`.mts` so Vite loads it as ESM without adding `"type": "module"`), `vitest.setup.ts` for jest-dom matchers, RTL cleanup, and the `matchMedia`/`scrollTo` stubs jsdom does not implement
+- `pnpm test` and `pnpm test:watch`; `pnpm test` added to the CI workflow after type-check
+- Tests colocated as `src/**/*.test.ts(x)`. Nothing imports them, so they stay out of the Next.js bundle
+- Dependency versions were chosen to clear the repo's 7-day `minimum-release-age` quarantine rather than bypassing it, so the newest release of three of them is intentionally not used
+
+### Coverage
+Fourteen tests over the two areas that actually regressed. Each was checked by reverting the
+fix it covers and confirming it fails:
+- `src/components/ui/modal.test.tsx` — the ref-counted body scroll lock, including two modals closing in the same commit (the case that left the page unscrollable) and restoring a pre-existing `overflow` value
+- `src/hooks/use-multi-scan.test.tsx` — `scanSingle` returning its outcome instead of reading stale state, unreadable images vs network failures, non-JSON error responses, retained images on failed rows, retry, a failed save leaving the queue intact, failed rows surviving a partial save, and the discard accounting for retryable rows
+
+`scripts/verify-scan-quota.ts` stays as it is: it exercises Postgres advisory locks and
+transaction isolation, which jsdom cannot provide.
+
 ## 2026-08-20 - Receipt Scan Save & Recovery
 
 ### Data loss
