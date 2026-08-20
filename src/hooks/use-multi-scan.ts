@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { compressImage, formatDateInput, toLocalDateString } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
 import { useToast } from "@/components/ui/toast";
@@ -61,11 +61,18 @@ export function useMultiScan() {
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [isSavingAll, setIsSavingAll] = useState(false);
+  // Read by the queue-mutation guards, which must see the in-flight save immediately
+  // rather than a render later.
+  const savingRef = useRef(false);
 
   // Mirrors `items` so callbacks can read the current queue without being re-created on
-  // every state change, and so retry never closes over a stale array.
+  // every state change, and so retry never closes over a stale array. Synced after commit
+  // rather than during render: React may discard a render, and a ref written in one would
+  // leak a queue that was never committed. Every reader runs from a user event, after commit.
   const itemsRef = useRef<MultiScanItem[]>([]);
-  itemsRef.current = items;
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
 
   const patchItem = useCallback((id: string, patch: Partial<MultiScanItem>) => {
     setItems((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
@@ -100,15 +107,31 @@ export function useMultiScan() {
           return { ok: false, error };
         }
 
+        // The server validates its own response with Zod, so this only fires on a version
+        // skew or a mangled 200. Worth catching: an unvalidated row reaches saveAll, which
+        // asserts these fields non-null, and the server then rejects the whole atomic batch
+        // with "Invalid input" — the batch-wide failure this change exists to remove. As a
+        // per-row error it is retryable instead. It also stops `withLocalTime(undefined)`
+        // throwing on `.slice` and being reported as a network problem.
+        if (
+          typeof data.amount !== "number" ||
+          typeof data.categoryId !== "string" ||
+          (!data.usedPhotoFallback && typeof data.date !== "string")
+        ) {
+          const error = "The scan returned an unexpected result. Please try again.";
+          patchItem(itemId, { status: "error", error });
+          return { ok: false, error };
+        }
+
         patchItem(itemId, {
           status: "success",
           error: undefined,
           data: {
-            amount: data.amount as number,
-            description: data.description as string,
-            type: data.type as "EXPENSE",
+            amount: data.amount,
+            description: typeof data.description === "string" ? data.description : "",
+            type: "EXPENSE",
             date: data.usedPhotoFallback ? photoDateTime : withLocalTime(data.date as string),
-            categoryId: data.categoryId as string,
+            categoryId: data.categoryId,
             multiCategory: data.multiCategory as boolean,
             breakdown: data.breakdown as ScanBreakdown | undefined,
             dateWarning: data.dateWarning as boolean,
@@ -200,22 +223,41 @@ export function useMultiScan() {
       setItems(initialItems);
       setShowReview(true);
 
-      // Compression is local and free, so it never blocks on the upload queue.
-      const compressedPromises = files.map((f) => compressImage(f).catch(() => f));
+      // Compression is local and free, so it never blocks on the upload queue. A rejection
+      // is reported on the row rather than uploading the original: an unreadable original
+      // usually trips the server's 4 MB limit, which reports a misleading cause. This
+      // matches what scanSingle already does. HEIC is unaffected — compressImage resolves
+      // with the original there rather than rejecting, since Gemini accepts HEIC directly.
+      const compressedPromises = files.map((f) =>
+        compressImage(f).then(
+          (compressed) => ({ ok: true as const, file: compressed }),
+          () => ({ ok: false as const }),
+        ),
+      );
 
       let nextIndex = 0;
       const processNext = async (): Promise<void> => {
         while (nextIndex < compressedPromises.length) {
           const i = nextIndex++;
-          const file = await compressedPromises[i];
+          const result = await compressedPromises[i];
           const itemId = initialItems[i].id;
 
+          if (!result.ok) {
+            // No imageFile, so this row is not offered a Retry: re-compressing the same
+            // unreadable file would fail the same way.
+            patchItem(itemId, {
+              status: "error",
+              error: "That image could not be read. Please try a different photo.",
+            });
+            continue;
+          }
+
           // Held on the row so a failed scan can be retried without re-picking the file.
-          patchItem(itemId, { imageFile: file });
+          patchItem(itemId, { imageFile: result.file });
 
           await scanOne({
             itemId,
-            file,
+            file: result.file,
             photoDate: photoDates[i],
             photoDateTime: photoDateTimes[i],
           });
@@ -286,6 +328,11 @@ export function useMultiScan() {
   /** Split a receipt by category, using the combined scan's breakdown when it has one. */
   const itemizeItem = useCallback(
     async (id: string) => {
+      // Save All snapshots the rows it submits. Expanding a submitted parent into children
+      // mid-flight leaves those children outside `savedIds`, so they survive the save and
+      // the next one recreates the same expenses. The UI disables this too; the guard here
+      // is what actually holds.
+      if (savingRef.current) return;
       const item = itemsRef.current.find((i) => i.id === id);
       if (!item) return;
 
@@ -387,6 +434,7 @@ export function useMultiScan() {
       return;
     }
 
+    savingRef.current = true;
     setIsSavingAll(true);
     try {
       await batchCreateMutation.mutateAsync(
@@ -407,6 +455,7 @@ export function useMultiScan() {
       showToast("Could not save your receipts. Your scans are still here — try again.", "error");
       return;
     } finally {
+      savingRef.current = false;
       setIsSavingAll(false);
     }
 

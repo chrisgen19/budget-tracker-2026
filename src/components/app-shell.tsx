@@ -15,7 +15,7 @@ import {
   Shield,
   AlertTriangle,
 } from "lucide-react";
-import { cn, formatDateInput } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { useUser } from "@/components/user-provider";
 import { ProfileMenu } from "@/components/profile-menu";
@@ -39,14 +39,6 @@ import type { TransactionInput } from "@/lib/validations";
 interface AppShellProps {
   children: React.ReactNode;
 }
-
-/** Take a date string from Gemini (YYYY-MM-DD or YYYY-MM-DDTHH:mm) and
- *  replace the time portion with the user's current local time. */
-const withLocalTime = (dateStr: string): string => {
-  // Strip any time portion Gemini may have included
-  const dateOnly = dateStr.slice(0, 10);
-  return formatDateInput(new Date(dateOnly + "T" + new Date().toTimeString().slice(0, 5)));
-};
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },

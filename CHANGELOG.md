@@ -15,6 +15,14 @@ All notable development history for the Budget Tracker app.
 - **A partial save discarded the rows that failed.** Save All posted the successful rows and then reset the whole queue, so in a mixed batch the failed scans vanished along with the retry path added in this same change. Only the saved rows are removed now; failures keep their retained image and stay in the review, with a toast naming what still needs attention
 - **Closing skipped the confirmation when every scan had failed.** The discard check counted only savable rows, so an all-failed batch reset silently on Escape or a swipe-down and destroyed the retry queue. Retryable rows are counted too, worded separately because their attempts were refunded and re-scanning costs only the trouble of picking the photos again
 
+### Review follow-ups (second round)
+- **Itemising during a save created duplicate transactions.** Save All snapshots the rows it submits; expanding a submitted parent into per-category children mid-flight left those children outside `savedIds`, so they survived the save and the next one recreated the same expenses. Queue mutations are now frozen while a save is in flight, guarded in the hook and disabled in the UI
+- **A malformed scan response could poison the whole batch.** Every field was cast with `as` and none was checked, so a 200 missing `amount` or `categoryId` produced a `success` row holding `undefined`; `saveAll` then asserted them non-null and the server rejected the entire atomic batch with `Invalid input` — exactly the batch-wide failure this change exists to remove. Required fields are validated and a malformed body becomes a retryable per-row error. It also stops `withLocalTime(undefined)` throwing on `.slice` and being reported as a network problem
+- `itemsRef` is synced in an effect rather than written during render. React may discard a render, and a ref written in one can leak a queue that was never committed into `saveAll` and `retryItem`
+- The batch path reported compression failures on the row instead of uploading the original, which usually tripped the server's 4 MB limit and reported a misleading cause. Matches what the single-capture path already did. HEIC is unaffected: `compressImage` resolves with the original there rather than rejecting
+- The success-row Remove button gained the `aria-label` the changelog already claimed for it, the category-load warning is a `role="status"` live region since it can appear after the modal opens, and the error row uses `gap-2` so Retry is not flush against a destructive Remove
+- Removed a dead copy of `withLocalTime` left in `AppShell` when the logic moved to the hook
+
 ### Correctness
 - A compression failure reported itself as "Network error. Please check your connection", sending the user to debug a connection over an image that never left the device. It now says the image could not be read
 - Error responses are parsed defensively. An unhandled server fault returns HTML, and `res.json()` rejecting on it made every such failure look like a network problem
@@ -27,7 +35,7 @@ All notable development history for the Budget Tracker app.
 - Retry, Remove, and Edit buttons carry `aria-label`s
 
 ### Structure
-- Scan orchestration moved out of `AppShell` (760 lines) into `src/hooks/use-multi-scan.ts`: capture, the review queue, itemisation, retry, and the atomic save. `AppShell` is down to 454 lines
+- Scan orchestration moved out of `AppShell` (760 lines) into `src/hooks/use-multi-scan.ts`: capture, the review queue, itemisation, retry, and the atomic save. `AppShell` is down to 460 lines
 
 ### Files
 - `src/hooks/use-multi-scan.ts` -- new; all receipt scan orchestration

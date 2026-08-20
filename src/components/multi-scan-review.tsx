@@ -65,7 +65,10 @@ export function MultiScanReview({
       {/* Categories drive only the icon and name shown per row, so a failed load degrades
           the display without blocking the save. */}
       {categoriesFailed && (
-        <div className="flex items-center gap-2 p-3 rounded-xl bg-cream-100 border border-cream-200">
+        <div
+          role="status"
+          className="flex items-center gap-2 p-3 rounded-xl bg-cream-100 border border-cream-200"
+        >
           <AlertCircle className="w-4 h-4 text-warm-400 shrink-0" />
           <p className="text-xs text-warm-500">
             Category names could not be loaded. Your receipts are still safe to save.
@@ -133,16 +136,19 @@ export function MultiScanReview({
                   <p className="text-sm text-warm-600 truncate">{item.fileName}</p>
                   <p className="text-xs text-expense">{item.error ?? "Failed to scan"}</p>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                {/* gap-2 rather than gap-1: Retry sits beside a destructive Remove on the
+                    recovery path, so the mis-tap costs the receipt. */}
+                <div className="flex items-center gap-2 shrink-0">
                   {/* The image is still in memory, and the failed attempt was refunded,
                       so a transient failure does not cost the user the receipt. */}
                   {item.imageFile && (
                     <button
                       type="button"
                       onClick={() => onRetry(item.id)}
+                      disabled={isSaving}
                       title="Retry scan"
                       aria-label={`Retry scanning ${item.fileName}`}
-                      className="p-2 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors"
+                      className="p-2 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <RotateCw className="w-4 h-4" />
                     </button>
@@ -150,9 +156,10 @@ export function MultiScanReview({
                   <button
                     type="button"
                     onClick={() => onRemove(item.id)}
+                    disabled={isSaving}
                     title="Remove"
                     aria-label={`Remove ${item.fileName}`}
-                    className="p-2 rounded-lg text-warm-300 hover:text-expense hover:bg-expense-light transition-colors"
+                    className="p-2 rounded-lg text-warm-300 hover:text-expense hover:bg-expense-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -240,8 +247,10 @@ export function MultiScanReview({
                     <button
                       type="button"
                       onClick={() => onItemize(item.id)}
+                      disabled={isSaving}
                       title="Itemize receipt"
-                      className="p-2 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors"
+                      aria-label={`Itemize ${item.data?.description || item.fileName}`}
+                      className="p-2 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <Rows3 className="w-4 h-4" />
                     </button>
@@ -249,16 +258,20 @@ export function MultiScanReview({
                   <button
                     type="button"
                     onClick={() => onEdit(item.id)}
+                    disabled={isSaving}
                     title="Edit"
                     aria-label={`Edit ${item.data?.description || item.fileName}`}
-                    className="p-2 rounded-lg text-warm-300 hover:text-amber-dark hover:bg-amber-light transition-colors"
+                    className="p-2 rounded-lg text-warm-300 hover:text-amber-dark hover:bg-amber-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <Pencil className="w-4 h-4" />
                   </button>
                   <button
                     type="button"
                     onClick={() => onRemove(item.id)}
-                    className="p-2 rounded-lg text-warm-300 hover:text-expense hover:bg-expense-light transition-colors"
+                    disabled={isSaving}
+                    title="Remove"
+                    aria-label={`Remove ${item.data?.description || item.fileName}`}
+                    className="p-2 rounded-lg text-warm-300 hover:text-expense hover:bg-expense-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
