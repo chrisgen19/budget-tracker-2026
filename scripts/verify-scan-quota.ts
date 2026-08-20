@@ -11,6 +11,13 @@
  * There is no test runner in this repo; run it directly:
  *
  *   pnpm exec tsx scripts/verify-scan-quota.ts
+ *
+ * Timing-dependent checks derive their windows from RESERVATION_TTL_MS rather than fixed
+ * durations, so the suite is valid under any GEMINI_TIMEOUT_MS. Worth running under a couple
+ * of configurations, since the TTL is fixed at module load:
+ *
+ *   GEMINI_TIMEOUT_MS=900000 pnpm exec tsx scripts/verify-scan-quota.ts
+ *   GEMINI_TIMEOUT_MS=0 pnpm exec tsx scripts/verify-scan-quota.ts
  */
 import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
@@ -20,6 +27,7 @@ import {
   countScansUsed,
   monthStartForUser,
   reservationTtlMs,
+  RESERVATION_TTL_MS,
 } from "../src/lib/scan-quota";
 import { geminiWorstCaseMs } from "../src/lib/gemini-limits";
 
@@ -68,17 +76,35 @@ async function main() {
   for (const r of unlimited) if (r.ok) await settleScanReservation(r.reservationId, "FAILED");
 
   // 5. Stale PENDING rows stop holding a credit past the TTL.
+  //    Aged relative to the configured TTL, not a fixed 30 minutes: RESERVATION_TTL_MS scales
+  //    with GEMINI_TIMEOUT_MS, so a hard-coded window reported false failures on correct code
+  //    at longer timeouts (a 900s timeout yields a ~150 minute TTL).
+  //    If this runs within one TTL of the local month start the aged rows fall outside the
+  //    month window, so they are uncounted for that reason instead -- the checks still hold.
+  const staleAt = new Date(Date.now() - RESERVATION_TTL_MS - 60_000);
   await prisma.scanLog.deleteMany({ where: { userId: uid } });
   await prisma.scanLog.createMany({
     data: Array.from({ length: 5 }, () => ({
       userId: uid,
       status: "PENDING" as const,
-      createdAt: new Date(Date.now() - 30 * 60 * 1000),
+      createdAt: staleAt,
     })),
   });
   check("stale PENDING not counted", await countScansUsed(uid, monthStart), 0);
   const revived = await reserveScanCredit(uid, 5, tz);
   check("reservation granted past stale TTL", revived.ok, true);
+
+  // A reservation one minute *inside* the TTL must still hold its credit, or the expiry
+  // window is simply too short rather than correctly derived.
+  await prisma.scanLog.deleteMany({ where: { userId: uid } });
+  await prisma.scanLog.create({
+    data: {
+      userId: uid,
+      status: "PENDING",
+      createdAt: new Date(Date.now() - RESERVATION_TTL_MS + 60_000),
+    },
+  });
+  check("live PENDING still holds its credit", await countScansUsed(uid, monthStart), 1);
 
   // 6. Month window follows the user's calendar, not the container's.
   //    UTC+8 at 2026-09-01T03:00 local is still 2026-08-31 in UTC.
