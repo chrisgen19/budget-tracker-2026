@@ -53,6 +53,20 @@ export default function RootLayout({
     <html lang="en" className={`${youngSerif.variable} ${outfit.variable} ${plusJakarta.variable}`}>
       <head>
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+        {/*
+          Chrome fires `beforeinstallprompt` once, shortly after load and often
+          before React hydrates. The event never replays, so capture it at parse
+          time and let `useInstallPrompt` adopt it via the `bip-ready` event.
+        */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "window.__bipEvent=null;" +
+              "window.addEventListener('beforeinstallprompt',function(e){" +
+              "e.preventDefault();window.__bipEvent=e;" +
+              "window.dispatchEvent(new Event('bip-ready'))});",
+          }}
+        />
       </head>
       <body className="font-sans antialiased">
         <SerwistProvider swUrl="/sw.js" reloadOnOnline={false} disable={process.env.NODE_ENV === "development"}>
