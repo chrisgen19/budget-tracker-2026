@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ScanLine, Mail, Rows3, Target, Tag } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
+import { InstallAppCard } from "@/components/pwa/install-app-card";
 
 export function FeaturesForm() {
   const { user, setUser } = useUser();
@@ -292,6 +293,8 @@ export function FeaturesForm() {
             />
           </button>
         </div>
+
+        <InstallAppCard />
 
         <div className="p-4 rounded-xl border border-cream-300 bg-cream-50/50">
           <div className="flex items-center gap-3 mb-3">
