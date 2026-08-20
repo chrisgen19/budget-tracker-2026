@@ -172,6 +172,13 @@ export const validDateString = z
     return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
   }, "Invalid calendar date");
 
+/**
+ * `Date.getTimezoneOffset()` in minutes. Real offsets span UTC-14 to UTC+14, so
+ * anything outside +/-840 is malformed and would silently shift the user's
+ * calendar day.
+ */
+export const timezoneOffsetParam = z.coerce.number().int().min(-840).max(840);
+
 export const analyticsQuerySchema = z.object({
   granularity: z.enum(["weekly", "monthly", "yearly"]),
   from: validDateString,
