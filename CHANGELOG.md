@@ -5,7 +5,7 @@ All notable development history for the Budget Tracker app.
 ## 2026-08-20 - Bill Reminder Correctness
 
 ### Data integrity
-- **Out-of-order pay/skip no longer discards unpaid occurrences.** `getPendingRemindersForUser` only walks forward from `nextDueDate`, but `pay`, `skip`, and `pay_existing` advanced it from the occurrence that was acted on. Paying the third card in the banner jumped `nextDueDate` past the first two, which had no terminal log and could never be regenerated. Each action now resolves `nextDueDate` with `advanceToNextUnpaidOccurrence`, running on the transaction client after the log insert so it sees its own write and cannot race a concurrent action
+- **Out-of-order pay/skip no longer discards unpaid occurrences.** `getPendingRemindersForUser` only walks forward from `nextDueDate`, but `pay`, `skip`, and `pay_existing` advanced it from the occurrence that was acted on. Paying the third card in the banner jumped `nextDueDate` past the first two, which had no terminal log and could never be regenerated. Each action now resolves `nextDueDate` with `advanceToNextUnpaidOccurrence`, running on the transaction client after the log insert so it sees its own write, and behind a `SELECT ... FOR UPDATE` on the bill row so concurrent actions on the same bill serialise instead of clobbering each other under Postgres READ COMMITTED
 - `scripts/heal-bill-next-due-dates.ts` gained a read-only pass reporting occurrences stranded before `nextDueDate` by the old behaviour. It never rewinds automatically: bills whose `startDate` predates their first payment have legitimately unpaid early occurrences
 
 ### Correctness

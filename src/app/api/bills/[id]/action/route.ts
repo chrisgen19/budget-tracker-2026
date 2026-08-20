@@ -41,17 +41,27 @@ export async function POST(
      * current nextDueDate to the earliest occurrence with no terminal log
      * instead.
      *
-     * Runs on the transaction client and after the log insert, so it sees this
-     * request's own write and cannot race a concurrent action on the same bill.
+     * Takes a row lock on the bill first. Postgres defaults to READ COMMITTED,
+     * so without it two concurrent actions on the same bill would both start
+     * from the nextDueDate read before either transaction began, each miss the
+     * other's uncommitted log, and the later commit would clobber the earlier
+     * one with a stale date. The lock serialises them, and re-reading inside
+     * the lock means the second sees the first's committed result.
+     *
+     * Call after inserting this action's log so the walk counts it too.
      */
     const resolveNextDueDate = async (tx: Prisma.TransactionClient) => {
+      const [locked] = await tx.$queryRaw<{ next_due_date: Date }[]>`
+        SELECT next_due_date FROM scheduled_transactions WHERE id = ${id} FOR UPDATE
+      `;
+
       const logs = await tx.scheduledTransactionLog.findMany({
         where: { scheduledTransactionId: bill.id },
         select: { dueDate: true, status: true },
       });
 
       return advanceToNextUnpaidOccurrence(
-        bill.nextDueDate,
+        locked?.next_due_date ?? bill.nextDueDate,
         bill.frequency,
         originalStartDay,
         bill.customIntervalDays,
