@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import type { CSSProperties } from "react";
 import { Download, X, Share } from "lucide-react";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
@@ -121,10 +121,22 @@ export function InstallPromptBanner() {
     };
   }, [visible, setBannerHeight]);
 
-  const handleDismiss = () => {
+  const handleDismiss = useCallback(() => {
     setVisible(false);
     safeSet(DISMISS_KEY, String(Date.now()));
-  };
+  }, [setVisible]);
+
+  // Escape dismisses like the close button, cooldown included
+  useEffect(() => {
+    if (!visible) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") handleDismiss();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [visible, handleDismiss]);
 
   const handleInstall = async () => {
     await promptInstall();
@@ -141,8 +153,8 @@ export function InstallPromptBanner() {
   return (
     <div
       ref={bannerRef}
-      role="status"
-      aria-live="polite"
+      role="region"
+      aria-label="Install Budget Tracker"
       style={{ "--bill-clearance": `${billClearance}px` } as CSSProperties}
       className="fixed bottom-[calc(4.5rem+var(--bill-clearance)+env(safe-area-inset-bottom))] lg:bottom-[calc(1.5rem+var(--bill-clearance))] left-4 right-4 lg:left-auto lg:right-6 lg:w-80 z-40 animate-fade-in-up"
     >
