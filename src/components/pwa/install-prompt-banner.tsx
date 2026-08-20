@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Download, X, Share } from "lucide-react";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import { useInstallBanner } from "@/components/pwa/install-banner-context";
@@ -126,17 +126,12 @@ export function InstallPromptBanner() {
     safeSet(DISMISS_KEY, String(Date.now()));
   }, [setVisible]);
 
-  // Escape dismisses like the close button, cooldown included
-  useEffect(() => {
-    if (!visible) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") handleDismiss();
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [visible, handleDismiss]);
+  // Scoped to the banner, not the document: Modal already closes on a document
+  // Escape listener, and a global handler here would silently start the 14-day
+  // cooldown every time the user escaped an unrelated dialog.
+  const handleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Escape") handleDismiss();
+  };
 
   const handleInstall = async () => {
     await promptInstall();
@@ -153,6 +148,7 @@ export function InstallPromptBanner() {
   return (
     <div
       ref={bannerRef}
+      onKeyDown={handleKeyDown}
       role="region"
       aria-label="Install Budget Tracker"
       style={{ "--bill-clearance": `${billClearance}px` } as CSSProperties}
