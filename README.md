@@ -90,7 +90,7 @@ cp .env.example .env
 ```env
 DATABASE_URL="postgres://myuser:mypassword@localhost:5432/budgettracker-nextjs"
 NEXTAUTH_SECRET="change-this-to-a-random-secret-in-production"
-NEXTAUTH_URL="http://localhost:3000"
+NEXTAUTH_URL="http://localhost:3111"
 
 # Google Gemini (optional — enables receipt scanning)
 GEMINI_API_KEY=""
@@ -137,7 +137,7 @@ pnpm db:seed
 pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), register an account, and start tracking.
+Open [http://localhost:3111](http://localhost:3111), register an account, and start tracking.
 
 ## Available Scripts
 
