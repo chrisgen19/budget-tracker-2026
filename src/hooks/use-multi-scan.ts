@@ -65,11 +65,15 @@ export function useMultiScan() {
   // rather than a render later.
   const savingRef = useRef(false);
 
-  // Idempotency key for the batch save. Held across a failure so an immediate retry is a
-  // replay rather than a second insert: a batch can commit and still have its response
-  // lost, and the failure toast invites the user to try again. Cleared once a save lands,
-  // so the next distinct save gets a fresh key.
-  const batchIdRef = useRef<string | null>(null);
+  // An unacknowledged batch save: the idempotency key together with the exact rows it was
+  // sent with. Held across a failure so a retry is a replay rather than a second insert —
+  // a batch can commit and still lose its response, and the failure toast invites a retry.
+  //
+  // The rows are pinned, not rebuilt from the queue, because the two must agree. The server
+  // replays whatever the key already created, so resending a *grown* payload under the same
+  // key would return only the original rows while the client marked the additions saved,
+  // dropping them silently. Cleared once a save is acknowledged.
+  const pendingSaveRef = useRef<{ key: string; items: MultiScanItem[] } | null>(null);
 
   // Mirrors `items` so callbacks can read the current queue without being re-created on
   // every state change, and so retry never closes over a stale array. Synced after commit
@@ -414,6 +418,7 @@ export function useMultiScan() {
   const openReview = useCallback(() => setShowReview(true), []);
 
   const reset = useCallback(() => {
+    pendingSaveRef.current = null;
     setShowReview(false);
     setItems([]);
   }, []);
@@ -431,12 +436,16 @@ export function useMultiScan() {
    * disappear with no way back to them short of re-picking the files.
    */
   const saveAll = useCallback(async () => {
-    const successItems = itemsRef.current.filter((i) => i.status === "success" && i.data);
-    if (successItems.length === 0) return;
+    // A previous attempt that was never acknowledged is resent exactly as it went out,
+    // rather than rebuilt from a queue the user may have added to since.
+    const pending = pendingSaveRef.current;
+    const submitItems =
+      pending?.items ?? itemsRef.current.filter((i) => i.status === "success" && i.data);
+    if (submitItems.length === 0) return;
 
-    if (successItems.length > MAX_BATCH_TRANSACTIONS) {
+    if (submitItems.length > MAX_BATCH_TRANSACTIONS) {
       showToast(
-        `Too many transactions to save at once (${successItems.length}). Remove some rows and keep it under ${MAX_BATCH_TRANSACTIONS}.`,
+        `Too many transactions to save at once (${submitItems.length}). Remove some rows and keep it under ${MAX_BATCH_TRANSACTIONS}.`,
         "error",
       );
       return;
@@ -444,12 +453,12 @@ export function useMultiScan() {
 
     savingRef.current = true;
     setIsSavingAll(true);
-    batchIdRef.current ??= crypto.randomUUID();
+    pendingSaveRef.current = pending ?? { key: crypto.randomUUID(), items: submitItems };
 
     try {
       await batchCreateMutation.mutateAsync({
-        clientBatchId: batchIdRef.current,
-        transactions: successItems.map((item) => ({
+        clientBatchId: pendingSaveRef.current.key,
+        transactions: submitItems.map((item) => ({
           amount: item.data!.amount!,
           description: item.data!.description!,
           type: item.data!.type!,
@@ -470,10 +479,12 @@ export function useMultiScan() {
       setIsSavingAll(false);
     }
 
-    // Landed, so the next save is a new intent and needs its own key.
-    batchIdRef.current = null;
+    // Acknowledged, so the next save is a new intent and needs its own key.
+    pendingSaveRef.current = null;
 
-    const savedIds = new Set(successItems.map((i) => i.id));
+    // Only the rows actually submitted are removed. Anything added while the save was
+    // unacknowledged is still unsaved and stays in the queue for the next attempt.
+    const savedIds = new Set(submitItems.map((i) => i.id));
     const remaining = itemsRef.current.filter((i) => !savedIds.has(i.id));
 
     if (remaining.length === 0) {
@@ -481,10 +492,14 @@ export function useMultiScan() {
       return;
     }
 
-    // Keep the review open on whatever could not be scanned, so Retry is still reachable.
+    // Keep the review open on whatever is left — failed scans, and anything scanned after
+    // this batch went out — so Retry and Save are both still reachable.
     setItems(remaining);
+    const savable = remaining.filter((i) => i.status === "success" && i.data).length;
     showToast(
-      `Saved ${savedIds.size} transaction${savedIds.size === 1 ? "" : "s"}. ${remaining.length} receipt${remaining.length === 1 ? "" : "s"} still need attention.`,
+      savable > 0
+        ? `Saved ${savedIds.size} transaction${savedIds.size === 1 ? "" : "s"}. ${savable} still to save.`
+        : `Saved ${savedIds.size} transaction${savedIds.size === 1 ? "" : "s"}. ${remaining.length} receipt${remaining.length === 1 ? "" : "s"} still need attention.`,
     );
   }, [batchCreateMutation, reset, showToast]);
 
