@@ -521,16 +521,10 @@ describe("labels survive a second edit", () => {
     });
     expect(result.current.items[0].data?.labelIds).toEqual(["lbl-1"]);
 
-    // TransactionForm omits labelIds entirely when the picker was not touched, and
-    // AppShell applies `input.labelIds ?? current.labelIds` before calling updateItem.
-    const formPayload: { description: string; labelIds?: string[] } = { description: "Renamed" };
-    const current = result.current.items[0].data;
+    // Exactly what AppShell forwards after TransactionForm omitted labelIds: the key is
+    // present and undefined. updateItem must drop it rather than write over the selection.
     act(() => {
-      result.current.updateItem(id, {
-        ...current,
-        description: formPayload.description,
-        labelIds: formPayload.labelIds ?? current?.labelIds,
-      });
+      result.current.updateItem(id, { description: "Renamed", labelIds: undefined });
     });
 
     expect(result.current.items[0].data?.description).toBe("Renamed");
@@ -545,18 +539,32 @@ describe("labels survive a second edit", () => {
     });
     const id = result.current.items[0].id;
 
-    // [] means the user opted out; undefined means the server auto-applies. `??` must not
-    // collapse the two.
+    // [] means the user opted out; undefined means the server auto-applies. Dropping
+    // undefined must not also drop an explicit [], or the two collapse into one.
     act(() => {
-      result.current.updateItem(id, { ...result.current.items[0].data, labelIds: [] });
+      result.current.updateItem(id, { labelIds: [] });
     });
-    const formPayload: { labelIds?: string[] } = {};
-    const current = result.current.items[0].data;
+    expect(result.current.items[0].data?.labelIds).toEqual([]);
+
     act(() => {
-      result.current.updateItem(id, {
-        ...current,
-        labelIds: formPayload.labelIds ?? current?.labelIds,
-      });
+      result.current.updateItem(id, { description: "Renamed", labelIds: undefined });
+    });
+    expect(result.current.items[0].data?.labelIds).toEqual([]);
+  });
+
+  it("still writes an explicit empty selection", async () => {
+    fetchMock.mockResolvedValueOnce(scanOk());
+    const { result } = setup();
+    await act(async () => {
+      await result.current.scanMultiple([receipt()]);
+    });
+    const id = result.current.items[0].id;
+
+    act(() => {
+      result.current.updateItem(id, { labelIds: ["lbl-1"] });
+    });
+    act(() => {
+      result.current.updateItem(id, { labelIds: [] });
     });
 
     expect(result.current.items[0].data?.labelIds).toEqual([]);

@@ -105,17 +105,15 @@ export function AppShell({ children }: AppShellProps) {
 
   const handleMultiScanEditSubmit = async (input: TransactionInput) => {
     if (!editingItemId) return;
-    const current = scan.items.find((i) => i.id === editingItemId);
+    // updateItem drops undefined values rather than writing them, which is what keeps a
+    // second edit from wiping labels the form omitted because the picker was untouched.
     scan.updateItem(editingItemId, {
       amount: input.amount,
       description: input.description,
       type: input.type,
       date: input.date,
       categoryId: input.categoryId,
-      // TransactionForm omits labelIds when the picker was not touched, so a second edit
-      // of another field would otherwise wipe labels chosen in the first. `??` keeps an
-      // explicit [] (the user opted out) distinct from undefined (server auto-applies).
-      labelIds: input.labelIds ?? current?.data?.labelIds,
+      labelIds: input.labelIds,
     });
     setEditingItemId(null);
   };

@@ -189,7 +189,7 @@ Active tasks:
 - Functions ≤ 50 lines, components ≤ 150 lines
 - No `console.log` in commits. Handle loading/error/empty states
 - Tailwind CSS utility classes directly — avoid `@apply` unless necessary
-- `pnpm` as package manager. Node 20+
+- `pnpm` as package manager. Node 20.19+ (Vite 8, jsdom and `@vitejs/plugin-react` all floor at `^20.19.0`; below that `pnpm test` fails inside the pool worker rather than at install)
 - Run `pnpm lint`, `pnpm type-check`, and `pnpm test` before finishing any code changes
 
 ## Rule Strictness

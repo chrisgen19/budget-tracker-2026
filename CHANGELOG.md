@@ -16,8 +16,12 @@ shipped and were caught only by review.
 - Dependency versions were chosen to clear the repo's 7-day `minimum-release-age` quarantine rather than bypassing it, so the newest release of three of them is intentionally not used
 - `jsdom` is pinned to the 29.x line, not 30.x. jsdom 30 requires Node `^22.22.2 || ^24.15.0 || >=26`, and both CI and production run Node 20 (`nixpacks.toml` pins `nodejs_20`). Pinning the test runner rather than moving the runtime keeps the decision to upgrade Node a separate, deliberate one
 
+### Review follow-ups
+- **The label-preservation tests asserted their own arithmetic.** They reproduced `input.labelIds ?? current.labelIds` inside the test and passed the already-merged result to `updateItem`, while the real merge lived in `AppShell`. Reverting the production fix left all of them green — the exact failure this suite exists to prevent. The semantics moved into `updateItem`, which now drops keys explicitly set to `undefined` rather than writing them over what is there, so the tests exercise production code. It also fixes the class rather than the one field: any omitted value now leaves the existing one intact, while an explicit `[]` still writes, keeping "opted out" distinct from "never chose"
+- `engines.node` raised from `>=20.0.0` to `>=20.19.0`. Vite 8, jsdom and `@vitejs/plugin-react` all floor at `^20.19.0`, so the declared range promised support the test stack could not deliver — on Node 20.0-20.18 it installs with warnings and then dies inside the vitest pool worker
+
 ### Coverage
-Twenty-eight tests over the two areas that actually regressed. Each was checked by reverting the
+Twenty-nine tests over the two areas that actually regressed. Each was checked by reverting the
 fix it covers and confirming it fails:
 - `src/components/ui/modal.test.tsx` — the ref-counted body scroll lock, including two modals closing in the same commit (the case that left the page unscrollable) and restoring a pre-existing `overflow` value
 - `src/hooks/use-multi-scan.test.tsx` — `scanSingle` returning its outcome instead of reading stale state, unreadable images vs network failures, non-JSON error responses, malformed 200 responses, retained images on failed rows, retry, a failed save leaving the queue intact, failed rows surviving a partial save, itemising being frozen while a save is in flight (which otherwise creates the receipt twice), the batch idempotency key surviving a failed save, staying pinned to the rows it was sent with, and rotating after a successful one, failures being classified as definitive or unknown, rows staying frozen while unconfirmed, labels surviving a second edit, and the discard accounting for retryable rows
