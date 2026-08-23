@@ -14,6 +14,8 @@ shipped and were caught only by review.
 - `pnpm test` and `pnpm test:watch`; `pnpm test` added to the CI workflow after type-check
 - Tests colocated as `src/**/*.test.ts(x)`. Nothing imports them, so they stay out of the Next.js bundle
 - Dependency versions were chosen to clear the repo's 7-day `minimum-release-age` quarantine rather than bypassing it, so the newest release of three of them is intentionally not used
+- `@testing-library/jest-dom` and `@testing-library/user-event` were dropped rather than downgraded. Neither was used: every matcher in the suite is a vitest built-in. jest-dom 7 floors at Node 22, so removing the unused dependency dissolved the constraint instead of pinning an October 2025 release to work around it
+- CI installs with `--engine-strict`, so a dependency whose `engines.node` excludes the CI Node version fails at install naming the package, rather than surfacing later as a crash inside a vitest pool worker
 - `jsdom` is pinned to the 29.x line, not 30.x. jsdom 30 requires Node `^22.22.2 || ^24.15.0 || >=26`, and both CI and production run Node 20 (`nixpacks.toml` pins `nodejs_20`). Pinning the test runner rather than moving the runtime keeps the decision to upgrade Node a separate, deliberate one
 
 ### Review follow-ups

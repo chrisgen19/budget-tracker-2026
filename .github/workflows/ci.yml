@@ -31,8 +31,12 @@ jobs:
           node-version: 20
           cache: pnpm
 
+      # --engine-strict fails the install when any dependency's engines.node excludes the
+      # Node version above, instead of letting it surface later as an obscure crash inside
+      # a test worker. jsdom 30 and @testing-library/jest-dom 7 both floor at Node 22 and
+      # were caught this way.
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --engine-strict
 
       - name: Lint
         run: pnpm lint

@@ -117,7 +117,8 @@ Active tasks:
 - `LabelSchedule` stores per-label auto-apply rules: `days` (int[]), `startTime`/`endTime` (HH:mm), linked to `Label` via `labelId`
 
 ## Testing
-- **Vitest + React Testing Library**, jsdom environment. `jsdom` stays on 29.x: 30.x requires Node 22+, while CI and production both run Node 20 (`nixpacks.toml`). Config in `vitest.config.mts`, global setup in `vitest.setup.ts` (jest-dom matchers, RTL cleanup, and `matchMedia`/`scrollTo` stubs jsdom lacks)
+- **Vitest + React Testing Library**, jsdom environment. Config in `vitest.config.mts`, global setup in `vitest.setup.ts` (RTL cleanup, and the `matchMedia`/`scrollTo` stubs jsdom lacks)
+- **Node floor**: CI and production both run Node 20 (`nixpacks.toml`), so test dependencies have to admit it. `jsdom` stays on 29.x and `@testing-library/jest-dom` is not installed at all — both 30.x and 7.x floor at Node 22. CI installs with `--engine-strict` so a dependency that excludes the Node version fails at install with a named cause, rather than crashing later inside a test worker
 - Tests are colocated: `src/**/*.test.ts(x)`. Nothing imports them, so they stay out of the Next.js bundle
 - Import test globals explicitly (`import { describe, it, expect } from "vitest"`) rather than enabling `globals`
 - A test should fail if you revert the fix it covers. When adding one for a bug, confirm that before committing
