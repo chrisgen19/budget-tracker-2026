@@ -29,16 +29,18 @@ describe("Modal body scroll lock", () => {
   });
 
   it("keeps the lock while a nested modal is still open", () => {
-    const Stack = ({ outer, inner }: { outer: boolean; inner: boolean }) => (
-      <>
-        <Modal open={outer} onClose={() => {}} title="Review">
-          <p>review</p>
-        </Modal>
-        <Modal open={inner} onClose={() => {}} title="Discard?">
-          <p>confirm</p>
-        </Modal>
-      </>
-    );
+    function Stack({ outer, inner }: { outer: boolean; inner: boolean }) {
+      return (
+        <>
+          <Modal open={outer} onClose={() => {}} title="Review">
+            <p>review</p>
+          </Modal>
+          <Modal open={inner} onClose={() => {}} title="Discard?">
+            <p>confirm</p>
+          </Modal>
+        </>
+      );
+    }
 
     const { rerender } = render(<Stack outer inner={false} />);
     expect(document.body.style.overflow).toBe("hidden");
@@ -56,16 +58,18 @@ describe("Modal body scroll lock", () => {
   });
 
   it("restores the page scroll when both modals close in the same commit", () => {
-    const Stack = ({ open }: { open: boolean }) => (
-      <>
-        <Modal open={open} onClose={() => {}} title="Review">
-          <p>review</p>
-        </Modal>
-        <Modal open={open} onClose={() => {}} title="Discard?">
-          <p>confirm</p>
-        </Modal>
-      </>
-    );
+    function Stack({ open }: { open: boolean }) {
+      return (
+        <>
+          <Modal open={open} onClose={() => {}} title="Review">
+            <p>review</p>
+          </Modal>
+          <Modal open={open} onClose={() => {}} title="Discard?">
+            <p>confirm</p>
+          </Modal>
+        </>
+      );
+    }
 
     const { rerender } = render(<Stack open />);
     expect(document.body.style.overflow).toBe("hidden");

@@ -47,40 +47,45 @@ const scanHtmlFault = () => ({
   },
 });
 
-const wrapper = ({ children }: { children: ReactNode }) => {
+/** One client per setup() call. Building it inside the wrapper's render body would hand a
+ *  fresh client to every re-render, discarding in-flight mutation state the moment any test
+ *  calls rerender. */
+const createWrapper = () => {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return (
-    <QueryClientProvider client={queryClient}>
-      <UserProvider
-        initialUser={{
-          name: "Test",
-          email: "test@example.com",
-          currency: "PHP",
-          timezoneOffset: -480,
-          receiptScanEnabled: true,
-          transactionLayout: "infinite",
-          transactionAmountAutofocus: true,
-          defaultLabelType: "EXPENSE",
-          showDayName: true,
-          dayNameFormat: "SHORT",
-          emailBillReminders: false,
-          emailVerified: true,
-          role: "FREE",
-          roleScanEnabled: true,
-          maxUploadFiles: 10,
-          monthlyScanLimit: 5,
-          scansUsedThisMonth: 0,
-        }}
-      >
-        <ToastProvider>{children}</ToastProvider>
-      </UserProvider>
-    </QueryClientProvider>
-  );
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <UserProvider
+          initialUser={{
+            name: "Test",
+            email: "test@example.com",
+            currency: "PHP",
+            timezoneOffset: -480,
+            receiptScanEnabled: true,
+            transactionLayout: "infinite",
+            transactionAmountAutofocus: true,
+            defaultLabelType: "EXPENSE",
+            showDayName: true,
+            dayNameFormat: "SHORT",
+            emailBillReminders: false,
+            emailVerified: true,
+            role: "FREE",
+            roleScanEnabled: true,
+            maxUploadFiles: 10,
+            monthlyScanLimit: 5,
+            scansUsedThisMonth: 0,
+          }}
+        >
+          <ToastProvider>{children}</ToastProvider>
+        </UserProvider>
+      </QueryClientProvider>
+    );
+  };
 };
 
-const setup = () => renderHook(() => useMultiScan(), { wrapper });
+const setup = () => renderHook(() => useMultiScan(), { wrapper: createWrapper() });
 
 let fetchMock: ReturnType<typeof vi.fn>;
 

@@ -12,6 +12,11 @@ concurrency:
 
 jobs:
   ci:
+    # The job only reads the repo and runs checks. Pinned here rather than relying on the
+    # repository default, which is set outside the repo and can change without a diff --
+    # this workflow runs install scripts and test code, so the token it holds matters.
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
