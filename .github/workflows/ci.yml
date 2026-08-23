@@ -12,6 +12,11 @@ concurrency:
 
 jobs:
   ci:
+    # The job only reads the repo and runs checks. Pinned here rather than relying on the
+    # repository default, which is set outside the repo and can change without a diff --
+    # this workflow runs install scripts and test code, so the token it holds matters.
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,8 +31,12 @@ jobs:
           node-version: 20
           cache: pnpm
 
+      # --engine-strict fails the install when any dependency's engines.node excludes the
+      # Node version above, instead of letting it surface later as an obscure crash inside
+      # a test worker. jsdom 30 and @testing-library/jest-dom 7 both floor at Node 22 and
+      # were caught this way.
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --engine-strict
 
       - name: Lint
         run: pnpm lint
@@ -37,3 +46,6 @@ jobs:
 
       - name: Type check
         run: pnpm type-check
+
+      - name: Test
+        run: pnpm test

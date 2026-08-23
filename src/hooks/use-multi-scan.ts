@@ -426,8 +426,18 @@ export function useMultiScan() {
     (id: string, data: ScanData) => {
       // An edit here would be silently discarded: the retry replays the pinned rows.
       if (savingRef.current || unconfirmedIds.has(id)) return;
+
+      // Keys explicitly set to undefined are dropped rather than written over what is
+      // already there. TransactionForm omits labelIds when the picker was not touched, so
+      // a second edit of any other field would otherwise clear labels chosen in the first.
+      // An explicit [] still writes: it means the user opted out, which is not the same as
+      // never having chosen, and the server treats the two differently.
+      const patch = Object.fromEntries(
+        Object.entries(data).filter(([, value]) => value !== undefined),
+      ) as ScanData;
+
       setItems((prev) =>
-        prev.map((item) => (item.id === id ? { ...item, data: { ...item.data, ...data } } : item)),
+        prev.map((item) => (item.id === id ? { ...item, data: { ...item.data, ...patch } } : item)),
       );
     },
     [unconfirmedIds],
