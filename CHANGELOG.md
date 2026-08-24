@@ -97,6 +97,17 @@ corruption, the total fallback, a stored total disagreeing with the item sum, ca
 search, `limit` capping only the returned rows while counts cover every match, timezone-resolved
 months, and group filtering.
 
+### Review follow-up (#115)
+- **The JSON null filter used a plain `null`, which Prisma's typed API does not accept.** `NOT: { receiptBreakdown: { equals: null } }` fails to compile when written against the typed client (`Type 'null' is not assignable to 'InputJsonValue | JsonNullValueFilter | ...'`), and the `Record<string, unknown>` shape these where-clauses are built as hid it. Now uses `Prisma.DbNull`.
+
+  The review reported this as a P1 that stopped the tool executing. That part is not true and was checked before changing anything: plain `null`, `Prisma.DbNull`, and `Prisma.AnyNull` all return the same 16 rows on 6.19.2, which matches the tool having returned all 116 items when the feature was verified. The real issue is narrower and still worth fixing: the query relied on behaviour Prisma's own types declare unsupported, with nothing to catch it changing under a version bump. Every other where-clause in the module was checked and type-checks clean, so this was the only one using the escape hatch.
+
+  `budget-queries.ts` now imports the `Prisma` namespace as a value rather than only types, which is a small departure from its dependency-injected design, taken deliberately for the sentinels. A test pins the sentinel, confirmed to fail if it regresses to `null`, and live output is unchanged at 116 items.
+
+- **Row limits fall back instead of silently truncating or reversing.** `slice(0, -1)` quietly drops the last row, `slice(0, NaN)` returns nothing, and Prisma reads a negative `take` as "from the end", reversing the window. All three look like real answers. `safeLimit` sends anything that is not a positive safe integer to the caller's default, applied at all four sites that take a limit (`getTopExpenses`, `searchTransactions`, `getBillHistory`, `getReceiptItems`) rather than only the one raised, since fixing one of several identical call sites is how the `timezoneOffset` drift in #112 happened.
+
+  Not reachable today: the MCP boundary already validates every limit with `.int().min(1).max(N)` and returns `-32602`, and nothing else calls these functions. The guard is a second line, deliberately clamping rather than throwing, so the library never invents data while telling the caller they were wrong stays the boundary's job. The suggested fix would have accepted `limit: 0`, which `slice(0, 0)` turns into an empty result for a parameter documented as a maximum.
+
 ### Files
 - `src/lib/budget-queries.ts` -- `getReceiptItems`, `parseReceiptBreakdown`
 - `src/lib/budget-query-types.ts` -- receipt item types
