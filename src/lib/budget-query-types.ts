@@ -296,7 +296,13 @@ export interface BillOccurrence {
   billId: string;
   billDescription: string;
   categoryName: string;
+  /** The bill's *current* configured amount, which may have been edited since */
   amount: number;
+  /** What the linked transaction actually recorded, which can differ from `amount`: Pay &
+   *  Edit lets the amount be changed at pay time, and editing the bill later rewrites
+   *  `amount` for every past occurrence. `null` unless the occurrence created a transaction.
+   *  Matches `paidAmount` on `/api/bills/[id]/history`. */
+  paidAmount: number | null;
   /** The date this occurrence was due */
   dueDate: string;
   /** The settled outcome (PAID or SKIPPED), or SNOOZED while still outstanding */

@@ -360,10 +360,15 @@ describe("getBillHistory measures lateness in the user's calendar days", () => {
     ...over,
   });
 
-  const histPrisma = (bills: ReturnType<typeof bill>[], logs: Log[]) =>
+  const histPrisma = (
+    bills: ReturnType<typeof bill>[],
+    logs: Log[],
+    transactions: Array<{ id: string; amount: number }> = []
+  ) =>
     ({
       scheduledTransaction: { findMany: vi.fn(async () => bills) },
       scheduledTransactionLog: { findMany: vi.fn(async () => logs) },
+      transaction: { findMany: vi.fn(async () => transactions) },
     }) as unknown as PrismaClient;
 
   it("counts a late-night Manila payment as the local day, not the UTC day", async () => {
@@ -616,6 +621,39 @@ describe("getBillHistory measures lateness in the user's calendar days", () => {
     expect(result.summaries[0].snoozed).toBe(1);
   });
 
+  it("reports what the linked transaction recorded, not the bill's current amount", async () => {
+    // Pay & Edit can change the amount at pay time, and editing the bill afterwards rewrites
+    // its nominal amount for every past occurrence. 100 is the bill's config; 137.50 is what
+    // was actually paid.
+    const result = await getBillHistory(
+      histPrisma(
+        [bill("b1", "Meralco")],
+        [
+          log({
+            actionDate: new Date("2026-03-05T02:00:00.000Z"),
+            transactionId: "tx1",
+          }),
+        ],
+        [{ id: "tx1", amount: 137.5 }]
+      ),
+      "u1",
+      {}
+    );
+
+    expect(result.occurrences[0].amount).toBe(100);
+    expect(result.occurrences[0].paidAmount).toBe(137.5);
+  });
+
+  it("leaves paidAmount null for occurrences that created no transaction", async () => {
+    const result = await getBillHistory(
+      histPrisma([bill("b1", "Meralco")], [log({ status: "SKIPPED" })]),
+      "u1",
+      {}
+    );
+
+    expect(result.occurrences[0].paidAmount).toBeNull();
+  });
+
   it("matches the status filter against the settled outcome, not the individual actions", async () => {
     const due = new Date("2026-03-05T00:00:00.000Z");
     const logs = [
@@ -661,6 +699,32 @@ describe("getBillHistory window arithmetic", () => {
     const result = await getBillHistory(emptyPrisma(), "u1", { months: 6 });
 
     expect(result.from).toBe("2025-11-30");
+  });
+
+  it("excludes occurrences due after today", async () => {
+    // /api/bills/upcoming surfaces bills due up to a week out and lets them be paid, which
+    // writes a log with a future dueDate. Those must not land in a window ending today.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-24T12:00:00.000Z"));
+
+    const seen: Array<Record<string, unknown>> = [];
+    const prisma = {
+      scheduledTransaction: { findMany: vi.fn(async () => [{ id: "b1", description: "R", amount: 1, category: { name: "C" } }]) },
+      scheduledTransactionLog: {
+        findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
+          seen.push(where);
+          return [];
+        }),
+      },
+      transaction: { findMany: vi.fn(async () => []) },
+    } as unknown as PrismaClient;
+
+    const result = await getBillHistory(prisma, "u1", { months: 6 });
+
+    const due = seen[0].dueDate as { gte?: Date; lte?: Date };
+    expect(due.lte).toBeDefined();
+    expect(due.lte!.toISOString()).toBe("2026-08-24T00:00:00.000Z");
+    expect(result.to).toBe("2026-08-24");
   });
 
   it("leaves a day that exists in the target month alone", async () => {

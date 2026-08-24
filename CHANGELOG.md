@@ -55,7 +55,13 @@ All three were confirmed against the code and by running them, not taken on trus
 - **One scheduled occurrence could be counted several times.** Snoozing deliberately does not settle an occurrence (`bills/[id]/action/route.ts` is the one branch of four that skips `alreadySettled`), so the same bill and due date accumulates a SNOOZED row per snooze plus a final PAID or SKIPPED. Counting per row reported a snoozed-twice-then-paid occurrence as three occurrences with three outcomes. Rows are now collapsed per `(billId, dueDate)`: `status` is the settled outcome, `snoozeCount` records how many times it was snoozed, and the status counts sum to `occurrences`. New `totalSnoozes` keeps the raw snooze volume, which legitimately can exceed the occurrence count. The `status` filter matches the settled outcome, so a snoozed-then-paid occurrence counts as PAID
 - **The lookback window overflowed on month-end days.** `Date.UTC(y, m - 6, 31)` for a 31st in a shorter target month rolls forward: six months before Aug 31 became Mar 3, silently trimming three days off the front. Clamped to the target month's last day
 
-Seven more tests (67 total), each confirmed to fail with its fix reverted.
+Seven more tests, each confirmed to fail with its fix reverted.
+
+### Review follow-ups, second round (#113)
+- **Occurrences reported the bill's nominal amount, not what was paid.** `ScheduledTransaction.amount` is the bill's *current* configuration: Pay & Edit can change the amount at pay time, and editing a bill rewrites the apparent cost of all its history. `/api/bills/[id]/history` already resolves this by reading the linked transaction and exposing `paidAmount`, so the MCP tool was contradicting the app's own bill history screen. It now reads the same source and exposes the same field, keeping `amount` as the nominal value. **This was wrong on real data, not hypothetically**: of six production occurrences, two differ — Mirea Rent nominal 22000 against 22010 paid, and Meralco nominal 5500 against 6513 paid
+- **The history window had no upper bound.** `/api/bills/upcoming` surfaces bills due up to a week ahead and offers pay and skip on them, which writes a log with a future `dueDate`. With only `gte`, those landed inside a window the response advertises as ending today, and counted into the summaries and averages. Bounded at `today`. Nothing is lost: the window trails, so that due date is picked up once it arrives
+
+Three more tests (70 total), again each confirmed to fail with its fix reverted.
 
 ### Files
 - `src/lib/budget-queries.ts` -- `getBillHistory`, local-day helpers

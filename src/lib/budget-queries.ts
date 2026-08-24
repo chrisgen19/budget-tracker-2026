@@ -684,10 +684,14 @@ export const getBillHistory = async (
 
   // The status filter is applied after grouping, against each occurrence's settled outcome.
   // Filtering in the query would drop the sibling rows needed to work that outcome out.
+  // Bounded at both ends. /api/bills/upcoming surfaces bills due up to a week ahead and lets
+  // them be paid or skipped, which writes a log with a future dueDate; without the upper
+  // bound those land in a window this call advertises as ending today. Nothing is lost by
+  // excluding them: the window trails, so that due date is picked up once it arrives.
   const logs = await prisma.scheduledTransactionLog.findMany({
     where: {
       scheduledTransactionId: { in: bills.map((b) => b.id) },
-      dueDate: { gte: from },
+      dueDate: { gte: from, lte: today },
     },
     orderBy: { dueDate: "desc" },
   });
@@ -728,6 +732,25 @@ export const getBillHistory = async (
     }
   }
 
+  // The bill's `amount` is its current configuration, not what any past occurrence cost:
+  // Pay & Edit can change the amount at pay time, and editing the bill rewrites the nominal
+  // amount for all of its history. Read the linked transactions, as /api/bills/[id]/history
+  // already does, so a paid occurrence reports what was actually recorded.
+  const transactionIds = Array.from(groups.values())
+    .map((g) => g.settled?.transactionId)
+    .filter((id): id is string => Boolean(id));
+
+  const paidAmounts = new Map<string, number>(
+    transactionIds.length > 0
+      ? (
+          await prisma.transaction.findMany({
+            where: { id: { in: transactionIds } },
+            select: { id: true, amount: true },
+          })
+        ).map((t) => [t.id, t.amount])
+      : []
+  );
+
   const occurrences: BillOccurrence[] = [];
   const stats = new Map<string, BillHistorySummary & { _lateDays: number[] }>();
 
@@ -754,6 +777,9 @@ export const getBillHistory = async (
       billDescription: bill.description || bill.category.name,
       categoryName: bill.category.name,
       amount: bill.amount,
+      paidAmount: group.settled?.transactionId
+        ? paidAmounts.get(group.settled.transactionId) ?? null
+        : null,
       dueDate: group.dueDate.toISOString(),
       status,
       actionDate: record.actionDate?.toISOString() ?? null,
