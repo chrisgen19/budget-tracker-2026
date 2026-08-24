@@ -16,6 +16,20 @@ import {
   getBillHistory,
   getReceiptItems,
 } from "../../src/lib/budget-queries.js";
+import {
+  spendingByCategoryOutput,
+  topExpensesOutput,
+  monthlySummaryOutput,
+  spendingTrendsOutput,
+  searchTransactionsOutput,
+  budgetOverviewOutput,
+  upcomingBillsOutput,
+  categoryListOutput,
+  labelBreakdownOutput,
+  labelListOutput,
+  billHistoryOutput,
+  receiptItemsOutput,
+} from "./output-schemas.js";
 
 const userId = process.env.BUDGET_USER_ID;
 
@@ -35,6 +49,16 @@ const prisma = new PrismaClient();
  * would enforce that structurally, at the cost of re-indenting every registration.
  */
 let userTimezoneOffset = 0;
+
+/**
+ * Widen a typed result into the index-signature shape `structuredContent` requires.
+ *
+ * Interfaces get no implicit index signature, so `SpendingTrends` and friends are not
+ * assignable to `Record<string, unknown>` directly. Spreading into a fresh object satisfies
+ * that without an `as` cast, which would assert a shape rather than produce one.
+ */
+const structured = (value: object): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(value));
 
 const server = new McpServer(
   {
@@ -66,12 +90,15 @@ server.registerTool(
         .optional()
         .describe("Month in YYYY-MM format. Defaults to current month."),
     },
+    outputSchema: spendingByCategoryOutput,
     annotations: { readOnlyHint: true },
   },
   async ({ month }) => {
     const result = await getSpendingByCategory(prisma, userId, { month, timezoneOffset: userTimezoneOffset });
+    const payload = { categories: result };
     return {
-      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+      structuredContent: structured(payload),
     };
   }
 );
@@ -95,12 +122,15 @@ server.registerTool(
         .optional()
         .describe("Month in YYYY-MM format. If omitted, returns all-time."),
     },
+    outputSchema: topExpensesOutput,
     annotations: { readOnlyHint: true },
   },
   async ({ limit, month }) => {
     const result = await getTopExpenses(prisma, userId, { limit, month, timezoneOffset: userTimezoneOffset });
+    const payload = { expenses: result };
     return {
-      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+      structuredContent: structured(payload),
     };
   }
 );
@@ -119,12 +149,15 @@ server.registerTool(
         .optional()
         .describe("Number of months to look back. Defaults to 6."),
     },
+    outputSchema: monthlySummaryOutput,
     annotations: { readOnlyHint: true },
   },
   async ({ months }) => {
     const result = await getMonthlySummary(prisma, userId, { months, timezoneOffset: userTimezoneOffset });
+    const payload = { months: result };
     return {
-      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+      structuredContent: structured(payload),
     };
   }
 );
@@ -144,6 +177,7 @@ server.registerTool(
         .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
         .describe("Comparison period in YYYY-MM format."),
     },
+    outputSchema: spendingTrendsOutput,
     annotations: { readOnlyHint: true },
   },
   async ({ currentMonth, previousMonth }) => {
@@ -152,8 +186,10 @@ server.registerTool(
       previousMonth,
       timezoneOffset: userTimezoneOffset,
     });
+    const payload = result;
     return {
-      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+      structuredContent: structured(payload),
     };
   }
 );
@@ -211,12 +247,15 @@ server.registerTool(
           "Only transactions carrying at least one of these label IDs. Use get_label_list to find IDs."
         ),
     },
+    outputSchema: searchTransactionsOutput,
     annotations: { readOnlyHint: true },
   },
   async (params) => {
     const result = await searchTransactions(prisma, userId, { ...params, timezoneOffset: userTimezoneOffset });
+    const payload = result;
     return {
-      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+      structuredContent: structured(payload),
     };
   }
 );
@@ -233,12 +272,15 @@ server.registerTool(
         .optional()
         .describe("Month in YYYY-MM format. Defaults to current month."),
     },
+    outputSchema: budgetOverviewOutput,
     annotations: { readOnlyHint: true },
   },
   async ({ month }) => {
     const result = await getBudgetOverview(prisma, userId, { month, timezoneOffset: userTimezoneOffset });
+    const payload = result;
     return {
-      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+      structuredContent: structured(payload),
     };
   }
 );
@@ -257,12 +299,15 @@ server.registerTool(
         .optional()
         .describe("Number of days to look ahead. Defaults to 7."),
     },
+    outputSchema: upcomingBillsOutput,
     annotations: { readOnlyHint: true },
   },
   async ({ days }) => {
     const result = await getUpcomingBills(prisma, userId, { days, timezoneOffset: userTimezoneOffset });
+    const payload = result;
     return {
-      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+      structuredContent: structured(payload),
     };
   }
 );
@@ -278,12 +323,15 @@ server.registerTool(
         .optional()
         .describe("Filter by category type."),
     },
+    outputSchema: categoryListOutput,
     annotations: { readOnlyHint: true },
   },
   async ({ type }) => {
     const result = await getCategoryList(prisma, userId, { type });
+    const payload = { categories: result };
     return {
-      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+      structuredContent: structured(payload),
     };
   }
 );
@@ -308,6 +356,7 @@ server.registerTool(
         .optional()
         .describe("Transaction type to break down. Defaults to EXPENSE."),
     },
+    outputSchema: labelBreakdownOutput,
     annotations: { readOnlyHint: true },
   },
   async ({ month, type }) => {
@@ -316,8 +365,10 @@ server.registerTool(
       type,
       timezoneOffset: userTimezoneOffset,
     });
+    const payload = result;
     return {
-      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+      structuredContent: structured(payload),
     };
   }
 );
@@ -338,12 +389,15 @@ server.registerTool(
           "Only labels usable on this transaction type. Labels marked BOTH always match."
         ),
     },
+    outputSchema: labelListOutput,
     annotations: { readOnlyHint: true },
   },
   async ({ applicableTo }) => {
     const result = await getLabelList(prisma, userId, { applicableTo });
+    const payload = { labels: result };
     return {
-      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+      structuredContent: structured(payload),
     };
   }
 );
@@ -382,6 +436,7 @@ server.registerTool(
         .optional()
         .describe("Max occurrences returned. Summaries still cover the whole window. Defaults to 50."),
     },
+    outputSchema: billHistoryOutput,
     annotations: { readOnlyHint: true },
   },
   async ({ billId, status, months, limit }) => {
@@ -392,8 +447,10 @@ server.registerTool(
       limit,
       timezoneOffset: userTimezoneOffset,
     });
+    const payload = result;
     return {
-      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+      structuredContent: structured(payload),
     };
   }
 );
@@ -430,6 +487,7 @@ server.registerTool(
         .optional()
         .describe("Max items returned. Counts and totals cover every match. Defaults to 100."),
     },
+    outputSchema: receiptItemsOutput,
     annotations: { readOnlyHint: true },
   },
   async ({ month, search, receiptGroupId, limit }) => {
@@ -440,8 +498,10 @@ server.registerTool(
       limit,
       timezoneOffset: userTimezoneOffset,
     });
+    const payload = result;
     return {
-      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+      structuredContent: structured(payload),
     };
   }
 );
