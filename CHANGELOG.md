@@ -2,6 +2,67 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-25 - Batch Replay Race
+
+Closes #121. The replay pre-check on `POST /api/transactions/batch` was an unlocked read, so a
+concurrent attempt holding the advisory lock but not yet committed was invisible to it. The
+retry then fell through to a 400 gate, and the client reads a 4xx as proof nothing was written
+(`definitelyNotCommitted` in `use-multi-scan.ts`): it drops the idempotency pin and unfreezes
+the rows, so a corrected resubmit creates the batch a second time.
+
+The window is real. A batch is bounded at 60s by `BATCH_TX_OPTIONS`, and the retry path exists
+precisely because a response can be lost while the server is still working.
+
+Predates the #119/#120 work: on `main` before it, the pre-check was already unlocked and label
+ownership validation already sat between it and the lock. The reachable trigger is a label
+deleted while a slow batch is in flight, which needs no deployment skew. The sixth review round
+of the 2026-08-20 receipt scan work fixed the *sequential* version of this by moving the
+existence check ahead of the label query; that fix is correct and still holds, it just cannot
+cover a concurrent attempt, because the check it moved is unlocked.
+
+### Approach
+The rejection path re-checks under the lock, rather than acquiring the lock before all
+validation. `rejectUnlessAlreadySaved` takes the key's advisory lock, which blocks until any
+in-flight attempt finishes, turning "no rows yet" into a decision rather than a guess. Only a
+request about to be rejected pays for it; the successful path keeps the fast unlocked read, and
+the lock is not held across label validation or `getScheduleContext`.
+
+If the lock cannot be obtained in time it returns **500, not the original 4xx**. A 500 reads as
+*unknown* to the client, which keeps the rows pinned — the safe direction when the server
+genuinely cannot tell whether the batch exists.
+
+Applied to both 4xx exits that can follow the pre-check: label ownership, and the `ZodError`
+branch for payload validation. Scoped to `POST`; the `DELETE` handler has no idempotency key
+and is unchanged.
+
+### Verification
+`scripts/verify-batch-idempotency.ts` gained a genuinely concurrent case, because the existing
+"replay survives a label deleted since" check is sequential and passes against the broken code:
+A commits before B starts. The new case holds A open — lock taken, rows written, not committed
+— fires B, then commits A. Run against a real dev server, 24 checks pass, and reverting the
+guard fails it with `got 400, want 200`.
+
+### Review follow-up (#122): the race check was sleep-based
+The first version of the concurrent case used two `setTimeout`s, which made it unreliable in
+both directions:
+- The delay before starting B did not guarantee A held the lock and had written. If B got there first it would take the lock, see nothing, and 400 — **failing a correct implementation**
+- The delay before releasing A did not prove B had reached the rejection path. If B started late, A committed first and B's *unlocked* pre-check returned 200 — **passing even with the fix reverted**, which is exactly what the check exists to catch
+
+The second is the serious one: `AGENTS.md` requires that reverting a fix makes its test fail,
+and this could silently not. It only worked when first run because the route was warm from
+twenty earlier checks. The 2026-08-20 entry already records this lesson from the scan-quota
+harness: "a verification script that cries wolf under a supported configuration stops being
+trusted."
+
+Both sleeps are gone. A signals once it actually holds the lock and has written, and B is
+released only once `pg_locks` shows a session genuinely blocked on an advisory lock (or B has
+already answered without reaching one). Confirmed deterministic: two consecutive runs pass with
+the fix and two fail without it, at `got 400, want 200`.
+
+### Files
+- `src/app/api/transactions/batch/route.ts` -- `rejectUnlessAlreadySaved` on both 4xx exits
+- `scripts/verify-batch-idempotency.ts` -- concurrent in-flight replay case, synchronised on real lock state
+
 ## 2026-08-24 - Receipt Breakdown Write Validation
 
 Closes #119. `transactions.receipt_breakdown` was persisted with no validation at all: the only

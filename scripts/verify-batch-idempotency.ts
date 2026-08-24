@@ -170,7 +170,85 @@ async function main() {
   check("newly invalid payload on a first attempt is rejected", badPayloadFirst.status, 400);
   check("rejected first attempt created nothing", await countRows(), 0);
 
-  // 7. A malformed key is rejected rather than silently treated as keyless.
+  // 7. The replay decision must survive a *concurrent* attempt, not just a sequential one.
+  //    Case 5 above passes even with an unlocked pre-check, because A commits before B
+  //    starts. This holds A open — lock taken, rows written, not yet committed — so B's
+  //    unlocked pre-check sees nothing and falls through to a 400 gate. Rejecting there
+  //    would tell the client nothing was written and let a corrected resubmit duplicate it.
+  const inFlightKey = randomUUID();
+  const ghostLabelId = randomUUID();
+  const raceRows = rows(2).map((r) => ({ ...r, labelIds: [ghostLabelId] }));
+
+  let releaseHold!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseHold = resolve;
+  });
+
+  // Signalled once A actually holds the lock and has written, so B is never started before
+  // the state it is supposed to race. A sleep here can let B take the lock first, which
+  // fails a correct implementation.
+  let holderReady!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    holderReady = resolve;
+  });
+
+  // A: takes the key's lock and writes, then stays open.
+  const holder = prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${inFlightKey}))`;
+      await tx.transaction.createMany({
+        data: raceRows.map((r) => ({
+          amount: r.amount,
+          description: r.description,
+          type: r.type,
+          date: new Date(r.date),
+          categoryId: category.id,
+          userId: user.id,
+          clientBatchId: inFlightKey,
+        })),
+      });
+      holderReady();
+      await held;
+    },
+    { maxWait: 10_000, timeout: 60_000 },
+  );
+
+  await ready;
+
+  // B: the retry. Its label no longer exists, so it fails validation after the pre-check.
+  let retrySettled = false;
+  const concurrentRetry = post(raceRows, inFlightKey).then((r) => {
+    retrySettled = true;
+    return r;
+  });
+
+  /** Is some session waiting on an advisory lock? That is B blocked inside the fix. */
+  const someoneBlockedOnAdvisoryLock = async () => {
+    const [row] = await prisma.$queryRaw<Array<{ n: bigint }>>`
+      SELECT count(*)::bigint AS n FROM pg_locks
+      WHERE locktype = 'advisory' AND NOT granted`;
+    return Number(row.n) > 0;
+  };
+
+  // Release A only once B has provably reached the lock, or has already answered without
+  // reaching it. Sleeping instead lets A commit first, after which B's *unlocked* pre-check
+  // returns 200 — so the check would pass even with the fix reverted, which is precisely
+  // what it exists to catch.
+  const deadline = Date.now() + 15_000;
+  while (!retrySettled && !(await someoneBlockedOnAdvisoryLock())) {
+    if (Date.now() > deadline) break;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+
+  releaseHold();
+  await holder;
+
+  const raced = await concurrentRetry;
+  check("concurrent replay is not rejected as unwritten", raced.status, 200);
+  check("rows after concurrent replay", await countRows(), 2);
+  await reset();
+
+  // 8. A malformed key is rejected rather than silently treated as keyless.
   const bad = await post(rows(1), "not-a-uuid");
   check("malformed key is rejected", bad.status, 400);
   check("malformed key created nothing", await countRows(), 0);
