@@ -19,20 +19,33 @@ import type {
   DateRange,
 } from "./budget-query-types";
 
-/** Parse "YYYY-MM" into a UTC start/end date range for that month */
-const parseMonth = (month: string): DateRange => {
+/**
+ * Parse "YYYY-MM" into the UTC instants bounding that month *in the user's timezone*.
+ *
+ * Same formula as `/api/dashboard` and `analytics-period.ts` so the whole app agrees on
+ * where a month starts. `tzOffset` is `Date.prototype.getTimezoneOffset()` minutes (UTC+8
+ * is -480), matching `users.timezone_offset`. It defaults to 0, which reproduces the old
+ * UTC-only behaviour for any caller that has no user context.
+ */
+const parseMonth = (month: string, tzOffset = 0): DateRange => {
   const [year, m] = month.split("-").map(Number);
+  const tzMs = tzOffset * 60 * 1000;
   return {
-    startDate: new Date(Date.UTC(year, m - 1, 1)),
-    endDate: new Date(Date.UTC(year, m, 0, 23, 59, 59, 999)),
+    startDate: new Date(Date.UTC(year, m - 1, 1) + tzMs),
+    endDate: new Date(Date.UTC(year, m, 0, 23, 59, 59, 999) + tzMs),
   };
 };
 
-/** Get current month as "YYYY-MM" */
-const currentMonth = (): string => {
-  const now = new Date();
-  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
-};
+/** Shift an instant into the user's local wall clock, to be read via UTC accessors. */
+const toLocal = (date: Date, tzOffset: number): Date =>
+  new Date(date.getTime() - tzOffset * 60 * 1000);
+
+/** Format a local-shifted date as its "YYYY-MM" month key. */
+const monthKey = (local: Date): string =>
+  `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, "0")}`;
+
+/** Get the current month as "YYYY-MM", in the user's timezone. */
+const currentMonth = (tzOffset = 0): string => monthKey(toLocal(new Date(), tzOffset));
 
 /**
  * Spending grouped by category for a given month.
@@ -43,7 +56,8 @@ export const getSpendingByCategory = async (
   userId: string,
   params: SpendingByCategoryParams = {}
 ): Promise<CategorySpending[]> => {
-  const { startDate, endDate } = parseMonth(params.month ?? currentMonth());
+  const tz = params.timezoneOffset ?? 0;
+  const { startDate, endDate } = parseMonth(params.month ?? currentMonth(tz), tz);
 
   const transactions = await prisma.transaction.findMany({
     where: {
@@ -100,7 +114,7 @@ export const getTopExpenses = async (
   const where: Record<string, unknown> = { userId, type: "EXPENSE" };
 
   if (params.month) {
-    const { startDate, endDate } = parseMonth(params.month);
+    const { startDate, endDate } = parseMonth(params.month, params.timezoneOffset ?? 0);
     where.date = { gte: startDate, lte: endDate };
   }
 
@@ -130,9 +144,12 @@ export const getMonthlySummary = async (
   params: MonthlySummaryParams = {}
 ): Promise<MonthSummary[]> => {
   const months = params.months ?? 6;
-  const now = new Date();
-  const startDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (months - 1), 1));
-  const endDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+  const tz = params.timezoneOffset ?? 0;
+  const tzMs = tz * 60 * 1000;
+  // "Now" and every bucket edge are the user's local month, not the container's.
+  const localNow = toLocal(new Date(), tz);
+  const startDate = new Date(Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth() - (months - 1), 1) + tzMs);
+  const endDate = new Date(Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth() + 1, 0, 23, 59, 59, 999) + tzMs);
 
   const transactions = await prisma.transaction.findMany({
     where: {
@@ -150,17 +167,13 @@ export const getMonthlySummary = async (
   const result: MonthSummary[] = [];
 
   for (let i = months - 1; i >= 0; i--) {
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
-    const monthKey = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+    const d = new Date(Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth() - i, 1));
+    const key = monthKey(d);
     const monthLabel = `${monthNames[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 
-    const monthTx = transactions.filter((t) => {
-      const td = new Date(t.date);
-      return (
-        `${td.getUTCFullYear()}-${String(td.getUTCMonth() + 1).padStart(2, "0")}` ===
-        monthKey
-      );
-    });
+    const monthTx = transactions.filter(
+      (t) => monthKey(toLocal(new Date(t.date), tz)) === key
+    );
 
     const income = monthTx
       .filter((t) => t.type === "INCOME")
@@ -189,9 +202,10 @@ export const getSpendingTrends = async (
   userId: string,
   params: SpendingTrendsParams
 ): Promise<SpendingTrends> => {
+  const tz = params.timezoneOffset ?? 0;
   const [currentSpending, previousSpending] = await Promise.all([
-    getSpendingByCategory(prisma, userId, { month: params.currentMonth }),
-    getSpendingByCategory(prisma, userId, { month: params.previousMonth }),
+    getSpendingByCategory(prisma, userId, { month: params.currentMonth, timezoneOffset: tz }),
+    getSpendingByCategory(prisma, userId, { month: params.previousMonth, timezoneOffset: tz }),
   ]);
 
   const currentTotal = currentSpending.reduce((sum, c) => sum + c.amount, 0);
@@ -249,11 +263,8 @@ export const searchTransactions = async (
   }
 
   if (params.month) {
-    const [year, m] = params.month.split("-").map(Number);
-    where.date = {
-      gte: new Date(Date.UTC(year, m - 1, 1)),
-      lt: new Date(Date.UTC(year, m, 1)),
-    };
+    const { startDate, endDate } = parseMonth(params.month, params.timezoneOffset ?? 0);
+    where.date = { gte: startDate, lte: endDate };
   }
 
   if (params.categoryId) {
@@ -324,8 +335,9 @@ export const getBudgetOverview = async (
   userId: string,
   params: BudgetOverviewParams = {}
 ): Promise<BudgetOverview> => {
-  const monthStr = params.month ?? currentMonth();
-  const { startDate, endDate } = parseMonth(monthStr);
+  const tz = params.timezoneOffset ?? 0;
+  const monthStr = params.month ?? currentMonth(tz);
+  const { startDate, endDate } = parseMonth(monthStr, tz);
 
   const [transactions, runningIncome, runningExpenses] = await Promise.all([
     prisma.transaction.findMany({
