@@ -30,9 +30,58 @@ const batchDeleteSchema = z.object({
   ids: z.array(z.string()).min(1),
 });
 
+/**
+ * Answer a keyed request that is about to be rejected, re-checking under the advisory lock.
+ *
+ * The pre-check that runs before validation is an unlocked read, so it cannot see a
+ * concurrent attempt that holds the lock and has not committed yet. Rejecting on that basis
+ * is unsafe in one direction only: the client reads a 4xx as proof nothing was written, drops
+ * its idempotency pin and unfreezes the rows, so a corrected resubmit would create the batch
+ * a second time. The window is real — a batch is bounded at 60s, and the retry path exists
+ * precisely because a response can be lost while the server is still working.
+ *
+ * Taking the lock here blocks until any in-flight attempt on this key finishes, turning "no
+ * rows yet" into a decision rather than a guess. Only the rejection path pays for it; success
+ * keeps the fast unlocked read.
+ *
+ * If the lock cannot be obtained in time this returns 500, not the original 4xx. A 500 reads
+ * as *unknown* to the client, which keeps the rows pinned — the safe direction when we
+ * genuinely cannot tell whether the batch exists.
+ */
+const rejectUnlessAlreadySaved = async (
+  userId: string,
+  clientBatchId: string | undefined,
+  rejection: NextResponse
+): Promise<NextResponse> => {
+  if (!clientBatchId) return rejection;
+
+  try {
+    const existing = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${clientBatchId}))`;
+      return tx.transaction.findMany({
+        where: { userId, clientBatchId },
+        include: TX_INCLUDE,
+      });
+    }, BATCH_TX_OPTIONS);
+
+    if (existing.length > 0) {
+      return NextResponse.json({ transactions: existing }, { status: 200 });
+    }
+    return rejection;
+  } catch {
+    return NextResponse.json(
+      { error: "Could not confirm whether this batch was already saved" },
+      { status: 500 }
+    );
+  }
+};
+
 export async function POST(request: Request) {
   const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
+
+  // Hoisted so the catch below can tell a rejection apart from a replay.
+  let replayKey: string | undefined;
 
   try {
     const body: unknown = await request.json();
@@ -55,6 +104,7 @@ export async function POST(request: Request) {
       (body as { clientBatchId?: unknown } | null)?.clientBatchId
     );
     if (providedKey.success) {
+      replayKey = providedKey.data;
       const alreadySaved = await prisma.transaction.findMany({
         where: { userId, clientBatchId: providedKey.data },
         include: TX_INCLUDE,
@@ -79,9 +129,13 @@ export async function POST(request: Request) {
         select: { id: true, applicableTo: true },
       });
       if (ownedLabels.length !== allExplicitLabelIds.length) {
-        return NextResponse.json(
-          { error: "One or more labels are invalid or do not belong to you" },
-          { status: 400 }
+        return rejectUnlessAlreadySaved(
+          userId,
+          clientBatchId,
+          NextResponse.json(
+            { error: "One or more labels are invalid or do not belong to you" },
+            { status: 400 }
+          )
         );
       }
       ownedLabelMap = new Map(ownedLabels.map((l) => [l.id, l.applicableTo]));
@@ -167,7 +221,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ transactions: created }, { status: replayed ? 200 : 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+      return rejectUnlessAlreadySaved(
+        userId,
+        replayKey,
+        NextResponse.json({ error: "Invalid input" }, { status: 400 })
+      );
     }
     return NextResponse.json(
       { error: "Failed to create transactions" },

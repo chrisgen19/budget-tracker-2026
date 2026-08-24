@@ -170,7 +170,57 @@ async function main() {
   check("newly invalid payload on a first attempt is rejected", badPayloadFirst.status, 400);
   check("rejected first attempt created nothing", await countRows(), 0);
 
-  // 7. A malformed key is rejected rather than silently treated as keyless.
+  // 7. The replay decision must survive a *concurrent* attempt, not just a sequential one.
+  //    Case 5 above passes even with an unlocked pre-check, because A commits before B
+  //    starts. This holds A open — lock taken, rows written, not yet committed — so B's
+  //    unlocked pre-check sees nothing and falls through to a 400 gate. Rejecting there
+  //    would tell the client nothing was written and let a corrected resubmit duplicate it.
+  const inFlightKey = randomUUID();
+  const ghostLabelId = randomUUID();
+  const raceRows = rows(2).map((r) => ({ ...r, labelIds: [ghostLabelId] }));
+
+  let releaseHold!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseHold = resolve;
+  });
+
+  // A: takes the key's lock and writes, then stays open.
+  const holder = prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${inFlightKey}))`;
+      await tx.transaction.createMany({
+        data: raceRows.map((r) => ({
+          amount: r.amount,
+          description: r.description,
+          type: r.type,
+          date: new Date(r.date),
+          categoryId: category.id,
+          userId: user.id,
+          clientBatchId: inFlightKey,
+        })),
+      });
+      await held;
+    },
+    { maxWait: 10_000, timeout: 60_000 },
+  );
+
+  // Let A reach the lock and write before B starts.
+  await new Promise((r) => setTimeout(r, 500));
+
+  // B: the retry. Its label no longer exists, so it fails validation after the pre-check.
+  const concurrentRetry = post(raceRows, inFlightKey);
+
+  // Give B time to reach the rejection path, then let A commit.
+  await new Promise((r) => setTimeout(r, 1500));
+  releaseHold();
+  await holder;
+
+  const raced = await concurrentRetry;
+  check("concurrent replay is not rejected as unwritten", raced.status, 200);
+  check("rows after concurrent replay", await countRows(), 2);
+  await reset();
+
+  // 8. A malformed key is rejected rather than silently treated as keyless.
   const bad = await post(rows(1), "not-a-uuid");
   check("malformed key is rejected", bad.status, 400);
   check("malformed key created nothing", await countRows(), 0);
