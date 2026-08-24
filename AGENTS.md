@@ -144,7 +144,7 @@ Active tasks:
 - **Label schedules** — labels can have time-of-day + day-of-week schedules that auto-tag transactions; pure matching in `schedule-matching.ts`, server helpers in `schedule-server.ts`, client hook in `use-scheduled-label.ts`; first-created label wins on overlap; `labelIds: undefined` = server auto-applies, `labelIds: []` = user opted out
 - **Label type restrictions** — labels have `applicableTo` ("EXPENSE" | "INCOME" | "BOTH"); LabelPicker filters by transaction type; schedule auto-labeling respects type; narrowing type on edit triggers 409 confirmation to remove affected associations; default controlled by `users.default_label_type` preference
 - **Timezone offsets** — all date-range queries accept a `timezoneOffset` (minutes) for correct day/month boundaries; offset stored in `users.timezone_offset` and provided by `UserProvider`
-- **MCP server** (`mcp-server/`) — standalone package; runs via `tsx` over stdio; user ID injected via `BUDGET_USER_ID` env var; excluded from root `tsconfig.json`
+- **MCP server** (`mcp-server/`) — standalone package; runs via `tsx` over stdio; user ID injected via `BUDGET_USER_ID` env var; excluded from root `tsconfig.json`, so it has its own `pnpm type-check` that CI runs separately. Standalone in its dependency tree only: it imports `src/lib/budget-queries.ts` and declares `@prisma/client` as `link:../node_modules/@prisma/client`, sharing the app's generated client rather than generating a second one. `zod` is pinned to the app's 3.x line on purpose: leaving it undeclared let pnpm auto-install zod 4 as an SDK peer, which type-checked the file against a different major than it ran on and made `tsc` exhaust the heap (`TS2589`). It also carries its own `.npmrc`, since npm config is read from the install cwd and the root hardening does not reach it
 
 ## API Routes Reference
 - `POST /api/register` — registration with bcrypt + sends verification email
@@ -192,6 +192,7 @@ Active tasks:
 - Tailwind CSS utility classes directly — avoid `@apply` unless necessary
 - `pnpm` as package manager. Node 20.19+ (Vite 8, jsdom and `@vitejs/plugin-react` all floor at `^20.19.0`; below that `pnpm test` fails inside the pool worker rather than at install)
 - Run `pnpm lint`, `pnpm type-check`, and `pnpm test` before finishing any code changes
+- When touching `src/lib/budget-queries.ts` or `src/lib/budget-query-types.ts`, also run `cd mcp-server && pnpm type-check`. The root type-check excludes `mcp-server`, so a signature change there compiles clean while breaking the MCP server
 
 ## Rule Strictness
 - **Hard requirements** (must pass): TypeScript, naming conventions, no `console.log` in commits (CLI scripts under `scripts/` may print — they have no other output channel; see `heal-bill-next-due-dates.ts`, `generate-pwa-icons.ts`, `prisma/seed.ts`), `pnpm` usage, and successful `pnpm lint` + `pnpm type-check` + `pnpm test`
