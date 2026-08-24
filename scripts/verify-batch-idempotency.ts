@@ -184,6 +184,14 @@ async function main() {
     releaseHold = resolve;
   });
 
+  // Signalled once A actually holds the lock and has written, so B is never started before
+  // the state it is supposed to race. A sleep here can let B take the lock first, which
+  // fails a correct implementation.
+  let holderReady!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    holderReady = resolve;
+  });
+
   // A: takes the key's lock and writes, then stays open.
   const holder = prisma.$transaction(
     async (tx) => {
@@ -199,19 +207,39 @@ async function main() {
           clientBatchId: inFlightKey,
         })),
       });
+      holderReady();
       await held;
     },
     { maxWait: 10_000, timeout: 60_000 },
   );
 
-  // Let A reach the lock and write before B starts.
-  await new Promise((r) => setTimeout(r, 500));
+  await ready;
 
   // B: the retry. Its label no longer exists, so it fails validation after the pre-check.
-  const concurrentRetry = post(raceRows, inFlightKey);
+  let retrySettled = false;
+  const concurrentRetry = post(raceRows, inFlightKey).then((r) => {
+    retrySettled = true;
+    return r;
+  });
 
-  // Give B time to reach the rejection path, then let A commit.
-  await new Promise((r) => setTimeout(r, 1500));
+  /** Is some session waiting on an advisory lock? That is B blocked inside the fix. */
+  const someoneBlockedOnAdvisoryLock = async () => {
+    const [row] = await prisma.$queryRaw<Array<{ n: bigint }>>`
+      SELECT count(*)::bigint AS n FROM pg_locks
+      WHERE locktype = 'advisory' AND NOT granted`;
+    return Number(row.n) > 0;
+  };
+
+  // Release A only once B has provably reached the lock, or has already answered without
+  // reaching it. Sleeping instead lets A commit first, after which B's *unlocked* pre-check
+  // returns 200 — so the check would pass even with the fix reverted, which is precisely
+  // what it exists to catch.
+  const deadline = Date.now() + 15_000;
+  while (!retrySettled && !(await someoneBlockedOnAdvisoryLock())) {
+    if (Date.now() > deadline) break;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+
   releaseHold();
   await holder;
 

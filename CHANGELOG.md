@@ -42,9 +42,26 @@ A commits before B starts. The new case holds A open — lock taken, rows writte
 — fires B, then commits A. Run against a real dev server, 24 checks pass, and reverting the
 guard fails it with `got 400, want 200`.
 
+### Review follow-up (#122): the race check was sleep-based
+The first version of the concurrent case used two `setTimeout`s, which made it unreliable in
+both directions:
+- The delay before starting B did not guarantee A held the lock and had written. If B got there first it would take the lock, see nothing, and 400 — **failing a correct implementation**
+- The delay before releasing A did not prove B had reached the rejection path. If B started late, A committed first and B's *unlocked* pre-check returned 200 — **passing even with the fix reverted**, which is exactly what the check exists to catch
+
+The second is the serious one: `AGENTS.md` requires that reverting a fix makes its test fail,
+and this could silently not. It only worked when first run because the route was warm from
+twenty earlier checks. The 2026-08-20 entry already records this lesson from the scan-quota
+harness: "a verification script that cries wolf under a supported configuration stops being
+trusted."
+
+Both sleeps are gone. A signals once it actually holds the lock and has written, and B is
+released only once `pg_locks` shows a session genuinely blocked on an advisory lock (or B has
+already answered without reaching one). Confirmed deterministic: two consecutive runs pass with
+the fix and two fail without it, at `got 400, want 200`.
+
 ### Files
 - `src/app/api/transactions/batch/route.ts` -- `rejectUnlessAlreadySaved` on both 4xx exits
-- `scripts/verify-batch-idempotency.ts` -- concurrent in-flight replay case
+- `scripts/verify-batch-idempotency.ts` -- concurrent in-flight replay case, synchronised on real lock state
 
 ## 2026-08-24 - Receipt Breakdown Write Validation
 
