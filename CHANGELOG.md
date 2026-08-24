@@ -2,6 +2,74 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-24 - MCP Bill Payment History
+
+Closes #112. Second feature item from the MCP audit. 10 tools become 11.
+
+`ScheduledTransactionLog` records what actually happened to every bill occurrence -- `PAID`,
+`SKIPPED`, or `SNOOZED`, with the `dueDate` it was for and the `actionDate` it was acted on --
+and none of the tools could see it. `get_upcoming_bills` only reports what is due next, so the
+whole payment-behaviour question ("how often do I pay rent late?", "which bills do I keep
+skipping?") was unanswerable.
+
+### New tool
+**`get_bill_history`** returns both the individual occurrences and a per-bill summary, so one
+call answers "what happened" and "what is the pattern". Per occurrence: description, category,
+due date, status, action date, `daysLate`, whether a transaction was created, and any
+`snoozeUntil`. Per bill: occurrence count, the split by status, paid-on-time versus paid-late,
+and average and worst lateness. Called without a `billId` it covers every bill, so it doubles
+as bill-ID discovery and no separate list tool is needed.
+
+### Lateness is measured in local calendar days, and it matters here
+`dueDate` is stored at midnight UTC while `actionDate` is a real timestamp, so subtracting them
+directly gives fractional days and mis-rounds for anyone off UTC. Both sides are truncated to
+the user's local day first.
+
+This is not theoretical on this account. Two of the six real occurrences change answer:
+
+```
+BRV   actionUTC=2026-03-09T22:09Z = 2026-03-10 06:09 Manila -> 5 days late, not 4
+PLDT  actionUTC=2026-03-19T21:36Z = 2026-03-20 05:36 Manila -> 0, on time, not 1 day early
+```
+
+Bills get paid late at night Manila time, which lands on the next UTC day. A first hand-check
+of this data using UTC dates produced both of those wrong, which is exactly the failure the
+truncation prevents.
+
+Two further decisions:
+- **Negative `daysLate` is kept, not clamped.** "Usually two days early" is a real answer
+- **`SKIPPED` and `SNOOZED` carry no lateness and are excluded from the averages.** Neither has
+  a payment date to be late relative to, so folding them in would make the averages meaningless.
+  They still count toward the occurrence total and their own status tallies
+
+### Tests
+Ten more (60 total): the late-night Manila case and the same payment for a UTC user (which must
+differ), same-local-day reporting 0 rather than negative, early payments keeping their sign,
+skipped/snoozed having null lateness, averages excluding them, null rather than `NaN` when
+nothing was paid, no bills returning empty, worst-first sort ordering with unmeasurable bills
+last, and `limit` capping occurrences while summaries still cover the window.
+
+### Review follow-ups (#113)
+All three were confirmed against the code and by running them, not taken on trust.
+- **The due date was being shifted into the user's timezone, breaking every user west of UTC.** `dueDate` is date-only: stored at midnight UTC, meaning "the 5th", not an instant. Converting it the same way as `actionDate` moved it to the 4th for a UTC-5 user, so a payment made on the due date reported as one day late, and that error propagated into `paidOnTime`/`paidLate`, the averages, and the summary ordering. Only real instants get the timezone conversion now; the due date is read as its stored calendar day. A UTC+8 account cannot see this bug, which is why testing against production data missed it
+- **One scheduled occurrence could be counted several times.** Snoozing deliberately does not settle an occurrence (`bills/[id]/action/route.ts` is the one branch of four that skips `alreadySettled`), so the same bill and due date accumulates a SNOOZED row per snooze plus a final PAID or SKIPPED. Counting per row reported a snoozed-twice-then-paid occurrence as three occurrences with three outcomes. Rows are now collapsed per `(billId, dueDate)`: `status` is the settled outcome, `snoozeCount` records how many times it was snoozed, and the status counts sum to `occurrences`. New `totalSnoozes` keeps the raw snooze volume, which legitimately can exceed the occurrence count. The `status` filter matches the settled outcome, so a snoozed-then-paid occurrence counts as PAID
+- **The lookback window overflowed on month-end days.** `Date.UTC(y, m - 6, 31)` for a 31st in a shorter target month rolls forward: six months before Aug 31 became Mar 3, silently trimming three days off the front. Clamped to the target month's last day
+
+Seven more tests, each confirmed to fail with its fix reverted.
+
+### Review follow-ups, second round (#113)
+- **Occurrences reported the bill's nominal amount, not what was paid.** `ScheduledTransaction.amount` is the bill's *current* configuration: Pay & Edit can change the amount at pay time, and editing a bill rewrites the apparent cost of all its history. `/api/bills/[id]/history` already resolves this by reading the linked transaction and exposing `paidAmount`, so the MCP tool was contradicting the app's own bill history screen. It now reads the same source and exposes the same field, keeping `amount` as the nominal value. **This was wrong on real data, not hypothetically**: of six production occurrences, two differ — Mirea Rent nominal 22000 against 22010 paid, and Meralco nominal 5500 against 6513 paid
+- **The history window had no upper bound.** `/api/bills/upcoming` surfaces bills due up to a week ahead and offers pay and skip on them, which writes a log with a future `dueDate`. With only `gte`, those landed inside a window the response advertises as ending today, and counted into the summaries and averages. Bounded at `today`. Nothing is lost: the window trails, so that due date is picked up once it arrives
+
+Three more tests (70 total), again each confirmed to fail with its fix reverted.
+
+### Files
+- `src/lib/budget-queries.ts` -- `getBillHistory`, local-day helpers
+- `src/lib/budget-query-types.ts` -- bill history types
+- `src/lib/budget-queries.test.ts` -- lateness coverage
+- `mcp-server/src/index.ts` -- tool registration
+- `README.md`, `AGENTS.md` -- tool table and counts
+
 ## 2026-08-24 - MCP Label Support
 
 Closes #110. Labels are a first-class feature of the app and were completely invisible to the

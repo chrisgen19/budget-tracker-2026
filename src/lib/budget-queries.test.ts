@@ -8,6 +8,7 @@ import {
   searchTransactions,
   getLabelBreakdown,
   getLabelList,
+  getBillHistory,
 } from "./budget-queries";
 
 /** Asia/Manila. `getTimezoneOffset()` returns -480 for UTC+8, matching users.timezone_offset. */
@@ -329,5 +330,409 @@ describe("searchTransactions label filter", () => {
     await searchTransactions(prisma, "u1", { labelIds: [] });
 
     expect(seen[0].labels).toBeUndefined();
+  });
+});
+
+describe("getBillHistory measures lateness in the user's calendar days", () => {
+  type Log = {
+    scheduledTransactionId: string;
+    dueDate: Date;
+    status: string;
+    actionDate: Date | null;
+    transactionId: string | null;
+    snoozeUntil: Date | null;
+  };
+
+  const bill = (id: string, description: string) => ({
+    id,
+    description,
+    amount: 100,
+    category: { name: "Utilities" },
+  });
+
+  const log = (over: Partial<Log> = {}): Log => ({
+    scheduledTransactionId: "b1",
+    dueDate: new Date("2026-03-05T00:00:00.000Z"),
+    status: "PAID",
+    actionDate: null,
+    transactionId: null,
+    snoozeUntil: null,
+    ...over,
+  });
+
+  const histPrisma = (
+    bills: ReturnType<typeof bill>[],
+    logs: Log[],
+    transactions: Array<{ id: string; amount: number }> = []
+  ) =>
+    ({
+      scheduledTransaction: { findMany: vi.fn(async () => bills) },
+      scheduledTransactionLog: { findMany: vi.fn(async () => logs) },
+      transaction: { findMany: vi.fn(async () => transactions) },
+    }) as unknown as PrismaClient;
+
+  it("counts a late-night Manila payment as the local day, not the UTC day", async () => {
+    // Real case: acting at 22:09Z on Mar 9 is already 06:09 on Mar 10 in Manila, so a bill
+    // due Mar 5 is 5 days late, not the 4 that naive UTC subtraction reports.
+    const result = await getBillHistory(
+      histPrisma([bill("b1", "BRV")], [log({ actionDate: new Date("2026-03-09T22:09:51.894Z") })]),
+      "u1",
+      { timezoneOffset: MANILA }
+    );
+
+    expect(result.occurrences[0].daysLate).toBe(5);
+  });
+
+  it("counts the same payment as 4 days late for a UTC user", async () => {
+    const result = await getBillHistory(
+      histPrisma([bill("b1", "BRV")], [log({ actionDate: new Date("2026-03-09T22:09:51.894Z") })]),
+      "u1",
+      {}
+    );
+
+    expect(result.occurrences[0].daysLate).toBe(4);
+  });
+
+  it("reports 0, not negative, when the local action day equals the due day", async () => {
+    // 21:36Z on Mar 19 is 05:36 on Mar 20 in Manila: due Mar 20, paid on time.
+    const result = await getBillHistory(
+      histPrisma(
+        [bill("b1", "PLDT")],
+        [
+          log({
+            dueDate: new Date("2026-03-20T00:00:00.000Z"),
+            actionDate: new Date("2026-03-19T21:36:33.943Z"),
+          }),
+        ]
+      ),
+      "u1",
+      { timezoneOffset: MANILA }
+    );
+
+    expect(result.occurrences[0].daysLate).toBe(0);
+    expect(result.summaries[0].paidOnTime).toBe(1);
+    expect(result.summaries[0].paidLate).toBe(0);
+  });
+
+  it("keeps the sign for an early payment rather than clamping to zero", async () => {
+    const result = await getBillHistory(
+      histPrisma(
+        [bill("b1", "Meralco")],
+        [
+          log({
+            dueDate: new Date("2026-04-05T00:00:00.000Z"),
+            actionDate: new Date("2026-04-04T04:32:12.734Z"),
+          }),
+        ]
+      ),
+      "u1",
+      { timezoneOffset: MANILA }
+    );
+
+    expect(result.occurrences[0].daysLate).toBe(-1);
+    expect(result.summaries[0].avgDaysLate).toBe(-1);
+  });
+
+  it("gives skipped and snoozed occurrences no lateness", async () => {
+    const result = await getBillHistory(
+      histPrisma(
+        [bill("b1", "Meralco")],
+        [
+          log({
+            dueDate: new Date("2026-03-05T00:00:00.000Z"),
+            status: "SKIPPED",
+            actionDate: new Date("2026-03-09T22:32:04.935Z"),
+          }),
+          log({
+            dueDate: new Date("2026-04-05T00:00:00.000Z"),
+            status: "SNOOZED",
+            snoozeUntil: new Date("2026-04-12T00:00:00.000Z"),
+          }),
+        ]
+      ),
+      "u1",
+      { timezoneOffset: MANILA }
+    );
+
+    expect(result.occurrences.map((o) => o.daysLate)).toEqual([null, null]);
+    expect(result.summaries[0].skipped).toBe(1);
+    expect(result.summaries[0].snoozed).toBe(1);
+  });
+
+  it("excludes skipped and snoozed from the averages", async () => {
+    // Only the PAID occurrence has lateness, so the average must be 4, not diluted to 2.
+    const result = await getBillHistory(
+      histPrisma(
+        [bill("b1", "Meralco")],
+        [
+          log({
+            dueDate: new Date("2026-03-05T00:00:00.000Z"),
+            actionDate: new Date("2026-03-09T00:00:00.000Z"),
+          }),
+          log({ dueDate: new Date("2026-04-05T00:00:00.000Z"), status: "SKIPPED" }),
+          log({ dueDate: new Date("2026-05-05T00:00:00.000Z"), status: "SNOOZED" }),
+        ]
+      ),
+      "u1",
+      {}
+    );
+
+    expect(result.summaries[0].occurrences).toBe(3);
+    expect(result.summaries[0].paid).toBe(1);
+    expect(result.summaries[0].avgDaysLate).toBe(4);
+    expect(result.summaries[0].maxDaysLate).toBe(4);
+  });
+
+  it("reports null rather than NaN for a bill with no paid occurrences", async () => {
+    const result = await getBillHistory(
+      histPrisma([bill("b1", "Meralco")], [log({ status: "SKIPPED" })]),
+      "u1",
+      {}
+    );
+
+    expect(result.summaries[0].avgDaysLate).toBeNull();
+    expect(result.summaries[0].maxDaysLate).toBeNull();
+  });
+
+  it("returns empty rather than throwing when the user has no bills", async () => {
+    const result = await getBillHistory(histPrisma([], []), "u1", {});
+
+    expect(result.occurrences).toEqual([]);
+    expect(result.summaries).toEqual([]);
+  });
+
+  it("sorts the worst average lateness first, with unmeasurable bills last", async () => {
+    const result = await getBillHistory(
+      histPrisma(
+        [bill("b1", "Late"), bill("b2", "Early"), bill("b3", "Skipped")],
+        [
+          log({ scheduledTransactionId: "b1", actionDate: new Date("2026-03-10T00:00:00.000Z") }),
+          log({ scheduledTransactionId: "b2", actionDate: new Date("2026-03-03T00:00:00.000Z") }),
+          log({ scheduledTransactionId: "b3", status: "SKIPPED" }),
+        ]
+      ),
+      "u1",
+      {}
+    );
+
+    expect(result.summaries.map((s) => s.description)).toEqual(["Late", "Early", "Skipped"]);
+  });
+
+  it("caps returned occurrences by limit while summaries still cover everything", async () => {
+    const result = await getBillHistory(
+      histPrisma(
+        [bill("b1", "Meralco")],
+        [log(), log(), log()].map((l, i) => ({ ...l, dueDate: new Date(`2026-0${i + 1}-05T00:00:00.000Z`) }))
+      ),
+      "u1",
+      { limit: 2 }
+    );
+
+    expect(result.occurrences).toHaveLength(2);
+    expect(result.summaries[0].occurrences).toBe(3);
+  });
+
+  // --- review follow-ups (#113) ---
+
+  it("reads the due date as its stored calendar day, not shifted into the user's timezone", async () => {
+    // dueDate is date-only: midnight UTC meaning "the 5th". Converting it for a user west of
+    // UTC moves it to the 4th and turns this on-time payment into a day late.
+    const paidOnDueDate = [
+      log({
+        dueDate: new Date("2026-03-05T00:00:00.000Z"),
+        actionDate: new Date("2026-03-05T15:00:00.000Z"), // 10:00 on the 5th in UTC-5
+      }),
+    ];
+
+    const newYork = await getBillHistory(histPrisma([bill("b1", "Rent")], paidOnDueDate), "u1", {
+      timezoneOffset: 300,
+    });
+    expect(newYork.occurrences[0].daysLate).toBe(0);
+    expect(newYork.summaries[0].paidOnTime).toBe(1);
+    expect(newYork.summaries[0].paidLate).toBe(0);
+
+    // Still correct east of UTC and at UTC itself.
+    for (const tz of [MANILA, 0]) {
+      const r = await getBillHistory(histPrisma([bill("b1", "Rent")], paidOnDueDate), "u1", {
+        timezoneOffset: tz,
+      });
+      expect(r.occurrences[0].daysLate).toBe(0);
+    }
+  });
+
+  it("collapses repeated actions on one occurrence into a single occurrence", async () => {
+    // Snoozing does not settle an occurrence, so the same (bill, dueDate) can be snoozed
+    // twice and then paid. That is one scheduled occurrence, not three.
+    const due = new Date("2026-03-05T00:00:00.000Z");
+    const result = await getBillHistory(
+      histPrisma(
+        [bill("b1", "Meralco")],
+        [
+          log({ dueDate: due, status: "SNOOZED", actionDate: new Date("2026-03-05T02:00:00.000Z") }),
+          log({ dueDate: due, status: "SNOOZED", actionDate: new Date("2026-03-06T02:00:00.000Z") }),
+          log({ dueDate: due, status: "PAID", actionDate: new Date("2026-03-07T02:00:00.000Z") }),
+        ]
+      ),
+      "u1",
+      {}
+    );
+
+    expect(result.occurrences).toHaveLength(1);
+    expect(result.occurrences[0].status).toBe("PAID");
+    expect(result.occurrences[0].snoozeCount).toBe(2);
+    expect(result.occurrences[0].daysLate).toBe(2);
+
+    const summary = result.summaries[0];
+    expect(summary.occurrences).toBe(1);
+    expect(summary.paid).toBe(1);
+    expect(summary.snoozed).toBe(0);
+    expect(summary.totalSnoozes).toBe(2);
+    expect(summary.paid + summary.skipped + summary.snoozed).toBe(summary.occurrences);
+  });
+
+  it("reports an unsettled occurrence as SNOOZED with its latest snooze", async () => {
+    const due = new Date("2026-03-05T00:00:00.000Z");
+    const result = await getBillHistory(
+      histPrisma(
+        [bill("b1", "Meralco")],
+        [
+          log({
+            dueDate: due,
+            status: "SNOOZED",
+            actionDate: new Date("2026-03-05T02:00:00.000Z"),
+            snoozeUntil: new Date("2026-03-06T00:00:00.000Z"),
+          }),
+          log({
+            dueDate: due,
+            status: "SNOOZED",
+            actionDate: new Date("2026-03-06T02:00:00.000Z"),
+            snoozeUntil: new Date("2026-03-09T00:00:00.000Z"),
+          }),
+        ]
+      ),
+      "u1",
+      {}
+    );
+
+    expect(result.occurrences).toHaveLength(1);
+    expect(result.occurrences[0].status).toBe("SNOOZED");
+    expect(result.occurrences[0].snoozeUntil).toBe("2026-03-09T00:00:00.000Z");
+    expect(result.occurrences[0].daysLate).toBeNull();
+    expect(result.summaries[0].snoozed).toBe(1);
+  });
+
+  it("reports what the linked transaction recorded, not the bill's current amount", async () => {
+    // Pay & Edit can change the amount at pay time, and editing the bill afterwards rewrites
+    // its nominal amount for every past occurrence. 100 is the bill's config; 137.50 is what
+    // was actually paid.
+    const result = await getBillHistory(
+      histPrisma(
+        [bill("b1", "Meralco")],
+        [
+          log({
+            actionDate: new Date("2026-03-05T02:00:00.000Z"),
+            transactionId: "tx1",
+          }),
+        ],
+        [{ id: "tx1", amount: 137.5 }]
+      ),
+      "u1",
+      {}
+    );
+
+    expect(result.occurrences[0].amount).toBe(100);
+    expect(result.occurrences[0].paidAmount).toBe(137.5);
+  });
+
+  it("leaves paidAmount null for occurrences that created no transaction", async () => {
+    const result = await getBillHistory(
+      histPrisma([bill("b1", "Meralco")], [log({ status: "SKIPPED" })]),
+      "u1",
+      {}
+    );
+
+    expect(result.occurrences[0].paidAmount).toBeNull();
+  });
+
+  it("matches the status filter against the settled outcome, not the individual actions", async () => {
+    const due = new Date("2026-03-05T00:00:00.000Z");
+    const logs = [
+      log({ dueDate: due, status: "SNOOZED", actionDate: new Date("2026-03-05T02:00:00.000Z") }),
+      log({ dueDate: due, status: "PAID", actionDate: new Date("2026-03-06T02:00:00.000Z") }),
+    ];
+
+    const paid = await getBillHistory(histPrisma([bill("b1", "M")], logs), "u1", { status: "PAID" });
+    expect(paid.occurrences).toHaveLength(1);
+
+    // It was snoozed, but it settled as PAID, so it must not match a SNOOZED filter.
+    const snoozed = await getBillHistory(histPrisma([bill("b1", "M")], logs), "u1", {
+      status: "SNOOZED",
+    });
+    expect(snoozed.occurrences).toHaveLength(0);
+    expect(snoozed.summaries).toHaveLength(0);
+  });
+});
+
+describe("getBillHistory window arithmetic", () => {
+  const emptyPrisma = () =>
+    ({
+      scheduledTransaction: { findMany: vi.fn(async () => []) },
+      scheduledTransactionLog: { findMany: vi.fn(async () => []) },
+    }) as unknown as PrismaClient;
+
+  it("clamps the lookback to the target month's last day instead of overflowing", async () => {
+    // Date.UTC(2026, 1, 31) is Feb 31, which rolls forward to Mar 3 and silently trims
+    // three days off the front of a six-month window.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-31T12:00:00.000Z"));
+
+    const result = await getBillHistory(emptyPrisma(), "u1", { months: 6 });
+
+    expect(result.from).toBe("2026-02-28");
+    expect(result.to).toBe("2026-08-31");
+  });
+
+  it("clamps into a 30-day month too", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-31T12:00:00.000Z"));
+
+    const result = await getBillHistory(emptyPrisma(), "u1", { months: 6 });
+
+    expect(result.from).toBe("2025-11-30");
+  });
+
+  it("excludes occurrences due after today", async () => {
+    // /api/bills/upcoming surfaces bills due up to a week out and lets them be paid, which
+    // writes a log with a future dueDate. Those must not land in a window ending today.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-24T12:00:00.000Z"));
+
+    const seen: Array<Record<string, unknown>> = [];
+    const prisma = {
+      scheduledTransaction: { findMany: vi.fn(async () => [{ id: "b1", description: "R", amount: 1, category: { name: "C" } }]) },
+      scheduledTransactionLog: {
+        findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
+          seen.push(where);
+          return [];
+        }),
+      },
+      transaction: { findMany: vi.fn(async () => []) },
+    } as unknown as PrismaClient;
+
+    const result = await getBillHistory(prisma, "u1", { months: 6 });
+
+    const due = seen[0].dueDate as { gte?: Date; lte?: Date };
+    expect(due.lte).toBeDefined();
+    expect(due.lte!.toISOString()).toBe("2026-08-24T00:00:00.000Z");
+    expect(result.to).toBe("2026-08-24");
+  });
+
+  it("leaves a day that exists in the target month alone", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-24T12:00:00.000Z"));
+
+    const result = await getBillHistory(emptyPrisma(), "u1", { months: 6 });
+
+    expect(result.from).toBe("2026-02-24");
   });
 });

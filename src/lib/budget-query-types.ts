@@ -265,3 +265,90 @@ export interface LabelItem {
   /** Auto-apply rules: transactions created in these windows get the label */
   schedules: Array<{ days: number[]; startTime: string; endTime: string }>;
 }
+
+// --- get_bill_history ---
+
+export interface BillHistoryParams {
+  /** Restrict to one bill. Omit to cover every bill the user has */
+  billId?: string;
+  /** Restrict to one outcome. Matched against the occurrence's settled outcome, so a
+   *  snoozed-then-paid occurrence counts as PAID, not SNOOZED. */
+  status?: BillOccurrenceStatus;
+  /** How many months back to look. Defaults to 6 */
+  months?: number;
+  /** Max occurrences returned. Summaries still cover the whole window. Defaults to 50 */
+  limit?: number;
+  /** User's timezone offset in minutes (`getTimezoneOffset()` convention, so UTC+8 is
+   *  -480). Lateness is measured in the user's calendar days. */
+  timezoneOffset?: number;
+}
+
+export type BillOccurrenceStatus = "PAID" | "SKIPPED" | "SNOOZED";
+
+/**
+ * One scheduled occurrence of a bill, which is a (bill, dueDate) pair.
+ *
+ * A single occurrence can produce several log rows: snoozing does not settle it, so it can
+ * be snoozed repeatedly and then paid or skipped. Those rows are collapsed here, so this is
+ * genuinely one entry per scheduled occurrence rather than one per user action.
+ */
+export interface BillOccurrence {
+  billId: string;
+  billDescription: string;
+  categoryName: string;
+  /** The bill's *current* configured amount, which may have been edited since */
+  amount: number;
+  /** What the linked transaction actually recorded, which can differ from `amount`: Pay &
+   *  Edit lets the amount be changed at pay time, and editing the bill later rewrites
+   *  `amount` for every past occurrence. `null` unless the occurrence created a transaction.
+   *  Matches `paidAmount` on `/api/bills/[id]/history`. */
+  paidAmount: number | null;
+  /** The date this occurrence was due */
+  dueDate: string;
+  /** The settled outcome (PAID or SKIPPED), or SNOOZED while still outstanding */
+  status: BillOccurrenceStatus;
+  /** When it was settled, or the most recent snooze if it never was */
+  actionDate: string | null;
+  /** Whole calendar days between the due day and the day it was paid. The due day is the
+   *  stored calendar date; only the action instant is converted to the user's timezone.
+   *  Negative means paid early. `null` unless the occurrence was PAID. */
+  daysLate: number | null;
+  /** How many times this occurrence was snoozed before being settled */
+  snoozeCount: number;
+  /** Whether paying it created a transaction */
+  transactionId: string | null;
+  snoozeUntil: string | null;
+}
+
+export interface BillHistorySummary {
+  billId: string;
+  description: string;
+  categoryName: string;
+  /** Scheduled occurrences in the window, not user actions. An occurrence snoozed twice and
+   *  then paid counts once here, not three times. */
+  occurrences: number;
+  /** Counts below are by settled outcome, so they sum to `occurrences` */
+  paid: number;
+  skipped: number;
+  /** Occurrences snoozed and still outstanding */
+  snoozed: number;
+  /** Total snoozes across all occurrences, which can exceed `occurrences` */
+  totalSnoozes: number;
+  /** Of the paid ones, how many landed on or before the due date */
+  paidOnTime: number;
+  paidLate: number;
+  /** Averaged over paid occurrences only; skipped and snoozed have no lateness.
+   *  `null` when nothing was paid. Negative means early on average. */
+  avgDaysLate: number | null;
+  /** Worst single lateness among paid occurrences. `null` when nothing was paid. */
+  maxDaysLate: number | null;
+}
+
+export interface BillHistory {
+  /** Start of the window, YYYY-MM-DD in the user's timezone */
+  from: string;
+  to: string;
+  occurrences: BillOccurrence[];
+  /** One entry per bill with history in the window, worst average lateness first */
+  summaries: BillHistorySummary[];
+}
