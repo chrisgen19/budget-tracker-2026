@@ -2,6 +2,60 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-24 - MCP Bill Payment History
+
+Closes #112. Second feature item from the MCP audit. 10 tools become 11.
+
+`ScheduledTransactionLog` records what actually happened to every bill occurrence -- `PAID`,
+`SKIPPED`, or `SNOOZED`, with the `dueDate` it was for and the `actionDate` it was acted on --
+and none of the tools could see it. `get_upcoming_bills` only reports what is due next, so the
+whole payment-behaviour question ("how often do I pay rent late?", "which bills do I keep
+skipping?") was unanswerable.
+
+### New tool
+**`get_bill_history`** returns both the individual occurrences and a per-bill summary, so one
+call answers "what happened" and "what is the pattern". Per occurrence: description, category,
+due date, status, action date, `daysLate`, whether a transaction was created, and any
+`snoozeUntil`. Per bill: occurrence count, the split by status, paid-on-time versus paid-late,
+and average and worst lateness. Called without a `billId` it covers every bill, so it doubles
+as bill-ID discovery and no separate list tool is needed.
+
+### Lateness is measured in local calendar days, and it matters here
+`dueDate` is stored at midnight UTC while `actionDate` is a real timestamp, so subtracting them
+directly gives fractional days and mis-rounds for anyone off UTC. Both sides are truncated to
+the user's local day first.
+
+This is not theoretical on this account. Two of the six real occurrences change answer:
+
+```
+BRV   actionUTC=2026-03-09T22:09Z = 2026-03-10 06:09 Manila -> 5 days late, not 4
+PLDT  actionUTC=2026-03-19T21:36Z = 2026-03-20 05:36 Manila -> 0, on time, not 1 day early
+```
+
+Bills get paid late at night Manila time, which lands on the next UTC day. A first hand-check
+of this data using UTC dates produced both of those wrong, which is exactly the failure the
+truncation prevents.
+
+Two further decisions:
+- **Negative `daysLate` is kept, not clamped.** "Usually two days early" is a real answer
+- **`SKIPPED` and `SNOOZED` carry no lateness and are excluded from the averages.** Neither has
+  a payment date to be late relative to, so folding them in would make the averages meaningless.
+  They still count toward the occurrence total and their own status tallies
+
+### Tests
+Ten more (60 total): the late-night Manila case and the same payment for a UTC user (which must
+differ), same-local-day reporting 0 rather than negative, early payments keeping their sign,
+skipped/snoozed having null lateness, averages excluding them, null rather than `NaN` when
+nothing was paid, no bills returning empty, worst-first sort ordering with unmeasurable bills
+last, and `limit` capping occurrences while summaries still cover the window.
+
+### Files
+- `src/lib/budget-queries.ts` -- `getBillHistory`, local-day helpers
+- `src/lib/budget-query-types.ts` -- bill history types
+- `src/lib/budget-queries.test.ts` -- lateness coverage
+- `mcp-server/src/index.ts` -- tool registration
+- `README.md`, `AGENTS.md` -- tool table and counts
+
 ## 2026-08-24 - MCP Label Support
 
 Closes #110. Labels are a first-class feature of the app and were completely invisible to the

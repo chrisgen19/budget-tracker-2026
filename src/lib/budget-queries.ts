@@ -21,6 +21,11 @@ import type {
   LabelBreakdownItem,
   LabelListParams,
   LabelItem,
+  BillHistoryParams,
+  BillHistory,
+  BillOccurrence,
+  BillHistorySummary,
+  BillOccurrenceStatus,
   DateRange,
 } from "./budget-query-types";
 
@@ -599,4 +604,143 @@ export const getLabelList = async (
       endTime: sc.endTime,
     })),
   }));
+};
+
+/** Truncate an instant to its calendar day in the user's timezone, as a UTC midnight. */
+const localDayStart = (date: Date, tzOffset: number): Date => {
+  const local = toLocal(date, tzOffset);
+  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()));
+};
+
+/** YYYY-MM-DD for a local-shifted date. */
+const dayKey = (local: Date): string =>
+  `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, "0")}-${String(local.getUTCDate()).padStart(2, "0")}`;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Bill occurrence history plus per-bill payment patterns.
+ *
+ * Lateness is measured in whole calendar days *in the user's timezone*. `dueDate` is stored
+ * at midnight UTC while `actionDate` is a real timestamp, so subtracting them directly gives
+ * fractional days and mis-rounds for anyone off UTC. Both sides are truncated to a local day
+ * first. Negative means paid early, which is kept rather than clamped: "usually two days
+ * early" is a real answer.
+ *
+ * Only PAID occurrences carry lateness. Folding SKIPPED and SNOOZED into the averages would
+ * make them meaningless, since neither has a payment date to be late relative to.
+ */
+export const getBillHistory = async (
+  prisma: PrismaClient,
+  userId: string,
+  params: BillHistoryParams = {}
+): Promise<BillHistory> => {
+  const tz = params.timezoneOffset ?? 0;
+  const months = params.months ?? 6;
+  const limit = params.limit ?? 50;
+
+  const today = localDayStart(new Date(), tz);
+  const from = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - months, today.getUTCDate()));
+
+  const bills = await prisma.scheduledTransaction.findMany({
+    where: { userId, ...(params.billId ? { id: params.billId } : {}) },
+    include: { category: true },
+  });
+
+  if (bills.length === 0) {
+    return { from: dayKey(from), to: dayKey(today), occurrences: [], summaries: [] };
+  }
+
+  const billsById = new Map(bills.map((b) => [b.id, b]));
+
+  const logs = await prisma.scheduledTransactionLog.findMany({
+    where: {
+      scheduledTransactionId: { in: bills.map((b) => b.id) },
+      dueDate: { gte: from },
+      ...(params.status ? { status: params.status } : {}),
+    },
+    orderBy: { dueDate: "desc" },
+  });
+
+  const occurrences: BillOccurrence[] = [];
+  const stats = new Map<string, BillHistorySummary & { _lateDays: number[] }>();
+
+  for (const log of logs) {
+    const bill = billsById.get(log.scheduledTransactionId);
+    if (!bill) continue;
+
+    const status = log.status as BillOccurrenceStatus;
+
+    let daysLate: number | null = null;
+    if (status === "PAID" && log.actionDate) {
+      const due = localDayStart(log.dueDate, tz);
+      const acted = localDayStart(log.actionDate, tz);
+      daysLate = Math.round((acted.getTime() - due.getTime()) / DAY_MS);
+    }
+
+    occurrences.push({
+      billId: bill.id,
+      billDescription: bill.description || bill.category.name,
+      categoryName: bill.category.name,
+      amount: bill.amount,
+      dueDate: log.dueDate.toISOString(),
+      status,
+      actionDate: log.actionDate?.toISOString() ?? null,
+      daysLate,
+      transactionId: log.transactionId ?? null,
+      snoozeUntil: log.snoozeUntil?.toISOString() ?? null,
+    });
+
+    let entry = stats.get(bill.id);
+    if (!entry) {
+      entry = {
+        billId: bill.id,
+        description: bill.description || bill.category.name,
+        categoryName: bill.category.name,
+        occurrences: 0,
+        paid: 0,
+        skipped: 0,
+        snoozed: 0,
+        paidOnTime: 0,
+        paidLate: 0,
+        avgDaysLate: null,
+        maxDaysLate: null,
+        _lateDays: [],
+      };
+      stats.set(bill.id, entry);
+    }
+
+    entry.occurrences += 1;
+    if (status === "PAID") entry.paid += 1;
+    else if (status === "SKIPPED") entry.skipped += 1;
+    else entry.snoozed += 1;
+
+    if (daysLate !== null) {
+      entry._lateDays.push(daysLate);
+      if (daysLate > 0) entry.paidLate += 1;
+      else entry.paidOnTime += 1;
+    }
+  }
+
+  const summaries: BillHistorySummary[] = Array.from(stats.values()).map((e) => {
+    const { _lateDays, ...rest } = e;
+    return {
+      ...rest,
+      avgDaysLate:
+        _lateDays.length > 0
+          ? Math.round((_lateDays.reduce((a, b) => a + b, 0) / _lateDays.length) * 10) / 10
+          : null,
+      maxDaysLate: _lateDays.length > 0 ? Math.max(..._lateDays) : null,
+    };
+  });
+
+  // Worst offenders first; bills with no measurable lateness sort last.
+  summaries.sort((a, b) => (b.avgDaysLate ?? -Infinity) - (a.avgDaysLate ?? -Infinity));
+
+  return {
+    from: dayKey(from),
+    to: dayKey(today),
+    occurrences: occurrences.slice(0, limit),
+    summaries,
+  };
 };

@@ -265,3 +265,67 @@ export interface LabelItem {
   /** Auto-apply rules: transactions created in these windows get the label */
   schedules: Array<{ days: number[]; startTime: string; endTime: string }>;
 }
+
+// --- get_bill_history ---
+
+export interface BillHistoryParams {
+  /** Restrict to one bill. Omit to cover every bill the user has */
+  billId?: string;
+  /** Restrict to one outcome */
+  status?: BillOccurrenceStatus;
+  /** How many months back to look. Defaults to 6 */
+  months?: number;
+  /** Max occurrences returned. Summaries still cover the whole window. Defaults to 50 */
+  limit?: number;
+  /** User's timezone offset in minutes (`getTimezoneOffset()` convention, so UTC+8 is
+   *  -480). Lateness is measured in the user's calendar days. */
+  timezoneOffset?: number;
+}
+
+export type BillOccurrenceStatus = "PAID" | "SKIPPED" | "SNOOZED";
+
+export interface BillOccurrence {
+  billId: string;
+  billDescription: string;
+  categoryName: string;
+  amount: number;
+  /** The date this occurrence was due */
+  dueDate: string;
+  status: BillOccurrenceStatus;
+  /** When the user acted on it, if they did */
+  actionDate: string | null;
+  /** Whole calendar days between due and action, in the user's timezone. Negative means
+   *  paid early. `null` when it cannot be measured (no action date, or not PAID). */
+  daysLate: number | null;
+  /** Whether paying it created a transaction */
+  transactionId: string | null;
+  snoozeUntil: string | null;
+}
+
+export interface BillHistorySummary {
+  billId: string;
+  description: string;
+  categoryName: string;
+  /** Occurrences recorded in the window */
+  occurrences: number;
+  paid: number;
+  skipped: number;
+  snoozed: number;
+  /** Of the paid ones, how many landed on or before the due date */
+  paidOnTime: number;
+  paidLate: number;
+  /** Averaged over paid occurrences only; skipped and snoozed have no lateness.
+   *  `null` when nothing was paid. Negative means early on average. */
+  avgDaysLate: number | null;
+  /** Worst single lateness among paid occurrences. `null` when nothing was paid. */
+  maxDaysLate: number | null;
+}
+
+export interface BillHistory {
+  /** Start of the window, YYYY-MM-DD in the user's timezone */
+  from: string;
+  to: string;
+  occurrences: BillOccurrence[];
+  /** One entry per bill with history in the window, worst average lateness first */
+  summaries: BillHistorySummary[];
+}

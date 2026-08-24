@@ -13,6 +13,7 @@ import {
   getCategoryList,
   getLabelBreakdown,
   getLabelList,
+  getBillHistory,
 } from "../../src/lib/budget-queries.js";
 
 const userId = process.env.BUDGET_USER_ID;
@@ -340,6 +341,56 @@ server.registerTool(
   },
   async ({ applicableTo }) => {
     const result = await getLabelList(prisma, userId, { applicableTo });
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+    };
+  }
+);
+
+server.registerTool(
+  "get_bill_history",
+  {
+    title: "Bill payment history",
+    description:
+      "Get what actually happened to past bill occurrences (paid, skipped, or snoozed), plus " +
+      "a per-bill summary of payment patterns: how often each was paid late, the average and " +
+      "worst lateness in days. Answers questions like 'how often do I pay rent late?' or " +
+      "'which bills do I keep skipping?'. Negative lateness means paid early. Called without " +
+      "a billId it covers every bill, so it can also be used to discover bill IDs.",
+    inputSchema: {
+      billId: z
+        .string()
+        .optional()
+        .describe("Restrict to one bill. Omit to cover every bill."),
+      status: z
+        .enum(["PAID", "SKIPPED", "SNOOZED"])
+        .optional()
+        .describe("Restrict to one outcome."),
+      months: z
+        .number()
+        .int()
+        .min(1)
+        .max(60)
+        .optional()
+        .describe("How many months back to look. Defaults to 6."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe("Max occurrences returned. Summaries still cover the whole window. Defaults to 50."),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  async ({ billId, status, months, limit }) => {
+    const result = await getBillHistory(prisma, userId, {
+      billId,
+      status,
+      months,
+      limit,
+      timezoneOffset: userTimezoneOffset,
+    });
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
     };
