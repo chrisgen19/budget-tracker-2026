@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { Prisma } from "@prisma/client";
 import type { PrismaClient } from "@prisma/client";
 import {
   getSpendingByCategory,
@@ -858,6 +859,27 @@ describe("getReceiptItems validates the stored breakdown rather than casting it"
     await getReceiptItems(prisma, "u1", { month: "2026-03", timezoneOffset: MANILA });
 
     expect((seen[0].date as DateFilter).gte?.toISOString()).toBe("2026-02-28T16:00:00.000Z");
+  });
+
+  it("excludes rows with Prisma's DbNull sentinel, not a plain null", async () => {
+    // Prisma's typed API rejects `equals: null` on a nullable JSON column; it happens to
+    // execute on 6.19.2, and the Record<string, unknown> where-clause hides the type error,
+    // so nothing else would catch a regression here.
+    const seen: Array<Record<string, unknown>> = [];
+    const prisma = {
+      transaction: {
+        findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
+          seen.push(where);
+          return [];
+        }),
+      },
+    } as unknown as PrismaClient;
+
+    await getReceiptItems(prisma, "u1", {});
+
+    const not = seen[0].NOT as { receiptBreakdown: { equals: unknown } };
+    expect(not.receiptBreakdown.equals).toBe(Prisma.DbNull);
+    expect(not.receiptBreakdown.equals).not.toBeNull();
   });
 
   it("filters to one receipt group", async () => {
