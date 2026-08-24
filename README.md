@@ -255,7 +255,7 @@ Claude Desktop will automatically start the MCP server when you open a conversat
 To verify tools work correctly before using in Claude Desktop:
 
 ```bash
-BUDGET_USER_ID=your-user-id DATABASE_URL="your-database-url" npx @modelcontextprotocol/inspector npx tsx mcp-server/src/index.ts
+BUDGET_USER_ID=your-user-id DATABASE_URL="your-database-url" npx @modelcontextprotocol/inspector mcp-server/node_modules/.bin/tsx mcp-server/src/index.ts
 ```
 
 This opens a web UI at `http://localhost:6274` where you can call each tool and inspect the results.

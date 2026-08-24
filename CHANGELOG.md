@@ -36,7 +36,7 @@ local day. That bug is tracked separately; this change is about the reason nobod
 ### Verification
 - `cd mcp-server && pnpm type-check` passes in ~2s, against a 140s OOM crash before
 - Confirmed it actually catches drift rather than merely passing: adding a required 4th parameter to `getTopExpenses` in `budget-queries.ts` produced `src/index.ts(68,26): error TS2554: Expected 4 arguments, but got 3`, then the change was reverted
-- The CI sequence was run locally as written (`rm -rf node_modules && pnpm install --frozen-lockfile --engine-strict && pnpm type-check`)
+- The two new CI steps were run locally as written, from `mcp-server/` (`rm -rf node_modules && pnpm install --frozen-lockfile --engine-strict && pnpm type-check`). Root `pnpm lint`, `pnpm type-check`, and `pnpm test` were run separately and pass
 - The server still works end to end: driven over stdio with a real MCP client, all 8 tools returned live data, and argument validation still rejects `month: "not-a-month"` and `limit: 999` with `-32602`
 - Regenerating the lockfile floated the SDK from 1.27.1 to 1.30.0. Type-check and the stdio smoke test were both re-run on it
 
