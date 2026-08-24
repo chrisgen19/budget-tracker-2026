@@ -612,23 +612,52 @@ const localDayStart = (date: Date, tzOffset: number): Date => {
   return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()));
 };
 
+/**
+ * Truncate a date-only value to its stored calendar day, with no timezone conversion.
+ *
+ * Bill due dates carry no time component: they are stored at midnight UTC and mean "the 5th",
+ * not an instant. Shifting one into a timezone west of UTC moves it to the 4th, which turns
+ * every on-time payment into a day late. Only real instants get `localDayStart`.
+ */
+const utcDayStart = (date: Date): Date =>
+  new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+
 /** YYYY-MM-DD for a local-shifted date. */
 const dayKey = (local: Date): string =>
   `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, "0")}-${String(local.getUTCDate()).padStart(2, "0")}`;
+
+/**
+ * N months before a day, clamped to the target month's last day.
+ *
+ * `Date.UTC(y, m - 6, 31)` for a 31st in a shorter target month overflows forward: six months
+ * before Aug 31 becomes Mar 3, silently trimming days off the front of the window.
+ */
+const monthsBefore = (day: Date, months: number): Date => {
+  const year = day.getUTCFullYear();
+  const month = day.getUTCMonth() - months;
+  const lastDayOfTarget = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(year, month, Math.min(day.getUTCDate(), lastDayOfTarget)));
+};
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Bill occurrence history plus per-bill payment patterns.
  *
- * Lateness is measured in whole calendar days *in the user's timezone*. `dueDate` is stored
- * at midnight UTC while `actionDate` is a real timestamp, so subtracting them directly gives
- * fractional days and mis-rounds for anyone off UTC. Both sides are truncated to a local day
- * first. Negative means paid early, which is kept rather than clamped: "usually two days
- * early" is a real answer.
+ * A scheduled occurrence is a (bill, dueDate) pair, and it can produce several log rows:
+ * snoozing deliberately does not settle the occurrence, so it can be snoozed repeatedly and
+ * then paid or skipped. Rows are collapsed per occurrence here, so the summary counts
+ * scheduled occurrences rather than user actions.
  *
- * Only PAID occurrences carry lateness. Folding SKIPPED and SNOOZED into the averages would
- * make them meaningless, since neither has a payment date to be late relative to.
+ * Lateness is whole calendar days between the due day and the day of payment. The due date is
+ * date-only (stored at midnight UTC, meaning "the 5th"), so it is read as its stored calendar
+ * day; only `actionDate`, a real instant, is converted into the user's timezone. Converting
+ * both would move the due day backwards for anyone west of UTC and report every on-time
+ * payment as a day late.
+ *
+ * Negative means paid early, which is kept rather than clamped: "usually two days early" is a
+ * real answer. Only settled-as-PAID occurrences carry lateness; skipped and outstanding ones
+ * have no payment date to be late relative to, so they stay out of the averages.
  */
 export const getBillHistory = async (
   prisma: PrismaClient,
@@ -640,7 +669,7 @@ export const getBillHistory = async (
   const limit = params.limit ?? 50;
 
   const today = localDayStart(new Date(), tz);
-  const from = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - months, today.getUTCDate()));
+  const from = monthsBefore(today, months);
 
   const bills = await prisma.scheduledTransaction.findMany({
     where: { userId, ...(params.billId ? { id: params.billId } : {}) },
@@ -653,28 +682,70 @@ export const getBillHistory = async (
 
   const billsById = new Map(bills.map((b) => [b.id, b]));
 
+  // The status filter is applied after grouping, against each occurrence's settled outcome.
+  // Filtering in the query would drop the sibling rows needed to work that outcome out.
   const logs = await prisma.scheduledTransactionLog.findMany({
     where: {
       scheduledTransactionId: { in: bills.map((b) => b.id) },
       dueDate: { gte: from },
-      ...(params.status ? { status: params.status } : {}),
     },
     orderBy: { dueDate: "desc" },
   });
 
+  type Group = {
+    billId: string;
+    dueDate: Date;
+    settled: (typeof logs)[number] | null;
+    latestSnooze: (typeof logs)[number] | null;
+    snoozeCount: number;
+  };
+
+  const groups = new Map<string, Group>();
+
+  for (const log of logs) {
+    if (!billsById.has(log.scheduledTransactionId)) continue;
+
+    const key = `${log.scheduledTransactionId}:${log.dueDate.getTime()}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        billId: log.scheduledTransactionId,
+        dueDate: log.dueDate,
+        settled: null,
+        latestSnooze: null,
+        snoozeCount: 0,
+      };
+      groups.set(key, group);
+    }
+
+    if (log.status === "SNOOZED") {
+      group.snoozeCount += 1;
+      const current = group.latestSnooze?.actionDate?.getTime() ?? -Infinity;
+      if ((log.actionDate?.getTime() ?? -Infinity) >= current) group.latestSnooze = log;
+    } else {
+      // PAID and SKIPPED are guarded by alreadySettled, so there is at most one per occurrence.
+      group.settled = log;
+    }
+  }
+
   const occurrences: BillOccurrence[] = [];
   const stats = new Map<string, BillHistorySummary & { _lateDays: number[] }>();
 
-  for (const log of logs) {
-    const bill = billsById.get(log.scheduledTransactionId);
-    if (!bill) continue;
+  const ordered = Array.from(groups.values()).sort(
+    (a, b) => b.dueDate.getTime() - a.dueDate.getTime()
+  );
 
-    const status = log.status as BillOccurrenceStatus;
+  for (const group of ordered) {
+    const bill = billsById.get(group.billId)!;
+    const record = group.settled ?? group.latestSnooze!;
+    const status = (group.settled ? group.settled.status : "SNOOZED") as BillOccurrenceStatus;
+
+    if (params.status && status !== params.status) continue;
 
     let daysLate: number | null = null;
-    if (status === "PAID" && log.actionDate) {
-      const due = localDayStart(log.dueDate, tz);
-      const acted = localDayStart(log.actionDate, tz);
+    if (status === "PAID" && record.actionDate) {
+      const due = utcDayStart(group.dueDate);
+      const acted = localDayStart(record.actionDate, tz);
       daysLate = Math.round((acted.getTime() - due.getTime()) / DAY_MS);
     }
 
@@ -683,12 +754,13 @@ export const getBillHistory = async (
       billDescription: bill.description || bill.category.name,
       categoryName: bill.category.name,
       amount: bill.amount,
-      dueDate: log.dueDate.toISOString(),
+      dueDate: group.dueDate.toISOString(),
       status,
-      actionDate: log.actionDate?.toISOString() ?? null,
+      actionDate: record.actionDate?.toISOString() ?? null,
       daysLate,
-      transactionId: log.transactionId ?? null,
-      snoozeUntil: log.snoozeUntil?.toISOString() ?? null,
+      snoozeCount: group.snoozeCount,
+      transactionId: group.settled?.transactionId ?? null,
+      snoozeUntil: group.latestSnooze?.snoozeUntil?.toISOString() ?? null,
     });
 
     let entry = stats.get(bill.id);
@@ -701,6 +773,7 @@ export const getBillHistory = async (
         paid: 0,
         skipped: 0,
         snoozed: 0,
+        totalSnoozes: 0,
         paidOnTime: 0,
         paidLate: 0,
         avgDaysLate: null,
@@ -711,6 +784,7 @@ export const getBillHistory = async (
     }
 
     entry.occurrences += 1;
+    entry.totalSnoozes += group.snoozeCount;
     if (status === "PAID") entry.paid += 1;
     else if (status === "SKIPPED") entry.skipped += 1;
     else entry.snoozed += 1;

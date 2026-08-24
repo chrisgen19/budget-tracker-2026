@@ -433,8 +433,16 @@ describe("getBillHistory measures lateness in the user's calendar days", () => {
       histPrisma(
         [bill("b1", "Meralco")],
         [
-          log({ status: "SKIPPED", actionDate: new Date("2026-03-09T22:32:04.935Z") }),
-          log({ status: "SNOOZED", snoozeUntil: new Date("2026-03-12T00:00:00.000Z") }),
+          log({
+            dueDate: new Date("2026-03-05T00:00:00.000Z"),
+            status: "SKIPPED",
+            actionDate: new Date("2026-03-09T22:32:04.935Z"),
+          }),
+          log({
+            dueDate: new Date("2026-04-05T00:00:00.000Z"),
+            status: "SNOOZED",
+            snoozeUntil: new Date("2026-04-12T00:00:00.000Z"),
+          }),
         ]
       ),
       "u1",
@@ -452,9 +460,12 @@ describe("getBillHistory measures lateness in the user's calendar days", () => {
       histPrisma(
         [bill("b1", "Meralco")],
         [
-          log({ actionDate: new Date("2026-03-09T00:00:00.000Z") }),
-          log({ status: "SKIPPED" }),
-          log({ status: "SNOOZED" }),
+          log({
+            dueDate: new Date("2026-03-05T00:00:00.000Z"),
+            actionDate: new Date("2026-03-09T00:00:00.000Z"),
+          }),
+          log({ dueDate: new Date("2026-04-05T00:00:00.000Z"), status: "SKIPPED" }),
+          log({ dueDate: new Date("2026-05-05T00:00:00.000Z"), status: "SNOOZED" }),
         ]
       ),
       "u1",
@@ -514,5 +525,150 @@ describe("getBillHistory measures lateness in the user's calendar days", () => {
 
     expect(result.occurrences).toHaveLength(2);
     expect(result.summaries[0].occurrences).toBe(3);
+  });
+
+  // --- review follow-ups (#113) ---
+
+  it("reads the due date as its stored calendar day, not shifted into the user's timezone", async () => {
+    // dueDate is date-only: midnight UTC meaning "the 5th". Converting it for a user west of
+    // UTC moves it to the 4th and turns this on-time payment into a day late.
+    const paidOnDueDate = [
+      log({
+        dueDate: new Date("2026-03-05T00:00:00.000Z"),
+        actionDate: new Date("2026-03-05T15:00:00.000Z"), // 10:00 on the 5th in UTC-5
+      }),
+    ];
+
+    const newYork = await getBillHistory(histPrisma([bill("b1", "Rent")], paidOnDueDate), "u1", {
+      timezoneOffset: 300,
+    });
+    expect(newYork.occurrences[0].daysLate).toBe(0);
+    expect(newYork.summaries[0].paidOnTime).toBe(1);
+    expect(newYork.summaries[0].paidLate).toBe(0);
+
+    // Still correct east of UTC and at UTC itself.
+    for (const tz of [MANILA, 0]) {
+      const r = await getBillHistory(histPrisma([bill("b1", "Rent")], paidOnDueDate), "u1", {
+        timezoneOffset: tz,
+      });
+      expect(r.occurrences[0].daysLate).toBe(0);
+    }
+  });
+
+  it("collapses repeated actions on one occurrence into a single occurrence", async () => {
+    // Snoozing does not settle an occurrence, so the same (bill, dueDate) can be snoozed
+    // twice and then paid. That is one scheduled occurrence, not three.
+    const due = new Date("2026-03-05T00:00:00.000Z");
+    const result = await getBillHistory(
+      histPrisma(
+        [bill("b1", "Meralco")],
+        [
+          log({ dueDate: due, status: "SNOOZED", actionDate: new Date("2026-03-05T02:00:00.000Z") }),
+          log({ dueDate: due, status: "SNOOZED", actionDate: new Date("2026-03-06T02:00:00.000Z") }),
+          log({ dueDate: due, status: "PAID", actionDate: new Date("2026-03-07T02:00:00.000Z") }),
+        ]
+      ),
+      "u1",
+      {}
+    );
+
+    expect(result.occurrences).toHaveLength(1);
+    expect(result.occurrences[0].status).toBe("PAID");
+    expect(result.occurrences[0].snoozeCount).toBe(2);
+    expect(result.occurrences[0].daysLate).toBe(2);
+
+    const summary = result.summaries[0];
+    expect(summary.occurrences).toBe(1);
+    expect(summary.paid).toBe(1);
+    expect(summary.snoozed).toBe(0);
+    expect(summary.totalSnoozes).toBe(2);
+    expect(summary.paid + summary.skipped + summary.snoozed).toBe(summary.occurrences);
+  });
+
+  it("reports an unsettled occurrence as SNOOZED with its latest snooze", async () => {
+    const due = new Date("2026-03-05T00:00:00.000Z");
+    const result = await getBillHistory(
+      histPrisma(
+        [bill("b1", "Meralco")],
+        [
+          log({
+            dueDate: due,
+            status: "SNOOZED",
+            actionDate: new Date("2026-03-05T02:00:00.000Z"),
+            snoozeUntil: new Date("2026-03-06T00:00:00.000Z"),
+          }),
+          log({
+            dueDate: due,
+            status: "SNOOZED",
+            actionDate: new Date("2026-03-06T02:00:00.000Z"),
+            snoozeUntil: new Date("2026-03-09T00:00:00.000Z"),
+          }),
+        ]
+      ),
+      "u1",
+      {}
+    );
+
+    expect(result.occurrences).toHaveLength(1);
+    expect(result.occurrences[0].status).toBe("SNOOZED");
+    expect(result.occurrences[0].snoozeUntil).toBe("2026-03-09T00:00:00.000Z");
+    expect(result.occurrences[0].daysLate).toBeNull();
+    expect(result.summaries[0].snoozed).toBe(1);
+  });
+
+  it("matches the status filter against the settled outcome, not the individual actions", async () => {
+    const due = new Date("2026-03-05T00:00:00.000Z");
+    const logs = [
+      log({ dueDate: due, status: "SNOOZED", actionDate: new Date("2026-03-05T02:00:00.000Z") }),
+      log({ dueDate: due, status: "PAID", actionDate: new Date("2026-03-06T02:00:00.000Z") }),
+    ];
+
+    const paid = await getBillHistory(histPrisma([bill("b1", "M")], logs), "u1", { status: "PAID" });
+    expect(paid.occurrences).toHaveLength(1);
+
+    // It was snoozed, but it settled as PAID, so it must not match a SNOOZED filter.
+    const snoozed = await getBillHistory(histPrisma([bill("b1", "M")], logs), "u1", {
+      status: "SNOOZED",
+    });
+    expect(snoozed.occurrences).toHaveLength(0);
+    expect(snoozed.summaries).toHaveLength(0);
+  });
+});
+
+describe("getBillHistory window arithmetic", () => {
+  const emptyPrisma = () =>
+    ({
+      scheduledTransaction: { findMany: vi.fn(async () => []) },
+      scheduledTransactionLog: { findMany: vi.fn(async () => []) },
+    }) as unknown as PrismaClient;
+
+  it("clamps the lookback to the target month's last day instead of overflowing", async () => {
+    // Date.UTC(2026, 1, 31) is Feb 31, which rolls forward to Mar 3 and silently trims
+    // three days off the front of a six-month window.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-31T12:00:00.000Z"));
+
+    const result = await getBillHistory(emptyPrisma(), "u1", { months: 6 });
+
+    expect(result.from).toBe("2026-02-28");
+    expect(result.to).toBe("2026-08-31");
+  });
+
+  it("clamps into a 30-day month too", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-31T12:00:00.000Z"));
+
+    const result = await getBillHistory(emptyPrisma(), "u1", { months: 6 });
+
+    expect(result.from).toBe("2025-11-30");
+  });
+
+  it("leaves a day that exists in the target month alone", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-24T12:00:00.000Z"));
+
+    const result = await getBillHistory(emptyPrisma(), "u1", { months: 6 });
+
+    expect(result.from).toBe("2026-02-24");
   });
 });

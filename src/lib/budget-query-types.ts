@@ -271,7 +271,8 @@ export interface LabelItem {
 export interface BillHistoryParams {
   /** Restrict to one bill. Omit to cover every bill the user has */
   billId?: string;
-  /** Restrict to one outcome */
+  /** Restrict to one outcome. Matched against the occurrence's settled outcome, so a
+   *  snoozed-then-paid occurrence counts as PAID, not SNOOZED. */
   status?: BillOccurrenceStatus;
   /** How many months back to look. Defaults to 6 */
   months?: number;
@@ -284,6 +285,13 @@ export interface BillHistoryParams {
 
 export type BillOccurrenceStatus = "PAID" | "SKIPPED" | "SNOOZED";
 
+/**
+ * One scheduled occurrence of a bill, which is a (bill, dueDate) pair.
+ *
+ * A single occurrence can produce several log rows: snoozing does not settle it, so it can
+ * be snoozed repeatedly and then paid or skipped. Those rows are collapsed here, so this is
+ * genuinely one entry per scheduled occurrence rather than one per user action.
+ */
 export interface BillOccurrence {
   billId: string;
   billDescription: string;
@@ -291,12 +299,16 @@ export interface BillOccurrence {
   amount: number;
   /** The date this occurrence was due */
   dueDate: string;
+  /** The settled outcome (PAID or SKIPPED), or SNOOZED while still outstanding */
   status: BillOccurrenceStatus;
-  /** When the user acted on it, if they did */
+  /** When it was settled, or the most recent snooze if it never was */
   actionDate: string | null;
-  /** Whole calendar days between due and action, in the user's timezone. Negative means
-   *  paid early. `null` when it cannot be measured (no action date, or not PAID). */
+  /** Whole calendar days between the due day and the day it was paid. The due day is the
+   *  stored calendar date; only the action instant is converted to the user's timezone.
+   *  Negative means paid early. `null` unless the occurrence was PAID. */
   daysLate: number | null;
+  /** How many times this occurrence was snoozed before being settled */
+  snoozeCount: number;
   /** Whether paying it created a transaction */
   transactionId: string | null;
   snoozeUntil: string | null;
@@ -306,11 +318,16 @@ export interface BillHistorySummary {
   billId: string;
   description: string;
   categoryName: string;
-  /** Occurrences recorded in the window */
+  /** Scheduled occurrences in the window, not user actions. An occurrence snoozed twice and
+   *  then paid counts once here, not three times. */
   occurrences: number;
+  /** Counts below are by settled outcome, so they sum to `occurrences` */
   paid: number;
   skipped: number;
+  /** Occurrences snoozed and still outstanding */
   snoozed: number;
+  /** Total snoozes across all occurrences, which can exceed `occurrences` */
+  totalSnoozes: number;
   /** Of the paid ones, how many landed on or before the due date */
   paidOnTime: number;
   paidLate: number;
