@@ -2,6 +2,39 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-24 - MCP Tools Declared Read-Only
+
+Closes #108. All 8 tools moved from the deprecated `server.tool()` to `registerTool`.
+
+### Why it is worth more than a deprecation fix
+- **Every tool now declares `annotations: { readOnlyHint: true }`.** All 8 are read-only by design (the server has no write path at all), but nothing told the client that. A client that knows a tool is read-only can auto-approve it instead of prompting, which is the difference between asking "what did I spend on food?" and answering a permission prompt per question
+- Each tool gained a human-readable `title` for display, separate from its machine name
+
+### Unchanged on purpose
+Tool names, input schemas, and returned content are identical. This is a registration-surface
+change, not a behaviour change.
+
+### Not done here
+`registerTool` also supports `outputSchema`/`structuredContent`, which would replace
+`JSON.stringify(result, null, 2)` in a text block with real structured output. That duplicates
+the return types from `budget-query-types.ts` as zod schemas and changes what every client
+receives, so it belongs in its own change.
+
+### Note
+This was blocked until #102. With the package untypecheckable, rewriting all 8 registrations
+was unverifiable, and the `TS2589` repro in that issue hit `registerTool` too under zod 4. It
+type-checks in ~2.2s now that zod is pinned to the app's 3.x line, which was the specific risk
+worth confirming.
+
+### Verification
+- `cd mcp-server && pnpm type-check` clean in ~2.2s, no `TS2589`, no heap growth
+- Over the wire: all 8 tools list with `readOnlyHint=true`, a title, and byte-identical names and input schemas
+- Data still correct against the live database, and validation still rejects `month: "2026-13"` and `limit: 999`
+
+### Files
+- `mcp-server/src/index.ts` -- 8 registrations migrated
+- `AGENTS.md` -- records the read-only declaration
+
 ## 2026-08-24 - MCP Audit Cleanup
 
 Closes #106. Correctness papercuts, dead config, and stale docs left over from the MCP audit.
