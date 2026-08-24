@@ -299,7 +299,7 @@ export const searchTransactions = async (
   const [transactions, total] = await Promise.all([
     prisma.transaction.findMany({
       where,
-      include: { category: true, bill: true },
+      include: { category: true },
       orderBy,
       skip: (page - 1) * limit,
       take: limit,
