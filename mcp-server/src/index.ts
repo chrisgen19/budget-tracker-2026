@@ -32,10 +32,21 @@ const prisma = new PrismaClient();
  */
 let userTimezoneOffset = 0;
 
-const server = new McpServer({
-  name: "budgettracker",
-  version: "1.0.0",
-});
+const server = new McpServer(
+  {
+    name: "budgettracker",
+    version: "1.0.0",
+  },
+  {
+    instructions:
+      "Read-only access to one person's personal budget: transactions, categories, " +
+      "recurring bills, and monthly summaries. Use it for questions about their own " +
+      "spending, income, or upcoming bills. Months are YYYY-MM and are resolved in the " +
+      "user's own timezone, so results match what they see in the app. Amounts are plain " +
+      "numbers in the user's configured currency. Every tool is read-only; nothing here " +
+      "can create, change, or delete their data.",
+  }
+);
 
 // --- Tool registrations ---
 
@@ -45,7 +56,7 @@ server.tool(
   {
     month: z
       .string()
-      .regex(/^\d{4}-\d{2}$/)
+      .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
       .optional()
       .describe("Month in YYYY-MM format. Defaults to current month."),
   },
@@ -70,7 +81,7 @@ server.tool(
       .describe("Number of results. Defaults to 10."),
     month: z
       .string()
-      .regex(/^\d{4}-\d{2}$/)
+      .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
       .optional()
       .describe("Month in YYYY-MM format. If omitted, returns all-time."),
   },
@@ -108,11 +119,11 @@ server.tool(
   {
     currentMonth: z
       .string()
-      .regex(/^\d{4}-\d{2}$/)
+      .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
       .describe("Current period in YYYY-MM format."),
     previousMonth: z
       .string()
-      .regex(/^\d{4}-\d{2}$/)
+      .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
       .describe("Comparison period in YYYY-MM format."),
   },
   async ({ currentMonth, previousMonth }) => {
@@ -145,7 +156,7 @@ server.tool(
       .describe("Filter by category ID. Use get_category_list to find IDs."),
     month: z
       .string()
-      .regex(/^\d{4}-\d{2}$/)
+      .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
       .optional()
       .describe("Filter by month in YYYY-MM format."),
     amountMin: z.number().optional().describe("Minimum amount filter."),
@@ -186,7 +197,7 @@ server.tool(
   {
     month: z
       .string()
-      .regex(/^\d{4}-\d{2}$/)
+      .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
       .optional()
       .describe("Month in YYYY-MM format. Defaults to current month."),
   },
@@ -259,6 +270,15 @@ const main = async () => {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // Claude Desktop stops the server by signalling it. Release the pool explicitly rather
+  // than leaving it to process teardown.
+  const shutdown = async () => {
+    await prisma.$disconnect().catch(() => {});
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 };
 
 main().catch((err) => {

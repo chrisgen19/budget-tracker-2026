@@ -2,6 +2,42 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-24 - MCP Audit Cleanup
+
+Closes #106. Correctness papercuts, dead config, and stale docs left over from the MCP audit.
+No user-facing behaviour changes beyond rejecting input that previously produced a silently
+wrong answer.
+
+### Correctness
+- **`month: "2026-13"` is rejected instead of silently answering for January 2027.** All six month arguments validated with `/^\d{4}-\d{2}$/`, which accepts `00` and `13`-`99`; `parseMonth` then rolled over (`2026-00` became December 2025) and the tool returned `[]`. An LLM caller reads `[]` as "you spent nothing", not "that month does not exist". Tightened to `/^\d{4}-(0[1-9]|1[0-2])$/`. Verified `2026-01` and `2026-12` still pass while `2026-00`, `2026-13`, `2026-1` and `abcd-12` are refused with `-32602`
+- `searchTransactions` no longer joins `bill`. `include: { category: true, bill: true }` pulled the relation on every search and every paginated page, and nothing in the mapped result read it
+- The MCP server disconnects Prisma on `SIGINT`/`SIGTERM` rather than leaving the pool to process teardown
+- The MCP server advertises `instructions`, so clients have a signal about when to reach for it beyond the individual tool descriptions. It states that months resolve in the user's timezone and that every tool is read-only
+
+### Dead config
+- **`pnpm.onlyBuiltDependencies` moved from `package.json` to `.npmrc`.** pnpm 10.32 stopped reading the `pnpm` field, so the 16-package build allowlist applied to nothing and every pnpm command printed a warning about it. Checked before assuming breakage and nothing was broken: `sharp` ran, the Prisma query engine binary was present, and `bcrypt` was in the list without being a dependency at all (the app uses `bcryptjs`, pure JS). It was dead config plus noise, not a broken build
+- **It deliberately did not move to `pnpm-workspace.yaml`,** the other supported home. Adding that file makes pnpm treat the repo as a workspace root, and `cd mcp-server && pnpm install` then walks up and installs the *root* instead of the MCP package -- which would silently defeat the CI type-check guard added in #102. Confirmed by testing: with the workspace file present the MCP install printed the root's `postinstall`/`prepare`, and scoping it with `packages: ["."]` did not help. The `.npmrc` route keeps the MCP install standalone
+- `bcrypt` dropped from the list, since it is not installed
+
+Verified with a real clean install (`rm -rf node_modules && pnpm install --frozen-lockfile`),
+not just by the warning disappearing: allowlisted packages now run their build scripts, and
+the only remaining `Ignored build scripts` entries are `protobufjs` and `unrs-resolver`, which
+are not on the allowlist and are correctly denied. Deny-by-default is the intended posture.
+
+### Docs
+- `AGENTS.md` model list corrected. It named a `Bill` model that does not exist; recurring bills are `ScheduledTransaction` (`@@map("scheduled_transactions")`). Added the missing `ScheduledTransactionLog`, `BillEmailLog`, `BillLabel`, `AiAssessment`, and `AiUsageLog`. Same schema-vs-docs drift #102 was about
+
+### Still open
+- The 8 `server.tool()` calls remain on the deprecated API; migrating to `registerTool` (with `annotations.readOnlyHint`, which lets clients auto-approve read-only calls) is its own change
+- Tools return bare numbers with no currency, though `users.currency` exists
+- No MCP coverage for labels, bill payment history, or receipt line items
+
+### Files
+- `mcp-server/src/index.ts` -- month validation, `instructions`, shutdown handling
+- `src/lib/budget-queries.ts` -- dropped the unread `bill` join
+- `.npmrc`, `package.json` -- build allowlist rehomed
+- `AGENTS.md` -- model list
+
 ## 2026-08-24 - Timezone-Aware Budget Queries
 
 Closes #104. `src/lib/budget-queries.ts` resolved every month boundary in UTC while the rest
