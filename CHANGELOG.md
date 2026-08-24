@@ -41,8 +41,19 @@ name-length bounds, and unknown-key rejection. `receipt-breakdown.test.ts` cover
 nine unusable shapes to `null`, keeping the valid entries of a partly malformed blob, and the
 total fallback. Both were confirmed to fail with their fix reverted.
 
+### Review follow-up (#120)
+- **Tightening the payload schema put it ahead of the replay lookup, which could duplicate committed transactions.** `POST /api/transactions/batch` ran `batchSchema.parse(body)` before checking whether the batch already existed. A batch accepted under the old permissive schema, whose response was then lost, would have its exact retry rejected with 400 by the new schema. The client reads a 4xx as proof nothing was written (`definitelyNotCommitted` in `use-multi-scan.ts`), drops the idempotency pin and unfreezes the rows, so a corrected resubmit creates the batch a second time.
+
+  This is the same failure the sixth review round on the 2026-08-20 receipt scan work already fixed once, when it moved the existence check ahead of the *label ownership* query for exactly this reason. The tightened schema reintroduced it one layer up, outside that protection. The replay lookup now runs before `batchSchema.parse`; a key that is absent or malformed cannot match an existing batch, so it falls through to normal validation, and the authoritative dedupe under the advisory lock is unchanged.
+
+  Not reachable with the current client, which only ever builds a conforming blob, and all 16 stored rows pass the new schema. Fixed anyway because `AGENTS.md` documents that a 4xx means nothing was written, and the route can only keep that promise if it never rejects a batch that exists — today that held by luck, and the next schema change need not.
+
+  `scripts/verify-batch-idempotency.ts` gained the case, driven against the real HTTP route: a replay whose payload the current schema rejects still returns 200, while the same payload on a *first* attempt is still rejected with 400. Reverting the ordering fails it with `got 400, want 200`.
+
 ### Files
 - `src/lib/validations.ts` -- `receiptBreakdownMetaSchema`, wired into `batchTransactionSchema`
+- `src/app/api/transactions/batch/route.ts` -- replay lookup moved ahead of payload validation
+- `scripts/verify-batch-idempotency.ts` -- stale-payload replay case
 - `src/components/transactions/receipt-breakdown.tsx` -- `toReceiptBreakdownMeta`
 - `src/components/transactions/transaction-form.tsx` -- narrows instead of casting
 - `src/lib/validations.test.ts`, `src/components/transactions/receipt-breakdown.test.ts` -- new
