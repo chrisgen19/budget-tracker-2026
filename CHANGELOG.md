@@ -2,6 +2,57 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-24 - Timezone-Aware Budget Queries
+
+Closes #104. `src/lib/budget-queries.ts` resolved every month boundary in UTC while the rest
+of the app resolved them in the user's stored timezone, so the same transaction landed in
+different months depending on which surface you looked at.
+
+Confirmed against production data for a UTC+8 account (`timezone_offset: -480`): of 288
+transactions, `Apple Subscription` at `2026-02-28T23:45Z` is `2026-03-01T07:45` in Manila.
+The dashboard filed it under March; `budget-queries.ts` filed it under February.
+
+### Correctness
+- **`parseMonth` and `currentMonth` take a `tzOffset`** and use the same formula as `/api/dashboard` and `analytics-period.ts` (`Date.UTC(...) + tzOffset * 60000`), so there is one convention in the codebase instead of two. The offset threads through `getSpendingByCategory`, `getTopExpenses`, `getBudgetOverview`, `getSpendingTrends`, and `searchTransactions` (which had its own inline UTC range)
+- **`getMonthlySummary` buckets by the user's local month**, and derives "now" from their local day rather than the container clock. Previously both the window edges and the per-month bucketing were UTC, so a boundary transaction was attributed to the wrong bar of the trend chart
+- **The AI daily tip was internally inconsistent.** `/api/assessment/daily-tip` already computed `monthStr` in local time and already passed `timezoneOffset` to `getUpcomingBills`, then handed that same local month to `getBudgetOverview` and `getSpendingByCategory`, which re-resolved it as UTC. The tip could quote figures that did not match the dashboard the user was reading. Both calls now pass the offset
+- `/api/assessment/generate` needed no change: it only calls `getUpcomingBills`, which was already timezone-aware
+
+### MCP server
+- Passes the user's offset to all seven date-scoped tools. `get_upcoming_bills` in particular was computing overdue against the container clock, even though `getUpcomingBills` had accepted a `timezoneOffset` since `8465df7` -- the MCP call site was never updated, which is the drift #102 added type-checking to catch
+- **An unknown `BUDGET_USER_ID` now fails at startup** with a message naming the id and pointing at `pnpm db:studio`. It previously connected happily and every tool returned zeros and empty arrays, which reads as "you have no transactions" rather than "you are misconfigured". The startup lookup was needed for the timezone offset anyway
+
+### Compatibility
+`timezoneOffset` is optional and defaults to 0, so callers without user context keep the
+previous UTC behaviour rather than breaking. The tradeoff is that a caller who forgets it
+gets silently wrong months instead of a type error, so `AGENTS.md` now says to pass it
+explicitly from anything holding a user.
+
+### Tests
+`src/lib/budget-queries.test.ts` is new; the module had no coverage at all despite taking
+its `PrismaClient` by injection specifically so it can be driven without a database. Ten
+tests over the boundary case, using a stub client that captures the `where` Prisma would
+have been given. Checked by reverting the fix: 7 of the 10 fail against the old UTC-only
+code. The 3 that still pass are the UTC-fallback tests, which are meant to hold in both
+states since they guard the backward-compatible default.
+
+### Verification
+- End to end through the real MCP server against the live database: searching `2026-03` for a Manila user returns `Apple Subscription`, and `2026-02` returns nothing. Before the fix it was the reverse
+- A bogus `BUDGET_USER_ID` exits 1 with the named error; a missing one keeps its existing message
+- All 8 MCP tools still answer, and argument validation still rejects `month: "not-a-month"` and `limit: 999` with `-32602`
+- `pnpm lint`, `pnpm type-check`, `pnpm test` (39 passing), and `cd mcp-server && pnpm type-check` all pass
+
+### Known gap
+`month: "2026-13"` still satisfies the tools' `/^\d{4}-\d{2}$/` and rolls forward to January
+2027, returning an empty result rather than an error. Not addressed here.
+
+### Files
+- `src/lib/budget-queries.ts` -- timezone-aware month helpers, offset threaded through
+- `src/lib/budget-query-types.ts` -- `timezoneOffset` on the month-scoped params
+- `src/lib/budget-queries.test.ts` -- new
+- `src/app/api/assessment/daily-tip/route.ts` -- passes the user's offset
+- `mcp-server/src/index.ts` -- startup user lookup, offset on every date-scoped tool
+
 ## 2026-08-24 - MCP Server Dependency Declaration & Type Checking
 
 Closes #102. `mcp-server/src/index.ts` was the only file in the repo with no static

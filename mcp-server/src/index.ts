@@ -22,6 +22,16 @@ if (!userId) {
 
 const prisma = new PrismaClient();
 
+/**
+ * The user's timezone offset in minutes, read once at startup.
+ *
+ * Assigned in `main()` strictly before `server.connect()`, so no tool handler can observe
+ * the initial value: a handler only runs in response to a request, and requests cannot
+ * arrive until the transport is connected. Registering the tools inside `main()` instead
+ * would enforce that structurally, at the cost of re-indenting every registration.
+ */
+let userTimezoneOffset = 0;
+
 const server = new McpServer({
   name: "budgettracker",
   version: "1.0.0",
@@ -40,7 +50,7 @@ server.tool(
       .describe("Month in YYYY-MM format. Defaults to current month."),
   },
   async ({ month }) => {
-    const result = await getSpendingByCategory(prisma, userId, { month });
+    const result = await getSpendingByCategory(prisma, userId, { month, timezoneOffset: userTimezoneOffset });
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
     };
@@ -65,7 +75,7 @@ server.tool(
       .describe("Month in YYYY-MM format. If omitted, returns all-time."),
   },
   async ({ limit, month }) => {
-    const result = await getTopExpenses(prisma, userId, { limit, month });
+    const result = await getTopExpenses(prisma, userId, { limit, month, timezoneOffset: userTimezoneOffset });
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
     };
@@ -85,7 +95,7 @@ server.tool(
       .describe("Number of months to look back. Defaults to 6."),
   },
   async ({ months }) => {
-    const result = await getMonthlySummary(prisma, userId, { months });
+    const result = await getMonthlySummary(prisma, userId, { months, timezoneOffset: userTimezoneOffset });
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
     };
@@ -109,6 +119,7 @@ server.tool(
     const result = await getSpendingTrends(prisma, userId, {
       currentMonth,
       previousMonth,
+      timezoneOffset: userTimezoneOffset,
     });
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
@@ -162,7 +173,7 @@ server.tool(
       .describe("Results per page. Defaults to 20."),
   },
   async (params) => {
-    const result = await searchTransactions(prisma, userId, params);
+    const result = await searchTransactions(prisma, userId, { ...params, timezoneOffset: userTimezoneOffset });
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
     };
@@ -180,7 +191,7 @@ server.tool(
       .describe("Month in YYYY-MM format. Defaults to current month."),
   },
   async ({ month }) => {
-    const result = await getBudgetOverview(prisma, userId, { month });
+    const result = await getBudgetOverview(prisma, userId, { month, timezoneOffset: userTimezoneOffset });
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
     };
@@ -200,7 +211,7 @@ server.tool(
       .describe("Number of days to look ahead. Defaults to 7."),
   },
   async ({ days }) => {
-    const result = await getUpcomingBills(prisma, userId, { days });
+    const result = await getUpcomingBills(prisma, userId, { days, timezoneOffset: userTimezoneOffset });
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
     };
@@ -227,6 +238,25 @@ server.tool(
 // --- Start server ---
 
 const main = async () => {
+  // Resolve the user before serving anything. Without this a typo'd BUDGET_USER_ID
+  // connects happily and every tool returns zeros and empty arrays, which reads as
+  // "you have no transactions" rather than "you are misconfigured".
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { timezoneOffset: true },
+  });
+
+  if (!user) {
+    console.error(
+      `No user found for BUDGET_USER_ID="${userId}". Check the id against the User table ` +
+        `(pnpm db:studio) and that DATABASE_URL points at the right database.`
+    );
+    await prisma.$disconnect();
+    process.exit(1);
+  }
+
+  userTimezoneOffset = user.timezoneOffset;
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
 };

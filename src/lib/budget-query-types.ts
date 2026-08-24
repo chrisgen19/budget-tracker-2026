@@ -16,6 +16,10 @@ export interface DateRange {
 export interface SpendingByCategoryParams {
   /** Format: YYYY-MM. Defaults to current month */
   month?: string;
+  /** User's timezone offset in minutes (`getTimezoneOffset()` convention, so UTC+8 is
+   *  -480), matching `users.timezone_offset`. Month boundaries are resolved in this
+   *  timezone. Omit to fall back to UTC. */
+  timezoneOffset?: number;
 }
 
 export interface CategorySpending {
@@ -34,6 +38,10 @@ export interface TopExpensesParams {
   limit?: number;
   /** Format: YYYY-MM. If omitted, returns all-time */
   month?: string;
+  /** User's timezone offset in minutes (`getTimezoneOffset()` convention, so UTC+8 is
+   *  -480), matching `users.timezone_offset`. Month boundaries are resolved in this
+   *  timezone. Omit to fall back to UTC. */
+  timezoneOffset?: number;
 }
 
 export interface TopExpense {
@@ -50,6 +58,10 @@ export interface TopExpense {
 export interface MonthlySummaryParams {
   /** Number of months to look back. Defaults to 6 */
   months?: number;
+  /** User's timezone offset in minutes (`getTimezoneOffset()` convention, so UTC+8 is
+   *  -480), matching `users.timezone_offset`. Month boundaries are resolved in this
+   *  timezone. Omit to fall back to UTC. */
+  timezoneOffset?: number;
 }
 
 export interface MonthSummary {
@@ -66,6 +78,10 @@ export interface SpendingTrendsParams {
   currentMonth: string;
   /** Format: YYYY-MM (comparison period) */
   previousMonth: string;
+  /** User's timezone offset in minutes (`getTimezoneOffset()` convention, so UTC+8 is
+   *  -480), matching `users.timezone_offset`. Month boundaries are resolved in this
+   *  timezone. Omit to fall back to UTC. */
+  timezoneOffset?: number;
 }
 
 export interface CategoryTrend {
@@ -107,6 +123,10 @@ export interface SearchTransactionsParams {
   page?: number;
   /** Results per page. Defaults to 20 */
   limit?: number;
+  /** User's timezone offset in minutes (`getTimezoneOffset()` convention, so UTC+8 is
+   *  -480), matching `users.timezone_offset`. Month boundaries are resolved in this
+   *  timezone. Omit to fall back to UTC. */
+  timezoneOffset?: number;
 }
 
 export interface SearchTransactionsResult {
@@ -133,6 +153,10 @@ export interface SearchTransactionsResult {
 export interface BudgetOverviewParams {
   /** Format: YYYY-MM. Defaults to current month */
   month?: string;
+  /** User's timezone offset in minutes (`getTimezoneOffset()` convention, so UTC+8 is
+   *  -480), matching `users.timezone_offset`. Month boundaries are resolved in this
+   *  timezone. Omit to fall back to UTC. */
+  timezoneOffset?: number;
 }
 
 export interface BudgetOverview {
