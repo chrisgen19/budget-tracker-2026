@@ -2,6 +2,54 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-24 - MCP Receipt Line Items
+
+Closes #114. Last of the three data gaps from the MCP audit. 11 tools become 12.
+
+Receipt scanning stores Gemini's per-item detail on `transactions.receipt_breakdown`, and
+`receipt_group_id` ties together the transactions of one multi-category receipt. Neither was
+visible to MCP, so the finest-grained spending data in the app could not be queried at all.
+Live on this account: 116 line items across 16 transactions and 7 receipt groups.
+
+### New tool
+**`get_receipt_items`** returns line items flattened across transactions, each carrying its
+transaction, category, date, and `receiptGroupId`. Filterable by month, by item name
+(case-insensitive), or by `receiptGroupId` to pull one whole receipt.
+
+Flat rather than nested by receipt: the common questions aggregate across receipts ("how much
+on coffee this month?"), which is far easier over a list than a tree. Returning the group id on
+each item still lets a caller drill into a single receipt.
+
+### The blob is validated, not cast
+`receipt_breakdown` is `Json?`, so it arrives as `unknown`. The 2026-08-20 entry records this
+exact class of bug shipping before: "Every field was cast with `as` and none was checked, so a
+200 missing `amount` or `categoryId` produced a `success` row holding `undefined`." Entries are
+type-checked individually, so a malformed or partially written blob is skipped rather than
+producing items with missing fields, and the valid entries of a partly broken blob survive.
+
+`breakdownTotal` is reported as stored. The app's `ReceiptBreakdown` component displays the
+stored total rather than recomputing from items, so the two can legitimately disagree and
+neither is silently substituted for the other. It falls back to summing the items only when the
+stored total is absent or unusable.
+
+### Verification
+All 116 live items were cross-checked against the raw JSON: the tool reports exactly 116, and
+every one appears verbatim in the stored blob. Group filtering was confirmed against a real
+receipt spanning two transactions.
+
+### Tests
+Nine more (79 total), covering the flattening, four shapes of malformed blob, partial
+corruption, the total fallback, a stored total disagreeing with the item sum, case-insensitive
+search, `limit` capping only the returned rows while counts cover every match, timezone-resolved
+months, and group filtering.
+
+### Files
+- `src/lib/budget-queries.ts` -- `getReceiptItems`, `parseReceiptBreakdown`
+- `src/lib/budget-query-types.ts` -- receipt item types
+- `src/lib/budget-queries.test.ts` -- receipt coverage
+- `mcp-server/src/index.ts` -- tool registration
+- `README.md`, `AGENTS.md` -- tool table and counts
+
 ## 2026-08-24 - MCP Bill Payment History
 
 Closes #112. Second feature item from the MCP audit. 10 tools become 11.

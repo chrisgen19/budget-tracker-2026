@@ -14,6 +14,7 @@ import {
   getLabelBreakdown,
   getLabelList,
   getBillHistory,
+  getReceiptItems,
 } from "../../src/lib/budget-queries.js";
 
 const userId = process.env.BUDGET_USER_ID;
@@ -388,6 +389,54 @@ server.registerTool(
       billId,
       status,
       months,
+      limit,
+      timezoneOffset: userTimezoneOffset,
+    });
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+    };
+  }
+);
+
+server.registerTool(
+  "get_receipt_items",
+  {
+    title: "Receipt line items",
+    description:
+      "Get individual line items from scanned receipts, with the transaction and category " +
+      "each was itemized under. Answers what was actually bought, not just the total: " +
+      "'what did I buy at the grocery?', 'how much have I spent on coffee this month?'. " +
+      "Filter by month, by item name, or by receiptGroupId to pull one whole receipt " +
+      "(a receipt spanning several categories becomes several transactions sharing that id).",
+    inputSchema: {
+      month: z
+        .string()
+        .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
+        .optional()
+        .describe("Month in YYYY-MM format. Omit for all time."),
+      search: z
+        .string()
+        .optional()
+        .describe("Case-insensitive substring match on the item name."),
+      receiptGroupId: z
+        .string()
+        .optional()
+        .describe("Restrict to one scanned receipt. IDs come back on each item."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .optional()
+        .describe("Max items returned. Counts and totals cover every match. Defaults to 100."),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  async ({ month, search, receiptGroupId, limit }) => {
+    const result = await getReceiptItems(prisma, userId, {
+      month,
+      search,
+      receiptGroupId,
       limit,
       timezoneOffset: userTimezoneOffset,
     });

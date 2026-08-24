@@ -26,6 +26,9 @@ import type {
   BillOccurrence,
   BillHistorySummary,
   BillOccurrenceStatus,
+  ReceiptItemsParams,
+  ReceiptItems,
+  ReceiptItem,
   DateRange,
 } from "./budget-query-types";
 
@@ -842,5 +845,108 @@ export const getBillHistory = async (
     to: dayKey(today),
     occurrences: occurrences.slice(0, limit),
     summaries,
+  };
+};
+
+/**
+ * Narrow a stored `receipt_breakdown` blob into items.
+ *
+ * The column is `Json?`, so this arrives as `unknown`. It is validated rather than cast:
+ * a partially written or hand-edited blob must be skipped, not turned into items holding
+ * `undefined` (see the 2026-08-20 entry, where casting scan responses without checking
+ * produced exactly that).
+ */
+const parseReceiptBreakdown = (
+  raw: unknown
+): { total: number; items: Array<{ name: string; amount: number }> } | null => {
+  if (typeof raw !== "object" || raw === null) return null;
+
+  const blob = raw as Record<string, unknown>;
+  if (!Array.isArray(blob.items)) return null;
+
+  const items: Array<{ name: string; amount: number }> = [];
+  for (const entry of blob.items) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { name, amount } = entry as Record<string, unknown>;
+    if (typeof name !== "string" || typeof amount !== "number" || !Number.isFinite(amount)) {
+      continue;
+    }
+    items.push({ name, amount });
+  }
+
+  if (items.length === 0) return null;
+
+  const total =
+    typeof blob.total === "number" && Number.isFinite(blob.total)
+      ? blob.total
+      : items.reduce((sum, i) => sum + i.amount, 0);
+
+  return { total, items };
+};
+
+/**
+ * Individual line items from scanned receipts, flattened across transactions.
+ *
+ * Flat rather than nested by receipt because the common questions aggregate across receipts
+ * ("how much on eggs this month?"), which is far easier over a list than a tree. Each item
+ * carries its `receiptGroupId`, so a caller can pass that back to pull one whole receipt.
+ */
+export const getReceiptItems = async (
+  prisma: PrismaClient,
+  userId: string,
+  params: ReceiptItemsParams = {}
+): Promise<ReceiptItems> => {
+  const tz = params.timezoneOffset ?? 0;
+  const limit = params.limit ?? 100;
+
+  const where: Record<string, unknown> = {
+    userId,
+    NOT: { receiptBreakdown: { equals: null } },
+  };
+
+  if (params.month) {
+    const { startDate, endDate } = parseMonth(params.month, tz);
+    where.date = { gte: startDate, lte: endDate };
+  }
+
+  if (params.receiptGroupId) {
+    where.receiptGroupId = params.receiptGroupId;
+  }
+
+  const transactions = await prisma.transaction.findMany({
+    where,
+    include: { category: true },
+    orderBy: [{ date: "desc" }, { id: "asc" }],
+  });
+
+  const needle = params.search?.toLowerCase();
+  const items: ReceiptItem[] = [];
+
+  for (const t of transactions) {
+    const breakdown = parseReceiptBreakdown(t.receiptBreakdown);
+    if (!breakdown) continue;
+
+    for (const item of breakdown.items) {
+      if (needle && !item.name.toLowerCase().includes(needle)) continue;
+
+      items.push({
+        name: item.name,
+        amount: item.amount,
+        transactionId: t.id,
+        transactionDescription: t.description,
+        transactionAmount: t.amount,
+        categoryName: t.category.name,
+        date: t.date.toISOString(),
+        receiptGroupId: t.receiptGroupId ?? null,
+        breakdownTotal: breakdown.total,
+      });
+    }
+  }
+
+  return {
+    month: params.month ?? null,
+    itemCount: items.length,
+    totalAmount: items.reduce((sum, i) => sum + i.amount, 0),
+    items: items.slice(0, limit),
   };
 };
