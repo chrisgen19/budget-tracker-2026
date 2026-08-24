@@ -71,7 +71,7 @@ src/
 │   └── index.ts            # Re-exports
 ├── types/                  # TypeScript type definitions
 └── mcp-server/             # Standalone MCP server for Claude Desktop integration
-    └── src/index.ts        # 8 read-only MCP tools over stdio
+    └── src/index.ts        # 10 read-only MCP tools over stdio
 ```
 
 ## Commands

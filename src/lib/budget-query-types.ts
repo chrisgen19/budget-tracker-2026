@@ -123,6 +123,8 @@ export interface SearchTransactionsParams {
   page?: number;
   /** Results per page. Defaults to 20 */
   limit?: number;
+  /** Only transactions carrying at least one of these label IDs */
+  labelIds?: string[];
   /** User's timezone offset in minutes (`getTimezoneOffset()` convention, so UTC+8 is
    *  -480), matching `users.timezone_offset`. Month boundaries are resolved in this
    *  timezone. Omit to fall back to UTC. */
@@ -139,6 +141,7 @@ export interface SearchTransactionsResult {
     categoryName: string;
     categoryIcon: string;
     categoryColor: string;
+    labels: Array<{ id: string; name: string; color: string }>;
   }>;
   pagination: {
     page: number;
@@ -209,4 +212,56 @@ export interface CategoryItem {
   icon: string;
   color: string;
   isDefault: boolean;
+}
+
+// --- get_label_breakdown ---
+
+export interface LabelBreakdownParams {
+  /** Format: YYYY-MM. Defaults to current month */
+  month?: string;
+  /** Restrict to one transaction type. Defaults to EXPENSE */
+  type?: TransactionType;
+  /** User's timezone offset in minutes (`getTimezoneOffset()` convention, so UTC+8 is
+   *  -480), matching `users.timezone_offset`. Month boundaries are resolved in this
+   *  timezone. Omit to fall back to UTC. */
+  timezoneOffset?: number;
+}
+
+export interface LabelBreakdownItem {
+  /** Label id, or the literal "unlabeled" for the catch-all entry */
+  id: string;
+  name: string;
+  color: string;
+  /** Sum of each transaction's amount divided by how many labels it carries */
+  amount: number;
+  /** Share of the period total, labeled or not */
+  percentage: number;
+  /** Counts a transaction once per label it carries */
+  transactionCount: number;
+}
+
+export interface LabelBreakdown {
+  month: string;
+  type: TransactionType;
+  /** Total across all transactions of this type in the period, labeled or not */
+  total: number;
+  labels: LabelBreakdownItem[];
+}
+
+// --- get_label_list ---
+
+export interface LabelListParams {
+  /** Only labels usable on this transaction type (matches "BOTH" too) */
+  applicableTo?: TransactionType;
+}
+
+export interface LabelItem {
+  id: string;
+  name: string;
+  color: string;
+  /** "EXPENSE" | "INCOME" | "BOTH" -- which transaction types the label may be used on */
+  applicableTo: string;
+  transactionCount: number;
+  /** Auto-apply rules: transactions created in these windows get the label */
+  schedules: Array<{ days: number[]; startTime: string; endTime: string }>;
 }

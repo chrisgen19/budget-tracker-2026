@@ -11,6 +11,8 @@ import {
   getBudgetOverview,
   getUpcomingBills,
   getCategoryList,
+  getLabelBreakdown,
+  getLabelList,
 } from "../../src/lib/budget-queries.js";
 
 const userId = process.env.BUDGET_USER_ID;
@@ -200,6 +202,12 @@ server.registerTool(
         .max(100)
         .optional()
         .describe("Results per page. Defaults to 20."),
+      labelIds: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Only transactions carrying at least one of these label IDs. Use get_label_list to find IDs."
+        ),
     },
     annotations: { readOnlyHint: true },
   },
@@ -272,6 +280,66 @@ server.registerTool(
   },
   async ({ type }) => {
     const result = await getCategoryList(prisma, userId, { type });
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+    };
+  }
+);
+
+server.registerTool(
+  "get_label_breakdown",
+  {
+    title: "Spending by label",
+    description:
+      "Get spending (or income) grouped by label for a month, with an 'unlabeled' entry for " +
+      "untagged transactions. A transaction tagged with several labels splits its amount " +
+      "evenly between them, so label amounts sum to the period total. Matches the app's " +
+      "analytics page.",
+    inputSchema: {
+      month: z
+        .string()
+        .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
+        .optional()
+        .describe("Month in YYYY-MM format. Defaults to current month."),
+      type: z
+        .enum(["INCOME", "EXPENSE"])
+        .optional()
+        .describe("Transaction type to break down. Defaults to EXPENSE."),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  async ({ month, type }) => {
+    const result = await getLabelBreakdown(prisma, userId, {
+      month,
+      type,
+      timezoneOffset: userTimezoneOffset,
+    });
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+    };
+  }
+);
+
+server.registerTool(
+  "get_label_list",
+  {
+    title: "Label list",
+    description:
+      "List the user's labels with how many transactions carry each, which transaction types " +
+      "they apply to, and any schedules that auto-apply them. Useful for finding label IDs to " +
+      "use with other tools.",
+    inputSchema: {
+      applicableTo: z
+        .enum(["INCOME", "EXPENSE"])
+        .optional()
+        .describe(
+          "Only labels usable on this transaction type. Labels marked BOTH always match."
+        ),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  async ({ applicableTo }) => {
+    const result = await getLabelList(prisma, userId, { applicableTo });
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
     };
