@@ -2,6 +2,60 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-24 - MCP Structured Output
+
+Closes #116. All 12 tools now declare an `outputSchema` and return `structuredContent`
+alongside the existing text, so clients get a declared shape and real structured data instead
+of a JSON string to parse. Deliberately last: it touches every tool, so it waited for the tool
+set to stop growing (#110, #112 and #114 each added one).
+
+### Two findings that shaped it
+- **The SDK does not validate `structuredContent` against `outputSchema`.** Verified against the installed 1.30.0: a tool declaring `{ total: z.number() }` and returning `{ total: "not a number" }` is passed straight through with no error. A schema that drifts from what the tool returns will not fail loudly, it will quietly misinform every client that trusts it
+- **`content` is not auto-filled from `structuredContent`.** Returning only the structured half would leave clients that do not support it with nothing, so every tool returns both
+
+### Drift is a build failure, not a silent lie
+`mcp-server/src/output-schemas.ts` pins each schema to the type the query layer already
+returns:
+
+```ts
+type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
+assertExact<z.infer<typeof categorySpending>, CategorySpending>(true);
+```
+
+Confirmed to catch all three directions of drift: a schema dropping a field, a schema retyping
+a field, and `budget-query-types.ts` gaining a field the schema lacks. Since #102 made this
+package type-checked in CI, each is a failed build. This deliberately avoids rewriting the
+app's shared types as zod, which would have pulled `/api/assessment/*` into an MCP-only change.
+
+### Behaviour change: array tools gained a wrapper key
+`structuredContent` must be an object, but five tools returned a bare JSON array. They now
+return a named key, applied to **both** halves so each tool has one shape rather than two
+descriptions of the same data:
+
+| Tool | Key |
+|---|---|
+| `get_spending_by_category` | `categories` |
+| `get_top_expenses` | `expenses` |
+| `get_monthly_summary` | `months` |
+| `get_category_list` | `categories` |
+| `get_label_list` | `labels` |
+
+The eight object-returning tools are unchanged.
+
+### Note
+`structuredContent` needs an index signature and interfaces do not get one implicitly, so the
+payload is widened through `Object.fromEntries(Object.entries(value))` rather than an `as`
+cast, which would assert a shape instead of producing one.
+
+### Verification
+All 12 tools answered against the live database with `content` and `structuredContent`
+serialising identically, 12 of 12, no mismatches.
+
+### Files
+- `mcp-server/src/output-schemas.ts` -- new; 12 schemas with drift assertions
+- `mcp-server/src/index.ts` -- schema declarations, dual-payload returns
+- `AGENTS.md` -- records why the assertions exist
+
 ## 2026-08-24 - MCP Receipt Line Items
 
 Closes #114. Last of the three data gaps from the MCP audit. 11 tools become 12.
