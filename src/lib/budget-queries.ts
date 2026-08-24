@@ -16,6 +16,11 @@ import type {
   UpcomingBillsResult,
   CategoryListParams,
   CategoryItem,
+  LabelBreakdownParams,
+  LabelBreakdown,
+  LabelBreakdownItem,
+  LabelListParams,
+  LabelItem,
   DateRange,
 } from "./budget-query-types";
 
@@ -282,6 +287,10 @@ export const searchTransactions = async (
     where.description = { contains: params.search, mode: "insensitive" };
   }
 
+  if (params.labelIds && params.labelIds.length > 0) {
+    where.labels = { some: { labelId: { in: params.labelIds } } };
+  }
+
   const direction = params.sortDir === "asc" ? "asc" : "desc";
   const orderBy =
     params.sortBy === "amount"
@@ -299,7 +308,7 @@ export const searchTransactions = async (
   const [transactions, total] = await Promise.all([
     prisma.transaction.findMany({
       where,
-      include: { category: true },
+      include: { category: true, labels: { include: { label: true } } },
       orderBy,
       skip: (page - 1) * limit,
       take: limit,
@@ -317,6 +326,11 @@ export const searchTransactions = async (
       categoryName: t.category.name,
       categoryIcon: t.category.icon,
       categoryColor: t.category.color,
+      labels: t.labels.map((tl) => ({
+        id: tl.label.id,
+        name: tl.label.name,
+        color: tl.label.color,
+      })),
     })),
     pagination: {
       page,
@@ -467,5 +481,122 @@ export const getCategoryList = async (
     icon: c.icon,
     color: c.color,
     isDefault: c.isDefault,
+  }));
+};
+
+/**
+ * Spending grouped by label for a month.
+ *
+ * Mirrors the analytics page's LabelBreakdown (`/api/analytics`) rather than defining its own
+ * arithmetic, so the same question gets the same answer in both places. In particular a
+ * transaction's amount is split evenly across its labels, so a 1000 expense tagged with two
+ * labels contributes 500 to each and the label amounts still sum to the period total.
+ * `transactionCount` deliberately counts a transaction once per label, so the counts do not.
+ */
+export const getLabelBreakdown = async (
+  prisma: PrismaClient,
+  userId: string,
+  params: LabelBreakdownParams = {}
+): Promise<LabelBreakdown> => {
+  const tz = params.timezoneOffset ?? 0;
+  const type = params.type ?? "EXPENSE";
+  const monthStr = params.month ?? currentMonth(tz);
+  const { startDate, endDate } = parseMonth(monthStr, tz);
+
+  const transactions = await prisma.transaction.findMany({
+    where: { userId, type, date: { gte: startDate, lte: endDate } },
+    include: { labels: { include: { label: true } } },
+  });
+
+  const total = transactions.reduce((sum, t) => sum + t.amount, 0);
+  const byLabel = new Map<string, LabelBreakdownItem>();
+  let unlabeledAmount = 0;
+  let unlabeledCount = 0;
+
+  for (const t of transactions) {
+    if (t.labels.length === 0) {
+      unlabeledAmount += t.amount;
+      unlabeledCount += 1;
+      continue;
+    }
+
+    const share = t.amount / t.labels.length;
+    for (const tl of t.labels) {
+      const existing = byLabel.get(tl.labelId);
+      if (existing) {
+        existing.amount += share;
+        existing.transactionCount += 1;
+      } else {
+        byLabel.set(tl.labelId, {
+          id: tl.labelId,
+          name: tl.label.name,
+          color: tl.label.color,
+          amount: share,
+          percentage: 0,
+          transactionCount: 1,
+        });
+      }
+    }
+  }
+
+  const pct = (amount: number) => (total > 0 ? Math.round((amount / total) * 100) : 0);
+
+  const labels: LabelBreakdownItem[] = Array.from(byLabel.values()).map((item) => ({
+    ...item,
+    percentage: pct(item.amount),
+  }));
+
+  if (unlabeledCount > 0) {
+    labels.push({
+      id: "unlabeled",
+      name: "Unlabeled",
+      color: "#9CA3AF",
+      amount: unlabeledAmount,
+      percentage: pct(unlabeledAmount),
+      transactionCount: unlabeledCount,
+    });
+  }
+
+  labels.sort((a, b) => b.amount - a.amount);
+
+  return { month: monthStr, type, total, labels };
+};
+
+/**
+ * The user's labels, with how many transactions carry each and any auto-apply schedules.
+ * The counterpart to `getCategoryList`: without it there is no way to discover label IDs.
+ */
+export const getLabelList = async (
+  prisma: PrismaClient,
+  userId: string,
+  params: LabelListParams = {}
+): Promise<LabelItem[]> => {
+  const where: Record<string, unknown> = { userId };
+
+  // A "BOTH" label is usable on either type, so it matches any filter.
+  if (params.applicableTo) {
+    where.applicableTo = { in: [params.applicableTo, "BOTH"] };
+  }
+
+  const labels = await prisma.label.findMany({
+    where,
+    include: {
+      _count: { select: { transactions: true } },
+      schedules: { orderBy: { createdAt: "asc" } },
+    },
+    orderBy: { name: "asc" },
+  });
+
+  return labels.map((l) => ({
+    id: l.id,
+    name: l.name,
+    color: l.color,
+    applicableTo: l.applicableTo,
+    transactionCount: l._count.transactions,
+    schedules: l.schedules.map((sc) => ({
+      days: sc.days,
+      startTime: sc.startTime,
+      endTime: sc.endTime,
+    })),
   }));
 };

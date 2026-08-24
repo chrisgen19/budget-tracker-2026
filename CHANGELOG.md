@@ -2,6 +2,48 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-24 - MCP Label Support
+
+Closes #110. Labels are a first-class feature of the app and were completely invisible to the
+MCP server: `Label`, `LabelSchedule`, `TransactionLabel`, and `BillLabel` all existed, the
+analytics page already rendered a LabelBreakdown chart, and none of the 8 tools could see any
+of it. "How much did I spend on Work Budget last month?" was unanswerable. Largest remaining
+gap in MCP coverage; 8 tools become 10.
+
+### New tools
+- **`get_label_breakdown`** — spending (or income) grouped by label for a month, with an `"unlabeled"` entry for untagged transactions
+- **`get_label_list`** — labels with transaction counts, `applicableTo`, and any auto-apply schedules. The counterpart to `get_category_list`: without it there was no way to discover label IDs
+
+### `search_transactions` gained labels
+- A `labelIds` filter (matches a transaction carrying *any* of the given labels)
+- Each returned transaction now carries its labels. The result shape previously had no label information at all
+- An empty `labelIds: []` is ignored rather than matching nothing, so "no filter chosen" does not silently return zero rows
+
+### Matching the analytics page, deliberately
+`getLabelBreakdown` mirrors `/api/analytics` rather than defining its own arithmetic, so the
+same question gets the same answer in both places:
+- **A transaction's amount splits evenly across its labels.** A 1000 expense tagged with two labels contributes 500 to each, so label amounts sum to the period total instead of double counting it
+- **`transactionCount` counts a transaction once per label**, so the counts deliberately do *not* sum to the transaction total. Documented on the type, since the two fields behaving differently is surprising otherwise
+- Percentages are against the period total including unlabeled
+- `"unlabeled"` is appended only when something is actually untagged
+
+Verified against production data: across 2026-02, 2026-03, and 2026-04 the label amounts sum
+to the period total exactly, and the even-split path is genuinely exercised — 3 real
+transactions carry more than one label.
+
+### Tests
+Eleven more in `src/lib/budget-queries.test.ts` covering the even split, the per-label count,
+the unlabeled bucket, percentages against the full total, sort order, an empty month (no
+divide-by-zero), the EXPENSE default, timezone resolution, `BOTH` labels matching either type
+filter, and the empty-`labelIds` case.
+
+### Files
+- `src/lib/budget-queries.ts` -- `getLabelBreakdown`, `getLabelList`, label filter and output on search
+- `src/lib/budget-query-types.ts` -- label types
+- `src/lib/budget-queries.test.ts` -- label coverage
+- `mcp-server/src/index.ts` -- two tool registrations, `labelIds` on search
+- `README.md`, `AGENTS.md` -- tool table and counts
+
 ## 2026-08-24 - MCP Tools Declared Read-Only
 
 Closes #108. All 8 tools moved from the deprecated `server.tool()` to `registerTool`.

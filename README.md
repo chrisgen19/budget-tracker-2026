@@ -35,7 +35,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **Scheduled Bills & Reminders** — Recurring bill management with configurable frequency (weekly, biweekly, monthly, quarterly, yearly); mobile toast reminders for upcoming and overdue bills; one-tap pay that auto-creates the expense transaction; snooze (1d/3d/1w) and skip actions; pay-all for batch payments; bill history with links to past payments
 - **Progressive Web App** — Installable PWA with offline support via Serwist service worker; install prompt banner (Android + iOS Safari guide); standalone mode with safe-area handling; smart caching for API responses and static assets
 - **Timezone-Aware Dates** — All date queries respect the user's local timezone offset for accurate day boundaries and month grouping
-- **MCP Server** — Local Model Context Protocol server for querying budget data from Claude Desktop; 8 read-only tools (spending by category, top expenses, monthly summary, spending trends, search transactions, budget overview, upcoming bills, category list); shared query library reusable for future in-app AI chat
+- **MCP Server** — Local Model Context Protocol server for querying budget data from Claude Desktop; 10 read-only tools (spending by category, top expenses, monthly summary, spending trends, search transactions, budget overview, upcoming bills, category list, label breakdown, label list); shared query library reusable for future in-app AI chat
 - **Analytics** — Dedicated reporting page with income vs expenses bar chart, cash flow area chart (net + cumulative), category breakdown donut chart, label breakdown horizontal bars, summary cards, and flexible time range controls (weekly/monthly/yearly/custom)
 - **Design** — Warm paper-ledger aesthetic with Young Serif + Outfit fonts, Plus Jakarta Sans for currency amounts, amber accents, and Framer Motion animations
 
@@ -245,10 +245,12 @@ Claude Desktop will automatically start the MCP server when you open a conversat
 | `get_top_expenses` | Largest individual expense transactions, optionally filtered by month |
 | `get_monthly_summary` | Income, expenses, and net per month for the last N months |
 | `get_spending_trends` | Compare spending between two months — shows which categories increased or decreased |
-| `search_transactions` | Search and filter transactions by description, category, amount range, type, and month |
+| `search_transactions` | Search and filter transactions by description, category, label, amount range, type, and month |
 | `get_budget_overview` | High-level monthly summary: income, expenses, net, running balance, transaction count |
 | `get_upcoming_bills` | Scheduled transactions (bills) due within N days, including overdue |
 | `get_category_list` | All categories (default + custom) — useful for finding category IDs |
+| `get_label_breakdown` | Spending or income grouped by label for a month, including an "unlabeled" bucket |
+| `get_label_list` | Labels with transaction counts, applicable type, and auto-apply schedules |
 
 ### Testing with MCP Inspector
 
