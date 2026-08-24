@@ -64,6 +64,20 @@ const toLocal = (date: Date, tzOffset: number): Date =>
 const monthKey = (local: Date): string =>
   `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, "0")}`;
 
+/**
+ * Coerce a caller-supplied row limit into something safe to slice or hand to Prisma's `take`.
+ *
+ * The MCP boundary already rejects bad limits with a protocol error, so this is a second line
+ * rather than the first. It earns its place because the failure is silent, not loud:
+ * `slice(0, -1)` quietly drops the last row, `slice(0, NaN)` returns nothing, and Prisma reads
+ * a negative `take` as "from the end", reversing the window. All three look like real answers.
+ *
+ * Anything not a positive safe integer falls back to the caller's default, so this never
+ * invents or truncates data; telling the caller they were wrong stays the boundary's job.
+ */
+const safeLimit = (value: number | undefined, fallback: number): number =>
+  value !== undefined && Number.isSafeInteger(value) && value >= 1 ? value : fallback;
+
 /** Get the current month as "YYYY-MM", in the user's timezone. */
 const currentMonth = (tzOffset = 0): string => monthKey(toLocal(new Date(), tzOffset));
 
@@ -129,7 +143,7 @@ export const getTopExpenses = async (
   userId: string,
   params: TopExpensesParams = {}
 ): Promise<TopExpense[]> => {
-  const limit = params.limit ?? 10;
+  const limit = safeLimit(params.limit, 10);
 
   const where: Record<string, unknown> = { userId, type: "EXPENSE" };
 
@@ -274,7 +288,7 @@ export const searchTransactions = async (
   params: SearchTransactionsParams = {}
 ): Promise<SearchTransactionsResult> => {
   const page = params.page ?? 1;
-  const limit = params.limit ?? 20;
+  const limit = safeLimit(params.limit, 20);
 
   const where: Record<string, unknown> = { userId };
 
@@ -676,7 +690,7 @@ export const getBillHistory = async (
 ): Promise<BillHistory> => {
   const tz = params.timezoneOffset ?? 0;
   const months = params.months ?? 6;
-  const limit = params.limit ?? 50;
+  const limit = safeLimit(params.limit, 50);
 
   const today = localDayStart(new Date(), tz);
   const from = monthsBefore(today, months);
@@ -904,7 +918,7 @@ export const getReceiptItems = async (
   params: ReceiptItemsParams = {}
 ): Promise<ReceiptItems> => {
   const tz = params.timezoneOffset ?? 0;
-  const limit = params.limit ?? 100;
+  const limit = safeLimit(params.limit, 100);
 
   // DbNull is "the column is SQL NULL", as opposed to a stored JSON `null`. Both are
   // excluded in practice: parseReceiptBreakdown rejects a JSON null too.

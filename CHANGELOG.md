@@ -50,6 +50,10 @@ months, and group filtering.
 
   `budget-queries.ts` now imports the `Prisma` namespace as a value rather than only types, which is a small departure from its dependency-injected design, taken deliberately for the sentinels. A test pins the sentinel, confirmed to fail if it regresses to `null`, and live output is unchanged at 116 items.
 
+- **Row limits fall back instead of silently truncating or reversing.** `slice(0, -1)` quietly drops the last row, `slice(0, NaN)` returns nothing, and Prisma reads a negative `take` as "from the end", reversing the window. All three look like real answers. `safeLimit` sends anything that is not a positive safe integer to the caller's default, applied at all four sites that take a limit (`getTopExpenses`, `searchTransactions`, `getBillHistory`, `getReceiptItems`) rather than only the one raised, since fixing one of several identical call sites is how the `timezoneOffset` drift in #112 happened.
+
+  Not reachable today: the MCP boundary already validates every limit with `.int().min(1).max(N)` and returns `-32602`, and nothing else calls these functions. The guard is a second line, deliberately clamping rather than throwing, so the library never invents data while telling the caller they were wrong stays the boundary's job. The suggested fix would have accepted `limit: 0`, which `slice(0, 0)` turns into an empty result for a parameter documented as a maximum.
+
 ### Files
 - `src/lib/budget-queries.ts` -- `getReceiptItems`, `parseReceiptBreakdown`
 - `src/lib/budget-query-types.ts` -- receipt item types

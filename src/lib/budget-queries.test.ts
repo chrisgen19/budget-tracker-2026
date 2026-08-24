@@ -898,3 +898,84 @@ describe("getReceiptItems validates the stored breakdown rather than casting it"
     expect(seen[0].receiptGroupId).toBe("g1");
   });
 });
+
+describe("row limits never silently truncate or reverse a result", () => {
+  const rows = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `t${i}`,
+      description: "d",
+      amount: 1,
+      date: new Date("2026-03-05T00:00:00.000Z"),
+      receiptGroupId: null,
+      category: { name: "C" },
+      receiptBreakdown: { total: 1, items: [{ name: `item${i}`, amount: 1 }] },
+    }));
+
+  const itemsPrisma = (n: number) =>
+    ({ transaction: { findMany: vi.fn(async () => rows(n)) } }) as unknown as PrismaClient;
+
+  // -1 would make slice(0, -1) drop the last row; NaN would make it return nothing.
+  // Both look like real answers, which is why they fall back rather than pass through.
+  const bad: Array<[string, number]> = [
+    ["negative", -1],
+    ["NaN", Number.NaN],
+    ["zero", 0],
+    ["fractional", 2.5],
+    ["Infinity", Number.POSITIVE_INFINITY],
+  ];
+
+  for (const [label, value] of bad) {
+    it(`falls back to the default for a ${label} limit`, async () => {
+      const result = await getReceiptItems(itemsPrisma(3), "u1", { limit: value });
+
+      // Default is 100, so all three survive rather than 2, 0, or "all but the last".
+      expect(result.items).toHaveLength(3);
+      expect(result.itemCount).toBe(3);
+    });
+  }
+
+  it("still honours a valid limit", async () => {
+    const result = await getReceiptItems(itemsPrisma(5), "u1", { limit: 2 });
+
+    expect(result.items).toHaveLength(2);
+    expect(result.itemCount).toBe(5);
+  });
+
+  it("never hands Prisma a negative take, which would read from the wrong end", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const prisma = {
+      transaction: {
+        findMany: vi.fn(async (args: Record<string, unknown>) => {
+          seen.push(args);
+          return [];
+        }),
+      },
+    } as unknown as PrismaClient;
+
+    await getTopExpenses(prisma, "u1", { limit: -5 });
+
+    expect(seen[0].take).toBe(10);
+  });
+
+  it("applies the same guard to bill history", async () => {
+    const log = (i: number) => ({
+      scheduledTransactionId: "b1",
+      dueDate: new Date(`2026-0${i + 1}-05T00:00:00.000Z`),
+      status: "PAID",
+      actionDate: new Date(`2026-0${i + 1}-05T00:00:00.000Z`),
+      transactionId: null,
+      snoozeUntil: null,
+    });
+    const prisma = {
+      scheduledTransaction: {
+        findMany: vi.fn(async () => [{ id: "b1", description: "R", amount: 1, category: { name: "C" } }]),
+      },
+      scheduledTransactionLog: { findMany: vi.fn(async () => [log(0), log(1), log(2)]) },
+      transaction: { findMany: vi.fn(async () => []) },
+    } as unknown as PrismaClient;
+
+    const result = await getBillHistory(prisma, "u1", { limit: -1, months: 24 });
+
+    expect(result.occurrences).toHaveLength(3);
+  });
+});
