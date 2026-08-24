@@ -24,9 +24,38 @@ export const transactionSchema = z.object({
   labelIds: z.array(z.string()).optional(),
 });
 
+export const receiptBreakdownLineItemSchema = z.object({
+  name: z.string().max(255),
+  amount: z.number().positive(),
+});
+
+/**
+ * The blob persisted to `transactions.receipt_breakdown`.
+ *
+ * This is assembled client-side from an already-validated scan result and posted back, so
+ * before this schema existed the column accepted `z.any()` and stored whatever arrived. That
+ * pushed the burden onto every reader: `getReceiptItems` has to parse defensively, and
+ * `ReceiptBreakdown` renders `breakdown.items.length` with no guard, so a blob missing `items`
+ * was a render-time TypeError rather than a degraded display.
+ *
+ * The bounds mirror what the client actually produces (`use-multi-scan.ts`: `total` is the
+ * item's own positive amount, `items` are the line items already checked by
+ * `receiptBreakdownItemSchema`), so nothing the app legitimately writes is rejected. They also
+ * bound the stored size, which `MAX_BATCH_TRANSACTIONS` did not: it caps rows, not blob size.
+ *
+ * `.strict()` keeps unknown keys out of the column rather than letting arbitrary payload ride
+ * along inside the JSON.
+ */
+export const receiptBreakdownMetaSchema = z
+  .object({
+    total: z.number().positive(),
+    items: z.array(receiptBreakdownLineItemSchema).min(1).max(50),
+  })
+  .strict();
+
 export const batchTransactionSchema = transactionSchema.extend({
   receiptGroupId: z.string().optional(),
-  receiptBreakdown: z.any().optional(),
+  receiptBreakdown: receiptBreakdownMetaSchema.optional(),
 });
 
 export const labelScheduleSchema = z.object({
@@ -76,11 +105,6 @@ export type LabelInput = z.infer<typeof labelSchema>;
 export type LabelScheduleInput = z.infer<typeof labelScheduleSchema>;
 export type CategoryInput = z.infer<typeof categorySchema>;
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
-
-export const receiptBreakdownLineItemSchema = z.object({
-  name: z.string().max(255),
-  amount: z.number().positive(),
-});
 
 /** Ceiling on one batch-create request. Multi-scan Save All sends every reviewed row in a
  *  single atomic request, and one upload can expand well past the old cap of 50 once
@@ -278,4 +302,5 @@ export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 export type ReceiptScanResult = z.infer<typeof receiptScanResultSchema>;
 export type ReceiptBreakdownResult = z.infer<typeof receiptBreakdownResultSchema>;
+export type ReceiptBreakdownMetaInput = z.infer<typeof receiptBreakdownMetaSchema>;
 export type UpdateAppSettingsInput = z.infer<typeof updateAppSettingsSchema>;

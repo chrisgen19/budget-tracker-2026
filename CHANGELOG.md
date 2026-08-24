@@ -2,6 +2,51 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-24 - Receipt Breakdown Write Validation
+
+Closes #119. `transactions.receipt_breakdown` was persisted with no validation at all: the only
+schema covering it was `receiptBreakdown: z.any().optional()` on `batchTransactionSchema`, and
+`POST /api/transactions/batch` stored whatever the client sent. The blob is assembled
+client-side and posted back, so nothing between Gemini and the database checked its shape.
+
+Not for lack of schemas: `receiptBreakdownLineItemSchema` and `receiptBreakdownItemSchema`
+validate the Gemini *scan response* thoroughly, but that is a different structure. The thing
+actually stored, `ReceiptBreakdownMeta`, had none.
+
+### Why it mattered
+- **The renderer had no guard.** `receipt-breakdown.tsx` reads `breakdown.items.length` with no check, so a stored blob missing `items` was a render-time `TypeError`, not a degraded display. The call site reached it through `as unknown as ReceiptBreakdownMeta` -- a double cast asserting a shape nothing verified, the pattern the 2026-08-20 entry already records as having shipped bugs
+- **Nothing bounded the size.** `MAX_BATCH_TRANSACTIONS` caps a request at 200 *rows*, but each row's blob was unbounded, so request size effectively was too
+- **It pushed the burden onto readers.** `getReceiptItems` (#114) had to parse defensively precisely because the column carried no guarantee
+
+### Changes
+- **`receiptBreakdownMetaSchema`** replaces `z.any()`. Bounds mirror what the client actually produces (`use-multi-scan.ts`): a positive `total`, and 1-50 items reusing `receiptBreakdownLineItemSchema`. `.strict()` keeps unknown keys out, so arbitrary payload cannot ride along inside the JSON column
+- **`toReceiptBreakdownMeta`** narrows a value read from the column, replacing the double cast in `transaction-form.tsx`. Tightening the write path does not make *existing* rows safe, so anything already stored still has to be narrowed rather than asserted. Deliberately duplicated rather than shared with `parseReceiptBreakdown` in `budget-queries.ts`, which imports Prisma as a value and must not reach a client bundle
+
+### Deliberately not included
+Rejecting non-positive item amounts on the **read** path, raised in review on #115 and declined
+there: receipts legitimately carry `0.00` lines (free or promotional items) and negative lines
+(discounts, coupons, returns), so dropping them on read would turn unusual-but-real data into
+silently missing data. The write schema does require positive amounts, matching what the scan
+path already enforces, so representing discounts would be a deliberate future decision on both
+sides rather than an accident on one.
+
+### Verification
+All 16 existing rows were checked against both halves: the new write schema accepts 16 and
+rejects 0, and the renderer narrowing keeps 16 and drops 0. So no stored data regresses.
+
+### Tests
+Thirty-eight more (117 total), in two new files. `validations.test.ts` covers the shape the
+scan flow produces plus ten malformed blobs that were previously storable, the item-count and
+name-length bounds, and unknown-key rejection. `receipt-breakdown.test.ts` covers narrowing
+nine unusable shapes to `null`, keeping the valid entries of a partly malformed blob, and the
+total fallback. Both were confirmed to fail with their fix reverted.
+
+### Files
+- `src/lib/validations.ts` -- `receiptBreakdownMetaSchema`, wired into `batchTransactionSchema`
+- `src/components/transactions/receipt-breakdown.tsx` -- `toReceiptBreakdownMeta`
+- `src/components/transactions/transaction-form.tsx` -- narrows instead of casting
+- `src/lib/validations.test.ts`, `src/components/transactions/receipt-breakdown.test.ts` -- new
+
 ## 2026-08-24 - MCP Structured Output
 
 Closes #116. All 12 tools now declare an `outputSchema` and return `structuredContent`
