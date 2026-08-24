@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { Prisma } from "@prisma/client";
 import type { PrismaClient } from "@prisma/client";
 import {
   getSpendingByCategory,
@@ -9,6 +10,7 @@ import {
   getLabelBreakdown,
   getLabelList,
   getBillHistory,
+  getReceiptItems,
 } from "./budget-queries";
 
 /** Asia/Manila. `getTimezoneOffset()` returns -480 for UTC+8, matching users.timezone_offset. */
@@ -734,5 +736,246 @@ describe("getBillHistory window arithmetic", () => {
     const result = await getBillHistory(emptyPrisma(), "u1", { months: 6 });
 
     expect(result.from).toBe("2026-02-24");
+  });
+});
+
+describe("getReceiptItems validates the stored breakdown rather than casting it", () => {
+  const tx = (over: Record<string, unknown> = {}) => ({
+    id: "t1",
+    description: "Lawson",
+    amount: 172,
+    date: new Date("2026-03-05T00:00:00.000Z"),
+    receiptGroupId: "g1",
+    category: { name: "Groceries" },
+    receiptBreakdown: {
+      total: 172,
+      items: [
+        { name: "Paper Cups", amount: 28 },
+        { name: "Ecobag Large", amount: 10 },
+      ],
+    },
+    ...over,
+  });
+
+  const itemsPrisma = (rows: ReturnType<typeof tx>[]) =>
+    ({ transaction: { findMany: vi.fn(async () => rows) } }) as unknown as PrismaClient;
+
+  it("flattens items with their transaction context", async () => {
+    const result = await getReceiptItems(itemsPrisma([tx()]), "u1", {});
+
+    expect(result.itemCount).toBe(2);
+    expect(result.totalAmount).toBe(38);
+    expect(result.items[0]).toMatchObject({
+      name: "Paper Cups",
+      amount: 28,
+      transactionId: "t1",
+      categoryName: "Groceries",
+      receiptGroupId: "g1",
+      breakdownTotal: 172,
+    });
+  });
+
+  it("skips a malformed blob instead of emitting items with undefined fields", async () => {
+    const rows = [
+      tx({ id: "bad1", receiptBreakdown: { items: "not-an-array" } }),
+      tx({ id: "bad2", receiptBreakdown: { items: [{ name: "No amount" }] } }),
+      tx({ id: "bad3", receiptBreakdown: { items: [{ amount: 5 }] } }),
+      tx({ id: "bad4", receiptBreakdown: "a string" }),
+      tx({ id: "bad5", receiptBreakdown: { items: [{ name: "NaN", amount: Number.NaN }] } }),
+    ];
+
+    const result = await getReceiptItems(itemsPrisma(rows), "u1", {});
+
+    expect(result.items).toEqual([]);
+    expect(result.itemCount).toBe(0);
+  });
+
+  it("keeps the valid entries of a partially malformed blob", async () => {
+    const result = await getReceiptItems(
+      itemsPrisma([
+        tx({
+          receiptBreakdown: {
+            total: 100,
+            items: [{ name: "Good", amount: 40 }, { name: "Bad" }, null, { amount: 3 }],
+          },
+        }),
+      ]),
+      "u1",
+      {}
+    );
+
+    expect(result.items.map((i) => i.name)).toEqual(["Good"]);
+  });
+
+  it("falls back to summing items when the stored total is missing or unusable", async () => {
+    const result = await getReceiptItems(
+      itemsPrisma([tx({ receiptBreakdown: { items: [{ name: "A", amount: 30 }, { name: "B", amount: 12 }] } })]),
+      "u1",
+      {}
+    );
+
+    expect(result.items[0].breakdownTotal).toBe(42);
+  });
+
+  it("reports the stored total as-is even when it disagrees with the item sum", async () => {
+    // The app's ReceiptBreakdown component displays the stored total rather than recomputing,
+    // so the two can legitimately differ. Do not silently substitute one for the other.
+    const result = await getReceiptItems(
+      itemsPrisma([tx({ receiptBreakdown: { total: 999, items: [{ name: "A", amount: 1 }] } })]),
+      "u1",
+      {}
+    );
+
+    expect(result.items[0].breakdownTotal).toBe(999);
+    expect(result.items[0].amount).toBe(1);
+  });
+
+  it("matches item names case-insensitively", async () => {
+    const result = await getReceiptItems(itemsPrisma([tx()]), "u1", { search: "ECOBAG" });
+
+    expect(result.items.map((i) => i.name)).toEqual(["Ecobag Large"]);
+    expect(result.totalAmount).toBe(10);
+  });
+
+  it("counts and totals every match while limit only caps what is returned", async () => {
+    const result = await getReceiptItems(itemsPrisma([tx()]), "u1", { limit: 1 });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.itemCount).toBe(2);
+    expect(result.totalAmount).toBe(38);
+  });
+
+  it("resolves the month filter in the user's timezone", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const prisma = {
+      transaction: {
+        findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
+          seen.push(where);
+          return [];
+        }),
+      },
+    } as unknown as PrismaClient;
+
+    await getReceiptItems(prisma, "u1", { month: "2026-03", timezoneOffset: MANILA });
+
+    expect((seen[0].date as DateFilter).gte?.toISOString()).toBe("2026-02-28T16:00:00.000Z");
+  });
+
+  it("excludes rows with Prisma's DbNull sentinel, not a plain null", async () => {
+    // Prisma's typed API rejects `equals: null` on a nullable JSON column; it happens to
+    // execute on 6.19.2, and the Record<string, unknown> where-clause hides the type error,
+    // so nothing else would catch a regression here.
+    const seen: Array<Record<string, unknown>> = [];
+    const prisma = {
+      transaction: {
+        findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
+          seen.push(where);
+          return [];
+        }),
+      },
+    } as unknown as PrismaClient;
+
+    await getReceiptItems(prisma, "u1", {});
+
+    const not = seen[0].NOT as { receiptBreakdown: { equals: unknown } };
+    expect(not.receiptBreakdown.equals).toBe(Prisma.DbNull);
+    expect(not.receiptBreakdown.equals).not.toBeNull();
+  });
+
+  it("filters to one receipt group", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const prisma = {
+      transaction: {
+        findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
+          seen.push(where);
+          return [];
+        }),
+      },
+    } as unknown as PrismaClient;
+
+    await getReceiptItems(prisma, "u1", { receiptGroupId: "g1" });
+
+    expect(seen[0].receiptGroupId).toBe("g1");
+  });
+});
+
+describe("row limits never silently truncate or reverse a result", () => {
+  const rows = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `t${i}`,
+      description: "d",
+      amount: 1,
+      date: new Date("2026-03-05T00:00:00.000Z"),
+      receiptGroupId: null,
+      category: { name: "C" },
+      receiptBreakdown: { total: 1, items: [{ name: `item${i}`, amount: 1 }] },
+    }));
+
+  const itemsPrisma = (n: number) =>
+    ({ transaction: { findMany: vi.fn(async () => rows(n)) } }) as unknown as PrismaClient;
+
+  // -1 would make slice(0, -1) drop the last row; NaN would make it return nothing.
+  // Both look like real answers, which is why they fall back rather than pass through.
+  const bad: Array<[string, number]> = [
+    ["negative", -1],
+    ["NaN", Number.NaN],
+    ["zero", 0],
+    ["fractional", 2.5],
+    ["Infinity", Number.POSITIVE_INFINITY],
+  ];
+
+  for (const [label, value] of bad) {
+    it(`falls back to the default for a ${label} limit`, async () => {
+      const result = await getReceiptItems(itemsPrisma(3), "u1", { limit: value });
+
+      // Default is 100, so all three survive rather than 2, 0, or "all but the last".
+      expect(result.items).toHaveLength(3);
+      expect(result.itemCount).toBe(3);
+    });
+  }
+
+  it("still honours a valid limit", async () => {
+    const result = await getReceiptItems(itemsPrisma(5), "u1", { limit: 2 });
+
+    expect(result.items).toHaveLength(2);
+    expect(result.itemCount).toBe(5);
+  });
+
+  it("never hands Prisma a negative take, which would read from the wrong end", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const prisma = {
+      transaction: {
+        findMany: vi.fn(async (args: Record<string, unknown>) => {
+          seen.push(args);
+          return [];
+        }),
+      },
+    } as unknown as PrismaClient;
+
+    await getTopExpenses(prisma, "u1", { limit: -5 });
+
+    expect(seen[0].take).toBe(10);
+  });
+
+  it("applies the same guard to bill history", async () => {
+    const log = (i: number) => ({
+      scheduledTransactionId: "b1",
+      dueDate: new Date(`2026-0${i + 1}-05T00:00:00.000Z`),
+      status: "PAID",
+      actionDate: new Date(`2026-0${i + 1}-05T00:00:00.000Z`),
+      transactionId: null,
+      snoozeUntil: null,
+    });
+    const prisma = {
+      scheduledTransaction: {
+        findMany: vi.fn(async () => [{ id: "b1", description: "R", amount: 1, category: { name: "C" } }]),
+      },
+      scheduledTransactionLog: { findMany: vi.fn(async () => [log(0), log(1), log(2)]) },
+      transaction: { findMany: vi.fn(async () => []) },
+    } as unknown as PrismaClient;
+
+    const result = await getBillHistory(prisma, "u1", { limit: -1, months: 24 });
+
+    expect(result.occurrences).toHaveLength(3);
   });
 });

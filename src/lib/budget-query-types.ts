@@ -352,3 +352,49 @@ export interface BillHistory {
   /** One entry per bill with history in the window, worst average lateness first */
   summaries: BillHistorySummary[];
 }
+
+// --- get_receipt_items ---
+
+export interface ReceiptItemsParams {
+  /** Format: YYYY-MM. Omit for all time */
+  month?: string;
+  /** Case-insensitive substring match on the item name */
+  search?: string;
+  /** Restrict to one scanned receipt, which may span several transactions */
+  receiptGroupId?: string;
+  /** Max items returned. Defaults to 100 */
+  limit?: number;
+  /** User's timezone offset in minutes (`getTimezoneOffset()` convention, so UTC+8 is
+   *  -480). Month boundaries are resolved in this timezone. */
+  timezoneOffset?: number;
+}
+
+export interface ReceiptItem {
+  /** Item name exactly as stored by the scan */
+  name: string;
+  amount: number;
+  /** The transaction this item was itemized under */
+  transactionId: string;
+  transactionDescription: string;
+  transactionAmount: number;
+  categoryName: string;
+  /** ISO date of the transaction */
+  date: string;
+  /** Ties together the transactions of one multi-category receipt. `null` for a receipt that
+   *  produced a single transaction. */
+  receiptGroupId: string | null;
+  /** The total the scan recorded for this transaction's breakdown. The app displays this
+   *  rather than recomputing from items, so it can disagree with both the item sum and
+   *  `transactionAmount`; it is reported as stored. */
+  breakdownTotal: number;
+}
+
+export interface ReceiptItems {
+  /** The month filtered on, or null when unfiltered */
+  month: string | null;
+  /** Matching items, before `limit` was applied */
+  itemCount: number;
+  /** Sum of every matching item's amount, before `limit` was applied */
+  totalAmount: number;
+  items: ReceiptItem[];
+}

@@ -35,7 +35,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **Scheduled Bills & Reminders** — Recurring bill management with configurable frequency (weekly, biweekly, monthly, quarterly, yearly); mobile toast reminders for upcoming and overdue bills; one-tap pay that auto-creates the expense transaction; snooze (1d/3d/1w) and skip actions; pay-all for batch payments; bill history with links to past payments
 - **Progressive Web App** — Installable PWA with offline support via Serwist service worker; install prompt banner (Android + iOS Safari guide); standalone mode with safe-area handling; smart caching for API responses and static assets
 - **Timezone-Aware Dates** — All date queries respect the user's local timezone offset for accurate day boundaries and month grouping
-- **MCP Server** — Local Model Context Protocol server for querying budget data from Claude Desktop; 11 read-only tools (spending by category, top expenses, monthly summary, spending trends, search transactions, budget overview, upcoming bills, category list, label breakdown, label list, bill history); shared query library reusable for future in-app AI chat
+- **MCP Server** — Local Model Context Protocol server for querying budget data from Claude Desktop; 12 read-only tools (spending by category, top expenses, monthly summary, spending trends, search transactions, budget overview, upcoming bills, category list, label breakdown, label list, bill history, receipt items); shared query library reusable for future in-app AI chat
 - **Analytics** — Dedicated reporting page with income vs expenses bar chart, cash flow area chart (net + cumulative), category breakdown donut chart, label breakdown horizontal bars, summary cards, and flexible time range controls (weekly/monthly/yearly/custom)
 - **Design** — Warm paper-ledger aesthetic with Young Serif + Outfit fonts, Plus Jakarta Sans for currency amounts, amber accents, and Framer Motion animations
 
@@ -252,6 +252,7 @@ Claude Desktop will automatically start the MCP server when you open a conversat
 | `get_label_breakdown` | Spending or income grouped by label for a month, including an "unlabeled" bucket |
 | `get_label_list` | Labels with transaction counts, applicable type, and auto-apply schedules |
 | `get_bill_history` | Past bill occurrences (paid/skipped/snoozed) plus per-bill lateness patterns |
+| `get_receipt_items` | Individual line items from scanned receipts, filterable by month, name, or receipt |
 
 ### Testing with MCP Inspector
 

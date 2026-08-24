@@ -2,6 +2,65 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-24 - MCP Receipt Line Items
+
+Closes #114. Last of the three data gaps from the MCP audit. 11 tools become 12.
+
+Receipt scanning stores Gemini's per-item detail on `transactions.receipt_breakdown`, and
+`receipt_group_id` ties together the transactions of one multi-category receipt. Neither was
+visible to MCP, so the finest-grained spending data in the app could not be queried at all.
+Live on this account: 116 line items across 16 transactions and 7 receipt groups.
+
+### New tool
+**`get_receipt_items`** returns line items flattened across transactions, each carrying its
+transaction, category, date, and `receiptGroupId`. Filterable by month, by item name
+(case-insensitive), or by `receiptGroupId` to pull one whole receipt.
+
+Flat rather than nested by receipt: the common questions aggregate across receipts ("how much
+on coffee this month?"), which is far easier over a list than a tree. Returning the group id on
+each item still lets a caller drill into a single receipt.
+
+### The blob is validated, not cast
+`receipt_breakdown` is `Json?`, so it arrives as `unknown`. The 2026-08-20 entry records this
+exact class of bug shipping before: "Every field was cast with `as` and none was checked, so a
+200 missing `amount` or `categoryId` produced a `success` row holding `undefined`." Entries are
+type-checked individually, so a malformed or partially written blob is skipped rather than
+producing items with missing fields, and the valid entries of a partly broken blob survive.
+
+`breakdownTotal` is reported as stored. The app's `ReceiptBreakdown` component displays the
+stored total rather than recomputing from items, so the two can legitimately disagree and
+neither is silently substituted for the other. It falls back to summing the items only when the
+stored total is absent or unusable.
+
+### Verification
+All 116 live items were cross-checked against the raw JSON: the tool reports exactly 116, and
+every one appears verbatim in the stored blob. Group filtering was confirmed against a real
+receipt spanning two transactions.
+
+### Tests
+Nine more (79 total), covering the flattening, four shapes of malformed blob, partial
+corruption, the total fallback, a stored total disagreeing with the item sum, case-insensitive
+search, `limit` capping only the returned rows while counts cover every match, timezone-resolved
+months, and group filtering.
+
+### Review follow-up (#115)
+- **The JSON null filter used a plain `null`, which Prisma's typed API does not accept.** `NOT: { receiptBreakdown: { equals: null } }` fails to compile when written against the typed client (`Type 'null' is not assignable to 'InputJsonValue | JsonNullValueFilter | ...'`), and the `Record<string, unknown>` shape these where-clauses are built as hid it. Now uses `Prisma.DbNull`.
+
+  The review reported this as a P1 that stopped the tool executing. That part is not true and was checked before changing anything: plain `null`, `Prisma.DbNull`, and `Prisma.AnyNull` all return the same 16 rows on 6.19.2, which matches the tool having returned all 116 items when the feature was verified. The real issue is narrower and still worth fixing: the query relied on behaviour Prisma's own types declare unsupported, with nothing to catch it changing under a version bump. Every other where-clause in the module was checked and type-checks clean, so this was the only one using the escape hatch.
+
+  `budget-queries.ts` now imports the `Prisma` namespace as a value rather than only types, which is a small departure from its dependency-injected design, taken deliberately for the sentinels. A test pins the sentinel, confirmed to fail if it regresses to `null`, and live output is unchanged at 116 items.
+
+- **Row limits fall back instead of silently truncating or reversing.** `slice(0, -1)` quietly drops the last row, `slice(0, NaN)` returns nothing, and Prisma reads a negative `take` as "from the end", reversing the window. All three look like real answers. `safeLimit` sends anything that is not a positive safe integer to the caller's default, applied at all four sites that take a limit (`getTopExpenses`, `searchTransactions`, `getBillHistory`, `getReceiptItems`) rather than only the one raised, since fixing one of several identical call sites is how the `timezoneOffset` drift in #112 happened.
+
+  Not reachable today: the MCP boundary already validates every limit with `.int().min(1).max(N)` and returns `-32602`, and nothing else calls these functions. The guard is a second line, deliberately clamping rather than throwing, so the library never invents data while telling the caller they were wrong stays the boundary's job. The suggested fix would have accepted `limit: 0`, which `slice(0, 0)` turns into an empty result for a parameter documented as a maximum.
+
+### Files
+- `src/lib/budget-queries.ts` -- `getReceiptItems`, `parseReceiptBreakdown`
+- `src/lib/budget-query-types.ts` -- receipt item types
+- `src/lib/budget-queries.test.ts` -- receipt coverage
+- `mcp-server/src/index.ts` -- tool registration
+- `README.md`, `AGENTS.md` -- tool table and counts
+
 ## 2026-08-24 - MCP Bill Payment History
 
 Closes #112. Second feature item from the MCP audit. 10 tools become 11.
