@@ -49,3 +49,16 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      # mcp-server is a standalone package: its own lockfile, its own .npmrc, and excluded
+      # from the root tsconfig. Nothing above this step enters the directory, so the file
+      # wiring the 8 MCP tools to src/lib/budget-queries.ts had no static verification at
+      # all -- and it drifted, silently, for five months. It must run after the root
+      # install, whose postinstall generates the Prisma client that this package links to.
+      - name: Install MCP server dependencies
+        run: pnpm install --frozen-lockfile --engine-strict
+        working-directory: mcp-server
+
+      - name: Type check MCP server
+        run: pnpm type-check
+        working-directory: mcp-server

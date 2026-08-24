@@ -2,7 +2,17 @@
   "name": "budgettracker-mcp-server",
   "version": "1.0.0",
   "private": true,
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1"
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@prisma/client": "link:../node_modules/@prisma/client",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
   }
 }

@@ -2,6 +2,51 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-24 - MCP Server Dependency Declaration & Type Checking
+
+Closes #102. `mcp-server/src/index.ts` was the only file in the repo with no static
+verification of any kind, and it is the glue layer between the 8 MCP tools and
+`src/lib/budget-queries.ts`.
+
+### The gap
+- **Undeclared dependencies.** `mcp-server/package.json` declared only `@modelcontextprotocol/sdk`, while `index.ts` also imports `zod` and `@prisma/client`. After installing, `mcp-server/node_modules` held only `@modelcontextprotocol`; both other imports resolved by walking up into the app root. That worked only because the server sits inside this repo with the app's dependencies installed, which is not a property of the package
+- **zod split brain.** Because `zod` was undeclared, pnpm's `autoInstallPeers` pulled `zod@4.3.6` in to satisfy the SDK's peer range, and that is what TypeScript resolved. The runtime resolved `zod@3.25.76` from the app root. The file was type-checked against a different major version of zod than it ran on
+- **Type-checking the package crashed.** `tsc -p mcp-server/tsconfig.json` died with `Ineffective mark-compacts near heap limit` after ~140s. Bisected to a single tool registration: one `server.tool()` (or `registerTool()`) call against SDK 1.27 + zod 4 emits `TS2589: Type instantiation is excessively deep and possibly infinite`, and eight of them exhaust the 4 GB default heap. Isolated repros confirmed SDK 1.27.1 + zod 4.3.6 fails while both SDK 1.27.1 + zod 3.25.76 and SDK 1.12.1 + zod 3.25.76 are clean, so declaring zod at 3.x fixes all three items at once
+- Nothing else covered the directory either: root `tsconfig.json` excludes `mcp-server`, `vitest.config.mts` scopes `include` to `src/**`, and CI never entered it
+
+This had already caused a silent regression. `mcp-server/src/index.ts` had one commit, from
+the original March feature, while `src/lib/budget-queries.ts` had three since. One of them,
+`8465df7 fix(assessment): timezone-aware upcoming bills in AI context`, added a
+`timezoneOffset` param to `getUpcomingBills` for the assessment route. The MCP tool never
+passed it, so overdue flags there still follow the container clock instead of the user's
+local day. That bug is tracked separately; this change is about the reason nobody noticed.
+
+### Changes
+- `mcp-server/package.json` declares `zod` (`^3.24.0`, the app's line) and `@prisma/client`, adds `tsx` and `typescript` as devDependencies, and gains a `type-check` script
+- **`@prisma/client` is declared as `link:../node_modules/@prisma/client`, not a version range.** Declaring it normally installs a physically separate, *ungenerated* copy into `mcp-server/node_modules`, and the type-check then fails with `Module '"@prisma/client"' has no exported member 'PrismaClient'`. Generating a second client would work but leaves two clients to keep in sync against one schema. The link is also the honest model: this package already imports `../../src/lib/budget-queries.js`, whose functions are typed against the app's generated client, so it was never independent of it
+- `packageManager` pinned to `pnpm@10.32.1`, matching the root. Without it, corepack fell through to whatever pnpm is installed globally, which resolved a different dependency set and wrote `allowBuilds` placeholders the pinned pnpm does not use
+- **New `mcp-server/.npmrc`.** npm config is read from the install cwd, and this package has its own lockfile and install step, so the root hardening never applied to it. Verified: `minimum-release-age` read as `undefined` in `mcp-server` against `10080` at the root, with no `~/.npmrc` in play. The MCP server was the one dependency tree in the repo installing with no supply-chain quarantine
+- CI gained an install and a type-check step scoped to `mcp-server`, ordered after the root install because the root `postinstall` generates the Prisma client this package links to
+
+### Docs
+- README setup no longer tells you to run `npx prisma generate --schema=../prisma/schema.prisma` inside `mcp-server`. That step generated the second client this change exists to avoid; the link makes it unnecessary. Installing the app's dependencies first is now an explicit step, since the link depends on it
+- The Claude Desktop config example points at `mcp-server/node_modules/.bin/tsx` rather than `npx tsx`, which runs the pinned version and avoids npm printing `Unknown project config` warnings about this package's `.npmrc` on every launch
+- `AGENTS.md` records why `zod` is pinned and why `@prisma/client` is linked, so neither reads as an oddity worth "cleaning up", and adds a note to run the MCP type-check when changing `budget-queries.ts` or `budget-query-types.ts`
+
+### Verification
+- `cd mcp-server && pnpm type-check` passes in ~2s, against a 140s OOM crash before
+- Confirmed it actually catches drift rather than merely passing: adding a required 4th parameter to `getTopExpenses` in `budget-queries.ts` produced `src/index.ts(68,26): error TS2554: Expected 4 arguments, but got 3`, then the change was reverted
+- The two new CI steps were run locally as written, from `mcp-server/` (`rm -rf node_modules && pnpm install --frozen-lockfile --engine-strict && pnpm type-check`). Root `pnpm lint`, `pnpm type-check`, and `pnpm test` were run separately and pass
+- The server still works end to end: driven over stdio with a real MCP client, all 8 tools returned live data, and argument validation still rejects `month: "not-a-month"` and `limit: 999` with `-32602`
+- Regenerating the lockfile floated the SDK from 1.27.1 to 1.30.0. Type-check and the stdio smoke test were both re-run on it
+
+### Files
+- `mcp-server/package.json` -- declared dependencies, `packageManager`, `type-check` script
+- `mcp-server/.npmrc` -- new; supply-chain hardening mirroring the root
+- `mcp-server/pnpm-lock.yaml` -- regenerated under pnpm 10.32.1
+- `.github/workflows/ci.yml` -- MCP install + type-check steps
+- `README.md`, `AGENTS.md` -- setup and rationale
+
 ## 2026-08-20 - Test Infrastructure (Vitest + React Testing Library)
 
 Added because the review rounds on the receipt scan work kept finding the same class of

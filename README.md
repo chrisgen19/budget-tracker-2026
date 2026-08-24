@@ -164,19 +164,38 @@ Claude Desktop → (stdio) → MCP Server (local script) → Prisma → PostgreS
 
 The MCP server is a standalone TypeScript script that runs locally via `tsx`. It is **not** a hosted server — Claude Desktop starts and stops it automatically.
 
+It has its own `package.json`, lockfile, and `.npmrc`, but it is standalone only in its
+dependency tree: it imports the shared query layer from `src/lib/budget-queries.ts` and
+links `@prisma/client` to the app's generated client rather than generating a second one.
+So the app's dependencies must be installed first.
+
 ### Setup
 
-#### 1. Install MCP server dependencies
+#### 1. Install app dependencies first
+
+```bash
+pnpm install
+```
+
+This generates the Prisma client (via `postinstall`) that the MCP server links to. Skipping
+it leaves `@prisma/client` unresolved in step 2.
+
+#### 2. Install MCP server dependencies
 
 ```bash
 cd mcp-server && pnpm install && cd ..
 ```
 
-#### 2. Generate Prisma client for the MCP server
+No separate `prisma generate` is needed here. The package links to the client generated in
+step 1, which keeps the two from drifting to different schema versions.
+
+To verify the server compiles against the current query layer:
 
 ```bash
-cd mcp-server && npx prisma generate --schema=../prisma/schema.prisma && cd ..
+cd mcp-server && pnpm type-check && cd ..
 ```
+
+CI runs this on every PR.
 
 #### 3. Find your user ID
 
@@ -199,8 +218,8 @@ Add the following (replace the placeholder values):
 {
   "mcpServers": {
     "budgettracker": {
-      "command": "npx",
-      "args": ["tsx", "/absolute/path/to/budgettracker/mcp-server/src/index.ts"],
+      "command": "/absolute/path/to/budgettracker/mcp-server/node_modules/.bin/tsx",
+      "args": ["/absolute/path/to/budgettracker/mcp-server/src/index.ts"],
       "env": {
         "DATABASE_URL": "postgres://myuser:mypassword@localhost:5432/budgettracker-nextjs",
         "BUDGET_USER_ID": "your-user-id-here"
@@ -209,6 +228,10 @@ Add the following (replace the placeholder values):
   }
 }
 ```
+
+`tsx` is a declared devDependency of the MCP package, so pointing at the local binary runs
+a pinned version. `npx tsx` also works, but resolves the version at launch and prints npm
+warnings about this package's `.npmrc` settings.
 
 #### 5. Restart Claude Desktop
 
@@ -232,7 +255,7 @@ Claude Desktop will automatically start the MCP server when you open a conversat
 To verify tools work correctly before using in Claude Desktop:
 
 ```bash
-BUDGET_USER_ID=your-user-id DATABASE_URL="your-database-url" npx @modelcontextprotocol/inspector npx tsx mcp-server/src/index.ts
+BUDGET_USER_ID=your-user-id DATABASE_URL="your-database-url" npx @modelcontextprotocol/inspector mcp-server/node_modules/.bin/tsx mcp-server/src/index.ts
 ```
 
 This opens a web UI at `http://localhost:6274` where you can call each tool and inspect the results.
