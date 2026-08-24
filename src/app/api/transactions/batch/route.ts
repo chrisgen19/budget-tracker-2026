@@ -35,25 +35,36 @@ export async function POST(request: Request) {
   if (userId instanceof NextResponse) return userId;
 
   try {
-    const body = await request.json();
-    const { transactions, clientBatchId } = batchSchema.parse(body);
+    const body: unknown = await request.json();
 
     // A replay creates nothing, so it must not be judged on the validity of inputs it will
-    // never use. Checked ahead of the label ownership query below: if a label included in
-    // the original batch is deleted before the retry arrives, validating first returns 400
-    // for a batch that is already committed — and a 400 tells the client nothing was
-    // written, which would unfreeze the rows and let a corrected resubmit duplicate them.
-    // The authoritative dedupe still happens under the advisory lock further down; this is
-    // the same check without the preconditions, not a replacement for it.
-    if (clientBatchId) {
+    // never use — not the label ownership query below, and not the transaction payload
+    // itself. A 4xx tells the client nothing was written, so it drops the idempotency pin
+    // and unfreezes the rows; returning one for a batch that *is* committed lets a
+    // corrected resubmit duplicate it.
+    //
+    // That is why this runs before `batchSchema.parse` rather than after. Any tightening of
+    // the payload schema would otherwise be able to reject a replay of a batch accepted
+    // under the previous schema — the same "judged on inputs it never uses" failure that
+    // moved this check ahead of the label query, one layer up.
+    //
+    // A key that is absent or malformed cannot match an existing batch, so it falls through
+    // to normal validation. The authoritative dedupe still happens under the advisory lock
+    // further down; this is the same check without the preconditions, not a replacement.
+    const providedKey = clientBatchIdSchema.safeParse(
+      (body as { clientBatchId?: unknown } | null)?.clientBatchId
+    );
+    if (providedKey.success) {
       const alreadySaved = await prisma.transaction.findMany({
-        where: { userId, clientBatchId },
+        where: { userId, clientBatchId: providedKey.data },
         include: TX_INCLUDE,
       });
       if (alreadySaved.length > 0) {
         return NextResponse.json({ transactions: alreadySaved }, { status: 200 });
       }
     }
+
+    const { transactions, clientBatchId } = batchSchema.parse(body);
 
     // Collect all explicitly-provided label IDs for a single ownership query
     const allExplicitLabelIds = [

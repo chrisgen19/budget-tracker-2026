@@ -141,7 +141,36 @@ async function main() {
   check("unknown label on a first attempt is rejected", badLabelFirst.status, 400);
   check("rejected first attempt created nothing", await countRows(), 0);
 
-  // 6. A malformed key is rejected rather than silently treated as keyless.
+  // 6. The same rule holds for the payload schema, not just label ownership. A batch
+  //    accepted under an older schema can be replayed after the schema tightens; judging
+  //    the payload first would return 400 for a committed batch and let the client's
+  //    corrected resubmit duplicate it. Simulated with a receiptBreakdown that the current
+  //    schema rejects (unknown key, and an item shape it no longer accepts).
+  const staleKey = randomUUID();
+  const goodRows = rows(2).map((r) => ({
+    ...r,
+    receiptBreakdown: { total: r.amount, items: [{ name: "Item", amount: r.amount }] },
+  }));
+
+  const acceptedUnderOldSchema = await post(goodRows, staleKey);
+  check("batch with a breakdown creates", acceptedUnderOldSchema.status, 201);
+
+  const nowInvalidRows = goodRows.map((r) => ({
+    ...r,
+    receiptBreakdown: { ...r.receiptBreakdown, legacyField: "accepted under z.any()" },
+  }));
+
+  const replayWithStalePayload = await post(nowInvalidRows, staleKey);
+  check("replay survives a payload the schema now rejects", replayWithStalePayload.status, 200);
+  check("rows after that replay", await countRows(), 2);
+  await reset();
+
+  // A first attempt carrying that same payload is still rejected — nothing exists to replay.
+  const badPayloadFirst = await post(nowInvalidRows, randomUUID());
+  check("newly invalid payload on a first attempt is rejected", badPayloadFirst.status, 400);
+  check("rejected first attempt created nothing", await countRows(), 0);
+
+  // 7. A malformed key is rejected rather than silently treated as keyless.
   const bad = await post(rows(1), "not-a-uuid");
   check("malformed key is rejected", bad.status, 400);
   check("malformed key created nothing", await countRows(), 0);

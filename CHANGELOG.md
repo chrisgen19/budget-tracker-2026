@@ -2,6 +2,62 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-24 - Receipt Breakdown Write Validation
+
+Closes #119. `transactions.receipt_breakdown` was persisted with no validation at all: the only
+schema covering it was `receiptBreakdown: z.any().optional()` on `batchTransactionSchema`, and
+`POST /api/transactions/batch` stored whatever the client sent. The blob is assembled
+client-side and posted back, so nothing between Gemini and the database checked its shape.
+
+Not for lack of schemas: `receiptBreakdownLineItemSchema` and `receiptBreakdownItemSchema`
+validate the Gemini *scan response* thoroughly, but that is a different structure. The thing
+actually stored, `ReceiptBreakdownMeta`, had none.
+
+### Why it mattered
+- **The renderer had no guard.** `receipt-breakdown.tsx` reads `breakdown.items.length` with no check, so a stored blob missing `items` was a render-time `TypeError`, not a degraded display. The call site reached it through `as unknown as ReceiptBreakdownMeta` -- a double cast asserting a shape nothing verified, the pattern the 2026-08-20 entry already records as having shipped bugs
+- **Nothing bounded the size.** `MAX_BATCH_TRANSACTIONS` caps a request at 200 *rows*, but each row's blob was unbounded, so request size effectively was too
+- **It pushed the burden onto readers.** `getReceiptItems` (#114) had to parse defensively precisely because the column carried no guarantee
+
+### Changes
+- **`receiptBreakdownMetaSchema`** replaces `z.any()`. Bounds mirror what the client actually produces (`use-multi-scan.ts`): a positive `total`, and 1-50 items reusing `receiptBreakdownLineItemSchema`. `.strict()` keeps unknown keys out, so arbitrary payload cannot ride along inside the JSON column
+- **`toReceiptBreakdownMeta`** narrows a value read from the column, replacing the double cast in `transaction-form.tsx`. Tightening the write path does not make *existing* rows safe, so anything already stored still has to be narrowed rather than asserted. Deliberately duplicated rather than shared with `parseReceiptBreakdown` in `budget-queries.ts`, which imports Prisma as a value and must not reach a client bundle
+
+### Deliberately not included
+Rejecting non-positive item amounts on the **read** path, raised in review on #115 and declined
+there: receipts legitimately carry `0.00` lines (free or promotional items) and negative lines
+(discounts, coupons, returns), so dropping them on read would turn unusual-but-real data into
+silently missing data. The write schema does require positive amounts, matching what the scan
+path already enforces, so representing discounts would be a deliberate future decision on both
+sides rather than an accident on one.
+
+### Verification
+All 16 existing rows were checked against both halves: the new write schema accepts 16 and
+rejects 0, and the renderer narrowing keeps 16 and drops 0. So no stored data regresses.
+
+### Tests
+Thirty-eight more (117 total), in two new files. `validations.test.ts` covers the shape the
+scan flow produces plus ten malformed blobs that were previously storable, the item-count and
+name-length bounds, and unknown-key rejection. `receipt-breakdown.test.ts` covers narrowing
+nine unusable shapes to `null`, keeping the valid entries of a partly malformed blob, and the
+total fallback. Both were confirmed to fail with their fix reverted.
+
+### Review follow-up (#120)
+- **Tightening the payload schema put it ahead of the replay lookup, which could duplicate committed transactions.** `POST /api/transactions/batch` ran `batchSchema.parse(body)` before checking whether the batch already existed. A batch accepted under the old permissive schema, whose response was then lost, would have its exact retry rejected with 400 by the new schema. The client reads a 4xx as proof nothing was written (`definitelyNotCommitted` in `use-multi-scan.ts`), drops the idempotency pin and unfreezes the rows, so a corrected resubmit creates the batch a second time.
+
+  This is the same failure the sixth review round on the 2026-08-20 receipt scan work already fixed once, when it moved the existence check ahead of the *label ownership* query for exactly this reason. The tightened schema reintroduced it one layer up, outside that protection. The replay lookup now runs before `batchSchema.parse`; a key that is absent or malformed cannot match an existing batch, so it falls through to normal validation, and the authoritative dedupe under the advisory lock is unchanged.
+
+  Not reachable with the current client, which only ever builds a conforming blob, and all 16 stored rows pass the new schema. Fixed anyway because `AGENTS.md` documents that a 4xx means nothing was written, and the route can only keep that promise if it never rejects a batch that exists — today that held by luck, and the next schema change need not.
+
+  `scripts/verify-batch-idempotency.ts` gained the case, driven against the real HTTP route: a replay whose payload the current schema rejects still returns 200, while the same payload on a *first* attempt is still rejected with 400. Reverting the ordering fails it with `got 400, want 200`.
+
+### Files
+- `src/lib/validations.ts` -- `receiptBreakdownMetaSchema`, wired into `batchTransactionSchema`
+- `src/app/api/transactions/batch/route.ts` -- replay lookup moved ahead of payload validation
+- `scripts/verify-batch-idempotency.ts` -- stale-payload replay case
+- `src/components/transactions/receipt-breakdown.tsx` -- `toReceiptBreakdownMeta`
+- `src/components/transactions/transaction-form.tsx` -- narrows instead of casting
+- `src/lib/validations.test.ts`, `src/components/transactions/receipt-breakdown.test.ts` -- new
+
 ## 2026-08-24 - MCP Structured Output
 
 Closes #116. All 12 tools now declare an `outputSchema` and return `structuredContent`

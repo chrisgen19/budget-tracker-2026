@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion, AnimatePresence } from "framer-motion";
@@ -8,13 +8,13 @@ import { AlertCircle, ArrowLeft, CalendarDays, ChevronRight, Plus, Trash2 } from
 import { transactionSchema, type TransactionInput } from "@/lib/validations";
 import { formatDateInput, getCurrencySymbol, cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
-import { ReceiptBreakdown } from "@/components/transactions/receipt-breakdown";
+import { ReceiptBreakdown, toReceiptBreakdownMeta } from "@/components/transactions/receipt-breakdown";
 import { useUser } from "@/components/user-provider";
 import { useCategoriesQuery, useQuickPreferencesQuery } from "@/hooks/use-categories";
 import { LabelPicker } from "@/components/transactions/label-picker";
 import { useScheduledLabel } from "@/hooks/use-scheduled-label";
 import { useLabelsQuery } from "@/hooks/use-labels";
-import type { Category, TransactionWithCategory, ReceiptBreakdownMeta } from "@/types";
+import type { Category, TransactionWithCategory } from "@/types";
 
 export interface InitialTransactionData {
   amount?: number;
@@ -104,6 +104,13 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   });
 
   const selectedType = watch("type");
+
+  // Narrowed once rather than cast at the render site: the column only gained a write-side
+  // schema in #119, so older rows may not match ReceiptBreakdownMeta.
+  const receiptBreakdown = useMemo(
+    () => toReceiptBreakdownMeta(transaction?.receiptBreakdown),
+    [transaction?.receiptBreakdown]
+  );
   const watchedCategoryId = watch("categoryId");
   const watchedDate = watch("date");
   const watchedLabelIds = watch("labelIds") ?? [];
@@ -357,12 +364,10 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               </button>
             </div>
 
-            {/* Receipt Breakdown — only for itemized expenses */}
-            {selectedType === "EXPENSE" && transaction?.receiptBreakdown && (
-              <ReceiptBreakdown
-                breakdown={transaction.receiptBreakdown as unknown as ReceiptBreakdownMeta}
-                currency={user.currency}
-              />
+            {/* Receipt Breakdown — only for itemized expenses. Narrowed rather than cast:
+                rows written before the column had a write-side schema may not match. */}
+            {selectedType === "EXPENSE" && receiptBreakdown && (
+              <ReceiptBreakdown breakdown={receiptBreakdown} currency={user.currency} />
             )}
 
             {/* Amount — hero centerpiece */}

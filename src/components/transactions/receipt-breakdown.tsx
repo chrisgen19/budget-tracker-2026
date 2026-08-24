@@ -5,6 +5,44 @@ import { ChevronDown } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import type { ReceiptBreakdownMeta } from "@/types";
 
+/**
+ * Narrow a value read straight out of `transactions.receipt_breakdown` into the shape this
+ * component renders, or `null` when it cannot be trusted.
+ *
+ * The column only gained a write-side schema in #119, so rows written before that could hold
+ * anything, and this component reads `breakdown.items.length` with no guard. Callers holding
+ * a database value narrow through here instead of asserting the type with a cast.
+ *
+ * Deliberately duplicated rather than shared with `parseReceiptBreakdown` in
+ * `budget-queries.ts`: that module imports Prisma as a value and must not reach a client
+ * bundle.
+ */
+export function toReceiptBreakdownMeta(raw: unknown): ReceiptBreakdownMeta | null {
+  if (typeof raw !== "object" || raw === null) return null;
+
+  const blob = raw as Record<string, unknown>;
+  if (!Array.isArray(blob.items)) return null;
+
+  const items: ReceiptBreakdownMeta["items"] = [];
+  for (const entry of blob.items) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { name, amount } = entry as Record<string, unknown>;
+    if (typeof name !== "string" || typeof amount !== "number" || !Number.isFinite(amount)) {
+      continue;
+    }
+    items.push({ name, amount });
+  }
+
+  if (items.length === 0) return null;
+
+  const total =
+    typeof blob.total === "number" && Number.isFinite(blob.total)
+      ? blob.total
+      : items.reduce((sum, i) => sum + i.amount, 0);
+
+  return { total, items };
+}
+
 interface ReceiptBreakdownProps {
   breakdown: ReceiptBreakdownMeta;
   currency: string;
