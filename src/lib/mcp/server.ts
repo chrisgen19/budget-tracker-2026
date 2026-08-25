@@ -15,10 +15,15 @@ import {
   getReceiptItems,
 } from "../budget-queries";
 import type { PrismaClient } from "../budget-query-types";
-import { MCP_SCOPES, MCP_TOOL_SCOPES, type McpScope, type McpToolName } from "./scopes";
+import { READ_ONLY_SCOPES, MCP_TOOL_SCOPES, type McpScope, type McpToolName } from "./scopes";
 import { resolveWritePermission } from "./tokens";
 import { createTransactionBatch } from "../transaction-writes";
-import { clientBatchIdSchema, mcpTransactionSchema, MAX_BATCH_TRANSACTIONS } from "../validations";
+import {
+  clientBatchIdSchema,
+  mcpTransactionSchema,
+  resolveTransactionDate,
+  MAX_BATCH_TRANSACTIONS,
+} from "../validations";
 import {
   spendingByCategoryOutput,
   topExpensesOutput,
@@ -53,9 +58,10 @@ export interface BudgetMcpServerOptions {
   /** Minutes, `getTimezoneOffset()` convention (UTC+8 is -480). Resolved by the caller from the
    *  user row, so month boundaries match what the user sees in the app. */
   timezoneOffset: number;
-  /** Subject areas this caller may read. Tools outside them are removed before the server is
-   *  served. Defaults to every scope, which is what the stdio entry point wants: it is spawned
-   *  by the user's own machine and has no token to narrow. */
+  /** Subject areas this caller may use. Tools outside them are removed before the server is
+   *  served. Defaults to every *read* scope, never write: the stdio entry point does not pass
+   *  this, and it supplies no lease, so defaulting to write would advertise a tool that is
+   *  guaranteed to fail and point the user at a remote setting that does not apply to it. */
   scopes?: readonly McpScope[];
   /** `users.mcp_writes_enabled_until`, the write kill switch. Null or past means writes are
    *  refused even when the scope is granted. The stdio entry point passes null: a locally
@@ -76,7 +82,7 @@ export const createBudgetMcpServer = ({
   prisma,
   userId,
   timezoneOffset,
-  scopes = MCP_SCOPES,
+  scopes = READ_ONLY_SCOPES,
   writesEnabledUntil = null,
   tokenId,
 }: BudgetMcpServerOptions): McpServer => {
@@ -557,7 +563,9 @@ export const createBudgetMcpServer = ({
               type: z.enum(["INCOME", "EXPENSE"]),
               date: z
                 .string()
-                .describe("ISO date, e.g. 2026-08-25 or a full timestamp."),
+                .describe(
+                  "Calendar date, e.g. 2026-08-25, resolved in the user's own timezone. A full timestamp is also accepted and is used as given."
+                ),
               categoryId: z.string().describe("From get_category_list. Must be the user's own."),
               labelIds: z
                 .array(z.string())
@@ -612,11 +620,18 @@ export const createBudgetMcpServer = ({
       const result = await createTransactionBatch({
         prisma,
         userId,
-        // Normalised to an explicit opt-out, never left undefined. `createTransactionBatch`
-        // reads undefined as "auto-apply a scheduled label", and schedules match on time of day
-        // and weekday, which describe when the user spent rather than when a model typed it in.
-        // Leaving it undefined would silently tag rows the tool promises it never tags.
-        items: parsed.data.map((t) => ({ ...t, labelIds: t.labelIds ?? [] })),
+        items: parsed.data.map((t) => ({
+          ...t,
+          // A bare YYYY-MM-DD parses as midnight UTC, which is the previous day west of
+          // Greenwich, so the row would land in the wrong month for those users. Resolved
+          // against the user's own offset, matching every other write path in the app.
+          date: resolveTransactionDate(t.date, timezoneOffset),
+          // Normalised to an explicit opt-out, never left undefined. `createTransactionBatch`
+          // reads undefined as "auto-apply a scheduled label", and schedules match on time of
+          // day and weekday, which describe when the user spent rather than when a model typed
+          // it in. Leaving it undefined would silently tag rows the tool promises it never tags.
+          labelIds: t.labelIds ?? [],
+        })),
         clientBatchId: key.data,
         createdVia: "MCP",
         mcpTokenId: tokenId,

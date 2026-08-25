@@ -23,7 +23,10 @@ export function McpTokensForm() {
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [minted, setMinted] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [writesUntil, setWritesUntil] = useState<string | null>(null);
+  // `undefined` means "not known yet or failed to load", distinct from `null`, which means the
+  // lease really is off. Conflating them would let a failed request render the reassuring state
+  // and hide the kill switch while writes were still live.
+  const [writesUntil, setWritesUntil] = useState<string | null | undefined>(undefined);
 
   const load = useCallback(async () => {
     try {
@@ -33,13 +36,17 @@ export function McpTokensForm() {
       setTokens(data.tokens);
       setLoadFailed(false);
 
-      // The lease lives on the user, not the token list, so it is read separately.
+      // The lease lives on the user, not the token list, so it is read separately. A failure
+      // must not fall through to "off": that is the safe-looking answer, not the true one.
       const prefs = await fetch("/api/preferences");
-      if (prefs.ok) setWritesUntil((await prefs.json()).mcpWritesEnabledUntil ?? null);
+      if (!prefs.ok) throw new Error("Failed to load write access state");
+      setWritesUntil((await prefs.json()).mcpWritesEnabledUntil ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load tokens");
       // Deliberately not `setTokens([])`: an empty list renders "No tokens yet", which would tell
-      // a user whose fetch just failed that they have none and invite a duplicate mint.
+      // a user whose fetch just failed that they have none and invite a duplicate mint. The lease
+      // is left `undefined` for the same reason.
+      setWritesUntil(undefined);
       setLoadFailed(true);
     }
   }, []);
@@ -166,7 +173,11 @@ export function McpTokensForm() {
       )}
 
       <div className="space-y-5">
-        <McpWriteAccess enabledUntil={writesUntil} onChange={handleWriteLease} />
+        <McpWriteAccess
+          enabledUntil={writesUntil}
+          onChange={handleWriteLease}
+          onReload={load}
+        />
 
         <McpTokenCreate onCreate={handleCreate} creating={creating} />
 

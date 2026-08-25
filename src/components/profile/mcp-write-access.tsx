@@ -13,18 +13,20 @@ const LEASE_OPTIONS: { label: string; minutes: number }[] = [
 ];
 
 interface McpWriteAccessProps {
-  /** ISO instant the lease lapses, or null when writes are off. */
-  enabledUntil: string | null;
+  /** ISO instant the lease lapses, `null` when writes are off, `undefined` when unknown. */
+  enabledUntil: string | null | undefined;
   onChange: (minutes: number | null) => Promise<void>;
+  onReload: () => void;
 }
 
 const formatUntil = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-export function McpWriteAccess({ enabledUntil, onChange }: McpWriteAccessProps) {
+export function McpWriteAccess({ enabledUntil, onChange, onReload }: McpWriteAccessProps) {
   const [saving, setSaving] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
+  const unknown = enabledUntil === undefined;
   const expiresAt = enabledUntil ? new Date(enabledUntil).getTime() : null;
   const live = expiresAt !== null && expiresAt > now;
 
@@ -46,6 +48,24 @@ export function McpWriteAccess({ enabledUntil, onChange }: McpWriteAccessProps) 
       setSaving(false);
     }
   };
+
+  // Never claim writes are off when the state could not be read: an active lease would then be
+  // invisible and the "Turn off now" action absent, which is the opposite of what the panel is
+  // for. Say so and offer a retry instead.
+  if (unknown) {
+    return (
+      <div className="p-4 rounded-xl border border-dashed border-cream-300 text-center">
+        <p className="text-sm text-warm-400">Could not read write access state.</p>
+        <button
+          type="button"
+          onClick={onReload}
+          className="mt-2 text-xs font-medium text-amber-dark hover:text-amber underline"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div

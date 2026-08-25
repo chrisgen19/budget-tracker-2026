@@ -2,7 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   batchTransactionSchema,
   createMcpTokenSchema,
+  isRealDate,
+  mcpTransactionSchema,
   receiptBreakdownMetaSchema,
+  resolveTransactionDate,
 } from "./validations";
 
 /** What the multi-scan flow actually posts (use-multi-scan.ts). */
@@ -138,5 +141,65 @@ describe("createMcpTokenSchema", () => {
   it("rejects an unknown scope", () => {
     const result = createMcpTokenSchema.safeParse({ ...base, scopes: ["transactions:destroy"] });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("isRealDate", () => {
+  it("accepts a real calendar date", () => {
+    expect(isRealDate("2026-08-25")).toBe(true);
+  });
+
+  it("rejects a day that does not exist in that month", () => {
+    // Date.parse alone returns a finite value here: JS rolls 31 February forward to 3 March, so
+    // the row would be stored on a different day from the one the user approved.
+    expect(isRealDate("2026-02-31")).toBe(false);
+    expect(isRealDate("2026-04-31")).toBe(false);
+  });
+
+  it("rejects an impossible month", () => {
+    expect(isRealDate("2026-13-01")).toBe(false);
+  });
+
+  it("rejects nonsense", () => {
+    expect(isRealDate("not-a-date")).toBe(false);
+  });
+
+  it("accepts a full timestamp untouched", () => {
+    expect(isRealDate("2026-08-25T14:30:00.000Z")).toBe(true);
+  });
+});
+
+describe("resolveTransactionDate", () => {
+  it("anchors a bare date to local midnight, not UTC midnight", () => {
+    // UTC-5. A bare date parses as midnight UTC, which is 28 February locally, so the row would
+    // fall inside February's range and appear in the wrong month.
+    expect(resolveTransactionDate("2026-03-01", 300)).toBe("2026-03-01T05:00:00.000Z");
+  });
+
+  it("handles an eastern offset", () => {
+    // UTC+8: local midnight on 1 March is 16:00 UTC on 28 February.
+    expect(resolveTransactionDate("2026-03-01", -480)).toBe("2026-02-28T16:00:00.000Z");
+  });
+
+  it("leaves a value that already carries a time alone", () => {
+    const exact = "2026-03-01T09:15:00.000Z";
+    expect(resolveTransactionDate(exact, 300)).toBe(exact);
+  });
+});
+
+describe("mcpTransactionSchema", () => {
+  const base = {
+    amount: 10,
+    description: "x",
+    type: "EXPENSE" as const,
+    categoryId: "c1",
+  };
+
+  it("rejects an impossible date rather than silently rolling it forward", () => {
+    expect(mcpTransactionSchema.safeParse({ ...base, date: "2026-02-31" }).success).toBe(false);
+  });
+
+  it("accepts a real date", () => {
+    expect(mcpTransactionSchema.safeParse({ ...base, date: "2026-08-25" }).success).toBe(true);
   });
 });

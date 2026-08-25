@@ -46,10 +46,14 @@ export const isWriteScope = (scope: McpScope): boolean => scope.endsWith(":write
 
 export const grantsWrite = (scopes: readonly McpScope[]): boolean => scopes.some(isWriteScope);
 
-/** What the mint form starts with: everything readable, nothing writable. A token that can change
- *  data has to be chosen deliberately, or an untouched form would hand out write authority and
- *  least privilege would depend on the user noticing a pre-ticked box. */
-export const DEFAULT_MINT_SCOPES: readonly McpScope[] = MCP_SCOPES.filter((s) => !isWriteScope(s));
+/** Every scope that only reads. Also the default grant everywhere: a caller that does not name
+ *  its scopes must not silently receive write authority. */
+export const READ_ONLY_SCOPES: readonly McpScope[] = MCP_SCOPES.filter((s) => !isWriteScope(s));
+
+/** What the mint form starts with. A token that can change data has to be chosen deliberately, or
+ *  an untouched form would hand out write authority and least privilege would depend on the user
+ *  noticing a pre-ticked box. */
+export const DEFAULT_MINT_SCOPES = READ_ONLY_SCOPES;
 
 /**
  * Which scope each tool belongs to.

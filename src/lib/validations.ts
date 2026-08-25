@@ -356,10 +356,56 @@ export const createMcpTokenSchema = z
  * model, and an unparseable one used to reach Prisma and fail inside the transaction, which
  * reports UNKNOWN_WHETHER_SAVED and tells the caller to retry a request that can never succeed.
  */
+/** `YYYY-MM-DD` with nothing after it. */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+export const isDateOnly = (value: string): boolean => DATE_ONLY.test(value);
+
+/**
+ * True only for a date that exists.
+ *
+ * `Date.parse` is not enough on its own: JavaScript silently rolls impossible dates forward, so
+ * `2026-02-31` parses fine and becomes 3 March. Storing a different day from the one the user
+ * approved is worse than refusing the input, so the calendar components are checked to survive
+ * the round trip.
+ */
+export const isRealDate = (value: string): boolean => {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return false;
+  if (!DATE_ONLY.test(value)) return true;
+
+  const [y, m, d] = value.split("-").map(Number);
+  const asUtc = new Date(Date.UTC(y, m - 1, d));
+  return (
+    asUtc.getUTCFullYear() === y && asUtc.getUTCMonth() === m - 1 && asUtc.getUTCDate() === d
+  );
+};
+
+/**
+ * Resolve a model-supplied date to the instant the app would have stored.
+ *
+ * A bare `YYYY-MM-DD` parses as **midnight UTC**, which is the previous day for anyone west of
+ * Greenwich: a 1 March transaction from a UTC-5 user lands inside February's range and shows up
+ * in the wrong month. Every other write path already avoids this by attaching a local wall-clock
+ * time before sending (`datetime-local` in the transaction form, `withLocalTime` in the scan
+ * flow); the MCP tool is the only caller that receives a bare date, so it normalises here using
+ * the same `Date.UTC(y, m, d) + tzOffset * 60000` formula the rest of the app uses for day and
+ * month boundaries.
+ *
+ * A value that already carries a time is passed through untouched.
+ *
+ * @param timezoneOffset Minutes, `getTimezoneOffset()` convention (UTC+8 is -480).
+ */
+export const resolveTransactionDate = (value: string, timezoneOffset: number): string => {
+  if (!DATE_ONLY.test(value)) return value;
+  const [y, m, d] = value.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d) + timezoneOffset * 60_000).toISOString();
+};
+
 export const mcpTransactionSchema = batchTransactionSchema.extend({
-  date: z
-    .string()
-    .refine((v) => !Number.isNaN(Date.parse(v)), { message: "date must be a parseable date" }),
+  date: z.string().refine(isRealDate, {
+    message: "date must be a real calendar date, e.g. 2026-08-25",
+  }),
 });
 
 /** Provenance filter accepted by `GET /api/transactions` and the MCP search tool. */

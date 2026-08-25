@@ -23,16 +23,24 @@ interface StubOptions {
   /** Category ids the caller may use: their own plus the shared defaults. */
   usableCategoryIds?: string[];
   ownedLabels?: { id: string; applicableTo: string }[];
+  /** Type every stub category reports, so type-mismatch rejection is testable. */
+  categoryType?: "INCOME" | "EXPENSE";
 }
 
 /** Minimal Prisma stub. Records what was written so the assertions can inspect it. */
-const makePrisma = ({ usableCategoryIds = ["cat_own"], ownedLabels = [] }: StubOptions = {}) => {
+const makePrisma = ({
+  usableCategoryIds = ["cat_own"],
+  ownedLabels = [],
+  categoryType = "EXPENSE",
+}: StubOptions = {}) => {
   const created: Record<string, unknown>[] = [];
 
   const client = {
     category: {
       findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
-        where.id.in.filter((id) => usableCategoryIds.includes(id)).map((id) => ({ id }))
+        where.id.in
+          .filter((id) => usableCategoryIds.includes(id))
+          .map((id) => ({ id, type: categoryType }))
       ),
     },
     label: {
@@ -257,5 +265,36 @@ describe("scheduled label auto-application", () => {
     });
 
     expect(created[0]).not.toHaveProperty("labels");
+  });
+});
+
+describe("category type consistency", () => {
+  it("rejects an expense filed under an income category", async () => {
+    // Internally inconsistent, and it would distort every breakdown that groups by category. The
+    // app's form cannot produce it because the picker filters by type; a model can.
+    const { client, created } = makePrisma({ categoryType: "INCOME" });
+
+    const result = await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [{ ...ITEM, type: "EXPENSE" }],
+      createdVia: "MCP",
+    });
+
+    expect(result).toEqual({ ok: false, reason: "CATEGORIES_NOT_OWNED" });
+    expect(created).toHaveLength(0);
+  });
+
+  it("accepts a matching type", async () => {
+    const { client } = makePrisma({ categoryType: "EXPENSE" });
+
+    const result = await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [{ ...ITEM, type: "EXPENSE" }],
+      createdVia: "MCP",
+    });
+
+    expect(result.ok).toBe(true);
   });
 });

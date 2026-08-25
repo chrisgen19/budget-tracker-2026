@@ -56,11 +56,31 @@ replay-under-lock cases the client's `committed: "no" | "unknown"` classificatio
   it.
 - The transactions empty state distinguishes "no matches for this filter" from "no transactions".
 
+### Review follow-ups, second round
+- A bare `YYYY-MM-DD` from the model parsed as midnight **UTC**, which is the previous day west of
+  Greenwich: a 1 March row from a UTC-5 user landed inside February's range and appeared in the
+  wrong month. Every other write path already avoids this (`datetime-local` in the form,
+  `withLocalTime` in the scan flow); the tool now resolves bare dates through the same
+  `Date.UTC(y, m, d) + tzOffset * 60000` formula the rest of the app uses.
+- `2026-02-31` passed validation, because `Date.parse` accepts it and JavaScript rolls it forward
+  to 3 March. Storing a different day from the one the user approved is worse than refusing the
+  input, so calendar components are now checked to survive the round trip.
+- A failed `/api/preferences` read left the write-access panel showing "off". That is the
+  safe-looking answer, not the true one: an active lease would have been invisible and the
+  "Turn off now" action absent. The unknown state is now distinct from off and offers a retry.
+- The stdio entry point advertised `create_transactions`. It passes no scopes and no lease, so
+  every call was guaranteed to fail with a message pointing at a remote setting that does not
+  apply to a locally spawned server. The default grant is now read-only everywhere, which also
+  means a caller that forgets to pass scopes can never receive write authority.
+- An `EXPENSE` filed under an `INCOME` category was accepted. The app's picker filters by type so
+  its form cannot produce one, but nothing enforced it server-side, and it would distort every
+  breakdown that groups by category.
+
 ### Verification
-- 158 unit tests, 20 of them new: the write service (provenance stamping, category and label
+- 170 unit tests, 32 of them new: the write service (provenance stamping, category and label
   rejection, dedupe, lock-only-when-keyed, replay, unknown-outcome), `resolveWritePermission`, the
   mint cap, and that the write tool is invisible to a read-only token
-- `scripts/verify-mcp-endpoint.ts` 29/29 over real HTTP with the SDK client: refusal while the
+- `scripts/verify-mcp-endpoint.ts` 33/33 over real HTTP with the SDK client: refusal while the
   lease is off with nothing written, a create once it is live, a replay creating nothing, the
   provenance columns, a cross-user category refused, and the tool absent for a read-only token
 - `scripts/verify-mcp-token-auth.ts` covers the lease in both directions against real rows

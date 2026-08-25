@@ -270,6 +270,36 @@ async function main() {
     true
   );
 
+  // A bare date must land on the right local day. Stored as an instant, so a UTC-midnight
+  // interpretation would put a 1st-of-month row inside the previous month for western users.
+  const dateClient = await connect(writer.token);
+  await dateClient.callTool({
+    name: "create_transactions",
+    arguments: {
+      transactions: [
+        { amount: 7, description: "tz probe", type: "EXPENSE", date: "2026-03-01", categoryId: category.id },
+      ],
+      clientBatchId: randomUUID(),
+    },
+  });
+  await dateClient.close();
+
+  const tzRow = await prisma.transaction.findFirstOrThrow({
+    where: { userId: user.id, description: "tz probe" },
+    select: { date: true },
+  });
+  const localMidnight = new Date(Date.UTC(2026, 2, 1) + -480 * 60_000).toISOString();
+  check("a bare date is anchored to the user's local midnight", tzRow.date.toISOString(), localMidnight);
+
+  // An income category on an expense is internally inconsistent and would distort category
+  // breakdowns. The app's picker filters by type; a model has no such constraint.
+  const incomeCategory = await prisma.category.findFirstOrThrow({
+    where: { OR: [{ userId: user.id }, { userId: null }], type: "INCOME" },
+    select: { id: true },
+  });
+  const mismatched = await callCreate(writer.token, randomUUID(), incomeCategory.id);
+  check("an income category on an expense is refused", mismatched.isError, true);
+
   // The provenance filter must be reachable from the read side too. Uses the read token, since
   // search_transactions belongs to transactions:read and the writer deliberately lacks it.
   const searchClient = await connect(full.token);

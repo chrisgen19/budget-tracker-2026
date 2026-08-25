@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createBudgetMcpServer } from "./server";
-import { MCP_TOOL_SCOPES, type McpScope } from "./scopes";
+import { MCP_TOOL_SCOPES, READ_ONLY_SCOPES, type McpScope } from "./scopes";
 import type { PrismaClient } from "../budget-query-types";
 
 /** Registration never touches the database (only the tool handlers do, and none are called
@@ -22,8 +22,19 @@ const listToolNames = async (scopes?: readonly McpScope[]) => {
 };
 
 describe("createBudgetMcpServer", () => {
-  it("serves every tool when no scopes are given, as the stdio entry point expects", async () => {
-    expect(await listToolNames()).toEqual(Object.keys(MCP_TOOL_SCOPES).sort());
+  it("serves every read tool, and no write tool, when no scopes are given", async () => {
+    // The stdio entry point does not pass scopes and supplies no write lease, so defaulting to
+    // every scope would advertise a tool guaranteed to fail and point the user at a remote
+    // setting that does not apply to a locally spawned server.
+    const names = await listToolNames();
+
+    expect(names).toEqual(
+      Object.entries(MCP_TOOL_SCOPES)
+        .filter(([, scope]) => READ_ONLY_SCOPES.includes(scope))
+        .map(([name]) => name)
+        .sort()
+    );
+    expect(names).not.toContain("create_transactions");
   });
 
   it("never exposes the write tool to a read-only token", async () => {
@@ -51,14 +62,19 @@ describe("createBudgetMcpServer", () => {
   it("declares every registered tool in the scope map", async () => {
     // A tool added to server.ts without a MCP_TOOL_SCOPES entry would be removed from every
     // token. Catch that here rather than in a client that silently cannot see it.
-    const registered = await listToolNames();
+    const registered = await listToolNames(Object.values(MCP_TOOL_SCOPES));
     const mapped = Object.keys(MCP_TOOL_SCOPES).sort();
 
     expect(registered).toEqual(mapped);
   });
 
   it("keeps every read tool read-only and marks the write tool as not", async () => {
-    const server = createBudgetMcpServer({ prisma, userId: "user_1", timezoneOffset: -480 });
+    const server = createBudgetMcpServer({
+      prisma,
+      userId: "user_1",
+      timezoneOffset: -480,
+      scopes: Object.values(MCP_TOOL_SCOPES),
+    });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "test", version: "1.0.0" });
 

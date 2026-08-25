@@ -17,7 +17,7 @@ export const TX_INCLUDE = { category: true, labels: { include: { label: true } }
 export type BatchFailureReason =
   /** A label id was not the caller's. */
   | "LABELS_NOT_OWNED"
-  /** A category id was neither a default nor the caller's. */
+  /** A category id was neither a default nor the caller's, or its type did not match the item's. */
   | "CATEGORIES_NOT_OWNED"
   /** The advisory lock could not be taken, so whether the batch exists is genuinely unknown. */
   | "UNKNOWN_WHETHER_SAVED";
@@ -79,25 +79,34 @@ export const findSavedBatchUnderLock = async (
 };
 
 /**
- * Verify every referenced category is usable by this caller.
+ * Verify every item's category is usable by this caller *and* matches the item's type.
  *
- * Categories are either defaults (`userId: null`, shared by everyone) or owned by one user, and
- * neither create path used to check this — only labels were checked. That was latent while the
- * sole caller was the user's own browser session. It stops being latent once a model supplies
- * `categoryId` over an internet-facing endpoint, since the foreign key alone is satisfied by any
- * category that exists, including another user's.
+ * Two checks the create paths never made. Categories are either defaults (`userId: null`, shared
+ * by everyone) or owned by one user, and only labels used to be checked, so the foreign key alone
+ * accepted any category that exists, including another user's. Separately, an EXPENSE filed under
+ * an INCOME category is internally inconsistent and would distort every breakdown that groups by
+ * category; the app's form never allows it because it filters the picker by type, but nothing
+ * enforced it server-side.
+ *
+ * Both were latent while the sole caller was the user's own browser session. Neither is latent
+ * once a model supplies `categoryId` over an internet-facing endpoint.
  */
 const categoriesAreUsable = async (
   prisma: PrismaClient,
   userId: string,
-  categoryIds: string[]
+  items: BatchTransactionInput[]
 ): Promise<boolean> => {
+  const categoryIds = [...new Set(items.map((t) => t.categoryId))];
   if (categoryIds.length === 0) return true;
+
   const usable = await prisma.category.findMany({
     where: { id: { in: categoryIds }, OR: [{ userId }, { userId: null }] },
-    select: { id: true },
+    select: { id: true, type: true },
   });
-  return usable.length === categoryIds.length;
+  if (usable.length !== categoryIds.length) return false;
+
+  const typeById = new Map(usable.map((c) => [c.id, c.type]));
+  return items.every((t) => typeById.get(t.categoryId) === t.type);
 };
 
 /**
@@ -130,8 +139,7 @@ export const createTransactionBatch = async ({
     ownedLabelMap = new Map(ownedLabels.map((l) => [l.id, l.applicableTo]));
   }
 
-  const categoryIds = [...new Set(items.map((t) => t.categoryId))];
-  if (!(await categoriesAreUsable(prisma, userId, categoryIds))) {
+  if (!(await categoriesAreUsable(prisma, userId, items))) {
     return { ok: false, reason: "CATEGORIES_NOT_OWNED" };
   }
 
