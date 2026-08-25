@@ -50,8 +50,18 @@ const requireNonUtcSession = async () => {
   console.log(`INFO  session timezone is ${zone}; the timestamp checks below are meaningful`);
 };
 
+/** Build the request headers a client would send, so the checks exercise the real reader. */
+const authHeaders = (value: string | null, name = "authorization") =>
+  new Headers(value === null ? {} : { [name]: value });
+
 const reasonOf = async (header: string | null, now?: Date) => {
-  const result = await authenticateMcpRequest(header, now);
+  const result = await authenticateMcpRequest(authHeaders(header), now);
+  return result.ok ? "OK" : result.failure.reason;
+};
+
+/** Same, for the `X-Api-Key` header. */
+const apiKeyReasonOf = async (value: string | null) => {
+  const result = await authenticateMcpRequest(authHeaders(value, "x-api-key"));
   return result.ok ? "OK" : result.failure.reason;
 };
 
@@ -88,7 +98,7 @@ async function main() {
   check("a valid bearer authenticates", await reasonOf(`Bearer ${token}`), "OK");
   // Asserted on the authenticate result, not on what mint wrote: the narrowing happens in
   // `parseScopes` on the way out, so reading the row back would not exercise it.
-  const accepted = await authenticateMcpRequest(`Bearer ${token}`);
+  const accepted = await authenticateMcpRequest(authHeaders(`Bearer ${token}`));
   check(
     "scopes come back narrowed to what was granted",
     accepted.ok ? accepted.scopes : null,
@@ -100,6 +110,20 @@ async function main() {
   check("bearer with no value is MISSING", await reasonOf("Bearer "), "MISSING");
   check("an unknown token is INVALID", await reasonOf("Bearer btmcp_nope"), "INVALID");
   check("the header is case-insensitive on the scheme", await reasonOf(`bearer ${token}`), "OK");
+
+  // --- X-Api-Key, the header that exists because Authorization is unusable with the clients
+  // that most want this endpoint (see the comment on readPresentedToken) ---
+  check("an x-api-key header authenticates", await apiKeyReasonOf(token), "OK");
+  check("x-api-key takes the raw token, with no scheme", await apiKeyReasonOf(`Bearer ${token}`), "INVALID");
+  check("an empty x-api-key is MISSING", await apiKeyReasonOf(""), "MISSING");
+  check("an unknown x-api-key is INVALID", await apiKeyReasonOf("btmcp_nope"), "INVALID");
+
+  // Authorization wins, so a stale x-api-key further down a config cannot silently override a
+  // deliberately set bearer token.
+  const both = await authenticateMcpRequest(
+    new Headers({ authorization: `Bearer ${token}`, "x-api-key": "btmcp_nope" })
+  );
+  check("Authorization takes precedence when both are sent", both.ok ? "OK" : both.failure.reason, "OK");
 
   // --- Expiry ---
   const future = new Date(Date.now() + 31 * 24 * 60 * 60 * 1000);
@@ -146,7 +170,7 @@ async function main() {
   check("the last request in the window is allowed", await reasonOf(`Bearer ${limited.token}`), "OK");
   check("the next one is refused", await reasonOf(`Bearer ${limited.token}`), "RATE_LIMITED");
 
-  const refusal = await authenticateMcpRequest(`Bearer ${limited.token}`);
+  const refusal = await authenticateMcpRequest(authHeaders(`Bearer ${limited.token}`));
   const retryAfter = !refusal.ok && refusal.failure.reason === "RATE_LIMITED" ? refusal.failure.retryAfterSeconds : 0;
   check(
     "Retry-After is positive and within the window",

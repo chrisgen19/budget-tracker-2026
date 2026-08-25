@@ -42,6 +42,27 @@ const toolNamesFor = async (token: string) => {
   return tools.map((tool) => tool.name).sort();
 };
 
+/** Raw POST with an arbitrary auth header, so both accepted header names can be exercised. */
+const rawStatusWith = (headers: Record<string, string>) =>
+  fetch(ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      ...headers,
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "probe", version: "1.0.0" },
+      },
+    }),
+  });
+
 /** Raw POST, for the cases where the SDK client would just throw on a non-200. */
 const rawStatus = (authorization: string | null) =>
   fetch(ENDPOINT, {
@@ -115,6 +136,21 @@ async function main() {
     "a tool call returns structured content for the token's own user",
     typeof (result.structuredContent as Record<string, unknown> | undefined)?.totalIncome,
     "number"
+  );
+
+  // --- X-Api-Key over the wire ---
+  // The header exists so that clients which own `Authorization` for OAuth can still present a
+  // static credential. It has to authenticate on the first request: emitting a 401 is what
+  // makes those clients abandon the credential and start an OAuth flow.
+  check(
+    "an x-api-key header authenticates over HTTP",
+    (await rawStatusWith({ "x-api-key": full.token })).status,
+    200
+  );
+  check(
+    "an unknown x-api-key is still 401",
+    (await rawStatusWith({ "x-api-key": "btmcp_nope" })).status,
+    401
   );
 
   // --- GET must not open a stream ---

@@ -2,6 +2,47 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-25 - Accept X-Api-Key
+
+Follows #123. The remote endpoint worked from Claude Code but could not be connected from Claude
+Desktop by either available route, and both failures had the same cause.
+
+Claude Desktop's connector dialog rejects the header outright: "OAuth already sets the
+Authorization header. Choose a different name." And `mcp-remote`, the local bridge that exists
+precisely for clients without request-header support, reacts to a 401 on `Authorization` by
+abandoning the static credential and starting an OAuth flow:
+
+```
+StreamableHTTPClientTransport.send -> auth() -> authInternal -> registerClient
+HTTP 405: Invalid OAuth error response ... Raw body: Method Not Allowed
+```
+
+It attempts dynamic client registration against a path this app does not serve, gets Next's
+plain-text 405, and cannot parse it as an OAuth error. `--transport http-only` fails at the same
+point, so this is not the SSE fallback.
+
+Both tools read `Authorization` as "this server speaks OAuth". The endpoint now also accepts
+`X-Api-Key: <token>`, carrying the raw token with no scheme. Authenticating on the first request
+means the 401 that starts either cascade is never emitted. `Authorization` still works and wins
+when both are present, so a client that sets it deliberately is never silently overridden.
+
+A third, unrelated benefit: `mcp-remote` splits `--header` arguments on whitespace and warns
+`ignoring invalid header argument` for `Authorization: Bearer <token>`, then proceeds
+unauthenticated. `x-api-key:<token>` has no space.
+
+### Verification
+Tested against a real `mcp-remote` 0.2.1 on Windows, which is the thing that was broken:
+
+```
+Using custom headers: x-api-key
+Connected to remote server using StreamableHTTPClientTransport
+Proxy established successfully between local STDIO and remote StreamableHTTPClientTransport
+```
+
+`verify-mcp-token-auth.ts` covers the new header (raw token accepted, a `Bearer ` prefix rejected,
+empty treated as missing, unknown rejected, and `Authorization` winning when both are sent).
+`verify-mcp-endpoint.ts` covers it over real HTTP.
+
 ## 2026-08-25 - Remote MCP Access
 
 Closes #123. The MCP server only worked on one laptop: it spoke stdio, so a client had to spawn

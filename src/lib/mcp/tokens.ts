@@ -92,6 +92,29 @@ const readBearer = (header: string | null): string | null => {
   return value.length > 0 ? value : null;
 };
 
+/** Extract the credential from an `X-Api-Key: <token>` header, which carries no scheme. */
+const readApiKey = (header: string | null): string | null => {
+  const value = header?.trim();
+  return value ? value : null;
+};
+
+/**
+ * Read the presented token from either accepted header.
+ *
+ * `X-Api-Key` exists because `Authorization` is unusable with the two clients that most want
+ * this endpoint. Claude Desktop's connector dialog refuses the name outright ("OAuth already
+ * sets the Authorization header"), and `mcp-remote` treats a 401 on `Authorization` as "begin
+ * OAuth", so it abandons the static credential and attempts dynamic client registration against
+ * an endpoint this app does not serve. Authenticating on the first request avoids emitting the
+ * 401 that starts either cascade. It also dodges a Windows argument-parsing bug: the space in
+ * `Bearer <token>` splits the argument, while `x-api-key:<token>` has none.
+ *
+ * `Authorization` wins when both are present, so a client that sets it deliberately is never
+ * silently overridden by a stale header further down its config.
+ */
+const readPresentedToken = (headers: Headers): string | null =>
+  readBearer(headers.get("authorization")) ?? readApiKey(headers.get("x-api-key"));
+
 /**
  * Consume one request against the token's fixed window.
  *
@@ -139,10 +162,10 @@ const consumeRateLimit = async (tokenId: string) => {
  * caller that its token exists but is revoked confirms the token is real.
  */
 export const authenticateMcpRequest = async (
-  authorization: string | null,
+  headers: Headers,
   now = new Date()
 ): Promise<McpAuthResult> => {
-  const presented = readBearer(authorization);
+  const presented = readPresentedToken(headers);
   if (!presented) return { ok: false, failure: { reason: "MISSING" } };
 
   const record = await prisma.mcpToken.findUnique({

@@ -52,6 +52,10 @@ const unauthorized = (failure: McpAuthFailure) => {
  * client that can send a request header: Claude Desktop and Claude Code always, and claude.ai
  * web/mobile wherever request-header authentication is enabled for the account.
  *
+ * Accepts the credential as `Authorization: Bearer <token>` or `X-Api-Key: <token>`. The latter
+ * is not redundant: clients that own the `Authorization` header for OAuth either refuse to let
+ * you set it or react to its 401 by starting an OAuth flow.
+ *
  * The transport runs stateless (no `sessionIdGenerator`): a route handler has no process to
  * pin a session to, and a server instance kept across requests would hand one caller's
  * transport to the next. Each request therefore builds its own server, scoped to the token's
@@ -76,7 +80,7 @@ const handle = async (request: Request) => {
 };
 
 const serve = async (request: Request) => {
-  const auth = await authenticateMcpRequest(request.headers.get("authorization"));
+  const auth = await authenticateMcpRequest(request.headers);
   if (!auth.ok) return unauthorized(auth.failure);
 
   const user = await prisma.user.findUnique({
