@@ -585,6 +585,8 @@ export const createBudgetMcpServer = ({
       description:
         "Create one or more transactions in a single write. Use it after agreeing the amounts, " +
         "dates and categories with the user, for example when entering a stack of receipts. " +
+        "If the user says when something happened, put that in the date as a timestamp rather " +
+        "than a bare date, or the time is lost. " +
         "Call get_category_list first to resolve category IDs; a category that is not the " +
         "user's own is rejected. Scheduled labels are never applied automatically here, so pass " +
         "labelIds explicitly if the user wants any. `clientBatchId` must be a UUID you generate " +
@@ -601,7 +603,11 @@ export const createBudgetMcpServer = ({
               date: z
                 .string()
                 .describe(
-                  "Calendar date, e.g. 2026-08-25, resolved in the user's own timezone. A full timestamp is also accepted and is used as given."
+                  "When it happened, in the user's own timezone. INCLUDE THE TIME whenever the user " +
+                    "indicates one, even loosely: 'last night' -> 2026-08-25T21:00, 'this morning' -> " +
+                    "2026-08-26T08:30, 'at lunch' -> 2026-08-26T12:30. A bare date such as 2026-08-25 " +
+                    "records no time and is filled in with the current clock, so any time the user " +
+                    "mentioned is lost. Send a bare date only when they gave no indication at all."
                 ),
               categoryId: z.string().describe("From get_category_list. Must be the user's own."),
               labelIds: z
