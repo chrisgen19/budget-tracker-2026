@@ -291,6 +291,31 @@ async function main() {
   const localMidnight = new Date(Date.UTC(2026, 2, 1) + -480 * 60_000).toISOString();
   check("a bare date is anchored to the user's local midnight", tzRow.date.toISOString(), localMidnight);
 
+  // The confirmation the model reads back must name the same day the app shows, not the UTC one.
+  const echoed = await callCreate(writer.token, randomUUID());
+  const echoedOut = echoed.structuredContent as { transactions: { date: string }[] } | undefined;
+  check("the echoed date is the user's local day", echoedOut?.transactions[0]?.date, "2026-08-25");
+
+  // An impossible day must be refused even when it carries a time: appending one used to bypass
+  // the calendar check entirely.
+  const rolledClient = await connect(writer.token);
+  const rolled = await rolledClient.callTool({
+    name: "create_transactions",
+    arguments: {
+      transactions: [
+        { amount: 3, description: "rolled", type: "EXPENSE", date: "2026-02-31T00:00:00Z", categoryId: category.id },
+      ],
+      clientBatchId: randomUUID(),
+    },
+  });
+  await rolledClient.close();
+  check("an impossible day carrying a time is refused", rolled.isError, true);
+  check(
+    "nothing was written for it",
+    await prisma.transaction.count({ where: { userId: user.id, description: "rolled" } }),
+    0
+  );
+
   // An income category on an expense is internally inconsistent and would distort category
   // breakdowns. The app's picker filters by type; a model has no such constraint.
   const incomeCategory = await prisma.category.findFirstOrThrow({

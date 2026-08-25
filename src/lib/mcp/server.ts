@@ -20,6 +20,7 @@ import { resolveWritePermission } from "./tokens";
 import { createTransactionBatch } from "../transaction-writes";
 import {
   clientBatchIdSchema,
+  formatLocalDate,
   mcpTransactionSchema,
   resolveTransactionDate,
   MAX_BATCH_TRANSACTIONS,
@@ -655,7 +656,10 @@ export const createBudgetMcpServer = ({
           amount: t.amount,
           description: t.description,
           type: t.type,
-          date: t.date.toISOString().slice(0, 10),
+          // The user's own calendar day, not a UTC slice: a UTC+8 user's 1 March row is stored
+          // as 2026-02-28T16:00Z, so slicing the ISO string would echo back the wrong day for a
+          // transaction the app correctly shows on the 1st.
+          date: formatLocalDate(t.date, timezoneOffset),
           categoryName: t.category.name,
           labels: t.labels.map((l) => l.label.name),
         })),

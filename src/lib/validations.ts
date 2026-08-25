@@ -359,27 +359,56 @@ export const createMcpTokenSchema = z
 /** `YYYY-MM-DD` with nothing after it. */
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * ISO 8601 date, optionally with a time and offset. Anchored at both ends on purpose.
+ *
+ * `Date.parse` is far more permissive than this: it accepts `"0"`, `"2026"` and `"Mar 3 2026"`,
+ * each of which becomes some real instant that bears no relation to what a user approved. The
+ * tool documents an ISO date, so only that is accepted.
+ */
+const ISO_DATE_TIME =
+  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+
 export const isDateOnly = (value: string): boolean => DATE_ONLY.test(value);
 
 /**
- * True only for a date that exists.
+ * True only for a date that exists, whether or not it carries a time.
  *
- * `Date.parse` is not enough on its own: JavaScript silently rolls impossible dates forward, so
- * `2026-02-31` parses fine and becomes 3 March. Storing a different day from the one the user
- * approved is worse than refusing the input, so the calendar components are checked to survive
- * the round trip.
+ * `Date.parse` is not enough: JavaScript silently rolls impossible dates forward, so both
+ * `2026-02-31` *and* `2026-02-31T00:00:00Z` parse fine and become 3 March. Storing a different
+ * day from the one the user approved is worse than refusing the input, so the calendar
+ * components are checked to survive the round trip, and the time components are range-checked.
  */
 export const isRealDate = (value: string): boolean => {
-  const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) return false;
-  if (!DATE_ONLY.test(value)) return true;
+  const match = ISO_DATE_TIME.exec(value);
+  if (!match) return false;
 
-  const [y, m, d] = value.split("-").map(Number);
+  const [, ys, ms, ds, hs, mins, secs] = match;
+  const [y, m, d] = [Number(ys), Number(ms), Number(ds)];
+
   const asUtc = new Date(Date.UTC(y, m - 1, d));
-  return (
-    asUtc.getUTCFullYear() === y && asUtc.getUTCMonth() === m - 1 && asUtc.getUTCDate() === d
-  );
+  if (asUtc.getUTCFullYear() !== y || asUtc.getUTCMonth() !== m - 1 || asUtc.getUTCDate() !== d) {
+    return false;
+  }
+
+  if (hs !== undefined && (Number(hs) > 23 || Number(mins) > 59)) return false;
+  if (secs !== undefined && Number(secs) > 59) return false;
+
+  return true;
 };
+
+/**
+ * Render a stored instant as the calendar day the user would see in the app.
+ *
+ * The tool's confirmation echoes the date back to the model, and a raw UTC slice reports the
+ * wrong day for anyone east of Greenwich: a UTC+8 user's 1 March row is stored as
+ * `2026-02-28T16:00:00Z`, so slicing the ISO string would claim 28 February for a transaction the
+ * app correctly shows on 1 March.
+ *
+ * @param timezoneOffset Minutes, `getTimezoneOffset()` convention (UTC+8 is -480).
+ */
+export const formatLocalDate = (instant: Date, timezoneOffset: number): string =>
+  new Date(instant.getTime() - timezoneOffset * 60_000).toISOString().slice(0, 10);
 
 /**
  * Resolve a model-supplied date to the instant the app would have stored.

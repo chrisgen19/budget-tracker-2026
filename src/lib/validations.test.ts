@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   batchTransactionSchema,
   createMcpTokenSchema,
+  formatLocalDate,
   isRealDate,
   mcpTransactionSchema,
   receiptBreakdownMetaSchema,
@@ -164,8 +165,55 @@ describe("isRealDate", () => {
     expect(isRealDate("not-a-date")).toBe(false);
   });
 
-  it("accepts a full timestamp untouched", () => {
+  it("accepts a full timestamp", () => {
     expect(isRealDate("2026-08-25T14:30:00.000Z")).toBe(true);
+    expect(isRealDate("2026-08-25T14:30")).toBe(true);
+    expect(isRealDate("2026-08-25T14:30:00+08:00")).toBe(true);
+  });
+
+  it("rejects an impossible day even when it carries a time", () => {
+    // The date-only check alone was trivially bypassed by appending a time: Date.parse accepts
+    // this and rolls it forward to 3 March, so the row would be stored on a different day.
+    expect(isRealDate("2026-02-31T00:00:00Z")).toBe(false);
+    expect(isRealDate("2026-04-31T12:00:00Z")).toBe(false);
+  });
+
+  it("rejects out-of-range time components", () => {
+    expect(isRealDate("2026-08-25T24:00:00Z")).toBe(false);
+    expect(isRealDate("2026-08-25T12:60:00Z")).toBe(false);
+    expect(isRealDate("2026-08-25T12:00:61Z")).toBe(false);
+  });
+
+  it("rejects loose strings that Date.parse happens to accept", () => {
+    // Each of these parses to some real instant bearing no relation to what a user approved:
+    // "0" is 1999-12-31 in a UTC+8 environment, "2026" is 1 January, and the last is a US
+    // locale format the tool never documents.
+    expect(isRealDate("0")).toBe(false);
+    expect(isRealDate("2026")).toBe(false);
+    expect(isRealDate("2026-08")).toBe(false);
+    expect(isRealDate("Mar 3 2026")).toBe(false);
+  });
+});
+
+describe("formatLocalDate", () => {
+  it("reports the user's calendar day, not the UTC one", () => {
+    // A UTC+8 user's 1 March row is stored as 2026-02-28T16:00Z. Slicing the ISO string would
+    // echo 28 February back to the model for a transaction the app shows on the 1st.
+    const stored = new Date("2026-02-28T16:00:00.000Z");
+    expect(formatLocalDate(stored, -480)).toBe("2026-03-01");
+    expect(stored.toISOString().slice(0, 10)).toBe("2026-02-28");
+  });
+
+  it("works west of Greenwich too", () => {
+    // UTC-5: local midnight on 1 March is 05:00Z the same day.
+    expect(formatLocalDate(new Date("2026-03-01T05:00:00.000Z"), 300)).toBe("2026-03-01");
+  });
+
+  it("round-trips with resolveTransactionDate", () => {
+    for (const offset of [-480, 0, 300, -60]) {
+      const stored = new Date(resolveTransactionDate("2026-03-01", offset));
+      expect(formatLocalDate(stored, offset)).toBe("2026-03-01");
+    }
   });
 });
 
@@ -197,6 +245,12 @@ describe("mcpTransactionSchema", () => {
 
   it("rejects an impossible date rather than silently rolling it forward", () => {
     expect(mcpTransactionSchema.safeParse({ ...base, date: "2026-02-31" }).success).toBe(false);
+  });
+
+  it("rejects an impossible date carrying a time", () => {
+    expect(
+      mcpTransactionSchema.safeParse({ ...base, date: "2026-02-31T00:00:00Z" }).success
+    ).toBe(false);
   });
 
   it("accepts a real date", () => {

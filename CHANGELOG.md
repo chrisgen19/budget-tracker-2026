@@ -76,11 +76,25 @@ replay-under-lock cases the client's `committed: "no" | "unknown"` classificatio
   its form cannot produce one, but nothing enforced it server-side, and it would distort every
   breakdown that groups by category.
 
+### Review follow-ups, third round
+Both of these were holes left by the previous round's date fix.
+
+- The calendar check only covered bare dates, so appending a time bypassed it entirely:
+  `2026-02-31T00:00:00Z` was accepted and stored as 3 March. `Date.parse` is also far looser than
+  the documented format, accepting `"0"`, `"2026"` and `"Mar 3 2026"`, each of which becomes some
+  real instant unrelated to what the user approved. Input is now matched against an anchored ISO
+  pattern, with the calendar components round-tripped and the time components range-checked.
+- The tool echoed a raw UTC slice of the stored instant. Having just made storage timezone-aware,
+  that reported the wrong day *because* of the fix: a UTC+8 user's 1 March row is stored as
+  `2026-02-28T16:00:00Z`, so the confirmation claimed 28 February for a transaction the app
+  correctly shows on the 1st. The echo now uses the user's own offset, and a test asserts it
+  round-trips with the value that was stored.
+
 ### Verification
-- 170 unit tests, 32 of them new: the write service (provenance stamping, category and label
+- 177 unit tests, 39 of them new: the write service (provenance stamping, category and label
   rejection, dedupe, lock-only-when-keyed, replay, unknown-outcome), `resolveWritePermission`, the
   mint cap, and that the write tool is invisible to a read-only token
-- `scripts/verify-mcp-endpoint.ts` 33/33 over real HTTP with the SDK client: refusal while the
+- `scripts/verify-mcp-endpoint.ts` 36/36 over real HTTP with the SDK client: refusal while the
   lease is off with nothing written, a create once it is live, a replay creating nothing, the
   provenance columns, a cross-user category refused, and the tool absent for a read-only token
 - `scripts/verify-mcp-token-auth.ts` covers the lease in both directions against real rows
