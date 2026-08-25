@@ -266,9 +266,28 @@ describe("resolveTransactionDate", () => {
     expect(resolveTransactionDate("2026-03-01", -480)).toBe("2026-02-28T16:00:00.000Z");
   });
 
-  it("leaves a value that already carries a time alone", () => {
+  it("leaves a value that already pins its instant alone", () => {
+    // An explicit Z or offset is the caller's decision; nothing to resolve.
     const exact = "2026-03-01T09:15:00.000Z";
     expect(resolveTransactionDate(exact, 300)).toBe(exact);
+    expect(resolveTransactionDate("2026-03-01T09:15+05:00", -480)).toBe("2026-03-01T09:15+05:00");
+  });
+
+  it("resolves an offset-less time against the user, not the server", () => {
+    // `new Date("2026-08-25T23:30")` uses the *server's* timezone, which is UTC in production, so
+    // without this the stored instant would depend on where the app runs. For a UTC+8 user 23:30
+    // local is 15:30Z the same day; interpreting it as UTC would push it to the 26th locally.
+    expect(resolveTransactionDate("2026-08-25T23:30", -480)).toBe("2026-08-25T15:30:00.000Z");
+    expect(resolveTransactionDate("2026-08-25T23:30", 300)).toBe("2026-08-26T04:30:00.000Z");
+  });
+
+  it("keeps the local calendar day for a late offset-less time", () => {
+    // The property that actually matters: whatever the offset, the day the user typed is the day
+    // the app shows back.
+    for (const offset of [-480, 0, 300, -60, 720]) {
+      const stored = new Date(resolveTransactionDate("2026-08-25T23:30", offset));
+      expect(formatLocalDate(stored, offset)).toBe("2026-08-25");
+    }
   });
 });
 

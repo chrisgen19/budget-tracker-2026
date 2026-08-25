@@ -298,3 +298,62 @@ describe("category type consistency", () => {
     expect(result.ok).toBe(true);
   });
 });
+
+describe("replay beats validation of mutable references", () => {
+  it("returns a committed batch even when a label it used has since been deleted", async () => {
+    // The batch committed but its response was lost, and the label was deleted before the retry.
+    // Validating first would answer LABELS_NOT_OWNED, which the caller reads as "nothing was
+    // written", and a resubmit under a fresh key would duplicate the transaction.
+    const { client, raw } = makePrisma({ ownedLabels: [] });
+    const original = [{ id: "tx_original" }];
+    raw.transaction.findMany = vi.fn(async () => original) as typeof raw.transaction.findMany;
+
+    const result = await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [{ ...ITEM, labelIds: ["lbl_since_deleted"] }],
+      clientBatchId: "b1",
+      createdVia: "MCP",
+    });
+
+    expect(result).toEqual({ ok: true, transactions: original, replayed: true });
+    expect(raw.transaction.create).not.toHaveBeenCalled();
+  });
+
+  it("still rejects an unknown label on a first attempt", async () => {
+    // No saved batch under this key, so the rejection is the right answer.
+    const { client, created } = makePrisma({ ownedLabels: [] });
+
+    const result = await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [{ ...ITEM, labelIds: ["lbl_theirs"] }],
+      clientBatchId: "b_fresh",
+      createdVia: "MCP",
+    });
+
+    expect(result).toEqual({ ok: false, reason: "LABELS_NOT_OWNED" });
+    expect(created).toHaveLength(0);
+  });
+
+  it("reports unknown, not a rejection, when the lock cannot be taken", async () => {
+    // Returning the 4xx here would tell the caller nothing was written, which we cannot know.
+    const { client, raw } = makePrisma({ ownedLabels: [] });
+    let call = 0;
+    raw.$transaction = vi.fn(async (arg: unknown) => {
+      call += 1;
+      if (call === 1) throw new Error("lock timeout");
+      return Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => unknown)(raw);
+    }) as typeof raw.$transaction;
+
+    const result = await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [{ ...ITEM, labelIds: ["lbl_theirs"] }],
+      clientBatchId: "b1",
+      createdVia: "MCP",
+    });
+
+    expect(result).toEqual({ ok: false, reason: "UNKNOWN_WHETHER_SAVED" });
+  });
+});

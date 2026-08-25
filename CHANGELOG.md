@@ -105,11 +105,27 @@ Both again fallout from the previous round's fixes.
   unchanged, never re-armed, so a page left open for a long lease would still have claimed writes
   were live. The timer now advances in bounded hops.
 
+### Review follow-ups, fifth round
+- A timestamp without `Z` or an offset, such as `2026-08-25T23:30`, was passed through to
+  `new Date()`, which resolves it against the **server's** timezone. Production runs UTC, so for a
+  UTC+8 user that instant renders as the 26th locally: the wrong day, and dependent on where the
+  app happens to run rather than on the user. The bare-date fix two rounds earlier covered only
+  `YYYY-MM-DD`; `resolveTransactionDate` now treats any zone-less wall-clock reading as the
+  user's local time, and passes through anything that pins its own instant.
+- The replay guard moved into the shared writer. Label and category validation ran before the
+  existing-batch lookup, so a keyed retry whose label had since been deleted was answered with
+  `LABELS_NOT_OWNED` even though the batch was already committed. The HTTP route had always
+  guarded this with `rejectUnlessAlreadySaved`, but the MCP tool calls the writer directly and had
+  no such cover, and a caller reading that rejection as "nothing was written" would resubmit under
+  a fresh key and duplicate the rows.
+- The endpoint script asserted that the *previous* case wrote nothing after the invalid-offset
+  request, so an offset row would not have been caught. Both are now counted separately.
+
 ### Verification
-- 180 unit tests, 42 of them new: the write service (provenance stamping, category and label
+- 185 unit tests, 47 of them new: the write service (provenance stamping, category and label
   rejection, dedupe, lock-only-when-keyed, replay, unknown-outcome), `resolveWritePermission`, the
   mint cap, and that the write tool is invisible to a read-only token
-- `scripts/verify-mcp-endpoint.ts` 36/36 over real HTTP with the SDK client: refusal while the
+- `scripts/verify-mcp-endpoint.ts` 37/37 over real HTTP with the SDK client: refusal while the
   lease is off with nothing written, a create once it is live, a replay creating nothing, the
   provenance columns, a cross-user category refused, and the tool absent for a read-only token
 - `scripts/verify-mcp-token-auth.ts` covers the lease in both directions against real rows

@@ -331,8 +331,13 @@ async function main() {
     true
   );
   check(
-    "nothing was written for it",
+    "nothing was written for the impossible day",
     await prisma.transaction.count({ where: { userId: user.id, description: "rolled" } }),
+    0
+  );
+  check(
+    "nothing was written for the impossible offset",
+    await prisma.transaction.count({ where: { userId: user.id, description: "offset" } }),
     0
   );
 

@@ -124,6 +124,29 @@ export const createTransactionBatch = async ({
   createdVia,
   mcpTokenId,
 }: CreateTransactionBatchParams): Promise<CreateBatchResult> => {
+  // A replay creates nothing, so it must not be judged on references it will never use. Labels
+  // and categories are mutable: if the original write committed but its response was lost, and a
+  // label was deleted before the retry, validating first would reject a batch that is already
+  // saved. The caller reads that as "nothing was written", and a corrected resubmit under a fresh
+  // key duplicates it. The HTTP route has always guarded this with `rejectUnlessAlreadySaved`;
+  // the guard lives here now so the MCP tool, which calls this directly, is covered too.
+  if (clientBatchId) {
+    const alreadySaved = await findSavedBatch(prisma, userId, clientBatchId);
+    if (alreadySaved.length > 0) {
+      return { ok: true, transactions: alreadySaved, replayed: true };
+    }
+  }
+
+  /** Re-check under the lock before rejecting, so a concurrent in-flight attempt is not mistaken
+   *  for "never written". A lock we cannot take means genuinely unknown, never a rejection. */
+  const rejectUnlessSaved = async (reason: BatchFailureReason): Promise<CreateBatchResult> => {
+    if (!clientBatchId) return { ok: false, reason };
+    const existing = await findSavedBatchUnderLock(prisma, userId, clientBatchId);
+    if (existing === null) return { ok: false, reason: "UNKNOWN_WHETHER_SAVED" };
+    if (existing.length > 0) return { ok: true, transactions: existing, replayed: true };
+    return { ok: false, reason };
+  };
+
   // Collect all explicitly-provided label IDs for a single ownership query
   const allExplicitLabelIds = [...new Set(items.flatMap((t) => t.labelIds ?? []))];
 
@@ -134,13 +157,13 @@ export const createTransactionBatch = async ({
       select: { id: true, applicableTo: true },
     });
     if (ownedLabels.length !== allExplicitLabelIds.length) {
-      return { ok: false, reason: "LABELS_NOT_OWNED" };
+      return rejectUnlessSaved("LABELS_NOT_OWNED");
     }
     ownedLabelMap = new Map(ownedLabels.map((l) => [l.id, l.applicableTo]));
   }
 
   if (!(await categoriesAreUsable(prisma, userId, items))) {
-    return { ok: false, reason: "CATEGORIES_NOT_OWNED" };
+    return rejectUnlessSaved("CATEGORIES_NOT_OWNED");
   }
 
   // Fetch schedule context only when at least one item needs auto-tagging

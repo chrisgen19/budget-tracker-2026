@@ -367,7 +367,7 @@ const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
  * tool documents an ISO date, so only that is accepted.
  */
 const ISO_DATE_TIME =
-  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,6})?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
 
 export const isDateOnly = (value: string): boolean => DATE_ONLY.test(value);
 
@@ -431,9 +431,28 @@ export const formatLocalDate = (instant: Date, timezoneOffset: number): string =
  * @param timezoneOffset Minutes, `getTimezoneOffset()` convention (UTC+8 is -480).
  */
 export const resolveTransactionDate = (value: string, timezoneOffset: number): string => {
-  if (!DATE_ONLY.test(value)) return value;
-  const [y, m, d] = value.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d) + timezoneOffset * 60_000).toISOString();
+  const match = ISO_DATE_TIME.exec(value);
+  if (!match) return value;
+
+  const [, ys, ms, ds, hs, mins, secs, zone] = match;
+
+  // An explicit `Z` or offset already pins the instant, so it is used as given.
+  if (zone) return value;
+
+  // Everything else carries a wall-clock reading with no zone: a bare date, or a time such as
+  // `2026-08-25T23:30`. `new Date()` would resolve those against the *server's* timezone, which
+  // is UTC in production, so the stored instant would depend on where the app happens to run
+  // rather than on the user. Both are the user's local wall clock, resolved through the same
+  // `Date.UTC(...) + tzOffset * 60000` formula the rest of the app uses for boundaries.
+  const utcMs = Date.UTC(
+    Number(ys),
+    Number(ms) - 1,
+    Number(ds),
+    hs === undefined ? 0 : Number(hs),
+    mins === undefined ? 0 : Number(mins),
+    secs === undefined ? 0 : Number(secs)
+  );
+  return new Date(utcMs + timezoneOffset * 60_000).toISOString();
 };
 
 export const mcpTransactionSchema = batchTransactionSchema.extend({
