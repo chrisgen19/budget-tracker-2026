@@ -12,8 +12,6 @@ import {
   X,
   Loader2,
   ScanLine,
-  Receipt,
-  CalendarClock,
 } from "lucide-react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -33,6 +31,7 @@ import { useUser } from "@/components/user-provider";
 import { useScan } from "@/components/scan-provider";
 import { MobileFab } from "@/components/ui/mobile-fab";
 import { TransactionLabelPills } from "@/components/transactions/transaction-label-pills";
+import { TransactionRowBadges } from "@/components/transactions/transaction-row-badges";
 import {
   fetchTransactionsPage,
   queryKeys,
@@ -609,18 +608,11 @@ export default function TransactionsPage() {
                             <p className="text-sm font-medium text-warm-600 truncate">
                               {tx.description}
                             </p>
-                            {tx.receiptGroupId && (
-                              <span className="shrink-0 inline-flex items-center gap-0.5 bg-amber-light/60 text-amber-dark text-[10px] font-medium px-1.5 py-0.5 rounded">
-                                <Receipt className="w-2.5 h-2.5" />
-                                Itemized
-                              </span>
-                            )}
-                            {tx.billId && (
-                              <span className="shrink-0 inline-flex items-center gap-0.5 bg-income-light text-income text-[10px] font-medium px-1.5 py-0.5 rounded">
-                                <CalendarClock className="w-2.5 h-2.5" />
-                                Bill
-                              </span>
-                            )}
+                            <TransactionRowBadges
+                              receiptGroupId={tx.receiptGroupId}
+                              billId={tx.billId}
+                              createdVia={tx.createdVia}
+                            />
                           </div>
                           <div className="flex items-center gap-1 min-w-0 overflow-hidden">
                             <p className="text-xs text-warm-300 truncate">
