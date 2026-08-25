@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Lock, Unlock } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -23,15 +23,25 @@ const formatUntil = (iso: string) =>
 
 export function McpWriteAccess({ enabledUntil, onChange }: McpWriteAccessProps) {
   const [saving, setSaving] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
 
-  // Recomputed on render rather than stored: a lease that lapses while the page sits open should
-  // read as off without needing a refresh or a timer.
-  const live = enabledUntil !== null && new Date(enabledUntil) > new Date();
+  const expiresAt = enabledUntil ? new Date(enabledUntil).getTime() : null;
+  const live = expiresAt !== null && expiresAt > now;
+
+  // Wall-clock time passing does not itself re-render, so without this the panel would keep
+  // saying Claude can write for as long as the page stays open, while the server had already
+  // begun refusing. Fires once, exactly when the lease lapses.
+  useEffect(() => {
+    if (expiresAt === null || expiresAt <= Date.now()) return;
+    const timer = setTimeout(() => setNow(Date.now()), expiresAt - Date.now() + 1000);
+    return () => clearTimeout(timer);
+  }, [expiresAt]);
 
   const apply = async (minutes: number | null) => {
     setSaving(true);
     try {
       await onChange(minutes);
+      setNow(Date.now());
     } finally {
       setSaving(false);
     }
@@ -65,7 +75,8 @@ export function McpWriteAccess({ enabledUntil, onChange }: McpWriteAccessProps) 
               : "Claude can read your budget but cannot create transactions."}
           </p>
           <p className="text-xs text-warm-400 mt-1">
-            A token still needs the{" "}
+            Each option replaces the current expiry rather than adding to it. A token still needs
+            the{" "}
             <code className="font-mono">transactions:write</code> scope as well. This switch turns
             writing off for every token at once.
           </p>
@@ -81,7 +92,7 @@ export function McpWriteAccess({ enabledUntil, onChange }: McpWriteAccessProps) 
             onClick={() => apply(option.minutes)}
             className="px-3 py-1.5 rounded-full text-xs font-medium border border-cream-300 text-warm-500 hover:bg-cream-100 transition-colors disabled:opacity-50"
           >
-            {live ? `Extend ${option.label}` : `Enable ${option.label}`}
+            {live ? `Set to ${option.label}` : `Enable ${option.label}`}
           </button>
         ))}
         {live && (

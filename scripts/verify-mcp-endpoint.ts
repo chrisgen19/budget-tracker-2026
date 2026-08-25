@@ -227,6 +227,64 @@ async function main() {
   check("still exactly one row after the refusal", await prisma.transaction.count({ where: { userId: user.id } }), 1);
   await prisma.user.delete({ where: { id: foreign.id } });
 
+  // The tool must not auto-apply scheduled labels: schedules match on time of day and weekday,
+  // which describe when the user spent, not when a model typed the row in.
+  const scheduledLabel = await prisma.label.create({
+    data: {
+      name: `probe-schedule-${Date.now()}`,
+      color: "#000000",
+      userId: user.id,
+      applicableTo: "BOTH",
+      schedules: { create: { days: [0, 1, 2, 3, 4, 5, 6], startTime: "00:00", endTime: "23:59" } },
+    },
+    select: { id: true },
+  });
+
+  const unlabelled = await callCreate(writer.token, randomUUID());
+  const unlabelledOut = unlabelled.structuredContent as
+    | { transactions: { labels: string[] }[] }
+    | undefined;
+  check(
+    "omitting labelIds does not auto-apply a scheduled label",
+    unlabelledOut?.transactions[0]?.labels ?? ["<missing>"],
+    []
+  );
+  await prisma.label.delete({ where: { id: scheduledLabel.id } });
+
+  // An unparseable date must be named, not retried: it can never succeed.
+  const badDateClient = await connect(writer.token);
+  const badDate = await badDateClient.callTool({
+    name: "create_transactions",
+    arguments: {
+      transactions: [
+        { amount: 5, description: "bad", type: "EXPENSE", date: "not-a-date", categoryId: category.id },
+      ],
+      clientBatchId: randomUUID(),
+    },
+  });
+  await badDateClient.close();
+  check("an unparseable date is rejected before the write", badDate.isError, true);
+  check(
+    "the rejection names the date rather than telling the model to retry",
+    JSON.stringify(badDate.content).includes("date"),
+    true
+  );
+
+  // The provenance filter must be reachable from the read side too. Uses the read token, since
+  // search_transactions belongs to transactions:read and the writer deliberately lacks it.
+  const searchClient = await connect(full.token);
+  const mine = await searchClient.callTool({
+    name: "search_transactions",
+    arguments: { createdVia: "MCP" },
+  });
+  await searchClient.close();
+  const mineOut = mine.structuredContent as { transactions: unknown[] } | undefined;
+  check(
+    "search_transactions can filter to MCP-written rows",
+    (mineOut?.transactions?.length ?? 0) > 0,
+    true
+  );
+
   // A read-only token must not even see the tool.
   const readOnlyClient = await connect(full.token);
   const readOnlyTools = (await readOnlyClient.listTools()).tools.map((t) => t.name);

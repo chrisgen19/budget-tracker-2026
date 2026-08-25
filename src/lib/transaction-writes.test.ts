@@ -3,12 +3,12 @@ import { createTransactionBatch } from "./transaction-writes";
 import type { PrismaClient } from "./budget-query-types";
 import type { BatchTransactionInput } from "./validations";
 
-vi.mock("@/lib/schedule-server", () => ({
-  // No scheduled labels in these tests: a null context is the short-circuit the real helper
-  // returns for a user with none, so auto-labelling resolves to nothing.
-  getScheduleContext: vi.fn(async () => null),
-  matchScheduledLabel: vi.fn(() => null),
+const scheduleMock = vi.hoisted(() => ({
+  getScheduleContext: vi.fn(async (): Promise<unknown> => null),
+  matchScheduledLabel: vi.fn((): string | null => null),
 }));
+
+vi.mock("@/lib/schedule-server", () => scheduleMock);
 
 const ITEM: BatchTransactionInput = {
   amount: 100,
@@ -218,5 +218,44 @@ describe("createTransactionBatch", () => {
     });
 
     expect(result).toEqual({ ok: false, reason: "UNKNOWN_WHETHER_SAVED" });
+  });
+});
+
+describe("scheduled label auto-application", () => {
+  beforeEach(() => {
+    // A user who *does* have a matching schedule, so the difference between undefined and []
+    // is observable rather than hypothetical.
+    scheduleMock.getScheduleContext.mockResolvedValue({ labels: [], timezoneOffset: -480 });
+    scheduleMock.matchScheduledLabel.mockReturnValue("lbl_scheduled");
+  });
+
+  it("auto-applies a scheduled label when labelIds is undefined", () => {
+    // This is what the app's own form relies on, so it must keep working.
+    const { client, created } = makePrisma();
+    return createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [{ ...ITEM, labelIds: undefined }],
+      createdVia: "APP",
+    }).then(() => {
+      expect(created[0].labels).toEqual({
+        createMany: { data: [{ labelId: "lbl_scheduled" }] },
+      });
+    });
+  });
+
+  it("applies nothing when labelIds is an explicit empty array", async () => {
+    // The MCP tool normalises undefined to [] before calling this, because schedules match on
+    // time of day and weekday: they describe when the user spent, not when a model typed it in.
+    const { client, created } = makePrisma();
+
+    await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [{ ...ITEM, labelIds: [] }],
+      createdVia: "MCP",
+    });
+
+    expect(created[0]).not.toHaveProperty("labels");
   });
 });

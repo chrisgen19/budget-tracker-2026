@@ -388,7 +388,9 @@ export default function TransactionsPage() {
   /* ---- Render ---- */
 
   const deleteLoading = deleteMutation.isPending || bulkDeleteMutation.isPending;
-  const hasActiveSearch = filters.search !== "";
+  // Drives the empty state's wording. A source filter with no matches is "nothing matched", not
+  // "you have no transactions", which would read as data loss to someone who has plenty.
+  const hasActiveSearch = filters.search !== "" || filters.createdVia !== "ALL";
 
   return (
     <div>

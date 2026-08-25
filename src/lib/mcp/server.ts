@@ -18,7 +18,7 @@ import type { PrismaClient } from "../budget-query-types";
 import { MCP_SCOPES, MCP_TOOL_SCOPES, type McpScope, type McpToolName } from "./scopes";
 import { resolveWritePermission } from "./tokens";
 import { createTransactionBatch } from "../transaction-writes";
-import { batchTransactionSchema, clientBatchIdSchema, MAX_BATCH_TRANSACTIONS } from "../validations";
+import { clientBatchIdSchema, mcpTransactionSchema, MAX_BATCH_TRANSACTIONS } from "../validations";
 import {
   spendingByCategoryOutput,
   topExpensesOutput,
@@ -268,6 +268,12 @@ export const createBudgetMcpServer = ({
           .optional()
           .describe(
             "Only transactions carrying at least one of these label IDs. Use get_label_list to find IDs."
+          ),
+        createdVia: z
+          .enum(["APP", "MCP"])
+          .optional()
+          .describe(
+            "Where the row was created: APP for the app itself, MCP for rows written through this endpoint. Use it to review what you added."
           ),
       },
       outputSchema: searchTransactionsOutput,
@@ -585,16 +591,20 @@ export const createBudgetMcpServer = ({
         };
       }
 
-      const parsed = z.array(batchTransactionSchema).safeParse(transactions);
+      const parsed = z.array(mcpTransactionSchema).safeParse(transactions);
       const key = clientBatchIdSchema.safeParse(clientBatchId);
       if (!parsed.success || !key.success) {
+        // Named back to the model so it can correct the input rather than retry it unchanged.
+        // An unparseable date used to reach Prisma and fail inside the transaction, which
+        // surfaced as UNKNOWN_WHETHER_SAVED and told the model to retry a doomed request.
+        const detail = parsed.success
+          ? "clientBatchId must be a UUID."
+          : parsed.error.issues
+              .slice(0, 3)
+              .map((i) => `transactions[${i.path.join(".")}]: ${i.message}`)
+              .join(" ");
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: "Invalid transaction data. Amounts must be positive, dates must be parseable, and clientBatchId must be a UUID.",
-            },
-          ],
+          content: [{ type: "text" as const, text: `Invalid transaction data. ${detail}` }],
           isError: true,
         };
       }
@@ -602,7 +612,11 @@ export const createBudgetMcpServer = ({
       const result = await createTransactionBatch({
         prisma,
         userId,
-        items: parsed.data,
+        // Normalised to an explicit opt-out, never left undefined. `createTransactionBatch`
+        // reads undefined as "auto-apply a scheduled label", and schedules match on time of day
+        // and weekday, which describe when the user spent rather than when a model typed it in.
+        // Leaving it undefined would silently tag rows the tool promises it never tags.
+        items: parsed.data.map((t) => ({ ...t, labelIds: t.labelIds ?? [] })),
         clientBatchId: key.data,
         createdVia: "MCP",
         mcpTokenId: tokenId,

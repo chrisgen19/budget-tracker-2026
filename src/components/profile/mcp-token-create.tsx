@@ -3,7 +3,14 @@
 import { useState } from "react";
 import { Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { MCP_SCOPES, MCP_SCOPE_LABELS, grantsWrite, isWriteScope, type McpScope } from "@/lib/mcp/scopes";
+import {
+  DEFAULT_MINT_SCOPES,
+  MCP_SCOPES,
+  MCP_SCOPE_LABELS,
+  grantsWrite,
+  isWriteScope,
+  type McpScope,
+} from "@/lib/mcp/scopes";
 
 const INPUT_CLASS =
   "w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 placeholder:text-warm-300 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all";
@@ -33,24 +40,25 @@ interface McpTokenCreateProps {
 
 export function McpTokenCreate({ onCreate, creating }: McpTokenCreateProps) {
   const [name, setName] = useState("");
-  const [scopes, setScopes] = useState<McpScope[]>([...MCP_SCOPES]);
+  const [scopes, setScopes] = useState<McpScope[]>([...DEFAULT_MINT_SCOPES]);
   const [expiresInDays, setExpiresInDays] = useState<number | null>(90);
 
   const write = grantsWrite(scopes);
 
-  const toggleScope = (scope: McpScope) =>
-    setScopes((current) => {
-      const next = current.includes(scope)
-        ? current.filter((s) => s !== scope)
-        : [...current, scope];
-      // Ticking a write scope while "Never" or "1 year" is selected would leave the form in a
-      // state the API rejects, so pull the selection back to the write ceiling instead of
-      // failing on submit.
-      if (grantsWrite(next) && !allowedExpiry(expiresInDays, true)) {
-        setExpiresInDays(MAX_WRITE_EXPIRY_DAYS);
-      }
-      return next;
-    });
+  const toggleScope = (scope: McpScope) => {
+    const next = scopes.includes(scope)
+      ? scopes.filter((s) => s !== scope)
+      : [...scopes, scope];
+
+    // Ticking a write scope while "Never" or "1 year" is selected would leave the form in a state
+    // the API rejects, so pull the selection back to the write ceiling instead of failing on
+    // submit. Computed here rather than inside a setState updater: React may run an updater more
+    // than once, so queueing a second update from inside one can repeat or observe stale state.
+    if (grantsWrite(next) && !allowedExpiry(expiresInDays, true)) {
+      setExpiresInDays(MAX_WRITE_EXPIRY_DAYS);
+    }
+    setScopes(next);
+  };
 
   const canSubmit =
     name.trim().length > 0 &&

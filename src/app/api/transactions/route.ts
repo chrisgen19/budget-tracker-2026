@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
-import { transactionSchema } from "@/lib/validations";
+import { transactionSchema, transactionSourceSchema } from "@/lib/validations";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 
 export async function GET(request: Request) {
@@ -41,8 +41,9 @@ export async function GET(request: Request) {
     where.categoryId = categoryId;
   }
 
-  if (createdVia === "APP" || createdVia === "MCP") {
-    where.createdVia = createdVia;
+  const source = transactionSourceSchema.safeParse(createdVia);
+  if (source.success) {
+    where.createdVia = source.data;
   }
 
   const labelId = searchParams.get("labelId");

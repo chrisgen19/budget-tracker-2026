@@ -34,14 +34,33 @@ browser; not latent once a model supplies the id over an internet-facing endpoin
 ### Refactor
 `createTransactionBatch` in `src/lib/transaction-writes.ts` is now the single create path, injected
 with `prisma` and shared by the batch route and the tool. The route keeps its exact HTTP contract:
-`scripts/verify-batch-idempotency.ts` passes 18/18 unchanged, including the concurrency and
+`scripts/verify-batch-idempotency.ts` passes 24/24 unchanged, including the concurrency and
 replay-under-lock cases the client's `committed: "no" | "unknown"` classification depends on.
 
+### Review follow-ups
+- The mint form no longer pre-selects `transactions:write`. It initialised from `MCP_SCOPES`, so an
+  untouched form would have minted a write-capable token and least privilege would have depended
+  on the user noticing a pre-ticked box. `DEFAULT_MINT_SCOPES` is read-only by construction.
+- The tool normalises omitted `labelIds` to `[]`. `createTransactionBatch` reads `undefined` as
+  "auto-apply a scheduled label", so rows were being tagged despite the tool description promising
+  they never are.
+- `search_transactions` actually exposes `createdVia` now. The query layer accepted it and the
+  docs claimed it worked, but the tool never declared the parameter, so it was unreachable.
+- An unparseable date is rejected with a named reason instead of reaching Prisma, failing inside
+  the transaction, and surfacing as `UNKNOWN_WHETHER_SAVED`, which tells the caller to retry a
+  request that can never succeed.
+- `mcpWriteMinutes` is parsed with Zod rather than `Number()`. `Number(true)` is 1 and
+  `Number("60")` is 60, so a stray boolean or string could open the write window.
+- The write-access panel re-renders when the lease lapses, and its buttons say "Set to" rather
+  than "Extend": each option replaces the expiry, so "Extend 1 hour" on a 30-day lease shortened
+  it.
+- The transactions empty state distinguishes "no matches for this filter" from "no transactions".
+
 ### Verification
-- 154 unit tests, 16 of them new: the write service (provenance stamping, category and label
+- 158 unit tests, 20 of them new: the write service (provenance stamping, category and label
   rejection, dedupe, lock-only-when-keyed, replay, unknown-outcome), `resolveWritePermission`, the
   mint cap, and that the write tool is invisible to a read-only token
-- `scripts/verify-mcp-endpoint.ts` 25/25 over real HTTP with the SDK client: refusal while the
+- `scripts/verify-mcp-endpoint.ts` 29/29 over real HTTP with the SDK client: refusal while the
   lease is off with nothing written, a create once it is live, a replay creating nothing, the
   provenance columns, a cross-user category refused, and the tool absent for a read-only token
 - `scripts/verify-mcp-token-auth.ts` covers the lease in both directions against real rows

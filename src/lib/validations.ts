@@ -125,6 +125,10 @@ export const MAX_TOKEN_EXPIRY_DAYS = 365;
  *  leak goes unnoticed. */
 export const MAX_WRITE_TOKEN_EXPIRY_DAYS = 90;
 
+/** Ceiling on a single MCP write lease: 30 days. Long enough for "leave it on while I work
+ *  through the backlog", short enough that a forgotten lease still closes itself. */
+export const MAX_WRITE_LEASE_MINUTES = 30 * 24 * 60;
+
 /** Idempotency key accepted by POST /api/transactions/batch, so an ambiguous failure
  *  (committed, response lost) can be retried without creating the receipts twice. */
 export const clientBatchIdSchema = z.string().uuid();
@@ -343,3 +347,35 @@ export const createMcpTokenSchema = z
       path: ["expiresInDays"],
     }
   );
+
+/**
+ * One transaction accepted by the MCP write tool.
+ *
+ * Stricter than `batchTransactionSchema` on `date`, which only requires a non-empty string
+ * because the app's own form supplies a picker-formatted value. Here the value comes from a
+ * model, and an unparseable one used to reach Prisma and fail inside the transaction, which
+ * reports UNKNOWN_WHETHER_SAVED and tells the caller to retry a request that can never succeed.
+ */
+export const mcpTransactionSchema = batchTransactionSchema.extend({
+  date: z
+    .string()
+    .refine((v) => !Number.isNaN(Date.parse(v)), { message: "date must be a parseable date" }),
+});
+
+/** Provenance filter accepted by `GET /api/transactions` and the MCP search tool. */
+export const transactionSourceSchema = z.enum(["APP", "MCP"]);
+
+/**
+ * Write-lease duration, in minutes from now.
+ *
+ * Minutes rather than an absolute instant so the client never sends a time its clock disagrees
+ * with, `null` to switch writes off, and a strict number rather than a coerced one: `Number(true)`
+ * is 1 and `Number("60")` is 60, so a coercing check would let a stray boolean or string quietly
+ * open the write window.
+ */
+export const mcpWriteLeaseSchema = z
+  .number()
+  .int()
+  .positive()
+  .max(MAX_WRITE_LEASE_MINUTES)
+  .nullable();

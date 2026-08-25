@@ -275,7 +275,9 @@ Your endpoint is `https://<your-domain>/api/mcp`.
 In the deployed app, go to **Profile → MCP Access**:
 
 1. Name it after where it will live, e.g. "Claude Code (laptop)".
-2. Tick only the scopes you need. The descriptions say what each one actually returns:
+2. Tick only the scopes you need. Read scopes start ticked; `transactions:write` never does, so
+   write authority is always a deliberate choice. The descriptions say what each one actually
+   returns:
    `receipts:read` and `bills:read` both include the parent transaction's description and
    amount, so neither is as narrow as its name suggests.
 3. Pick an expiry. 90 days is the default; "Never" exists but should be a deliberate choice.
@@ -347,16 +349,18 @@ development, remote for real data.
 
 #### Creating transactions
 
-`create_transactions` is the only tool that writes, and it is off unless three things are true at
-once:
+`create_transactions` is the only tool that writes. The server refuses it unless **both** of these
+are true:
 
 1. The token carries the `transactions:write` scope. Read-only tokens cannot see the tool at all.
    A token with a write scope cannot be set to "Never" expire and is capped at 90 days.
 2. Writes are switched on under **Profile > MCP Access > Write access**. This is a lease, not a
    toggle: pick 1 hour, 8 hours, or 30 days, and it closes itself. Every token is refused while it
    is off, so it works as a kill switch when you are away from your machine.
-3. Your client prompts you. The tool deliberately omits `readOnlyHint`, so it is not auto-approved
-   the way the read tools are.
+
+Separately, the tool omits `readOnlyHint`, so clients that support tool approval prompt you before
+each call rather than auto-approving it. That is a client-side courtesy, not something the server
+can enforce, so do not rely on it as a third gate.
 
 Rows it creates are stamped with `created_via = MCP` and the token that wrote them, set
 server-side. Filter them on `/transactions` with the **Added by → Claude** control, or ask the

@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
-
-/** Ceiling on a single write lease: 30 days. Long enough for "leave it on while I work through
- *  the backlog", short enough that a forgotten lease still closes itself. */
-const MAX_WRITE_LEASE_MINUTES = 30 * 24 * 60;
+import { mcpWriteLeaseSchema } from "@/lib/validations";
 
 export async function GET() {
   const userId = await getAuthUserId();
@@ -65,16 +62,12 @@ export async function PATCH(request: Request) {
   // clock disagrees with, `null` to switch writes off, and a bounded ceiling so a mis-sent value
   // cannot leave writes open indefinitely.
   if ("mcpWriteMinutes" in body) {
-    const minutes = body.mcpWriteMinutes;
-    if (minutes === null) {
-      data.mcpWritesEnabledUntil = null;
-    } else {
-      const parsed = Number(minutes);
-      if (!Number.isFinite(parsed) || parsed <= 0 || parsed > MAX_WRITE_LEASE_MINUTES) {
-        return NextResponse.json({ error: "Invalid write lease" }, { status: 400 });
-      }
-      data.mcpWritesEnabledUntil = new Date(Date.now() + parsed * 60_000);
+    const lease = mcpWriteLeaseSchema.safeParse(body.mcpWriteMinutes);
+    if (!lease.success) {
+      return NextResponse.json({ error: "Invalid write lease" }, { status: 400 });
     }
+    data.mcpWritesEnabledUntil =
+      lease.data === null ? null : new Date(Date.now() + lease.data * 60_000);
   }
 
   // Handle quick category preferences
