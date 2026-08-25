@@ -32,7 +32,15 @@ export async function POST(request: Request) {
   const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
 
-  const parsed = createTokenSchema.safeParse(await request.json());
+  let json: unknown;
+  try {
+    json = await request.json();
+  } catch (error) {
+    console.error("[mcp/tokens] invalid JSON body:", error instanceof Error ? error.message : error);
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+
+  const parsed = createTokenSchema.safeParse(json);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid request", details: parsed.error.flatten() },

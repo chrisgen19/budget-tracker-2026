@@ -9,11 +9,17 @@ it as a local process, and it read whatever `DATABASE_URL` pointed at.
 
 ### The decision
 The issue's option **B** was chosen — a static bearer token — over an in-app chat (A) or a full
-OAuth 2.1 provider (C). Worth recording what the check the issue asked for turned up: **claude.ai
-in the browser and the mobile apps cannot use this.** Their custom connector UI accepts OAuth
-fields only (authorization URL, token URL, client id/secret); there is no field for a static
-token or a custom header, and that is an open feature request, not a supported path. Claude
-Desktop and Claude Code do support custom headers, so those are the targets.
+OAuth 2.1 provider (C).
+
+Where it works, which is the check the issue asked for: Claude Desktop and Claude Code always,
+since both let you set request headers directly. **claude.ai in the browser and the mobile apps
+work too, but only where request-header authentication is enabled** — Anthropic documents it for
+custom connectors, `authorization` is on the accepted header-name allowlist, and the value is
+sent verbatim (so the stored value must include the `Bearer ` prefix). It is in beta and rolled
+out on request, so an account without it is limited to the two desktop clients, or needs OAuth.
+
+Older sources say flatly that the connector UI accepts OAuth fields only. That was true and is
+no longer.
 
 The trade was made deliberately: NextAuth v4 is an OAuth *client*, not a server, so the SDK's
 auth handlers have nothing to plug into, and standing up an authorization server (clients,
@@ -45,7 +51,7 @@ Tokens carry subject-area scopes (`budget:read`, `transactions:read`, `labels:re
 default), and revocation. Out-of-scope tools are **removed** from the server rather than rejected
 at call time, so a scoped token never advertises capabilities it cannot use. Revocation marks
 `revoked_at` instead of deleting, so the row still answers "what was this allowed to do, and when
-was it last used" after you suspect it leaked. Every non-rate-limit failure renders as the same
+was it last used" after you suspect it leaked. Every *authentication* failure renders as the same
 bare 401: distinguishing "revoked" from "no such token" would confirm to an unauthenticated
 caller that the token it presented is real.
 

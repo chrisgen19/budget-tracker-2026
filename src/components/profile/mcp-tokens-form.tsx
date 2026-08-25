@@ -38,7 +38,9 @@ export function McpTokensForm() {
     load();
   }, [load]);
 
-  const handleCreate = async (input: CreateInput) => {
+  /** Resolves to whether a token was actually minted, so a failed create does not make the
+   *  user retype the name before retrying. */
+  const handleCreate = async (input: CreateInput): Promise<boolean> => {
     setCreating(true);
     setError("");
     try {
@@ -54,8 +56,10 @@ export function McpTokensForm() {
       setMinted(data.token);
       setCopied(false);
       setTokens((current) => [data.record, ...(current ?? [])]);
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create token");
+      return false;
     } finally {
       setCreating(false);
     }
@@ -82,8 +86,14 @@ export function McpTokensForm() {
 
   const handleCopy = async () => {
     if (!minted) return;
-    await navigator.clipboard.writeText(minted);
-    setCopied(true);
+    try {
+      await navigator.clipboard.writeText(minted);
+      setCopied(true);
+    } catch {
+      // Rejects on an insecure origin or a denied permission. The token is on screen either
+      // way, so say so rather than leaving the button silently inert.
+      setError("Could not copy the token. Select it above and copy it manually.");
+    }
   };
 
   return (
@@ -145,8 +155,9 @@ export function McpTokensForm() {
         <p className="text-xs text-warm-400 flex items-start gap-1.5">
           <Plug className="w-3.5 h-3.5 shrink-0 mt-0.5" />
           Point your client at <code className="font-mono">/api/mcp</code> and send the token as{" "}
-          <code className="font-mono">Authorization: Bearer …</code>. claude.ai in the browser
-          cannot use these — its connector setup accepts OAuth only.
+          <code className="font-mono">Authorization: Bearer …</code>. Claude Desktop and Claude
+          Code support this directly; claude.ai on web and mobile needs request-header
+          authentication enabled on the account.
         </p>
       </div>
 

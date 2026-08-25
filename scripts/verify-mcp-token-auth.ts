@@ -23,6 +23,33 @@ const check = (label: string, actual: unknown, expected: unknown) => {
   console.log(`${ok ? "PASS" : "FAIL"}  ${label}: got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`);
 };
 
+/**
+ * Refuse to report a pass the run did not earn.
+ *
+ * The timestamp regression the rate-limit checks below exist to catch only appears when the
+ * database session is *not* UTC: a `Date` bound into `$queryRaw` is sent as `timestamptz` and
+ * compared through the session's zone. On a UTC server those checks pass identically with and
+ * without the fix, so a green run there would prove nothing. Fail loudly instead.
+ *
+ * Checked rather than forced: Prisma pools connections, so a `SET TIME ZONE` would apply to
+ * whichever connection happened to run it and not to the concurrent burst further down.
+ */
+const requireNonUtcSession = async () => {
+  const [row] = await prisma.$queryRawUnsafe<{ TimeZone: string }[]>("SHOW TimeZone");
+  const zone = row?.TimeZone ?? "unknown";
+
+  if (/^(UTC|GMT|Etc\/UTC|Etc\/GMT[+-]?0?)$/i.test(zone)) {
+    failures++;
+    console.log(
+      `FAIL  session timezone is ${zone}: the rate-limit checks cannot detect the timestamp ` +
+        `regression on a UTC server. Re-run against a database configured otherwise, e.g. ` +
+        `ALTER DATABASE "${process.env.PGDATABASE ?? "your_db"}" SET timezone = 'Asia/Manila'.`
+    );
+    return;
+  }
+  console.log(`INFO  session timezone is ${zone}; the timestamp checks below are meaningful`);
+};
+
 const reasonOf = async (header: string | null, now?: Date) => {
   const result = await authenticateMcpRequest(header, now);
   return result.ok ? "OK" : result.failure.reason;
@@ -44,7 +71,14 @@ async function main() {
 
   check("the plaintext is never persisted", await prisma.mcpToken.count({ where: { tokenHash: token } }), 0);
   check("a valid bearer authenticates", await reasonOf(`Bearer ${token}`), "OK");
-  check("scopes come back narrowed to what was granted", record.scopes, ["bills:read"]);
+  // Asserted on the authenticate result, not on what mint wrote: the narrowing happens in
+  // `parseScopes` on the way out, so reading the row back would not exercise it.
+  const accepted = await authenticateMcpRequest(`Bearer ${token}`);
+  check(
+    "scopes come back narrowed to what was granted",
+    accepted.ok ? accepted.scopes : null,
+    ["bills:read"]
+  );
 
   check("a missing header is MISSING", await reasonOf(null), "MISSING");
   check("a non-bearer scheme is MISSING", await reasonOf(`Token ${token}`), "MISSING");
@@ -68,6 +102,8 @@ async function main() {
   check("a revoked token is REVOKED", await reasonOf(`Bearer ${revocable.token}`), "REVOKED");
 
   // --- Rate limit, the reason this script needs a real database ---
+  await requireNonUtcSession();
+
   const limited = await mintMcpToken({
     userId: user.id,
     name: "rate limited",

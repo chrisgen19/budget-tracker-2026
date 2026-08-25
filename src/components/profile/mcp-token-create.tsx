@@ -18,7 +18,8 @@ const EXPIRY_OPTIONS: { label: string; days: number | null }[] = [
 ];
 
 interface McpTokenCreateProps {
-  onCreate: (input: { name: string; scopes: McpScope[]; expiresInDays: number | null }) => Promise<void>;
+  /** Resolves to whether the token was minted; a rejected save must leave the form intact. */
+  onCreate: (input: { name: string; scopes: McpScope[]; expiresInDays: number | null }) => Promise<boolean>;
   creating: boolean;
 }
 
@@ -37,8 +38,10 @@ export function McpTokenCreate({ onCreate, creating }: McpTokenCreateProps) {
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!canSubmit) return;
-    await onCreate({ name: name.trim(), scopes, expiresInDays });
-    setName("");
+    const created = await onCreate({ name: name.trim(), scopes, expiresInDays });
+    // Only on success: clearing after a transient failure would make the user retype the name
+    // just to retry.
+    if (created) setName("");
   };
 
   return (
