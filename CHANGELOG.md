@@ -19,6 +19,15 @@ No API, schema or type change was needed: `GET /api/transactions` uses `include`
 `TransactionWithCategory` extends the Prisma row, so it was already typed. Only the render was
 missing.
 
+### Review follow-up
+The markers moved out of the page into `TransactionRowBadges`. The new conditional had no test and
+no manual plan, which the repository checklist requires, and arguing it was impractical was the
+wrong answer: the markup was only untestable because it sat inline in a route that would have to
+be mounted whole, with its providers, router and query client, to assert on one span. Extracting
+it made it testable and gave the pre-existing "Itemized" and "Bill" markers their first coverage
+too. Both failure directions are pinned: a marker that never appears, and a marker that appears on
+every row, which is the one that matters since a false "Added by Claude" is a provenance lie.
+
 Still not a label, for the reasons recorded in #126: `getLabelBreakdown` splits a transaction's
 amount evenly across its labels, so a provenance label would divert half of every MCP-written
 expense out of its real category, and labels are user-deletable, so the actor could erase the
