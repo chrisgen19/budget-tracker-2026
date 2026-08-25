@@ -14,6 +14,7 @@ import {
   ScanLine,
   Receipt,
   CalendarClock,
+  Sparkles,
 } from "lucide-react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -619,6 +620,19 @@ export default function TransactionsPage() {
                               <span className="shrink-0 inline-flex items-center gap-0.5 bg-income-light text-income text-[10px] font-medium px-1.5 py-0.5 rounded">
                                 <CalendarClock className="w-2.5 h-2.5" />
                                 Bill
+                              </span>
+                            )}
+                            {/* Provenance, from `transactions.created_via`. Icon-only so it does
+                                not compete with the amount on a narrow row; the accessible name
+                                carries the meaning. Filterable via "Added by" in the filter bar. */}
+                            {tx.createdVia === "MCP" && (
+                              <span
+                                title="Added by Claude"
+                                aria-label="Added by Claude"
+                                role="img"
+                                className="shrink-0 inline-flex items-center text-amber-dark"
+                              >
+                                <Sparkles className="w-3 h-3" />
                               </span>
                             )}
                           </div>

@@ -2,6 +2,28 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-25 - Show provenance on the row
+
+Follows #126, which added `transactions.created_via` and an "Added by" filter but no per-row
+marker. You could filter the list down to what Claude wrote; you could not tell, looking at the
+list, which rows those were. The original request was to *see* them, so settling the mechanism
+without delivering the visibility left the feature half done.
+
+MCP-created rows now carry a small sparkle beside the description, following the pattern the
+`receiptGroupId` "Itemized" and `billId` "Bill" markers already established. Icon-only rather than
+a text badge so it does not compete with the amount on a narrow row; the meaning lives in the
+accessible name and the tooltip.
+
+No API, schema or type change was needed: `GET /api/transactions` uses `include` rather than
+`select`, so `created_via` was already in every payload the client received, and
+`TransactionWithCategory` extends the Prisma row, so it was already typed. Only the render was
+missing.
+
+Still not a label, for the reasons recorded in #126: `getLabelBreakdown` splits a transaction's
+amount evenly across its labels, so a provenance label would divert half of every MCP-written
+expense out of its real category, and labels are user-deletable, so the actor could erase the
+marker.
+
 ## 2026-08-25 - MCP write support
 
 Closes #126. The MCP endpoint could answer questions about the budget but not add to it, so the
