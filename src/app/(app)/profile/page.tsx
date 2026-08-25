@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { User, Lock, Sparkles, Settings2 } from "lucide-react";
+import { User, Lock, Sparkles, Settings2, Plug } from "lucide-react";
 import {
   updateProfileSchema,
   changePasswordSchema,
@@ -16,8 +16,9 @@ import { PersonalInfoForm } from "@/components/profile/personal-info-form";
 import { PasswordForm } from "@/components/profile/password-form";
 import { FeaturesForm } from "@/components/profile/features-form";
 import { PreferencesForm } from "@/components/profile/preferences-form";
+import { McpTokensForm } from "@/components/profile/mcp-tokens-form";
 
-type Tab = "personal" | "password" | "features" | "preferences";
+type Tab = "personal" | "password" | "features" | "preferences" | "mcp";
 
 const ROLE_BADGE_STYLES: Record<string, string> = {
   ADMIN: "bg-purple-100 text-purple-700",
@@ -124,6 +125,7 @@ export default function ProfilePage() {
     { id: "password", label: "Change Password", icon: Lock },
     { id: "features", label: "Features", icon: Sparkles },
     { id: "preferences", label: "Preferences", icon: Settings2 },
+    { id: "mcp", label: "MCP Access", icon: Plug },
   ];
 
   if (loading) {
@@ -220,6 +222,12 @@ export default function ProfilePage() {
             activeTab !== "preferences" && "lg:hidden"
           )}>
             <PreferencesForm />
+          </div>
+
+          <div className={cn(
+            activeTab !== "mcp" && "lg:hidden"
+          )}>
+            <McpTokensForm />
           </div>
         </div>
       </div>
