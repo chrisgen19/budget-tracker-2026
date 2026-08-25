@@ -2,6 +2,74 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-25 - Remote MCP Access
+
+Closes #123. The MCP server only worked on one laptop: it spoke stdio, so a client had to spawn
+it as a local process, and it read whatever `DATABASE_URL` pointed at.
+
+### The decision
+The issue's option **B** was chosen — a static bearer token — over an in-app chat (A) or a full
+OAuth 2.1 provider (C). Worth recording what the check the issue asked for turned up: **claude.ai
+in the browser and the mobile apps cannot use this.** Their custom connector UI accepts OAuth
+fields only (authorization URL, token URL, client id/secret); there is no field for a static
+token or a custom header, and that is an open feature request, not a supported path. Claude
+Desktop and Claude Code do support custom headers, so those are the targets.
+
+The trade was made deliberately: NextAuth v4 is an OAuth *client*, not a server, so the SDK's
+auth handlers have nothing to plug into, and standing up an authorization server (clients,
+authorization codes, PKCE, refresh, revocation, DCR) is hard to justify while this is
+single-user. If it stops being single-user, C is the right answer.
+
+### Transport
+The 12 tools now live in `src/lib/mcp/server.ts` and are served over two transports from one
+definition: `mcp-server/` is a thin stdio entry point, and `POST|GET|DELETE /api/mcp` serves the
+same server over Streamable HTTP. A second copy of the registrations would have drifted the
+moment a tool changed on either side.
+
+The HTTP transport runs **stateless**. A route handler has no process to pin a session to, and a
+server instance kept across requests would hand one caller's transport to the next, so each
+request builds its own.
+
+`mcp-server/` now links `@modelcontextprotocol/sdk` and `zod` from the root `node_modules`, the
+way it already linked `@prisma/client`. This is what makes the shared file safe: a module under
+`src/lib/` resolves its imports from the root regardless of which entry point loaded it, so a
+separately installed SDK would have put two different `McpServer` classes in one process.
+
+### Auth
+Only the SHA-256 of a token is stored. Not bcrypt: the secret is 256 bits of CSPRNG output, not a
+guessable password, and every request has to look the row up *by* the digest, which a salted hash
+cannot do without reading and comparing every row.
+
+Tokens carry subject-area scopes (`budget:read`, `transactions:read`, `labels:read`, `bills:read`,
+`receipts:read`), an optional expiry (90 days by default; "never" is available but never the
+default), and revocation. Out-of-scope tools are **removed** from the server rather than rejected
+at call time, so a scoped token never advertises capabilities it cannot use. Revocation marks
+`revoked_at` instead of deleting, so the row still answers "what was this allowed to do, and when
+was it last used" after you suspect it leaked. Every non-rate-limit failure renders as the same
+bare 401: distinguishing "revoked" from "no such token" would confirm to an unauthenticated
+caller that the token it presented is real.
+
+Managed from **Profile > MCP Access**. The plaintext is shown once and never stored.
+
+### A bug the verification script caught
+The rate limiter is a fixed window applied in one atomic `UPDATE`, so concurrent requests
+serialise on the row lock instead of all reading the same pre-write count. The first version
+bound `Date` objects into `$queryRaw` and enforced nothing: Prisma maps `DateTime` to `timestamp
+without time zone` holding UTC, but a bound `Date` is sent as `timestamptz` and compared through
+the session timezone. Under Asia/Manila every window looked 8 hours stale, so the limiter reset
+on each request. Reads have the mirror-image problem, which would have made `Retry-After` wrong
+by the same 8 hours. Every instant is now computed and returned inside SQL.
+
+This is the only ceiling on how hard a leaked token can be pulled — every tool is a database read
+and nothing else bounds request volume.
+
+### Verification
+- `src/lib/mcp/server.test.ts`, `src/lib/mcp/scopes.test.ts` — scope filtering, read-only
+  annotations, and a guard that every registered tool has a scope entry
+- `scripts/verify-mcp-token-auth.ts` — needs real Postgres: expiry, revocation, the rate limit,
+  and a 40-way concurrent burst that admits exactly the remaining allowance
+- `scripts/verify-mcp-endpoint.ts` — drives the real route with the SDK's own HTTP client
+
 ## 2026-08-25 - Batch Replay Race
 
 Closes #121. The replay pre-check on `POST /api/transactions/batch` was an unlocked read, so a

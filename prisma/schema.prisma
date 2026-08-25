@@ -85,10 +85,39 @@ model User {
   labels                  Label[]
   aiAssessments           AiAssessment[]
   aiUsageLogs             AiUsageLog[]
+  mcpTokens               McpToken[]
   createdAt    DateTime      @default(now()) @map("created_at")
   updatedAt    DateTime      @updatedAt @map("updated_at")
 
   @@map("users")
+}
+
+/// A long-lived bearer credential for the remote MCP endpoint at `/api/mcp`.
+///
+/// Only the SHA-256 of the token is stored, never the token. SHA-256 rather than bcrypt on
+/// purpose: the secret is 256 bits of CSPRNG output, not a guessable password, so there is
+/// nothing for a slow KDF to defend against — and every request has to look the row up *by*
+/// the digest, which a salted hash cannot do without reading and comparing every row.
+model McpToken {
+  id              String    @id @default(cuid())
+  userId          String    @map("user_id")
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// What the user called it, e.g. "Claude Desktop (laptop)". Only for telling tokens apart.
+  name            String
+  /// Leading characters of the plaintext, kept so the UI can identify a token it can never show again.
+  prefix          String
+  tokenHash       String    @unique @map("token_hash")
+  scopes          String[]
+  expiresAt       DateTime? @map("expires_at")
+  revokedAt       DateTime? @map("revoked_at")
+  lastUsedAt      DateTime? @map("last_used_at")
+  /// Fixed-window rate limit counters, updated in one atomic UPDATE per request.
+  rateWindowStart DateTime  @default(now()) @map("rate_window_start")
+  rateCount       Int       @default(0) @map("rate_count")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("mcp_tokens")
 }
 
 model Category {

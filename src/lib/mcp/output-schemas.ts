@@ -24,7 +24,7 @@ import type {
   LabelItem,
   BillHistory,
   ReceiptItems,
-} from "../../src/lib/budget-query-types.js";
+} from "../budget-query-types";
 
 /** True only when A and B are mutually assignable, so neither side may drift. */
 type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
