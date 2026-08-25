@@ -318,6 +318,13 @@ describe("replay beats validation of mutable references", () => {
 
     expect(result).toEqual({ ok: true, transactions: original, replayed: true });
     expect(raw.transaction.create).not.toHaveBeenCalled();
+
+    // The outcome alone does not pin the fix: the locked re-check on the rejection path returns
+    // the same rows, so the test passed even with the early branch removed. Asserting that the
+    // mutable references were never consulted is what makes this fail if replay moves back
+    // behind validation.
+    expect(raw.label.findMany).not.toHaveBeenCalled();
+    expect(raw.category.findMany).not.toHaveBeenCalled();
   });
 
   it("still rejects an unknown label on a first attempt", async () => {
@@ -355,5 +362,77 @@ describe("replay beats validation of mutable references", () => {
     });
 
     expect(result).toEqual({ ok: false, reason: "UNKNOWN_WHETHER_SAVED" });
+  });
+});
+
+describe("permission re-checked at the moment of the write", () => {
+  it("writes nothing when permission is withdrawn mid-flight", async () => {
+    // The lease is read when the request arrives, and a batch can hold a transaction for up to a
+    // minute. Without this the kill switch would only refuse the *next* request while letting an
+    // in-flight one commit, which is a request-admission check rather than a kill switch.
+    const { client, created } = makePrisma();
+
+    const result = await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [ITEM],
+      clientBatchId: "b1",
+      createdVia: "MCP",
+      assertStillPermitted: async () => false,
+    });
+
+    expect(result).toEqual({ ok: false, reason: "NO_LONGER_PERMITTED" });
+    expect(created).toHaveLength(0);
+  });
+
+  it("writes normally when permission still holds", async () => {
+    const { client, created } = makePrisma();
+
+    const result = await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [ITEM],
+      clientBatchId: "b1",
+      createdVia: "MCP",
+      assertStillPermitted: async () => true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(created).toHaveLength(1);
+  });
+
+  it("still replays a committed batch even when permission has been withdrawn", async () => {
+    // A replay writes nothing, so the kill switch has nothing to stop. Refusing it would leave
+    // the caller unable to resolve an ambiguous outcome, which is how duplicates get made.
+    const { client, raw } = makePrisma();
+    const original = [{ id: "tx_original" }];
+    raw.transaction.findMany = vi.fn(async () => original) as typeof raw.transaction.findMany;
+
+    const result = await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [ITEM],
+      clientBatchId: "b1",
+      createdVia: "MCP",
+      assertStillPermitted: async () => false,
+    });
+
+    expect(result).toEqual({ ok: true, transactions: original, replayed: true });
+  });
+
+  it("is not consulted at all when the caller supplies no check", async () => {
+    // The app route never passes one, and must keep behaving exactly as before.
+    const { client, created } = makePrisma();
+
+    const result = await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [ITEM],
+      clientBatchId: "b1",
+      createdVia: "APP",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(created).toHaveLength(1);
   });
 });

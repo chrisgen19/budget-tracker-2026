@@ -19,6 +19,8 @@ export type BatchFailureReason =
   | "LABELS_NOT_OWNED"
   /** A category id was neither a default nor the caller's, or its type did not match the item's. */
   | "CATEGORIES_NOT_OWNED"
+  /** Permission was withdrawn between the request arriving and the write starting. */
+  | "NO_LONGER_PERMITTED"
   /** The advisory lock could not be taken, so whether the batch exists is genuinely unknown. */
   | "UNKNOWN_WHETHER_SAVED";
 
@@ -42,6 +44,17 @@ export interface CreateTransactionBatchParams {
   createdVia: TransactionSource;
   /** Recorded when `createdVia` is MCP, so an incident can be traced to one credential. */
   mcpTokenId?: string;
+  /**
+   * Re-checked inside the write transaction, immediately before any row is created. Returning
+   * false aborts without writing.
+   *
+   * The MCP path reads its write lease once, when the request arrives. A batch can then sit in a
+   * database transaction for up to a minute, so a user who hits the kill switch during one would
+   * watch it commit anyway, and a client that pipelined several requests would have them all
+   * commit after the switch. Re-reading at the moment of the write closes that window, which is
+   * the difference between a kill switch and a request-admission check.
+   */
+  assertStillPermitted?: (tx: Prisma.TransactionClient) => Promise<boolean>;
 }
 
 /** Look for an already-committed batch under this key, without taking the lock. */
@@ -123,6 +136,7 @@ export const createTransactionBatch = async ({
   clientBatchId,
   createdVia,
   mcpTokenId,
+  assertStillPermitted,
 }: CreateTransactionBatchParams): Promise<CreateBatchResult> => {
   // A replay creates nothing, so it must not be judged on references it will never use. Labels
   // and categories are mutable: if the original write committed but its response was lost, and a
@@ -215,6 +229,9 @@ export const createTransactionBatch = async ({
 
   // Without a key this stays exactly as it was: one atomic multi-create.
   if (!clientBatchId) {
+    if (assertStillPermitted && !(await assertStillPermitted(prisma as Prisma.TransactionClient))) {
+      return { ok: false, reason: "NO_LONGER_PERMITTED" };
+    }
     const created = await prisma.$transaction(buildCreates(prisma as Prisma.TransactionClient));
     return { ok: true, transactions: created, replayed: false };
   }
@@ -233,6 +250,13 @@ export const createTransactionBatch = async ({
       });
       if (existing.length > 0) {
         return { ok: true as const, transactions: existing, replayed: true };
+      }
+
+      // Checked here, under the lock and inside the transaction, so the answer cannot go stale
+      // between the decision and the write. A replay is already handled above and writes
+      // nothing, so it is deliberately not gated on this.
+      if (assertStillPermitted && !(await assertStillPermitted(tx))) {
+        return { ok: false as const, reason: "NO_LONGER_PERMITTED" as const };
       }
 
       const rows: TransactionWithRelations[] = [];

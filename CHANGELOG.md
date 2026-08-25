@@ -139,11 +139,27 @@ Both again fallout from the previous round's fixes.
   added to fix. Each half degrades on its own, neither renders a value it did not fetch, and the
   error banner is left for actions rather than repeating what the inline placeholder already says.
 
+### Review follow-ups, eighth round
+- The write lease is re-read **inside the write transaction**, not only when the request arrives.
+  A batch can hold a transaction for up to a minute, so "Turn off now" would have watched an
+  in-flight batch commit anyway, and a client that pipelined several requests would have had them
+  all commit after the switch. That is a request-admission check rather than a kill switch. The
+  shared writer takes an optional `assertStillPermitted` callback so the lease stays an MCP
+  concern; the app route passes none and is unchanged. A replay is deliberately not gated on it,
+  since it writes nothing.
+- App-created rows are no longer spliced into a transaction cache filtered to MCP. The infinite
+  cache splice orders by date and consults no filters, which predates this PR and shows an extra
+  row early under the other filters; under this one it would have rendered an app-created row as
+  "Added by Claude", which is exactly the claim `created_via` exists to make trustworthy.
+- The replay-beats-validation test now asserts the label and category lookups never ran. Its
+  outcome alone did not pin the fix: the locked re-check on the rejection path returns the same
+  rows, so it passed even with the early branch removed.
+
 ### Verification
-- 189 unit tests, 51 of them new: the write service (provenance stamping, category and label
+- 194 unit tests, 56 of them new: the write service (provenance stamping, category and label
   rejection, dedupe, lock-only-when-keyed, replay, unknown-outcome), `resolveWritePermission`, the
   mint cap, and that the write tool is invisible to a read-only token
-- `scripts/verify-mcp-endpoint.ts` 42/42 over real HTTP with the SDK client: refusal while the
+- `scripts/verify-mcp-endpoint.ts` 44/44 over real HTTP with the SDK client: refusal while the
   lease is off with nothing written, a create once it is live, a replay creating nothing, the
   provenance columns, a cross-user category refused, and the tool absent for a read-only token
 - `scripts/verify-mcp-token-auth.ts` covers the lease in both directions against real rows

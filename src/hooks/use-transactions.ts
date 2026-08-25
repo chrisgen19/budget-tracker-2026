@@ -125,6 +125,13 @@ export function useDashboardQuery(month: string, tz: number) {
 type InfiniteTransactionsData = InfiniteData<TransactionsResponse, number>;
 
 /** Insert a new transaction into the correct date-sorted position in infinite data */
+/** Both transaction cache keys carry their filters at index 2:
+ *  `["transactions", "list", filters, page]` and `["transactions", "infinite", filters]`. */
+const filtersOfKey = (key: readonly unknown[]): TransactionFilters | undefined =>
+  key[0] === "transactions" && typeof key[2] === "object" && key[2] !== null
+    ? (key[2] as TransactionFilters)
+    : undefined;
+
 const insertTransactionIntoInfiniteData = (
   data: InfiniteTransactionsData,
   tx: TransactionWithCategory
@@ -442,7 +449,15 @@ export function useBatchCreateTransactions() {
     onSuccess: (data) => {
       // Directly insert all new transactions into infinite query caches
       queryClient.setQueriesData<InfiniteTransactionsData>(
-        { queryKey: queryKeys.transactions.all },
+        {
+          queryKey: queryKeys.transactions.all,
+          // Everything saved through this hook is app-created, so it must never be spliced into
+          // a cache filtered to MCP: the row would appear under "Added by Claude", which is
+          // exactly the claim `created_via` exists to make trustworthy. The splice ignores the
+          // other filters too (it orders by date alone), but those only ever show an extra row
+          // early; this one would misattribute it.
+          predicate: (query) => filtersOfKey(query.queryKey)?.createdVia !== "MCP",
+        },
         (old) => {
           if (!old?.pages) return old;
           let updated = old;

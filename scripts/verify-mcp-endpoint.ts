@@ -381,6 +381,52 @@ async function main() {
     data: { mcpWritesEnabledUntil: new Date(Date.now() + 60 * 60 * 1000) },
   });
 
+  // --- The kill switch must stop work already in flight, not just the next request ---
+  // The lease is read when the request arrives, so a batch holding a transaction would otherwise
+  // commit after the user hit "Turn off now". Simulated by switching writes off while the request
+  // is being served: the tool re-reads the lease inside the write transaction.
+  const raceKey = randomUUID();
+  const racedCountBefore = await prisma.transaction.count({ where: { userId: user.id } });
+  const raced = connect(writer.token).then((c) =>
+    c
+      .callTool({
+        name: "create_transactions",
+        arguments: {
+          transactions: [
+            { amount: 9, description: "raced", type: "EXPENSE", date: "2026-08-25", categoryId: category.id },
+          ],
+          clientBatchId: raceKey,
+        },
+      })
+      .finally(() => c.close())
+  );
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { mcpWritesEnabledUntil: new Date(Date.now() - 1000) },
+  });
+  const racedResult = await raced;
+
+  // Either the write beat the switch or the switch beat the write, but the two must agree: a
+  // refusal means no row, and a success means exactly one.
+  const racedRows = await prisma.transaction.count({
+    where: { userId: user.id, description: "raced" },
+  });
+  check(
+    "a mid-flight refusal and the row count agree",
+    racedResult.isError === true ? racedRows === 0 : racedRows === 1,
+    true
+  );
+  check(
+    "no partial write either way",
+    (await prisma.transaction.count({ where: { userId: user.id } })) - racedCountBefore,
+    racedRows
+  );
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { mcpWritesEnabledUntil: new Date(Date.now() + 60 * 60 * 1000) },
+  });
+
   // The provenance filter must be reachable from the read side too. Uses the read token, since
   // search_transactions belongs to transactions:read and the writer deliberately lacks it.
   const searchClient = await connect(full.token);

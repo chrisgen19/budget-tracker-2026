@@ -689,6 +689,16 @@ export const createBudgetMcpServer = ({
         clientBatchId: key.data,
         createdVia: "MCP",
         mcpTokenId: tokenId,
+        // The lease was read when the request arrived; a batch can then hold a transaction for
+        // up to a minute. Re-read at the moment of the write so "Turn off now" stops work that
+        // is already in flight, rather than only refusing the next request.
+        assertStillPermitted: async (tx) => {
+          const current = await tx.user.findUnique({
+            where: { id: userId },
+            select: { mcpWritesEnabledUntil: true },
+          });
+          return resolveWritePermission(scopes, current?.mcpWritesEnabledUntil ?? null).allowed;
+        },
       });
 
       if (!result.ok) {

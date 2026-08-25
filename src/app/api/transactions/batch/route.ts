@@ -106,7 +106,7 @@ export async function POST(request: Request) {
     });
 
     if (!result.ok) {
-      if (result.reason === "UNKNOWN_WHETHER_SAVED") {
+      if (result.reason === "UNKNOWN_WHETHER_SAVED" || result.reason === "NO_LONGER_PERMITTED") {
         return NextResponse.json({ error: "Failed to create transactions" }, { status: 500 });
       }
       const message =
