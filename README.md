@@ -35,7 +35,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **Scheduled Bills & Reminders** — Recurring bill management with configurable frequency (weekly, biweekly, monthly, quarterly, yearly); mobile toast reminders for upcoming and overdue bills; one-tap pay that auto-creates the expense transaction; snooze (1d/3d/1w) and skip actions; pay-all for batch payments; bill history with links to past payments
 - **Progressive Web App** — Installable PWA with offline support via Serwist service worker; install prompt banner (Android + iOS Safari guide); standalone mode with safe-area handling; smart caching for API responses and static assets
 - **Timezone-Aware Dates** — All date queries respect the user's local timezone offset for accurate day boundaries and month grouping
-- **MCP Server** — Local Model Context Protocol server for querying budget data from Claude Desktop; 12 read-only tools (spending by category, top expenses, monthly summary, spending trends, search transactions, budget overview, upcoming bills, category list, label breakdown, label list, bill history, receipt items); shared query library reusable for future in-app AI chat
+- **MCP Server** - [Model Context Protocol](https://modelcontextprotocol.io/) access to your budget data in natural language, over stdio (local) or HTTP with a scoped bearer token (remote); 12 read-only tools (spending by category, top expenses, monthly summary, spending trends, search transactions, budget overview, upcoming bills, category list, label breakdown, label list, bill history, receipt items); shared query library reusable for future in-app AI chat
 - **Analytics** — Dedicated reporting page with income vs expenses bar chart, cash flow area chart (net + cumulative), category breakdown donut chart, label breakdown horizontal bars, summary cards, and flexible time range controls (weekly/monthly/yearly/custom)
 - **Design** — Warm paper-ledger aesthetic with Young Serif + Outfit fonts, Plus Jakarta Sans for currency amounts, amber accents, and Framer Motion animations
 
@@ -152,26 +152,42 @@ Open [http://localhost:3111](http://localhost:3111), register an account, and st
 | `pnpm db:seed` | Seed default categories + set admin role |
 | `pnpm db:studio` | Open Prisma Studio (database GUI) |
 
-## MCP Server (Claude Desktop Integration)
+## MCP Server
 
-The project includes a local [Model Context Protocol](https://modelcontextprotocol.io/) server that lets you query your budget data directly from Claude Desktop using natural language — e.g., "what's my biggest spending category?" or "how much did I spend on food this month?"
+A [Model Context Protocol](https://modelcontextprotocol.io/) server that lets you ask about your
+budget in natural language ("what's my biggest spending category?", "how much did I spend on food
+this month?") from Claude Code or Claude Desktop.
 
-### Architecture
+The 12 tools are defined once, in `src/lib/mcp/server.ts`, and served over two transports:
 
 ```
-Claude Desktop → (stdio) → MCP Server (local script) → Prisma → PostgreSQL
+Local:   Claude Desktop ──(stdio)──▶ mcp-server/src/index.ts ─┐
+                                                              ├─▶ budget-queries ─▶ Prisma ─▶ PostgreSQL
+Remote:  Claude Code / Desktop ──(HTTPS + bearer)──▶ /api/mcp ─┘
 ```
 
-The MCP server is a standalone TypeScript script that runs locally via `tsx`. It is **not** a hosted server — Claude Desktop starts and stops it automatically.
+Pick by which database you want to read:
+
+| | Reads | Auth | Setup |
+|---|---|---|---|
+| **[Local (stdio)](#option-a-local-stdio)** | whatever `DATABASE_URL` points at, usually your dev database | none, it is your own machine | config file per client |
+| **[Remote (HTTP)](#option-b-remote-http)** | the deployed app's database, i.e. **production** | scoped bearer token, revocable | mint a token, one command |
+
+Every tool is read-only; nothing here can create, change, or delete your data.
+
+### Option A: Local (stdio)
+
+The stdio server is a standalone TypeScript script that runs via `tsx`. It is **not** hosted:
+Claude Desktop starts and stops it automatically.
 
 It has its own `package.json`, lockfile, and `.npmrc`, but it is standalone only in its
-dependency tree: it imports the shared query layer from `src/lib/budget-queries.ts` and
-links `@prisma/client` to the app's generated client rather than generating a second one.
-So the app's dependencies must be installed first.
+dependency tree: it imports the tool definitions and shared query layer from `src/lib/`, and links
+`@prisma/client`, `@modelcontextprotocol/sdk` and `zod` to the app's copies rather than resolving
+second ones. So the app's dependencies must be installed first.
 
-### Setup
+#### Setup
 
-#### 1. Install app dependencies first
+##### 1. Install app dependencies first
 
 ```bash
 pnpm install
@@ -180,7 +196,7 @@ pnpm install
 This generates the Prisma client (via `postinstall`) that the MCP server links to. Skipping
 it leaves `@prisma/client` unresolved in step 2.
 
-#### 2. Install MCP server dependencies
+##### 2. Install MCP server dependencies
 
 ```bash
 cd mcp-server && pnpm install && cd ..
@@ -197,7 +213,7 @@ cd mcp-server && pnpm type-check && cd ..
 
 CI runs this on every PR.
 
-#### 3. Find your user ID
+##### 3. Find your user ID
 
 ```bash
 pnpm db:studio
@@ -205,7 +221,7 @@ pnpm db:studio
 
 Open the `User` table in Prisma Studio and copy your user's `id` value.
 
-#### 4. Configure Claude Desktop
+##### 4. Configure Claude Desktop
 
 Edit your Claude Desktop config file:
 
@@ -233,9 +249,97 @@ Add the following (replace the placeholder values):
 a pinned version. `npx tsx` also works, but resolves the version at launch and prints npm
 warnings about this package's `.npmrc` settings.
 
-#### 5. Restart Claude Desktop
+##### 5. Restart Claude Desktop
 
 Claude Desktop will automatically start the MCP server when you open a conversation. No manual startup needed.
+
+### Option B: Remote (HTTP)
+
+The same tools served from the deployed app at `/api/mcp`, so a client on any machine can reach
+them and the answers come from **production** data rather than your local database.
+
+#### 1. Deploy
+
+Nothing to configure. `pnpm build` runs `prisma migrate deploy`, so the deploy creates the
+`mcp_tokens` table on its own, and the endpoint reads the same `DATABASE_URL` the app already
+uses. No new environment variables.
+
+Your endpoint is `https://<your-domain>/api/mcp`.
+
+> The URL must be public HTTPS if you connect through Claude's own connector infrastructure,
+> because those requests come from Anthropic's servers, not your machine, so `localhost` will not
+> work. The `mcp-remote` bridge below runs locally and has no such restriction.
+
+#### 2. Mint a token
+
+In the deployed app, go to **Profile → MCP Access**:
+
+1. Name it after where it will live, e.g. "Claude Code (laptop)".
+2. Tick only the scopes you need. The descriptions say what each one actually returns:
+   `receipts:read` and `bills:read` both include the parent transaction's description and
+   amount, so neither is as narrow as its name suggests.
+3. Pick an expiry. 90 days is the default; "Never" exists but should be a deliberate choice.
+
+Copy the token immediately. Only its SHA-256 is stored, so it cannot be shown again: a lost
+token is re-minted, not recovered. Revoke from the same screen at any time; it takes effect on
+the next request.
+
+#### 3a. Claude Code
+
+```bash
+claude mcp add --transport http budget https://<your-domain>/api/mcp \
+  --header "Authorization: Bearer btmcp_your_token_here" \
+  -s user
+```
+
+`-s user` makes it available in every project; the default `local` scopes it to the current
+directory. Check it with `claude mcp list`.
+
+#### 3b. Claude Desktop
+
+Desktop's `claude_desktop_config.json` handles **local stdio servers only**, so a remote endpoint
+needs one of these instead.
+
+**Custom connector.** Settings → Connectors → Add custom connector, then set an `authorization`
+request header. The value is sent verbatim, so enter it *including* the scheme:
+`Bearer btmcp_your_token_here`. Request-header authentication is in beta and rolled out on
+request. If your account does not have it, the field will not appear and you want the bridge
+below.
+
+**`mcp-remote` bridge.** A local stdio proxy that forwards to the HTTP endpoint
+([npm](https://www.npmjs.com/package/mcp-remote)), which works without the beta:
+
+```json
+{
+  "mcpServers": {
+    "budgettracker-remote": {
+      "command": "npx",
+      "args": [
+        "-y", "mcp-remote",
+        "https://<your-domain>/api/mcp",
+        "--header", "Authorization: Bearer btmcp_your_token_here"
+      ]
+    }
+  }
+}
+```
+
+If the bridge mishandles the space in the header value, pass it through the environment instead:
+`"--header", "Authorization:${AUTH}"` with `"env": { "AUTH": "Bearer btmcp_your_token_here" }`.
+
+You can register the local and remote servers side by side under different names: local for
+development, remote for real data.
+
+#### Operational notes
+
+- **Rate limit:** 300 requests per 15 minutes per token, which a conversation will not approach.
+  It is the only ceiling on how hard a token can be pulled, so it applies to revoked and expired
+  tokens too.
+- **`GET /api/mcp` returns 405 by design.** Clients talk over POST only, so nothing holds a
+  long-lived connection open through the reverse proxy.
+- **Treat the token as a password.** It grants read access to everything in its scopes and sits in
+  plaintext in `~/.claude.json` or `claude_desktop_config.json`; passing it on the command line
+  also puts it in your shell history. Scope it narrowly and give it an expiry.
 
 ### Available MCP Tools
 
@@ -263,6 +367,18 @@ BUDGET_USER_ID=your-user-id DATABASE_URL="your-database-url" npx @modelcontextpr
 ```
 
 This opens a web UI at `http://localhost:6274` where you can call each tool and inspect the results.
+
+To exercise the remote endpoint instead (bearer auth, scope narrowing, and a real tool call over
+HTTP, driven by the SDK's own client), run it against a dev server:
+
+```bash
+pnpm dev -p 3111
+BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-mcp-endpoint.ts
+```
+
+`scripts/verify-mcp-token-auth.ts` covers the token lifecycle (expiry, revocation, rate limiting)
+directly against the database. It needs a **non-UTC** database timezone and says so if it finds
+one, since the timestamp behaviour it checks cannot be observed under UTC.
 
 ## Git Hooks
 
