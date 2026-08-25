@@ -394,7 +394,12 @@ export const isRealDate = (value: string): boolean => {
   if (hs !== undefined && (Number(hs) > 23 || Number(mins) > 59)) return false;
   if (secs !== undefined && Number(secs) > 59) return false;
 
-  return true;
+  // Backstop for anything the pattern's shape admits but the runtime cannot represent, such as a
+  // UTC offset of +24:00 or +14:61. Checking each component separately has now twice let a
+  // narrower case through, so this bounds the whole class instead: whatever survives above must
+  // also resolve to a real instant, or `new Date()` would produce Invalid Date, the write would
+  // fail inside Prisma, and the caller would be told to retry a request that can never succeed.
+  return Number.isFinite(Date.parse(value));
 };
 
 /**

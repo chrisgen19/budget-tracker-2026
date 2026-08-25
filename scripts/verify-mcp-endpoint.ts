@@ -310,6 +310,26 @@ async function main() {
   });
   await rolledClient.close();
   check("an impossible day carrying a time is refused", rolled.isError, true);
+
+  // An offset that cannot exist parses to Invalid Date, which used to reach Prisma and surface
+  // as UNKNOWN_WHETHER_SAVED, telling the caller to retry a request that can never succeed.
+  const offsetClient = await connect(writer.token);
+  const badOffset = await offsetClient.callTool({
+    name: "create_transactions",
+    arguments: {
+      transactions: [
+        { amount: 4, description: "offset", type: "EXPENSE", date: "2026-08-25T12:00+24:00", categoryId: category.id },
+      ],
+      clientBatchId: randomUUID(),
+    },
+  });
+  await offsetClient.close();
+  check("an impossible UTC offset is refused before the write", badOffset.isError, true);
+  check(
+    "the refusal names the input rather than reporting an unknown outcome",
+    JSON.stringify(badOffset.content).includes("Invalid transaction data"),
+    true
+  );
   check(
     "nothing was written for it",
     await prisma.transaction.count({ where: { userId: user.id, description: "rolled" } }),

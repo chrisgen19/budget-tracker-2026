@@ -90,8 +90,23 @@ Both of these were holes left by the previous round's date fix.
   correctly shows on the 1st. The echo now uses the user's own offset, and a test asserts it
   round-trips with the value that was stored.
 
+### Review follow-ups, fourth round
+Both again fallout from the previous round's fixes.
+
+- The anchored ISO pattern admitted UTC offsets that cannot exist, such as `+24:00` and `+14:61`,
+  and the component checks did not look at the offset at all. Those parse to Invalid Date, which
+  reached Prisma, failed inside the transaction, and was reported as `UNKNOWN_WHETHER_SAVED`:
+  precisely the failure the date validation was added to prevent two rounds earlier. Rather than
+  adding a third per-component rule, `isRealDate` now ends with a parse backstop, so anything the
+  shape admits must also resolve to a real instant. A property test asserts that nothing the
+  validator accepts can produce an Invalid Date.
+- The lease re-render timer passed the 30-day duration straight to `setTimeout`, which truncates
+  any delay above 2^31-1 ms (about 24.8 days). It fired immediately and, with `expiresAt`
+  unchanged, never re-armed, so a page left open for a long lease would still have claimed writes
+  were live. The timer now advances in bounded hops.
+
 ### Verification
-- 177 unit tests, 39 of them new: the write service (provenance stamping, category and label
+- 180 unit tests, 42 of them new: the write service (provenance stamping, category and label
   rejection, dedupe, lock-only-when-keyed, replay, unknown-outcome), `resolveWritePermission`, the
   mint cap, and that the write tool is invisible to a read-only token
 - `scripts/verify-mcp-endpoint.ts` 36/36 over real HTTP with the SDK client: refusal while the

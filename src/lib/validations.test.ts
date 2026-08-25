@@ -184,6 +184,43 @@ describe("isRealDate", () => {
     expect(isRealDate("2026-08-25T12:00:61Z")).toBe(false);
   });
 
+  it("rejects a timestamp whose offset cannot exist", () => {
+    // The anchored pattern admits the shape, but no such instant exists. Checked with a parse
+    // backstop rather than another per-component rule, because narrower checks had already let
+    // two separate cases through.
+    expect(isRealDate("2026-08-25T12:00+24:00")).toBe(false);
+    expect(isRealDate("2026-08-25T12:00+14:61")).toBe(false);
+    expect(isRealDate("2026-08-25T12:00+99:99")).toBe(false);
+  });
+
+  it("still accepts a real offset", () => {
+    expect(isRealDate("2026-08-25T12:00+08:00")).toBe(true);
+    expect(isRealDate("2026-08-25T12:00-05:00")).toBe(true);
+  });
+
+  it("accepts nothing that new Date() cannot represent", () => {
+    // The property that matters: anything this admits must produce a usable instant, or the
+    // write fails inside Prisma and is reported as UNKNOWN_WHETHER_SAVED, which tells the caller
+    // to retry a request that can never succeed.
+    const candidates = [
+      "2026-08-25",
+      "2026-08-25T12:00",
+      "2026-08-25T12:00:00Z",
+      "2026-08-25T12:00+24:00",
+      "2026-02-31",
+      "2026-13-01",
+      "0",
+      "2026",
+      "Mar 3 2026",
+      "",
+    ];
+    for (const value of candidates) {
+      if (isRealDate(value)) {
+        expect(Number.isNaN(new Date(value).getTime())).toBe(false);
+      }
+    }
+  });
+
   it("rejects loose strings that Date.parse happens to accept", () => {
     // Each of these parses to some real instant bearing no relation to what a user approved:
     // "0" is 1999-12-31 in a UTC+8 environment, "2026" is 1 January, and the last is a US

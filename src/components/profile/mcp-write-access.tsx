@@ -6,6 +6,10 @@ import { cn } from "@/lib/utils";
 
 /** Lease durations offered in the UI. `null` is "until I turn it off", which the API still caps
  *  at 30 days so a forgotten lease closes itself eventually. */
+/** Longest delay `setTimeout` represents faithfully; anything larger is truncated and fires
+ *  immediately. */
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
 const LEASE_OPTIONS: { label: string; minutes: number }[] = [
   { label: "1 hour", minutes: 60 },
   { label: "8 hours", minutes: 8 * 60 },
@@ -32,12 +36,17 @@ export function McpWriteAccess({ enabledUntil, onChange, onReload }: McpWriteAcc
 
   // Wall-clock time passing does not itself re-render, so without this the panel would keep
   // saying Claude can write for as long as the page stays open, while the server had already
-  // begun refusing. Fires once, exactly when the lease lapses.
+  // begun refusing.
+  //
+  // Re-armed in bounded hops rather than one long timer: `setTimeout` truncates a delay above
+  // 2^31-1 ms (about 24.8 days), so the 30-day lease would fire immediately and, with `expiresAt`
+  // unchanged, never schedule again. Each hop moves `now`, which re-runs this effect.
   useEffect(() => {
-    if (expiresAt === null || expiresAt <= Date.now()) return;
-    const timer = setTimeout(() => setNow(Date.now()), expiresAt - Date.now() + 1000);
+    if (expiresAt === null || expiresAt <= now) return;
+    const delay = Math.min(expiresAt - now + 1000, MAX_TIMEOUT_MS);
+    const timer = setTimeout(() => setNow(Date.now()), delay);
     return () => clearTimeout(timer);
-  }, [expiresAt]);
+  }, [expiresAt, now]);
 
   const apply = async (minutes: number | null) => {
     setSaving(true);
