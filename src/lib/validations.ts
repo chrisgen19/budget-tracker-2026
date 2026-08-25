@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { grantsWrite, mcpScopeSchema } from "@/lib/mcp/scopes";
 
 export const loginSchema = z.object({
   email: z.string().email("Please enter a valid email"),
@@ -58,6 +59,10 @@ export const batchTransactionSchema = transactionSchema.extend({
   receiptBreakdown: receiptBreakdownMetaSchema.optional(),
 });
 
+/** One item accepted by `createTransactionBatch`. Exported so the shared write service and the
+ *  MCP tool type against the schema rather than restating its shape. */
+export type BatchTransactionInput = z.infer<typeof batchTransactionSchema>;
+
 export const labelScheduleSchema = z.object({
   id: z.string().optional(),
   days: z.array(z.number().int().min(0).max(6)).min(1, "Select at least one day"),
@@ -111,6 +116,14 @@ export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
  *  receipts are itemised into per-category children. Overflowing it failed the whole save
  *  with a generic "Invalid input" after the scan credits had already been spent. */
 export const MAX_BATCH_TRANSACTIONS = 200;
+
+/** Longest lifetime the MCP token UI will mint. Anything longer is re-minted deliberately. */
+export const MAX_TOKEN_EXPIRY_DAYS = 365;
+
+/** Longest lifetime for a token that can write. Shorter than the read cap on purpose: it bounds
+ *  how long a leaked writing credential stays useful, which revocation alone cannot do when the
+ *  leak goes unnoticed. */
+export const MAX_WRITE_TOKEN_EXPIRY_DAYS = 90;
 
 /** Idempotency key accepted by POST /api/transactions/batch, so an ambiguous failure
  *  (committed, response lost) can be retried without creating the receipts twice. */
@@ -304,3 +317,29 @@ export type ReceiptScanResult = z.infer<typeof receiptScanResultSchema>;
 export type ReceiptBreakdownResult = z.infer<typeof receiptBreakdownResultSchema>;
 export type ReceiptBreakdownMetaInput = z.infer<typeof receiptBreakdownMetaSchema>;
 export type UpdateAppSettingsInput = z.infer<typeof updateAppSettingsSchema>;
+
+/**
+ * Minting an MCP token.
+ *
+ * A read-only credential that never expires is a contained risk: it can only ever disclose. One
+ * that can also create rows is not, so a write grant must carry an end date, and a shorter one.
+ * Enforced in the schema rather than only in the form, since the form is not the only thing that
+ * can post this.
+ */
+export const createMcpTokenSchema = z
+  .object({
+    name: z.string().trim().min(1).max(60),
+    scopes: z.array(mcpScopeSchema).min(1),
+    expiresInDays: z.number().int().min(1).max(MAX_TOKEN_EXPIRY_DAYS).nullable(),
+  })
+  .refine((v) => !(grantsWrite(v.scopes) && v.expiresInDays === null), {
+    message: "A token with a write scope must expire",
+    path: ["expiresInDays"],
+  })
+  .refine(
+    (v) => !(grantsWrite(v.scopes) && (v.expiresInDays ?? 0) > MAX_WRITE_TOKEN_EXPIRY_DAYS),
+    {
+      message: `A token with a write scope may last at most ${MAX_WRITE_TOKEN_EXPIRY_DAYS} days`,
+      path: ["expiresInDays"],
+    }
+  );

@@ -5,6 +5,7 @@ import { Check, Copy, Plug } from "lucide-react";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { McpTokenCreate } from "@/components/profile/mcp-token-create";
 import { McpTokenList, type McpTokenRecord } from "@/components/profile/mcp-token-list";
+import { McpWriteAccess } from "@/components/profile/mcp-write-access";
 import type { McpScope } from "@/lib/mcp/scopes";
 
 interface CreateInput {
@@ -22,6 +23,7 @@ export function McpTokensForm() {
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [minted, setMinted] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [writesUntil, setWritesUntil] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -30,6 +32,10 @@ export function McpTokensForm() {
       const data = await res.json();
       setTokens(data.tokens);
       setLoadFailed(false);
+
+      // The lease lives on the user, not the token list, so it is read separately.
+      const prefs = await fetch("/api/preferences");
+      if (prefs.ok) setWritesUntil((await prefs.json()).mcpWritesEnabledUntil ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load tokens");
       // Deliberately not `setTokens([])`: an empty list renders "No tokens yet", which would tell
@@ -85,6 +91,21 @@ export function McpTokensForm() {
     } finally {
       setRevokingId(null);
       setRevoking(null);
+    }
+  };
+
+  const handleWriteLease = async (minutes: number | null) => {
+    setError("");
+    try {
+      const res = await fetch("/api/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mcpWriteMinutes: minutes }),
+      });
+      if (!res.ok) throw new Error("Failed to update write access");
+      setWritesUntil((await res.json()).mcpWritesEnabledUntil ?? null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update write access");
     }
   };
 
@@ -145,6 +166,8 @@ export function McpTokensForm() {
       )}
 
       <div className="space-y-5">
+        <McpWriteAccess enabledUntil={writesUntil} onChange={handleWriteLease} />
+
         <McpTokenCreate onCreate={handleCreate} creating={creating} />
 
         {loadFailed ? (

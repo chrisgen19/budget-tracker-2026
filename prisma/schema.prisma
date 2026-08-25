@@ -51,6 +51,16 @@ enum AiInsightKind {
 /// PENDING is the in-flight reservation that makes the quota check atomic;
 /// only PENDING and SUCCESS consume a monthly credit. FAILED rows are kept
 /// (not deleted) so a refunded attempt still counts against the rate limit.
+/// How a transaction came to exist. Provenance is a column rather than a label because labels
+/// are a spending dimension here: `getLabelBreakdown` splits a transaction's amount evenly across
+/// its labels, so tagging provenance would divert half of every MCP-written expense out of its
+/// real category. A label is also user-deletable, and an audit marker the actor can erase is not
+/// an audit marker.
+enum TransactionSource {
+  APP
+  MCP
+}
+
 enum ScanStatus {
   PENDING
   SUCCESS
@@ -77,6 +87,10 @@ model User {
   dayNameFormat              DayNameFormat @default(SHORT) @map("day_name_format")
   emailBillReminders         Boolean    @default(false) @map("email_bill_reminders")
   timezoneOffset          Int           @default(-480) @map("timezone_offset")
+  /// Lease, not a flag: MCP writes are permitted only while this is in the future. A boolean
+  /// would depend on remembering to switch it back off, and the failure that matters is leaving
+  /// writes on for days, which fails silently. Null means writes are off.
+  mcpWritesEnabledUntil   DateTime?     @map("mcp_writes_enabled_until")
   transactions            Transaction[]
   categories              Category[]
   scanLogs                ScanLog[]
@@ -161,6 +175,13 @@ model Transaction {
   /// response is lost looks identical to one that never ran, and the review modal invites
   /// the user to retry — which would post the same receipts a second time.
   clientBatchId    String?                @map("client_batch_id")
+  /// Which surface created this row. Set server-side, never from caller input, so a compromised
+  /// MCP token cannot forge or omit it.
+  createdVia       TransactionSource      @default(APP) @map("created_via")
+  /// Which MCP token wrote this row, when `createdVia` is MCP. Deliberately not a foreign key:
+  /// the audit record has to outlive the credential, and revoking or deleting a token must not
+  /// cascade away the evidence of what it did.
+  mcpTokenId       String?                @map("mcp_token_id")
   billId           String?                @map("bill_id")
   bill             ScheduledTransaction?  @relation(fields: [billId], references: [id], onDelete: SetNull)
   labels           TransactionLabel[]
@@ -172,6 +193,7 @@ model Transaction {
   @@index([receiptGroupId])
   @@index([billId])
   @@index([userId, clientBatchId])
+  @@index([userId, createdVia])
   @@map("transactions")
 }
 

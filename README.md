@@ -345,6 +345,25 @@ Three details that are each enough to break it on their own:
 You can register the local and remote servers side by side under different names: local for
 development, remote for real data.
 
+#### Creating transactions
+
+`create_transactions` is the only tool that writes, and it is off unless three things are true at
+once:
+
+1. The token carries the `transactions:write` scope. Read-only tokens cannot see the tool at all.
+   A token with a write scope cannot be set to "Never" expire and is capped at 90 days.
+2. Writes are switched on under **Profile > MCP Access > Write access**. This is a lease, not a
+   toggle: pick 1 hour, 8 hours, or 30 days, and it closes itself. Every token is refused while it
+   is off, so it works as a kill switch when you are away from your machine.
+3. Your client prompts you. The tool deliberately omits `readOnlyHint`, so it is not auto-approved
+   the way the read tools are.
+
+Rows it creates are stamped with `created_via = MCP` and the token that wrote them, set
+server-side. Filter them on `/transactions` with the **Added by → Claude** control, or ask the
+model directly, since `search_transactions` takes the same filter.
+
+Nothing here can edit or delete an existing transaction.
+
 #### Operational notes
 
 - **Rate limit:** 300 requests per 15 minutes per token, which a conversation will not approach.
@@ -372,6 +391,7 @@ development, remote for real data.
 | `get_label_list` | Labels with transaction counts, applicable type, and auto-apply schedules |
 | `get_bill_history` | Past bill occurrences (paid/skipped/snoozed) plus per-bill lateness patterns |
 | `get_receipt_items` | Individual line items from scanned receipts, filterable by month, name, or receipt |
+| `create_transactions` | **Write.** Creates one or more transactions in a single idempotent batch |
 
 ### Testing with MCP Inspector
 

@@ -26,6 +26,8 @@ export interface TransactionFilters {
   month: string;
   categoryId: string | null;
   labelId: string | null;
+  /** Which surface created the row. "MCP" surfaces what the remote endpoint wrote. */
+  createdVia: "ALL" | "APP" | "MCP";
   amountMin: number | null;
   amountMax: number | null;
   sortBy: "date" | "amount";
@@ -49,11 +51,20 @@ const SORT_OPTIONS = [
   { label: "Amount (low-high)", sortBy: "amount" as const, sortDir: "asc" as const },
 ];
 
+/** Provenance comes from `transactions.created_via`, set server-side. "Claude" rather than "MCP"
+ *  in the UI: the column is a mechanism, the user thinks in terms of who added the row. */
+const SOURCE_OPTIONS = [
+  { value: "ALL" as const, label: "Any" },
+  { value: "APP" as const, label: "In app" },
+  { value: "MCP" as const, label: "Claude" },
+];
+
 const DEFAULT_FILTERS: Omit<TransactionFilters, "month"> = {
   search: "",
   type: "ALL",
   categoryId: null,
   labelId: null,
+  createdVia: "ALL",
   amountMin: null,
   amountMax: null,
   sortBy: "date",
@@ -77,6 +88,7 @@ const countAdvancedFilters = (f: TransactionFilters): number => {
   let count = 0;
   if (f.categoryId) count++;
   if (f.labelId) count++;
+  if (f.createdVia !== "ALL") count++;
   if (f.amountMin !== null) count++;
   if (f.amountMax !== null) count++;
   if (f.sortBy !== "date" || f.sortDir !== "desc") count++;
@@ -89,6 +101,7 @@ const hasActiveFilters = (f: TransactionFilters): boolean =>
   f.type !== "ALL" ||
   f.categoryId !== null ||
   f.labelId !== null ||
+  f.createdVia !== "ALL" ||
   f.amountMin !== null ||
   f.amountMax !== null ||
   f.sortBy !== "date" ||
@@ -278,6 +291,12 @@ export function TransactionFiltersBar({
     activeChips.push({
       label: selectedLabel.name,
       onRemove: () => update({ labelId: null }),
+    });
+  }
+  if (filters.createdVia !== "ALL") {
+    activeChips.push({
+      label: filters.createdVia === "MCP" ? "Added by Claude" : "Added in app",
+      onRemove: () => update({ createdVia: "ALL" }),
     });
   }
   if (filters.amountMin !== null) {
@@ -623,6 +642,25 @@ export function TransactionFiltersBar({
             </div>
           </div>
 
+          {/* Desktop: Added by */}
+          <div className="hidden sm:flex items-center gap-1 p-1 rounded-lg bg-cream-100">
+            {SOURCE_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                onClick={() => update({ createdVia: option.value })}
+                title="Where the transaction was created"
+                className={cn(
+                  "px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-150",
+                  filters.createdVia === option.value
+                    ? "bg-white text-warm-700 shadow-warm"
+                    : "text-warm-400 hover:text-warm-600"
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
           <div className="flex-1" />
 
           {/* Desktop: Clear all */}
@@ -895,6 +933,27 @@ export function TransactionFiltersBar({
                         className="w-full pl-7 pr-2 py-2.5 rounded-lg border border-cream-200 bg-cream-50/50 text-sm text-warm-700 placeholder:text-warm-300 focus:outline-none focus:ring-2 focus:ring-amber/20 focus:border-amber transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
                     </div>
+                  </div>
+                </div>
+
+                {/* Added by */}
+                <div>
+                  <label className="block text-xs font-medium text-warm-400 mb-1.5">Added by</label>
+                  <div className="flex items-center gap-1 p-1 rounded-lg bg-cream-100">
+                    {SOURCE_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        onClick={() => update({ createdVia: option.value })}
+                        className={cn(
+                          "flex-1 px-3 py-2 rounded-md text-xs font-medium transition-all duration-150",
+                          filters.createdVia === option.value
+                            ? "bg-white text-warm-700 shadow-warm"
+                            : "text-warm-400 hover:text-warm-600"
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
 

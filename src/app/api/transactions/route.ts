@@ -21,6 +21,7 @@ export async function GET(request: Request) {
   const sortBy = searchParams.get("sortBy") || "date"; // "date" | "amount"
   const sortDir = searchParams.get("sortDir") || "desc"; // "asc" | "desc"
   const search = searchParams.get("search");
+  const createdVia = searchParams.get("createdVia");
 
   const where: Record<string, unknown> = { userId };
 
@@ -38,6 +39,10 @@ export async function GET(request: Request) {
 
   if (categoryId) {
     where.categoryId = categoryId;
+  }
+
+  if (createdVia === "APP" || createdVia === "MCP") {
+    where.createdVia = createdVia;
   }
 
   const labelId = searchParams.get("labelId");

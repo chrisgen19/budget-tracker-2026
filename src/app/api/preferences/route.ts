@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 
+/** Ceiling on a single write lease: 30 days. Long enough for "leave it on while I work through
+ *  the backlog", short enough that a forgotten lease still closes itself. */
+const MAX_WRITE_LEASE_MINUTES = 30 * 24 * 60;
+
 export async function GET() {
   const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
@@ -20,6 +24,7 @@ export async function GET() {
       showDayName: true,
       dayNameFormat: true,
       emailBillReminders: true,
+      mcpWritesEnabledUntil: true,
     },
   });
 
@@ -35,6 +40,7 @@ export async function GET() {
     showDayName: user?.showDayName ?? true,
     dayNameFormat: user?.dayNameFormat ?? "SHORT",
     emailBillReminders: user?.emailBillReminders ?? false,
+    mcpWritesEnabledUntil: user?.mcpWritesEnabledUntil?.toISOString() ?? null,
   });
 }
 
@@ -53,6 +59,22 @@ export async function PATCH(request: Request) {
   // Handle receiptScanEnabled
   if ("receiptScanEnabled" in body) {
     data.receiptScanEnabled = Boolean(body.receiptScanEnabled);
+  }
+
+  // MCP write lease. Accepts minutes-from-now so the client never sends an absolute instant its
+  // clock disagrees with, `null` to switch writes off, and a bounded ceiling so a mis-sent value
+  // cannot leave writes open indefinitely.
+  if ("mcpWriteMinutes" in body) {
+    const minutes = body.mcpWriteMinutes;
+    if (minutes === null) {
+      data.mcpWritesEnabledUntil = null;
+    } else {
+      const parsed = Number(minutes);
+      if (!Number.isFinite(parsed) || parsed <= 0 || parsed > MAX_WRITE_LEASE_MINUTES) {
+        return NextResponse.json({ error: "Invalid write lease" }, { status: 400 });
+      }
+      data.mcpWritesEnabledUntil = new Date(Date.now() + parsed * 60_000);
+    }
   }
 
   // Handle quick category preferences
@@ -150,6 +172,7 @@ export async function PATCH(request: Request) {
       showDayName: true,
       dayNameFormat: true,
       emailBillReminders: true,
+      mcpWritesEnabledUntil: true,
     },
   });
 
@@ -165,5 +188,6 @@ export async function PATCH(request: Request) {
     showDayName: user.showDayName,
     dayNameFormat: user.dayNameFormat,
     emailBillReminders: user.emailBillReminders,
+    mcpWritesEnabledUntil: user.mcpWritesEnabledUntil?.toISOString() ?? null,
   });
 }

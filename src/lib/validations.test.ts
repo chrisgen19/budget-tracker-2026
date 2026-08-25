@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { batchTransactionSchema, receiptBreakdownMetaSchema } from "./validations";
+import {
+  batchTransactionSchema,
+  createMcpTokenSchema,
+  receiptBreakdownMetaSchema,
+} from "./validations";
 
 /** What the multi-scan flow actually posts (use-multi-scan.ts). */
 const validBlob = {
@@ -77,5 +81,62 @@ describe("batchTransactionSchema no longer accepts any receiptBreakdown", () => 
 
   it("rejects a malformed one instead of persisting it", () => {
     expect(batchTransactionSchema.safeParse(batchRow({ items: "nope" })).success).toBe(false);
+  });
+});
+
+describe("createMcpTokenSchema", () => {
+  const base = { name: "laptop", expiresInDays: 90 };
+
+  it("allows a read-only token that never expires", () => {
+    // A credential that can only disclose is a contained risk, so an unbounded lifetime is a
+    // reasonable choice to offer.
+    const result = createMcpTokenSchema.safeParse({
+      ...base,
+      scopes: ["budget:read"],
+      expiresInDays: null,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("refuses a write token that never expires", () => {
+    // Revocation only helps once the leak is noticed, so a writing credential has to age out.
+    const result = createMcpTokenSchema.safeParse({
+      ...base,
+      scopes: ["transactions:write"],
+      expiresInDays: null,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("refuses a write token that outlives the write cap", () => {
+    const result = createMcpTokenSchema.safeParse({
+      ...base,
+      scopes: ["budget:read", "transactions:write"],
+      expiresInDays: 365,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("allows a write token at exactly the cap", () => {
+    const result = createMcpTokenSchema.safeParse({
+      ...base,
+      scopes: ["transactions:write"],
+      expiresInDays: 90,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("allows a read-only token to use the longer cap", () => {
+    const result = createMcpTokenSchema.safeParse({
+      ...base,
+      scopes: ["budget:read"],
+      expiresInDays: 365,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an unknown scope", () => {
+    const result = createMcpTokenSchema.safeParse({ ...base, scopes: ["transactions:destroy"] });
+    expect(result.success).toBe(false);
   });
 });

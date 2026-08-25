@@ -2,6 +2,50 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-25 - MCP write support
+
+Closes #126. The MCP endpoint could answer questions about the budget but not add to it, so the
+receipts workflow still ended with typing everything into the app by hand.
+
+One tool, `create_transactions`, creates a batch in a single write. Editing, deleting, bill
+payment and category/label creation are deliberately out of scope; delete in particular is the
+only irreversible operation and is a separate decision.
+
+### Three controls, none substituting for another
+- **`transactions:write` scope**: least privilege, fixed at mint. Existing tokens carry only
+  `:read` scopes so they stay read-only with no migration. A token granted write may not choose
+  "Never" and is capped at 90 days, since revocation only helps once a leak is noticed.
+- **`users.mcp_writes_enabled_until`**: a lease rather than a boolean. The failure that matters is
+  not forgetting to switch writes on, which fails loudly, but forgetting to switch them off, which
+  fails silently. A lease returns to the safe state on its own.
+- **`transactions.created_via` + `mcp_token_id`**: set server-side, so a compromised token can
+  neither forge nor omit them, and not a foreign key, so the record outlives the credential.
+
+Provenance is a column rather than a label because `getLabelBreakdown` splits a transaction's
+amount evenly across its labels: a provenance label would divert half of every MCP-written expense
+out of its real category, and labels are user-deletable, so the actor could erase the marker.
+
+### A pre-existing gap closed on the way
+Neither create path verified that `categoryId` belonged to the caller. Labels were checked;
+categories were not, and `Category.userId` is nullable so the foreign key alone is satisfied by any
+category that exists, including another user's. Latent while the only caller was the user's own
+browser; not latent once a model supplies the id over an internet-facing endpoint.
+
+### Refactor
+`createTransactionBatch` in `src/lib/transaction-writes.ts` is now the single create path, injected
+with `prisma` and shared by the batch route and the tool. The route keeps its exact HTTP contract:
+`scripts/verify-batch-idempotency.ts` passes 18/18 unchanged, including the concurrency and
+replay-under-lock cases the client's `committed: "no" | "unknown"` classification depends on.
+
+### Verification
+- 154 unit tests, 16 of them new: the write service (provenance stamping, category and label
+  rejection, dedupe, lock-only-when-keyed, replay, unknown-outcome), `resolveWritePermission`, the
+  mint cap, and that the write tool is invisible to a read-only token
+- `scripts/verify-mcp-endpoint.ts` 25/25 over real HTTP with the SDK client: refusal while the
+  lease is off with nothing written, a create once it is live, a replay creating nothing, the
+  provenance columns, a cross-user category refused, and the tool absent for a read-only token
+- `scripts/verify-mcp-token-auth.ts` covers the lease in both directions against real rows
+
 ## 2026-08-25 - Accept X-Api-Key
 
 Follows #123. The remote endpoint worked from Claude Code but could not be connected from Claude

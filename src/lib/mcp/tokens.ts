@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { parseScopes, type McpScope } from "./scopes";
+import { grantsWrite, parseScopes, type McpScope } from "./scopes";
 
 /** Distinctive prefix so a leaked token is greppable and recognisable in a config file. */
 const TOKEN_PREFIX = "btmcp_";
@@ -32,6 +32,34 @@ export type McpAuthFailure =
 export type McpAuthResult =
   | { ok: true; tokenId: string; userId: string; scopes: McpScope[] }
   | { ok: false; failure: McpAuthFailure };
+
+/** Why a write was refused, so the tool can tell the model which of the two switches to mention. */
+export type McpWriteRefusal = "SCOPE_NOT_GRANTED" | "WRITES_DISABLED";
+
+export type McpWritePermission = { allowed: true } | { allowed: false; reason: McpWriteRefusal };
+
+/**
+ * Decide whether this request may write, right now.
+ *
+ * Two independent gates, deliberately not collapsed into one. The scope is least privilege fixed
+ * at mint time ("may *this token* write?"); the lease is a kill switch the user can flip at any
+ * moment ("may *anything* write right now?"). Either alone is insufficient: a scope cannot be
+ * withdrawn without re-minting, and a lease cannot distinguish one token from another.
+ *
+ * @param writesEnabledUntil `users.mcp_writes_enabled_until`. Null or past means writes are off,
+ *   which is the safe default rather than a state the user has to remember to return to.
+ */
+export const resolveWritePermission = (
+  scopes: readonly McpScope[],
+  writesEnabledUntil: Date | null,
+  now = new Date()
+): McpWritePermission => {
+  if (!grantsWrite(scopes)) return { allowed: false, reason: "SCOPE_NOT_GRANTED" };
+  if (!writesEnabledUntil || writesEnabledUntil <= now) {
+    return { allowed: false, reason: "WRITES_DISABLED" };
+  }
+  return { allowed: true };
+};
 
 export const hashMcpToken = (token: string): string =>
   createHash("sha256").update(token).digest("hex");

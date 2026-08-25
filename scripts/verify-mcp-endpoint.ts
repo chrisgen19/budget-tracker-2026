@@ -14,6 +14,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { PrismaClient } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { mintMcpToken } from "../src/lib/mcp/tokens";
 
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:3000";
@@ -26,6 +27,16 @@ const check = (label: string, actual: unknown, expected: unknown) => {
   const ok = JSON.stringify(actual) === JSON.stringify(expected);
   if (!ok) failures++;
   console.log(`${ok ? "PASS" : "FAIL"}  ${label}: got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`);
+};
+
+/** Open a client on the endpoint with a given token. Caller closes it. */
+const connect = async (token: string) => {
+  const client = new Client({ name: "endpoint-probe", version: "1.0.0" });
+  const transport = new StreamableHTTPClientTransport(ENDPOINT, {
+    requestInit: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  await client.connect(transport);
+  return client;
 };
 
 /** Connect as an MCP client carrying a bearer token, and list what it can see. */
@@ -137,6 +148,90 @@ async function main() {
     typeof (result.structuredContent as Record<string, unknown> | undefined)?.totalIncome,
     "number"
   );
+
+  // --- Write tool: scope, lease, idempotency, provenance ---
+  const writer = await mintMcpToken({
+    userId: user.id,
+    name: "writer",
+    scopes: ["budget:read", "transactions:write"],
+    expiresInDays: 30,
+  });
+
+  const category = await prisma.category.findFirst({
+    where: { OR: [{ userId: user.id }, { userId: null }], type: "EXPENSE" },
+    select: { id: true },
+  });
+  if (!category) throw new Error("no expense category available to write against");
+
+  const callCreate = async (token: string, clientBatchId: string, categoryId = category.id) => {
+    const client = await connect(token);
+    const result = await client.callTool({
+      name: "create_transactions",
+      arguments: {
+        transactions: [
+          { amount: 12.5, description: "probe", type: "EXPENSE", date: "2026-08-25", categoryId },
+        ],
+        clientBatchId,
+      },
+    });
+    await client.close();
+    return result;
+  };
+
+  // Writes are off for a fresh user, so the tool must refuse even though the scope is granted.
+  const refused = await callCreate(writer.token, randomUUID());
+  check("the write tool refuses while the lease is off", refused.isError, true);
+  check(
+    "the refusal names the switch to flip",
+    JSON.stringify(refused.content).includes("Profile > MCP Access"),
+    true
+  );
+  check("nothing was written while refused", await prisma.transaction.count({ where: { userId: user.id } }), 0);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { mcpWritesEnabledUntil: new Date(Date.now() + 60 * 60 * 1000) },
+  });
+
+  const key = randomUUID();
+  const first = await callCreate(writer.token, key);
+  const firstOut = first.structuredContent as { created: number; replayed: boolean } | undefined;
+  check("the write tool creates once the lease is live", firstOut?.created, 1);
+  check("the first call is not a replay", firstOut?.replayed, false);
+
+  // The whole point of requiring a key: an agent retry must not duplicate the rows.
+  const replay = await callCreate(writer.token, key);
+  const replayOut = replay.structuredContent as { created: number; replayed: boolean } | undefined;
+  check("replaying the same clientBatchId creates nothing", replayOut?.created, 0);
+  check("the replay is reported as one", replayOut?.replayed, true);
+  check("exactly one row exists after the replay", await prisma.transaction.count({ where: { userId: user.id } }), 1);
+
+  const written = await prisma.transaction.findFirstOrThrow({
+    where: { userId: user.id },
+    select: { createdVia: true, mcpTokenId: true },
+  });
+  check("the row records that MCP wrote it", written.createdVia, "MCP");
+  check("the row records which token wrote it", written.mcpTokenId, writer.record.id);
+
+  // A category that is not this user's must be refused, since the id comes from a model.
+  const foreign = await prisma.user.create({
+    data: { name: "other", email: "mcp-endpoint-other@scratch.invalid", password: "x" },
+    select: { id: true },
+  });
+  const foreignCategory = await prisma.category.create({
+    data: { name: "theirs", type: "EXPENSE", icon: "x", color: "#000", userId: foreign.id },
+    select: { id: true },
+  });
+  const crossUser = await callCreate(writer.token, randomUUID(), foreignCategory.id);
+  check("a category belonging to another user is refused", crossUser.isError, true);
+  check("still exactly one row after the refusal", await prisma.transaction.count({ where: { userId: user.id } }), 1);
+  await prisma.user.delete({ where: { id: foreign.id } });
+
+  // A read-only token must not even see the tool.
+  const readOnlyClient = await connect(full.token);
+  const readOnlyTools = (await readOnlyClient.listTools()).tools.map((t) => t.name);
+  await readOnlyClient.close();
+  check("a read-only token cannot see the write tool", readOnlyTools.includes("create_transactions"), false);
 
   // --- X-Api-Key over the wire ---
   // The header exists so that clients which own `Authorization` for OAuth can still present a

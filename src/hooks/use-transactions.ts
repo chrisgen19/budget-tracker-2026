@@ -59,6 +59,7 @@ const buildTransactionParams = (filters: TransactionFilters, page: number, tz: n
   if (filters.search) params.set("search", filters.search);
   if (filters.categoryId) params.set("categoryId", filters.categoryId);
   if (filters.labelId) params.set("labelId", filters.labelId);
+  if (filters.createdVia !== "ALL") params.set("createdVia", filters.createdVia);
   if (filters.amountMin !== null) params.set("amountMin", String(filters.amountMin));
   if (filters.amountMax !== null) params.set("amountMax", String(filters.amountMax));
   if (filters.sortBy !== "date") params.set("sortBy", filters.sortBy);

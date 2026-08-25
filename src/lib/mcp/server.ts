@@ -16,6 +16,9 @@ import {
 } from "../budget-queries";
 import type { PrismaClient } from "../budget-query-types";
 import { MCP_SCOPES, MCP_TOOL_SCOPES, type McpScope, type McpToolName } from "./scopes";
+import { resolveWritePermission } from "./tokens";
+import { createTransactionBatch } from "../transaction-writes";
+import { batchTransactionSchema, clientBatchIdSchema, MAX_BATCH_TRANSACTIONS } from "../validations";
 import {
   spendingByCategoryOutput,
   topExpensesOutput,
@@ -29,6 +32,7 @@ import {
   labelListOutput,
   billHistoryOutput,
   receiptItemsOutput,
+  createTransactionsOutput,
 } from "./output-schemas";
 
 /**
@@ -53,6 +57,12 @@ export interface BudgetMcpServerOptions {
    *  served. Defaults to every scope, which is what the stdio entry point wants: it is spawned
    *  by the user's own machine and has no token to narrow. */
   scopes?: readonly McpScope[];
+  /** `users.mcp_writes_enabled_until`, the write kill switch. Null or past means writes are
+   *  refused even when the scope is granted. The stdio entry point passes null: a locally
+   *  spawned server has no remote credential to contain, and writes are not offered there. */
+  writesEnabledUntil?: Date | null;
+  /** Recorded on every row this server writes, so an incident traces to one credential. */
+  tokenId?: string;
 }
 
 /**
@@ -67,6 +77,8 @@ export const createBudgetMcpServer = ({
   userId,
   timezoneOffset,
   scopes = MCP_SCOPES,
+  writesEnabledUntil = null,
+  tokenId,
 }: BudgetMcpServerOptions): McpServer => {
   const registered = {} as Record<McpToolName, RegisteredTool>;
 
@@ -81,8 +93,9 @@ export const createBudgetMcpServer = ({
         "recurring bills, and monthly summaries. Use it for questions about their own " +
         "spending, income, or upcoming bills. Months are YYYY-MM and are resolved in the " +
         "user's own timezone, so results match what they see in the app. Amounts are plain " +
-        "numbers in the user's configured currency. Every tool is read-only; nothing here " +
-        "can create, change, or delete their data.",
+        "numbers in the user's configured currency. Every tool whose name begins with `get_` " +
+        "or `search_` is read-only. `create_transactions`, when present, is the only tool that " +
+        "writes, and nothing here can ever change or delete existing data.",
     }
   );
 
@@ -509,6 +522,116 @@ export const createBudgetMcpServer = ({
         timezoneOffset,
       });
       const payload = result;
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+        structuredContent: structured(payload),
+      };
+    }
+  );
+
+  registered.create_transactions = server.registerTool(
+    "create_transactions",
+    {
+      title: "Create transactions",
+      description:
+        "Create one or more transactions in a single write. Use it after agreeing the amounts, " +
+        "dates and categories with the user, for example when entering a stack of receipts. " +
+        "Call get_category_list first to resolve category IDs; a category that is not the " +
+        "user's own is rejected. Scheduled labels are never applied automatically here, so pass " +
+        "labelIds explicitly if the user wants any. `clientBatchId` must be a UUID you generate " +
+        "once per intent and REUSE unchanged if a call fails and you retry: replaying the same " +
+        "id returns the original rows instead of creating duplicates. Generate a fresh id only " +
+        "for a genuinely new set of transactions.",
+      inputSchema: {
+        transactions: z
+          .array(
+            z.object({
+              amount: z.number().positive().describe("Amount in the user's currency, always positive."),
+              description: z.string().max(255).describe("What the transaction was for."),
+              type: z.enum(["INCOME", "EXPENSE"]),
+              date: z
+                .string()
+                .describe("ISO date, e.g. 2026-08-25 or a full timestamp."),
+              categoryId: z.string().describe("From get_category_list. Must be the user's own."),
+              labelIds: z
+                .array(z.string())
+                .optional()
+                .describe("Label IDs from get_label_list. Omit or pass [] for none."),
+            })
+          )
+          .min(1)
+          .max(MAX_BATCH_TRANSACTIONS),
+        clientBatchId: z
+          .string()
+          .uuid()
+          .describe("A UUID identifying this intent. Reuse it verbatim when retrying a failure."),
+      },
+      outputSchema: createTransactionsOutput,
+      // Deliberately no readOnlyHint, so clients prompt before each call rather than
+      // auto-approving. Nothing here overwrites or removes existing rows, hence destructiveHint
+      // false; replaying a clientBatchId returns the original rows, hence idempotentHint true.
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async ({ transactions, clientBatchId }) => {
+      const permission = resolveWritePermission(scopes, writesEnabledUntil);
+      if (!permission.allowed) {
+        const message =
+          permission.reason === "SCOPE_NOT_GRANTED"
+            ? "This token cannot create transactions. Mint a new token with the transactions:write scope in Profile > MCP Access."
+            : "Writes are currently switched off for this account. Turn them on in Profile > MCP Access, then try again.";
+        return {
+          content: [{ type: "text" as const, text: message }],
+          isError: true,
+        };
+      }
+
+      const parsed = z.array(batchTransactionSchema).safeParse(transactions);
+      const key = clientBatchIdSchema.safeParse(clientBatchId);
+      if (!parsed.success || !key.success) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "Invalid transaction data. Amounts must be positive, dates must be parseable, and clientBatchId must be a UUID.",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const result = await createTransactionBatch({
+        prisma,
+        userId,
+        items: parsed.data,
+        clientBatchId: key.data,
+        createdVia: "MCP",
+        mcpTokenId: tokenId,
+      });
+
+      if (!result.ok) {
+        const message =
+          result.reason === "LABELS_NOT_OWNED"
+            ? "One or more label IDs are not this user's. Call get_label_list for valid IDs."
+            : result.reason === "CATEGORIES_NOT_OWNED"
+              ? "One or more category IDs are not this user's. Call get_category_list for valid IDs."
+              : "Could not confirm whether these transactions were saved. Do NOT retry with a new clientBatchId: retry with the same one, which will return the original rows if they were written.";
+        return { content: [{ type: "text" as const, text: message }], isError: true };
+      }
+
+      const payload = {
+        created: result.replayed ? 0 : result.transactions.length,
+        replayed: result.replayed,
+        transactions: result.transactions.map((t) => ({
+          id: t.id,
+          amount: t.amount,
+          description: t.description,
+          type: t.type,
+          date: t.date.toISOString().slice(0, 10),
+          categoryName: t.category.name,
+          labels: t.labels.map((l) => l.label.name),
+        })),
+      };
+
       return {
         content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
         structuredContent: structured(payload),

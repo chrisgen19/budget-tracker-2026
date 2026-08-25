@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { MCP_SCOPES, MCP_SCOPE_LABELS, type McpScope } from "@/lib/mcp/scopes";
+import { MCP_SCOPES, MCP_SCOPE_LABELS, grantsWrite, isWriteScope, type McpScope } from "@/lib/mcp/scopes";
 
 const INPUT_CLASS =
   "w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 placeholder:text-warm-300 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all";
@@ -17,6 +17,14 @@ const EXPIRY_OPTIONS: { label: string; days: number | null }[] = [
   { label: "Never", days: null },
 ];
 
+/** A read-only credential that never expires can only ever disclose; one that can create rows
+ *  cannot be left unbounded, because revocation only helps once the leak is noticed. Mirrored by
+ *  the API, which rejects the same combinations regardless of what the form allows. */
+const MAX_WRITE_EXPIRY_DAYS = 90;
+
+const allowedExpiry = (days: number | null, write: boolean) =>
+  !write || (days !== null && days <= MAX_WRITE_EXPIRY_DAYS);
+
 interface McpTokenCreateProps {
   /** Resolves to whether the token was minted; a rejected save must leave the form intact. */
   onCreate: (input: { name: string; scopes: McpScope[]; expiresInDays: number | null }) => Promise<boolean>;
@@ -28,12 +36,27 @@ export function McpTokenCreate({ onCreate, creating }: McpTokenCreateProps) {
   const [scopes, setScopes] = useState<McpScope[]>([...MCP_SCOPES]);
   const [expiresInDays, setExpiresInDays] = useState<number | null>(90);
 
-  const toggleScope = (scope: McpScope) =>
-    setScopes((current) =>
-      current.includes(scope) ? current.filter((s) => s !== scope) : [...current, scope]
-    );
+  const write = grantsWrite(scopes);
 
-  const canSubmit = name.trim().length > 0 && scopes.length > 0 && !creating;
+  const toggleScope = (scope: McpScope) =>
+    setScopes((current) => {
+      const next = current.includes(scope)
+        ? current.filter((s) => s !== scope)
+        : [...current, scope];
+      // Ticking a write scope while "Never" or "1 year" is selected would leave the form in a
+      // state the API rejects, so pull the selection back to the write ceiling instead of
+      // failing on submit.
+      if (grantsWrite(next) && !allowedExpiry(expiresInDays, true)) {
+        setExpiresInDays(MAX_WRITE_EXPIRY_DAYS);
+      }
+      return next;
+    });
+
+  const canSubmit =
+    name.trim().length > 0 &&
+    scopes.length > 0 &&
+    allowedExpiry(expiresInDays, write) &&
+    !creating;
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -72,7 +95,14 @@ export function McpTokenCreate({ onCreate, creating }: McpTokenCreateProps) {
                 className="mt-0.5 accent-amber"
               />
               <span>
-                <span className="font-mono text-warm-600">{scope}</span>
+                <span
+                  className={cn(
+                    "font-mono",
+                    isWriteScope(scope) ? "text-amber-dark font-semibold" : "text-warm-600"
+                  )}
+                >
+                  {scope}
+                </span>
                 <span className="block text-warm-400">{MCP_SCOPE_LABELS[scope]}</span>
               </span>
             </label>
@@ -86,22 +116,33 @@ export function McpTokenCreate({ onCreate, creating }: McpTokenCreateProps) {
       <fieldset>
         <legend className="text-sm font-medium text-warm-600">Expires</legend>
         <div className="mt-1.5 flex flex-wrap gap-2">
-          {EXPIRY_OPTIONS.map((option) => (
-            <button
-              key={option.label}
-              type="button"
-              onClick={() => setExpiresInDays(option.days)}
-              className={cn(
-                "px-3 py-1.5 rounded-full text-xs font-medium border transition-colors",
-                expiresInDays === option.days
-                  ? "bg-amber text-white border-amber"
-                  : "border-cream-300 text-warm-500 hover:bg-cream-100"
-              )}
-            >
-              {option.label}
-            </button>
-          ))}
+          {EXPIRY_OPTIONS.map((option) => {
+            const disabled = !allowedExpiry(option.days, write);
+            return (
+              <button
+                key={option.label}
+                type="button"
+                disabled={disabled}
+                title={disabled ? "Not available for a token that can write" : undefined}
+                onClick={() => setExpiresInDays(option.days)}
+                className={cn(
+                  "px-3 py-1.5 rounded-full text-xs font-medium border transition-colors",
+                  expiresInDays === option.days && !disabled
+                    ? "bg-amber text-white border-amber"
+                    : "border-cream-300 text-warm-500 hover:bg-cream-100",
+                  disabled && "opacity-40 cursor-not-allowed hover:bg-transparent"
+                )}
+              >
+                {option.label}
+              </button>
+            );
+          })}
         </div>
+        {write && (
+          <p className="text-xs text-warm-400 mt-2">
+            A token that can write must expire, within {MAX_WRITE_EXPIRY_DAYS} days.
+          </p>
+        )}
       </fieldset>
 
       <button type="submit" disabled={!canSubmit} className="w-full inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-amber hover:bg-amber-dark text-white font-medium text-sm transition-colors shadow-soft disabled:opacity-50 disabled:cursor-not-allowed">

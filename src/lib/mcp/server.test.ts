@@ -26,6 +26,15 @@ describe("createBudgetMcpServer", () => {
     expect(await listToolNames()).toEqual(Object.keys(MCP_TOOL_SCOPES).sort());
   });
 
+  it("never exposes the write tool to a read-only token", async () => {
+    const names = await listToolNames(["budget:read", "transactions:read", "receipts:read"]);
+    expect(names).not.toContain("create_transactions");
+  });
+
+  it("exposes the write tool only with transactions:write", async () => {
+    expect(await listToolNames(["transactions:write"])).toEqual(["create_transactions"]);
+  });
+
   it("removes tools outside the granted scopes rather than leaving them listed", async () => {
     const names = await listToolNames(["bills:read"]);
 
@@ -48,7 +57,7 @@ describe("createBudgetMcpServer", () => {
     expect(registered).toEqual(mapped);
   });
 
-  it("marks every tool read-only, since the endpoint has no write path", async () => {
+  it("keeps every read tool read-only and marks the write tool as not", async () => {
     const server = createBudgetMcpServer({ prisma, userId: "user_1", timezoneOffset: -480 });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "test", version: "1.0.0" });
@@ -58,6 +67,14 @@ describe("createBudgetMcpServer", () => {
     await client.close();
 
     expect(tools).toHaveLength(Object.keys(MCP_TOOL_SCOPES).length);
-    expect(tools.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
+
+    const readTools = tools.filter((tool) => tool.name !== "create_transactions");
+    expect(readTools.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
+
+    // The write tool must NOT be read-only, or clients auto-approve it without prompting.
+    const write = tools.find((tool) => tool.name === "create_transactions");
+    expect(write?.annotations?.readOnlyHint).toBeUndefined();
+    expect(write?.annotations?.destructiveHint).toBe(false);
+    expect(write?.annotations?.idempotentHint).toBe(true);
   });
 });
