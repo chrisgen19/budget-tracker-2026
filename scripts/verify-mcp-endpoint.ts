@@ -299,7 +299,14 @@ async function main() {
 
   // A bare date must record the user's current clock, not midnight: every MCP row sitting at
   // 12:00 AM was how this was noticed, and no app-created row does that.
+  /** Minutes since local midnight for an instant, at the probe user's UTC+8 offset. */
+  const localMinutes = (at: Date) => {
+    const shifted = new Date(at.getTime() + 480 * 60_000);
+    return shifted.getUTCHours() * 60 + shifted.getUTCMinutes();
+  };
+
   const bareClient = await connect(writer.token);
+  const bareBefore = new Date();
   await bareClient.callTool({
     name: "create_transactions",
     arguments: {
@@ -309,6 +316,7 @@ async function main() {
       clientBatchId: randomUUID(),
     },
   });
+  const bareAfter = new Date();
   await bareClient.close();
 
   const bareRow = await prisma.transaction.findFirstOrThrow({
@@ -316,10 +324,17 @@ async function main() {
     select: { date: true },
   });
   const bareLocal = new Date(bareRow.date.getTime() + 480 * 60_000);
+
+  // Asserted as "the clock at the moment of the request", not as "not midnight". The latter is
+  // only usually true: a run during the minute the probe user's local clock reads 00:00 fills
+  // midnight correctly and would have failed a non-midnight check. The window wraps if the
+  // request straddles local midnight, which is why the comparison is written this way.
+  const [lo, hi] = [localMinutes(bareBefore), localMinutes(bareAfter)];
+  const storedMinutes = bareLocal.getUTCHours() * 60 + bareLocal.getUTCMinutes();
   check(
-    "a bare date does not land at local midnight",
-    bareLocal.getUTCHours() === 0 && bareLocal.getUTCMinutes() === 0,
-    false
+    "a bare date is filled with the clock at request time",
+    lo <= hi ? storedMinutes >= lo && storedMinutes <= hi : storedMinutes >= lo || storedMinutes <= hi,
+    true
   );
   check(
     "and it stays on the day that was named",
