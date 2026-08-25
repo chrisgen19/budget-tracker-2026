@@ -17,7 +17,11 @@ import {
 import type { PrismaClient } from "../budget-query-types";
 import { READ_ONLY_SCOPES, MCP_TOOL_SCOPES, type McpScope, type McpToolName } from "./scopes";
 import { resolveWritePermission } from "./tokens";
-import { createTransactionBatch } from "../transaction-writes";
+import {
+  createTransactionBatch,
+  findSavedBatch,
+  type TransactionWithRelations,
+} from "../transaction-writes";
 import {
   clientBatchIdSchema,
   formatLocalDate,
@@ -50,6 +54,38 @@ import {
  */
 const structured = (value: object): Record<string, unknown> =>
   Object.fromEntries(Object.entries(value));
+
+/**
+ * Render a create result, shared by the write path and the lease-lapsed replay path so both
+ * report the same shape. `created` is 0 on a replay: that request wrote nothing.
+ */
+const renderCreated = (
+  transactions: TransactionWithRelations[],
+  replayed: boolean,
+  timezoneOffset: number
+) => {
+  const payload = {
+    created: replayed ? 0 : transactions.length,
+    replayed,
+    transactions: transactions.map((t) => ({
+      id: t.id,
+      amount: t.amount,
+      description: t.description,
+      type: t.type,
+      // The user's own calendar day, not a UTC slice: a UTC+8 user's 1 March row is stored as
+      // 2026-02-28T16:00Z, so slicing the ISO string would echo back the wrong day for a
+      // transaction the app correctly shows on the 1st.
+      date: formatLocalDate(t.date, timezoneOffset),
+      categoryName: t.category.name,
+      labels: t.labels.map((l) => l.label.name),
+    })),
+  };
+
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+    structuredContent: structured(payload),
+  };
+};
 
 export interface BudgetMcpServerOptions {
   /** Injected so the stdio entry point and the HTTP route can each supply their own client. */
@@ -589,7 +625,24 @@ export const createBudgetMcpServer = ({
     },
     async ({ transactions, clientBatchId }) => {
       const permission = resolveWritePermission(scopes, writesEnabledUntil);
+
       if (!permission.allowed) {
+        // A batch that committed but whose response was lost must stay resolvable, and the
+        // required retry carries the same key. If the lease lapsed in between, refusing that
+        // retry leaves the caller unable to tell whether the rows exist, which is the state most
+        // likely to end in a manual duplicate or a resubmit under a fresh key.
+        //
+        // Returning an already-committed batch writes nothing, so the kill switch loses nothing
+        // by allowing it. Deliberately narrow: only a lapsed *lease* is bypassed, never a missing
+        // scope (such a token could never have created the batch), the key must be well formed,
+        // and this path can only ever read. A caller with no saved batch under that key still
+        // falls through to the refusal below, so no write can happen while writes are off.
+        const replayKey = clientBatchIdSchema.safeParse(clientBatchId);
+        if (permission.reason === "WRITES_DISABLED" && replayKey.success) {
+          const saved = await findSavedBatch(prisma, userId, replayKey.data);
+          if (saved.length > 0) return renderCreated(saved, true, timezoneOffset);
+        }
+
         const message =
           permission.reason === "SCOPE_NOT_GRANTED"
             ? "This token cannot create transactions. Mint a new token with the transactions:write scope in Profile > MCP Access."
@@ -648,27 +701,7 @@ export const createBudgetMcpServer = ({
         return { content: [{ type: "text" as const, text: message }], isError: true };
       }
 
-      const payload = {
-        created: result.replayed ? 0 : result.transactions.length,
-        replayed: result.replayed,
-        transactions: result.transactions.map((t) => ({
-          id: t.id,
-          amount: t.amount,
-          description: t.description,
-          type: t.type,
-          // The user's own calendar day, not a UTC slice: a UTC+8 user's 1 March row is stored
-          // as 2026-02-28T16:00Z, so slicing the ISO string would echo back the wrong day for a
-          // transaction the app correctly shows on the 1st.
-          date: formatLocalDate(t.date, timezoneOffset),
-          categoryName: t.category.name,
-          labels: t.labels.map((l) => l.label.name),
-        })),
-      };
-
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-        structuredContent: structured(payload),
-      };
+      return renderCreated(result.transactions, result.replayed, timezoneOffset);
     }
   );
 

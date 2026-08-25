@@ -121,11 +121,21 @@ Both again fallout from the previous round's fixes.
 - The endpoint script asserted that the *previous* case wrote nothing after the invalid-offset
   request, so an offset row would not have been caught. Both are now counted separately.
 
+### Review follow-ups, sixth round
+- A committed batch can now be replayed even after the write lease lapses. The idempotency
+  contract requires a retry under the same key, and refusing that retry because the lease expired
+  in between left the caller unable to tell whether the rows existed, which is the state most
+  likely to end in a manual duplicate or a resubmit under a fresh key. Deliberately narrow: only
+  a lapsed *lease* is bypassed, never a missing scope, the key must be well formed, and the path
+  can only read. A caller with no saved batch under that key still falls through to the refusal,
+  so the kill switch remains absolute for anything that would actually write, which the endpoint
+  script now asserts in both directions.
+
 ### Verification
 - 185 unit tests, 47 of them new: the write service (provenance stamping, category and label
   rejection, dedupe, lock-only-when-keyed, replay, unknown-outcome), `resolveWritePermission`, the
   mint cap, and that the write tool is invisible to a read-only token
-- `scripts/verify-mcp-endpoint.ts` 37/37 over real HTTP with the SDK client: refusal while the
+- `scripts/verify-mcp-endpoint.ts` 42/42 over real HTTP with the SDK client: refusal while the
   lease is off with nothing written, a create once it is live, a replay creating nothing, the
   provenance columns, a cross-user category refused, and the tool absent for a read-only token
 - `scripts/verify-mcp-token-auth.ts` covers the lease in both directions against real rows

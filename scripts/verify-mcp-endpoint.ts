@@ -350,6 +350,37 @@ async function main() {
   const mismatched = await callCreate(writer.token, randomUUID(), incomeCategory.id);
   check("an income category on an expense is refused", mismatched.isError, true);
 
+  // --- A lapsed lease must not strand an ambiguous outcome, but must still block writes ---
+  const strandedKey = randomUUID();
+  const beforeLapse = await callCreate(writer.token, strandedKey);
+  check("a batch commits while the lease is live", (beforeLapse.structuredContent as { created: number }).created, 1);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { mcpWritesEnabledUntil: new Date(Date.now() - 1000) },
+  });
+
+  // The retry the idempotency contract asks for must still resolve, since it writes nothing.
+  const afterLapse = await callCreate(writer.token, strandedKey);
+  const lapsedOut = afterLapse.structuredContent as { created: number; replayed: boolean } | undefined;
+  check("a committed batch still replays after the lease lapses", lapsedOut?.replayed, true);
+  check("the replay creates nothing", lapsedOut?.created, 0);
+
+  // The kill switch stays absolute for anything that would actually write.
+  const countBefore = await prisma.transaction.count({ where: { userId: user.id } });
+  const freshWhileOff = await callCreate(writer.token, randomUUID());
+  check("a fresh key is still refused while the lease is off", freshWhileOff.isError, true);
+  check(
+    "and nothing was written",
+    await prisma.transaction.count({ where: { userId: user.id } }),
+    countBefore
+  );
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { mcpWritesEnabledUntil: new Date(Date.now() + 60 * 60 * 1000) },
+  });
+
   // The provenance filter must be reachable from the read side too. Uses the read token, since
   // search_transactions belongs to transactions:read and the writer deliberately lacks it.
   const searchClient = await connect(full.token);
