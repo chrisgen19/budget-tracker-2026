@@ -15,8 +15,9 @@ const PREFIX_KEEP = TOKEN_PREFIX.length + 6;
 
 /** Fixed-window rate limit, per token.
  *
- *  This is the only ceiling on how hard a leaked token can be pulled: every tool is a database
- *  read, and nothing else here bounds request volume. Sized well above real use — a Claude
+ *  This is the only ceiling on how hard a token can be pulled, valid or not: every tool is a
+ *  database read, and nothing else here bounds request volume. It is charged before the
+ *  revoked/expired checks so that a revoked credential cannot be replayed without limit. Sized well above real use — a Claude
  *  Desktop conversation issues a handful of tool calls per turn, not hundreds. */
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const RATE_LIMIT_MAX_REQUESTS = 300;
@@ -154,11 +155,10 @@ export const authenticateMcpRequest = async (
   if (!record || !digestsMatch(record.tokenHash, hashMcpToken(presented))) {
     return { ok: false, failure: { reason: "INVALID" } };
   }
-  if (record.revokedAt) return { ok: false, failure: { reason: "REVOKED" } };
-  if (record.expiresAt && record.expiresAt <= now) {
-    return { ok: false, failure: { reason: "EXPIRED" } };
-  }
-
+  // Charged *before* the revoked/expired branches, not after. Revocation is the response to a
+  // leak, so a revoked token is precisely the one whose replay needs a ceiling; short-circuiting
+  // first would have exempted it from the only limit in the system. It also stamps `last_used_at`
+  // on refused attempts, which is how you see that someone is still trying a token you killed.
   const usage = await consumeRateLimit(record.id);
   if (!usage) return { ok: false, failure: { reason: "INVALID" } };
 
@@ -171,6 +171,11 @@ export const authenticateMcpRequest = async (
         retryAfterSeconds: Math.max(1, Math.ceil((resetsAt - now.getTime()) / 1000)),
       },
     };
+  }
+
+  if (record.revokedAt) return { ok: false, failure: { reason: "REVOKED" } };
+  if (record.expiresAt && record.expiresAt <= now) {
+    return { ok: false, failure: { reason: "EXPIRED" } };
   }
 
   return {

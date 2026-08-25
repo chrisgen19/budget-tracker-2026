@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
  *  for auth failures. */
 const JSONRPC_UNAUTHORIZED = -32001;
 const JSONRPC_INTERNAL_ERROR = -32603;
+const JSONRPC_METHOD_NOT_FOUND = -32601;
 
 /**
  * Render an auth failure.
@@ -104,4 +105,26 @@ const serve = async (request: Request) => {
   return transport.handleRequest(request);
 };
 
-export { handle as GET, handle as POST, handle as DELETE };
+/**
+ * Refuse the standalone SSE stream.
+ *
+ * The SDK client opens `GET` with `Accept: text/event-stream` as soon as `initialized` is
+ * acknowledged. Serving it here would build a `ReadableStream` and arm a keep-alive interval on
+ * a *per-request* transport that nothing ever writes to — with `enableJsonResponse`, every real
+ * response goes back on its own POST — and nothing closes either, so each client would pin an
+ * open request and a live timer on the server for the length of its session.
+ *
+ * 405 is the spec's way of saying the server offers no stream at this endpoint; the SDK client
+ * treats it as expected and carries on over POST alone.
+ */
+const rejectStream = async () =>
+  NextResponse.json(
+    {
+      jsonrpc: "2.0",
+      error: { code: JSONRPC_METHOD_NOT_FOUND, message: "This endpoint does not offer an SSE stream." },
+      id: null,
+    },
+    { status: 405, headers: { Allow: "POST, DELETE" } }
+  );
+
+export { handle as POST, handle as DELETE, rejectStream as GET };

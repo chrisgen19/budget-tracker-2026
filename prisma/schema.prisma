@@ -112,6 +112,14 @@ model McpToken {
   revokedAt       DateTime? @map("revoked_at")
   lastUsedAt      DateTime? @map("last_used_at")
   /// Fixed-window rate limit counters, updated in one atomic UPDATE per request.
+  ///
+  /// `rateWindowStart` must hold UTC, because `consumeRateLimit` compares it against
+  /// `now() AT TIME ZONE 'UTC'`. Prisma supplies `@default(now())` from the client as a correctly
+  /// bound UTC timestamp, so always create these rows through Prisma. The column's SQL-level
+  /// `DEFAULT CURRENT_TIMESTAMP` is Prisma's own generated convention and resolves to the
+  /// *session* zone, so a raw `INSERT` that omits this column would start the window hours in the
+  /// future and keep the token throttled long past the window. Changing that default by hand is
+  /// not the fix: `prisma migrate diff` then reports permanent drift and regenerates it back.
   rateWindowStart DateTime  @default(now()) @map("rate_window_start")
   rateCount       Int       @default(0) @map("rate_count")
   createdAt       DateTime  @default(now()) @map("created_at")

@@ -117,9 +117,37 @@ async function main() {
     "number"
   );
 
+  // --- GET must not open a stream ---
+  // Serving the standalone SSE stream from a stateless route pins an open request and a
+  // keep-alive timer per client for the life of its session, on a transport nothing writes to.
+  // The SDK client treats 405 as "no stream offered" and carries on over POST.
+  const stream = await fetch(ENDPOINT, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${full.token}`, Accept: "text/event-stream" },
+  });
+  check("GET declines to open an SSE stream", stream.status, 405);
+  check(
+    "the refusal is not itself a stream",
+    stream.headers.get("content-type")?.startsWith("text/event-stream") ?? false,
+    false
+  );
+  await stream.body?.cancel();
+
   // --- Revocation takes effect immediately ---
   await prisma.mcpToken.update({ where: { id: scoped.record.id }, data: { revokedAt: new Date() } });
   check("a revoked token is 401 on the next request", (await rawStatus(`Bearer ${scoped.token}`)).status, 401);
+
+  // --- The precondition behind idempotent revocation ---
+  // A repeat revoke matches no rows, which is exactly why the DELETE route must not treat an
+  // update count of 0 as "not found": two tabs listing the same live token is ordinary, and
+  // reporting failure for a token that is in fact revoked tells the user the opposite of the
+  // truth at the worst moment. The route itself needs a browser session, so it is covered by the
+  // manual test plan rather than here.
+  const revokeAgain = await prisma.mcpToken.updateMany({
+    where: { id: scoped.record.id, userId: user.id, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  check("a repeat revoke matches no rows, preserving the first timestamp", revokeAgain.count, 0);
 }
 
 main()

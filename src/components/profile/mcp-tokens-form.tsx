@@ -15,6 +15,7 @@ interface CreateInput {
 
 export function McpTokensForm() {
   const [tokens, setTokens] = useState<McpTokenRecord[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
   const [revoking, setRevoking] = useState<McpTokenRecord | null>(null);
@@ -28,9 +29,12 @@ export function McpTokensForm() {
       if (!res.ok) throw new Error("Failed to load tokens");
       const data = await res.json();
       setTokens(data.tokens);
+      setLoadFailed(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load tokens");
-      setTokens([]);
+      // Deliberately not `setTokens([])`: an empty list renders "No tokens yet", which would tell
+      // a user whose fetch just failed that they have none and invite a duplicate mint.
+      setLoadFailed(true);
     }
   }, []);
 
@@ -143,7 +147,18 @@ export function McpTokensForm() {
       <div className="space-y-5">
         <McpTokenCreate onCreate={handleCreate} creating={creating} />
 
-        {tokens === null ? (
+        {loadFailed ? (
+          <div className="p-4 rounded-xl border border-dashed border-cream-300 text-center">
+            <p className="text-sm text-warm-400">Could not load your tokens.</p>
+            <button
+              type="button"
+              onClick={load}
+              className="mt-2 text-xs font-medium text-amber-dark hover:text-amber underline"
+            >
+              Try again
+            </button>
+          </div>
+        ) : tokens === null ? (
           <div className="space-y-3" aria-hidden>
             <div className="h-20 bg-cream-200 rounded-xl animate-shimmer" />
             <div className="h-20 bg-cream-200 rounded-xl animate-shimmer" />

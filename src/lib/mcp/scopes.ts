@@ -21,13 +21,20 @@ export type McpScope = (typeof MCP_SCOPES)[number];
 
 export const mcpScopeSchema = z.enum(MCP_SCOPES);
 
-/** Human-readable descriptions, shown next to each checkbox when minting a token. */
+/** Human-readable descriptions, shown next to each checkbox when minting a token.
+ *
+ *  These have to describe what the tools *return*, not what they are named after. `receipts:read`
+ *  and `bills:read` both carry the parent transaction's description and amount, so a token
+ *  narrowed to either still exposes individual transactions; a label implying otherwise would
+ *  make the scope picker actively misleading about what is being handed over. */
 export const MCP_SCOPE_LABELS: Record<McpScope, string> = {
   "budget:read": "Monthly totals, category breakdowns, trends, and the category list",
   "transactions:read": "Individual transactions, search, and largest expenses",
   "labels:read": "Labels and spending grouped by label",
-  "bills:read": "Recurring bills, what is due, and payment history",
-  "receipts:read": "Line items from scanned receipts",
+  "bills:read":
+    "Recurring bills, what is due, and payment history (including the amount paid for each)",
+  "receipts:read":
+    "Line items from scanned receipts, each with its transaction's description, amount, and date",
 };
 
 /**

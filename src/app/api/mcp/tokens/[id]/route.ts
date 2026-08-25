@@ -20,14 +20,19 @@ export async function DELETE(
   const { id } = await params;
 
   // Scoped by userId as well as id, so one user cannot revoke another's token by guessing a cuid.
-  const { count } = await prisma.mcpToken.updateMany({
+  const existing = await prisma.mcpToken.findFirst({ where: { id, userId }, select: { id: true } });
+  if (!existing) {
+    return NextResponse.json({ error: "Token not found" }, { status: 404 });
+  }
+
+  // Idempotent: revoking an already-revoked token succeeds. Two tabs listing the same live token
+  // is ordinary, and reporting "failed to revoke" for a credential that is in fact revoked tells
+  // the user the opposite of the truth at the moment they least want to be misled. `revokedAt:
+  // null` stays in the *write* filter so a repeat keeps the original revocation's timestamp.
+  await prisma.mcpToken.updateMany({
     where: { id, userId, revokedAt: null },
     data: { revokedAt: new Date() },
   });
-
-  if (count === 0) {
-    return NextResponse.json({ error: "Token not found" }, { status: 404 });
-  }
 
   const record = await prisma.mcpToken.findUnique({ where: { id }, select: mcpTokenSelect });
   return NextResponse.json({ record });

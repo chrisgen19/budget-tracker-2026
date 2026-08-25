@@ -69,6 +69,21 @@ async function main() {
     expiresInDays: 30,
   });
 
+  // The window must be stored in UTC: `consumeRateLimit` compares it against
+  // `now() AT TIME ZONE 'UTC'`. Prisma supplies it, but a raw INSERT that omitted the column
+  // would take the SQL default, which resolves to the session zone and starts the window hours
+  // ahead. Asserted on the path that actually runs.
+  const [minted] = await prisma.$queryRawUnsafe<{ skew_seconds: number }[]>(
+    `SELECT EXTRACT(EPOCH FROM ((now() AT TIME ZONE 'UTC') - rate_window_start))::float8 AS skew_seconds
+       FROM mcp_tokens WHERE id = $1`,
+    record.id
+  );
+  check(
+    "a minted token's rate window starts in UTC, not the session zone",
+    Math.abs(minted.skew_seconds) < 60,
+    true
+  );
+
   check("the plaintext is never persisted", await prisma.mcpToken.count({ where: { tokenHash: token } }), 0);
   check("a valid bearer authenticates", await reasonOf(`Bearer ${token}`), "OK");
   // Asserted on the authenticate result, not on what mint wrote: the narrowing happens in
@@ -99,7 +114,19 @@ async function main() {
   });
   check("a never-expiring token authenticates", await reasonOf(`Bearer ${revocable.token}`), "OK");
   await prisma.mcpToken.update({ where: { id: revocable.record.id }, data: { revokedAt: new Date() } });
+  // Revocation is the response to a leak, so a revoked token is exactly the one whose replay
+  // needs a ceiling. Measured as a delta across one refused attempt: this token authenticated
+  // successfully before it was revoked, so its absolute count is already non-zero and would
+  // prove nothing. If the revoked branch short-circuits ahead of the limiter, the delta is 0.
+  const countOf = async () =>
+    (await prisma.mcpToken.findUnique({
+      where: { id: revocable.record.id },
+      select: { rateCount: true },
+    }))?.rateCount ?? -1;
+
+  const before = await countOf();
   check("a revoked token is REVOKED", await reasonOf(`Bearer ${revocable.token}`), "REVOKED");
+  check("a revoked token still consumes its rate window", (await countOf()) - before, 1);
 
   // --- Rate limit, the reason this script needs a real database ---
   await requireNonUtcSession();

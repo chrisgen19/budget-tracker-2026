@@ -69,6 +69,26 @@ by the same 8 hours. Every instant is now computed and returned inside SQL.
 This is the only ceiling on how hard a leaked token can be pulled — every tool is a database read
 and nothing else bounds request volume.
 
+### Review follow-ups
+- `GET /api/mcp` returns 405 rather than serving the standalone SSE stream. The SDK client opens
+  one as soon as `initialized` is acknowledged; in stateless mode that built a `ReadableStream`
+  and a keep-alive timer on a per-request transport nothing ever writes to, and nothing closed
+  either. Measured before the fix: the request was still open when the probe aborted it at 6s.
+- The rate limit is charged before the revoked/expired branches. A revoked token was exempt from
+  the only ceiling in the system, which is backwards: revocation is the response to a leak.
+- Revoking an already-revoked token succeeds instead of 404ing. Two tabs listing the same token
+  is ordinary, and "Failed to revoke" for a credential that *is* revoked is the worst possible
+  moment to tell the user the opposite of the truth.
+- The scope labels describe what the tools return. `receipts:read` and `bills:read` both carry
+  the parent transaction's description and amount, so a token narrowed to either still exposes
+  individual transactions; the old copy implied otherwise.
+- A failed token fetch no longer renders as "No tokens yet" with a retry-free empty state.
+- `rate_window_start`'s UTC invariant is documented on the model and asserted in the verification
+  script. The migration's `DEFAULT CURRENT_TIMESTAMP` does resolve to the session zone (measured:
+  8h skew when it fires), but Prisma supplies the value on every real insert, and hand-editing
+  the default makes `prisma migrate diff` report permanent drift — so the guard is the invariant,
+  not the DDL.
+
 ### Verification
 - `src/lib/mcp/server.test.ts`, `src/lib/mcp/scopes.test.ts` — scope filtering, read-only
   annotations, and a guard that every registered tool has a scope entry
@@ -108,6 +128,26 @@ genuinely cannot tell whether the batch exists.
 Applied to both 4xx exits that can follow the pre-check: label ownership, and the `ZodError`
 branch for payload validation. Scoped to `POST`; the `DELETE` handler has no idempotency key
 and is unchanged.
+
+### Review follow-ups
+- `GET /api/mcp` returns 405 rather than serving the standalone SSE stream. The SDK client opens
+  one as soon as `initialized` is acknowledged; in stateless mode that built a `ReadableStream`
+  and a keep-alive timer on a per-request transport nothing ever writes to, and nothing closed
+  either. Measured before the fix: the request was still open when the probe aborted it at 6s.
+- The rate limit is charged before the revoked/expired branches. A revoked token was exempt from
+  the only ceiling in the system, which is backwards: revocation is the response to a leak.
+- Revoking an already-revoked token succeeds instead of 404ing. Two tabs listing the same token
+  is ordinary, and "Failed to revoke" for a credential that *is* revoked is the worst possible
+  moment to tell the user the opposite of the truth.
+- The scope labels describe what the tools return. `receipts:read` and `bills:read` both carry
+  the parent transaction's description and amount, so a token narrowed to either still exposes
+  individual transactions; the old copy implied otherwise.
+- A failed token fetch no longer renders as "No tokens yet" with a retry-free empty state.
+- `rate_window_start`'s UTC invariant is documented on the model and asserted in the verification
+  script. The migration's `DEFAULT CURRENT_TIMESTAMP` does resolve to the session zone (measured:
+  8h skew when it fires), but Prisma supplies the value on every real insert, and hand-editing
+  the default makes `prisma migrate diff` report permanent drift — so the guard is the invariant,
+  not the DDL.
 
 ### Verification
 `scripts/verify-batch-idempotency.ts` gained a genuinely concurrent case, because the existing
@@ -164,6 +204,26 @@ there: receipts legitimately carry `0.00` lines (free or promotional items) and 
 silently missing data. The write schema does require positive amounts, matching what the scan
 path already enforces, so representing discounts would be a deliberate future decision on both
 sides rather than an accident on one.
+
+### Review follow-ups
+- `GET /api/mcp` returns 405 rather than serving the standalone SSE stream. The SDK client opens
+  one as soon as `initialized` is acknowledged; in stateless mode that built a `ReadableStream`
+  and a keep-alive timer on a per-request transport nothing ever writes to, and nothing closed
+  either. Measured before the fix: the request was still open when the probe aborted it at 6s.
+- The rate limit is charged before the revoked/expired branches. A revoked token was exempt from
+  the only ceiling in the system, which is backwards: revocation is the response to a leak.
+- Revoking an already-revoked token succeeds instead of 404ing. Two tabs listing the same token
+  is ordinary, and "Failed to revoke" for a credential that *is* revoked is the worst possible
+  moment to tell the user the opposite of the truth.
+- The scope labels describe what the tools return. `receipts:read` and `bills:read` both carry
+  the parent transaction's description and amount, so a token narrowed to either still exposes
+  individual transactions; the old copy implied otherwise.
+- A failed token fetch no longer renders as "No tokens yet" with a retry-free empty state.
+- `rate_window_start`'s UTC invariant is documented on the model and asserted in the verification
+  script. The migration's `DEFAULT CURRENT_TIMESTAMP` does resolve to the session zone (measured:
+  8h skew when it fires), but Prisma supplies the value on every real insert, and hand-editing
+  the default makes `prisma migrate diff` report permanent drift — so the guard is the invariant,
+  not the DDL.
 
 ### Verification
 All 16 existing rows were checked against both halves: the new write schema accepts 16 and
@@ -238,6 +298,26 @@ The eight object-returning tools are unchanged.
 payload is widened through `Object.fromEntries(Object.entries(value))` rather than an `as`
 cast, which would assert a shape instead of producing one.
 
+### Review follow-ups
+- `GET /api/mcp` returns 405 rather than serving the standalone SSE stream. The SDK client opens
+  one as soon as `initialized` is acknowledged; in stateless mode that built a `ReadableStream`
+  and a keep-alive timer on a per-request transport nothing ever writes to, and nothing closed
+  either. Measured before the fix: the request was still open when the probe aborted it at 6s.
+- The rate limit is charged before the revoked/expired branches. A revoked token was exempt from
+  the only ceiling in the system, which is backwards: revocation is the response to a leak.
+- Revoking an already-revoked token succeeds instead of 404ing. Two tabs listing the same token
+  is ordinary, and "Failed to revoke" for a credential that *is* revoked is the worst possible
+  moment to tell the user the opposite of the truth.
+- The scope labels describe what the tools return. `receipts:read` and `bills:read` both carry
+  the parent transaction's description and amount, so a token narrowed to either still exposes
+  individual transactions; the old copy implied otherwise.
+- A failed token fetch no longer renders as "No tokens yet" with a retry-free empty state.
+- `rate_window_start`'s UTC invariant is documented on the model and asserted in the verification
+  script. The migration's `DEFAULT CURRENT_TIMESTAMP` does resolve to the session zone (measured:
+  8h skew when it fires), but Prisma supplies the value on every real insert, and hand-editing
+  the default makes `prisma migrate diff` report permanent drift — so the guard is the invariant,
+  not the DDL.
+
 ### Verification
 All 12 tools answered against the live database with `content` and `structuredContent`
 serialising identically, 12 of 12, no mismatches.
@@ -276,6 +356,26 @@ producing items with missing fields, and the valid entries of a partly broken bl
 stored total rather than recomputing from items, so the two can legitimately disagree and
 neither is silently substituted for the other. It falls back to summing the items only when the
 stored total is absent or unusable.
+
+### Review follow-ups
+- `GET /api/mcp` returns 405 rather than serving the standalone SSE stream. The SDK client opens
+  one as soon as `initialized` is acknowledged; in stateless mode that built a `ReadableStream`
+  and a keep-alive timer on a per-request transport nothing ever writes to, and nothing closed
+  either. Measured before the fix: the request was still open when the probe aborted it at 6s.
+- The rate limit is charged before the revoked/expired branches. A revoked token was exempt from
+  the only ceiling in the system, which is backwards: revocation is the response to a leak.
+- Revoking an already-revoked token succeeds instead of 404ing. Two tabs listing the same token
+  is ordinary, and "Failed to revoke" for a credential that *is* revoked is the worst possible
+  moment to tell the user the opposite of the truth.
+- The scope labels describe what the tools return. `receipts:read` and `bills:read` both carry
+  the parent transaction's description and amount, so a token narrowed to either still exposes
+  individual transactions; the old copy implied otherwise.
+- A failed token fetch no longer renders as "No tokens yet" with a retry-free empty state.
+- `rate_window_start`'s UTC invariant is documented on the model and asserted in the verification
+  script. The migration's `DEFAULT CURRENT_TIMESTAMP` does resolve to the session zone (measured:
+  8h skew when it fires), but Prisma supplies the value on every real insert, and hand-editing
+  the default makes `prisma migrate diff` report permanent drift — so the guard is the invariant,
+  not the DDL.
 
 ### Verification
 All 116 live items were cross-checked against the raw JSON: the tool reports exactly 116, and
@@ -440,6 +540,26 @@ was unverifiable, and the `TS2589` repro in that issue hit `registerTool` too un
 type-checks in ~2.2s now that zod is pinned to the app's 3.x line, which was the specific risk
 worth confirming.
 
+### Review follow-ups
+- `GET /api/mcp` returns 405 rather than serving the standalone SSE stream. The SDK client opens
+  one as soon as `initialized` is acknowledged; in stateless mode that built a `ReadableStream`
+  and a keep-alive timer on a per-request transport nothing ever writes to, and nothing closed
+  either. Measured before the fix: the request was still open when the probe aborted it at 6s.
+- The rate limit is charged before the revoked/expired branches. A revoked token was exempt from
+  the only ceiling in the system, which is backwards: revocation is the response to a leak.
+- Revoking an already-revoked token succeeds instead of 404ing. Two tabs listing the same token
+  is ordinary, and "Failed to revoke" for a credential that *is* revoked is the worst possible
+  moment to tell the user the opposite of the truth.
+- The scope labels describe what the tools return. `receipts:read` and `bills:read` both carry
+  the parent transaction's description and amount, so a token narrowed to either still exposes
+  individual transactions; the old copy implied otherwise.
+- A failed token fetch no longer renders as "No tokens yet" with a retry-free empty state.
+- `rate_window_start`'s UTC invariant is documented on the model and asserted in the verification
+  script. The migration's `DEFAULT CURRENT_TIMESTAMP` does resolve to the session zone (measured:
+  8h skew when it fires), but Prisma supplies the value on every real insert, and hand-editing
+  the default makes `prisma migrate diff` report permanent drift — so the guard is the invariant,
+  not the DDL.
+
 ### Verification
 - `cd mcp-server && pnpm type-check` clean in ~2.2s, no `TS2589`, no heap growth
 - Over the wire: all 8 tools list with `readOnlyHint=true`, a title, and byte-identical names and input schemas
@@ -519,6 +639,26 @@ have been given. Checked by reverting the fix: 7 of the 10 fail against the old 
 code. The 3 that still pass are the UTC-fallback tests, which are meant to hold in both
 states since they guard the backward-compatible default.
 
+### Review follow-ups
+- `GET /api/mcp` returns 405 rather than serving the standalone SSE stream. The SDK client opens
+  one as soon as `initialized` is acknowledged; in stateless mode that built a `ReadableStream`
+  and a keep-alive timer on a per-request transport nothing ever writes to, and nothing closed
+  either. Measured before the fix: the request was still open when the probe aborted it at 6s.
+- The rate limit is charged before the revoked/expired branches. A revoked token was exempt from
+  the only ceiling in the system, which is backwards: revocation is the response to a leak.
+- Revoking an already-revoked token succeeds instead of 404ing. Two tabs listing the same token
+  is ordinary, and "Failed to revoke" for a credential that *is* revoked is the worst possible
+  moment to tell the user the opposite of the truth.
+- The scope labels describe what the tools return. `receipts:read` and `bills:read` both carry
+  the parent transaction's description and amount, so a token narrowed to either still exposes
+  individual transactions; the old copy implied otherwise.
+- A failed token fetch no longer renders as "No tokens yet" with a retry-free empty state.
+- `rate_window_start`'s UTC invariant is documented on the model and asserted in the verification
+  script. The migration's `DEFAULT CURRENT_TIMESTAMP` does resolve to the session zone (measured:
+  8h skew when it fires), but Prisma supplies the value on every real insert, and hand-editing
+  the default makes `prisma migrate diff` report permanent drift — so the guard is the invariant,
+  not the DDL.
+
 ### Verification
 - End to end through the real MCP server against the live database: searching `2026-03` for a Manila user returns `Apple Subscription`, and `2026-02` returns nothing. Before the fix it was the reverse
 - A bogus `BUDGET_USER_ID` exits 1 with the named error; a missing one keeps its existing message
@@ -566,6 +706,26 @@ local day. That bug is tracked separately; this change is about the reason nobod
 - README setup no longer tells you to run `npx prisma generate --schema=../prisma/schema.prisma` inside `mcp-server`. That step generated the second client this change exists to avoid; the link makes it unnecessary. Installing the app's dependencies first is now an explicit step, since the link depends on it
 - The Claude Desktop config example points at `mcp-server/node_modules/.bin/tsx` rather than `npx tsx`, which runs the pinned version and avoids npm printing `Unknown project config` warnings about this package's `.npmrc` on every launch
 - `AGENTS.md` records why `zod` is pinned and why `@prisma/client` is linked, so neither reads as an oddity worth "cleaning up", and adds a note to run the MCP type-check when changing `budget-queries.ts` or `budget-query-types.ts`
+
+### Review follow-ups
+- `GET /api/mcp` returns 405 rather than serving the standalone SSE stream. The SDK client opens
+  one as soon as `initialized` is acknowledged; in stateless mode that built a `ReadableStream`
+  and a keep-alive timer on a per-request transport nothing ever writes to, and nothing closed
+  either. Measured before the fix: the request was still open when the probe aborted it at 6s.
+- The rate limit is charged before the revoked/expired branches. A revoked token was exempt from
+  the only ceiling in the system, which is backwards: revocation is the response to a leak.
+- Revoking an already-revoked token succeeds instead of 404ing. Two tabs listing the same token
+  is ordinary, and "Failed to revoke" for a credential that *is* revoked is the worst possible
+  moment to tell the user the opposite of the truth.
+- The scope labels describe what the tools return. `receipts:read` and `bills:read` both carry
+  the parent transaction's description and amount, so a token narrowed to either still exposes
+  individual transactions; the old copy implied otherwise.
+- A failed token fetch no longer renders as "No tokens yet" with a retry-free empty state.
+- `rate_window_start`'s UTC invariant is documented on the model and asserted in the verification
+  script. The migration's `DEFAULT CURRENT_TIMESTAMP` does resolve to the session zone (measured:
+  8h skew when it fires), but Prisma supplies the value on every real insert, and hand-editing
+  the default makes `prisma migrate diff` report permanent drift — so the guard is the invariant,
+  not the DDL.
 
 ### Verification
 - `cd mcp-server && pnpm type-check` passes in ~2s, against a 140s OOM crash before
