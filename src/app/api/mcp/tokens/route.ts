@@ -11,7 +11,7 @@ const MAX_EXPIRY_DAYS = 365;
 const createTokenSchema = z.object({
   name: z.string().trim().min(1).max(60),
   scopes: z.array(mcpScopeSchema).min(1),
-  /** `null` mints a token that never expires — allowed, but never the default. */
+  /** `null` mints a token that never expires: allowed, but never the default. */
   expiresInDays: z.number().int().min(1).max(MAX_EXPIRY_DAYS).nullable(),
 });
 

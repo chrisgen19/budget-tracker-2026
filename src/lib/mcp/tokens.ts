@@ -17,7 +17,7 @@ const PREFIX_KEEP = TOKEN_PREFIX.length + 6;
  *
  *  This is the only ceiling on how hard a token can be pulled, valid or not: every tool is a
  *  database read, and nothing else here bounds request volume. It is charged before the
- *  revoked/expired checks so that a revoked credential cannot be replayed without limit. Sized well above real use — a Claude
+ *  revoked/expired checks so that a revoked credential cannot be replayed without limit. Sized well above real use: a Claude
  *  Desktop conversation issues a handful of tool calls per turn, not hundreds. */
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const RATE_LIMIT_MAX_REQUESTS = 300;
@@ -42,7 +42,7 @@ export const hashMcpToken = (token: string): string =>
  * The plaintext is returned once and never stored, so a lost token is re-minted, not recovered.
  *
  * @param expiresInDays Days until the token stops working. `null` means it never expires, which
- *   the caller has to choose deliberately — the UI defaults to a bounded lifetime.
+ *   the caller has to choose deliberately, since the UI defaults to a bounded lifetime.
  */
 export const mintMcpToken = async (params: {
   userId: string;
@@ -102,7 +102,7 @@ const readBearer = (header: string | null): string | null => {
  *
  * Every instant is computed and returned *inside* SQL, never bound as a `Date`. Prisma maps
  * `DateTime` to `timestamp without time zone` holding UTC, but a `Date` bound into `$queryRaw`
- * is sent as `timestamptz` and compared through the session's timezone — under Asia/Manila that
+ * is sent as `timestamptz` and compared through the session's timezone. Under Asia/Manila that
  * made every window look 8 hours stale, so the limiter reset on each request and enforced
  * nothing. Reads have the mirror-image problem, so the window start comes back as an epoch
  * rather than a timestamp. `verify-mcp-token-auth.ts` covers both directions.

@@ -7,7 +7,7 @@ import { mcpTokenSelect } from "@/lib/mcp/tokens";
  * Revoke a token.
  *
  * Marks it revoked rather than deleting it, so the row still answers "what was this credential
- * allowed to do, and when was it last used" after the fact — the questions that actually matter
+ * allowed to do, and when was it last used" after the fact: the questions that actually matter
  * once you suspect a token leaked.
  */
 export async function DELETE(

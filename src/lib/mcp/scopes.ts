@@ -3,7 +3,7 @@ import { z } from "zod";
 /**
  * What a remote MCP token is allowed to read.
  *
- * Every tool is read-only, so scoping by *verb* would be meaningless here — the useful axis is
+ * Every tool is read-only, so scoping by *verb* would be meaningless here; the useful axis is
  * subject matter. A token pasted into a third-party config can therefore be narrowed to, say,
  * bills only, instead of granting the whole financial history. Out-of-scope tools are removed
  * from the server before it is served rather than rejected on call, so a scoped token never

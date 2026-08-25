@@ -184,7 +184,7 @@ export function McpTokensForm() {
         message={
           <>
             Any client using <strong>{revoking?.name}</strong> stops working immediately. This
-            cannot be undone — you would need to create a new token.
+            cannot be undone, and you would need to create a new token.
           </>
         }
         confirmLabel="Revoke"

@@ -85,7 +85,7 @@ const serve = async (request: Request) => {
   });
 
   // The token's owner was deleted between minting and now. Cascade delete should have taken the
-  // token with them, so this is unreachable in practice — but serving month boundaries off a
+  // token with them, so this is unreachable in practice, but serving month boundaries off a
   // default offset would silently answer with the wrong months rather than fail.
   if (!user) return unauthorized({ reason: "INVALID" });
 
@@ -110,8 +110,8 @@ const serve = async (request: Request) => {
  *
  * The SDK client opens `GET` with `Accept: text/event-stream` as soon as `initialized` is
  * acknowledged. Serving it here would build a `ReadableStream` and arm a keep-alive interval on
- * a *per-request* transport that nothing ever writes to — with `enableJsonResponse`, every real
- * response goes back on its own POST — and nothing closes either, so each client would pin an
+ * a *per-request* transport that nothing ever writes to (with `enableJsonResponse`, every real
+ * response goes back on its own POST), and nothing closes either, so each client would pin an
  * open request and a live timer on the server for the length of its session.
  *
  * 405 is the spec's way of saying the server offers no stream at this endpoint; the SDK client

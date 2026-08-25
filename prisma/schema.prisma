@@ -96,7 +96,7 @@ model User {
 ///
 /// Only the SHA-256 of the token is stored, never the token. SHA-256 rather than bcrypt on
 /// purpose: the secret is 256 bits of CSPRNG output, not a guessable password, so there is
-/// nothing for a slow KDF to defend against — and every request has to look the row up *by*
+/// nothing for a slow KDF to defend against, and every request has to look the row up *by*
 /// the digest, which a salted hash cannot do without reading and comparing every row.
 model McpToken {
   id              String    @id @default(cuid())

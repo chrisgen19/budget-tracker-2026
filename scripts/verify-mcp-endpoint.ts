@@ -1,8 +1,8 @@
 /**
  * End-to-end check of the remote MCP endpoint (src/app/api/mcp/route.ts).
  *
- * Drives the real HTTP route with the SDK's own Streamable HTTP client — the same path Claude
- * Desktop takes — so it covers the parts unit tests cannot: bearer auth on a real request, the
+ * Drives the real HTTP route with the SDK's own Streamable HTTP client, the same path Claude
+ * Desktop takes, so it covers the parts unit tests cannot: bearer auth on a real request, the
  * stateless transport actually completing a JSON-RPC exchange, and scope narrowing surviving
  * the round trip.
  *

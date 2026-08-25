@@ -5,8 +5,8 @@ import { createBudgetMcpServer } from "./server";
 import { MCP_TOOL_SCOPES, type McpScope } from "./scopes";
 import type { PrismaClient } from "../budget-query-types";
 
-/** Registration never touches the database — only the tool handlers do, and none are called
- *  here. A stub keeps the test free of a live Postgres. */
+/** Registration never touches the database (only the tool handlers do, and none are called
+ *  here). A stub keeps the test free of a live Postgres. */
 const prisma = {} as PrismaClient;
 
 const listToolNames = async (scopes?: readonly McpScope[]) => {
