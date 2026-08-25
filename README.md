@@ -300,11 +300,18 @@ directory. Check it with `claude mcp list`.
 Desktop's `claude_desktop_config.json` handles **local stdio servers only**, so a remote endpoint
 needs one of these instead.
 
-**Custom connector.** Settings → Connectors → Add custom connector, then set an `authorization`
-request header. The value is sent verbatim, so enter it *including* the scheme:
-`Bearer btmcp_your_token_here`. Request-header authentication is in beta and rolled out on
-request. If your account does not have it, the field will not appear and you want the bridge
-below.
+Use **`x-api-key`**, not `Authorization`, for both options below. The endpoint accepts either,
+but every client that implements OAuth treats `Authorization` as its own: Claude Desktop's
+connector dialog refuses the name outright ("OAuth already sets the Authorization header"), and
+`mcp-remote` responds to a 401 on it by abandoning the static credential and attempting dynamic
+client registration, which fails against an app that is not an OAuth server. Authenticating on
+the first request avoids emitting the 401 that starts either cascade.
+
+**Custom connector.** Settings → Connectors → Add custom connector, leave the OAuth Client ID and
+Secret **blank** (this app is not an OAuth authorization server, and its discovery endpoints
+return 404), then add a request header named `x-api-key` with the raw token as its value, no
+scheme prefix. Request-header authentication is in beta and rolled out on request; if the field
+does not appear, use the bridge.
 
 **`mcp-remote` bridge.** A local stdio proxy that forwards to the HTTP endpoint
 ([npm](https://www.npmjs.com/package/mcp-remote)), which works without the beta:
@@ -312,20 +319,28 @@ below.
 ```json
 {
   "mcpServers": {
-    "budgettracker-remote": {
+    "budget": {
       "command": "npx",
       "args": [
         "-y", "mcp-remote",
         "https://<your-domain>/api/mcp",
-        "--header", "Authorization: Bearer btmcp_your_token_here"
+        "--transport", "http-only",
+        "--header", "x-api-key:btmcp_your_token_here"
       ]
     }
   }
 }
 ```
 
-If the bridge mishandles the space in the header value, pass it through the environment instead:
-`"--header", "Authorization:${AUTH}"` with `"env": { "AUTH": "Bearer btmcp_your_token_here" }`.
+Three details that are each enough to break it on their own:
+
+- **No space anywhere in the `--header` argument.** `mcp-remote` splits on whitespace and warns
+  `ignoring invalid header argument`, then proceeds unauthenticated. `x-api-key:<token>` has no
+  space; `Authorization: Bearer <token>` does, which is the other reason to prefer the former.
+- **`--transport http-only`.** Without it the default `http-first` strategy falls back to the SSE
+  transport, whose `GET` this endpoint answers with 405 by design.
+- **Node must be on the PATH of whatever launches Claude Desktop.** On Windows that is Windows
+  Node, not a WSL install.
 
 You can register the local and remote servers side by side under different names: local for
 development, remote for real data.
