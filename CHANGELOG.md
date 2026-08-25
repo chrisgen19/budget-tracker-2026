@@ -131,8 +131,16 @@ Both again fallout from the previous round's fixes.
   so the kill switch remains absolute for anything that would actually write, which the endpoint
   script now asserts in both directions.
 
+### Review follow-ups, seventh round
+- The token list and the write lease now fail independently. Sharing one try/catch meant a
+  preferences outage hid the token list behind "could not load your tokens" even though
+  `/api/mcp/tokens` had answered, removing the ability to revoke a credential: the action most
+  likely to be urgent, and a worse failure than the misreported lease state the shared catch was
+  added to fix. Each half degrades on its own, neither renders a value it did not fetch, and the
+  error banner is left for actions rather than repeating what the inline placeholder already says.
+
 ### Verification
-- 185 unit tests, 47 of them new: the write service (provenance stamping, category and label
+- 189 unit tests, 51 of them new: the write service (provenance stamping, category and label
   rejection, dedupe, lock-only-when-keyed, replay, unknown-outcome), `resolveWritePermission`, the
   mint cap, and that the write tool is invisible to a read-only token
 - `scripts/verify-mcp-endpoint.ts` 42/42 over real HTTP with the SDK client: refusal while the

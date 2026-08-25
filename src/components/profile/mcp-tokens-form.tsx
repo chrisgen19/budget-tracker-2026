@@ -28,26 +28,38 @@ export function McpTokensForm() {
   // and hide the kill switch while writes were still live.
   const [writesUntil, setWritesUntil] = useState<string | null | undefined>(undefined);
 
+  /**
+   * The token list and the write lease come from different endpoints and fail independently.
+   *
+   * They are loaded separately on purpose. Sharing one try/catch meant a preferences outage hid
+   * the token list behind "could not load your tokens", which removes the ability to revoke a
+   * credential: the one action most likely to be urgent. Each half now degrades on its own, and
+   * neither failure is allowed to render a reassuring value it did not fetch.
+   */
   const load = useCallback(async () => {
+    // Each half reports its own failure inline, next to its own retry, so the banner is left for
+    // action errors (minting, revoking, copying) rather than repeating what the placeholder says.
+    setError("");
+
     try {
       const res = await fetch("/api/mcp/tokens");
-      if (!res.ok) throw new Error("Failed to load tokens");
-      const data = await res.json();
-      setTokens(data.tokens);
+      if (!res.ok) throw new Error("request failed");
+      setTokens((await res.json()).tokens);
       setLoadFailed(false);
-
-      // The lease lives on the user, not the token list, so it is read separately. A failure
-      // must not fall through to "off": that is the safe-looking answer, not the true one.
-      const prefs = await fetch("/api/preferences");
-      if (!prefs.ok) throw new Error("Failed to load write access state");
-      setWritesUntil((await prefs.json()).mcpWritesEnabledUntil ?? null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load tokens");
+    } catch {
       // Deliberately not `setTokens([])`: an empty list renders "No tokens yet", which would tell
-      // a user whose fetch just failed that they have none and invite a duplicate mint. The lease
-      // is left `undefined` for the same reason.
-      setWritesUntil(undefined);
+      // a user whose fetch just failed that they have none and invite a duplicate mint.
       setLoadFailed(true);
+    }
+
+    try {
+      const prefs = await fetch("/api/preferences");
+      if (!prefs.ok) throw new Error("request failed");
+      setWritesUntil((await prefs.json()).mcpWritesEnabledUntil ?? null);
+    } catch {
+      // Left unknown rather than `null`: "off" is the safe-looking answer, not the true one, and
+      // it would hide the kill switch while writes were possibly still live.
+      setWritesUntil(undefined);
     }
   }, []);
 
