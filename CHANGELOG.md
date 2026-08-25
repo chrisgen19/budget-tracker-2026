@@ -2,6 +2,168 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-25 - MCP write support
+
+Closes #126. The MCP endpoint could answer questions about the budget but not add to it, so the
+receipts workflow still ended with typing everything into the app by hand.
+
+One tool, `create_transactions`, creates a batch in a single write. Editing, deleting, bill
+payment and category/label creation are deliberately out of scope; delete in particular is the
+only irreversible operation and is a separate decision.
+
+### Three controls, none substituting for another
+- **`transactions:write` scope**: least privilege, fixed at mint. Existing tokens carry only
+  `:read` scopes so they stay read-only with no migration. A token granted write may not choose
+  "Never" and is capped at 90 days, since revocation only helps once a leak is noticed.
+- **`users.mcp_writes_enabled_until`**: a lease rather than a boolean. The failure that matters is
+  not forgetting to switch writes on, which fails loudly, but forgetting to switch them off, which
+  fails silently. A lease returns to the safe state on its own.
+- **`transactions.created_via` + `mcp_token_id`**: set server-side, so a compromised token can
+  neither forge nor omit them, and not a foreign key, so the record outlives the credential.
+
+Provenance is a column rather than a label because `getLabelBreakdown` splits a transaction's
+amount evenly across its labels: a provenance label would divert half of every MCP-written expense
+out of its real category, and labels are user-deletable, so the actor could erase the marker.
+
+### A pre-existing gap closed on the way
+Neither create path verified that `categoryId` belonged to the caller. Labels were checked;
+categories were not, and `Category.userId` is nullable so the foreign key alone is satisfied by any
+category that exists, including another user's. Latent while the only caller was the user's own
+browser; not latent once a model supplies the id over an internet-facing endpoint.
+
+### Refactor
+`createTransactionBatch` in `src/lib/transaction-writes.ts` is now the single create path, injected
+with `prisma` and shared by the batch route and the tool. The route keeps its exact HTTP contract:
+`scripts/verify-batch-idempotency.ts` passes 24/24 unchanged, including the concurrency and
+replay-under-lock cases the client's `committed: "no" | "unknown"` classification depends on.
+
+### Review follow-ups
+- The mint form no longer pre-selects `transactions:write`. It initialised from `MCP_SCOPES`, so an
+  untouched form would have minted a write-capable token and least privilege would have depended
+  on the user noticing a pre-ticked box. `DEFAULT_MINT_SCOPES` is read-only by construction.
+- The tool normalises omitted `labelIds` to `[]`. `createTransactionBatch` reads `undefined` as
+  "auto-apply a scheduled label", so rows were being tagged despite the tool description promising
+  they never are.
+- `search_transactions` actually exposes `createdVia` now. The query layer accepted it and the
+  docs claimed it worked, but the tool never declared the parameter, so it was unreachable.
+- An unparseable date is rejected with a named reason instead of reaching Prisma, failing inside
+  the transaction, and surfacing as `UNKNOWN_WHETHER_SAVED`, which tells the caller to retry a
+  request that can never succeed.
+- `mcpWriteMinutes` is parsed with Zod rather than `Number()`. `Number(true)` is 1 and
+  `Number("60")` is 60, so a stray boolean or string could open the write window.
+- The write-access panel re-renders when the lease lapses, and its buttons say "Set to" rather
+  than "Extend": each option replaces the expiry, so "Extend 1 hour" on a 30-day lease shortened
+  it.
+- The transactions empty state distinguishes "no matches for this filter" from "no transactions".
+
+### Review follow-ups, second round
+- A bare `YYYY-MM-DD` from the model parsed as midnight **UTC**, which is the previous day west of
+  Greenwich: a 1 March row from a UTC-5 user landed inside February's range and appeared in the
+  wrong month. Every other write path already avoids this (`datetime-local` in the form,
+  `withLocalTime` in the scan flow); the tool now resolves bare dates through the same
+  `Date.UTC(y, m, d) + tzOffset * 60000` formula the rest of the app uses.
+- `2026-02-31` passed validation, because `Date.parse` accepts it and JavaScript rolls it forward
+  to 3 March. Storing a different day from the one the user approved is worse than refusing the
+  input, so calendar components are now checked to survive the round trip.
+- A failed `/api/preferences` read left the write-access panel showing "off". That is the
+  safe-looking answer, not the true one: an active lease would have been invisible and the
+  "Turn off now" action absent. The unknown state is now distinct from off and offers a retry.
+- The stdio entry point advertised `create_transactions`. It passes no scopes and no lease, so
+  every call was guaranteed to fail with a message pointing at a remote setting that does not
+  apply to a locally spawned server. The default grant is now read-only everywhere, which also
+  means a caller that forgets to pass scopes can never receive write authority.
+- An `EXPENSE` filed under an `INCOME` category was accepted. The app's picker filters by type so
+  its form cannot produce one, but nothing enforced it server-side, and it would distort every
+  breakdown that groups by category.
+
+### Review follow-ups, third round
+Both of these were holes left by the previous round's date fix.
+
+- The calendar check only covered bare dates, so appending a time bypassed it entirely:
+  `2026-02-31T00:00:00Z` was accepted and stored as 3 March. `Date.parse` is also far looser than
+  the documented format, accepting `"0"`, `"2026"` and `"Mar 3 2026"`, each of which becomes some
+  real instant unrelated to what the user approved. Input is now matched against an anchored ISO
+  pattern, with the calendar components round-tripped and the time components range-checked.
+- The tool echoed a raw UTC slice of the stored instant. Having just made storage timezone-aware,
+  that reported the wrong day *because* of the fix: a UTC+8 user's 1 March row is stored as
+  `2026-02-28T16:00:00Z`, so the confirmation claimed 28 February for a transaction the app
+  correctly shows on the 1st. The echo now uses the user's own offset, and a test asserts it
+  round-trips with the value that was stored.
+
+### Review follow-ups, fourth round
+Both again fallout from the previous round's fixes.
+
+- The anchored ISO pattern admitted UTC offsets that cannot exist, such as `+24:00` and `+14:61`,
+  and the component checks did not look at the offset at all. Those parse to Invalid Date, which
+  reached Prisma, failed inside the transaction, and was reported as `UNKNOWN_WHETHER_SAVED`:
+  precisely the failure the date validation was added to prevent two rounds earlier. Rather than
+  adding a third per-component rule, `isRealDate` now ends with a parse backstop, so anything the
+  shape admits must also resolve to a real instant. A property test asserts that nothing the
+  validator accepts can produce an Invalid Date.
+- The lease re-render timer passed the 30-day duration straight to `setTimeout`, which truncates
+  any delay above 2^31-1 ms (about 24.8 days). It fired immediately and, with `expiresAt`
+  unchanged, never re-armed, so a page left open for a long lease would still have claimed writes
+  were live. The timer now advances in bounded hops.
+
+### Review follow-ups, fifth round
+- A timestamp without `Z` or an offset, such as `2026-08-25T23:30`, was passed through to
+  `new Date()`, which resolves it against the **server's** timezone. Production runs UTC, so for a
+  UTC+8 user that instant renders as the 26th locally: the wrong day, and dependent on where the
+  app happens to run rather than on the user. The bare-date fix two rounds earlier covered only
+  `YYYY-MM-DD`; `resolveTransactionDate` now treats any zone-less wall-clock reading as the
+  user's local time, and passes through anything that pins its own instant.
+- The replay guard moved into the shared writer. Label and category validation ran before the
+  existing-batch lookup, so a keyed retry whose label had since been deleted was answered with
+  `LABELS_NOT_OWNED` even though the batch was already committed. The HTTP route had always
+  guarded this with `rejectUnlessAlreadySaved`, but the MCP tool calls the writer directly and had
+  no such cover, and a caller reading that rejection as "nothing was written" would resubmit under
+  a fresh key and duplicate the rows.
+- The endpoint script asserted that the *previous* case wrote nothing after the invalid-offset
+  request, so an offset row would not have been caught. Both are now counted separately.
+
+### Review follow-ups, sixth round
+- A committed batch can now be replayed even after the write lease lapses. The idempotency
+  contract requires a retry under the same key, and refusing that retry because the lease expired
+  in between left the caller unable to tell whether the rows existed, which is the state most
+  likely to end in a manual duplicate or a resubmit under a fresh key. Deliberately narrow: only
+  a lapsed *lease* is bypassed, never a missing scope, the key must be well formed, and the path
+  can only read. A caller with no saved batch under that key still falls through to the refusal,
+  so the kill switch remains absolute for anything that would actually write, which the endpoint
+  script now asserts in both directions.
+
+### Review follow-ups, seventh round
+- The token list and the write lease now fail independently. Sharing one try/catch meant a
+  preferences outage hid the token list behind "could not load your tokens" even though
+  `/api/mcp/tokens` had answered, removing the ability to revoke a credential: the action most
+  likely to be urgent, and a worse failure than the misreported lease state the shared catch was
+  added to fix. Each half degrades on its own, neither renders a value it did not fetch, and the
+  error banner is left for actions rather than repeating what the inline placeholder already says.
+
+### Review follow-ups, eighth round
+- The write lease is re-read **inside the write transaction**, not only when the request arrives.
+  A batch can hold a transaction for up to a minute, so "Turn off now" would have watched an
+  in-flight batch commit anyway, and a client that pipelined several requests would have had them
+  all commit after the switch. That is a request-admission check rather than a kill switch. The
+  shared writer takes an optional `assertStillPermitted` callback so the lease stays an MCP
+  concern; the app route passes none and is unchanged. A replay is deliberately not gated on it,
+  since it writes nothing.
+- App-created rows are no longer spliced into a transaction cache filtered to MCP. The infinite
+  cache splice orders by date and consults no filters, which predates this PR and shows an extra
+  row early under the other filters; under this one it would have rendered an app-created row as
+  "Added by Claude", which is exactly the claim `created_via` exists to make trustworthy.
+- The replay-beats-validation test now asserts the label and category lookups never ran. Its
+  outcome alone did not pin the fix: the locked re-check on the rejection path returns the same
+  rows, so it passed even with the early branch removed.
+
+### Verification
+- 194 unit tests, 56 of them new: the write service (provenance stamping, category and label
+  rejection, dedupe, lock-only-when-keyed, replay, unknown-outcome), `resolveWritePermission`, the
+  mint cap, and that the write tool is invisible to a read-only token
+- `scripts/verify-mcp-endpoint.ts` 44/44 over real HTTP with the SDK client: refusal while the
+  lease is off with nothing written, a create once it is live, a replay creating nothing, the
+  provenance columns, a cross-user category refused, and the tool absent for a read-only token
+- `scripts/verify-mcp-token-auth.ts` covers the lease in both directions against real rows
+
 ## 2026-08-25 - Accept X-Api-Key
 
 Follows #123. The remote endpoint worked from Claude Code but could not be connected from Claude

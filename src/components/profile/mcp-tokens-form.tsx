@@ -5,6 +5,7 @@ import { Check, Copy, Plug } from "lucide-react";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { McpTokenCreate } from "@/components/profile/mcp-token-create";
 import { McpTokenList, type McpTokenRecord } from "@/components/profile/mcp-token-list";
+import { McpWriteAccess } from "@/components/profile/mcp-write-access";
 import type { McpScope } from "@/lib/mcp/scopes";
 
 interface CreateInput {
@@ -22,19 +23,43 @@ export function McpTokensForm() {
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [minted, setMinted] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // `undefined` means "not known yet or failed to load", distinct from `null`, which means the
+  // lease really is off. Conflating them would let a failed request render the reassuring state
+  // and hide the kill switch while writes were still live.
+  const [writesUntil, setWritesUntil] = useState<string | null | undefined>(undefined);
 
+  /**
+   * The token list and the write lease come from different endpoints and fail independently.
+   *
+   * They are loaded separately on purpose. Sharing one try/catch meant a preferences outage hid
+   * the token list behind "could not load your tokens", which removes the ability to revoke a
+   * credential: the one action most likely to be urgent. Each half now degrades on its own, and
+   * neither failure is allowed to render a reassuring value it did not fetch.
+   */
   const load = useCallback(async () => {
+    // Each half reports its own failure inline, next to its own retry, so the banner is left for
+    // action errors (minting, revoking, copying) rather than repeating what the placeholder says.
+    setError("");
+
     try {
       const res = await fetch("/api/mcp/tokens");
-      if (!res.ok) throw new Error("Failed to load tokens");
-      const data = await res.json();
-      setTokens(data.tokens);
+      if (!res.ok) throw new Error("request failed");
+      setTokens((await res.json()).tokens);
       setLoadFailed(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load tokens");
+    } catch {
       // Deliberately not `setTokens([])`: an empty list renders "No tokens yet", which would tell
       // a user whose fetch just failed that they have none and invite a duplicate mint.
       setLoadFailed(true);
+    }
+
+    try {
+      const prefs = await fetch("/api/preferences");
+      if (!prefs.ok) throw new Error("request failed");
+      setWritesUntil((await prefs.json()).mcpWritesEnabledUntil ?? null);
+    } catch {
+      // Left unknown rather than `null`: "off" is the safe-looking answer, not the true one, and
+      // it would hide the kill switch while writes were possibly still live.
+      setWritesUntil(undefined);
     }
   }, []);
 
@@ -85,6 +110,21 @@ export function McpTokensForm() {
     } finally {
       setRevokingId(null);
       setRevoking(null);
+    }
+  };
+
+  const handleWriteLease = async (minutes: number | null) => {
+    setError("");
+    try {
+      const res = await fetch("/api/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mcpWriteMinutes: minutes }),
+      });
+      if (!res.ok) throw new Error("Failed to update write access");
+      setWritesUntil((await res.json()).mcpWritesEnabledUntil ?? null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update write access");
     }
   };
 
@@ -145,6 +185,12 @@ export function McpTokensForm() {
       )}
 
       <div className="space-y-5">
+        <McpWriteAccess
+          enabledUntil={writesUntil}
+          onChange={handleWriteLease}
+          onReload={load}
+        />
+
         <McpTokenCreate onCreate={handleCreate} creating={creating} />
 
         {loadFailed ? (

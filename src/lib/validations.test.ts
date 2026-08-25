@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { batchTransactionSchema, receiptBreakdownMetaSchema } from "./validations";
+import {
+  batchTransactionSchema,
+  createMcpTokenSchema,
+  formatLocalDate,
+  isRealDate,
+  mcpTransactionSchema,
+  receiptBreakdownMetaSchema,
+  resolveTransactionDate,
+} from "./validations";
 
 /** What the multi-scan flow actually posts (use-multi-scan.ts). */
 const validBlob = {
@@ -77,5 +85,231 @@ describe("batchTransactionSchema no longer accepts any receiptBreakdown", () => 
 
   it("rejects a malformed one instead of persisting it", () => {
     expect(batchTransactionSchema.safeParse(batchRow({ items: "nope" })).success).toBe(false);
+  });
+});
+
+describe("createMcpTokenSchema", () => {
+  const base = { name: "laptop", expiresInDays: 90 };
+
+  it("allows a read-only token that never expires", () => {
+    // A credential that can only disclose is a contained risk, so an unbounded lifetime is a
+    // reasonable choice to offer.
+    const result = createMcpTokenSchema.safeParse({
+      ...base,
+      scopes: ["budget:read"],
+      expiresInDays: null,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("refuses a write token that never expires", () => {
+    // Revocation only helps once the leak is noticed, so a writing credential has to age out.
+    const result = createMcpTokenSchema.safeParse({
+      ...base,
+      scopes: ["transactions:write"],
+      expiresInDays: null,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("refuses a write token that outlives the write cap", () => {
+    const result = createMcpTokenSchema.safeParse({
+      ...base,
+      scopes: ["budget:read", "transactions:write"],
+      expiresInDays: 365,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("allows a write token at exactly the cap", () => {
+    const result = createMcpTokenSchema.safeParse({
+      ...base,
+      scopes: ["transactions:write"],
+      expiresInDays: 90,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("allows a read-only token to use the longer cap", () => {
+    const result = createMcpTokenSchema.safeParse({
+      ...base,
+      scopes: ["budget:read"],
+      expiresInDays: 365,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an unknown scope", () => {
+    const result = createMcpTokenSchema.safeParse({ ...base, scopes: ["transactions:destroy"] });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("isRealDate", () => {
+  it("accepts a real calendar date", () => {
+    expect(isRealDate("2026-08-25")).toBe(true);
+  });
+
+  it("rejects a day that does not exist in that month", () => {
+    // Date.parse alone returns a finite value here: JS rolls 31 February forward to 3 March, so
+    // the row would be stored on a different day from the one the user approved.
+    expect(isRealDate("2026-02-31")).toBe(false);
+    expect(isRealDate("2026-04-31")).toBe(false);
+  });
+
+  it("rejects an impossible month", () => {
+    expect(isRealDate("2026-13-01")).toBe(false);
+  });
+
+  it("rejects nonsense", () => {
+    expect(isRealDate("not-a-date")).toBe(false);
+  });
+
+  it("accepts a full timestamp", () => {
+    expect(isRealDate("2026-08-25T14:30:00.000Z")).toBe(true);
+    expect(isRealDate("2026-08-25T14:30")).toBe(true);
+    expect(isRealDate("2026-08-25T14:30:00+08:00")).toBe(true);
+  });
+
+  it("rejects an impossible day even when it carries a time", () => {
+    // The date-only check alone was trivially bypassed by appending a time: Date.parse accepts
+    // this and rolls it forward to 3 March, so the row would be stored on a different day.
+    expect(isRealDate("2026-02-31T00:00:00Z")).toBe(false);
+    expect(isRealDate("2026-04-31T12:00:00Z")).toBe(false);
+  });
+
+  it("rejects out-of-range time components", () => {
+    expect(isRealDate("2026-08-25T24:00:00Z")).toBe(false);
+    expect(isRealDate("2026-08-25T12:60:00Z")).toBe(false);
+    expect(isRealDate("2026-08-25T12:00:61Z")).toBe(false);
+  });
+
+  it("rejects a timestamp whose offset cannot exist", () => {
+    // The anchored pattern admits the shape, but no such instant exists. Checked with a parse
+    // backstop rather than another per-component rule, because narrower checks had already let
+    // two separate cases through.
+    expect(isRealDate("2026-08-25T12:00+24:00")).toBe(false);
+    expect(isRealDate("2026-08-25T12:00+14:61")).toBe(false);
+    expect(isRealDate("2026-08-25T12:00+99:99")).toBe(false);
+  });
+
+  it("still accepts a real offset", () => {
+    expect(isRealDate("2026-08-25T12:00+08:00")).toBe(true);
+    expect(isRealDate("2026-08-25T12:00-05:00")).toBe(true);
+  });
+
+  it("accepts nothing that new Date() cannot represent", () => {
+    // The property that matters: anything this admits must produce a usable instant, or the
+    // write fails inside Prisma and is reported as UNKNOWN_WHETHER_SAVED, which tells the caller
+    // to retry a request that can never succeed.
+    const candidates = [
+      "2026-08-25",
+      "2026-08-25T12:00",
+      "2026-08-25T12:00:00Z",
+      "2026-08-25T12:00+24:00",
+      "2026-02-31",
+      "2026-13-01",
+      "0",
+      "2026",
+      "Mar 3 2026",
+      "",
+    ];
+    for (const value of candidates) {
+      if (isRealDate(value)) {
+        expect(Number.isNaN(new Date(value).getTime())).toBe(false);
+      }
+    }
+  });
+
+  it("rejects loose strings that Date.parse happens to accept", () => {
+    // Each of these parses to some real instant bearing no relation to what a user approved:
+    // "0" is 1999-12-31 in a UTC+8 environment, "2026" is 1 January, and the last is a US
+    // locale format the tool never documents.
+    expect(isRealDate("0")).toBe(false);
+    expect(isRealDate("2026")).toBe(false);
+    expect(isRealDate("2026-08")).toBe(false);
+    expect(isRealDate("Mar 3 2026")).toBe(false);
+  });
+});
+
+describe("formatLocalDate", () => {
+  it("reports the user's calendar day, not the UTC one", () => {
+    // A UTC+8 user's 1 March row is stored as 2026-02-28T16:00Z. Slicing the ISO string would
+    // echo 28 February back to the model for a transaction the app shows on the 1st.
+    const stored = new Date("2026-02-28T16:00:00.000Z");
+    expect(formatLocalDate(stored, -480)).toBe("2026-03-01");
+    expect(stored.toISOString().slice(0, 10)).toBe("2026-02-28");
+  });
+
+  it("works west of Greenwich too", () => {
+    // UTC-5: local midnight on 1 March is 05:00Z the same day.
+    expect(formatLocalDate(new Date("2026-03-01T05:00:00.000Z"), 300)).toBe("2026-03-01");
+  });
+
+  it("round-trips with resolveTransactionDate", () => {
+    for (const offset of [-480, 0, 300, -60]) {
+      const stored = new Date(resolveTransactionDate("2026-03-01", offset));
+      expect(formatLocalDate(stored, offset)).toBe("2026-03-01");
+    }
+  });
+});
+
+describe("resolveTransactionDate", () => {
+  it("anchors a bare date to local midnight, not UTC midnight", () => {
+    // UTC-5. A bare date parses as midnight UTC, which is 28 February locally, so the row would
+    // fall inside February's range and appear in the wrong month.
+    expect(resolveTransactionDate("2026-03-01", 300)).toBe("2026-03-01T05:00:00.000Z");
+  });
+
+  it("handles an eastern offset", () => {
+    // UTC+8: local midnight on 1 March is 16:00 UTC on 28 February.
+    expect(resolveTransactionDate("2026-03-01", -480)).toBe("2026-02-28T16:00:00.000Z");
+  });
+
+  it("leaves a value that already pins its instant alone", () => {
+    // An explicit Z or offset is the caller's decision; nothing to resolve.
+    const exact = "2026-03-01T09:15:00.000Z";
+    expect(resolveTransactionDate(exact, 300)).toBe(exact);
+    expect(resolveTransactionDate("2026-03-01T09:15+05:00", -480)).toBe("2026-03-01T09:15+05:00");
+  });
+
+  it("resolves an offset-less time against the user, not the server", () => {
+    // `new Date("2026-08-25T23:30")` uses the *server's* timezone, which is UTC in production, so
+    // without this the stored instant would depend on where the app runs. For a UTC+8 user 23:30
+    // local is 15:30Z the same day; interpreting it as UTC would push it to the 26th locally.
+    expect(resolveTransactionDate("2026-08-25T23:30", -480)).toBe("2026-08-25T15:30:00.000Z");
+    expect(resolveTransactionDate("2026-08-25T23:30", 300)).toBe("2026-08-26T04:30:00.000Z");
+  });
+
+  it("keeps the local calendar day for a late offset-less time", () => {
+    // The property that actually matters: whatever the offset, the day the user typed is the day
+    // the app shows back.
+    for (const offset of [-480, 0, 300, -60, 720]) {
+      const stored = new Date(resolveTransactionDate("2026-08-25T23:30", offset));
+      expect(formatLocalDate(stored, offset)).toBe("2026-08-25");
+    }
+  });
+});
+
+describe("mcpTransactionSchema", () => {
+  const base = {
+    amount: 10,
+    description: "x",
+    type: "EXPENSE" as const,
+    categoryId: "c1",
+  };
+
+  it("rejects an impossible date rather than silently rolling it forward", () => {
+    expect(mcpTransactionSchema.safeParse({ ...base, date: "2026-02-31" }).success).toBe(false);
+  });
+
+  it("rejects an impossible date carrying a time", () => {
+    expect(
+      mcpTransactionSchema.safeParse({ ...base, date: "2026-02-31T00:00:00Z" }).success
+    ).toBe(false);
+  });
+
+  it("accepts a real date", () => {
+    expect(mcpTransactionSchema.safeParse({ ...base, date: "2026-08-25" }).success).toBe(true);
   });
 });

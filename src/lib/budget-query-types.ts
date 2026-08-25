@@ -119,6 +119,8 @@ export interface SearchTransactionsParams {
   sortBy?: "date" | "amount";
   /** Sort direction. Defaults to "desc" */
   sortDir?: "asc" | "desc";
+  /** Which surface created the row. Omit for any. */
+  createdVia?: "APP" | "MCP";
   /** Page number. Defaults to 1 */
   page?: number;
   /** Results per page. Defaults to 20 */

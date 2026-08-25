@@ -305,6 +305,10 @@ export const searchTransactions = async (
     where.categoryId = params.categoryId;
   }
 
+  if (params.createdVia) {
+    where.createdVia = params.createdVia;
+  }
+
   if (params.amountMin !== undefined || params.amountMax !== undefined) {
     const amountFilter: Record<string, number> = {};
     if (params.amountMin !== undefined) amountFilter.gte = params.amountMin;

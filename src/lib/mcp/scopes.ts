@@ -15,6 +15,7 @@ export const MCP_SCOPES = [
   "labels:read",
   "bills:read",
   "receipts:read",
+  "transactions:write",
 ] as const;
 
 export type McpScope = (typeof MCP_SCOPES)[number];
@@ -35,7 +36,24 @@ export const MCP_SCOPE_LABELS: Record<McpScope, string> = {
     "Recurring bills, what is due, and payment history (including the amount paid for each)",
   "receipts:read":
     "Line items from scanned receipts, each with its transaction's description, amount, and date",
+  "transactions:write":
+    "Create new transactions. Also requires writes to be switched on below, and cannot be granted to a token that never expires",
 };
+
+/** True for scopes that let the caller change data. Used to force a bounded token lifetime at
+ *  mint time and to decide whether the write lease has to be consulted. */
+export const isWriteScope = (scope: McpScope): boolean => scope.endsWith(":write");
+
+export const grantsWrite = (scopes: readonly McpScope[]): boolean => scopes.some(isWriteScope);
+
+/** Every scope that only reads. Also the default grant everywhere: a caller that does not name
+ *  its scopes must not silently receive write authority. */
+export const READ_ONLY_SCOPES: readonly McpScope[] = MCP_SCOPES.filter((s) => !isWriteScope(s));
+
+/** What the mint form starts with. A token that can change data has to be chosen deliberately, or
+ *  an untouched form would hand out write authority and least privilege would depend on the user
+ *  noticing a pre-ticked box. */
+export const DEFAULT_MINT_SCOPES = READ_ONLY_SCOPES;
 
 /**
  * Which scope each tool belongs to.
@@ -57,6 +75,7 @@ export const MCP_TOOL_SCOPES = {
   get_upcoming_bills: "bills:read",
   get_bill_history: "bills:read",
   get_receipt_items: "receipts:read",
+  create_transactions: "transactions:write",
 } as const satisfies Record<string, McpScope>;
 
 export type McpToolName = keyof typeof MCP_TOOL_SCOPES;

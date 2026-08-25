@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
+import { mcpWriteLeaseSchema } from "@/lib/validations";
 
 export async function GET() {
   const userId = await getAuthUserId();
@@ -20,6 +21,7 @@ export async function GET() {
       showDayName: true,
       dayNameFormat: true,
       emailBillReminders: true,
+      mcpWritesEnabledUntil: true,
     },
   });
 
@@ -35,6 +37,7 @@ export async function GET() {
     showDayName: user?.showDayName ?? true,
     dayNameFormat: user?.dayNameFormat ?? "SHORT",
     emailBillReminders: user?.emailBillReminders ?? false,
+    mcpWritesEnabledUntil: user?.mcpWritesEnabledUntil?.toISOString() ?? null,
   });
 }
 
@@ -53,6 +56,18 @@ export async function PATCH(request: Request) {
   // Handle receiptScanEnabled
   if ("receiptScanEnabled" in body) {
     data.receiptScanEnabled = Boolean(body.receiptScanEnabled);
+  }
+
+  // MCP write lease. Accepts minutes-from-now so the client never sends an absolute instant its
+  // clock disagrees with, `null` to switch writes off, and a bounded ceiling so a mis-sent value
+  // cannot leave writes open indefinitely.
+  if ("mcpWriteMinutes" in body) {
+    const lease = mcpWriteLeaseSchema.safeParse(body.mcpWriteMinutes);
+    if (!lease.success) {
+      return NextResponse.json({ error: "Invalid write lease" }, { status: 400 });
+    }
+    data.mcpWritesEnabledUntil =
+      lease.data === null ? null : new Date(Date.now() + lease.data * 60_000);
   }
 
   // Handle quick category preferences
@@ -150,6 +165,7 @@ export async function PATCH(request: Request) {
       showDayName: true,
       dayNameFormat: true,
       emailBillReminders: true,
+      mcpWritesEnabledUntil: true,
     },
   });
 
@@ -165,5 +181,6 @@ export async function PATCH(request: Request) {
     showDayName: user.showDayName,
     dayNameFormat: user.dayNameFormat,
     emailBillReminders: user.emailBillReminders,
+    mcpWritesEnabledUntil: user.mcpWritesEnabledUntil?.toISOString() ?? null,
   });
 }

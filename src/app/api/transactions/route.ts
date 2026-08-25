@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
-import { transactionSchema } from "@/lib/validations";
+import { transactionSchema, transactionSourceSchema } from "@/lib/validations";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 
 export async function GET(request: Request) {
@@ -21,6 +21,7 @@ export async function GET(request: Request) {
   const sortBy = searchParams.get("sortBy") || "date"; // "date" | "amount"
   const sortDir = searchParams.get("sortDir") || "desc"; // "asc" | "desc"
   const search = searchParams.get("search");
+  const createdVia = searchParams.get("createdVia");
 
   const where: Record<string, unknown> = { userId };
 
@@ -38,6 +39,11 @@ export async function GET(request: Request) {
 
   if (categoryId) {
     where.categoryId = categoryId;
+  }
+
+  const source = transactionSourceSchema.safeParse(createdVia);
+  if (source.success) {
+    where.createdVia = source.data;
   }
 
   const labelId = searchParams.get("labelId");

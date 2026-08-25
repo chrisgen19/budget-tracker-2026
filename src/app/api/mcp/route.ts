@@ -85,7 +85,7 @@ const serve = async (request: Request) => {
 
   const user = await prisma.user.findUnique({
     where: { id: auth.userId },
-    select: { timezoneOffset: true },
+    select: { timezoneOffset: true, mcpWritesEnabledUntil: true },
   });
 
   // The token's owner was deleted between minting and now. Cascade delete should have taken the
@@ -98,6 +98,8 @@ const serve = async (request: Request) => {
     userId: auth.userId,
     timezoneOffset: user.timezoneOffset,
     scopes: auth.scopes,
+    writesEnabledUntil: user.mcpWritesEnabledUntil,
+    tokenId: auth.tokenId,
   });
 
   const transport = new WebStandardStreamableHTTPServerTransport({

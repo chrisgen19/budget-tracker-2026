@@ -15,7 +15,20 @@ import {
   getReceiptItems,
 } from "../budget-queries";
 import type { PrismaClient } from "../budget-query-types";
-import { MCP_SCOPES, MCP_TOOL_SCOPES, type McpScope, type McpToolName } from "./scopes";
+import { READ_ONLY_SCOPES, MCP_TOOL_SCOPES, type McpScope, type McpToolName } from "./scopes";
+import { resolveWritePermission } from "./tokens";
+import {
+  createTransactionBatch,
+  findSavedBatch,
+  type TransactionWithRelations,
+} from "../transaction-writes";
+import {
+  clientBatchIdSchema,
+  formatLocalDate,
+  mcpTransactionSchema,
+  resolveTransactionDate,
+  MAX_BATCH_TRANSACTIONS,
+} from "../validations";
 import {
   spendingByCategoryOutput,
   topExpensesOutput,
@@ -29,6 +42,7 @@ import {
   labelListOutput,
   billHistoryOutput,
   receiptItemsOutput,
+  createTransactionsOutput,
 } from "./output-schemas";
 
 /**
@@ -41,6 +55,38 @@ import {
 const structured = (value: object): Record<string, unknown> =>
   Object.fromEntries(Object.entries(value));
 
+/**
+ * Render a create result, shared by the write path and the lease-lapsed replay path so both
+ * report the same shape. `created` is 0 on a replay: that request wrote nothing.
+ */
+const renderCreated = (
+  transactions: TransactionWithRelations[],
+  replayed: boolean,
+  timezoneOffset: number
+) => {
+  const payload = {
+    created: replayed ? 0 : transactions.length,
+    replayed,
+    transactions: transactions.map((t) => ({
+      id: t.id,
+      amount: t.amount,
+      description: t.description,
+      type: t.type,
+      // The user's own calendar day, not a UTC slice: a UTC+8 user's 1 March row is stored as
+      // 2026-02-28T16:00Z, so slicing the ISO string would echo back the wrong day for a
+      // transaction the app correctly shows on the 1st.
+      date: formatLocalDate(t.date, timezoneOffset),
+      categoryName: t.category.name,
+      labels: t.labels.map((l) => l.label.name),
+    })),
+  };
+
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+    structuredContent: structured(payload),
+  };
+};
+
 export interface BudgetMcpServerOptions {
   /** Injected so the stdio entry point and the HTTP route can each supply their own client. */
   prisma: PrismaClient;
@@ -49,10 +95,17 @@ export interface BudgetMcpServerOptions {
   /** Minutes, `getTimezoneOffset()` convention (UTC+8 is -480). Resolved by the caller from the
    *  user row, so month boundaries match what the user sees in the app. */
   timezoneOffset: number;
-  /** Subject areas this caller may read. Tools outside them are removed before the server is
-   *  served. Defaults to every scope, which is what the stdio entry point wants: it is spawned
-   *  by the user's own machine and has no token to narrow. */
+  /** Subject areas this caller may use. Tools outside them are removed before the server is
+   *  served. Defaults to every *read* scope, never write: the stdio entry point does not pass
+   *  this, and it supplies no lease, so defaulting to write would advertise a tool that is
+   *  guaranteed to fail and point the user at a remote setting that does not apply to it. */
   scopes?: readonly McpScope[];
+  /** `users.mcp_writes_enabled_until`, the write kill switch. Null or past means writes are
+   *  refused even when the scope is granted. The stdio entry point passes null: a locally
+   *  spawned server has no remote credential to contain, and writes are not offered there. */
+  writesEnabledUntil?: Date | null;
+  /** Recorded on every row this server writes, so an incident traces to one credential. */
+  tokenId?: string;
 }
 
 /**
@@ -66,7 +119,9 @@ export const createBudgetMcpServer = ({
   prisma,
   userId,
   timezoneOffset,
-  scopes = MCP_SCOPES,
+  scopes = READ_ONLY_SCOPES,
+  writesEnabledUntil = null,
+  tokenId,
 }: BudgetMcpServerOptions): McpServer => {
   const registered = {} as Record<McpToolName, RegisteredTool>;
 
@@ -81,8 +136,9 @@ export const createBudgetMcpServer = ({
         "recurring bills, and monthly summaries. Use it for questions about their own " +
         "spending, income, or upcoming bills. Months are YYYY-MM and are resolved in the " +
         "user's own timezone, so results match what they see in the app. Amounts are plain " +
-        "numbers in the user's configured currency. Every tool is read-only; nothing here " +
-        "can create, change, or delete their data.",
+        "numbers in the user's configured currency. Every tool whose name begins with `get_` " +
+        "or `search_` is read-only. `create_transactions`, when present, is the only tool that " +
+        "writes, and nothing here can ever change or delete existing data.",
     }
   );
 
@@ -255,6 +311,12 @@ export const createBudgetMcpServer = ({
           .optional()
           .describe(
             "Only transactions carrying at least one of these label IDs. Use get_label_list to find IDs."
+          ),
+        createdVia: z
+          .enum(["APP", "MCP"])
+          .optional()
+          .describe(
+            "Where the row was created: APP for the app itself, MCP for rows written through this endpoint. Use it to review what you added."
           ),
       },
       outputSchema: searchTransactionsOutput,
@@ -513,6 +575,143 @@ export const createBudgetMcpServer = ({
         content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
         structuredContent: structured(payload),
       };
+    }
+  );
+
+  registered.create_transactions = server.registerTool(
+    "create_transactions",
+    {
+      title: "Create transactions",
+      description:
+        "Create one or more transactions in a single write. Use it after agreeing the amounts, " +
+        "dates and categories with the user, for example when entering a stack of receipts. " +
+        "Call get_category_list first to resolve category IDs; a category that is not the " +
+        "user's own is rejected. Scheduled labels are never applied automatically here, so pass " +
+        "labelIds explicitly if the user wants any. `clientBatchId` must be a UUID you generate " +
+        "once per intent and REUSE unchanged if a call fails and you retry: replaying the same " +
+        "id returns the original rows instead of creating duplicates. Generate a fresh id only " +
+        "for a genuinely new set of transactions.",
+      inputSchema: {
+        transactions: z
+          .array(
+            z.object({
+              amount: z.number().positive().describe("Amount in the user's currency, always positive."),
+              description: z.string().max(255).describe("What the transaction was for."),
+              type: z.enum(["INCOME", "EXPENSE"]),
+              date: z
+                .string()
+                .describe(
+                  "Calendar date, e.g. 2026-08-25, resolved in the user's own timezone. A full timestamp is also accepted and is used as given."
+                ),
+              categoryId: z.string().describe("From get_category_list. Must be the user's own."),
+              labelIds: z
+                .array(z.string())
+                .optional()
+                .describe("Label IDs from get_label_list. Omit or pass [] for none."),
+            })
+          )
+          .min(1)
+          .max(MAX_BATCH_TRANSACTIONS),
+        clientBatchId: z
+          .string()
+          .uuid()
+          .describe("A UUID identifying this intent. Reuse it verbatim when retrying a failure."),
+      },
+      outputSchema: createTransactionsOutput,
+      // Deliberately no readOnlyHint, so clients prompt before each call rather than
+      // auto-approving. Nothing here overwrites or removes existing rows, hence destructiveHint
+      // false; replaying a clientBatchId returns the original rows, hence idempotentHint true.
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async ({ transactions, clientBatchId }) => {
+      const permission = resolveWritePermission(scopes, writesEnabledUntil);
+
+      if (!permission.allowed) {
+        // A batch that committed but whose response was lost must stay resolvable, and the
+        // required retry carries the same key. If the lease lapsed in between, refusing that
+        // retry leaves the caller unable to tell whether the rows exist, which is the state most
+        // likely to end in a manual duplicate or a resubmit under a fresh key.
+        //
+        // Returning an already-committed batch writes nothing, so the kill switch loses nothing
+        // by allowing it. Deliberately narrow: only a lapsed *lease* is bypassed, never a missing
+        // scope (such a token could never have created the batch), the key must be well formed,
+        // and this path can only ever read. A caller with no saved batch under that key still
+        // falls through to the refusal below, so no write can happen while writes are off.
+        const replayKey = clientBatchIdSchema.safeParse(clientBatchId);
+        if (permission.reason === "WRITES_DISABLED" && replayKey.success) {
+          const saved = await findSavedBatch(prisma, userId, replayKey.data);
+          if (saved.length > 0) return renderCreated(saved, true, timezoneOffset);
+        }
+
+        const message =
+          permission.reason === "SCOPE_NOT_GRANTED"
+            ? "This token cannot create transactions. Mint a new token with the transactions:write scope in Profile > MCP Access."
+            : "Writes are currently switched off for this account. Turn them on in Profile > MCP Access, then try again.";
+        return {
+          content: [{ type: "text" as const, text: message }],
+          isError: true,
+        };
+      }
+
+      const parsed = z.array(mcpTransactionSchema).safeParse(transactions);
+      const key = clientBatchIdSchema.safeParse(clientBatchId);
+      if (!parsed.success || !key.success) {
+        // Named back to the model so it can correct the input rather than retry it unchanged.
+        // An unparseable date used to reach Prisma and fail inside the transaction, which
+        // surfaced as UNKNOWN_WHETHER_SAVED and told the model to retry a doomed request.
+        const detail = parsed.success
+          ? "clientBatchId must be a UUID."
+          : parsed.error.issues
+              .slice(0, 3)
+              .map((i) => `transactions[${i.path.join(".")}]: ${i.message}`)
+              .join(" ");
+        return {
+          content: [{ type: "text" as const, text: `Invalid transaction data. ${detail}` }],
+          isError: true,
+        };
+      }
+
+      const result = await createTransactionBatch({
+        prisma,
+        userId,
+        items: parsed.data.map((t) => ({
+          ...t,
+          // A bare YYYY-MM-DD parses as midnight UTC, which is the previous day west of
+          // Greenwich, so the row would land in the wrong month for those users. Resolved
+          // against the user's own offset, matching every other write path in the app.
+          date: resolveTransactionDate(t.date, timezoneOffset),
+          // Normalised to an explicit opt-out, never left undefined. `createTransactionBatch`
+          // reads undefined as "auto-apply a scheduled label", and schedules match on time of
+          // day and weekday, which describe when the user spent rather than when a model typed
+          // it in. Leaving it undefined would silently tag rows the tool promises it never tags.
+          labelIds: t.labelIds ?? [],
+        })),
+        clientBatchId: key.data,
+        createdVia: "MCP",
+        mcpTokenId: tokenId,
+        // The lease was read when the request arrived; a batch can then hold a transaction for
+        // up to a minute. Re-read at the moment of the write so "Turn off now" stops work that
+        // is already in flight, rather than only refusing the next request.
+        assertStillPermitted: async (tx) => {
+          const current = await tx.user.findUnique({
+            where: { id: userId },
+            select: { mcpWritesEnabledUntil: true },
+          });
+          return resolveWritePermission(scopes, current?.mcpWritesEnabledUntil ?? null).allowed;
+        },
+      });
+
+      if (!result.ok) {
+        const message =
+          result.reason === "LABELS_NOT_OWNED"
+            ? "One or more label IDs are not this user's. Call get_label_list for valid IDs."
+            : result.reason === "CATEGORIES_NOT_OWNED"
+              ? "One or more category IDs are not this user's. Call get_category_list for valid IDs."
+              : "Could not confirm whether these transactions were saved. Do NOT retry with a new clientBatchId: retry with the same one, which will return the original rows if they were written.";
+        return { content: [{ type: "text" as const, text: message }], isError: true };
+      }
+
+      return renderCreated(result.transactions, result.replayed, timezoneOffset);
     }
   );
 

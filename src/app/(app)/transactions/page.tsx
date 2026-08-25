@@ -78,6 +78,7 @@ const createInitialFilters = (): TransactionFilters => {
     month: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`,
     categoryId: null,
     labelId: null,
+    createdVia: "ALL",
     amountMin: null,
     amountMax: null,
     sortBy: "date",
@@ -387,7 +388,9 @@ export default function TransactionsPage() {
   /* ---- Render ---- */
 
   const deleteLoading = deleteMutation.isPending || bulkDeleteMutation.isPending;
-  const hasActiveSearch = filters.search !== "";
+  // Drives the empty state's wording. A source filter with no matches is "nothing matched", not
+  // "you have no transactions", which would read as data loss to someone who has plenty.
+  const hasActiveSearch = filters.search !== "" || filters.createdVia !== "ALL";
 
   return (
     <div>

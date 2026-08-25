@@ -276,3 +276,31 @@ const receiptItems = z.object({
 assertExact<z.infer<typeof receiptItems>, ReceiptItems>(true);
 
 export const receiptItemsOutput = receiptItems.shape;
+
+// --- create_transactions ---
+
+/**
+ * The write tool's result, deliberately narrower than the row the service returns.
+ *
+ * There is no query-layer type to pin this to with `assertExact`, because this shape is composed
+ * here rather than mirrored from `budget-query-types.ts`. It stays hand-maintained on purpose:
+ * echoing the full Prisma row would put `userId`, `mcpTokenId` and the raw receipt breakdown into
+ * a tool result the model reads back, none of which it needs to confirm a write.
+ */
+const createdTransaction = z.object({
+  id: z.string(),
+  amount: z.number(),
+  description: z.string(),
+  type: transactionType,
+  date: z.string(),
+  categoryName: z.string(),
+  labels: z.array(z.string()),
+});
+
+export const createTransactionsOutput = {
+  /** Rows actually written. Zero on a replay, which created nothing. */
+  created: z.number(),
+  /** True when this `clientBatchId` had already been saved, so the rows below are the originals. */
+  replayed: z.boolean(),
+  transactions: z.array(createdTransaction),
+};

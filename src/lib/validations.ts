@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { grantsWrite, mcpScopeSchema } from "@/lib/mcp/scopes";
 
 export const loginSchema = z.object({
   email: z.string().email("Please enter a valid email"),
@@ -58,6 +59,10 @@ export const batchTransactionSchema = transactionSchema.extend({
   receiptBreakdown: receiptBreakdownMetaSchema.optional(),
 });
 
+/** One item accepted by `createTransactionBatch`. Exported so the shared write service and the
+ *  MCP tool type against the schema rather than restating its shape. */
+export type BatchTransactionInput = z.infer<typeof batchTransactionSchema>;
+
 export const labelScheduleSchema = z.object({
   id: z.string().optional(),
   days: z.array(z.number().int().min(0).max(6)).min(1, "Select at least one day"),
@@ -111,6 +116,18 @@ export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
  *  receipts are itemised into per-category children. Overflowing it failed the whole save
  *  with a generic "Invalid input" after the scan credits had already been spent. */
 export const MAX_BATCH_TRANSACTIONS = 200;
+
+/** Longest lifetime the MCP token UI will mint. Anything longer is re-minted deliberately. */
+export const MAX_TOKEN_EXPIRY_DAYS = 365;
+
+/** Longest lifetime for a token that can write. Shorter than the read cap on purpose: it bounds
+ *  how long a leaked writing credential stays useful, which revocation alone cannot do when the
+ *  leak goes unnoticed. */
+export const MAX_WRITE_TOKEN_EXPIRY_DAYS = 90;
+
+/** Ceiling on a single MCP write lease: 30 days. Long enough for "leave it on while I work
+ *  through the backlog", short enough that a forgotten lease still closes itself. */
+export const MAX_WRITE_LEASE_MINUTES = 30 * 24 * 60;
 
 /** Idempotency key accepted by POST /api/transactions/batch, so an ambiguous failure
  *  (committed, response lost) can be retried without creating the receipts twice. */
@@ -304,3 +321,160 @@ export type ReceiptScanResult = z.infer<typeof receiptScanResultSchema>;
 export type ReceiptBreakdownResult = z.infer<typeof receiptBreakdownResultSchema>;
 export type ReceiptBreakdownMetaInput = z.infer<typeof receiptBreakdownMetaSchema>;
 export type UpdateAppSettingsInput = z.infer<typeof updateAppSettingsSchema>;
+
+/**
+ * Minting an MCP token.
+ *
+ * A read-only credential that never expires is a contained risk: it can only ever disclose. One
+ * that can also create rows is not, so a write grant must carry an end date, and a shorter one.
+ * Enforced in the schema rather than only in the form, since the form is not the only thing that
+ * can post this.
+ */
+export const createMcpTokenSchema = z
+  .object({
+    name: z.string().trim().min(1).max(60),
+    scopes: z.array(mcpScopeSchema).min(1),
+    expiresInDays: z.number().int().min(1).max(MAX_TOKEN_EXPIRY_DAYS).nullable(),
+  })
+  .refine((v) => !(grantsWrite(v.scopes) && v.expiresInDays === null), {
+    message: "A token with a write scope must expire",
+    path: ["expiresInDays"],
+  })
+  .refine(
+    (v) => !(grantsWrite(v.scopes) && (v.expiresInDays ?? 0) > MAX_WRITE_TOKEN_EXPIRY_DAYS),
+    {
+      message: `A token with a write scope may last at most ${MAX_WRITE_TOKEN_EXPIRY_DAYS} days`,
+      path: ["expiresInDays"],
+    }
+  );
+
+/**
+ * One transaction accepted by the MCP write tool.
+ *
+ * Stricter than `batchTransactionSchema` on `date`, which only requires a non-empty string
+ * because the app's own form supplies a picker-formatted value. Here the value comes from a
+ * model, and an unparseable one used to reach Prisma and fail inside the transaction, which
+ * reports UNKNOWN_WHETHER_SAVED and tells the caller to retry a request that can never succeed.
+ */
+/** `YYYY-MM-DD` with nothing after it. */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * ISO 8601 date, optionally with a time and offset. Anchored at both ends on purpose.
+ *
+ * `Date.parse` is far more permissive than this: it accepts `"0"`, `"2026"` and `"Mar 3 2026"`,
+ * each of which becomes some real instant that bears no relation to what a user approved. The
+ * tool documents an ISO date, so only that is accepted.
+ */
+const ISO_DATE_TIME =
+  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,6})?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+
+export const isDateOnly = (value: string): boolean => DATE_ONLY.test(value);
+
+/**
+ * True only for a date that exists, whether or not it carries a time.
+ *
+ * `Date.parse` is not enough: JavaScript silently rolls impossible dates forward, so both
+ * `2026-02-31` *and* `2026-02-31T00:00:00Z` parse fine and become 3 March. Storing a different
+ * day from the one the user approved is worse than refusing the input, so the calendar
+ * components are checked to survive the round trip, and the time components are range-checked.
+ */
+export const isRealDate = (value: string): boolean => {
+  const match = ISO_DATE_TIME.exec(value);
+  if (!match) return false;
+
+  const [, ys, ms, ds, hs, mins, secs] = match;
+  const [y, m, d] = [Number(ys), Number(ms), Number(ds)];
+
+  const asUtc = new Date(Date.UTC(y, m - 1, d));
+  if (asUtc.getUTCFullYear() !== y || asUtc.getUTCMonth() !== m - 1 || asUtc.getUTCDate() !== d) {
+    return false;
+  }
+
+  if (hs !== undefined && (Number(hs) > 23 || Number(mins) > 59)) return false;
+  if (secs !== undefined && Number(secs) > 59) return false;
+
+  // Backstop for anything the pattern's shape admits but the runtime cannot represent, such as a
+  // UTC offset of +24:00 or +14:61. Checking each component separately has now twice let a
+  // narrower case through, so this bounds the whole class instead: whatever survives above must
+  // also resolve to a real instant, or `new Date()` would produce Invalid Date, the write would
+  // fail inside Prisma, and the caller would be told to retry a request that can never succeed.
+  return Number.isFinite(Date.parse(value));
+};
+
+/**
+ * Render a stored instant as the calendar day the user would see in the app.
+ *
+ * The tool's confirmation echoes the date back to the model, and a raw UTC slice reports the
+ * wrong day for anyone east of Greenwich: a UTC+8 user's 1 March row is stored as
+ * `2026-02-28T16:00:00Z`, so slicing the ISO string would claim 28 February for a transaction the
+ * app correctly shows on 1 March.
+ *
+ * @param timezoneOffset Minutes, `getTimezoneOffset()` convention (UTC+8 is -480).
+ */
+export const formatLocalDate = (instant: Date, timezoneOffset: number): string =>
+  new Date(instant.getTime() - timezoneOffset * 60_000).toISOString().slice(0, 10);
+
+/**
+ * Resolve a model-supplied date to the instant the app would have stored.
+ *
+ * A bare `YYYY-MM-DD` parses as **midnight UTC**, which is the previous day for anyone west of
+ * Greenwich: a 1 March transaction from a UTC-5 user lands inside February's range and shows up
+ * in the wrong month. Every other write path already avoids this by attaching a local wall-clock
+ * time before sending (`datetime-local` in the transaction form, `withLocalTime` in the scan
+ * flow); the MCP tool is the only caller that receives a bare date, so it normalises here using
+ * the same `Date.UTC(y, m, d) + tzOffset * 60000` formula the rest of the app uses for day and
+ * month boundaries.
+ *
+ * A value that already carries a time is passed through untouched.
+ *
+ * @param timezoneOffset Minutes, `getTimezoneOffset()` convention (UTC+8 is -480).
+ */
+export const resolveTransactionDate = (value: string, timezoneOffset: number): string => {
+  const match = ISO_DATE_TIME.exec(value);
+  if (!match) return value;
+
+  const [, ys, ms, ds, hs, mins, secs, zone] = match;
+
+  // An explicit `Z` or offset already pins the instant, so it is used as given.
+  if (zone) return value;
+
+  // Everything else carries a wall-clock reading with no zone: a bare date, or a time such as
+  // `2026-08-25T23:30`. `new Date()` would resolve those against the *server's* timezone, which
+  // is UTC in production, so the stored instant would depend on where the app happens to run
+  // rather than on the user. Both are the user's local wall clock, resolved through the same
+  // `Date.UTC(...) + tzOffset * 60000` formula the rest of the app uses for boundaries.
+  const utcMs = Date.UTC(
+    Number(ys),
+    Number(ms) - 1,
+    Number(ds),
+    hs === undefined ? 0 : Number(hs),
+    mins === undefined ? 0 : Number(mins),
+    secs === undefined ? 0 : Number(secs)
+  );
+  return new Date(utcMs + timezoneOffset * 60_000).toISOString();
+};
+
+export const mcpTransactionSchema = batchTransactionSchema.extend({
+  date: z.string().refine(isRealDate, {
+    message: "date must be a real calendar date, e.g. 2026-08-25",
+  }),
+});
+
+/** Provenance filter accepted by `GET /api/transactions` and the MCP search tool. */
+export const transactionSourceSchema = z.enum(["APP", "MCP"]);
+
+/**
+ * Write-lease duration, in minutes from now.
+ *
+ * Minutes rather than an absolute instant so the client never sends a time its clock disagrees
+ * with, `null` to switch writes off, and a strict number rather than a coerced one: `Number(true)`
+ * is 1 and `Number("60")` is 60, so a coercing check would let a stray boolean or string quietly
+ * open the write window.
+ */
+export const mcpWriteLeaseSchema = z
+  .number()
+  .int()
+  .positive()
+  .max(MAX_WRITE_LEASE_MINUTES)
+  .nullable();

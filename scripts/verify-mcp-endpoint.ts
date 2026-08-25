@@ -14,6 +14,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { PrismaClient } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { mintMcpToken } from "../src/lib/mcp/tokens";
 
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:3000";
@@ -26,6 +27,16 @@ const check = (label: string, actual: unknown, expected: unknown) => {
   const ok = JSON.stringify(actual) === JSON.stringify(expected);
   if (!ok) failures++;
   console.log(`${ok ? "PASS" : "FAIL"}  ${label}: got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`);
+};
+
+/** Open a client on the endpoint with a given token. Caller closes it. */
+const connect = async (token: string) => {
+  const client = new Client({ name: "endpoint-probe", version: "1.0.0" });
+  const transport = new StreamableHTTPClientTransport(ENDPOINT, {
+    requestInit: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  await client.connect(transport);
+  return client;
 };
 
 /** Connect as an MCP client carrying a bearer token, and list what it can see. */
@@ -137,6 +148,305 @@ async function main() {
     typeof (result.structuredContent as Record<string, unknown> | undefined)?.totalIncome,
     "number"
   );
+
+  // --- Write tool: scope, lease, idempotency, provenance ---
+  const writer = await mintMcpToken({
+    userId: user.id,
+    name: "writer",
+    scopes: ["budget:read", "transactions:write"],
+    expiresInDays: 30,
+  });
+
+  const category = await prisma.category.findFirst({
+    where: { OR: [{ userId: user.id }, { userId: null }], type: "EXPENSE" },
+    select: { id: true },
+  });
+  if (!category) throw new Error("no expense category available to write against");
+
+  const callCreate = async (token: string, clientBatchId: string, categoryId = category.id) => {
+    const client = await connect(token);
+    const result = await client.callTool({
+      name: "create_transactions",
+      arguments: {
+        transactions: [
+          { amount: 12.5, description: "probe", type: "EXPENSE", date: "2026-08-25", categoryId },
+        ],
+        clientBatchId,
+      },
+    });
+    await client.close();
+    return result;
+  };
+
+  // Writes are off for a fresh user, so the tool must refuse even though the scope is granted.
+  const refused = await callCreate(writer.token, randomUUID());
+  check("the write tool refuses while the lease is off", refused.isError, true);
+  check(
+    "the refusal names the switch to flip",
+    JSON.stringify(refused.content).includes("Profile > MCP Access"),
+    true
+  );
+  check("nothing was written while refused", await prisma.transaction.count({ where: { userId: user.id } }), 0);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { mcpWritesEnabledUntil: new Date(Date.now() + 60 * 60 * 1000) },
+  });
+
+  const key = randomUUID();
+  const first = await callCreate(writer.token, key);
+  const firstOut = first.structuredContent as { created: number; replayed: boolean } | undefined;
+  check("the write tool creates once the lease is live", firstOut?.created, 1);
+  check("the first call is not a replay", firstOut?.replayed, false);
+
+  // The whole point of requiring a key: an agent retry must not duplicate the rows.
+  const replay = await callCreate(writer.token, key);
+  const replayOut = replay.structuredContent as { created: number; replayed: boolean } | undefined;
+  check("replaying the same clientBatchId creates nothing", replayOut?.created, 0);
+  check("the replay is reported as one", replayOut?.replayed, true);
+  check("exactly one row exists after the replay", await prisma.transaction.count({ where: { userId: user.id } }), 1);
+
+  const written = await prisma.transaction.findFirstOrThrow({
+    where: { userId: user.id },
+    select: { createdVia: true, mcpTokenId: true },
+  });
+  check("the row records that MCP wrote it", written.createdVia, "MCP");
+  check("the row records which token wrote it", written.mcpTokenId, writer.record.id);
+
+  // A category that is not this user's must be refused, since the id comes from a model.
+  const foreign = await prisma.user.create({
+    data: { name: "other", email: "mcp-endpoint-other@scratch.invalid", password: "x" },
+    select: { id: true },
+  });
+  const foreignCategory = await prisma.category.create({
+    data: { name: "theirs", type: "EXPENSE", icon: "x", color: "#000", userId: foreign.id },
+    select: { id: true },
+  });
+  const crossUser = await callCreate(writer.token, randomUUID(), foreignCategory.id);
+  check("a category belonging to another user is refused", crossUser.isError, true);
+  check("still exactly one row after the refusal", await prisma.transaction.count({ where: { userId: user.id } }), 1);
+  await prisma.user.delete({ where: { id: foreign.id } });
+
+  // The tool must not auto-apply scheduled labels: schedules match on time of day and weekday,
+  // which describe when the user spent, not when a model typed the row in.
+  const scheduledLabel = await prisma.label.create({
+    data: {
+      name: `probe-schedule-${Date.now()}`,
+      color: "#000000",
+      userId: user.id,
+      applicableTo: "BOTH",
+      schedules: { create: { days: [0, 1, 2, 3, 4, 5, 6], startTime: "00:00", endTime: "23:59" } },
+    },
+    select: { id: true },
+  });
+
+  const unlabelled = await callCreate(writer.token, randomUUID());
+  const unlabelledOut = unlabelled.structuredContent as
+    | { transactions: { labels: string[] }[] }
+    | undefined;
+  check(
+    "omitting labelIds does not auto-apply a scheduled label",
+    unlabelledOut?.transactions[0]?.labels ?? ["<missing>"],
+    []
+  );
+  await prisma.label.delete({ where: { id: scheduledLabel.id } });
+
+  // An unparseable date must be named, not retried: it can never succeed.
+  const badDateClient = await connect(writer.token);
+  const badDate = await badDateClient.callTool({
+    name: "create_transactions",
+    arguments: {
+      transactions: [
+        { amount: 5, description: "bad", type: "EXPENSE", date: "not-a-date", categoryId: category.id },
+      ],
+      clientBatchId: randomUUID(),
+    },
+  });
+  await badDateClient.close();
+  check("an unparseable date is rejected before the write", badDate.isError, true);
+  check(
+    "the rejection names the date rather than telling the model to retry",
+    JSON.stringify(badDate.content).includes("date"),
+    true
+  );
+
+  // A bare date must land on the right local day. Stored as an instant, so a UTC-midnight
+  // interpretation would put a 1st-of-month row inside the previous month for western users.
+  const dateClient = await connect(writer.token);
+  await dateClient.callTool({
+    name: "create_transactions",
+    arguments: {
+      transactions: [
+        { amount: 7, description: "tz probe", type: "EXPENSE", date: "2026-03-01", categoryId: category.id },
+      ],
+      clientBatchId: randomUUID(),
+    },
+  });
+  await dateClient.close();
+
+  const tzRow = await prisma.transaction.findFirstOrThrow({
+    where: { userId: user.id, description: "tz probe" },
+    select: { date: true },
+  });
+  const localMidnight = new Date(Date.UTC(2026, 2, 1) + -480 * 60_000).toISOString();
+  check("a bare date is anchored to the user's local midnight", tzRow.date.toISOString(), localMidnight);
+
+  // The confirmation the model reads back must name the same day the app shows, not the UTC one.
+  const echoed = await callCreate(writer.token, randomUUID());
+  const echoedOut = echoed.structuredContent as { transactions: { date: string }[] } | undefined;
+  check("the echoed date is the user's local day", echoedOut?.transactions[0]?.date, "2026-08-25");
+
+  // An impossible day must be refused even when it carries a time: appending one used to bypass
+  // the calendar check entirely.
+  const rolledClient = await connect(writer.token);
+  const rolled = await rolledClient.callTool({
+    name: "create_transactions",
+    arguments: {
+      transactions: [
+        { amount: 3, description: "rolled", type: "EXPENSE", date: "2026-02-31T00:00:00Z", categoryId: category.id },
+      ],
+      clientBatchId: randomUUID(),
+    },
+  });
+  await rolledClient.close();
+  check("an impossible day carrying a time is refused", rolled.isError, true);
+
+  // An offset that cannot exist parses to Invalid Date, which used to reach Prisma and surface
+  // as UNKNOWN_WHETHER_SAVED, telling the caller to retry a request that can never succeed.
+  const offsetClient = await connect(writer.token);
+  const badOffset = await offsetClient.callTool({
+    name: "create_transactions",
+    arguments: {
+      transactions: [
+        { amount: 4, description: "offset", type: "EXPENSE", date: "2026-08-25T12:00+24:00", categoryId: category.id },
+      ],
+      clientBatchId: randomUUID(),
+    },
+  });
+  await offsetClient.close();
+  check("an impossible UTC offset is refused before the write", badOffset.isError, true);
+  check(
+    "the refusal names the input rather than reporting an unknown outcome",
+    JSON.stringify(badOffset.content).includes("Invalid transaction data"),
+    true
+  );
+  check(
+    "nothing was written for the impossible day",
+    await prisma.transaction.count({ where: { userId: user.id, description: "rolled" } }),
+    0
+  );
+  check(
+    "nothing was written for the impossible offset",
+    await prisma.transaction.count({ where: { userId: user.id, description: "offset" } }),
+    0
+  );
+
+  // An income category on an expense is internally inconsistent and would distort category
+  // breakdowns. The app's picker filters by type; a model has no such constraint.
+  const incomeCategory = await prisma.category.findFirstOrThrow({
+    where: { OR: [{ userId: user.id }, { userId: null }], type: "INCOME" },
+    select: { id: true },
+  });
+  const mismatched = await callCreate(writer.token, randomUUID(), incomeCategory.id);
+  check("an income category on an expense is refused", mismatched.isError, true);
+
+  // --- A lapsed lease must not strand an ambiguous outcome, but must still block writes ---
+  const strandedKey = randomUUID();
+  const beforeLapse = await callCreate(writer.token, strandedKey);
+  check("a batch commits while the lease is live", (beforeLapse.structuredContent as { created: number }).created, 1);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { mcpWritesEnabledUntil: new Date(Date.now() - 1000) },
+  });
+
+  // The retry the idempotency contract asks for must still resolve, since it writes nothing.
+  const afterLapse = await callCreate(writer.token, strandedKey);
+  const lapsedOut = afterLapse.structuredContent as { created: number; replayed: boolean } | undefined;
+  check("a committed batch still replays after the lease lapses", lapsedOut?.replayed, true);
+  check("the replay creates nothing", lapsedOut?.created, 0);
+
+  // The kill switch stays absolute for anything that would actually write.
+  const countBefore = await prisma.transaction.count({ where: { userId: user.id } });
+  const freshWhileOff = await callCreate(writer.token, randomUUID());
+  check("a fresh key is still refused while the lease is off", freshWhileOff.isError, true);
+  check(
+    "and nothing was written",
+    await prisma.transaction.count({ where: { userId: user.id } }),
+    countBefore
+  );
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { mcpWritesEnabledUntil: new Date(Date.now() + 60 * 60 * 1000) },
+  });
+
+  // --- The kill switch must stop work already in flight, not just the next request ---
+  // The lease is read when the request arrives, so a batch holding a transaction would otherwise
+  // commit after the user hit "Turn off now". Simulated by switching writes off while the request
+  // is being served: the tool re-reads the lease inside the write transaction.
+  const raceKey = randomUUID();
+  const racedCountBefore = await prisma.transaction.count({ where: { userId: user.id } });
+  const raced = connect(writer.token).then((c) =>
+    c
+      .callTool({
+        name: "create_transactions",
+        arguments: {
+          transactions: [
+            { amount: 9, description: "raced", type: "EXPENSE", date: "2026-08-25", categoryId: category.id },
+          ],
+          clientBatchId: raceKey,
+        },
+      })
+      .finally(() => c.close())
+  );
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { mcpWritesEnabledUntil: new Date(Date.now() - 1000) },
+  });
+  const racedResult = await raced;
+
+  // Either the write beat the switch or the switch beat the write, but the two must agree: a
+  // refusal means no row, and a success means exactly one.
+  const racedRows = await prisma.transaction.count({
+    where: { userId: user.id, description: "raced" },
+  });
+  check(
+    "a mid-flight refusal and the row count agree",
+    racedResult.isError === true ? racedRows === 0 : racedRows === 1,
+    true
+  );
+  check(
+    "no partial write either way",
+    (await prisma.transaction.count({ where: { userId: user.id } })) - racedCountBefore,
+    racedRows
+  );
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { mcpWritesEnabledUntil: new Date(Date.now() + 60 * 60 * 1000) },
+  });
+
+  // The provenance filter must be reachable from the read side too. Uses the read token, since
+  // search_transactions belongs to transactions:read and the writer deliberately lacks it.
+  const searchClient = await connect(full.token);
+  const mine = await searchClient.callTool({
+    name: "search_transactions",
+    arguments: { createdVia: "MCP" },
+  });
+  await searchClient.close();
+  const mineOut = mine.structuredContent as { transactions: unknown[] } | undefined;
+  check(
+    "search_transactions can filter to MCP-written rows",
+    (mineOut?.transactions?.length ?? 0) > 0,
+    true
+  );
+
+  // A read-only token must not even see the tool.
+  const readOnlyClient = await connect(full.token);
+  const readOnlyTools = (await readOnlyClient.listTools()).tools.map((t) => t.name);
+  await readOnlyClient.close();
+  check("a read-only token cannot see the write tool", readOnlyTools.includes("create_transactions"), false);
 
   // --- X-Api-Key over the wire ---
   // The header exists so that clients which own `Authorization` for OAuth can still present a

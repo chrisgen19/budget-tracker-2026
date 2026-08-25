@@ -11,7 +11,12 @@
  *   pnpm exec tsx scripts/verify-mcp-token-auth.ts
  */
 import { PrismaClient } from "@prisma/client";
-import { authenticateMcpRequest, mintMcpToken, MCP_RATE_LIMIT } from "../src/lib/mcp/tokens";
+import {
+  authenticateMcpRequest,
+  mintMcpToken,
+  resolveWritePermission,
+  MCP_RATE_LIMIT,
+} from "../src/lib/mcp/tokens";
 
 const prisma = new PrismaClient();
 const EMAIL = "mcp-token-probe@scratch.invalid";
@@ -151,6 +156,58 @@ async function main() {
   const before = await countOf();
   check("a revoked token is REVOKED", await reasonOf(`Bearer ${revocable.token}`), "REVOKED");
   check("a revoked token still consumes its rate window", (await countOf()) - before, 1);
+
+  // --- Write lease, read from the real user row ---
+  // Two independent gates: the scope is fixed at mint, the lease is flipped any time. Neither
+  // alone is sufficient, so both directions are checked against a row that really exists.
+  const writeToken = await mintMcpToken({
+    userId: user.id,
+    name: "writer",
+    scopes: ["transactions:write"],
+    expiresInDays: 30,
+  });
+
+  const leaseOf = async () =>
+    (await prisma.user.findUnique({ where: { id: user.id }, select: { mcpWritesEnabledUntil: true } }))
+      ?.mcpWritesEnabledUntil ?? null;
+
+  check("writes are off by default for a new user", await leaseOf(), null);
+  check(
+    "a write-scoped token is refused while the lease is off",
+    resolveWritePermission(["transactions:write"], await leaseOf()),
+    { allowed: false, reason: "WRITES_DISABLED" }
+  );
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { mcpWritesEnabledUntil: new Date(Date.now() + 60 * 60 * 1000) },
+  });
+  check(
+    "a write-scoped token is allowed while the lease is live",
+    resolveWritePermission(["transactions:write"], await leaseOf()),
+    { allowed: true }
+  );
+
+  // A read-only token must stay read-only no matter what the lease says: the switch can only
+  // ever subtract from what a token holds.
+  const readOnly = await authenticateMcpRequest(authHeaders(`Bearer ${token}`));
+  check(
+    "a read-only token is refused even with the lease live",
+    resolveWritePermission(readOnly.ok ? readOnly.scopes : [], await leaseOf()),
+    { allowed: false, reason: "SCOPE_NOT_GRANTED" }
+  );
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { mcpWritesEnabledUntil: new Date(Date.now() - 1000) },
+  });
+  check(
+    "a lapsed lease refuses writes without anyone turning it off",
+    resolveWritePermission(["transactions:write"], await leaseOf()),
+    { allowed: false, reason: "WRITES_DISABLED" }
+  );
+
+  check("the write token itself still authenticates", await reasonOf(`Bearer ${writeToken.token}`), "OK");
 
   // --- Rate limit, the reason this script needs a real database ---
   await requireNonUtcSession();
