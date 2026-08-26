@@ -23,6 +23,8 @@ export function McpTokensForm() {
   const [creating, setCreating] = useState(false);
   const [revoking, setRevoking] = useState<McpTokenRecord | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<McpTokenRecord | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [minted, setMinted] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   // `undefined` means "not known yet or failed to load", distinct from `null`, which means the
@@ -112,6 +114,25 @@ export function McpTokensForm() {
     } finally {
       setRevokingId(null);
       setRevoking(null);
+    }
+  };
+
+  /** Remove a dead token for good. The API refuses a live one, so revoking stays a separate step. */
+  const handleDelete = async () => {
+    if (!deleting) return;
+    setDeletingId(deleting.id);
+    setError("");
+    try {
+      const res = await fetch(`/api/mcp/tokens/${deleting.id}?permanent=true`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to delete token");
+      setTokens((current) => (current ?? []).filter((token) => token.id !== deleting.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete token");
+    } finally {
+      setDeletingId(null);
+      setDeleting(null);
     }
   };
 
@@ -212,7 +233,13 @@ export function McpTokensForm() {
             <div className="h-20 bg-cream-200 rounded-xl animate-shimmer" />
           </div>
         ) : (
-          <McpTokenList tokens={tokens} revokingId={revokingId} onRevoke={setRevoking} />
+          <McpTokenList
+            tokens={tokens}
+            revokingId={revokingId}
+            deletingId={deletingId}
+            onRevoke={setRevoking}
+            onDelete={setDeleting}
+          />
         )}
 
         <p className="text-xs text-warm-400 flex items-start gap-1.5">
@@ -237,6 +264,22 @@ export function McpTokensForm() {
         }
         confirmLabel="Revoke"
         loading={revokingId !== null}
+      />
+
+      <ConfirmModal
+        open={deleting !== null}
+        onClose={() => setDeleting(null)}
+        onConfirm={handleDelete}
+        title="Delete this token?"
+        message={
+          <>
+            <strong>{deleting?.name}</strong> already cannot be used, so nothing stops working.
+            Any transactions it created stay exactly as they are, but you will no longer be able
+            to tell which token wrote them.
+          </>
+        }
+        confirmLabel="Delete"
+        loading={deletingId !== null}
       />
     </div>
   );
