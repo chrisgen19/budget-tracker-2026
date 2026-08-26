@@ -10,6 +10,7 @@ import { localDay, localTimestamp } from "@/lib/telegram/local-time";
 import { messageIsAllowed, type Allowlist, type TelegramMessage } from "@/lib/telegram/allowlist";
 import { chunkMessage } from "@/lib/telegram/chunk";
 import { MAX_IMAGE_BYTES, pickReceiptImage } from "@/lib/telegram/photo";
+import { confirmPendingScan } from "@/lib/telegram/confirm-scan";
 import {
   clearPendingScan,
   isConfirmation,
@@ -697,19 +698,30 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
   if (isConfirmation(text)) {
     const scan = takePendingScan(chatId);
     if (scan) {
-      const result = await createTransactions(updateBatchId(BOT_ID, scan.updateId), [
-        {
-          amount: scan.amount,
-          description: scan.description,
-          type: "EXPENSE",
-          categoryId: scan.categoryId,
-          date: scan.date,
-        },
-      ]);
-      if (result.transactions.length > 0) {
-        await confirmCreated(chatId, result);
+      const outcome = await confirmPendingScan(scan, {
+        save: (key, s) =>
+          createTransactions(key, [
+            {
+              amount: s.amount,
+              description: s.description,
+              type: "EXPENSE",
+              categoryId: s.categoryId,
+              date: s.date,
+            },
+          ]),
+        // Restored with a fresh timestamp so a save that failed near the TTL does not leave the
+        // user a scan they can no longer confirm.
+        restore: (s) => putPendingScan(chatId, { ...s, createdAt: Date.now() }),
+        batchKey: (s) => updateBatchId(BOT_ID, s.updateId),
+      });
+
+      if (outcome.status === "saved") {
+        await confirmCreated(chatId, outcome.batch as CreatedBatch);
         return;
       }
+
+      await sendMessage(chatId, "I could not save that receipt. Reply *yes* to try again.");
+      return;
     }
   }
 
