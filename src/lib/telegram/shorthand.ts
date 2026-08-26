@@ -28,8 +28,10 @@ const MONTH = "jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec";
  */
 const TEMPORAL_HINT = new RegExp(
   [
-    // Relative days.
+    // Relative days, and the named clock times, which are as explicit as "18:00" and were
+    // taking the fast path: "350 lunch at noon" had its stated time replaced with now.
     `\\b(yesterday|yday|today|tonight|tomorrow|earlier|previously)\\b`,
+    `\\b(noon|midday|midnight)\\b`,
     // "last night", "this morning", "next friday", "last week".
     `\\blast\\s+(night|week|month|year|${DAY_ANY})\\w*`,
     `\\b(this|next)\\s+(morning|afternoon|evening|night|week|month|year|${DAY_ANY})\\w*`,

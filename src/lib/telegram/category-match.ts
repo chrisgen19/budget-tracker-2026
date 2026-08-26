@@ -4,13 +4,38 @@ export interface BotCategory {
   type: string;
 }
 
+/**
+ * Build a hint pattern that only matches whole words.
+ *
+ * Unbounded alternations quietly matched inside other words, and every one of those is a
+ * transaction filed under the wrong category with nothing to show for it: "theater ticket"
+ * matched `eat` and became Food & Dining, "business permit" matched `bus` and became
+ * Transportation, "watermelon" matched `water` and became Utilities.
+ *
+ * The optional trailing `s` keeps the plurals the sloppy version caught by accident; inflections
+ * that are not just a plural ("eating") are listed outright.
+ */
+const words = (...list: string[]) => new RegExp(`\\b(?:${list.join("|")})s?\\b`, "i");
+
 /** Keyword hints for the shorthand path, matched against the description. */
 const HINTS: { pattern: RegExp; name: string }[] = [
-  { pattern: /breakfast|lunch|dinner|coffee|food|snack|jollibee|mcdo|kfc|eat|restaurant/i, name: "food" },
-  { pattern: /grab|angkas|taxi|bus|jeep|gas|fare|fuel|transport/i, name: "transport" },
-  { pattern: /shopee|lazada|mall|clothes|shopping/i, name: "shopping" },
-  { pattern: /bill|meralco|water|electric|internet|wifi/i, name: "utilities" },
-  { pattern: /medicine|pharmacy|doctor|clinic|hospital|dental|dentist|checkup|meds/i, name: "health" },
+  {
+    pattern: words(
+      "breakfast", "lunch", "lunches", "dinner", "coffee", "food", "snack", "meal",
+      "jollibee", "mcdo", "kfc", "eat", "eating", "ate", "restaurant", "merienda"
+    ),
+    name: "food",
+  },
+  {
+    pattern: words("grab", "angkas", "taxi", "bus", "buses", "jeep", "gas", "fare", "fuel", "transport", "transportation"),
+    name: "transport",
+  },
+  { pattern: words("shopee", "lazada", "mall", "clothes", "shopping"), name: "shopping" },
+  { pattern: words("bill", "meralco", "water", "electric", "electricity", "internet", "wifi"), name: "utilities" },
+  {
+    pattern: words("medicine", "pharmacy", "doctor", "clinic", "hospital", "dental", "dentist", "checkup", "med"),
+    name: "health",
+  },
 ];
 
 /**

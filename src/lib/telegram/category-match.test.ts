@@ -46,6 +46,30 @@ describe("matchCategory", () => {
     }
   });
 
+  // The bug this covers: the hint patterns were unbounded alternations, so they matched inside
+  // other words. Seven of ten sample descriptions were misfiled, each one silently.
+  it("does not match a keyword buried inside another word", () => {
+    const cases: [string, string][] = [
+      ["theater ticket", "eat"],
+      ["business permit", "bus"],
+      ["watermelon", "water"],
+      ["great seats", "eat"],
+      ["sweater", "eat"],
+      ["small gift", "mall"],
+      ["gasket repair", "gas"],
+    ];
+    for (const [desc] of cases) {
+      expect(matchCategory(desc, "EXPENSE", CATEGORIES)).toBeNull();
+    }
+  });
+
+  it("still matches the plurals and inflections the loose version caught", () => {
+    expect(matchCategory("eating out", "EXPENSE", CATEGORIES)?.name).toBe("Food & Dining");
+    expect(matchCategory("snacks", "EXPENSE", CATEGORIES)?.name).toBe("Food & Dining");
+    expect(matchCategory("lunches", "EXPENSE", CATEGORIES)?.name).toBe("Food & Dining");
+    expect(matchCategory("meds", "EXPENSE", CATEGORIES)?.name).toBe("Healthcare");
+  });
+
   it("routes medicine to healthcare rather than education", () => {
     expect(matchCategory("medicine", "EXPENSE", CATEGORIES)?.name).toBe("Healthcare");
     expect(matchCategory("dentist checkup", "EXPENSE", CATEGORIES)?.name).toBe("Healthcare");

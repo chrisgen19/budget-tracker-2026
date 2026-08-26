@@ -24,6 +24,9 @@ describe("isPlainShorthand", () => {
       "350 dinner 18:00",
       "200 lunch 12:30",
       "500 groceries 09:15",
+      "350 lunch at noon",
+      "200 taxi at midnight",
+      "100 snack midday",
       "150 taxi tonight",
     ]) {
       expect(isPlainShorthand(text)).toBe(false);
