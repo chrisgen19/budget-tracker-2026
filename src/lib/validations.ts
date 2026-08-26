@@ -430,6 +430,34 @@ export const formatLocalDate = (instant: Date, timezoneOffset: number): string =
  *
  * @param timezoneOffset Minutes, `getTimezoneOffset()` convention (UTC+8 is -480).
  */
+/**
+ * Whether a supplied date carries a time that reflects reality.
+ *
+ * `resolveTransactionDate` fills a bare date with the current clock, which is right for entering
+ * something as it happens and wrong for backdating: "yesterday's dinner" would be stamped with
+ * this morning's time. That fabricated clock must not then drive schedule matching, or a Tuesday
+ * dinner lands inside a weekday 05:00-17:00 window and gets tagged as work spending.
+ *
+ * Trustworthy when the caller gave a time, or when the date is today in the user's own timezone,
+ * because filling "today" with "now" is what the app's own form does anyway.
+ *
+ * @param timezoneOffset Minutes, `getTimezoneOffset()` convention (UTC+8 is -480).
+ */
+export const hasTrustworthyTime = (
+  value: string,
+  timezoneOffset: number,
+  now = new Date()
+): boolean => {
+  const match = ISO_DATE_TIME.exec(value);
+  if (!match) return false;
+
+  const [, ys, ms, ds, hs] = match;
+  if (hs !== undefined) return true;
+
+  const today = new Date(now.getTime() - timezoneOffset * 60_000).toISOString().slice(0, 10);
+  return `${ys}-${ms}-${ds}` === today;
+};
+
 export const resolveTransactionDate = (
   value: string,
   timezoneOffset: number,

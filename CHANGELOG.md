@@ -2,6 +2,53 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-26 - MCP respects auto-apply label schedules
+
+`create_transactions` never ran the user's auto-apply schedules: omitted `labelIds` were
+normalised to `[]`. That was the right call when it was made, because a bare date became midnight
+and a `05:00-17:00` window could never match it. It stopped being right once dates carried a real
+clock, leaving the two writers disagreeing: entering the same weekday lunch through the app tagged
+it, through MCP did not.
+
+Schedules now run, gated on the timestamp reflecting reality:
+
+| Input | Timestamp | Schedules |
+| --- | --- | --- |
+| a time was supplied | real, from the user | applied |
+| bare date, and it is today | filled with now, which is what the app's form does | applied |
+| bare date in the past | fabricated | **not** applied |
+
+The third row is the whole reason for the gate. A bare date is filled with the *current* clock, so
+"yesterday's dinner" entered on a Wednesday morning would carry 08:09, land inside a weekday
+05:00-17:00 window, and be tagged as work spending on what is typically the busiest label. An
+explicit `labelIds: []` still opts out unconditionally.
+
+The decision is made server-side from what was actually supplied, rather than exposed as a tool
+parameter: the model has no information the server lacks, and a lever it can get wrong is worse
+than no lever.
+
+### Review follow-up
+The tool-level description still said "Scheduled labels are never applied automatically here, so
+pass labelIds explicitly", directly contradicting the field-level text right below it. Only the
+field had been updated. A client reading the tool description would omit `labelIds` expecting no
+labels and receive a scheduled one, which is worse than either behaviour on its own: the metadata
+was actively wrong. Both now agree, and the tool level also documents the backdating exception,
+which the field has no room for. Verified by reading the served metadata back over a real client
+connection rather than by inspecting the source.
+
+### Verification
+- `hasTrustworthyTime` covers supplied times, today, past and future bare dates, unparseable input,
+  and that "today" is decided in the user's zone rather than the server's
+- `verify-mcp-endpoint.ts` 51/51, against a real weekday `05:00-17:00` schedule: a stated
+  in-window time is tagged, a stated out-of-window time is not, a backdated bare date is not, and
+  an explicit empty list opts out
+- Both edges pinned by revert: disabling auto-apply fails the in-window check, and removing the
+  gate fails the backdated ones, showing the exact mis-tag
+- An existing check asserting "omitting labelIds never auto-applies" had become stale, passing for
+  a different reason than its name claimed. Rewritten as the stronger case it actually is: a
+  backdated row escaping a schedule that matches every hour of every day, so only the gate can
+  withhold the label
+
 ## 2026-08-26 - MCP transactions no longer default to midnight
 
 Every transaction written through MCP was landing at 12:00 AM, including ones described as
