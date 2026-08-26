@@ -125,6 +125,36 @@ describe("create_transactions provenance", () => {
   });
 });
 
+describe("search_transactions provenance filter", () => {
+  /**
+   * The filter has to know about every value `created_via` can hold.
+   *
+   * It listed APP and MCP only, so once a Telegram token started stamping TELEGRAM, asking for
+   * those rows failed input validation instead of returning them: the bot could write rows that
+   * nothing could then audit.
+   */
+  it("accepts every source a row can carry", async () => {
+    const server = createBudgetMcpServer({
+      prisma,
+      userId: "user_1",
+      timezoneOffset: -480,
+      scopes: Object.values(MCP_TOOL_SCOPES),
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const { tools } = await client.listTools();
+    await client.close();
+
+    const search = tools.find((tool) => tool.name === "search_transactions");
+    const properties = search?.inputSchema.properties as
+      | Record<string, { enum?: string[] }>
+      | undefined;
+
+    expect(properties?.createdVia.enum).toEqual(["APP", "MCP", "TELEGRAM"]);
+  });
+});
+
 describe("createBudgetMcpServer", () => {
   it("serves every read tool, and no write tool, when no scopes are given", async () => {
     // The stdio entry point does not pass scopes and supplies no write lease, so defaulting to
