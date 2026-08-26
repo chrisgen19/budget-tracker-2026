@@ -21,6 +21,9 @@ describe("isPlainShorthand", () => {
       "1200 groceries 09/14",
       "400 lunch 2026-08-25",
       "300 dinner 7pm",
+      "350 dinner 18:00",
+      "200 lunch 12:30",
+      "500 groceries 09:15",
       "150 taxi tonight",
     ]) {
       expect(isPlainShorthand(text)).toBe(false);
@@ -29,6 +32,10 @@ describe("isPlainShorthand", () => {
 
   it("is case insensitive", () => {
     expect(isPlainShorthand("350 groceries YESTERDAY")).toBe(false);
+  });
+
+  it("ignores digit pairs that are not a valid clock time", () => {
+    expect(isPlainShorthand("100 item 25:99")).toBe(true);
   });
 
   it("does not fire on a word that merely contains a temporal one", () => {

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { GENERIC_FAILURE_REPLY, McpToolError, replyForError } from "@/lib/telegram/errors";
+import {
+  GENERIC_FAILURE_REPLY,
+  McpToolError,
+  UNCONFIRMED_WRITE_REPLY,
+  UnconfirmedWriteError,
+  replyForError,
+} from "@/lib/telegram/errors";
 
 describe("replyForError", () => {
   // The bug this covers: callTool throws the server's own message, and the only consumer
@@ -35,5 +41,25 @@ describe("replyForError", () => {
   // were written. Telling the user nothing was saved invites a duplicate entered by hand.
   it("never claims nothing was saved", () => {
     expect(GENERIC_FAILURE_REPLY.toLowerCase()).not.toContain("nothing was saved");
+  });
+
+  it("names an unconfirmed write instead of inviting a resend", () => {
+    expect(replyForError(new UnconfirmedWriteError("batch x unresolved"))).toBe(
+      UNCONFIRMED_WRITE_REPLY
+    );
+  });
+
+  // The bug this covers: the generic reply told the user "send it again: a repeat cannot create
+  // the transaction twice". The key is derived from the Telegram *update*, so only a redelivery
+  // replays. A retyped message is a new update with a new key, so that advice caused the very
+  // duplicate it promised to prevent.
+  it("never tells the user a resend cannot duplicate", () => {
+    for (const reply of [GENERIC_FAILURE_REPLY, UNCONFIRMED_WRITE_REPLY]) {
+      expect(reply.toLowerCase()).not.toMatch(/cannot create the transaction twice|cannot duplicate/);
+    }
+  });
+
+  it("warns that a resend would duplicate when the write is unconfirmed", () => {
+    expect(UNCONFIRMED_WRITE_REPLY.toLowerCase()).toContain("second copy");
   });
 });

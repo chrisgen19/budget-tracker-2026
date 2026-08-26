@@ -42,10 +42,12 @@ const TEMPORAL_HINT = new RegExp(
     // A month only counts beside a day number, in either order.
     `\\b(${MONTH})\\w*\\.?\\s+\\d{1,2}\\b`,
     `\\b\\d{1,2}\\s+(${MONTH})\\w*\\b`,
-    // Numeric dates and clock times.
+    // Numeric dates and clock times. The 24-hour form needs no am/pm suffix, and without it
+    // "350 dinner 18:00" took the fast path and had its stated time silently replaced by now.
     `\\d{1,2}\\/\\d{1,2}`,
     `\\d{4}-\\d{2}-\\d{2}`,
     `\\b\\d{1,2}(:\\d{2})?\\s*(am|pm)\\b`,
+    `\\b([01]?\\d|2[0-3]):[0-5]\\d\\b`,
   ].join("|"),
   "i"
 );

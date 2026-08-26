@@ -8,7 +8,7 @@ import { GoogleGenAI } from "@google/genai";
 import { updateBatchId } from "@/lib/telegram/batch-id";
 import { localDay, localTimestamp } from "@/lib/telegram/local-time";
 import { messageIsAllowed, type Allowlist, type TelegramMessage } from "@/lib/telegram/allowlist";
-import { McpToolError, replyForError } from "@/lib/telegram/errors";
+import { McpToolError, UnconfirmedWriteError, replyForError } from "@/lib/telegram/errors";
 import { isPlainShorthand } from "@/lib/telegram/shorthand";
 /**
  * The bot talks to the deployed app over MCP rather than to a database.
@@ -256,6 +256,46 @@ const formatCreated = (result: CreatedBatch): string => {
   if (labels) reply += `\ud83c\udff7\ufe0f *Labels:* ${labels}\n`;
   return reply;
 };
+
+/**
+ * Create transactions, retrying a transport failure under the *same* idempotency key.
+ *
+ * This is the only thing that can settle a lost response. If the batch committed and the reply
+ * never arrived, replaying the key returns the original rows; if it never ran, the replay writes
+ * them once. Either way the ambiguity is gone.
+ *
+ * It has to happen here rather than by asking the user to send the message again, because the key
+ * is derived from the Telegram update id. A redelivery of the same update replays, but a message
+ * the user retypes is a *new* update with a new key, so it would write a second row. Telling them
+ * to resend was therefore advice that caused the duplicate it claimed to prevent.
+ *
+ * A server refusal is not retried: it is deterministic, and repeating it only delays the reply.
+ */
+async function createTransactions(
+  clientBatchId: string,
+  transactions: Record<string, unknown>[]
+): Promise<CreatedBatch> {
+  const delays = [0, 1_500, 4_000];
+
+  for (const [attempt, delay] of delays.entries()) {
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+    try {
+      return await callTool<CreatedBatch>("create_transactions", { clientBatchId, transactions });
+    } catch (err) {
+      if (err instanceof McpToolError) throw err;
+      if (attempt === delays.length - 1) {
+        console.error(
+          `[telegram] could not settle batch ${clientBatchId} after ${delays.length} attempts:`,
+          err instanceof Error ? err.message : err
+        );
+        throw new UnconfirmedWriteError(`batch ${clientBatchId} unresolved`);
+      }
+    }
+  }
+
+  // Unreachable: the loop either returns or throws on its last attempt.
+  throw new UnconfirmedWriteError(`batch ${clientBatchId} unresolved`);
+}
 
 /**
  * Confirm a write, and make an undelivered confirmation recoverable.
@@ -550,18 +590,15 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       const now = new Date();
       const clientBatchId = updateBatchId(BOT_ID, updateId);
 
-      const result = await callTool<CreatedBatch>("create_transactions", {
-        clientBatchId,
-        transactions: [
-          {
-            amount,
-            description: description.charAt(0).toUpperCase() + description.slice(1),
-            type: isIncome ? "INCOME" : "EXPENSE",
-            categoryId: matchedCat.id,
-            date: now.toISOString(),
-          },
-        ],
-      });
+      const result = await createTransactions(clientBatchId, [
+        {
+          amount,
+          description: description.charAt(0).toUpperCase() + description.slice(1),
+          type: isIncome ? "INCOME" : "EXPENSE",
+          categoryId: matchedCat.id,
+          date: now.toISOString(),
+        },
+      ]);
 
       if (result.transactions.length > 0) {
         await confirmCreated(chatId, result);
@@ -576,18 +613,15 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     if (aiResult?.action === "CREATE_TRANSACTION" && aiResult.transaction) {
       const txData = aiResult.transaction;
       const clientBatchId = updateBatchId(BOT_ID, updateId);
-      const result = await callTool<CreatedBatch>("create_transactions", {
-        clientBatchId,
-        transactions: [
-          {
-            amount: txData.amount,
-            description: txData.description,
-            type: txData.type,
-            categoryId: txData.categoryId,
-            date: txData.date || new Date().toISOString(),
-          },
-        ],
-      });
+      const result = await createTransactions(clientBatchId, [
+        {
+          amount: txData.amount,
+          description: txData.description,
+          type: txData.type,
+          categoryId: txData.categoryId,
+          date: txData.date || new Date().toISOString(),
+        },
+      ]);
 
       if (result.transactions.length > 0) {
         await confirmCreated(chatId, result);

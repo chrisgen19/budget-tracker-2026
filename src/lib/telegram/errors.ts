@@ -5,20 +5,41 @@
  * written for a model but reads well enough for a chat reply and, more importantly, is the only
  * place that says what to do next: "Writes are currently switched off for this account. Turn
  * them on in Profile > MCP Access." A network stack trace is neither.
+ *
+ * It also means the failure is deterministic, so there is nothing to gain by retrying it.
  */
 export class McpToolError extends Error {}
 
 /**
+ * A write whose outcome is genuinely unknown.
+ *
+ * Raised when `create_transactions` fails at the transport level and retrying under the same
+ * idempotency key could not settle it. The rows may or may not exist, and nothing the bot can
+ * see will say which.
+ */
+export class UnconfirmedWriteError extends Error {}
+
+/**
  * Sent when handling a message fails for a reason the server did not explain.
  *
- * It deliberately does not claim that nothing was saved. A batch can fail as
- * `UNKNOWN_WHETHER_SAVED`, where the server says outright that it cannot tell, and asserting the
- * opposite invites the user to enter the row a second time by hand. Repeating the message is
- * safe on its own: the idempotency key is derived from the Telegram update, so a resend replays
- * rather than writing again.
+ * Deliberately promises nothing about duplicates in either direction. It cannot say "nothing was
+ * saved", because a batch can fail as `UNKNOWN_WHETHER_SAVED`. It also must not invite a resend
+ * as safe: the idempotency key is derived from the Telegram *update*, so only a redelivery of the
+ * same update replays. A message the user retypes arrives as a new update with a new key and
+ * writes a second row, which is exactly what an over-confident reply would have caused.
  */
 export const GENERIC_FAILURE_REPLY =
-  "Something went wrong handling that. Send it again: a repeat of the same message cannot create the transaction twice.";
+  "Something went wrong handling that. Please try again.";
+
+/**
+ * Sent when a write may or may not have landed.
+ *
+ * Says so plainly and points at the app, because checking is the only thing that resolves it.
+ * Telling the user to resend would risk a duplicate; telling them nothing was saved would risk a
+ * missing transaction. Naming the uncertainty is the only honest option.
+ */
+export const UNCONFIRMED_WRITE_REPLY =
+  "I could not confirm whether that saved. Check the app before sending it again: if it is there, sending it again would add a second copy.";
 
 /**
  * What to say back when handling a message threw.
@@ -27,5 +48,8 @@ export const GENERIC_FAILURE_REPLY =
  * generic reply meant every message answered "something went wrong" forever while the actionable
  * text sat in the container log where nobody was looking.
  */
-export const replyForError = (err: unknown): string =>
-  err instanceof McpToolError && err.message.trim() ? err.message : GENERIC_FAILURE_REPLY;
+export const replyForError = (err: unknown): string => {
+  if (err instanceof UnconfirmedWriteError) return UNCONFIRMED_WRITE_REPLY;
+  if (err instanceof McpToolError && err.message.trim()) return err.message;
+  return GENERIC_FAILURE_REPLY;
+};
