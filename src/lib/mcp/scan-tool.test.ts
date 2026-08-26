@@ -3,6 +3,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createBudgetMcpServer } from "./server";
 import type { PrismaClient } from "../budget-query-types";
+import { MAX_BASE64_LENGTH, MAX_FILE_SIZE } from "../receipt-limits";
 
 const prisma = {} as PrismaClient;
 
@@ -78,6 +79,18 @@ describe("scan_receipt", () => {
   it("declares an image size limit in its description, since callers cannot discover it", async () => {
     const tool = (await listTools(["receipts:scan"]))[0];
     expect(tool.description).toContain("4 MB");
+  });
+
+  // The hazard this covers: the schema accepted an unbounded string, so an oversized payload was
+  // parsed as JSON and allocated again by Buffer.from before the 4 MB check ran. The cap has to
+  // be on the *encoded* length, which is the only one available before decoding.
+  it("publishes an encoded size cap, so oversized payloads are refused before decoding", async () => {
+    const tool = (await listTools(["receipts:scan"]))[0];
+    const props = tool.inputSchema.properties as Record<string, { maxLength?: number }>;
+
+    expect(props.imageBase64.maxLength).toBe(MAX_BASE64_LENGTH);
+    // Tight enough to matter: an accepted payload decodes to roughly the image limit, not more.
+    expect(MAX_BASE64_LENGTH).toBeLessThan(MAX_FILE_SIZE * 1.4);
   });
 
   it("tells a caller that can see the image to read it itself", async () => {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { reserveScanCredit } from "@/lib/scan-quota";
+import { MAX_FILE_SIZE } from "@/lib/receipt-limits";
 
 /** Formats Gemini accepts inline and the client can realistically produce. */
 const ALLOWED_TYPES = new Set([
@@ -28,7 +29,7 @@ export const resolveMimeType = (file: File): string => {
   return EXTENSION_MIME_MAP[ext] ?? file.type;
 };
 
-const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB
+
 
 /** Ceiling on the whole multipart body, checked before we buffer any of it. Leaves room for
  *  multipart framing on top of a MAX_FILE_SIZE image. */

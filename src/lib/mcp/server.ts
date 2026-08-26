@@ -6,6 +6,7 @@ import {
   WRITE_ERROR_MESSAGES,
 } from "@/lib/mcp/write-errors";
 import { z } from "zod";
+import { MAX_BASE64_LENGTH } from "@/lib/receipt-limits";
 import {
   getSpendingByCategory,
   getTopExpenses,
@@ -620,6 +621,10 @@ export const createBudgetMcpServer = ({
         imageBase64: z
           .string()
           .min(1)
+          // Bounded on the *encoded* length, which is the only length available before decoding.
+          // Without it an arbitrarily large string was parsed as JSON and then allocated again by
+          // Buffer.from, so the 4 MB image limit was only enforced after both had happened.
+          .max(MAX_BASE64_LENGTH)
           .describe("The receipt image, base64 encoded, with no data: URL prefix."),
         mimeType: z
           .enum(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"])

@@ -22,6 +22,51 @@ describe("pickReceiptImage", () => {
     expect(pick).toMatchObject({ kind: "ok", fileId: "big", mimeType: "image/jpeg" });
   });
 
+  // The bug this covers: file_size is optional on PhotoSize. Comparing on it alone scored every
+  // variant zero when it was absent, reduce kept the first, and the first is the smallest
+  // thumbnail. A 90x67 crop then went to OCR, produced nothing usable, and still spent a scan.
+  it("picks the largest by pixel area when Telegram omits file_size", () => {
+    const pick = pickReceiptImage({
+      ...base,
+      photo: [
+        { file_id: "thumb", width: 90, height: 67 },
+        { file_id: "medium", width: 320, height: 240 },
+        { file_id: "full", width: 1280, height: 960 },
+      ],
+    });
+    expect(pick).toMatchObject({ kind: "ok", fileId: "full" });
+  });
+
+  it("does not let a sized thumbnail beat a larger variant with no size", () => {
+    const pick = pickReceiptImage({
+      ...base,
+      photo: [
+        { file_id: "thumb", width: 90, height: 67, file_size: 1_500 },
+        { file_id: "full", width: 1280, height: 960 },
+      ],
+    });
+    expect(pick).toMatchObject({ kind: "ok", fileId: "full" });
+  });
+
+  it("falls back to Telegram's ascending order when nothing is comparable", () => {
+    const pick = pickReceiptImage({
+      ...base,
+      photo: [{ file_id: "a" }, { file_id: "b" }, { file_id: "last" }],
+    });
+    expect(pick).toMatchObject({ kind: "ok", fileId: "last" });
+  });
+
+  it("uses byte size to break a tie between equal dimensions", () => {
+    const pick = pickReceiptImage({
+      ...base,
+      photo: [
+        { file_id: "worse", width: 800, height: 600, file_size: 40_000 },
+        { file_id: "better", width: 800, height: 600, file_size: 90_000 },
+      ],
+    });
+    expect(pick).toMatchObject({ kind: "ok", fileId: "better" });
+  });
+
   it("prefers a document over a photo, since Telegram has not recompressed it", () => {
     const pick = pickReceiptImage({
       ...base,

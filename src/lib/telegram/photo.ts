@@ -1,11 +1,36 @@
-import type { TelegramMessage } from "@/lib/telegram/allowlist";
+import type { TelegramMessage, TelegramPhotoSize } from "@/lib/telegram/allowlist";
+import { MAX_FILE_SIZE } from "@/lib/receipt-limits";
+
+/** Re-exported so the bot refuses an oversized image in chat, with a reason, rather than after a
+ *  download and without ever reserving a credit. Same number the scan pipeline enforces. */
+export const MAX_IMAGE_BYTES = MAX_FILE_SIZE;
 
 /** Matches ALLOWED_TYPES in receipt-guard. Anything else is refused before it costs a scan. */
 const SCANNABLE = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 
-/** The scan pipeline's own ceiling. Checked here too so an oversized photo is refused in chat,
- *  with a reason, rather than after a download. */
-export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+/**
+ * The biggest variant Telegram offered.
+ *
+ * `file_size` is optional on `PhotoSize`, and comparing on it alone is wrong in a way that costs
+ * money: when it is absent every variant scores zero, `reduce` keeps the first, and the first is
+ * the smallest thumbnail. A 90x67 crop then goes to OCR, produces nothing usable, and still
+ * spends one of the user's scans.
+ *
+ * Pixel area is the better signal anyway, since it is what OCR actually depends on. Byte size is
+ * kept as a tiebreak for variants of equal dimensions, and the documented ascending order is the
+ * last resort when a variant carries neither.
+ */
+const pickLargestSize = (sizes: TelegramPhotoSize[]): TelegramPhotoSize => {
+  const area = (p: TelegramPhotoSize) => (p.width ?? 0) * (p.height ?? 0);
+  const bytes = (p: TelegramPhotoSize) => p.file_size ?? 0;
+
+  // Seeded with the last element rather than the first: Telegram documents these as ascending,
+  // so it is the best guess when nothing can be compared.
+  return sizes.reduce((best, next) => {
+    if (area(next) !== area(best)) return area(next) > area(best) ? next : best;
+    return bytes(next) > bytes(best) ? next : best;
+  }, sizes[sizes.length - 1]);
+};
 
 export type PhotoPick =
   | { kind: "none" }
@@ -37,9 +62,7 @@ export const pickReceiptImage = (message: TelegramMessage): PhotoPick => {
   const sizes = message.photo;
   if (!sizes?.length) return { kind: "none" };
 
-  // Ascending by size, but not guaranteed to be, so pick the largest explicitly rather than
-  // trusting the order.
-  const largest = sizes.reduce((a, b) => ((b.file_size ?? 0) > (a.file_size ?? 0) ? b : a));
+  const largest = pickLargestSize(sizes);
   if ((largest.file_size ?? 0) > MAX_IMAGE_BYTES) {
     return { kind: "too_large", bytes: largest.file_size ?? 0 };
   }
