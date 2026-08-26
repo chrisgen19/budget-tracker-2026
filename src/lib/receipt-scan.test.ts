@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/validations";
 
 const authorize = vi.hoisted(() => vi.fn());
 const settle = vi.hoisted(() => vi.fn(async () => {}));
@@ -248,5 +249,86 @@ describe("capture date fallback", () => {
 
     if (!outcome.ok || !("result" in outcome)) return;
     expect(outcome.result.date).toBe("2026-08-01");
+  });
+});
+
+describe("oversized breakdown", () => {
+  /** What Gemini returns for a weekly supermarket run: one group holding every grocery line. */
+  const receiptWith = (lineItemCount: number) => ({
+    amount: 7193.6,
+    categoryId: "cat_1",
+    date: "2026-08-26",
+    dateSource: "OCR",
+    description: "SOUTH SUPERMARKET - PASIG",
+    multiCategory: true,
+    breakdown: [
+      {
+        amount: 6586.9,
+        categoryId: "cat_1",
+        description: "South Supermarket - groceries",
+        lineItems: Array.from({ length: lineItemCount }, (_, i) => ({
+          name: `item ${i}`,
+          amount: 1,
+        })),
+      },
+    ],
+  });
+
+  const scan = () =>
+    scanReceipt({
+      userId: "u1",
+      mimeType: "image/jpeg",
+      byteLength: 1_000,
+      readBase64: () => "aW1hZ2U=",
+      todayStr: "2026-08-26",
+      photoDateStr: "2026-08-26",
+    });
+
+  beforeEach(() => authorize.mockResolvedValue(AUTHORIZED));
+
+  // The bug: lineItems was capped at 50, a real supermarket receipt carried 56, and the whole
+  // scan was rejected — POST /api/receipts/scan 500, "Failed to scan receipt. Please try again."
+  // — despite the amount, date, merchant and category all having been read correctly.
+  it("keeps a 56-item breakdown now that the bound reflects a real receipt", async () => {
+    generate.mockResolvedValue({ text: JSON.stringify(receiptWith(56)) });
+
+    const outcome = await scan();
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok || !("result" in outcome)) return;
+    expect(outcome.result.amount).toBe(7193.6);
+    expect(outcome.result.breakdown).toBeDefined();
+    expect(settle).toHaveBeenCalledWith("res_1", "SUCCESS");
+  });
+
+  // Past the bound the breakdown is dropped rather than the scan: the amount and date are still
+  // right, and multiCategory survives so the review still offers Itemize to rebuild it.
+  it("drops a breakdown past the bound but still returns the scan", async () => {
+    generate.mockResolvedValue({
+      text: JSON.stringify(receiptWith(MAX_BREAKDOWN_LINE_ITEMS + 1)),
+    });
+
+    const outcome = await scan();
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok || !("result" in outcome)) return;
+    expect(outcome.result.amount).toBe(7193.6);
+    expect(outcome.result.description).toBe("SOUTH SUPERMARKET - PASIG");
+    expect(outcome.result.breakdown).toBeUndefined();
+    expect(outcome.result.multiCategory).toBe(true);
+    expect(settle).toHaveBeenCalledWith("res_1", "SUCCESS");
+  });
+
+  // The retry must not become a way to smuggle a broken scan through: dropping the breakdown
+  // only rescues a response whose every other field was already valid.
+  it("still fails when the response is broken outside the breakdown", async () => {
+    generate.mockResolvedValue({
+      text: JSON.stringify({ ...receiptWith(200), amount: -5 }),
+    });
+
+    const outcome = await scan();
+
+    expect(outcome).toMatchObject({ ok: false, failure: { reason: "FAILED" } });
+    expect(settle).toHaveBeenCalledWith("res_1", "FAILED");
   });
 });

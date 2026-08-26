@@ -2,6 +2,31 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-26 - A supermarket receipt could fail its own scan
+
+Uploading a 56-item supermarket receipt returned `POST /api/receipts/scan 500` and "Failed to
+scan receipt. Please try again." The scan had in fact worked: the amount, date, merchant and
+category were all read correctly. What failed was `lineItems`, capped at 50 in
+`receiptBreakdownItemSchema`, and a single weekly grocery run exceeds that. The whole result was
+discarded over the one optional field on it.
+
+Two things were wrong, so both are fixed.
+
+The bound is now `MAX_BREAKDOWN_LINE_ITEMS` (150), one constant shared by the scan-side schema and
+the storage-side `receiptBreakdownMetaSchema`. They were separate copies of 50, and raising only
+the scan would have produced the worse failure: a receipt that scans cleanly and is then rejected
+on save, after the credit is spent. The cap bounds the stored JSON blob rather than describing a
+typical receipt, so it sits well above what one realistically holds.
+
+`scanReceipt` no longer discards a scan when only the breakdown is invalid. It retries the parse
+without that field and returns the rest, keeping `multiCategory` so the review still offers
+Itemize and the user can rebuild the breakdown through `/api/receipts/breakdown`. A response
+broken anywhere else fails the retry too and still settles as `FAILED`, so this cannot smuggle an
+unusable scan through.
+
+The failure was also invisible: the schema branch returned without logging, so the dev server
+showed a bare 500 and nothing else. A dropped breakdown now logs which bound it broke.
+
 ## 2026-08-26 - Telegram bot runs inside the app
 
 The bot needed somewhere always-on. A second Coolify application would have doubled the build and

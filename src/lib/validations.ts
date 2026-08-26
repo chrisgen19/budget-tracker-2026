@@ -25,6 +25,20 @@ export const transactionSchema = z.object({
   labelIds: z.array(z.string()).optional(),
 });
 
+/**
+ * Ceiling on the line items a single breakdown group may carry.
+ *
+ * One constant, used by both the scan-side schema (`receiptBreakdownItemSchema`) and the
+ * storage-side one (`receiptBreakdownMetaSchema`), because they are the two ends of one payload:
+ * a bound raised on the scan alone yields a receipt that scans cleanly and is then rejected on
+ * save, which is a worse failure than rejecting it outright.
+ *
+ * It was 50, which a single weekly supermarket run exceeds — a 56-item grocery group failed the
+ * whole scan with a 500. The bound exists to cap the stored JSON blob, not to describe a typical
+ * receipt, so it is set well above what one realistically holds rather than near it.
+ */
+export const MAX_BREAKDOWN_LINE_ITEMS = 150;
+
 export const receiptBreakdownLineItemSchema = z.object({
   name: z.string().max(255),
   amount: z.number().positive(),
@@ -50,7 +64,7 @@ export const receiptBreakdownLineItemSchema = z.object({
 export const receiptBreakdownMetaSchema = z
   .object({
     total: z.number().positive(),
-    items: z.array(receiptBreakdownLineItemSchema).min(1).max(50),
+    items: z.array(receiptBreakdownLineItemSchema).min(1).max(MAX_BREAKDOWN_LINE_ITEMS),
   })
   .strict();
 
@@ -137,7 +151,7 @@ export const receiptBreakdownItemSchema = z.object({
   amount: z.number().positive(),
   categoryId: z.string().min(1),
   description: z.string().max(255),
-  lineItems: z.array(receiptBreakdownLineItemSchema).min(1).max(50),
+  lineItems: z.array(receiptBreakdownLineItemSchema).min(1).max(MAX_BREAKDOWN_LINE_ITEMS),
 });
 
 /** Signal from Gemini distinguishing "date read off the receipt" from "date is the photo-fallback we instructed".

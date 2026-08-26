@@ -160,10 +160,34 @@ export async function scanReceipt(params: {
       return await fail("NOT_A_RECEIPT");
     }
 
-    const result = receiptScanResultSchema.safeParse({
+    let result = receiptScanResultSchema.safeParse({
       ...(parsed as Record<string, unknown>),
       type: "EXPENSE",
     });
+
+    // The breakdown is an enrichment, not the result. A scan whose amount, date, merchant and
+    // category all read correctly was being discarded whole because the optional itemization
+    // broke a bound: a supermarket receipt with 56 items in one group met a 50-item cap and the
+    // user got "Failed to scan receipt" for a scan that had in fact worked.
+    //
+    // So retry without it. `multiCategory` is deliberately kept, because it is what drives the
+    // review's Itemize action — the user can rebuild the breakdown through
+    // /api/receipts/breakdown, which is the same state a scan reaches before itemizing anyway.
+    // This cannot rescue a genuinely unusable response: anything wrong outside `breakdown` fails
+    // the retry too, and falls through to FAILED as before.
+    if (!result.success && parsed && typeof parsed === "object" && "breakdown" in parsed) {
+      const withoutBreakdown: Record<string, unknown> = { ...(parsed as Record<string, unknown>) };
+      delete withoutBreakdown.breakdown;
+
+      const degraded = receiptScanResultSchema.safeParse({ ...withoutBreakdown, type: "EXPENSE" });
+      if (degraded.success) {
+        console.warn(
+          "[receipt-scan] dropped an invalid breakdown and kept the scan:",
+          result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")
+        );
+      }
+      result = degraded;
+    }
     if (!result.success) return await fail("FAILED");
 
     // Normalize date and flag a suspicious year for the caller.
