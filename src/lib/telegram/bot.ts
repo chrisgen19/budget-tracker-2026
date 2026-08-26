@@ -8,6 +8,7 @@ import { GoogleGenAI } from "@google/genai";
 import { updateBatchId } from "@/lib/telegram/batch-id";
 import { localDay, localTimestamp } from "@/lib/telegram/local-time";
 import { messageIsAllowed, type Allowlist, type TelegramMessage } from "@/lib/telegram/allowlist";
+import { chunkMessage } from "@/lib/telegram/chunk";
 import { McpToolError, UnconfirmedWriteError, replyForError } from "@/lib/telegram/errors";
 import { isPlainShorthand } from "@/lib/telegram/shorthand";
 /**
@@ -33,7 +34,16 @@ const env = (name: string): string | undefined => {
   return value ? value : undefined;
 };
 
-const MCP_URL = env("TELEGRAM_MCP_URL") ?? "https://budget.cgdev.site/api/mcp";
+/**
+ * Required, with no default on purpose.
+ *
+ * It used to fall back to this project's own production domain. That is the right host for its
+ * owner and a trap for anyone else: a fork, or a staging deploy that forgets the variable, would
+ * send a write-capable token to a domain it does not control and write to the wrong budget. A
+ * credential should never have a hardcoded external destination, so this fails at startup
+ * instead, the same way the empty allowlist refuses to serve.
+ */
+const MCP_URL = env("TELEGRAM_MCP_URL");
 const MCP_TOKEN = env("TELEGRAM_MCP_TOKEN");
 /** Only used for display; the server owns every amount and every date boundary. */
 const SYMBOL = env("TELEGRAM_CURRENCY_SYMBOL") ?? "\u20B1";
@@ -68,6 +78,7 @@ let mcp: Client | null = null;
 
 async function mcpClient(): Promise<Client> {
   if (mcp) return mcp;
+  if (!MCP_URL) throw new Error("TELEGRAM_MCP_URL is not set");
   if (!MCP_TOKEN) throw new Error("TELEGRAM_MCP_TOKEN is not set");
   const client = new Client({ name: "telegram-bot", version: "1.0.0" });
   await client.connect(
@@ -198,6 +209,25 @@ async function sendMessage(
   chatId: number | string,
   text: string,
   parseMode: "Markdown" | "HTML" = "Markdown"
+): Promise<boolean> {
+  // Telegram rejects an over-long message outright, and the plain-text fallback is the same
+  // length, so every attempt failed and the user was answered with silence.
+  const parts = chunkMessage(text);
+  if (parts.length > 1) {
+    let allSent = true;
+    for (const part of parts) {
+      if (!(await sendOne(chatId, part, parseMode))) allSent = false;
+    }
+    return allSent;
+  }
+
+  return sendOne(chatId, text, parseMode);
+}
+
+async function sendOne(
+  chatId: number | string,
+  text: string,
+  parseMode: "Markdown" | "HTML"
 ): Promise<boolean> {
   try {
     await telegramApi("sendMessage", { chat_id: chatId, text, parse_mode: parseMode });
@@ -734,10 +764,18 @@ export async function startTelegramBot(): Promise<void> {
     throw new Error("TELEGRAM_BOT_TOKEN is not set.");
   }
 
+  if (!MCP_URL) {
+    throw new Error(
+      "TELEGRAM_MCP_URL is not set. Point it at this deployment's /api/mcp endpoint, for " +
+        "example http://localhost:3000/api/mcp when the bot runs inside the app container."
+    );
+  }
+
   if (!MCP_TOKEN) {
     throw new Error(
       "TELEGRAM_MCP_TOKEN is not set. Mint one in Profile > MCP Access with the " +
-        "transactions:write scope, then set TELEGRAM_MCP_TOKEN."
+        "budget:read, transactions:read, bills:read and transactions:write scopes, then set " +
+        "TELEGRAM_MCP_TOKEN."
     );
   }
 
