@@ -35,7 +35,8 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **Scheduled Bills & Reminders** — Recurring bill management with configurable frequency (weekly, biweekly, monthly, quarterly, yearly); mobile toast reminders for upcoming and overdue bills; one-tap pay that auto-creates the expense transaction; snooze (1d/3d/1w) and skip actions; pay-all for batch payments; bill history with links to past payments
 - **Progressive Web App** — Installable PWA with offline support via Serwist service worker; install prompt banner (Android + iOS Safari guide); standalone mode with safe-area handling; smart caching for API responses and static assets
 - **Timezone-Aware Dates** — All date queries respect the user's local timezone offset for accurate day boundaries and month grouping
-- **MCP Server** - [Model Context Protocol](https://modelcontextprotocol.io/) access to your budget data in natural language, over stdio (local) or HTTP with a scoped bearer token (remote); 12 read-only tools (spending by category, top expenses, monthly summary, spending trends, search transactions, budget overview, upcoming bills, category list, label breakdown, label list, bill history, receipt items); shared query library reusable for future in-app AI chat
+- **MCP Server** - [Model Context Protocol](https://modelcontextprotocol.io/) access to your budget data in natural language, over stdio (local) or HTTP with a scoped bearer token (remote); 12 read-only tools (spending by category, top expenses, monthly summary, spending trends, search transactions, budget overview, upcoming bills, category list, label breakdown, label list, bill history, receipt items) plus one write tool (`create_transactions`), gated behind a separate scope, a time-limited write lease, and a provenance column; shared query library reusable for future in-app AI chat
+- **Telegram Bot** - Log spending by messaging a personal Telegram bot (`100 breakfast`, `spent 350 for groceries yesterday`) and ask for summaries, recent transactions, or upcoming bills; runs inside the app on boot; talks to the app as an MCP client, so it inherits the token scope, write lease, rate limit, and audit trail rather than touching the database; Gemini only classifies each message, so every figure it reports comes from real data
 - **Analytics** — Dedicated reporting page with income vs expenses bar chart, cash flow area chart (net + cumulative), category breakdown donut chart, label breakdown horizontal bars, summary cards, and flexible time range controls (weekly/monthly/yearly/custom)
 - **Design** — Warm paper-ledger aesthetic with Young Serif + Outfit fonts, Plus Jakarta Sans for currency amounts, amber accents, and Framer Motion animations
 
@@ -55,6 +56,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 | Email | Resend |
 | PWA | Serwist (Service Worker) |
 | MCP Server | Model Context Protocol SDK |
+| Chat Bot | Telegram Bot API (long polling, MCP client) |
 | Icons | Lucide React |
 | Animation | Framer Motion |
 
@@ -101,6 +103,15 @@ GEMINI_FALLBACK_MODEL="gemini-2.5-flash"   # "" disables fallback
 GEMINI_THINKING_LEVEL="medium"             # used by Gemini 3+ models
 GEMINI_THINKING_BUDGET="-1"                # used by Gemini 2.x models
 GEMINI_TIMEOUT_MS="60000"                  # per-attempt timeout; 0 disables
+
+# Telegram bot (optional: see the Telegram Bot section below)
+# Blank counts as unset for every TELEGRAM_ variable.
+TELEGRAM_BOT_ENABLED="false"               # "true" starts the bot on server boot
+TELEGRAM_BOT_TOKEN=""                      # from @BotFather
+TELEGRAM_ALLOWED_IDS=""                    # numeric ids; empty means serve nobody
+TELEGRAM_MCP_URL="http://localhost:3111/api/mcp"   # required, no default
+TELEGRAM_MCP_TOKEN=""                      # a scoped token from Profile > MCP Access
+TELEGRAM_TZ_OFFSET="-480"                  # required, no default; UTC+8 is -480
 ```
 
 > **Note:** Generate a secure `NEXTAUTH_SECRET` for production with `openssl rand -base64 32`
@@ -148,6 +159,9 @@ Open [http://localhost:3111](http://localhost:3111), register an account, and st
 | `pnpm start` | Start production server |
 | `pnpm lint` | Run ESLint |
 | `pnpm type-check` | Run TypeScript type checker |
+| `pnpm test` | Run the test suite once (CI mode) |
+| `pnpm test:watch` | Run the test suite in watch mode |
+| `pnpm telegram:bot` | Run the Telegram bot locally (never while it is enabled in production) |
 | `pnpm db:migrate` | Run Prisma migrations |
 | `pnpm db:seed` | Seed default categories + set admin role |
 | `pnpm db:studio` | Open Prisma Studio (database GUI) |
@@ -158,7 +172,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io/) server that lets yo
 budget in natural language ("what's my biggest spending category?", "how much did I spend on food
 this month?") from Claude Code or Claude Desktop.
 
-The 12 tools are defined once, in `src/lib/mcp/server.ts`, and served over two transports:
+The 13 tools are defined once, in `src/lib/mcp/server.ts`, and served over two transports:
 
 ```
 Local:   Claude Desktop ──(stdio)──▶ mcp-server/src/index.ts ─┐
@@ -173,7 +187,10 @@ Pick by which database you want to read:
 | **[Local (stdio)](#option-a-local-stdio)** | whatever `DATABASE_URL` points at, usually your dev database | none, it is your own machine | config file per client |
 | **[Remote (HTTP)](#option-b-remote-http)** | the deployed app's database, i.e. **production** | scoped bearer token, revocable | mint a token, one command |
 
-Every tool is read-only; nothing here can create, change, or delete your data.
+Twelve of the thirteen tools are read-only. The exception is `create_transactions`, which is
+available only to a token minted with the `transactions:write` scope **and** only while a
+time-limited write lease is open (Profile > MCP Access). Nothing in the server can change or
+delete an existing transaction. See [MCP writes](#mcp-writes) for how the controls fit together.
 
 ### Option A: Local (stdio)
 
@@ -397,6 +414,26 @@ Nothing here can edit or delete an existing transaction.
 | `get_receipt_items` | Individual line items from scanned receipts, filterable by month, name, or receipt |
 | `create_transactions` | **Write.** Creates one or more transactions in a single idempotent batch |
 
+### MCP writes
+
+`create_transactions` is the only tool that writes, and it sits behind three independent controls.
+None of them substitutes for another:
+
+| Control | What it is | Why |
+|---|---|---|
+| `transactions:write` scope | Chosen when the token is minted and fixed for its life. Such a token cannot pick "Never" expires and is capped at 90 days | Least privilege. A read token can never be talked into writing |
+| Write lease | `users.mcp_writes_enabled_until`, a timestamp rather than a boolean, set from Profile > MCP Access | Forgetting to switch writes off cannot leave them open for days |
+| Provenance | `transactions.created_via` + `mcp_token_id`, both set server-side | An audit trail. A compromised token cannot forge or omit it |
+
+Provenance follows the **credential**, not the endpoint. A token is minted as either an AI
+assistant or a Telegram bot, and every row it writes is stamped accordingly, because every remote
+write arrives through `/api/mcp` and deriving the source from the endpoint would make the bot's
+rows claim Claude wrote them. `APP` is not mintable, so no token can make a row look hand-typed.
+The transactions page can filter by any of these.
+
+Writes are idempotent. Each call carries a `clientBatchId` UUID, and replaying one returns the
+original rows instead of writing a second copy, so a lost response can be retried safely.
+
 ### Testing with MCP Inspector
 
 To verify tools work correctly before using in Claude Desktop:
@@ -418,6 +455,83 @@ BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-mcp-endpoint.ts
 `scripts/verify-mcp-token-auth.ts` covers the token lifecycle (expiry, revocation, rate limiting)
 directly against the database. It needs a **non-UTC** database timezone and says so if it finds
 one, since the timestamp behaviour it checks cannot be observed under UTC.
+
+## Telegram Bot
+
+A personal Telegram bot that logs spending from a chat message and answers questions about it.
+
+```
+You ──▶ Telegram ──(long poll)──▶ bot ──(HTTPS + scoped token)──▶ /api/mcp ──▶ PostgreSQL
+```
+
+It is an **MCP client, not a database client**. It holds no database credentials: it calls
+`/api/mcp` with a scoped token like any other client, so it inherits the scope, the write lease,
+the rate limit, and the audit trail rather than going around them.
+
+**Gemini only classifies a message.** It is never given transactions, totals, or balances, and
+every figure the bot sends comes from an MCP read tool via the same handlers the slash commands
+use. A model holding nothing but category names could only refuse or invent an answer, so free-text
+questions are routed to a real query instead of being answered by the model.
+
+### What you can send
+
+| Message | Result |
+|---|---|
+| `100 breakfast` | Logs a 100 expense, category matched from the text |
+| `+5000 freelance payout` | Logs income (leading `+`) |
+| `spent 350 for groceries yesterday` | Goes to Gemini, which resolves the date |
+| `/summary` | This month's balance and top spending |
+| `/recent` | The last 5 transactions |
+| `/bills` | Bills due in the next 30 days |
+| `/categories` | Your category list |
+| `/help` | The above, in chat |
+
+Anything with a date or time in it (`yesterday`, `at noon`, `18:00`, `sep 14`) skips the fast path
+and goes to Gemini, because the fast path stamps the current time and has no way to express a date.
+
+### Setup
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
+2. Mint an MCP token in **Profile > MCP Access** with **all four** scopes the handlers need:
+   `budget:read`, `transactions:read`, `bills:read`, `transactions:write`. Set **Used by** to
+   **Telegram bot** so its rows are stamped `TELEGRAM` rather than appearing as Claude's. A
+   write-only token fails on every message, since each one reads the category list first.
+3. Set the environment variables (see below), then start the app. The bot starts with it.
+4. Message the bot. If your id is not on the allowlist it stays silent, and the log prints the id
+   so you can copy it in.
+
+| Variable | Required | Notes |
+|---|---|---|
+| `TELEGRAM_BOT_ENABLED` | yes | `"true"` starts the bot on server boot. Off everywhere else |
+| `TELEGRAM_BOT_TOKEN` | yes | From @BotFather |
+| `TELEGRAM_ALLOWED_IDS` | one of these two | Numeric ids, comma separated. Preferred |
+| `TELEGRAM_ALLOWED_USERNAMES` | one of these two | Weaker: a released `@handle` can be claimed by someone else |
+| `TELEGRAM_MCP_URL` | yes, **no default** | `http://localhost:3111/api/mcp` for `pnpm dev`, `http://localhost:3000/api/mcp` inside the deployed container, or the public URL if the bot runs elsewhere |
+| `TELEGRAM_MCP_TOKEN` | yes | The token from step 2 |
+| `TELEGRAM_TZ_OFFSET` | yes, **no default** | Minutes, `getTimezoneOffset()` convention, so UTC+8 is `-480`. Must match the account's timezone |
+| `TELEGRAM_CURRENCY_SYMBOL` | no | Display only. Defaults to the peso sign |
+| `TELEGRAM_API_IP` | no | Only for a network whose DNS sinkholes Telegram. Leave unset otherwise: Telegram rotates these |
+
+Blank counts as unset for all of them. The two marked **no default** fail at startup with a named
+cause rather than guessing, because both silently wrong values are dangerous: an inherited URL
+would send a write-capable token to a host you do not control, and the host's own timezone is UTC
+in a container, which resolves "yesterday" to the wrong day.
+
+### Two rules worth knowing
+
+**Only one poller may exist per bot token.** Telegram answers a second concurrent `getUpdates`
+with 409 Conflict, so never run `pnpm telegram:bot` while the bot is enabled in production. That
+is what the `TELEGRAM_BOT_ENABLED` flag is for.
+
+**With no allowlist the bot serves nobody, and says so at startup.** Bot usernames are searchable
+and the `t.me` link is public, so anyone who found it could otherwise read your balances and write
+transactions. Denied messages get no reply at all, since replying would confirm the bot is live and
+whose it is. Every message is also required to be in a *private* chat: replies go to the chat the
+message came from, so running `/summary` in a group would have shown your balances to everyone in
+it.
+
+Two entry points share one definition: `src/instrumentation.ts` starts the bot on server boot in
+production, and `scripts/telegram-bot.ts` (`pnpm telegram:bot`) runs it locally.
 
 ## Git Hooks
 
@@ -475,15 +589,19 @@ src/
 │   └── user-provider.tsx    # Reactive user info context (name, email, currency, role)
 ├── hooks/                   # TanStack Query hooks (use-transactions, use-categories)
 ├── lib/                     # Prisma client, auth, Gemini client, query client, utils, validations
-│   ├── budget-queries.ts    # Shared query functions (used by MCP server + future AI chat)
-│   └── budget-query-types.ts # TypeScript types for query params and return values
+│   ├── budget-queries.ts    # Shared read-only query functions (used by the app + MCP)
+│   ├── budget-query-types.ts # TypeScript types for query params and return values
+│   ├── transaction-writes.ts # The single create path, shared by the batch route + MCP
+│   ├── mcp/                 # Tool definitions, scopes, bearer-token auth, write errors
+│   └── telegram/            # Telegram bot (MCP client), allowlist, shorthand parsing
+├── instrumentation.ts       # Server boot hook: starts the Telegram bot
 └── types/                   # TypeScript type definitions
 
-mcp-server/                  # MCP server for Claude Desktop integration
+mcp-server/                  # stdio entry point for a locally spawned MCP client
 ├── package.json             # Standalone dependencies (@modelcontextprotocol/sdk)
 ├── tsconfig.json            # Standalone TypeScript config
 └── src/
-    └── index.ts             # Entry point — registers 8 read-only tools
+    └── index.ts             # Thin wrapper; tools live in src/lib/mcp/server.ts
 
 prisma/
 ├── schema.prisma            # Database schema
@@ -502,14 +620,15 @@ User ──< Transaction >── Category
  ├────────< Category (custom, per-user)
  ├────────< Bill >── Category
  ├────────< ScanLog
+ ├────────< McpToken
  └────────< VerificationToken
 
 AppSettings (per role: FREE, PAID)
 ```
 
-- **User** — id, name, email, emailVerified, password, role (ADMIN/FREE/PAID), currency, timezoneOffset, hide_amounts, quickExpenseCategories, quickIncomeCategories, receiptScanEnabled, transactionLayout
+- **User** — id, name, email, emailVerified, password, role (ADMIN/FREE/PAID), currency, timezoneOffset, hide_amounts, quickExpenseCategories, quickIncomeCategories, receiptScanEnabled, transactionLayout, mcpWritesEnabledUntil (the write lease)
 - **Category** — id, name, type (INCOME/EXPENSE), icon, color, isDefault, userId (null for defaults)
-- **Transaction** — id, amount, description, type, date, categoryId, userId, billId, receiptGroupId (links itemized siblings), receiptBreakdown (JSON — individual line items)
+- **Transaction** — id, amount, description, type, date, categoryId, userId, billId, receiptGroupId (links itemized siblings), receiptBreakdown (JSON: individual line items), clientBatchId (idempotency key), createdVia (APP/MCP/TELEGRAM) + mcpTokenId (provenance)
 - **Bill** — id, amount, description, frequency, nextDueDate, isActive, categoryId, userId (recurring scheduled transactions)
 - **Label** — id, name, color, applicableTo (EXPENSE/INCOME/BOTH), userId, createdAt
 - **LabelSchedule** — id, labelId, days (int[]), startTime, endTime (HH:mm strings)
@@ -517,6 +636,7 @@ AppSettings (per role: FREE, PAID)
 - **AppSettings** — id, role (unique), receiptScanEnabled, maxUploadFiles, monthlyScanLimit
 - **ScanLog** — id, userId, createdAt (tracks scan usage for monthly limits)
 - **VerificationToken** — id, token, type (EMAIL_VERIFY/PASSWORD_RESET), userId, expiresAt
+- **McpToken** - id, name, prefix, tokenHash (SHA-256; the plaintext is never stored), scopes, source (MCP/TELEGRAM, stamped onto rows the token writes), expiresAt, revokedAt, lastUsedAt, rate-limit window
 
 ## Analytics Roadmap
 
