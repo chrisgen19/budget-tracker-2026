@@ -172,7 +172,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io/) server that lets yo
 budget in natural language ("what's my biggest spending category?", "how much did I spend on food
 this month?") from Claude Code or Claude Desktop.
 
-The 13 tools are defined once, in `src/lib/mcp/server.ts`, and served over two transports:
+The 14 tools are defined once, in `src/lib/mcp/server.ts`, and served over two transports:
 
 ```
 Local:   Claude Desktop ──(stdio)──▶ mcp-server/src/index.ts ─┐
@@ -187,7 +187,9 @@ Pick by which database you want to read:
 | **[Local (stdio)](#option-a-local-stdio)** | whatever `DATABASE_URL` points at, usually your dev database | none, it is your own machine | config file per client |
 | **[Remote (HTTP)](#option-b-remote-http)** | the deployed app's database, i.e. **production** | scoped bearer token, revocable | mint a token, one command |
 
-Twelve of the thirteen tools are read-only. The exception is `create_transactions`, which is
+Twelve of the fourteen tools are read-only. `scan_receipt` writes nothing either, but each call
+spends one of your monthly receipt scans, so it is scoped separately and is never granted by
+default. The remaining exception is `create_transactions`, which is
 available only to a token minted with the `transactions:write` scope **and** only while a
 time-limited write lease is open (Profile > MCP Access). Nothing in the server can change or
 delete an existing transaction. See [MCP writes](#mcp-writes) for how the controls fit together.
@@ -412,6 +414,7 @@ Nothing here can edit or delete an existing transaction.
 | `get_label_list` | Labels with transaction counts, applicable type, and auto-apply schedules |
 | `get_bill_history` | Past bill occurrences (paid/skipped/snoozed) plus per-bill lateness patterns |
 | `get_receipt_items` | Individual line items from scanned receipts, filterable by month, name, or receipt |
+| `scan_receipt` | **Spends a scan.** Reads a receipt image and returns a draft; saves nothing |
 | `create_transactions` | **Write.** Creates one or more transactions in a single idempotent batch |
 
 ### MCP writes
@@ -485,15 +488,32 @@ questions are routed to a real query instead of being answered by the model.
 | `/bills` | Bills due in the next 30 days |
 | `/categories` | Your category list |
 | `/help` | The above, in chat |
+| *(send a photo)* | Reads the receipt with AI, shows what it found, and waits for `yes` before saving |
 
 Anything with a date or time in it (`yesterday`, `at noon`, `18:00`, `sep 14`) skips the fast path
 and goes to Gemini, because the fast path stamps the current time and has no way to express a date.
+
+### Receipts
+
+Send the bot a photo of a receipt and it reads the amount, date, category and merchant, then
+shows you what it found and waits for `yes` before saving anything. Reply `no` to discard.
+
+The confirmation is not politeness. The web app shows a review modal for the same reason: OCR on a
+phone photo is exactly where a wrong amount comes from, and a bot that saved silently would put it
+in the budget with nobody having seen it.
+
+Sending the receipt **as a file** rather than a photo reads better on small print, because Telegram
+recompresses photos. Both work. Images must be 4 MB or smaller.
+
+Each scan spends one of your monthly receipt scans, the same allowance the web app uses, because
+the bot scans through the MCP endpoint rather than calling Gemini itself. A scan that fails is
+refunded.
 
 ### Setup
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
 2. Mint an MCP token in **Profile > MCP Access** with **all four** scopes the handlers need:
-   `budget:read`, `transactions:read`, `bills:read`, `transactions:write`. Set **Used by** to
+   `budget:read`, `transactions:read`, `bills:read`, `receipts:scan`, `transactions:write`. Set **Used by** to
    **Telegram bot** so its rows are stamped `TELEGRAM` rather than appearing as Claude's. A
    write-only token fails on every message, since each one reads the category list first.
 3. Set the environment variables (see below), then start the app. The bot starts with it.

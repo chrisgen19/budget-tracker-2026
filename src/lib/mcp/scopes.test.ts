@@ -3,7 +3,9 @@ import {
   DEFAULT_MINT_SCOPES,
   MCP_SCOPES,
   MCP_SCOPE_LABELS,
+  READ_ONLY_SCOPES,
   grantsWrite,
+  isPrivilegedScope,
   isWriteScope,
   parseScopes,
 } from "./scopes";
@@ -54,7 +56,15 @@ describe("DEFAULT_MINT_SCOPES", () => {
     expect(grantsWrite(DEFAULT_MINT_SCOPES)).toBe(false);
   });
 
-  it("offers every read scope by default", () => {
-    expect(DEFAULT_MINT_SCOPES).toEqual(MCP_SCOPES.filter((s) => !isWriteScope(s)));
+  it("offers every scope that neither writes nor costs anything", () => {
+    expect(DEFAULT_MINT_SCOPES).toEqual(MCP_SCOPES.filter((s) => !isPrivilegedScope(s)));
+  });
+
+  it("never pre-selects a scope that spends the user's scan allowance", () => {
+    // receipts:scan does not end in ":write", so the old definition of read-only filed it as
+    // harmless and put it in this list. Every token minted from an untouched form, and the local
+    // stdio server which passes no scopes at all, would then have been able to spend real money.
+    expect(DEFAULT_MINT_SCOPES).not.toContain("receipts:scan");
+    expect(READ_ONLY_SCOPES).not.toContain("receipts:scan");
   });
 });

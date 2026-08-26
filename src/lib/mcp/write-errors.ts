@@ -1,4 +1,6 @@
 import type { BatchFailureReason } from "@/lib/transaction-writes";
+import type { ScanRefusal } from "@/lib/receipt-guard";
+import type { ScanFailure } from "@/lib/receipt-scan";
 
 /**
  * What `create_transactions` says when a write fails, defined once so a client can recognise it.
@@ -35,3 +37,40 @@ export const WRITE_ERROR_MESSAGES: Record<BatchFailureReason, string> = {
  */
 export const isAmbiguousWriteFailure = (message: string): boolean =>
   message.trim() === WRITE_ERROR_MESSAGES.UNKNOWN_WHETHER_SAVED;
+
+/**
+ * What `scan_receipt` says when a scan is refused before it runs.
+ *
+ * Written for a model that has to decide what to do next, so each one says whether retrying could
+ * ever work: a lapsed allowance cannot be retried today, a rate limit can be retried later, and a
+ * disabled feature needs the user to change a setting.
+ */
+export const SCAN_REFUSAL_MESSAGES: Record<
+  ScanRefusal["reason"],
+  (refusal: ScanRefusal) => string
+> = {
+  UNAUTHORIZED: () => "That account no longer exists.",
+  SCAN_DISABLED: (r) =>
+    r.reason === "SCAN_DISABLED" && r.scope === "USER"
+      ? "Receipt scanning is switched off for this account. Turn it on in Profile > Settings > Features."
+      : "Receipt scanning is not available on this account's plan.",
+  INVALID_TYPE: () => "That image format is not supported. Send a JPEG, PNG, WebP, HEIC or HEIF.",
+  TOO_LARGE: () => "That image is over the 4 MB limit. Send a smaller or more compressed photo.",
+  LIMIT_REACHED: (r) =>
+    r.reason === "LIMIT_REACHED"
+      ? `This account has used all ${r.limit} of its scans for the month (${r.used}/${r.limit}). The allowance resets next month; enter the transaction manually until then.`
+      : "",
+  RATE_LIMITED: (r) =>
+    r.reason === "RATE_LIMITED"
+      ? `Too many scans in a short time. Wait about ${Math.ceil(r.retryAfterSeconds / 60)} minute(s) and try the same image again.`
+      : "",
+};
+
+/** What `scan_receipt` says when the scan ran but produced nothing usable. The credit is
+ *  refunded in every one of these cases, so retrying costs the user nothing extra. */
+export const SCAN_FAILURE_MESSAGES: Record<ScanFailure["reason"], string> = {
+  NOT_A_RECEIPT: "That image does not look like a receipt. Ask the user for a photo of one.",
+  UNREADABLE: "The receipt could not be read. Ask for a clearer, better-lit photo.",
+  AI_UNAVAILABLE: "The scanning service is busy. Try the same image again in a minute.",
+  FAILED: "The scan failed. Try the same image again.",
+};

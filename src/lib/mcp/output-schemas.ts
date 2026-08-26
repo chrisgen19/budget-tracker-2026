@@ -304,3 +304,27 @@ export const createTransactionsOutput = {
   replayed: z.boolean(),
   transactions: z.array(createdTransaction),
 };
+
+/**
+ * What `scan_receipt` returns: a draft, never a saved row.
+ *
+ * Deliberately not pinned to a query-layer type with `assertExact` like the read schemas, since
+ * this describes AI output rather than a database shape. `breakdown` is passed through as opaque
+ * JSON: the caller either sends it to `create_transactions` unchanged or ignores it, and pinning
+ * its shape here would duplicate `receiptScanResultSchema` for no gain.
+ */
+export const scanReceiptOutput = {
+  amount: z.number(),
+  categoryId: z.string(),
+  /** YYYY-MM-DD in the user's own calendar. */
+  date: z.string(),
+  description: z.string(),
+  type: z.literal("EXPENSE"),
+  /** True when the receipt spans more than one category, in which case `breakdown` is present. */
+  multiCategory: z.boolean().optional(),
+  breakdown: z.unknown().optional(),
+  /** The year read off the receipt does not match the current one, so the date is worth checking. */
+  dateWarning: z.boolean(),
+  /** The receipt's own date was unreadable, so the photo's date was used instead. */
+  usedPhotoFallback: z.boolean(),
+};

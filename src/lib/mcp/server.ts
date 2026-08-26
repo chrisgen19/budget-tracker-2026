@@ -1,6 +1,10 @@
 import { McpServer, type RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { TransactionSource } from "@prisma/client";
-import { WRITE_ERROR_MESSAGES } from "@/lib/mcp/write-errors";
+import {
+  SCAN_FAILURE_MESSAGES,
+  SCAN_REFUSAL_MESSAGES,
+  WRITE_ERROR_MESSAGES,
+} from "@/lib/mcp/write-errors";
 import { z } from "zod";
 import {
   getSpendingByCategory,
@@ -28,6 +32,7 @@ import {
   clientBatchIdSchema,
   formatLocalDate,
   hasTrustworthyTime,
+  isRealDate,
   mcpTransactionSchema,
   resolveTransactionDate,
   MAX_BATCH_TRANSACTIONS,
@@ -46,6 +51,7 @@ import {
   billHistoryOutput,
   receiptItemsOutput,
   createTransactionsOutput,
+  scanReceiptOutput,
 } from "./output-schemas";
 
 /**
@@ -135,6 +141,9 @@ export const createBudgetMcpServer = ({
   tokenId,
   createdVia = "MCP",
 }: BudgetMcpServerOptions): McpServer => {
+  // Scanning is gated by scope alone. It writes nothing, so the write lease does not apply; its
+  // own limit is the user's monthly scan allowance, enforced inside `scanReceipt`.
+  const scanEnabled = scopes.includes("receipts:scan");
   const registered = {} as Record<McpToolName, RegisteredTool>;
 
   const server = new McpServer(
@@ -588,6 +597,99 @@ export const createBudgetMcpServer = ({
       return {
         content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
         structuredContent: structured(payload),
+      };
+    }
+  );
+
+  registered.scan_receipt = server.registerTool(
+    "scan_receipt",
+    {
+      title: "Scan a receipt photo",
+      description:
+        "Read a photo of a receipt and return the amount, date, category and merchant, WITHOUT " +
+        "saving anything. Show the result to the user, let them correct it, then call " +
+        "create_transactions to save it. " +
+        "Only for callers that cannot read the image themselves: if you can see the image, read " +
+        "it directly and call create_transactions, because every call here spends one of the " +
+        "user's monthly scans. " +
+        "Send the raw image as base64 with its mime type (JPEG, PNG, WebP, HEIC or HEIF). The " +
+        "image must be 4 MB or smaller before encoding. " +
+        "The returned categoryId is always one of the user's own. Check dateWarning and " +
+        "usedPhotoFallback before saving: both mean the date is a guess worth confirming.",
+      inputSchema: {
+        imageBase64: z
+          .string()
+          .min(1)
+          .describe("The receipt image, base64 encoded, with no data: URL prefix."),
+        mimeType: z
+          .enum(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"])
+          .describe("The image's mime type."),
+        localDate: z
+          .string()
+          .optional()
+          .describe(
+            "Today's date in the user's timezone as YYYY-MM-DD. Used to spot a receipt year " +
+              "that cannot be right. Defaults to the user's today."
+          ),
+      },
+      outputSchema: scanReceiptOutput,
+      // Not read-only: each call spends a metered, paid resource, so clients must prompt rather
+      // than auto-approving it. It still writes nothing, hence destructiveHint false. Not
+      // idempotent either: a second call costs a second scan and Gemini may read it differently.
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ imageBase64, mimeType, localDate }) => {
+      const refuse = (text: string) => ({
+        content: [{ type: "text" as const, text }],
+        isError: true,
+      });
+
+      if (!scanEnabled) {
+        return refuse(
+          "This token cannot scan receipts. Mint a new token with the receipts:scan scope in Profile > MCP Access."
+        );
+      }
+
+      // Decoded here so a malformed payload is refused before anything is reserved. Buffer.from
+      // ignores invalid base64 rather than throwing, so the round trip is what actually detects it.
+      const buffer = Buffer.from(imageBase64, "base64");
+      if (buffer.length === 0) {
+        return refuse("imageBase64 is not valid base64 image data.");
+      }
+
+      const today = formatLocalDate(new Date(), timezoneOffset);
+      const todayStr = localDate && isRealDate(localDate) ? localDate.slice(0, 10) : today;
+
+      // Imported here rather than at module scope on purpose: `receipt-scan` pulls in
+      // `gemini.ts`, which builds its client on load and throws without GEMINI_API_KEY. At the
+      // top of this file that would make the stdio entry point refuse to start on a machine that
+      // has no Gemini key and never intended to scan anything.
+      const { scanReceipt } = await import("@/lib/receipt-scan");
+
+      const outcome = await scanReceipt({
+        userId,
+        base64: buffer.toString("base64"),
+        mimeType,
+        byteLength: buffer.length,
+        todayStr,
+        // The caller has no camera roll to read a capture date from, so today is the only
+        // honest fallback for an unreadable receipt date.
+        photoDateStr: todayStr,
+      });
+
+      if ("refusal" in outcome) return refuse(SCAN_REFUSAL_MESSAGES[outcome.refusal.reason](outcome.refusal));
+      if (!outcome.ok) return refuse(SCAN_FAILURE_MESSAGES[outcome.failure.reason]);
+
+      const r = outcome.result;
+      const summary =
+        `Receipt read: ${r.description} for ${r.amount} on ${r.date}.` +
+        (r.dateWarning ? " The year on the receipt looks wrong, so confirm the date." : "") +
+        (r.usedPhotoFallback ? " The receipt's own date was unreadable, so today's was used." : "") +
+        " Nothing has been saved. Confirm with the user, then call create_transactions.";
+
+      return {
+        content: [{ type: "text" as const, text: summary }],
+        structuredContent: { ...r },
       };
     }
   );

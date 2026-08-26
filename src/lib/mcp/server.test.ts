@@ -218,13 +218,24 @@ describe("createBudgetMcpServer", () => {
 
     expect(tools).toHaveLength(Object.keys(MCP_TOOL_SCOPES).length);
 
-    const readTools = tools.filter((tool) => tool.name !== "create_transactions");
-    expect(readTools.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
+    // Anything that changes data or spends a metered resource must not be marked read-only, or
+    // clients auto-approve it without prompting.
+    const PROMPTS_BEFORE_RUNNING = ["create_transactions", "scan_receipt"];
 
-    // The write tool must NOT be read-only, or clients auto-approve it without prompting.
-    const write = tools.find((tool) => tool.name === "create_transactions");
-    expect(write?.annotations?.readOnlyHint).toBeUndefined();
-    expect(write?.annotations?.destructiveHint).toBe(false);
-    expect(write?.annotations?.idempotentHint).toBe(true);
+    const readTools = tools.filter((tool) => !PROMPTS_BEFORE_RUNNING.includes(tool.name));
+    expect(readTools.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
+    expect(readTools).toHaveLength(tools.length - PROMPTS_BEFORE_RUNNING.length);
+
+    for (const name of PROMPTS_BEFORE_RUNNING) {
+      const tool = tools.find((t) => t.name === name);
+      expect(tool, name).toBeDefined();
+      expect(tool?.annotations?.readOnlyHint, name).toBeUndefined();
+      expect(tool?.annotations?.destructiveHint, name).toBe(false);
+    }
+
+    // Replaying a clientBatchId returns the original rows, so the write is idempotent. A second
+    // scan is not: it costs another credit and Gemini may read the image differently.
+    expect(tools.find((t) => t.name === "create_transactions")?.annotations?.idempotentHint).toBe(true);
+    expect(tools.find((t) => t.name === "scan_receipt")?.annotations?.idempotentHint).toBe(false);
   });
 });

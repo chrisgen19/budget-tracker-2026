@@ -1,8 +1,22 @@
+/** One size of a photo Telegram has already transcoded. */
+export interface TelegramPhotoSize {
+  file_id: string;
+  file_size?: number;
+  width?: number;
+  height?: number;
+}
+
 /** The fields of a Telegram message this bot actually reads. */
 export interface TelegramMessage {
   chat: { id: number; type?: string };
   from?: { id?: number; username?: string };
   text?: string;
+  /** Ascending by size. Telegram recompresses these, so the largest is the best available. */
+  photo?: TelegramPhotoSize[];
+  /** A file sent without compression, which is the better source for OCR when the user picks it. */
+  document?: { file_id: string; mime_type?: string; file_size?: number };
+  /** Present on both photos and documents when the user typed a message with the attachment. */
+  caption?: string;
 }
 
 export interface Allowlist {

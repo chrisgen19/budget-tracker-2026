@@ -9,6 +9,14 @@ import { updateBatchId } from "@/lib/telegram/batch-id";
 import { localDay, localTimestamp } from "@/lib/telegram/local-time";
 import { messageIsAllowed, type Allowlist, type TelegramMessage } from "@/lib/telegram/allowlist";
 import { chunkMessage } from "@/lib/telegram/chunk";
+import { MAX_IMAGE_BYTES, pickReceiptImage } from "@/lib/telegram/photo";
+import {
+  clearPendingScan,
+  isConfirmation,
+  isRejection,
+  putPendingScan,
+  takePendingScan,
+} from "@/lib/telegram/pending-scan";
 import { GEMINI_TIMEOUT_MS } from "@/lib/gemini-limits";
 import {
   McpToolError,
@@ -221,6 +229,50 @@ async function telegramApi(method: string, body: Record<string, any> = {}): Prom
  * confirmed leaves the user believing nothing happened, and their resend arrives under a new
  * Telegram update id, so it writes a second row instead of replaying the first.
  */
+/**
+ * Download a file Telegram is holding for us.
+ *
+ * Two steps by design on Telegram's side: `getFile` exchanges a `file_id` for a short-lived path,
+ * and the bytes come from a different host. Bounded by the same timeout as every other call, and
+ * by `MAX_IMAGE_BYTES` mid-stream, so a file whose declared size lied cannot be buffered without
+ * limit.
+ */
+async function downloadTelegramFile(fileId: string): Promise<Buffer> {
+  const file = await telegramApi("getFile", { file_id: fileId });
+  const path = file?.file_path;
+  if (!path) throw new Error("Telegram returned no file_path");
+
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      `https://api.telegram.org/file/bot${BOT_TOKEN}/${path}`,
+      { agent },
+      (res) => {
+        if (res.statusCode !== 200) {
+          res.resume();
+          reject(new Error(`Telegram file download returned ${res.statusCode}`));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        let total = 0;
+        res.on("data", (chunk: Buffer) => {
+          total += chunk.length;
+          if (total > MAX_IMAGE_BYTES) {
+            req.destroy(new Error("Image exceeds the size limit"));
+            return;
+          }
+          chunks.push(chunk);
+        });
+        res.on("end", () => resolve(Buffer.concat(chunks)));
+        res.on("error", reject);
+      }
+    );
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      req.destroy(new Error(`Telegram file download timed out after ${REQUEST_TIMEOUT_MS}ms`));
+    });
+    req.on("error", reject);
+  });
+}
+
 async function sendMessage(
   chatId: number | string,
   text: string,
@@ -546,17 +598,135 @@ Return ONLY a JSON object in this format:
   }
 }
 
+/** What `scan_receipt` returns. Mirrors `scanReceiptOutput` in the MCP server. */
+interface ScannedReceipt {
+  amount: number;
+  categoryId: string;
+  date: string;
+  description: string;
+  dateWarning: boolean;
+  usedPhotoFallback: boolean;
+}
+
+/**
+ * Scan a receipt photo and ask the user to confirm before anything is written.
+ *
+ * The confirmation is not politeness. The web app shows a review modal for the same reason: OCR
+ * on a phone photo of a crumpled receipt is exactly where a wrong amount comes from, and a bot
+ * that saved silently would put it in the budget with nobody having seen it.
+ */
+async function handleReceiptPhoto(
+  message: TelegramMessage,
+  updateId: number,
+  categories: { id: string; name: string; type: string }[]
+): Promise<void> {
+  const chatId = message.chat.id;
+  const pick = pickReceiptImage(message);
+
+  if (pick.kind === "unsupported") {
+    await sendMessage(chatId, "I can only read JPEG, PNG, WebP or HEIC images.");
+    return;
+  }
+  if (pick.kind === "too_large") {
+    await sendMessage(
+      chatId,
+      `That image is ${(pick.bytes / 1024 / 1024).toFixed(1)} MB, over the ${MAX_IMAGE_BYTES / 1024 / 1024} MB limit. Send it as a photo rather than a file, or take a smaller one.`
+    );
+    return;
+  }
+  if (pick.kind === "none") return;
+
+  // A second photo supersedes the first: "yes" is ambiguous with two pending, and saving the
+  // wrong receipt is worse than being asked to send it again.
+  clearPendingScan(chatId);
+  await sendMessage(chatId, "Reading that receipt...");
+
+  const image = await downloadTelegramFile(pick.fileId);
+  const scan = await callTool<ScannedReceipt>("scan_receipt", {
+    imageBase64: image.toString("base64"),
+    mimeType: pick.mimeType,
+    localDate: localTimestamp(TZ_OFFSET).slice(0, 10),
+  });
+
+  const categoryName =
+    categories.find((c) => c.id === scan.categoryId)?.name ?? "Uncategorised";
+
+  putPendingScan(chatId, {
+    amount: scan.amount,
+    description: scan.description,
+    categoryId: scan.categoryId,
+    categoryName,
+    date: scan.date,
+    // Keyed to the photo's update, not the confirming message, so a redelivered "yes" replays
+    // the same batch instead of writing a second row.
+    updateId,
+    createdAt: Date.now(),
+  });
+
+  let reply = `\ud83e\uddfe *Receipt read*\n\n`;
+  reply += `\ud83d\udcdd *Description:* ${scan.description}\n`;
+  reply += `\ud83d\udcb0 *Amount:* ${SYMBOL}${scan.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
+  reply += `\ud83d\udcc1 *Category:* ${categoryName}\n`;
+  reply += `\ud83d\udcc5 *Date:* ${scan.date}\n`;
+  if (scan.dateWarning) reply += `\n\u26a0\ufe0f The year on the receipt looks wrong. Check the date.\n`;
+  if (scan.usedPhotoFallback) reply += `\n\u26a0\ufe0f I could not read a date on it, so I used today's.\n`;
+  reply += `\nNothing is saved yet. Reply *yes* to save it, or *no* to discard.`;
+
+  await sendMessage(chatId, reply);
+}
+
 async function handleMessage(message: TelegramMessage, updateId: number) {
   const chatId = message.chat.id;
   const text = (message.text || "").trim();
 
+  // A photo carries no `text`, so this has to come before the empty-text return that used to
+  // drop every non-text message on the floor.
+  if (message.photo?.length || message.document) {
+    const { categories } = await callTool<{
+      categories: { id: string; name: string; type: string }[];
+    }>("get_category_list");
+    await handleReceiptPhoto(message, updateId, categories);
+    return;
+  }
+
   if (!text) return;
+
+  // Answering a scan that is waiting. Checked before everything else: while one is pending, a
+  // bare "yes" means that and nothing else. Anything that is not a clear yes or no falls through
+  // to normal handling, so typing another expense logs it rather than being refused.
+  if (isConfirmation(text)) {
+    const scan = takePendingScan(chatId);
+    if (scan) {
+      const result = await createTransactions(updateBatchId(BOT_ID, scan.updateId), [
+        {
+          amount: scan.amount,
+          description: scan.description,
+          type: "EXPENSE",
+          categoryId: scan.categoryId,
+          date: scan.date,
+        },
+      ]);
+      if (result.transactions.length > 0) {
+        await confirmCreated(chatId, result);
+        return;
+      }
+    }
+  }
+
+  if (isRejection(text)) {
+    const scan = takePendingScan(chatId);
+    if (scan) {
+      await sendMessage(chatId, "Discarded. Nothing was saved.");
+      return;
+    }
+  }
 
   // Commands
   if (text.startsWith("/start") || text.startsWith("/help")) {
     const msg =
       `👋 *Welcome to Budget Tracker Bot!*\n\n` +
       `💼 *Currency:* ${SYMBOL}\n\n` +
+      `🧾 *Receipts:* send a photo and I will read it, then ask you to confirm\n\n` +
       `⚡ *Quick Logging:*\n` +
       `Just type your expense or income naturally:\n` +
       `• \`100 breakfast\`\n` +
@@ -742,6 +912,7 @@ const REQUIRED_TOOLS = [
   "search_transactions",
   "get_upcoming_bills",
   "create_transactions",
+  "scan_receipt",
 ] as const;
 
 /** Attempts the MCP handshake with backoff, and gives up quietly rather than ending the bot. */
@@ -762,7 +933,7 @@ async function probeMcp(): Promise<void> {
         // started clean and then failed on everything.
         console.warn(
           `[telegram] this token is missing ${missing.join(", ")}. ` +
-            "Mint one with budget:read, transactions:read, bills:read and transactions:write."
+            "Mint one with budget:read, transactions:read, bills:read, receipts:scan and transactions:write."
         );
       }
       return;
