@@ -59,6 +59,7 @@ enum AiInsightKind {
 enum TransactionSource {
   APP
   MCP
+  TELEGRAM
 }
 
 enum ScanStatus {
@@ -122,6 +123,13 @@ model McpToken {
   prefix          String
   tokenHash       String    @unique @map("token_hash")
   scopes          String[]
+  /// What this token represents, stamped onto every row it writes as `transactions.created_via`.
+  ///
+  /// Provenance belongs to the credential, not the endpoint. Every remote write arrives through
+  /// `/api/mcp`, so deriving it from the endpoint made a Telegram bot's rows claim Claude wrote
+  /// them. Set at mint time and never from request input, so a compromised token cannot pretend
+  /// to be something else.
+  source          TransactionSource @default(MCP)
   expiresAt       DateTime? @map("expires_at")
   revokedAt       DateTime? @map("revoked_at")
   lastUsedAt      DateTime? @map("last_used_at")

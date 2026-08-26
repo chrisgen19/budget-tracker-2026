@@ -1,4 +1,6 @@
 import { McpServer, type RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { TransactionSource } from "@prisma/client";
+import { WRITE_ERROR_MESSAGES } from "@/lib/mcp/write-errors";
 import { z } from "zod";
 import {
   getSpendingByCategory,
@@ -107,6 +109,14 @@ export interface BudgetMcpServerOptions {
   writesEnabledUntil?: Date | null;
   /** Recorded on every row this server writes, so an incident traces to one credential. */
   tokenId?: string;
+  /**
+   * Stamped onto rows this server writes, taken from the token row.
+   *
+   * Provenance belongs to the credential rather than the endpoint: every remote write arrives
+   * here, so deriving it from the endpoint made a Telegram bot's rows claim Claude wrote them.
+   * Never accepted from tool input, which would let a caller forge it.
+   */
+  createdVia?: TransactionSource;
 }
 
 /**
@@ -123,6 +133,7 @@ export const createBudgetMcpServer = ({
   scopes = READ_ONLY_SCOPES,
   writesEnabledUntil = null,
   tokenId,
+  createdVia = "MCP",
 }: BudgetMcpServerOptions): McpServer => {
   const registered = {} as Record<McpToolName, RegisteredTool>;
 
@@ -314,10 +325,12 @@ export const createBudgetMcpServer = ({
             "Only transactions carrying at least one of these label IDs. Use get_label_list to find IDs."
           ),
         createdVia: z
-          .enum(["APP", "MCP"])
+          .enum(["APP", "MCP", "TELEGRAM"])
           .optional()
           .describe(
-            "Where the row was created: APP for the app itself, MCP for rows written through this endpoint. Use it to review what you added."
+            "Where the row was created: APP for the app itself, MCP for rows an assistant wrote " +
+              "through this endpoint, TELEGRAM for rows the user's Telegram bot wrote. Use it to " +
+              "review what you added."
           ),
       },
       outputSchema: searchTransactionsOutput,
@@ -704,7 +717,7 @@ export const createBudgetMcpServer = ({
             t.labelIds ?? (hasTrustworthyTime(t.date, timezoneOffset) ? undefined : []),
         })),
         clientBatchId: key.data,
-        createdVia: "MCP",
+        createdVia,
         mcpTokenId: tokenId,
         // The lease was read when the request arrived; a batch can then hold a transaction for
         // up to a minute. Re-read at the moment of the write so "Turn off now" stops work that
@@ -719,12 +732,11 @@ export const createBudgetMcpServer = ({
       });
 
       if (!result.ok) {
-        const message =
-          result.reason === "LABELS_NOT_OWNED"
-            ? "One or more label IDs are not this user's. Call get_label_list for valid IDs."
-            : result.reason === "CATEGORIES_NOT_OWNED"
-              ? "One or more category IDs are not this user's. Call get_category_list for valid IDs."
-              : "Could not confirm whether these transactions were saved. Do NOT retry with a new clientBatchId: retry with the same one, which will return the original rows if they were written.";
+        // One message per reason, from the shared table. NO_LONGER_PERMITTED used to fall into
+        // the "could not confirm" wording, which was wrong: that check runs inside the
+        // transaction before any row is created, so nothing was written and there is nothing
+        // ambiguous to resolve.
+        const message = WRITE_ERROR_MESSAGES[result.reason];
         return { content: [{ type: "text" as const, text: message }], isError: true };
       }
 

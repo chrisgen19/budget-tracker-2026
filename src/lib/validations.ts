@@ -322,6 +322,15 @@ export type ReceiptBreakdownResult = z.infer<typeof receiptBreakdownResultSchema
 export type ReceiptBreakdownMetaInput = z.infer<typeof receiptBreakdownMetaSchema>;
 export type UpdateAppSettingsInput = z.infer<typeof updateAppSettingsSchema>;
 
+/** Provenance filter accepted by `GET /api/transactions` and the MCP search tool. */
+export const transactionSourceSchema = z.enum(["APP", "MCP", "TELEGRAM"]);
+
+/** What a minted token may claim to be. `APP` is excluded: it means the web app itself, which
+ *  never uses a token, so offering it would let a token forge rows as hand-typed. */
+export const mcpTokenSourceSchema = z.enum(["MCP", "TELEGRAM"]);
+
+export type McpTokenSource = z.infer<typeof mcpTokenSourceSchema>;
+
 /**
  * Minting an MCP token.
  *
@@ -335,6 +344,7 @@ export const createMcpTokenSchema = z
     name: z.string().trim().min(1).max(60),
     scopes: z.array(mcpScopeSchema).min(1),
     expiresInDays: z.number().int().min(1).max(MAX_TOKEN_EXPIRY_DAYS).nullable(),
+    source: mcpTokenSourceSchema.default("MCP"),
   })
   .refine((v) => !(grantsWrite(v.scopes) && v.expiresInDays === null), {
     message: "A token with a write scope must expire",
@@ -506,9 +516,6 @@ export const mcpTransactionSchema = batchTransactionSchema.extend({
     message: "date must be a real calendar date, e.g. 2026-08-25",
   }),
 });
-
-/** Provenance filter accepted by `GET /api/transactions` and the MCP search tool. */
-export const transactionSourceSchema = z.enum(["APP", "MCP"]);
 
 /**
  * Write-lease duration, in minutes from now.

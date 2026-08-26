@@ -100,7 +100,46 @@ src/
 - `EMAIL_FROM` — Sender address (optional; defaults to `Budget Tracker <noreply@resend.dev>` if unset). Use a verified Resend domain in production, e.g. `Budget Tracker <noreply@yourdomain.com>`.
 - `AUTH_URL` — Optional; used in preview/staging deployments
 - `CRON_SECRET` — Shared secret required by `/api/cron/bill-reminders`. Set in the production (Coolify) environment; a Coolify Scheduled Task reuses the same env var to call the endpoint daily (see **Cron Jobs** below).
+- `TELEGRAM_BOT_ENABLED`: starts the bot from `src/instrumentation.ts` on server boot. Set it **only** in the deployed environment: Telegram answers a second concurrent `getUpdates` for one bot token with 409 Conflict, so enabling it locally while production runs the bot makes the two fight. Use `pnpm telegram:bot` to run it locally instead, and not at the same time
+- `TELEGRAM_BOT_TOKEN`: from @BotFather
+- `TELEGRAM_ALLOWED_IDS` / `TELEGRAM_ALLOWED_USERNAMES`: who may message the bot. With neither set it serves nobody. Prefer numeric ids: usernames are weaker, since a released handle can be claimed by someone else
+- `TELEGRAM_MCP_URL` / `TELEGRAM_MCP_TOKEN`: where the bot writes. The URL is **required and has no default**: it used to fall back to this project's production domain, which is correct for its owner and a trap for a fork or a staging deploy that forgets it, since a write-capable token would then be sent to a host the deployer does not control. The port differs by how it runs: `http://localhost:3111/api/mcp` for `pnpm dev` plus `pnpm telegram:bot`, `http://localhost:3000/api/mcp` inside the deployed container (`next start`), or the public URL when the bot runs on a different machine from the app. Mint the token in Profile > MCP Access with all four scopes the handlers need: `budget:read`, `transactions:read`, `bills:read` and `transactions:write`. A write-only token fails on every message, since each one reads the category list first, and the probe names anything missing at startup. Give the bot its own token so revoking it does not break another client
+- `TELEGRAM_TZ_OFFSET`: **required, no default**. Minutes, `getTimezoneOffset()` convention, and it must match the account's own timezone. It used to fall back to the host's offset, which is UTC in the app container, so "yesterday" silently resolved to the wrong day. Used to resolve relative dates for Gemini and to render the day in `/recent`; every query and write is still resolved server-side against `users.timezone_offset`, so a wrong value cannot move a stored row, only mislabel one before it is written. That it duplicates `users.timezone_offset` at all is the real defect and can drift: see issue #132
+- `TELEGRAM_CURRENCY_SYMBOL`: display only, defaults to the peso sign
+- `TELEGRAM_API_IP`: only for a network whose DNS sinkholes Telegram, an address to use for `api.telegram.org` instead of the resolver. Unset everywhere else: Telegram rotates these, so a stale pin breaks all bot traffic even where DNS works
+- Blank counts as unset for every `TELEGRAM_` variable, so an empty Coolify field is treated as absent rather than as an empty string. `??` alone did not do that: `TELEGRAM_CURRENCY_SYMBOL=""` rendered every amount with no symbol, and `TELEGRAM_TZ_OFFSET=""` meant UTC, since `Number("")` is a finite 0. For the required variables (`TELEGRAM_MCP_URL`, `TELEGRAM_TZ_OFFSET`) blank now fails startup with a named cause rather than falling back
 - `AI_ASSESSMENT_DAILY_LIMIT` — Optional; max AI Assessment report generations per user per day (default `10`). The grounded report makes 2 Gemini calls per generation; cached reports and the daily tip don't count against it.
+
+## Telegram bot
+`src/lib/telegram/bot.ts` is a personal Telegram bot that logs transactions and answers summary
+queries. Gemini only ever *classifies* a message: it is never given transactions, totals or
+balances, and every figure the bot sends comes from an MCP read tool via the same handlers the
+slash commands use. A free-text question is routed to one of those handlers, not answered by the
+model, because a model holding only category names can only refuse or invent. It is an **MCP client**, not a database client: it calls `/api/mcp` with a scoped token,
+so it inherits the scope, the write lease, the rate limit and the audit trail rather than going
+around them, and it holds no database credentials.
+
+Two entry points share the one definition, the same shape as `mcp-server/`:
+- `src/instrumentation.ts` starts it on server boot when `TELEGRAM_BOT_ENABLED=true`, which is how
+  it runs in production. Importing it means Next traces it into `.next/standalone`, so the
+  container needs neither `tsx` nor `scripts/`
+- `scripts/telegram-bot.ts` (`pnpm telegram:bot`) runs it locally
+
+**Only one poller may exist per bot token.** Telegram answers a second concurrent `getUpdates`
+with 409 Conflict, which is why the flag exists: without it every `pnpm dev` would fight the
+deployed bot. Never run it locally while it is enabled in production.
+
+Every message is gated by `TELEGRAM_ALLOWED_IDS` (preferred) or `TELEGRAM_ALLOWED_USERNAMES`,
+**and** by the chat being private. Authenticating the sender alone was not enough: replies go to
+`message.chat.id`, so the owner running `/summary` in a group would have shown their balances to
+everyone in it.
+With neither set the bot serves nobody and says so at startup, because bot usernames are
+searchable and the `t.me` link is public. Denials log the sender's numeric id and reply with
+nothing, since a reply would confirm the bot is live and whose it is.
+
+`next.config.ts` ignores the bot module for non-node runtimes: `instrumentation.ts` is compiled
+for edge as well (middleware exists), the bot uses `node:https` and `node:dns`, and the
+`NEXT_RUNTIME` guard stops it *running* there without stopping webpack tracing it.
 
 ## Cron Jobs
 Production runs on Coolify. Schedules are configured in the Coolify dashboard under **Application > Scheduled Tasks** (not in the repo). Each task runs its command inside the running container, so it can hit the app at `http://localhost:3000` and reuse the container's env vars.
@@ -113,7 +152,7 @@ Active tasks:
 - Default categories are seeded (15 total: 10 expense, 5 income)
 - Users can create custom categories on top of defaults
 - Key models: `User`, `Category`, `Transaction`, `ScheduledTransaction` (recurring bills; `@@map("scheduled_transactions")` — there is no `Bill` model), `ScheduledTransactionLog` (per-occurrence PAID/SKIPPED/SNOOZED), `BillEmailLog`, `Label`, `LabelSchedule`, `TransactionLabel`, `BillLabel`, `VerificationToken`, `ScanLog`, `AiAssessment`, `AiUsageLog`, `McpToken`, `AppSettings`
-- Notable columns: `users.hide_amounts`, `users.timezone_offset`, `users.email_verified`, `users.default_label_type`, `transactions.receipt_group_id`, `transactions.receipt_breakdown`, `transactions.bill_id`, `transactions.client_batch_id`, `transactions.created_via`, `transactions.mcp_token_id`, `users.mcp_writes_enabled_until`
+- Notable columns: `users.hide_amounts`, `users.timezone_offset`, `users.email_verified`, `users.default_label_type`, `transactions.receipt_group_id`, `transactions.receipt_breakdown`, `transactions.bill_id`, `transactions.client_batch_id`, `transactions.created_via`, `transactions.mcp_token_id`, `users.mcp_writes_enabled_until`, `mcp_tokens.source`
 - `Label.applicable_to` restricts labels to "EXPENSE", "INCOME", or "BOTH" (default); filters LabelPicker, schedule auto-labeling, and retroactive apply
 - `LabelSchedule` stores per-label auto-apply rules: `days` (int[]), `startTime`/`endTime` (HH:mm), linked to `Label` via `labelId`
 
@@ -143,7 +182,7 @@ Active tasks:
 - **AI Assessment** (`src/lib/ai-assessment.ts`) — Gemini turns the analytics page's already-computed `AnalyticsData` into a personalized report; two parallel calls (structured data analysis + grounded web tips via Google Search), cached per period in `AiAssessment`, metered by `AiUsageLog`. Prose is privacy-safe by construction (relative/percentage language, not raw amounts)
 - **TanStack React Query** — all data fetching uses React Query; `queryKeys` object in each query hook scopes cache invalidation; `query-client.ts` exports a factory (needed for server/client separation)
 - **Shared transaction writes** (`src/lib/transaction-writes.ts`): `createTransactionBatch` is the single create path, injected with `prisma` and shared by `POST /api/transactions/batch` and the MCP `create_transactions` tool. It owns the advisory-lock idempotency, the label resolution rules (`undefined` auto-labels, `[]` opts out, explicit ids are deduped and type-filtered), and the category-ownership check. A second copy would drift the moment either changed
-- **MCP writes** are gated by three independent controls, none of which substitutes for another: the `transactions:write` scope (least privilege, fixed at mint, and such a token may not choose "Never" and is capped at 90 days), `users.mcp_writes_enabled_until` (a *lease*, not a boolean, so forgetting to switch it off cannot leave writes open for days), and `transactions.created_via` + `mcp_token_id` (audit, set server-side so a compromised token cannot forge or omit it). Provenance is a column and not a label because `getLabelBreakdown` splits an amount evenly across a transaction's labels, so a provenance label would divert half of every MCP-written expense out of its real category, and labels are user-deletable
+- **MCP writes** are gated by three independent controls, none of which substitutes for another: the `transactions:write` scope (least privilege, fixed at mint, and such a token may not choose "Never" and is capped at 90 days), `users.mcp_writes_enabled_until` (a *lease*, not a boolean, so forgetting to switch it off cannot leave writes open for days), and `transactions.created_via` + `mcp_token_id` (audit, set server-side so a compromised token cannot forge or omit it). Provenance follows the *credential*, not the endpoint: `mcp_tokens.source` is chosen at mint ("AI assistant" or "Telegram bot") and stamped onto every row that token writes, because every remote write arrives through `/api/mcp` and deriving it from the endpoint made the Telegram bot's rows claim Claude wrote them. `APP` is not mintable, so a token can never make a row look hand-typed. Provenance is a column and not a label because `getLabelBreakdown` splits an amount evenly across a transaction's labels, so a provenance label would divert half of every MCP-written expense out of its real category, and labels are user-deletable
 - **Shared budget queries** (`src/lib/budget-queries.ts`) — dependency-injected Prisma functions shared between API routes and the MCP server
 - **MCP and label schedules**: `create_transactions` lets a user's auto-apply schedules run, but only when the timestamp reflects reality (`hasTrustworthyTime`): a time the caller supplied, or a bare date that is *today* in the user's zone. A bare date is filled with the current clock, so a backdated row would otherwise carry an invented time, and a Tuesday dinner entered on a Wednesday morning would land inside a weekday 05:00-17:00 window and be tagged as work spending. An explicit `labelIds: []` always opts out
 - **Label schedules** — labels can have time-of-day + day-of-week schedules that auto-tag transactions; pure matching in `schedule-matching.ts`, server helpers in `schedule-server.ts`, client hook in `use-scheduled-label.ts`; first-created label wins on overlap; `labelIds: undefined` = server auto-applies, `labelIds: []` = user opted out

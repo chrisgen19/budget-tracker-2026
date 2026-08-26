@@ -100,6 +100,7 @@ const serve = async (request: Request) => {
     scopes: auth.scopes,
     writesEnabledUntil: user.mcpWritesEnabledUntil,
     tokenId: auth.tokenId,
+    createdVia: auth.source,
   });
 
   const transport = new WebStandardStreamableHTTPServerTransport({

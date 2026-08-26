@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { Prisma } from "@prisma/client";
+import { Prisma, type TransactionSource } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { grantsWrite, parseScopes, type McpScope } from "./scopes";
 
@@ -30,7 +30,14 @@ export type McpAuthFailure =
   | { reason: "RATE_LIMITED"; retryAfterSeconds: number };
 
 export type McpAuthResult =
-  | { ok: true; tokenId: string; userId: string; scopes: McpScope[] }
+  | {
+      ok: true;
+      tokenId: string;
+      userId: string;
+      scopes: McpScope[];
+      /** Stamped onto rows this token writes. Comes from the token row, never from the request. */
+      source: TransactionSource;
+    }
   | { ok: false; failure: McpAuthFailure };
 
 /** Why a write was refused, so the tool can tell the model which of the two switches to mention. */
@@ -77,6 +84,8 @@ export const mintMcpToken = async (params: {
   name: string;
   scopes: McpScope[];
   expiresInDays: number | null;
+  /** What the token represents. Defaults to an assistant reaching the endpoint over MCP. */
+  source?: TransactionSource;
 }) => {
   const token = TOKEN_PREFIX + randomBytes(TOKEN_BYTES).toString("base64url");
   const expiresAt =
@@ -91,6 +100,7 @@ export const mintMcpToken = async (params: {
       prefix: token.slice(0, PREFIX_KEEP),
       tokenHash: hashMcpToken(token),
       scopes: params.scopes,
+      source: params.source ?? "MCP",
       expiresAt,
     },
     select: mcpTokenSelect,
@@ -105,6 +115,7 @@ export const mcpTokenSelect = {
   name: true,
   prefix: true,
   scopes: true,
+  source: true,
   expiresAt: true,
   revokedAt: true,
   lastUsedAt: true,
@@ -198,7 +209,15 @@ export const authenticateMcpRequest = async (
 
   const record = await prisma.mcpToken.findUnique({
     where: { tokenHash: hashMcpToken(presented) },
-    select: { id: true, userId: true, scopes: true, tokenHash: true, revokedAt: true, expiresAt: true },
+    select: {
+      id: true,
+      userId: true,
+      scopes: true,
+      source: true,
+      tokenHash: true,
+      revokedAt: true,
+      expiresAt: true,
+    },
   });
 
   // The unique-index lookup already decided this; the compare re-checks it in constant time so
@@ -232,6 +251,7 @@ export const authenticateMcpRequest = async (
   return {
     ok: true,
     tokenId: record.id,
+    source: record.source,
     userId: record.userId,
     // Narrowed to scopes this build knows: a scope removed from the code must stop granting
     // access even while it is still sitting in an old row.

@@ -19,6 +19,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate",
+    "telegram:bot": "tsx scripts/telegram-bot.ts",
     "prepare": "husky"
   },
   "dependencies": {

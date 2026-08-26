@@ -452,11 +452,14 @@ export function useBatchCreateTransactions() {
         {
           queryKey: queryKeys.transactions.all,
           // Everything saved through this hook is app-created, so it must never be spliced into
-          // a cache filtered to MCP: the row would appear under "Added by Claude", which is
-          // exactly the claim `created_via` exists to make trustworthy. The splice ignores the
-          // other filters too (it orders by date alone), but those only ever show an extra row
-          // early; this one would misattribute it.
-          predicate: (query) => filtersOfKey(query.queryKey)?.createdVia !== "MCP",
+          // a cache filtered to a remote source: the row would appear under "Added by Claude" or
+          // "Added via Telegram", which is exactly the claim `created_via` exists to make
+          // trustworthy. The splice ignores the other filters too (it orders by date alone), but
+          // those only ever show an extra row early; this one would misattribute it.
+          predicate: (query) => {
+            const via = filtersOfKey(query.queryKey)?.createdVia;
+            return via !== "MCP" && via !== "TELEGRAM";
+          },
         },
         (old) => {
           if (!old?.pages) return old;

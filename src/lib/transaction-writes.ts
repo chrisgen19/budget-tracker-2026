@@ -42,7 +42,7 @@ export interface CreateTransactionBatchParams {
    *  retries on its own, with no human deciding whether to resubmit. */
   clientBatchId?: string;
   createdVia: TransactionSource;
-  /** Recorded when `createdVia` is MCP, so an incident can be traced to one credential. */
+  /** Recorded for any token-carried source, so an incident can be traced to one credential. */
   mcpTokenId?: string;
   /**
    * Re-checked inside the write transaction, immediately before any row is created. Returning

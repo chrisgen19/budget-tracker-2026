@@ -16,6 +16,19 @@ describe("TransactionRowBadges", () => {
     expect(screen.getByLabelText("Added by Claude")).toBeDefined();
   });
 
+  it("distinguishes a Telegram row from a Claude one", () => {
+    // Both arrive through /api/mcp. Sharing one marker would have made the bot's rows claim
+    // Claude wrote them, which is the misattribution this whole column exists to prevent.
+    render(<TransactionRowBadges createdVia="TELEGRAM" />);
+    expect(screen.getByLabelText("Added via Telegram")).toBeDefined();
+    expect(screen.queryByLabelText("Added by Claude")).toBeNull();
+  });
+
+  it("does not mark an app row as Telegram", () => {
+    render(<TransactionRowBadges createdVia="APP" />);
+    expect(screen.queryByLabelText("Added via Telegram")).toBeNull();
+  });
+
   it("does not mark a row created in the app", () => {
     render(<TransactionRowBadges createdVia="APP" />);
     expect(screen.queryByLabelText("Added by Claude")).toBeNull();
