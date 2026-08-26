@@ -447,29 +447,9 @@ BUDGET_USER_ID=your-user-id DATABASE_URL="your-database-url" npx @modelcontextpr
 
 This opens a web UI at `http://localhost:6274` where you can call each tool and inspect the results.
 
-To exercise the remote endpoint instead (bearer auth, scope narrowing, and a real tool call over
-HTTP, driven by the SDK's own client), run it against a dev server:
-
-```bash
-pnpm dev -p 3111
-BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-mcp-endpoint.ts
-```
-
-To exercise `scan_receipt` end to end, including a real Gemini call and the scan-credit
-accounting:
-
-```bash
-pnpm dev -p 3111
-BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-receipt-scan.ts
-# and, to cover a successful scan as well:
-RECEIPT=/path/to/receipt.jpg BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-receipt-scan.ts
-```
-
-It uses a throwaway user, so it never spends your own scan allowance.
-
-`scripts/verify-mcp-token-auth.ts` covers the token lifecycle (expiry, revocation, rate limiting)
-directly against the database. It needs a **non-UTC** database timezone and says so if it finds
-one, since the timestamp behaviour it checks cannot be observed under UTC.
+The Inspector drives the **stdio** server. To exercise the remote endpoint instead, including
+bearer auth, scope narrowing, the write path and `scan_receipt`, see
+[Verification scripts](#verification-scripts) under Testing.
 
 ## Telegram Bot
 
@@ -564,6 +544,90 @@ it.
 
 Two entry points share one definition: `src/instrumentation.ts` starts the bot on server boot in
 production, and `scripts/telegram-bot.ts` (`pnpm telegram:bot`) runs it locally.
+
+## Testing
+
+```bash
+pnpm test          # the whole suite once
+pnpm test:watch    # re-run on change
+pnpm lint
+pnpm type-check
+cd mcp-server && pnpm type-check   # excluded from the root config, so run it separately
+```
+
+Vitest with React Testing Library, jsdom environment. Tests are colocated as
+`src/**/*.test.ts(x)`, so nothing imports them and they stay out of the Next.js bundle.
+
+### Verification scripts
+
+Five things cannot be tested in jsdom, because getting them wrong looks identical to getting
+them right until a real database or a real HTTP request is involved: advisory locks, row locks,
+transaction isolation, timestamp marshalling, and anything a spec-compliant client validates on
+the way back. Each has a script under `scripts/`, run directly with `pnpm exec tsx`.
+
+They are worth running when you touch the area they cover. Each creates and deletes its own
+throwaway user, so none of them touch your own data.
+
+| Script | Covers | Needs |
+|---|---|---|
+| `verify-scan-quota.ts` | Scan credit reservation, refund, and the rolling rate limit under concurrency | a database |
+| `verify-mcp-token-auth.ts` | Token expiry, revocation, and the rate limiter's row lock | a **non-UTC** database |
+| `verify-mcp-endpoint.ts` | Bearer auth, the stateless transport, and scope narrowing over real HTTP | a dev server |
+| `verify-batch-idempotency.ts` | A committed batch whose response was lost replays instead of duplicating | a dev server |
+| `verify-receipt-scan.ts` | `scan_receipt` over HTTP, a real Gemini call, and the scan-credit accounting | a dev server + `GEMINI_API_KEY` |
+
+```bash
+# database only
+pnpm exec tsx scripts/verify-scan-quota.ts
+pnpm exec tsx scripts/verify-mcp-token-auth.ts
+
+# dev server in one terminal
+pnpm dev -p 3111
+
+# then, in another
+BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-mcp-endpoint.ts
+BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-batch-idempotency.ts
+BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-receipt-scan.ts
+```
+
+`verify-mcp-token-auth.ts` refuses to pass against a UTC database and says so: the timestamp
+behaviour it checks cannot be observed under UTC, so a green run there would prove nothing.
+
+### Testing receipt scanning
+
+`verify-receipt-scan.ts` covers the whole scan path without a receipt to hand, using
+`bill.png` (a screenshot, not a receipt) to exercise the refusal *and* confirm the scan credit is
+refunded. To also cover a successful scan, point it at a real photo:
+
+```bash
+RECEIPT=/path/to/receipt.jpg BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-receipt-scan.ts
+```
+
+It checks that a refused call reserves nothing, a non-receipt is refunded but keeps its `FAILED`
+row so it still counts toward the rate limit, a usable scan spends exactly one credit, and
+scanning writes no transaction.
+
+### Testing the Telegram bot
+
+The bot's own logic (photo selection, the pending-scan lifecycle, the confirm step, message
+parsing) is covered by unit tests. Everything past that needs real Telegram.
+
+```bash
+pnpm dev -p 3111        # one terminal
+pnpm telegram:bot       # another
+```
+
+`.env` needs `TELEGRAM_BOT_TOKEN`, an allowlist entry, `TELEGRAM_MCP_URL=http://localhost:3111/api/mcp`,
+`TELEGRAM_MCP_TOKEN`, and `TELEGRAM_TZ_OFFSET`. The startup log names anything missing.
+
+> **Only one poller may exist per bot token.** Telegram answers a second concurrent `getUpdates`
+> with 409 Conflict, so never run `pnpm telegram:bot` while `TELEGRAM_BOT_ENABLED=true` in a
+> deployed environment. Either turn it off there first, or use a second bot from @BotFather for
+> local work.
+
+Sending a photo spends a real scan credit and calls Gemini, so it costs something every time. The
+verification script above is the cheaper way to test the scan itself; use the bot to test the
+parts only it has, which are the photo download and the yes/no confirmation.
 
 ## Git Hooks
 
