@@ -6,6 +6,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { GoogleGenAI } from "@google/genai";
 import { updateBatchId } from "@/lib/telegram/batch-id";
+import { localTimestamp } from "@/lib/telegram/local-time";
+import { messageIsAllowed, type Allowlist, type TelegramMessage } from "@/lib/telegram/allowlist";
 /**
  * The bot talks to the deployed app over MCP rather than to a database.
  *
@@ -17,10 +19,22 @@ import { updateBatchId } from "@/lib/telegram/batch-id";
  * As an MCP client it needs no database credentials at all, and the token decides whose budget it
  * touches and what it may do there.
  */
-const MCP_URL = process.env.TELEGRAM_MCP_URL ?? "https://budget.cgdev.site/api/mcp";
-const MCP_TOKEN = process.env.TELEGRAM_MCP_TOKEN;
+/**
+ * An environment variable, with blank treated as unset.
+ *
+ * `??` only catches `undefined`, and a Coolify field or a `.env.example` line left as `""` is an
+ * empty string. That made `TELEGRAM_CURRENCY_SYMBOL=""` render every amount with no symbol, and
+ * `TELEGRAM_TZ_OFFSET=""` silently mean UTC, since `Number("")` is a perfectly finite 0.
+ */
+const env = (name: string): string | undefined => {
+  const value = process.env[name]?.trim();
+  return value ? value : undefined;
+};
+
+const MCP_URL = env("TELEGRAM_MCP_URL") ?? "https://budget.cgdev.site/api/mcp";
+const MCP_TOKEN = env("TELEGRAM_MCP_TOKEN");
 /** Only used for display; the server owns every amount and every date boundary. */
-const SYMBOL = process.env.TELEGRAM_CURRENCY_SYMBOL ?? "\u20B1";
+const SYMBOL = env("TELEGRAM_CURRENCY_SYMBOL") ?? "\u20B1";
 
 /**
  * The user's timezone offset in minutes, `getTimezoneOffset()` convention so UTC+8 is -480.
@@ -32,11 +46,11 @@ const SYMBOL = process.env.TELEGRAM_CURRENCY_SYMBOL ?? "\u20B1";
  * Defaults to the host's own offset, which is right whenever the bot runs near the user. Set
  * TELEGRAM_TZ_OFFSET when it does not, such as on a UTC server.
  */
-const TZ_OFFSET = Number.isFinite(Number(process.env.TELEGRAM_TZ_OFFSET))
-  ? Number(process.env.TELEGRAM_TZ_OFFSET)
+const TZ_OFFSET = Number.isFinite(Number(env("TELEGRAM_TZ_OFFSET")))
+  ? Number(env("TELEGRAM_TZ_OFFSET"))
   : new Date().getTimezoneOffset();
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const BOT_TOKEN = env("TELEGRAM_BOT_TOKEN");
 
 /** The numeric half of the bot token, which identifies the bot and is not the secret half. */
 const BOT_ID = (BOT_TOKEN ?? "").split(":")[0];
@@ -86,18 +100,27 @@ async function callTool<T>(name: string, args: Record<string, unknown> = {}): Pr
   }
 }
 
-// Custom HTTPS Agent to resolve api.telegram.org directly to IP if DNS is sinkholed by firewall
+/**
+ * An address to use for api.telegram.org instead of asking the resolver.
+ *
+ * Only for a network whose DNS sinkholes Telegram, which is why the bot was written with an
+ * address baked in. Hardcoding it is a liability rather than a safety net: Telegram rotates
+ * these, and a rotation would then break every request even where DNS works perfectly. Unset by
+ * default, so the resolver is used, and the deployed container needs nothing.
+ */
+const TELEGRAM_API_IP = env("TELEGRAM_API_IP");
+
 const agent = new https.Agent({
   lookup: (hostname, options: any, callback: any) => {
     if (typeof options === "function") {
       callback = options;
       options = {};
     }
-    if (hostname === "api.telegram.org") {
+    if (hostname === "api.telegram.org" && TELEGRAM_API_IP) {
       if (options && options.all) {
-        return callback(null, [{ address: "149.154.166.110", family: 4 }]);
+        return callback(null, [{ address: TELEGRAM_API_IP, family: 4 }]);
       }
-      return callback(null, "149.154.166.110", 4);
+      return callback(null, TELEGRAM_API_IP, 4);
     }
     return dns.lookup(hostname, options, callback);
   },
@@ -108,6 +131,14 @@ const agent = new https.Agent({
   rejectUnauthorized: true,
   servername: "api.telegram.org",
 });
+
+/**
+ * Longer than the 20-second `getUpdates` long poll, so a normal quiet period is never mistaken
+ * for a stall. Without any timeout a socket that hangs open leaves the promise unsettled forever:
+ * the poll loop awaits it, no error is ever raised, and the bot stops answering with nothing in
+ * the logs to say why.
+ */
+const REQUEST_TIMEOUT_MS = 40_000;
 
 async function telegramApi(method: string, body: Record<string, any> = {}): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -140,6 +171,11 @@ async function telegramApi(method: string, body: Record<string, any> = {}): Prom
       }
     );
 
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      // `setTimeout` alone only fires the event; the socket has to be destroyed for the request
+      // to end, and the resulting error is what rejects the promise.
+      req.destroy(new Error(`Telegram ${method} timed out after ${REQUEST_TIMEOUT_MS}ms`));
+    });
     req.on("error", (e) => reject(e));
     req.write(postData);
     req.end();
@@ -324,8 +360,7 @@ async function processNaturalLanguageWithGemini(
 ): Promise<any> {
   if (!gemini) return null;
 
-  const now = new Date();
-  const localIso = new Date(now.getTime() - TZ_OFFSET * 60_000).toISOString();
+  const localIso = localTimestamp(TZ_OFFSET);
   const categoryNames = categories.map((c) => ({ name: c.name, type: c.type, id: c.id }));
 
   const prompt = `You are an AI assistant for a personal budget tracker.
@@ -340,7 +375,7 @@ If logging a transaction:
 - description: concise title (e.g. "Breakfast", "Jollibee lunch", "Salary")
 - type: "EXPENSE" or "INCOME"
 - categoryId: best matching category ID from the provided list
-- date: ISO timestamp string (e.g. "2026-08-26T08:30:00") matching when it occurred, or current timestamp
+- date: ISO timestamp string (e.g. "2026-08-26T08:30:00") matching when it occurred, or the current timestamp above. Write it in the user's local time with NO "Z" and no offset suffix: the server resolves it against their timezone, and a "Z" would be read as UTC and shift the transaction by hours
 
 Return ONLY a JSON object in this format:
 {
@@ -372,7 +407,7 @@ Return ONLY a JSON object in this format:
   }
 }
 
-async function handleMessage(message: any, updateId: number) {
+async function handleMessage(message: TelegramMessage, updateId: number) {
   const chatId = message.chat.id;
   const text = (message.text || "").trim();
 
@@ -548,11 +583,7 @@ const ALLOWED_USERNAMES = new Set(
     .filter(Boolean)
 );
 
-const senderIsAllowed = (from: { id?: number; username?: string } | undefined): boolean => {
-  if (!from) return false;
-  if (from.id !== undefined && ALLOWED_IDS.has(String(from.id))) return true;
-  return from.username !== undefined && ALLOWED_USERNAMES.has(from.username.toLowerCase());
-};
+const ALLOWLIST: Allowlist = { ids: ALLOWED_IDS, usernames: ALLOWED_USERNAMES };
 
 /** Attempts the MCP handshake with backoff, and gives up quietly rather than ending the bot. */
 async function probeMcp(): Promise<void> {
@@ -636,13 +667,15 @@ export async function startTelegramBot(): Promise<void> {
         if (!update.message) continue;
 
         const from = update.message.from;
-        if (!senderIsAllowed(from)) {
+        if (!messageIsAllowed(update.message, ALLOWLIST)) {
           // The id is logged so it can be copied straight into TELEGRAM_ALLOWED_IDS. Nothing is
-          // sent back: a reply would confirm to a stranger that the bot is live and whose it is.
-          // The message text is deliberately not logged, here or anywhere else.
+          // sent back: a reply would confirm to a stranger that the bot is live and whose it is,
+          // and in a group it would announce the bot to everyone in it. The message text is
+          // deliberately not logged, here or anywhere else.
           console.warn(
-            `[telegram] denied message from id=${from?.id ?? "unknown"} username=@${from?.username ?? "none"}. ` +
-              `Add the id to TELEGRAM_ALLOWED_IDS to allow it.`
+            `[telegram] denied message from id=${from?.id ?? "unknown"} username=@${from?.username ?? "none"} ` +
+              `in a ${update.message.chat?.type ?? "unknown"} chat. ` +
+              `Add the id to TELEGRAM_ALLOWED_IDS to allow it; only private chats are answered.`
           );
           continue;
         }

@@ -106,6 +106,8 @@ src/
 - `TELEGRAM_MCP_URL` / `TELEGRAM_MCP_TOKEN`: where the bot writes. Mint the token in Profile > MCP Access with `transactions:write`, and give the bot its own so revoking it does not break another client
 - `TELEGRAM_TZ_OFFSET`: minutes, `getTimezoneOffset()` convention. Only so Gemini can resolve "yesterday"; every query and write is resolved server-side against `users.timezone_offset`
 - `TELEGRAM_CURRENCY_SYMBOL`: display only, defaults to the peso sign
+- `TELEGRAM_API_IP`: only for a network whose DNS sinkholes Telegram, an address to use for `api.telegram.org` instead of the resolver. Unset everywhere else: Telegram rotates these, so a stale pin breaks all bot traffic even where DNS works
+- Blank counts as unset for every `TELEGRAM_` variable, so an empty Coolify field falls back to the documented default. `??` alone did not do that, and `TELEGRAM_TZ_OFFSET=""` silently meant UTC because `Number("")` is a finite 0
 - `AI_ASSESSMENT_DAILY_LIMIT` — Optional; max AI Assessment report generations per user per day (default `10`). The grounded report makes 2 Gemini calls per generation; cached reports and the daily tip don't count against it.
 
 ## Telegram bot
@@ -124,7 +126,10 @@ Two entry points share the one definition, the same shape as `mcp-server/`:
 with 409 Conflict, which is why the flag exists: without it every `pnpm dev` would fight the
 deployed bot. Never run it locally while it is enabled in production.
 
-Every message is gated by `TELEGRAM_ALLOWED_IDS` (preferred) or `TELEGRAM_ALLOWED_USERNAMES`.
+Every message is gated by `TELEGRAM_ALLOWED_IDS` (preferred) or `TELEGRAM_ALLOWED_USERNAMES`,
+**and** by the chat being private. Authenticating the sender alone was not enough: replies go to
+`message.chat.id`, so the owner running `/summary` in a group would have shown their balances to
+everyone in it.
 With neither set the bot serves nobody and says so at startup, because bot usernames are
 searchable and the `t.me` link is public. Denials log the sender's numeric id and reply with
 nothing, since a reply would confirm the bot is live and whose it is.
