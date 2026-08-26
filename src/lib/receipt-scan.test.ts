@@ -439,3 +439,46 @@ describe("breakdown invalid for reasons other than size", () => {
     warn.mockRestore();
   });
 });
+
+describe("unreadable responses", () => {
+  beforeEach(() => authorize.mockResolvedValue(AUTHORIZED));
+
+  // Why this class of failure needed a log at all: an UNREADABLE reaches the user as "Could not
+  // read the receipt. Please try a clearer photo." — advice that is wrong when the real cause was
+  // a receipt heavy enough to exhaust the output budget. Nothing distinguished the two.
+  it("logs why the model returned nothing", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    generate.mockResolvedValue({
+      text: "",
+      candidates: [{ finishReason: "MAX_TOKENS" }],
+      usageMetadata: { thoughtsTokenCount: 13863, candidatesTokenCount: 0 },
+    });
+
+    const outcome = await scan();
+
+    expect(outcome).toMatchObject({ ok: false, failure: { reason: "UNREADABLE" } });
+    const logged = warn.mock.calls[0]?.[0] as string;
+    expect(logged).toContain("MAX_TOKENS");
+    expect(logged).toContain("13863");
+    expect(settle).toHaveBeenCalledWith("res_1", "FAILED");
+    warn.mockRestore();
+  });
+
+  it("logs the tail of a truncated response, where it stopped", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // Valid JSON right up to the cut, which is what a budget-exhausted response looks like.
+    generate.mockResolvedValue({
+      text: '{"amount": 7193.6, "breakdown": [{"lineItems": [{"name": "Rice',
+      candidates: [{ finishReason: "MAX_TOKENS" }],
+      usageMetadata: { thoughtsTokenCount: 9000, candidatesTokenCount: 2500 },
+    });
+
+    const outcome = await scan();
+
+    expect(outcome).toMatchObject({ ok: false, failure: { reason: "UNREADABLE" } });
+    const logged = warn.mock.calls[0]?.[0] as string;
+    expect(logged).toContain("Rice");
+    expect(logged).toContain("MAX_TOKENS");
+    warn.mockRestore();
+  });
+});

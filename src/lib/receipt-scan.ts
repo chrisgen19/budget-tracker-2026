@@ -55,6 +55,7 @@ Return a JSON object with these fields:
 - "amount": the grand total / total due including tax, tips, and service charges (number). Use the largest final amount on the receipt.
 - "categoryId": pick the best category ID using the rules below.
 - "date": the TRANSACTION date (the date of purchase, usually near the top of the receipt next to the time). Use "YYYY-MM-DD" format (date only, no time). IMPORTANT: Ignore any "Date of Issuance", PTU accreditation dates, permit dates, or BIR registration dates — these are regulatory dates, NOT the purchase date. If the transaction date is unreadable, use "${photoDateStr}".
+  This photo was taken on ${photoDateStr}. A receipt is normally photographed within days of the purchase, so the year is almost always ${photoDateStr.slice(0, 4)}. Before answering, re-read the year digits and check them against that. Only report a different year if the receipt plainly prints one — an old receipt is possible, a misread digit is far more likely.
 - "dateSource": "OCR" if you read the date from the receipt itself, or "PHOTO_FALLBACK" if you used the fallback "${photoDateStr}" because the date was unreadable. Always include this field.
 - "description": merchant name + short summary of purchase (max 100 chars).
 - "multiCategory": true if the receipt contains items that span 2 or more DIFFERENT categories from the list below, false if all items belong to a single category. For example, a grocery receipt with food AND cleaning supplies = true, a restaurant bill with only food = false, a single ride receipt = false.
@@ -156,13 +157,37 @@ export async function scanReceipt(params: {
       config: receiptScanConfig(),
     });
 
+    // Why the model produced nothing usable, which was previously logged nowhere: an UNREADABLE
+    // is indistinguishable from a bad photo in the UI, and a receipt heavy enough to exhaust the
+    // output budget fails this way roughly as often as a genuinely blurry one. `finishReason`
+    // separates them — MAX_TOKENS means the model ran out of room, SAFETY means it refused —
+    // and the thinking count is the number that moves: it reached 13.8k on a 66-item receipt,
+    // against output that never exceeded ~2.5k.
+    const describeResponse = () => {
+      const usage = response.usageMetadata;
+      return [
+        `finish=${response.candidates?.[0]?.finishReason ?? "unknown"}`,
+        `thoughts=${usage?.thoughtsTokenCount ?? "?"}`,
+        `output=${usage?.candidatesTokenCount ?? "?"}`,
+      ].join(" ");
+    };
+
     const rawText = response.text?.trim();
-    if (!rawText) return await fail("UNREADABLE");
+    if (!rawText) {
+      console.warn(`[receipt-scan] model returned no text: ${describeResponse()}`);
+      return await fail("UNREADABLE");
+    }
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(stripCodeFences(rawText));
     } catch {
+      // The tail, not the head: a response truncated by the output budget is valid JSON right up
+      // to the point it stops, so where it stopped is the diagnostic.
+      console.warn(
+        `[receipt-scan] model returned unparseable text: ${describeResponse()} ` +
+          `length=${rawText.length} tail=${JSON.stringify(rawText.slice(-80))}`
+      );
       return await fail("UNREADABLE");
     }
 

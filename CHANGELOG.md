@@ -2,6 +2,34 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-26 - A misread year, and the failures nobody could see
+
+A production scan of a receipt printing `08/26/2026` came back as **2023**-08-26. Month and day
+exactly right, year three off. The UI flagged it — `checkReceiptDate` raises `dateWarning`
+whenever the year disagrees with today's — so nothing wrong was saved, but the user had to catch
+and fix it by hand.
+
+That signature is a misread digit, not a three-year-old receipt: reading a *different* date wrong
+almost never lands on today's month and day by accident. So it is now repaired rather than only
+flagged, and `dateWarning` stays on afterwards, because the repair is an inference and the person
+holding the receipt is the one who can settle it. The guard is deliberately narrow — month and day
+must match the photo's exactly. Anything looser would start rewriting dates that were read
+correctly, and a wrong date nobody was warned about is worse than a right one they were. A
+genuinely old receipt scanned on its own anniversary is the false positive, which needs a 1-in-365
+coincidence and costs nothing when it happens, since the warning still shows.
+
+The prompt now also tells the model when the photo was taken and that the year is almost certainly
+that year. Measured on its own this was neutral — 3/5 correct dates with it and without — so it is
+insurance, not the fix. The repair above is the part that does not depend on the model behaving.
+
+Separately: `UNREADABLE` was logged nowhere. It reaches the user as "Could not read the receipt.
+Please try a clearer photo", which is the wrong advice when the real cause is a receipt heavy
+enough to exhaust the output budget — and on a 66-item supermarket receipt that happens often. Both
+paths now log `finishReason` and the thinking/output token counts, which separate a blurry photo
+(`SAFETY`, or genuinely empty) from a truncated one (`MAX_TOKENS`), plus the tail of an unparseable
+response, since a budget-exhausted response is valid JSON right up to where it stops. Thinking was
+observed reaching 13.8k tokens against output that never passed ~2.5k.
+
 ## 2026-08-26 - A supermarket receipt could fail its own scan
 
 Uploading a 56-item supermarket receipt returned `POST /api/receipts/scan 500` and "Failed to
