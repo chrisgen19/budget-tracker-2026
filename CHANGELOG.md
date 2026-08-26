@@ -27,6 +27,15 @@ The decision is made server-side from what was actually supplied, rather than ex
 parameter: the model has no information the server lacks, and a lever it can get wrong is worse
 than no lever.
 
+### Review follow-up
+The tool-level description still said "Scheduled labels are never applied automatically here, so
+pass labelIds explicitly", directly contradicting the field-level text right below it. Only the
+field had been updated. A client reading the tool description would omit `labelIds` expecting no
+labels and receive a scheduled one, which is worse than either behaviour on its own: the metadata
+was actively wrong. Both now agree, and the tool level also documents the backdating exception,
+which the field has no room for. Verified by reading the served metadata back over a real client
+connection rather than by inspecting the source.
+
 ### Verification
 - `hasTrustworthyTime` covers supplied times, today, past and future bare dates, unparseable input,
   and that "today" is decided in the user's zone rather than the server's

@@ -589,8 +589,10 @@ export const createBudgetMcpServer = ({
         "If the user says when something happened, put that in the date as a timestamp rather " +
         "than a bare date, or the time is lost. " +
         "Call get_category_list first to resolve category IDs; a category that is not the " +
-        "user's own is rejected. Scheduled labels are never applied automatically here, so pass " +
-        "labelIds explicitly if the user wants any. `clientBatchId` must be a UUID you generate " +
+        "user's own is rejected. Omitting labelIds lets the user's own auto-apply label schedules " +
+        "decide, which is usually what they want; pass explicit ids to override them, or [] to " +
+        "force no labels. Schedules are skipped for a backdated bare date, because the time on " +
+        "one is filled in rather than known. `clientBatchId` must be a UUID you generate " +
         "once per intent and REUSE unchanged if a call fails and you retry: replaying the same " +
         "id returns the original rows instead of creating duplicates. Generate a fresh id only " +
         "for a genuinely new set of transactions.",
