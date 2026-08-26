@@ -133,6 +133,9 @@ export interface MultiScanItem {
       description: string;
       lineItems: Array<{ name: string; amount: number }>;
     }>;
+    /** The year printed on the receipt, when the scan replaced it as a misread digit. Lets the
+     *  review name the correction instead of showing a bare "check year". */
+    repairedFromYear?: string;
     /** True when the receipt date year differs from the current year (possible POS error) */
     dateWarning?: boolean;
   };

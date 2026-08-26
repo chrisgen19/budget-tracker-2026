@@ -42,6 +42,15 @@ export interface ScanResultPayload {
    * identical in both cases and the user cannot tell the free expansion from the paid one.
    */
   breakdownDropped?: boolean;
+  /**
+   * The year printed on the receipt, when the scan replaced it.
+   *
+   * A readable year is only ever overridden when it looks like a misread digit (see
+   * `checkReceiptDate`), and that inference has to be visible: without this the review shows a
+   * corrected date behind a generic warning, and the user cannot tell a correction from an
+   * ordinary cross-year receipt, nor put back a year that was right all along.
+   */
+  repairedFromYear?: string;
   dateWarning: boolean;
   usedPhotoFallback: boolean;
 }
@@ -182,11 +191,17 @@ export async function scanReceipt(params: {
     try {
       parsed = JSON.parse(stripCodeFences(rawText));
     } catch {
-      // The tail, not the head: a response truncated by the output budget is valid JSON right up
-      // to the point it stops, so where it stopped is the diagnostic.
+      // Shape, never content. The question worth answering here is "did the model run out of room
+      // or ignore the format", and both are answered by where the text starts and stops — whereas
+      // the text itself is the user's receipt: merchant, items, prices. Those belong in the
+      // response, not in a log line that outlives the request.
+      const body = stripCodeFences(rawText).trim();
       console.warn(
         `[receipt-scan] model returned unparseable text: ${describeResponse()} ` +
-          `length=${rawText.length} tail=${JSON.stringify(rawText.slice(-80))}`
+          `length=${rawText.length} startsAsJson=${body.startsWith("{")} ` +
+          // A response cut off by the output budget is valid JSON right up to the point it stops,
+          // so an unterminated object is the signature of truncation rather than of malformation.
+          `terminated=${body.endsWith("}")}`
       );
       return await fail("UNREADABLE");
     }
@@ -243,11 +258,12 @@ export async function scanReceipt(params: {
     }
 
     // Normalize date and flag a suspicious year for the caller.
-    const { date: normalizedDate, dateWarning, usedPhotoFallback: parseFailed } = checkReceiptDate(
-      result.data.date,
-      params.todayStr,
-      params.photoDateStr,
-    );
+    const {
+      date: normalizedDate,
+      dateWarning,
+      usedPhotoFallback: parseFailed,
+      repairedFromYear,
+    } = checkReceiptDate(result.data.date, params.todayStr, params.photoDateStr);
     // Trust Gemini's explicit signal first; fall back to parse-failure detection.
     const usedPhotoFallback = result.data.dateSource === "PHOTO_FALLBACK" || parseFailed;
 
@@ -296,6 +312,9 @@ export async function scanReceipt(params: {
         // Only when true: an absent flag is the ordinary case, and emitting `false` on every
         // scan would add a field to every MCP result to say nothing happened.
         ...(breakdownDropped && { breakdownDropped: true }),
+        // Present only on a repair, so the UI can say which year was replaced rather than showing
+        // a bare "check year" that hides the fact anything changed.
+        ...(repairedFromYear && { repairedFromYear }),
         dateWarning,
         usedPhotoFallback,
       },

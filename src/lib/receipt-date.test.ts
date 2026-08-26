@@ -26,11 +26,25 @@ describe("checkReceiptDate", () => {
     });
   });
 
-  it("rejects an impossible calendar date rather than rolling it over", () => {
-    // "2026-02-31" would roll to 3 March if it were trusted.
+  // `new Date("2026-02-31T00:00:00")` does not fail — it rolls over to 3 March — so an
+  // impossible date was accepted and returned verbatim, to be rolled over later by whatever
+  // finally parsed it. isNaN alone only catches the shapes JS refuses outright, like month 13.
+  it("rejects a date that rolls over rather than passing it on", () => {
+    const result = checkReceiptDate("2026-02-31", TODAY, PHOTO);
+    expect(result.usedPhotoFallback).toBe(true);
+    expect(result.date).toBe(PHOTO);
+  });
+
+  it("rejects a date JS refuses outright", () => {
     const result = checkReceiptDate("2026-13-40", TODAY, PHOTO);
     expect(result.usedPhotoFallback).toBe(true);
     expect(result.date).toBe(PHOTO);
+  });
+
+  it("accepts a real leap day", () => {
+    const result = checkReceiptDate("2024-02-29", "2024-03-01", "2024-03-01");
+    expect(result.date).toBe("2024-02-29");
+    expect(result.usedPhotoFallback).toBe(false);
   });
 });
 
@@ -42,7 +56,20 @@ describe("year slips", () => {
       date: "2026-08-26",
       dateWarning: true,
       usedPhotoFallback: false,
+      repairedFromYear: "2023",
     });
+  });
+
+  // The repair overrides a year the model claims it read, so it has to say so: a bare
+  // "check year" leaves the user unable to tell a correction from an ordinary warning, and
+  // unable to put back a year that was right all along.
+  it("reports the year it replaced, so the change is visible and reversible", () => {
+    expect(checkReceiptDate("2023-08-26", TODAY, PHOTO).repairedFromYear).toBe("2023");
+  });
+
+  it("reports no replaced year when nothing was repaired", () => {
+    expect(checkReceiptDate("2025-03-14", TODAY, PHOTO).repairedFromYear).toBeUndefined();
+    expect(checkReceiptDate("2026-08-26", TODAY, PHOTO).repairedFromYear).toBeUndefined();
   });
 
   it("keeps the warning on after repairing, because the repair is an inference", () => {
@@ -79,6 +106,18 @@ describe("year slips", () => {
     const result = checkReceiptDate("2023-08-20", "2026-08-26", "2026-08-20");
     expect(result.date).toBe("2026-08-20");
     expect(result.dateWarning).toBe(true);
+  });
+
+  // A receipt cannot be photographed before it exists, so an OCR year later than the photo's is
+  // impossible rather than merely suspicious. The same-year shortcut used to return here with no
+  // warning at all, because the OCR year matched today's.
+  it("repairs a receipt dated after its own photo", () => {
+    expect(checkReceiptDate("2026-08-26", "2026-09-01", "2025-08-26")).toEqual({
+      date: "2025-08-26",
+      dateWarning: true,
+      usedPhotoFallback: false,
+      repairedFromYear: "2026",
+    });
   });
 
   // Cross-year scanning is legitimate — a December receipt entered in January — and the warning

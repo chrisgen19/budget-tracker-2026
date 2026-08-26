@@ -464,11 +464,11 @@ describe("unreadable responses", () => {
     warn.mockRestore();
   });
 
-  it("logs the tail of a truncated response, where it stopped", async () => {
+  it("reports a truncated response by its shape", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     // Valid JSON right up to the cut, which is what a budget-exhausted response looks like.
     generate.mockResolvedValue({
-      text: '{"amount": 7193.6, "breakdown": [{"lineItems": [{"name": "Rice',
+      text: '{"amount": 7193.6, "breakdown": [{"lineItems": [{"name": "Rice 5kg", "amount": 12',
       candidates: [{ finishReason: "MAX_TOKENS" }],
       usageMetadata: { thoughtsTokenCount: 9000, candidatesTokenCount: 2500 },
     });
@@ -477,8 +477,43 @@ describe("unreadable responses", () => {
 
     expect(outcome).toMatchObject({ ok: false, failure: { reason: "UNREADABLE" } });
     const logged = warn.mock.calls[0]?.[0] as string;
-    expect(logged).toContain("Rice");
     expect(logged).toContain("MAX_TOKENS");
+    expect(logged).toContain("startsAsJson=true");
+    expect(logged).toContain("terminated=false");
+    warn.mockRestore();
+  });
+
+  // The log outlives the request, and the response body is the user's receipt: merchant, items,
+  // prices. None of it is needed to tell a truncation from a refusal, so none of it is written.
+  it("keeps receipt content out of the log", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    generate.mockResolvedValue({
+      text: '{"description": "SOUTH SUPERMARKET", "amount": 7193.6, "items": [{"name": "Rice 5kg"',
+      candidates: [{ finishReason: "MAX_TOKENS" }],
+      usageMetadata: { thoughtsTokenCount: 9000, candidatesTokenCount: 2500 },
+    });
+
+    await scan();
+
+    const logged = warn.mock.calls[0]?.[0] as string;
+    expect(logged).not.toContain("SOUTH SUPERMARKET");
+    expect(logged).not.toContain("Rice");
+    expect(logged).not.toContain("7193");
+    warn.mockRestore();
+  });
+
+  it("reports a non-JSON response as such, rather than as a truncation", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    generate.mockResolvedValue({
+      text: "I am unable to read this receipt image.",
+      candidates: [{ finishReason: "STOP" }],
+      usageMetadata: { thoughtsTokenCount: 500, candidatesTokenCount: 12 },
+    });
+
+    await scan();
+
+    const logged = warn.mock.calls[0]?.[0] as string;
+    expect(logged).toContain("startsAsJson=false");
     warn.mockRestore();
   });
 });

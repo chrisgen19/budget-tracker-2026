@@ -22,13 +22,42 @@ The prompt now also tells the model when the photo was taken and that the year i
 that year. Measured on its own this was neutral — 3/5 correct dates with it and without — so it is
 insurance, not the fix. The repair above is the part that does not depend on the model behaving.
 
+Review found three holes in the first cut of this, and one in the mechanism meant to catch them.
+
+`new Date("2026-02-31T00:00:00")` does not fail — it rolls over to 3 March — so an impossible
+date was accepted and handed on verbatim, to be rolled over later by whatever finally parsed it.
+`isNaN` only rejects what JS refuses outright, like month 13, which is what the test covering this
+actually fed while its comment claimed otherwise. The parsed components are compared back against
+the string now.
+
+The repair also ran only when the OCR year disagreed with *today's*, so a receipt dated after its
+own photo — impossible, since a receipt cannot be photographed before it exists — returned with no
+warning at all. The check is anchored to the photo now, and runs before any same-year shortcut.
+
+And the repair was silent: a corrected date sat behind the same generic "check year" as an
+ordinary cross-year receipt, so a wrong correction was indistinguishable from a right one and
+could not be undone. `repairedFromYear` now carries the year that was replaced, the review renders
+"year corrected from 2023", and `scan_receipt` says so in prose.
+
+The `assertExact` pin that should have caught `repairedFromYear` missing from the MCP schema did
+not fire, and the reason generalises: mutual assignability cannot see an added **optional**
+property, because `{a}` and `{a; b?}` each extend the other. Every field added to a tool payload
+has been optional, so the pin was blind to precisely the drift it exists to catch — including
+`breakdownDropped` before this. It compares keys now. The first attempt at that fix was itself
+wrong in a way worth recording: a `SameKeys<A, B> extends true` guard always passes, since the
+`never` it returns on failure is assignable to `true`.
+
 Separately: `UNREADABLE` was logged nowhere. It reaches the user as "Could not read the receipt.
 Please try a clearer photo", which is the wrong advice when the real cause is a receipt heavy
 enough to exhaust the output budget — and on a 66-item supermarket receipt that happens often. Both
 paths now log `finishReason` and the thinking/output token counts, which separate a blurry photo
-(`SAFETY`, or genuinely empty) from a truncated one (`MAX_TOKENS`), plus the tail of an unparseable
-response, since a budget-exhausted response is valid JSON right up to where it stops. Thinking was
-observed reaching 13.8k tokens against output that never passed ~2.5k.
+(`SAFETY`, or genuinely empty) from a truncated one (`MAX_TOKENS`). Thinking was observed reaching
+13.8k tokens against output that never passed ~2.5k.
+
+The log records the response's *shape* — whether it starts as JSON, whether it is terminated —
+never its content. Logging the tail was the obvious way to show where a truncated response
+stopped, and it would have written merchant names and prices into logs that outlive the request.
+`startsAsJson` and `terminated` answer the same question without any of that.
 
 ## 2026-08-26 - A supermarket receipt could fail its own scan
 
