@@ -718,11 +718,14 @@ export async function startTelegramBot(): Promise<void> {
   await probeMcp();
 
   if (ALLOWED_IDS.size === 0 && ALLOWED_USERNAMES.size === 0) {
+    // It keeps polling on purpose, and the wording has to say so: every sender is denied, but
+    // the denial logs their numeric id, which is the documented way to find your own and put it
+    // in TELEGRAM_ALLOWED_IDS. Stopping here would remove the only route out of this state.
     console.error(
-      "\n[telegram] REFUSING TO SERVE: no allowlist configured.\n" +
-        "Without one, anyone who finds this bot can read your balances and write transactions.\n" +
+      "\n[telegram] SERVING NOBODY: no allowlist configured, so every message will be denied.\n" +
+        "Without one, anyone who finds this bot could read your balances and write transactions.\n" +
         "Set TELEGRAM_ALLOWED_IDS (preferred) or TELEGRAM_ALLOWED_USERNAMES in .env.\n" +
-        "Message the bot once and its numeric id will be printed here.\n"
+        "It keeps polling so you can message it once and read your numeric id from the log here.\n"
     );
   } else {
     // Only the shape of the allowlist, never who is on it.

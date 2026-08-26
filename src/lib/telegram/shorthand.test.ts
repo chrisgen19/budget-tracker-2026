@@ -32,9 +32,43 @@ describe("isPlainShorthand", () => {
   });
 
   it("does not fire on a word that merely contains a temporal one", () => {
-    // "todays" and "agonist" would be false positives if the pattern were unanchored; a false
-    // positive only costs one extra model call, but the fast path should still keep what it can.
     expect(isPlainShorthand("100 mayonnaise")).toBe(true);
     expect(isPlainShorthand("250 decorations")).toBe(true);
+  });
+
+  // The bug this covers: month abbreviations matched as bare words, and "may" is an everyday
+  // word in both English and Tagalog. This is a Philippine app, so "may bayad" and "may sukli"
+  // are ordinary spending descriptions. They were diverted off the fast path, and with no
+  // GEMINI_API_KEY the bot then refused a message that was perfectly clear.
+  it("keeps everyday words that happen to be month abbreviations", () => {
+    for (const text of [
+      "500 may allowance",
+      "300 may bayad sa kuryente",
+      "250 may sukli",
+      "200 sun cream",
+      "150 sat down meal",
+      "1500 rent on monthly",
+      "400 march ing band tickets",
+    ]) {
+      expect(isPlainShorthand(text)).toBe(true);
+    }
+  });
+
+  it("still diverts a month name that sits beside a day number", () => {
+    for (const text of [
+      "500 dinner sep 14",
+      "300 lunch 14 aug",
+      "250 groceries Dec 25",
+      "700 gift december 25",
+      "400 fare may 3",
+    ]) {
+      expect(isPlainShorthand(text)).toBe(false);
+    }
+  });
+
+  it("diverts named days and 'on' plus an abbreviation", () => {
+    expect(isPlainShorthand("500 gas on fri")).toBe(false);
+    expect(isPlainShorthand("500 gas friday")).toBe(false);
+    expect(isPlainShorthand("200 lunch next tuesday")).toBe(false);
   });
 });

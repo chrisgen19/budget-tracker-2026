@@ -1,5 +1,13 @@
+/** Day names. Abbreviations are only honoured after "on", "last", "this" or "next", because
+ *  bare "mon", "sat" and "sun" are ordinary words ("sun cream", "he sat"). */
+const DAY_FULL = "monday|tuesday|wednesday|thursday|friday|saturday|sunday";
+const DAY_ANY = "mon|tues?|wed(nes)?|thur?s?|fri|sat(ur)?|sun";
+
+/** Month names, only ever matched next to a day number. See TEMPORAL_HINT. */
+const MONTH = "jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec";
+
 /**
- * Words that place a transaction somewhere other than right now.
+ * Text that places a transaction somewhere other than right now.
  *
  * The shorthand path is a regex that takes an amount and treats everything after it as the
  * description, then stamps the current instant. "350 groceries yesterday" therefore matched, was
@@ -7,12 +15,38 @@
  * Worse, the invented timestamp then drove label auto-apply, so a Saturday errand entered on a
  * Monday morning could land inside a weekday window and be tagged as work spending.
  *
- * A message carrying any of these goes to Gemini instead, which resolves the date properly. The
- * cost of a false positive is one extra model call; the cost of a false negative is a
- * transaction on the wrong day.
+ * A message carrying any of this goes to Gemini instead, which resolves the date properly.
+ *
+ * Both kinds of mistake cost something, so the pattern is deliberately conservative about bare
+ * words. A missed date files a transaction on the wrong day. A false positive costs a model call,
+ * or, with no GEMINI_API_KEY, refuses a message that was perfectly clear. Month names are the
+ * sharp edge: "may" is an everyday word in both English and Tagalog, and this is a Philippine
+ * app, so "500 may allowance" and "300 may bayad" must stay on the fast path. Months therefore
+ * only count next to a day number, where they are unambiguously a date.
  */
-const TEMPORAL_HINT =
-  /\b(yesterday|yday|today|tonight|tomorrow|last\s+(night|week|month|year|mon|tues|wednes|thurs|fri|satur|sun)\w*|this\s+(morning|afternoon|evening|week|month)|ago|earlier|previous|past\s+\w+|on\s+(mon|tues|wednes|thurs|fri|satur|sun)\w*|(mon|tues|wednes|thurs|fri|satur|sun)day|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b|\d{1,2}\/\d{1,2}|\d{4}-\d{2}-\d{2}|\b\d{1,2}(:\d{2})?\s*(am|pm)\b/i;
+const TEMPORAL_HINT = new RegExp(
+  [
+    // Relative days.
+    `\\b(yesterday|yday|today|tonight|tomorrow|earlier|previously)\\b`,
+    // "last night", "this morning", "next friday", "last week".
+    `\\blast\\s+(night|week|month|year|${DAY_ANY})\\w*`,
+    `\\b(this|next)\\s+(morning|afternoon|evening|night|week|month|year|${DAY_ANY})\\w*`,
+    // "3 days ago", "a week ago".
+    `\\b\\w+\\s+(day|week|month|year)s?\\s+ago\\b`,
+    `\\bago\\b`,
+    // Named days, and abbreviations only where "on" makes them a date.
+    `\\b(${DAY_FULL})\\b`,
+    `\\bon\\s+(${DAY_FULL}|${DAY_ANY})\\b`,
+    // A month only counts beside a day number, in either order.
+    `\\b(${MONTH})\\w*\\.?\\s+\\d{1,2}\\b`,
+    `\\b\\d{1,2}\\s+(${MONTH})\\w*\\b`,
+    // Numeric dates and clock times.
+    `\\d{1,2}\\/\\d{1,2}`,
+    `\\d{4}-\\d{2}-\\d{2}`,
+    `\\b\\d{1,2}(:\\d{2})?\\s*(am|pm)\\b`,
+  ].join("|"),
+  "i"
+);
 
 /**
  * Whether the fast shorthand path may handle this message.
