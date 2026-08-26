@@ -256,8 +256,15 @@ export function MultiScanReview({
                     {formattedDate && (
                       <span className={cn("text-xs", item.data?.dateWarning ? "text-amber-600 font-medium" : "text-warm-400")}>
                         {item.data?.dateWarning && "⚠ "}{formattedDate}
+                        {/* A repaired year names what it replaced. "check year" on a date the
+                            scan already changed reads as though the receipt said this, leaving
+                            the user unable to spot a correction — or undo one that was wrong. */}
                         {item.data?.dateWarning && (
-                          <span className="text-[10px] text-amber-500 ml-1">(check year)</span>
+                          <span className="text-[10px] text-amber-500 ml-1">
+                            {item.data.repairedFromYear
+                              ? `(year corrected from ${item.data.repairedFromYear})`
+                              : "(check year)"}
+                          </span>
                         )}
                       </span>
                     )}

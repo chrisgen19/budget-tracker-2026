@@ -725,7 +725,15 @@ export const createBudgetMcpServer = ({
       const r = outcome.result;
       const summary =
         `Receipt read: ${r.description} for ${r.amount} on ${r.date}.` +
-        (r.dateWarning ? " The year on the receipt looks wrong, so confirm the date." : "") +
+        (r.repairedFromYear
+          ? // Named, not just flagged: the model is about to file this date, and a correction it
+            // cannot see is one it cannot mention or undo.
+            ` The year read off the receipt was ${r.repairedFromYear}, which disagreed with the` +
+            " photo's while the month and day matched exactly, so it was corrected to the date" +
+            " above. Tell the user, and put it back if they say the receipt really is that old."
+          : r.dateWarning
+            ? " The year on the receipt looks wrong, so confirm the date."
+            : "") +
         (r.usedPhotoFallback
           ? // Which fallback was used is not cosmetic. A model that reads "today's was used"
             // while the structured date says a fortnight ago will offer to correct a date that

@@ -151,6 +151,7 @@ export function useMultiScan() {
             multiCategory: data.multiCategory as boolean,
             breakdownDropped: data.breakdownDropped as boolean | undefined,
             breakdown: data.breakdown as ScanBreakdown | undefined,
+            repairedFromYear: data.repairedFromYear as string | undefined,
             dateWarning: data.dateWarning as boolean,
           },
         });

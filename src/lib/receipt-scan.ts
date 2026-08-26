@@ -42,6 +42,15 @@ export interface ScanResultPayload {
    * identical in both cases and the user cannot tell the free expansion from the paid one.
    */
   breakdownDropped?: boolean;
+  /**
+   * The year printed on the receipt, when the scan replaced it.
+   *
+   * A readable year is only ever overridden when it looks like a misread digit (see
+   * `checkReceiptDate`), and that inference has to be visible: without this the review shows a
+   * corrected date behind a generic warning, and the user cannot tell a correction from an
+   * ordinary cross-year receipt, nor put back a year that was right all along.
+   */
+  repairedFromYear?: string;
   dateWarning: boolean;
   usedPhotoFallback: boolean;
 }
@@ -55,6 +64,7 @@ Return a JSON object with these fields:
 - "amount": the grand total / total due including tax, tips, and service charges (number). Use the largest final amount on the receipt.
 - "categoryId": pick the best category ID using the rules below.
 - "date": the TRANSACTION date (the date of purchase, usually near the top of the receipt next to the time). Use "YYYY-MM-DD" format (date only, no time). IMPORTANT: Ignore any "Date of Issuance", PTU accreditation dates, permit dates, or BIR registration dates — these are regulatory dates, NOT the purchase date. If the transaction date is unreadable, use "${photoDateStr}".
+  This photo was taken on ${photoDateStr}. A receipt is normally photographed within days of the purchase, so the year is almost always ${photoDateStr.slice(0, 4)}. Before answering, re-read the year digits and check them against that. Only report a different year if the receipt plainly prints one — an old receipt is possible, a misread digit is far more likely.
 - "dateSource": "OCR" if you read the date from the receipt itself, or "PHOTO_FALLBACK" if you used the fallback "${photoDateStr}" because the date was unreadable. Always include this field.
 - "description": merchant name + short summary of purchase (max 100 chars).
 - "multiCategory": true if the receipt contains items that span 2 or more DIFFERENT categories from the list below, false if all items belong to a single category. For example, a grocery receipt with food AND cleaning supplies = true, a restaurant bill with only food = false, a single ride receipt = false.
@@ -156,13 +166,43 @@ export async function scanReceipt(params: {
       config: receiptScanConfig(),
     });
 
+    // Why the model produced nothing usable, which was previously logged nowhere: an UNREADABLE
+    // is indistinguishable from a bad photo in the UI, and a receipt heavy enough to exhaust the
+    // output budget fails this way roughly as often as a genuinely blurry one. `finishReason`
+    // separates them — MAX_TOKENS means the model ran out of room, SAFETY means it refused —
+    // and the thinking count is the number that moves: it reached 13.8k on a 66-item receipt,
+    // against output that never exceeded ~2.5k.
+    const describeResponse = () => {
+      const usage = response.usageMetadata;
+      return [
+        `finish=${response.candidates?.[0]?.finishReason ?? "unknown"}`,
+        `thoughts=${usage?.thoughtsTokenCount ?? "?"}`,
+        `output=${usage?.candidatesTokenCount ?? "?"}`,
+      ].join(" ");
+    };
+
     const rawText = response.text?.trim();
-    if (!rawText) return await fail("UNREADABLE");
+    if (!rawText) {
+      console.warn(`[receipt-scan] model returned no text: ${describeResponse()}`);
+      return await fail("UNREADABLE");
+    }
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(stripCodeFences(rawText));
     } catch {
+      // Shape, never content. The question worth answering here is "did the model run out of room
+      // or ignore the format", and both are answered by where the text starts and stops — whereas
+      // the text itself is the user's receipt: merchant, items, prices. Those belong in the
+      // response, not in a log line that outlives the request.
+      const body = stripCodeFences(rawText).trim();
+      console.warn(
+        `[receipt-scan] model returned unparseable text: ${describeResponse()} ` +
+          `length=${rawText.length} startsAsJson=${body.startsWith("{")} ` +
+          // A response cut off by the output budget is valid JSON right up to the point it stops,
+          // so an unterminated object is the signature of truncation rather than of malformation.
+          `terminated=${body.endsWith("}")}`
+      );
       return await fail("UNREADABLE");
     }
 
@@ -218,11 +258,12 @@ export async function scanReceipt(params: {
     }
 
     // Normalize date and flag a suspicious year for the caller.
-    const { date: normalizedDate, dateWarning, usedPhotoFallback: parseFailed } = checkReceiptDate(
-      result.data.date,
-      params.todayStr,
-      params.photoDateStr,
-    );
+    const {
+      date: normalizedDate,
+      dateWarning,
+      usedPhotoFallback: parseFailed,
+      repairedFromYear,
+    } = checkReceiptDate(result.data.date, params.todayStr, params.photoDateStr);
     // Trust Gemini's explicit signal first; fall back to parse-failure detection.
     const usedPhotoFallback = result.data.dateSource === "PHOTO_FALLBACK" || parseFailed;
 
@@ -271,6 +312,9 @@ export async function scanReceipt(params: {
         // Only when true: an absent flag is the ordinary case, and emitting `false` on every
         // scan would add a field to every MCP result to say nothing happened.
         ...(breakdownDropped && { breakdownDropped: true }),
+        // Present only on a repair, so the UI can say which year was replaced rather than showing
+        // a bare "check year" that hides the fact anything changed.
+        ...(repairedFromYear && { repairedFromYear }),
         dateWarning,
         usedPhotoFallback,
       },

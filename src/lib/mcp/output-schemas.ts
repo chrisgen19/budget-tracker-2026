@@ -27,8 +27,30 @@ import type {
 } from "../budget-query-types";
 import type { ScanResultPayload } from "../receipt-scan";
 
-/** True only when A and B are mutually assignable, so neither side may drift. */
-type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
+/**
+ * True only when A and B have exactly the same keys *and* are mutually assignable.
+ *
+ * The key comparison is not redundant. Mutual assignability alone does not catch an added
+ * **optional** property: `{a: string}` and `{a: string; b?: string}` each extend the other, since
+ * excess properties are permitted outside object literals. That is precisely the shape every
+ * field added to a tool payload has taken — `breakdownDropped?`, `repairedFromYear?` — so the
+ * assignability check alone passed while the schema silently fell behind the type it pins, which
+ * is the drift this whole mechanism exists to prevent.
+ *
+ * Every check is tuple-wrapped and inlined rather than composed out of a named helper. A helper
+ * returning `never` cannot be tested with `Helper<A, B> extends true`, because `never` is
+ * assignable to everything and so takes the *true* branch — a guard written that way silently
+ * passes on exactly the drift it was added to catch.
+ */
+type Exact<A, B> = [Exclude<keyof A, keyof B>] extends [never]
+  ? [Exclude<keyof B, keyof A>] extends [never]
+    ? [A] extends [B]
+      ? [B] extends [A]
+        ? true
+        : never
+      : never
+    : never
+  : never;
 const assertExact = <A, B>(_proof: Exact<A, B>) => {};
 
 const transactionType = z.enum(["INCOME", "EXPENSE"]);
@@ -363,6 +385,17 @@ export const scanReceiptOutput = {
       "True when the receipt was itemized but the itemization failed validation and was " +
         "discarded. The scan itself is valid and was charged; rebuilding the breakdown is a " +
         "separate, separately-metered call."
+    ),
+  /** Set when the scan replaced a misread year, naming the year the receipt appeared to print. */
+  repairedFromYear: z
+    .string()
+    .optional()
+    .describe(
+      "The year originally read off the receipt, present only when the scan replaced it. The " +
+        "year was overridden because it disagreed with the photo's while the month and day " +
+        "matched exactly, which is a misread digit rather than an old receipt. Tell the user " +
+        "the date was corrected and from what, so they can put it back if the receipt really " +
+        "is from that year."
     ),
   /** The year read off the receipt does not match the current one, so the date is worth checking. */
   dateWarning: z.boolean(),
