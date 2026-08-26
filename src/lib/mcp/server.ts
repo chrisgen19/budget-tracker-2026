@@ -673,9 +673,11 @@ export const createBudgetMcpServer = ({
 
       const outcome = await scanReceipt({
         userId,
-        base64: buffer.toString("base64"),
         mimeType,
         byteLength: buffer.length,
+        // Already decoded above to measure it, and the schema caps the encoded string, so the
+        // allocation here is bounded before this point rather than by the lazy read.
+        readBase64: () => imageBase64,
         todayStr,
         // The caller has no camera roll to read a capture date from, so today is the only
         // honest fallback for an unreadable receipt date.

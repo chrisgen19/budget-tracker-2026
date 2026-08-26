@@ -84,9 +84,19 @@ or when multiCategory is true:
  */
 export async function scanReceipt(params: {
   userId: string;
-  base64: string;
   mimeType: string;
+  /** Decoded size, checked before the image is read into memory. */
   byteLength: number;
+  /**
+   * Produces the base64 image, called only once the scan is authorized.
+   *
+   * Lazy on purpose. Encoding eagerly allocated the decoded buffer and its base64 form, which is
+   * a third larger again, *before* anything had checked the size: the pre-refactor guard
+   * validated the upload before the route ever called `arrayBuffer()`, and passing an already
+   * encoded string here quietly gave that up. `checkBodySize` does not cover it, since a chunked
+   * request carries no `content-length` to check.
+   */
+  readBase64: () => Promise<string> | string;
   todayStr: string;
   photoDateStr: string;
 }): Promise<ReceiptScanOutcome> {
@@ -106,13 +116,15 @@ export async function scanReceipt(params: {
   };
 
   try {
+    const base64 = await params.readBase64();
+
     const response = await generateContentWithRetry({
       model: GEMINI_MODEL,
       contents: [
         {
           role: "user",
           parts: [
-            { inlineData: { mimeType: params.mimeType, data: params.base64 } },
+            { inlineData: { mimeType: params.mimeType, data: base64 } },
             { text: buildPrompt(categoryList, params.photoDateStr) },
           ],
         },

@@ -12,7 +12,7 @@ import { chunkMessage } from "@/lib/telegram/chunk";
 import { MAX_IMAGE_BYTES, pickReceiptImage } from "@/lib/telegram/photo";
 import { confirmPendingScan } from "@/lib/telegram/confirm-scan";
 import {
-  clearPendingScan,
+  hasPendingScan,
   isConfirmation,
   isRejection,
   putPendingScan,
@@ -637,17 +637,32 @@ async function handleReceiptPhoto(
   }
   if (pick.kind === "none") return;
 
-  // A second photo supersedes the first: "yes" is ambiguous with two pending, and saving the
-  // wrong receipt is worse than being asked to send it again.
-  clearPendingScan(chatId);
   await sendMessage(chatId, "Reading that receipt...");
 
-  const image = await downloadTelegramFile(pick.fileId);
-  const scan = await callTool<ScannedReceipt>("scan_receipt", {
-    imageBase64: image.toString("base64"),
-    mimeType: pick.mimeType,
-    localDate: localTimestamp(TZ_OFFSET).slice(0, 10),
-  });
+  // Any earlier draft is left in place until this one succeeds. Clearing it up front threw away
+  // something the user had already paid a scan for: if the download or the scan then failed,
+  // recovering the first receipt meant scanning it again and spending a second credit. A
+  // successful scan replaces it below, so a stale draft cannot linger either.
+  const superseding = hasPendingScan(chatId);
+
+  let scan: ScannedReceipt;
+  try {
+    const image = await downloadTelegramFile(pick.fileId);
+    scan = await callTool<ScannedReceipt>("scan_receipt", {
+      imageBase64: image.toString("base64"),
+      mimeType: pick.mimeType,
+      localDate: localTimestamp(TZ_OFFSET).slice(0, 10),
+    });
+  } catch (err) {
+    // Reported here rather than rethrown, so the reply can say which receipt is still pending.
+    // Answering "yes" now would save the earlier one, and the user has to know that.
+    await sendMessage(
+      chatId,
+      replyForError(err) +
+        (superseding ? "\n\nYour earlier receipt is still waiting. Reply *yes* to save that one." : "")
+    );
+    return;
+  }
 
   const categoryName =
     categories.find((c) => c.id === scan.categoryId)?.name ?? "Uncategorised";

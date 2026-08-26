@@ -50,9 +50,11 @@ export async function POST(request: Request) {
 
     const outcome = await scanReceipt({
       userId,
-      base64: Buffer.from(await file.arrayBuffer()).toString("base64"),
       mimeType: resolveMimeType(file),
       byteLength: file.size,
+      // Read only after the size and type have been accepted, so an oversized upload is refused
+      // without ever being buffered or encoded.
+      readBase64: async () => Buffer.from(await file.arrayBuffer()).toString("base64"),
       todayStr,
       photoDateStr,
     });

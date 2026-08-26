@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach } from "vitest";
 import {
   PENDING_TTL_MS,
   clearPendingScan,
+  hasPendingScan,
   isConfirmation,
   isRejection,
   putPendingScan,
@@ -64,6 +65,27 @@ describe("pending scans", () => {
     expect(takePendingScan(1, now)).toBeNull();
     // Even asking again at a time when it would have been fresh must not resurrect it.
     expect(takePendingScan(1, now - PENDING_TTL_MS)).toBeNull();
+  });
+
+  // The bug this covers: a new photo cleared the pending draft before the replacement had been
+  // downloaded or scanned. A failure then left nothing, and recovering the first receipt meant
+  // scanning it again and spending a second credit.
+  it("reports a pending scan without consuming it", () => {
+    putPendingScan(1, scan());
+    expect(hasPendingScan(1)).toBe(true);
+    // Still there: peeking must not be what loses it.
+    expect(hasPendingScan(1)).toBe(true);
+    expect(takePendingScan(1)).not.toBeNull();
+  });
+
+  it("does not report an expired scan as pending", () => {
+    const now = Date.now();
+    putPendingScan(1, scan({ createdAt: now - PENDING_TTL_MS - 1 }));
+    expect(hasPendingScan(1, now)).toBe(false);
+  });
+
+  it("reports nothing pending for an untouched chat", () => {
+    expect(hasPendingScan(1)).toBe(false);
   });
 
   it("returns null for a chat with nothing pending", () => {

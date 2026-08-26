@@ -42,6 +42,13 @@ export const takePendingScan = (chatId: number, now = Date.now()): PendingScan |
   return now - scan.createdAt > PENDING_TTL_MS ? null : scan;
 };
 
+/** Whether a scan is waiting, without consuming it. Used to tell the user their earlier receipt
+ *  survived when a replacement scan fails. */
+export const hasPendingScan = (chatId: number, now = Date.now()): boolean => {
+  const scan = pending.get(chatId);
+  return !!scan && now - scan.createdAt <= PENDING_TTL_MS;
+};
+
 export const clearPendingScan = (chatId: number): void => {
   pending.delete(chatId);
 };
