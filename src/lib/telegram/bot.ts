@@ -6,9 +6,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { GoogleGenAI } from "@google/genai";
 import { updateBatchId } from "@/lib/telegram/batch-id";
-import { localTimestamp } from "@/lib/telegram/local-time";
+import { localDay, localTimestamp } from "@/lib/telegram/local-time";
 import { messageIsAllowed, type Allowlist, type TelegramMessage } from "@/lib/telegram/allowlist";
 import { McpToolError, replyForError } from "@/lib/telegram/errors";
+import { isPlainShorthand } from "@/lib/telegram/shorthand";
 /**
  * The bot talks to the deployed app over MCP rather than to a database.
  *
@@ -182,24 +183,40 @@ async function telegramApi(method: string, body: Record<string, any> = {}): Prom
   });
 }
 
-async function sendMessage(chatId: number | string, text: string, parseMode: "Markdown" | "HTML" = "Markdown") {
+/**
+ * Send a chat message, and report whether it actually landed.
+ *
+ * Two different failures are handled differently. Markdown that Telegram cannot parse is a 400
+ * that will fail identically forever, so it falls back to plain text once. A network failure is
+ * transient, so plain text is retried after a short pause.
+ *
+ * The return value matters for a confirmation: a write that committed and then failed to be
+ * confirmed leaves the user believing nothing happened, and their resend arrives under a new
+ * Telegram update id, so it writes a second row instead of replaying the first.
+ */
+async function sendMessage(
+  chatId: number | string,
+  text: string,
+  parseMode: "Markdown" | "HTML" = "Markdown"
+): Promise<boolean> {
   try {
-    await telegramApi("sendMessage", {
-      chat_id: chatId,
-      text,
-      parse_mode: parseMode,
-    });
+    await telegramApi("sendMessage", { chat_id: chatId, text, parse_mode: parseMode });
+    return true;
   } catch {
-    // If Markdown parsing fails due to unescaped special characters, fall back to plain text
+    // Unescaped special characters in the text; plain text is the only thing that can work.
+  }
+
+  for (const delay of [0, 2_000]) {
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
     try {
-      await telegramApi("sendMessage", {
-        chat_id: chatId,
-        text,
-      });
+      await telegramApi("sendMessage", { chat_id: chatId, text });
+      return true;
     } catch (err) {
-      console.error("[telegram] failed to send a message:", err);
+      console.error("[telegram] failed to send a message:", err instanceof Error ? err.message : err);
     }
   }
+
+  return false;
 }
 
 // Gemini setup
@@ -239,6 +256,25 @@ const formatCreated = (result: CreatedBatch): string => {
   if (labels) reply += `\ud83c\udff7\ufe0f *Labels:* ${labels}\n`;
   return reply;
 };
+
+/**
+ * Confirm a write, and make an undelivered confirmation recoverable.
+ *
+ * The rows are already committed by the time this runs. If the confirmation cannot be delivered
+ * the user sees nothing, assumes it failed, and resends: that arrives under a new Telegram update
+ * id, so it derives a new idempotency key and writes a second row rather than replaying the
+ * first. Retrying the send is what closes most of that window; the log line covers the rest by
+ * naming the rows that exist, so a duplicate can be found instead of guessed at.
+ */
+async function confirmCreated(chatId: number, result: CreatedBatch): Promise<void> {
+  if (await sendMessage(chatId, formatCreated(result))) return;
+
+  console.error(
+    "[telegram] wrote transactions but could not confirm them to the user. " +
+      "A resend will create duplicates rather than replay. Rows: " +
+      result.transactions.map((t) => t.id).join(", ")
+  );
+}
 
 async function handleSummary(chatId: number) {
   // No month is passed: the server resolves the current month in the user's own timezone, which
@@ -296,7 +332,7 @@ async function handleRecent(chatId: number) {
     const icon = t.type === "INCOME" ? "\u2795" : "\u2796";
     const labels = t.labels.map((l) => l.name).join(", ");
     msg += `${icon} *${SYMBOL}${t.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}* - ${t.description || t.categoryName}\n`;
-    msg += `   \ud83d\udcc1 ${t.categoryName} | \ud83d\udcc5 ${t.date.slice(0, 10)}${labels ? ` | \ud83c\udff7\ufe0f ${labels}` : ""}\n\n`;
+    msg += `   \ud83d\udcc1 ${t.categoryName} | \ud83d\udcc5 ${localDay(t.date, TZ_OFFSET)}${labels ? ` | \ud83c\udff7\ufe0f ${labels}` : ""}\n\n`;
   }
 
   await sendMessage(chatId, msg);
@@ -455,9 +491,12 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     return;
   }
 
-  // Fast Regex Shorthand Matching: e.g. "100 breakfast" or "+5000 salary" or "250.50 lunch"
-  const quickExpenseMatch = /^(\d+(?:\.\d+)?)\s+(.+)$/i.exec(text);
-  const quickIncomeMatch = /^\+(\d+(?:\.\d+)?)\s+(.+)$/i.exec(text);
+  // Fast Regex Shorthand Matching: e.g. "100 breakfast" or "+5000 salary" or "250.50 lunch".
+  // Skipped entirely when the text says *when* something happened: this path stamps the current
+  // instant and has no way to express a date, so "350 groceries yesterday" was filed under today.
+  const quick = isPlainShorthand(text);
+  const quickExpenseMatch = quick ? /^(\d+(?:\.\d+)?)\s+(.+)$/i.exec(text) : null;
+  const quickIncomeMatch = quick ? /^\+(\d+(?:\.\d+)?)\s+(.+)$/i.exec(text) : null;
 
   const { categories } = await callTool<{ categories: { id: string; name: string; type: string }[] }>(
     "get_category_list"
@@ -525,7 +564,7 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       });
 
       if (result.transactions.length > 0) {
-        await sendMessage(chatId, formatCreated(result));
+        await confirmCreated(chatId, result);
         return;
       }
     }
@@ -551,7 +590,7 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       });
 
       if (result.transactions.length > 0) {
-        await sendMessage(chatId, formatCreated(result));
+        await confirmCreated(chatId, result);
         return;
       }
     }
@@ -562,9 +601,15 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     }
   }
 
+  // A message that named a date but could not be understood is worth explaining, rather than
+  // repeating an example that has the same problem. Without Gemini there is nothing here that can
+  // resolve "yesterday", and quietly filing it under today is the outcome this path exists to
+  // avoid.
   await sendMessage(
     chatId,
-    `I couldn't understand that command. Try logging an expense like:\n\`100 breakfast\`\nor type /help for options.`
+    !quick && !gemini
+      ? `I can't work out the date in that one. Log it without the date, like \`350 groceries\`, and edit the day in the app.`
+      : `I couldn't understand that command. Try logging an expense like:\n\`100 breakfast\`\nor type /help for options.`
   );
 }
 
@@ -596,6 +641,22 @@ const ALLOWED_USERNAMES = new Set(
 
 const ALLOWLIST: Allowlist = { ids: ALLOWED_IDS, usernames: ALLOWED_USERNAMES };
 
+/**
+ * Every tool a handler calls, so a token too narrow to serve them says so at boot.
+ *
+ * Listed rather than derived: nothing links a handler to its tool at compile time, so this is the
+ * one place that records the dependency. A handler that starts calling something new belongs here
+ * too, or its first failure will be a chat reply rather than a startup warning.
+ */
+const REQUIRED_TOOLS = [
+  "get_category_list",
+  "get_budget_overview",
+  "get_spending_by_category",
+  "search_transactions",
+  "get_upcoming_bills",
+  "create_transactions",
+] as const;
+
 /** Attempts the MCP handshake with backoff, and gives up quietly rather than ending the bot. */
 async function probeMcp(): Promise<void> {
   const delays = [0, 2_000, 5_000, 15_000, 30_000];
@@ -606,19 +667,15 @@ async function probeMcp(): Promise<void> {
       const client = await mcpClient();
       const { tools } = await client.listTools();
       const names = new Set(tools.map((t) => t.name));
-      if (!names.has("create_transactions")) {
+      const missing = REQUIRED_TOOLS.filter((tool) => !names.has(tool));
+      if (missing.length > 0) {
+        // Out-of-scope tools are removed from the server rather than rejected on call, so a
+        // narrow token is silent about what it cannot do until the first message fails. The
+        // setup notes used to name only transactions:write, and a token minted to the letter
+        // started clean and then failed on everything.
         console.warn(
-          "[telegram] this token has no transactions:write scope, so logging will be refused."
-        );
-      }
-      // Every free-text message reads the category list before it can log anything, and that
-      // tool is gated by budget:read. The setup notes say to mint with transactions:write, so a
-      // token minted literally to that instruction used to start clean and then fail on every
-      // single message.
-      if (!names.has("get_category_list")) {
-        console.warn(
-          "[telegram] this token has no budget:read scope, so every message will fail. " +
-            "Mint one with budget:read as well as transactions:write."
+          `[telegram] this token is missing ${missing.join(", ")}. ` +
+            "Mint one with budget:read, transactions:read, bills:read and transactions:write."
         );
       }
       return;

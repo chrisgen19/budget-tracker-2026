@@ -15,3 +15,21 @@
  */
 export const localTimestamp = (timezoneOffset: number, now = new Date()): string =>
   new Date(now.getTime() - timezoneOffset * 60_000).toISOString().slice(0, 19);
+
+/**
+ * The user's calendar day for an instant, as `YYYY-MM-DD`.
+ *
+ * `search_transactions` returns `date` as a full UTC instant, while `create_transactions` returns
+ * a day already resolved against the user's zone. Slicing the first ten characters off the former
+ * therefore printed the UTC day: a transaction entered at 01:00 on 1 September in Manila is
+ * stored as 2026-08-31T17:00:00Z and was shown as 31 August.
+ *
+ * @param timezoneOffset Minutes, `getTimezoneOffset()` convention, so UTC+8 is -480.
+ */
+export const localDay = (instant: string, timezoneOffset: number): string => {
+  const parsed = new Date(instant);
+  // An unparseable value is passed through rather than rendered as "Invalid Date": whatever the
+  // server sent is more informative to look at than NaN.
+  if (Number.isNaN(parsed.getTime())) return instant.slice(0, 10);
+  return localTimestamp(timezoneOffset, parsed).slice(0, 10);
+};
