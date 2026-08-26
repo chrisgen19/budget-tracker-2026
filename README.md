@@ -172,7 +172,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io/) server that lets yo
 budget in natural language ("what's my biggest spending category?", "how much did I spend on food
 this month?") from Claude Code or Claude Desktop.
 
-The 13 tools are defined once, in `src/lib/mcp/server.ts`, and served over two transports:
+The 14 tools are defined once, in `src/lib/mcp/server.ts`, and served over two transports:
 
 ```
 Local:   Claude Desktop ──(stdio)──▶ mcp-server/src/index.ts ─┐
@@ -187,7 +187,9 @@ Pick by which database you want to read:
 | **[Local (stdio)](#option-a-local-stdio)** | whatever `DATABASE_URL` points at, usually your dev database | none, it is your own machine | config file per client |
 | **[Remote (HTTP)](#option-b-remote-http)** | the deployed app's database, i.e. **production** | scoped bearer token, revocable | mint a token, one command |
 
-Twelve of the thirteen tools are read-only. The exception is `create_transactions`, which is
+Twelve of the fourteen tools are read-only. `scan_receipt` writes nothing either, but each call
+spends one of your monthly receipt scans, so it is scoped separately and is never granted by
+default. The remaining exception is `create_transactions`, which is
 available only to a token minted with the `transactions:write` scope **and** only while a
 time-limited write lease is open (Profile > MCP Access). Nothing in the server can change or
 delete an existing transaction. See [MCP writes](#mcp-writes) for how the controls fit together.
@@ -412,6 +414,7 @@ Nothing here can edit or delete an existing transaction.
 | `get_label_list` | Labels with transaction counts, applicable type, and auto-apply schedules |
 | `get_bill_history` | Past bill occurrences (paid/skipped/snoozed) plus per-bill lateness patterns |
 | `get_receipt_items` | Individual line items from scanned receipts, filterable by month, name, or receipt |
+| `scan_receipt` | **Spends a scan.** Reads a receipt image and returns a draft; saves nothing |
 | `create_transactions` | **Write.** Creates one or more transactions in a single idempotent batch |
 
 ### MCP writes
@@ -444,17 +447,9 @@ BUDGET_USER_ID=your-user-id DATABASE_URL="your-database-url" npx @modelcontextpr
 
 This opens a web UI at `http://localhost:6274` where you can call each tool and inspect the results.
 
-To exercise the remote endpoint instead (bearer auth, scope narrowing, and a real tool call over
-HTTP, driven by the SDK's own client), run it against a dev server:
-
-```bash
-pnpm dev -p 3111
-BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-mcp-endpoint.ts
-```
-
-`scripts/verify-mcp-token-auth.ts` covers the token lifecycle (expiry, revocation, rate limiting)
-directly against the database. It needs a **non-UTC** database timezone and says so if it finds
-one, since the timestamp behaviour it checks cannot be observed under UTC.
+The Inspector drives the **stdio** server. To exercise the remote endpoint instead, including
+bearer auth, scope narrowing, the write path and `scan_receipt`, see
+[Verification scripts](#verification-scripts) under Testing.
 
 ## Telegram Bot
 
@@ -485,15 +480,36 @@ questions are routed to a real query instead of being answered by the model.
 | `/bills` | Bills due in the next 30 days |
 | `/categories` | Your category list |
 | `/help` | The above, in chat |
+| *(send a photo)* | Reads the receipt with AI, shows what it found, and waits for `yes` before saving |
 
 Anything with a date or time in it (`yesterday`, `at noon`, `18:00`, `sep 14`) skips the fast path
 and goes to Gemini, because the fast path stamps the current time and has no way to express a date.
 
+### Receipts
+
+Send the bot a photo of a receipt and it reads the amount, date, category and merchant, then
+shows you what it found and waits for `yes` before saving anything. Reply `no` to discard.
+
+The confirmation is not politeness. The web app shows a review modal for the same reason: OCR on a
+phone photo is exactly where a wrong amount comes from, and a bot that saved silently would put it
+in the budget with nobody having seen it.
+
+Sending the receipt **as a file** rather than a photo is worth doing for two reasons. Telegram
+recompresses anything sent as a photo, which costs accuracy on small print, and that recompression
+also strips the image's metadata. Sent as a file, the photo's own capture time survives, and that
+is what the bot falls back to when the date on the receipt cannot be read: a receipt photographed
+on Monday and sent on Thursday then lands on Monday rather than on Thursday. Without it the
+fallback is today, as before. Both work; images must be 4 MB or smaller.
+
+Each scan spends one of your monthly receipt scans, the same allowance the web app uses, because
+the bot scans through the MCP endpoint rather than calling Gemini itself. A scan that fails is
+refunded.
+
 ### Setup
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
-2. Mint an MCP token in **Profile > MCP Access** with **all four** scopes the handlers need:
-   `budget:read`, `transactions:read`, `bills:read`, `transactions:write`. Set **Used by** to
+2. Mint an MCP token in **Profile > MCP Access** with **all five** scopes the handlers need:
+   `budget:read`, `transactions:read`, `bills:read`, `receipts:scan`, `transactions:write`. Set **Used by** to
    **Telegram bot** so its rows are stamped `TELEGRAM` rather than appearing as Claude's. A
    write-only token fails on every message, since each one reads the category list first.
 3. Set the environment variables (see below), then start the app. The bot starts with it.
@@ -532,6 +548,91 @@ it.
 
 Two entry points share one definition: `src/instrumentation.ts` starts the bot on server boot in
 production, and `scripts/telegram-bot.ts` (`pnpm telegram:bot`) runs it locally.
+
+## Testing
+
+```bash
+pnpm test          # the whole suite once
+pnpm test:watch    # re-run on change
+pnpm lint
+pnpm type-check
+cd mcp-server && pnpm type-check   # excluded from the root config, so run it separately
+```
+
+Vitest with React Testing Library, jsdom environment. Tests are colocated as
+`src/**/*.test.ts(x)`, so nothing imports them and they stay out of the Next.js bundle.
+
+### Verification scripts
+
+Five things cannot be tested in jsdom, because getting them wrong looks identical to getting
+them right until a real database or a real HTTP request is involved: advisory locks, row locks,
+transaction isolation, timestamp marshalling, and anything a spec-compliant client validates on
+the way back. Each has a script under `scripts/`, run directly with `pnpm exec tsx`.
+
+They are worth running when you touch the area they cover. Each creates and deletes its own
+throwaway user, so none of them touch your own data.
+
+| Script | Covers | Needs |
+|---|---|---|
+| `verify-scan-quota.ts` | Scan credit reservation, refund, and the rolling rate limit under concurrency | a database |
+| `verify-mcp-token-auth.ts` | Token expiry, revocation, and the rate limiter's row lock | a **non-UTC** database |
+| `verify-mcp-endpoint.ts` | Bearer auth, the stateless transport, and scope narrowing over real HTTP | a dev server |
+| `verify-batch-idempotency.ts` | A committed batch whose response was lost replays instead of duplicating | a dev server |
+| `verify-receipt-scan.ts` | `scan_receipt` over HTTP, a real Gemini call, and the scan-credit accounting | a dev server + `GEMINI_API_KEY` |
+
+```bash
+# database only
+pnpm exec tsx scripts/verify-scan-quota.ts
+pnpm exec tsx scripts/verify-mcp-token-auth.ts
+
+# dev server in one terminal
+pnpm dev -p 3111
+
+# then, in another
+BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-mcp-endpoint.ts
+BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-batch-idempotency.ts
+BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-receipt-scan.ts
+```
+
+`verify-mcp-token-auth.ts` refuses to pass against a UTC database and says so: the timestamp
+behaviour it checks cannot be observed under UTC, so a green run there would prove nothing.
+
+### Testing receipt scanning
+
+`verify-receipt-scan.ts` covers the whole scan path without a receipt to hand: it generates a
+plain single-colour image, which Gemini correctly refuses, and that exercises the refusal *and*
+confirms the scan credit is refunded. Nothing needs to be committed for it. To also cover a
+successful scan, point it at a real photo:
+
+```bash
+RECEIPT=/path/to/receipt.jpg BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-receipt-scan.ts
+```
+
+It checks that a refused call reserves nothing, a non-receipt is refunded but keeps its `FAILED`
+row so it still counts toward the rate limit, a usable scan spends exactly one credit, and
+scanning writes no transaction.
+
+### Testing the Telegram bot
+
+The bot's own logic (photo selection, the pending-scan lifecycle, the confirm step, message
+parsing) is covered by unit tests. Everything past that needs real Telegram.
+
+```bash
+pnpm dev -p 3111        # one terminal
+pnpm telegram:bot       # another
+```
+
+`.env` needs `TELEGRAM_BOT_TOKEN`, an allowlist entry, `TELEGRAM_MCP_URL=http://localhost:3111/api/mcp`,
+`TELEGRAM_MCP_TOKEN`, and `TELEGRAM_TZ_OFFSET`. The startup log names anything missing.
+
+> **Only one poller may exist per bot token.** Telegram answers a second concurrent `getUpdates`
+> with 409 Conflict, so never run `pnpm telegram:bot` while `TELEGRAM_BOT_ENABLED=true` in a
+> deployed environment. Either turn it off there first, or use a second bot from @BotFather for
+> local work.
+
+Sending a photo spends a real scan credit and calls Gemini, so it costs something every time. The
+verification script above is the cheaper way to test the scan itself; use the bot to test the
+parts only it has, which are the photo download and the yes/no confirmation.
 
 ## Git Hooks
 

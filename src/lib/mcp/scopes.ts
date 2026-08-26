@@ -15,6 +15,7 @@ export const MCP_SCOPES = [
   "labels:read",
   "bills:read",
   "receipts:read",
+  "receipts:scan",
   "transactions:write",
 ] as const;
 
@@ -36,6 +37,8 @@ export const MCP_SCOPE_LABELS: Record<McpScope, string> = {
     "Recurring bills, what is due, and payment history (including the amount paid for each)",
   "receipts:read":
     "Line items from scanned receipts, each with its transaction's description, amount, and date",
+  "receipts:scan":
+    "Read a receipt photo with AI and return the amount, date, and category. Spends one scan from your monthly allowance per call",
   "transactions:write":
     "Create new transactions. Also requires writes to be switched on below, and cannot be granted to a token that never expires",
 };
@@ -46,9 +49,20 @@ export const isWriteScope = (scope: McpScope): boolean => scope.endsWith(":write
 
 export const grantsWrite = (scopes: readonly McpScope[]): boolean => scopes.some(isWriteScope);
 
-/** Every scope that only reads. Also the default grant everywhere: a caller that does not name
- *  its scopes must not silently receive write authority. */
-export const READ_ONLY_SCOPES: readonly McpScope[] = MCP_SCOPES.filter((s) => !isWriteScope(s));
+/**
+ * Scopes that are not free to exercise, whether or not they write.
+ *
+ * `receipts:scan` writes nothing, but each call spends one of the user's monthly scans and costs
+ * a real Gemini request. Testing `endsWith(":write")` alone would therefore have filed it under
+ * read-only and put it in the default grant below, handing metered spend to every token that
+ * names no scopes, including the local stdio server.
+ */
+export const isPrivilegedScope = (scope: McpScope): boolean =>
+  isWriteScope(scope) || scope === "receipts:scan";
+
+/** Every scope that neither changes data nor spends a metered resource. Also the default grant
+ *  everywhere: a caller that does not name its scopes must not silently receive either. */
+export const READ_ONLY_SCOPES: readonly McpScope[] = MCP_SCOPES.filter((s) => !isPrivilegedScope(s));
 
 /** What the mint form starts with. A token that can change data has to be chosen deliberately, or
  *  an untouched form would hand out write authority and least privilege would depend on the user
@@ -75,6 +89,7 @@ export const MCP_TOOL_SCOPES = {
   get_upcoming_bills: "bills:read",
   get_bill_history: "bills:read",
   get_receipt_items: "receipts:read",
+  scan_receipt: "receipts:scan",
   create_transactions: "transactions:write",
 } as const satisfies Record<string, McpScope>;
 
