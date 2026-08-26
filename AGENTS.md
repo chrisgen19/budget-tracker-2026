@@ -120,7 +120,10 @@ model, because a model holding only category names can only refuse or invent. Ob
 Gemini is consulted at all: paying a model call to recognise the word "summary" is slow, costs a
 request, and fails outright when `GEMINI_API_KEY` is unset, where the slash command still works.
 Anything ambiguous is left to the model, since a wrong local guess answers a question the user did
-not ask with no sign it misread them. It is an **MCP client**, not a database client: it calls `/api/mcp` with a scoped token,
+not ask with no sign it misread them. That routing covers specific questions too ("did I pay
+meralco this month"): Gemini names a label, a category or a search term, `search-intent.ts`
+resolves those names against the real lists so a hallucinated one cannot reach the query, and a
+question about a recurring bill goes to `get_bill_history` instead. It is an **MCP client**, not a database client: it calls `/api/mcp` with a scoped token,
 so it inherits the scope, the write lease, the rate limit and the audit trail rather than going
 around them, and it holds no database credentials.
 

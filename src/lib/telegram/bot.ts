@@ -13,6 +13,7 @@ import { MAX_IMAGE_BYTES, pickReceiptImage } from "@/lib/telegram/photo";
 import { readPhotoTakenAt } from "@/lib/exif-date";
 import { receiptDateLooksOff } from "@/lib/telegram/date-sanity";
 import { resolveCommand, type BotCommand } from "@/lib/telegram/commands";
+import { parseSearchIntent } from "@/lib/telegram/search-intent";
 import { confirmPendingScan } from "@/lib/telegram/confirm-scan";
 import {
   hasPendingScan,
@@ -514,6 +515,119 @@ async function handleBills(chatId: number) {
   await sendMessage(chatId, msg);
 }
 
+/**
+ * Answer "did I pay X" and "how much did I spend on X" from real rows.
+ *
+ * Gemini extracts only the term and the month; every figure below comes from `search_transactions`.
+ * The distinction matters because this is the shape of question a model is most tempted to answer
+ * from nothing, and a confident wrong number about your own money is worse than no answer.
+ */
+async function handleSearch(chatId: number, search: string, month: string | null): Promise<void> {
+  const result = await callTool<{
+    transactions: {
+      amount: number;
+      description: string;
+      date: string;
+      categoryName: string;
+      type: string;
+    }[];
+    pagination: { total: number };
+  }>("search_transactions", {
+    search,
+    ...(month && { month }),
+    limit: 10,
+    sortBy: "date",
+    sortDir: "desc",
+  });
+
+  const rows = result.transactions;
+  const when = month ? ` in ${month}` : "";
+
+  if (rows.length === 0) {
+    // Said plainly rather than dressed up: "no" is a real answer to "did I pay X", and the
+    // wording has to make clear it means nothing was found rather than nothing was searched.
+    await sendMessage(
+      chatId,
+      `\ud83d\udd0d No transactions matching *${search}*${when}.\n\n` +
+        `I match what you typed when logging it, so try the merchant name as it appears on the transaction.`
+    );
+    return;
+  }
+
+  const total = rows.reduce((sum, r) => sum + (r.type === "EXPENSE" ? r.amount : 0), 0);
+  const money = (n: number) => `${SYMBOL}${n.toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+
+  let msg = `\ud83d\udd0d *${search}*${when}: ${result.pagination.total} match${result.pagination.total === 1 ? "" : "es"}\n\n`;
+  for (const r of rows) {
+    msg += `\u2022 ${localDay(r.date, TZ_OFFSET)}  *${money(r.amount)}*  ${r.description || r.categoryName}\n`;
+  }
+  if (rows.length < result.pagination.total) {
+    msg += `\n_Showing the ${rows.length} most recent._`;
+  }
+  if (total > 0) msg += `\n\nTotal shown: *${money(total)}*`;
+
+  await sendMessage(chatId, msg);
+}
+
+/**
+ * Answer "did I pay the water bill" from the bill's own history.
+ *
+ * Better than a description search for a *recurring* bill: the log records paid, skipped and
+ * snoozed per occurrence, so "no" can be distinguished from "skipped on purpose", and a bill the
+ * user renamed still matches. Falls back to a plain search when nothing matches the name, since
+ * not everything people call a bill is a scheduled one.
+ */
+async function handleBillCheck(chatId: number, search: string, month: string | null): Promise<void> {
+  const result = await callTool<{
+    occurrences: {
+      billDescription: string;
+      categoryName: string;
+      amount: number;
+      paidAmount: number | null;
+      dueDate: string;
+      status: string;
+      daysLate: number | null;
+    }[];
+  }>("get_bill_history", { months: 6, limit: 50 });
+
+  const needle = search.toLowerCase();
+  const matches = result.occurrences.filter(
+    (o) =>
+      o.billDescription.toLowerCase().includes(needle) ||
+      o.categoryName.toLowerCase().includes(needle)
+  );
+
+  if (matches.length === 0) {
+    // Not a scheduled bill, or named differently. A description search still answers the
+    // question they actually asked, so fall through rather than saying no.
+    await handleSearch(chatId, search, month);
+    return;
+  }
+
+  const money = (n: number) => `${SYMBOL}${n.toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+  const inMonth = month ? matches.filter((o) => o.dueDate.slice(0, 7) === month) : matches;
+
+  if (inMonth.length === 0) {
+    const latest = matches[0];
+    await sendMessage(
+      chatId,
+      `\ud83d\udcc5 No *${latest.billDescription}* occurrence in ${month}.\n\n` +
+        `Most recent: ${localDay(latest.dueDate, TZ_OFFSET)}, ${latest.status.toLowerCase()}.`
+    );
+    return;
+  }
+
+  let msg = `\ud83d\udcc5 *${inMonth[0].billDescription}*${month ? ` in ${month}` : ""}\n\n`;
+  for (const o of inMonth.slice(0, 6)) {
+    const mark = o.status === "PAID" ? "\u2705" : o.status === "SKIPPED" ? "\u23ed\ufe0f" : "\ud83d\udd52";
+    const amount = o.paidAmount ?? o.amount;
+    const late = o.daysLate && o.daysLate > 0 ? ` (${o.daysLate}d late)` : "";
+    msg += `${mark} ${localDay(o.dueDate, TZ_OFFSET)}  ${o.status.toLowerCase()}  *${money(amount)}*${late}\n`;
+  }
+
+  await sendMessage(chatId, msg);
+}
+
 async function handleCategories(chatId: number) {
   const result = await callTool<{ categories: { name: string; type: string }[] }>(
     "get_category_list"
@@ -556,8 +670,19 @@ Decide what the user wants:
 - Asking about this month's spending, balance, or where their money went -> "SHOW_SUMMARY"
 - Asking what they recently logged -> "SHOW_RECENT"
 - Asking about upcoming or due bills -> "SHOW_BILLS"
+- Asking whether a specific RECURRING BILL was paid ("did I pay the water bill", "have I paid
+  internet this month") -> "CHECK_BILL", with "search" set to the bill's name as they said it
+- Asking whether they bought or paid for something specific, or what they spent on it
+  ("did I pay meralco", "how much did I spend at jollibee", "did I buy coffee last week")
+  -> "SEARCH_TRANSACTIONS", with "search" set to the merchant or item, and "month" set to
+  YYYY-MM when they named one. Use the current timestamp above to resolve "this month" and
+  "last month". Omit "month" when they did not limit it to one.
 - Anything else -> "UNSUPPORTED", with replyText saying briefly what you cannot do and
   pointing at /summary, /recent, /bills or /help. State no figures.
+
+For the search actions, "search" is matched against the transaction description, so use the word
+the user would have typed when logging it: "meralco", not "electricity". Never guess an amount or
+a date: you are only extracting what to look for.
 
 The SHOW_* actions are answered from the user's real data, not by you.
 
@@ -570,7 +695,9 @@ If logging a transaction:
 
 Return ONLY a JSON object in this format:
 {
-  "action": "CREATE_TRANSACTION" | "SHOW_SUMMARY" | "SHOW_RECENT" | "SHOW_BILLS" | "UNSUPPORTED",
+  "action": "CREATE_TRANSACTION" | "SHOW_SUMMARY" | "SHOW_RECENT" | "SHOW_BILLS" | "CHECK_BILL" | "SEARCH_TRANSACTIONS" | "UNSUPPORTED",
+  "search": string | null,
+  "month": string | null,
   "transaction": {
     "amount": number,
     "description": string,
@@ -799,6 +926,10 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       `\u2022 /bills - Upcoming scheduled bills\n` +
       `\u2022 /categories - List all categories\n` +
       `\u2022 /help - Show this guide\n\n` +
+      `\ud83d\udd0d *Ask about what you logged:*\n` +
+      `\u2022 \`did I pay meralco this month\`\n` +
+      `\u2022 \`how much on transportation in work budget\`\n` +
+      `\u2022 \`did I pay the water bill\`\n\n` +
       `The slash is optional: *summary*, *recent*, *bills* and *categories* work on their own, ` +
       `and you can ask in your own words too.`;
     await sendMessage(chatId, msg);
@@ -904,6 +1035,15 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       return;
     }
 
+    // Validated rather than trusted: see parseSearchIntent for why a bad month is dropped
+    // instead of being passed through as a filter.
+    const intent = parseSearchIntent(aiResult);
+    if (intent) {
+      if (intent.kind === "BILL") await handleBillCheck(chatId, intent.search, intent.month);
+      else await handleSearch(chatId, intent.search, intent.month);
+      return;
+    }
+
     if (aiResult?.replyText) {
       await sendMessage(chatId, aiResult.replyText);
       return;
@@ -963,6 +1103,7 @@ const REQUIRED_TOOLS = [
   "get_spending_by_category",
   "search_transactions",
   "get_upcoming_bills",
+  "get_bill_history",
   "create_transactions",
   "scan_receipt",
 ] as const;
