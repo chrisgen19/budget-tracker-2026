@@ -112,7 +112,10 @@ src/
 
 ## Telegram bot
 `src/lib/telegram/bot.ts` is a personal Telegram bot that logs transactions and answers summary
-queries. It is an **MCP client**, not a database client: it calls `/api/mcp` with a scoped token,
+queries. Gemini only ever *classifies* a message: it is never given transactions, totals or
+balances, and every figure the bot sends comes from an MCP read tool via the same handlers the
+slash commands use. A free-text question is routed to one of those handlers, not answered by the
+model, because a model holding only category names can only refuse or invent. It is an **MCP client**, not a database client: it calls `/api/mcp` with a scoped token,
 so it inherits the scope, the write lease, the rate limit and the audit trail rather than going
 around them, and it holds no database credentials.
 

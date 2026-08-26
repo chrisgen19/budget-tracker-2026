@@ -17,6 +17,7 @@ import {
   shouldRetryWrite,
 } from "@/lib/telegram/errors";
 import { isPlainShorthand } from "@/lib/telegram/shorthand";
+import { findOtherCategory, matchCategory } from "@/lib/telegram/category-match";
 /**
  * The bot talks to the deployed app over MCP rather than to a database.
  *
@@ -490,7 +491,20 @@ User's categories: ${JSON.stringify(categoryNames)}
 
 Analyze the user's message: "${text}"
 
-Determine if the user wants to log an expense/income transaction or ask a question.
+You have NO access to the user's transactions, totals, or balances. You can see only the
+message, the current time, and the category names above. Never state or estimate any amount,
+total, balance or count: you would be inventing it.
+
+Decide what the user wants:
+- Logging an expense or income -> "CREATE_TRANSACTION"
+- Asking about this month's spending, balance, or where their money went -> "SHOW_SUMMARY"
+- Asking what they recently logged -> "SHOW_RECENT"
+- Asking about upcoming or due bills -> "SHOW_BILLS"
+- Anything else -> "UNSUPPORTED", with replyText saying briefly what you cannot do and
+  pointing at /summary, /recent, /bills or /help. State no figures.
+
+The SHOW_* actions are answered from the user's real data, not by you.
+
 If logging a transaction:
 - amount: positive number
 - description: concise title (e.g. "Breakfast", "Jollibee lunch", "Salary")
@@ -500,7 +514,7 @@ If logging a transaction:
 
 Return ONLY a JSON object in this format:
 {
-  "action": "CREATE_TRANSACTION" | "ANSWER_QUERY",
+  "action": "CREATE_TRANSACTION" | "SHOW_SUMMARY" | "SHOW_RECENT" | "SHOW_BILLS" | "UNSUPPORTED",
   "transaction": {
     "amount": number,
     "description": string,
@@ -598,60 +612,34 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     const description = match[2].trim();
 
     if (amount > 0 && description) {
-      // Find best category match
       const type = isIncome ? "INCOME" : "EXPENSE";
-      const matchingCats = categories.filter((c) => c.type === type);
-      const descLower = description.toLowerCase();
+      // No confident match returns null rather than a guess. It used to fall back to the first
+      // category of that type, and the list is ordered defaults-first then alphabetically, so
+      // with the seeded data every unrecognised expense was filed under Education.
+      let matchedCat = matchCategory(description, type, categories);
 
-      let matchedCat = matchingCats.find((c) => descLower.includes(c.name.toLowerCase()));
-      if (!matchedCat) {
-        if (isIncome) {
-          matchedCat = matchingCats.find((c) => c.name.toLowerCase().includes("income") || c.name.toLowerCase().includes("salary")) || matchingCats[0];
-        } else {
-          // Defaults for food, transport, bills
-          if (/breakfast|lunch|dinner|coffee|food|snack|jollibee|mcdo|kfc|eat|restaurant/i.test(descLower)) {
-            matchedCat = matchingCats.find((c) => c.name.toLowerCase().includes("food"));
-          } else if (/grab|angkas|taxi|bus|jeep|gas|fare|fuel|transport/i.test(descLower)) {
-            matchedCat = matchingCats.find((c) => c.name.toLowerCase().includes("transport"));
-          } else if (/shopee|lazada|mall|clothes|shopping/i.test(descLower)) {
-            matchedCat = matchingCats.find((c) => c.name.toLowerCase().includes("shopping"));
-          } else if (/bill|meralco|water|electric|internet|wifi/i.test(descLower)) {
-            matchedCat = matchingCats.find((c) => c.name.toLowerCase().includes("utilities"));
-          }
+      // Gemini sees the whole list and can choose properly, so the fast path steps aside for it.
+      // Only when there is no Gemini does an explicit "Other" bucket become the least-bad
+      // answer: it is at least somewhere the user would recognise as unsorted.
+      if (!matchedCat && !gemini) matchedCat = findOtherCategory(type, categories);
+
+      if (matchedCat) {
+        const clientBatchId = updateBatchId(BOT_ID, updateId);
+
+        const result = await createTransactions(clientBatchId, [
+          {
+            amount,
+            description: description.charAt(0).toUpperCase() + description.slice(1),
+            type,
+            categoryId: matchedCat.id,
+            date: new Date().toISOString(),
+          },
+        ]);
+
+        if (result.transactions.length > 0) {
+          await confirmCreated(chatId, result);
+          return;
         }
-      }
-
-      if (!matchedCat) {
-        matchedCat = matchingCats[0];
-      }
-
-      // `matchingCats[0]` on an empty list is undefined, and the id is read a few lines down.
-      // Reaching that meant a TypeError surfacing as the generic error reply, with nothing in
-      // the log naming the cause.
-      if (!matchedCat) {
-        await sendMessage(
-          chatId,
-          `You have no ${type} categories yet, so there is nothing to file this under. Add one in the app first.`
-        );
-        return;
-      }
-
-      const now = new Date();
-      const clientBatchId = updateBatchId(BOT_ID, updateId);
-
-      const result = await createTransactions(clientBatchId, [
-        {
-          amount,
-          description: description.charAt(0).toUpperCase() + description.slice(1),
-          type: isIncome ? "INCOME" : "EXPENSE",
-          categoryId: matchedCat.id,
-          date: now.toISOString(),
-        },
-      ]);
-
-      if (result.transactions.length > 0) {
-        await confirmCreated(chatId, result);
-        return;
       }
     }
   }
@@ -676,6 +664,22 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
         await confirmCreated(chatId, result);
         return;
       }
+    }
+
+    // Questions are answered from the user's real data by the same handlers the slash commands
+    // use. Gemini only classifies the intent; it is told it has no access to transactions, and
+    // it never sees any, so it cannot be the thing that states a figure. It used to return free
+    // text for any question, which was sent to the user verbatim: with nothing but category
+    // names to work from, an answer to "how much did I spend this week" could only be invented.
+    const grounded: Record<string, ((chatId: number) => Promise<void>) | undefined> = {
+      SHOW_SUMMARY: handleSummary,
+      SHOW_RECENT: handleRecent,
+      SHOW_BILLS: handleBills,
+    };
+    const handler = grounded[aiResult?.action ?? ""];
+    if (handler) {
+      await handler(chatId);
+      return;
     }
 
     if (aiResult?.replyText) {
