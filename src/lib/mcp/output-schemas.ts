@@ -25,6 +25,7 @@ import type {
   BillHistory,
   ReceiptItems,
 } from "../budget-query-types";
+import type { ScanResultPayload } from "../receipt-scan";
 
 /** True only when A and B are mutually assignable, so neither side may drift. */
 type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
@@ -259,7 +260,13 @@ const receiptItems = z.object({
   month: z.string().nullable(),
   itemCount: z.number(),
   totalAmount: z.number(),
-  truncated: z.boolean(),
+  truncated: z
+    .boolean()
+    .describe(
+      "True when `limit` cut the list short, so `items` is only the first part of what matched. " +
+        "Read this rather than comparing `items.length` to `itemCount`. When true, re-request " +
+        "with a higher `limit` before summarising, or say the list is partial."
+    ),
   items: z.array(
     z.object({
       name: z.string(),
@@ -309,10 +316,14 @@ export const createTransactionsOutput = {
 /**
  * What `scan_receipt` returns: a draft, never a saved row.
  *
- * Deliberately not pinned to a query-layer type with `assertExact` like the read schemas, since
- * this describes AI output rather than a database shape. `breakdown` is passed through as opaque
- * JSON: the caller either sends it to `create_transactions` unchanged or ignores it, and pinning
- * its shape here would duplicate `receiptScanResultSchema` for no gain.
+ * `breakdown` stays opaque JSON — the caller either forwards it to `create_transactions`
+ * unchanged or ignores it, and mirroring `receiptScanResultSchema` here would duplicate it for
+ * no gain. The *field list*, though, is pinned to `ScanResultPayload` below, because the SDK
+ * client validates `structuredContent` and rejects unknown properties: a field added to the
+ * payload and not to this schema takes down `scan_receipt` for every remote client at runtime,
+ * which is precisely what a leaked `dateSource` once did. This file previously declined the pin
+ * on the grounds that it describes AI output; the shape is a repo-local interface, so it pins
+ * exactly as the read schemas do.
  */
 export const scanReceiptOutput = {
   amount: z.number(),
@@ -358,3 +369,4 @@ export const scanReceiptOutput = {
   /** The receipt's own date was unreadable, so the photo's date was used instead. */
   usedPhotoFallback: z.boolean(),
 };
+assertExact<z.infer<z.ZodObject<typeof scanReceiptOutput>>, ScanResultPayload>(true);

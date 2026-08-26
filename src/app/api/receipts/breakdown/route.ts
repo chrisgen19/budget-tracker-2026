@@ -5,6 +5,7 @@ import { receiptBreakdownResultSchema } from "@/lib/validations";
 import { parseLocalDate, checkReceiptDate } from "@/lib/receipt-date";
 import { guardReceiptRequest, stripCodeFences } from "@/lib/receipt-guard";
 import { MAX_BREAKDOWN_GROUPS, MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
+import { summarizeIssues } from "@/lib/zod-issue-summary";
 import { settleScanReservation } from "@/lib/scan-quota";
 
 export async function POST(request: Request) {
@@ -85,7 +86,7 @@ RULES:
 - If an item has quantity > 1, multiply to get the total and use a single lineItems entry
 - Minimum 1 category group, maximum ${MAX_BREAKDOWN_GROUPS} category groups
 - At most ${MAX_BREAKDOWN_LINE_ITEMS} lineItems in any one group; if a group would exceed that, merge its smallest items into a single "Other items" line
-- All amounts must be positive numbers
+- All amounts must be positive numbers. A discount, promo, void or zero-priced line is NOT its own item: subtract it from the item it applies to, or from that group's total, and never emit a zero or negative "amount"
 - Do NOT include tax/service charge as a separate item — distribute proportionally or include in the largest group`;
 
     const response = await generateContentWithRetry({
@@ -141,10 +142,7 @@ RULES:
       // one entry per bad line item.
       console.warn(
         "[receipts/breakdown] response failed validation:",
-        result.error.issues
-          .slice(0, 5)
-          .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
-          .join("; ") + (result.error.issues.length > 5 ? ` (+${result.error.issues.length - 5} more)` : "")
+        summarizeIssues(result.error.issues)
       );
       return await fail("Could not extract item details from this receipt.", 422);
     }

@@ -9,6 +9,7 @@ import { settleScanReservation } from "@/lib/scan-quota";
 import { checkReceiptDate } from "@/lib/receipt-date";
 import { receiptScanResultSchema } from "@/lib/validations";
 import { MAX_BREAKDOWN_GROUPS, MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
+import { summarizeIssues } from "@/lib/zod-issue-summary";
 
 /** Why a scan produced nothing usable, once it was authorized and the credit was held. */
 export type ScanFailure =
@@ -21,22 +22,6 @@ export type ReceiptScanOutcome =
   | { ok: true; result: ScanResultPayload }
   | { ok: false; refusal: ScanRefusal }
   | { ok: false; failure: ScanFailure };
-
-/**
- * One log-safe line describing why a payload was rejected.
- *
- * Capped because the issue list scales with the payload: a receipt whose every line carries a
- * zero amount yields one issue per item — up to 20 groups x 150 items — and joining all of them
- * would put a several-hundred-KB string in the log on every such scan. Five is enough to name
- * the defect; the count carries the rest.
- */
-const summarizeIssues = (issues: ReadonlyArray<{ path: PropertyKey[]; message: string }>): string => {
-  const shown = issues
-    .slice(0, 5)
-    .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
-    .join("; ");
-  return issues.length > 5 ? `${shown} (+${issues.length - 5} more)` : shown;
-};
 
 export interface ScanResultPayload {
   amount: number;

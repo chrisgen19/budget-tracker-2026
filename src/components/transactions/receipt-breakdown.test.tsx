@@ -88,3 +88,30 @@ describe("ReceiptBreakdown expansion", () => {
     expect(screen.getByText("Rice 5kg")).toBeDefined();
   });
 });
+
+/**
+ * Collapsed became the default in the same change, which makes the hidden state the normal one.
+ * Without aria-expanded a screen-reader user hears only the heading and has no signal that
+ * anything is behind it.
+ */
+describe("ReceiptBreakdown accessibility", () => {
+  const breakdown = { total: 10, items: [{ name: "Rice 5kg", amount: 10 }] };
+
+  it("reports its collapsed state and names the panel it controls", () => {
+    render(<ReceiptBreakdown breakdown={breakdown} currency="PHP" />);
+    const toggle = screen.getByRole("button");
+
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.getAttribute("aria-controls")).toBeTruthy();
+  });
+
+  it("updates the reported state when opened", () => {
+    render(<ReceiptBreakdown breakdown={breakdown} currency="PHP" />);
+    const toggle = screen.getByRole("button");
+
+    fireEvent.click(toggle);
+
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(document.getElementById(toggle.getAttribute("aria-controls")!)).toBeTruthy();
+  });
+});

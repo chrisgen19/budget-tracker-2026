@@ -196,9 +196,11 @@ export function MultiScanReview({
               })
             : "";
           const canItemize = !!item.imageFile && !item.parentId && !!item.data?.multiCategory;
-          // Itemizing is free when the scan already carried the breakdown, and a second metered
-          // Gemini call when that breakdown was dropped for failing validation.
-          const costsAnotherScan = canItemize && !item.data?.breakdown?.length;
+          // Driven by the server's own flag rather than re-derived from `!breakdown?.length`:
+          // only the scan knows whether an itemization was produced and discarded, as opposed to
+          // never having existed. `itemizeItem` skips the call when a breakdown is present, so
+          // this is exactly the case that spends a second metered Gemini call.
+          const costsAnotherScan = canItemize && !!item.data?.breakdownDropped;
           const isItemizedChild = !!item.parentId;
           const isUnconfirmed = unconfirmedIds.has(item.id);
           const actionsDisabled = isSaving || isUnconfirmed;
@@ -276,10 +278,10 @@ export function MultiScanReview({
                       type="button"
                       onClick={() => onItemize(item.id)}
                       disabled={actionsDisabled}
-                      // A dropped breakdown is the one case where this costs another scan
-                      // credit: `itemizeItem` short-circuits when a breakdown is already
-                      // present, and falls through to a second Gemini call when it is not.
-                      // Same button either way, so the label is what tells them apart.
+                      // `title` is deliberately not the only signal: it renders no tooltip on
+                      // touch, which is most of this app's use, and `aria-label` is invisible to
+                      // a sighted user. The visible "1 scan" pill below is what actually tells
+                      // the metered case apart from the free one.
                       title={
                         costsAnotherScan
                           ? "Itemize receipt (uses another scan credit)"
@@ -290,9 +292,19 @@ export function MultiScanReview({
                           ? `Itemize ${item.data?.description || item.fileName} — uses another scan credit`
                           : `Itemize ${item.data?.description || item.fileName}`
                       }
-                      className="p-2 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      className={cn(
+                        "flex items-center gap-1 p-2 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                        costsAnotherScan
+                          ? "text-amber-dark hover:bg-amber-light"
+                          : "text-warm-300 hover:text-amber hover:bg-amber-light"
+                      )}
                     >
                       <Rows3 className="w-4 h-4" />
+                      {costsAnotherScan && (
+                        <span className="text-[10px] font-semibold leading-none px-1 py-0.5 rounded bg-amber-light text-amber-dark">
+                          1 scan
+                        </span>
+                      )}
                     </button>
                   )}
                   <button
@@ -323,7 +335,6 @@ export function MultiScanReview({
                 <ReceiptBreakdown
                   breakdown={item.data.receiptBreakdown}
                   currency={user.currency}
-                  defaultExpanded={false}
                 />
               )}
             </div>

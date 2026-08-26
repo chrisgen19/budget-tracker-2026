@@ -299,6 +299,9 @@ describe("oversized breakdown", () => {
     if (!outcome.ok || !("result" in outcome)) return;
     expect(outcome.result.amount).toBe(7193.6);
     expect(outcome.result.breakdown).toBeDefined();
+    // Absent, not false: a scan that kept its breakdown must not carry the flag, or the review
+    // would offer a credit warning on the free path.
+    expect(outcome.result.breakdownDropped).toBeUndefined();
     expect(settle).toHaveBeenCalledWith("res_1", "SUCCESS");
   });
 
@@ -317,6 +320,9 @@ describe("oversized breakdown", () => {
     expect(outcome.result.description).toBe("SOUTH SUPERMARKET - PASIG");
     expect(outcome.result.breakdown).toBeUndefined();
     expect(outcome.result.multiCategory).toBe(true);
+    // The whole point of the flag: multiCategory alone cannot tell "one category" from
+    // "several, and we lost the split", and only the latter makes Itemize cost a credit.
+    expect(outcome.result.breakdownDropped).toBe(true);
     expect(settle).toHaveBeenCalledWith("res_1", "SUCCESS");
   });
 
@@ -372,6 +378,7 @@ describe("breakdown invalid for reasons other than size", () => {
     if (!outcome.ok || !("result" in outcome)) return;
     expect(outcome.result.amount).toBe(1240);
     expect(outcome.result.breakdown).toBeUndefined();
+    expect(outcome.result.breakdownDropped).toBe(true);
     expect(settle).toHaveBeenCalledWith("res_1", "SUCCESS");
   });
 

@@ -928,7 +928,8 @@ describe("row limits never silently truncate or reverse a result", () => {
     it(`falls back to the default for a ${label} limit`, async () => {
       const result = await getReceiptItems(itemsPrisma(3), "u1", { limit: value });
 
-      // Default is 100, so all three survive rather than 2, 0, or "all but the last".
+      // The default covers one transaction's worth of items, so all three survive here
+      // rather than 2, 0, or "all but the last".
       expect(result.items).toHaveLength(3);
       expect(result.itemCount).toBe(3);
     });

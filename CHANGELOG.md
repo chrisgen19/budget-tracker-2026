@@ -65,6 +65,30 @@ client. Both now live in `.describe()`.
 dropped breakdown is rebuilt: its prompt states the per-group item cap, and its validation
 failure logs instead of returning a silent 422. Unifying the two parses outright is issue #139.
 
+A third review pass caught the same defect three times over: a fix written on a channel its
+audience cannot read. The `truncated` flag shipped with no `.describe()` — the exact JSDoc trap
+fixed for `multiCategory` one field earlier — while the `limit` text still taught the model to
+compare `items.length` against `itemCount`. The credit warning on Itemize lived only in `title`
+and `aria-label`, neither of which a phone renders, in an app used mostly on phones; it is now a
+visible "1 scan" pill. The promo-line rule was added to the scan prompt but not to
+`/api/receipts/breakdown`, so the recovery path still failed on the very receipt that triggered
+the drop. And `breakdownDropped` was threaded to the client and then never read, with the UI
+re-deriving it from `!breakdown?.length`; it drives the pill now, because only the server knows
+whether an itemization was lost as opposed to never produced. The `scan_receipt` prose summary
+says so too, since prose is what many clients surface.
+
+`scanReceiptOutput` is now pinned to `ScanResultPayload` with `assertExact`, like every read
+schema. The file previously declined the pin as describing "AI output rather than a database
+shape", but the payload is a repo-local interface, and the failure it guards against is
+documented in the same file: a field that reaches `structuredContent` without reaching the
+schema is rejected by the SDK client and breaks every scan at the caller.
+
+Smaller: `summarizeIssues` is a shared leaf module rather than two copies; `get_receipt_items`
+stops pretty-printing its text channel, since it is the one result whose size scales with a
+stored blob and it is already serialized twice; `ReceiptBreakdown` reports `aria-expanded` and
+`aria-controls`, which mattered little while it rendered open and matters now that collapsed is
+the default.
+
 ## 2026-08-26 - Telegram bot runs inside the app
 
 The bot needed somewhere always-on. A second Coolify application would have doubled the build and
