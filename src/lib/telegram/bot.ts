@@ -12,6 +12,7 @@ import { chunkMessage } from "@/lib/telegram/chunk";
 import { MAX_IMAGE_BYTES, pickReceiptImage } from "@/lib/telegram/photo";
 import { readPhotoTakenAt } from "@/lib/exif-date";
 import { receiptDateLooksOff } from "@/lib/telegram/date-sanity";
+import { resolveCommand, type BotCommand } from "@/lib/telegram/commands";
 import { confirmPendingScan } from "@/lib/telegram/confirm-scan";
 import {
   hasPendingScan,
@@ -775,46 +776,43 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     }
   }
 
-  // Commands
-  if (text.startsWith("/start") || text.startsWith("/help")) {
+  // Commands, matched locally. Bare phrasings resolve here too, so "summary" is answered
+  // instantly rather than costing a Gemini round trip to recognise a word. Anything that is not
+  // an obvious command falls through, and Gemini still handles the conversational cases.
+  const command = resolveCommand(text);
+
+  if (command === "HELP") {
     const msg =
-      `👋 *Welcome to Budget Tracker Bot!*\n\n` +
-      `💼 *Currency:* ${SYMBOL}\n\n` +
-      `🧾 *Receipts:* send a photo and I will read it, then ask you to confirm\n\n` +
-      `⚡ *Quick Logging:*\n` +
+      `\ud83d\udc4b *Welcome to Budget Tracker Bot!*\n\n` +
+      `\ud83d\udcbc *Currency:* ${SYMBOL}\n\n` +
+      `\ud83e\uddfe *Receipts:* send a photo and I will read it, then ask you to confirm\n\n` +
+      `\u26a1 *Quick Logging:*\n` +
       `Just type your expense or income naturally:\n` +
-      `• \`100 breakfast\`\n` +
-      `• \`250 jollibee lunch\`\n` +
-      `• \`1500 internet bill\`\n` +
-      `• \`+5000 freelance payout\`\n` +
-      `• \`spent 350 for groceries yesterday\`\n\n` +
-      `📌 *Commands:*\n` +
-      `• /summary - This month's balance & top spending\n` +
-      `• /recent - Last 5 transactions\n` +
-      `• /bills - Upcoming scheduled bills\n` +
-      `• /categories - List all categories\n` +
-      `• /help - Show this guide`;
+      `\u2022 \`100 breakfast\`\n` +
+      `\u2022 \`250 jollibee lunch\`\n` +
+      `\u2022 \`1500 internet bill\`\n` +
+      `\u2022 \`+5000 freelance payout\`\n` +
+      `\u2022 \`spent 350 for groceries yesterday\`\n\n` +
+      `\ud83d\udccc *Commands:*\n` +
+      `\u2022 /summary - This month's balance & top spending\n` +
+      `\u2022 /recent - Last 5 transactions\n` +
+      `\u2022 /bills - Upcoming scheduled bills\n` +
+      `\u2022 /categories - List all categories\n` +
+      `\u2022 /help - Show this guide\n\n` +
+      `The slash is optional: *summary*, *recent*, *bills* and *categories* work on their own, ` +
+      `and you can ask in your own words too.`;
     await sendMessage(chatId, msg);
     return;
   }
 
-  if (text === "/summary" || text === "/balance") {
-    await handleSummary(chatId);
-    return;
-  }
-
-  if (text === "/recent") {
-    await handleRecent(chatId);
-    return;
-  }
-
-  if (text === "/bills") {
-    await handleBills(chatId);
-    return;
-  }
-
-  if (text === "/categories") {
-    await handleCategories(chatId);
+  if (command) {
+    const handlers: Record<Exclude<BotCommand, "HELP">, (chatId: number) => Promise<void>> = {
+      SUMMARY: handleSummary,
+      RECENT: handleRecent,
+      BILLS: handleBills,
+      CATEGORIES: handleCategories,
+    };
+    await handlers[command](chatId);
     return;
   }
 
