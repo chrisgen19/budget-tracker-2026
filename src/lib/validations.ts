@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { grantsWrite, mcpScopeSchema } from "@/lib/mcp/scopes";
+import { MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
 
 export const loginSchema = z.object({
   email: z.string().email("Please enter a valid email"),
@@ -24,20 +25,6 @@ export const transactionSchema = z.object({
   categoryId: z.string().min(1, "Category is required"),
   labelIds: z.array(z.string()).optional(),
 });
-
-/**
- * Ceiling on the line items a single breakdown group may carry.
- *
- * One constant, used by both the scan-side schema (`receiptBreakdownItemSchema`) and the
- * storage-side one (`receiptBreakdownMetaSchema`), because they are the two ends of one payload:
- * a bound raised on the scan alone yields a receipt that scans cleanly and is then rejected on
- * save, which is a worse failure than rejecting it outright.
- *
- * It was 50, which a single weekly supermarket run exceeds — a 56-item grocery group failed the
- * whole scan with a 500. The bound exists to cap the stored JSON blob, not to describe a typical
- * receipt, so it is set well above what one realistically holds rather than near it.
- */
-export const MAX_BREAKDOWN_LINE_ITEMS = 150;
 
 export const receiptBreakdownLineItemSchema = z.object({
   name: z.string().max(255),

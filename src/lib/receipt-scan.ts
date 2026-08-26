@@ -21,6 +21,22 @@ export type ReceiptScanOutcome =
   | { ok: false; refusal: ScanRefusal }
   | { ok: false; failure: ScanFailure };
 
+/**
+ * One log-safe line describing why a payload was rejected.
+ *
+ * Capped because the issue list scales with the payload: a receipt whose every line carries a
+ * zero amount yields one issue per item — up to 20 groups x 150 items — and joining all of them
+ * would put a several-hundred-KB string in the log on every such scan. Five is enough to name
+ * the defect; the count carries the rest.
+ */
+const summarizeIssues = (issues: ReadonlyArray<{ path: PropertyKey[]; message: string }>): string => {
+  const shown = issues
+    .slice(0, 5)
+    .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+    .join("; ");
+  return issues.length > 5 ? `${shown} (+${issues.length - 5} more)` : shown;
+};
+
 export interface ScanResultPayload {
   amount: number;
   categoryId: string;
@@ -46,6 +62,8 @@ Return a JSON object with these fields:
 - "description": merchant name + short summary of purchase (max 100 chars).
 - "multiCategory": true if the receipt contains items that span 2 or more DIFFERENT categories from the list below, false if all items belong to a single category. For example, a grocery receipt with food AND cleaning supplies = true, a restaurant bill with only food = false, a single ride receipt = false.
 - "breakdown": ONLY include this field when "multiCategory" is true. Read every line item on the receipt and group them by category. Each entry has: "amount" (sum for that category), "categoryId", "description" (store name + category + 1-2 sample items, max 80 chars), and "lineItems" (array of {"name": "<item name>", "amount": <price>}). The sum of all breakdown amounts should approximately equal the receipt total. Distribute tax/service proportionally or into the largest group. Do NOT include breakdown when multiCategory is false.
+  All amounts must be positive numbers. A discount, promo, void or zero-priced line is NOT its own line item: subtract it from the item it applies to, or from that category's total, and never emit a zero or negative "amount".
+  At most 20 category groups, and at most 150 lineItems in any one group. If a group would exceed 150, merge its smallest items into a single "Other items" line so the group stays within the limit.
 
 CATEGORIES:
 ${categoryList}
@@ -170,9 +188,12 @@ export async function scanReceipt(params: {
     // broke a bound: a supermarket receipt with 56 items in one group met a 50-item cap and the
     // user got "Failed to scan receipt" for a scan that had in fact worked.
     //
-    // So retry without it. `multiCategory` is deliberately kept, because it is what drives the
-    // review's Itemize action — the user can rebuild the breakdown through
-    // /api/receipts/breakdown, which is the same state a scan reaches before itemizing anyway.
+    // So retry without it, keeping `multiCategory` so the review still offers Itemize. That is a
+    // partial recovery, not a guaranteed one: /api/receipts/breakdown validates against the same
+    // `receiptBreakdownItemSchema` and does not degrade, so it can rebuild a breakdown Gemini
+    // simply mis-shaped here, but not one whose group genuinely exceeds the item cap. Unifying
+    // the two is issue-sized work; the prompt above is what keeps either case rare.
+    //
     // This cannot rescue a genuinely unusable response: anything wrong outside `breakdown` fails
     // the retry too, and falls through to FAILED as before.
     if (!result.success && parsed && typeof parsed === "object" && "breakdown" in parsed) {
@@ -183,12 +204,19 @@ export async function scanReceipt(params: {
       if (degraded.success) {
         console.warn(
           "[receipt-scan] dropped an invalid breakdown and kept the scan:",
-          result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")
+          summarizeIssues(result.error.issues)
         );
+        // Only on success: a failed retry's error is about the payload minus its breakdown, which
+        // is the less informative of the two for whoever reads the log below.
+        result = degraded;
       }
-      result = degraded;
     }
-    if (!result.success) return await fail("FAILED");
+    if (!result.success) {
+      // The reason a scan 500s, which used to be logged nowhere: this branch returned silently,
+      // so a rejected response surfaced as a bare 500 and took a reproduction to identify.
+      console.warn("[receipt-scan] response failed validation:", summarizeIssues(result.error.issues));
+      return await fail("FAILED");
+    }
 
     // Normalize date and flag a suspicious year for the caller.
     const { date: normalizedDate, dateWarning, usedPhotoFallback: parseFailed } = checkReceiptDate(

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/validations";
+import { MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
 
 const authorize = vi.hoisted(() => vi.fn());
 const settle = vi.hoisted(() => vi.fn(async () => {}));
@@ -323,12 +323,121 @@ describe("oversized breakdown", () => {
   // only rescues a response whose every other field was already valid.
   it("still fails when the response is broken outside the breakdown", async () => {
     generate.mockResolvedValue({
-      text: JSON.stringify({ ...receiptWith(200), amount: -5 }),
+      text: JSON.stringify({ ...receiptWith(MAX_BREAKDOWN_LINE_ITEMS + 1), amount: -5 }),
     });
 
     const outcome = await scan();
 
     expect(outcome).toMatchObject({ ok: false, failure: { reason: "FAILED" } });
     expect(settle).toHaveBeenCalledWith("res_1", "FAILED");
+  });
+});
+
+describe("breakdown invalid for reasons other than size", () => {
+  const scan = () =>
+    scanReceipt({
+      userId: "u1",
+      mimeType: "image/jpeg",
+      byteLength: 1_000,
+      readBase64: () => "aW1hZ2U=",
+      todayStr: "2026-08-26",
+      photoDateStr: "2026-08-26",
+    });
+
+  beforeEach(() => authorize.mockResolvedValue(AUTHORIZED));
+
+  // lineItems.amount is z.number().positive(), and a receipt with a "FREE 0.00" or
+  // "-25.00 SENIOR DISC" line is ordinary here. Before the prompt told Gemini to fold those into
+  // the item they apply to, one such line invalidated the whole breakdown — and once scanReceipt
+  // learned to degrade, that stopped being loud: the user was billed a credit for an itemization
+  // they never received. The scan still has to survive, and the credit still has to be spent
+  // knowingly rather than silently, so this pins the degraded shape rather than the old refusal.
+  it("drops a breakdown carrying a zero-amount promo line but keeps the scan", async () => {
+    generate.mockResolvedValue({
+      text: JSON.stringify({
+        amount: 1240,
+        categoryId: "cat_1",
+        date: "2026-08-26",
+        dateSource: "OCR",
+        description: "SM Supermarket",
+        multiCategory: true,
+        breakdown: [
+          {
+            amount: 1240,
+            categoryId: "cat_1",
+            description: "Groceries",
+            lineItems: [
+              { name: "Rice 5kg", amount: 1240 },
+              { name: "FREE 1PC TUMBLER", amount: 0 },
+            ],
+          },
+        ],
+      }),
+    });
+
+    const outcome = await scan();
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok || !("result" in outcome)) return;
+    expect(outcome.result.amount).toBe(1240);
+    expect(outcome.result.breakdown).toBeUndefined();
+    expect(settle).toHaveBeenCalledWith("res_1", "SUCCESS");
+  });
+
+  // The reason this class of bug took a full reproduction to find: the rejection branch returned
+  // without logging, so a 500 arrived with nothing beside it in the server output.
+  it("logs why a response was rejected when even the degraded parse fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    generate.mockResolvedValue({
+      text: JSON.stringify({
+        amount: 1240,
+        categoryId: "cat_1",
+        date: "2026-08-26",
+        dateSource: "OCR",
+        description: "x".repeat(300), // too long with or without the breakdown
+        multiCategory: true,
+        breakdown: [{ amount: 1240, categoryId: "cat_1", description: "G", lineItems: [] }],
+      }),
+    });
+
+    const outcome = await scan();
+
+    expect(outcome).toMatchObject({ ok: false, failure: { reason: "FAILED" } });
+    expect(warn).toHaveBeenCalledWith(
+      "[receipt-scan] response failed validation:",
+      expect.stringContaining("description")
+    );
+    warn.mockRestore();
+  });
+
+  // The log line scales with the payload — one issue per bad item, up to 20 x 150 of them.
+  it("caps the issue list rather than logging one line per bad item", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    generate.mockResolvedValue({
+      text: JSON.stringify({
+        amount: 1240,
+        categoryId: "cat_1",
+        date: "2026-08-26",
+        dateSource: "OCR",
+        description: "SM Supermarket",
+        multiCategory: true,
+        breakdown: [
+          {
+            amount: 1240,
+            categoryId: "cat_1",
+            description: "Groceries",
+            // Every line invalid, so Zod reports one issue per item.
+            lineItems: Array.from({ length: 60 }, (_, i) => ({ name: `i${i}`, amount: 0 })),
+          },
+        ],
+      }),
+    });
+
+    await scan();
+
+    const logged = warn.mock.calls[0]?.[1] as string;
+    expect(logged).toContain("more)");
+    expect(logged.split(";").length).toBeLessThanOrEqual(5);
+    warn.mockRestore();
   });
 });

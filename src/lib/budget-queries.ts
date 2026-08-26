@@ -5,6 +5,7 @@
 // these where-clauses are built as would hide that. It happens to execute correctly on
 // 6.19.2, which is exactly why it needs pinning: nothing would catch it changing.
 import { Prisma } from "@prisma/client";
+import { MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
 import type {
   PrismaClient,
   SpendingByCategoryParams,
@@ -922,7 +923,11 @@ export const getReceiptItems = async (
   params: ReceiptItemsParams = {}
 ): Promise<ReceiptItems> => {
   const tz = params.timezoneOffset ?? 0;
-  const limit = safeLimit(params.limit, 100);
+  // Defaults to a whole receipt rather than 100. The tool's own description invites a caller to
+  // pass a receiptGroupId "to pull one whole receipt", and one transaction may now carry up to
+  // MAX_BREAKDOWN_LINE_ITEMS items — so a lower default would return 100 of 150 while itemCount
+  // reported 150, and the caller would summarise two thirds of a receipt as if it were all of it.
+  const limit = safeLimit(params.limit, MAX_BREAKDOWN_LINE_ITEMS);
 
   // DbNull is "the column is SQL NULL", as opposed to a stored JSON `null`. Both are
   // excluded in practice: parseReceiptBreakdown rejects a JSON null too.

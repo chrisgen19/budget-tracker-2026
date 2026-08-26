@@ -10,7 +10,7 @@ category were all read correctly. What failed was `lineItems`, capped at 50 in
 `receiptBreakdownItemSchema`, and a single weekly grocery run exceeds that. The whole result was
 discarded over the one optional field on it.
 
-Two things were wrong, so both are fixed.
+Several things were wrong here, so all of them are fixed.
 
 The bound is now `MAX_BREAKDOWN_LINE_ITEMS` (150), one constant shared by the scan-side schema and
 the storage-side `receiptBreakdownMetaSchema`. They were separate copies of 50, and raising only
@@ -20,12 +20,31 @@ typical receipt, so it sits well above what one realistically holds.
 
 `scanReceipt` no longer discards a scan when only the breakdown is invalid. It retries the parse
 without that field and returns the rest, keeping `multiCategory` so the review still offers
-Itemize and the user can rebuild the breakdown through `/api/receipts/breakdown`. A response
+Itemize. That is a partial recovery, not a guaranteed one: `/api/receipts/breakdown` validates
+against the same `receiptBreakdownItemSchema` and does not degrade, so it can rebuild a breakdown
+Gemini merely mis-shaped, but not one whose group genuinely exceeds the item cap. A response
 broken anywhere else fails the retry too and still settles as `FAILED`, so this cannot smuggle an
 unusable scan through.
 
+Degrading quietly created a second hazard, so the prompt was tightened to match. `lineItems.amount`
+is `positive()`, and a "FREE 0.00" or "-25.00 SENIOR DISC" line is ordinary on a supermarket
+receipt — the sort of thing that used to fail loudly and *refund* the credit, and would now fail
+silently while still spending it. `buildPrompt` never said amounts must be positive, though the
+breakdown route's prompt always had; it now does, and states the 150-item and 20-group bounds so
+the model stays inside them rather than relying on the drop.
+
 The failure was also invisible: the schema branch returned without logging, so the dev server
-showed a bare 500 and nothing else. A dropped breakdown now logs which bound it broke.
+showed a bare 500 and nothing else. Both paths now log — the drop and the outright rejection —
+with the issue list capped, since it carries one entry per bad line item.
+
+Two consequences of the higher bound were followed through. `getReceiptItems` defaulted to 100
+items, below what one transaction can now hold, so pulling a single receipt would have returned
+100 of 150 while reporting 150; its default is the bound itself. And `ReceiptBreakdown` renders
+expanded by default, which the transaction modal relied on — it now passes `defaultExpanded={false}`
+as the multi-scan review already did.
+
+The constant lives in `receipt-limits.ts`, a module with no imports of its own, so `budget-queries.ts`
+can read it without pulling zod and the MCP scope schema into the query layer.
 
 ## 2026-08-26 - Telegram bot runs inside the app
 

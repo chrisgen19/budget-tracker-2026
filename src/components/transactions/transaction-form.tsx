@@ -367,7 +367,14 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
             {/* Receipt Breakdown — only for itemized expenses. Narrowed rather than cast:
                 rows written before the column had a write-side schema may not match. */}
             {selectedType === "EXPENSE" && receiptBreakdown && (
-              <ReceiptBreakdown breakdown={receiptBreakdown} currency={user.currency} />
+              <ReceiptBreakdown
+                breakdown={receiptBreakdown}
+                currency={user.currency}
+                // Collapsed like the multi-scan review: one receipt can carry up to
+                // MAX_BREAKDOWN_LINE_ITEMS rows, which is a lot to paint on open inside a
+                // keyboard-aware modal on mobile.
+                defaultExpanded={false}
+              />
             )}
 
             {/* Amount — hero centerpiece */}

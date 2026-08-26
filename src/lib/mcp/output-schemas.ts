@@ -320,7 +320,9 @@ export const scanReceiptOutput = {
   date: z.string(),
   description: z.string(),
   type: z.literal("EXPENSE"),
-  /** True when the receipt spans more than one category, in which case `breakdown` is present. */
+  /** True when the receipt spans more than one category. `breakdown` is usually present with it,
+   *  but not guaranteed: an itemization that fails validation is dropped so the rest of the scan
+   *  survives, so check `breakdown` itself rather than inferring it from this flag. */
   multiCategory: z.boolean().optional(),
   breakdown: z.unknown().optional(),
   /** The year read off the receipt does not match the current one, so the date is worth checking. */
