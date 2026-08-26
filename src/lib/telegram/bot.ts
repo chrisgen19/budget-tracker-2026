@@ -9,6 +9,7 @@ import { updateBatchId } from "@/lib/telegram/batch-id";
 import { localDay, localTimestamp } from "@/lib/telegram/local-time";
 import { messageIsAllowed, type Allowlist, type TelegramMessage } from "@/lib/telegram/allowlist";
 import { chunkMessage } from "@/lib/telegram/chunk";
+import { GEMINI_TIMEOUT_MS } from "@/lib/gemini-limits";
 import {
   McpToolError,
   UnconfirmedWriteError,
@@ -56,16 +57,25 @@ const SYMBOL = env("TELEGRAM_CURRENCY_SYMBOL") ?? "\u20B1";
 /**
  * The user's timezone offset in minutes, `getTimezoneOffset()` convention so UTC+8 is -480.
  *
- * Needed only so Gemini can resolve "yesterday" and "last night" into a date. Every query and
- * every write is resolved server-side against `users.timezone_offset`, so this affects nothing
- * else and a wrong value cannot put a transaction in the wrong month.
+ * Required, with no fallback. It used to default to the host's own offset, which is right only
+ * when the bot runs on the user's machine. It now runs inside the app container, where the host
+ * is UTC, so the guess was wrong in the deployment this exists for, and wrong silently: at 01:00
+ * on the 27th in Manila a UTC host reads the 26th, so "yesterday" resolves to the 25th and the
+ * transaction lands two days out.
  *
- * Defaults to the host's own offset, which is right whenever the bot runs near the user. Set
- * TELEGRAM_TZ_OFFSET when it does not, such as on a UTC server.
+ * It is used to resolve relative dates for Gemini, and to render the day in /recent. Every query
+ * and every write is still resolved server-side against `users.timezone_offset`, so a wrong
+ * value here cannot move a stored row; it can only mislabel one before it is written.
+ *
+ * That this duplicates `users.timezone_offset` at all is the real defect, and it can drift if the
+ * account's timezone changes. Removing the duplication means the bot reading the offset from the
+ * server, which no MCP tool exposes today. Tracked with the rest of the MCP timezone work in
+ * issue #132.
  */
-const TZ_OFFSET = Number.isFinite(Number(env("TELEGRAM_TZ_OFFSET")))
-  ? Number(env("TELEGRAM_TZ_OFFSET"))
-  : new Date().getTimezoneOffset();
+const TZ_CONFIGURED = Number.isFinite(Number(env("TELEGRAM_TZ_OFFSET")));
+/** Zero only as a placeholder: `startTelegramBot` refuses to run when TZ_CONFIGURED is false,
+ *  so nothing ever reads this value unconfigured. */
+const TZ_OFFSET = TZ_CONFIGURED ? Number(env("TELEGRAM_TZ_OFFSET")) : 0;
 
 const BOT_TOKEN = env("TELEGRAM_BOT_TOKEN");
 
@@ -507,6 +517,10 @@ Return ONLY a JSON object in this format:
       contents: prompt,
       config: {
         responseMimeType: "application/json",
+        // The poll loop awaits each update in turn, so a request with no deadline stops the bot
+        // answering anyone until it settles, which a stalled call may never do. Same knob the
+        // receipt scanner uses, so one setting bounds every Gemini call the app makes.
+        ...(GEMINI_TIMEOUT_MS > 0 && { httpOptions: { timeout: GEMINI_TIMEOUT_MS } }),
       },
     });
 
@@ -767,6 +781,15 @@ async function probeMcp(): Promise<void> {
 export async function startTelegramBot(): Promise<void> {
   if (!BOT_TOKEN) {
     throw new Error("TELEGRAM_BOT_TOKEN is not set.");
+  }
+
+  if (!TZ_CONFIGURED) {
+    throw new Error(
+      "TELEGRAM_TZ_OFFSET is not set. It must match the account's timezone, in minutes and " +
+        "getTimezoneOffset() convention, so UTC+8 is -480. There is no default: the host's own " +
+        "offset is UTC in the app container, which would silently resolve \"yesterday\" to the " +
+        "wrong day."
+    );
   }
 
   if (!MCP_URL) {
