@@ -1,3 +1,5 @@
+import { isAmbiguousWriteFailure } from "@/lib/mcp/write-errors";
+
 /**
  * A refusal the MCP server authored, as opposed to a transport or parsing failure.
  *
@@ -40,6 +42,19 @@ export const GENERIC_FAILURE_REPLY =
  */
 export const UNCONFIRMED_WRITE_REPLY =
   "I could not confirm whether that saved. Check the app before sending it again: if it is there, sending it again would add a second copy.";
+
+/**
+ * Whether a failed `create_transactions` is worth replaying under the same idempotency key.
+ *
+ * Everything is, except a refusal the server authored, which is deterministic and would fail
+ * identically. The exception to that exception is the one that matters: `UNKNOWN_WHETHER_SAVED`
+ * also arrives as an `isError`, but it is ambiguous rather than a refusal, and the server's own
+ * instruction is to replay the same key. Treating every `isError` as final meant that
+ * instruction was relayed to a user who cannot follow it, since a retyped message is a new
+ * Telegram update with a new key and therefore a second row.
+ */
+export const shouldRetryWrite = (err: unknown): boolean =>
+  !(err instanceof McpToolError) || isAmbiguousWriteFailure(err.message);
 
 /**
  * What to say back when handling a message threw.

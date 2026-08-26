@@ -5,7 +5,9 @@ import {
   UNCONFIRMED_WRITE_REPLY,
   UnconfirmedWriteError,
   replyForError,
+  shouldRetryWrite,
 } from "@/lib/telegram/errors";
+import { WRITE_ERROR_MESSAGES } from "@/lib/mcp/write-errors";
 
 describe("replyForError", () => {
   // The bug this covers: callTool throws the server's own message, and the only consumer
@@ -61,5 +63,31 @@ describe("replyForError", () => {
 
   it("warns that a resend would duplicate when the write is unconfirmed", () => {
     expect(UNCONFIRMED_WRITE_REPLY.toLowerCase()).toContain("second copy");
+  });
+});
+
+describe("shouldRetryWrite", () => {
+  it("replays a transport failure, whose outcome is unknown", () => {
+    expect(shouldRetryWrite(new Error("fetch failed"))).toBe(true);
+    expect(shouldRetryWrite("boom")).toBe(true);
+  });
+
+  // The bug this covers: every isError was treated as a deterministic refusal, so the retry was
+  // skipped and the server's "retry with the same clientBatchId" was relayed to a user who
+  // cannot do that. Retyping makes a new Telegram update, a new key, and a second row.
+  it("replays the server's ambiguous failure, which the user cannot replay themselves", () => {
+    const err = new McpToolError(WRITE_ERROR_MESSAGES.UNKNOWN_WHETHER_SAVED);
+    expect(shouldRetryWrite(err)).toBe(true);
+  });
+
+  it("does not replay a deterministic refusal, which would fail identically", () => {
+    for (const message of [
+      WRITE_ERROR_MESSAGES.LABELS_NOT_OWNED,
+      WRITE_ERROR_MESSAGES.CATEGORIES_NOT_OWNED,
+      WRITE_ERROR_MESSAGES.NO_LONGER_PERMITTED,
+      "This token cannot create transactions.",
+    ]) {
+      expect(shouldRetryWrite(new McpToolError(message))).toBe(false);
+    }
   });
 });

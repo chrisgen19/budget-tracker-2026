@@ -1,5 +1,6 @@
 import { McpServer, type RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { TransactionSource } from "@prisma/client";
+import { WRITE_ERROR_MESSAGES } from "@/lib/mcp/write-errors";
 import { z } from "zod";
 import {
   getSpendingByCategory,
@@ -731,12 +732,11 @@ export const createBudgetMcpServer = ({
       });
 
       if (!result.ok) {
-        const message =
-          result.reason === "LABELS_NOT_OWNED"
-            ? "One or more label IDs are not this user's. Call get_label_list for valid IDs."
-            : result.reason === "CATEGORIES_NOT_OWNED"
-              ? "One or more category IDs are not this user's. Call get_category_list for valid IDs."
-              : "Could not confirm whether these transactions were saved. Do NOT retry with a new clientBatchId: retry with the same one, which will return the original rows if they were written.";
+        // One message per reason, from the shared table. NO_LONGER_PERMITTED used to fall into
+        // the "could not confirm" wording, which was wrong: that check runs inside the
+        // transaction before any row is created, so nothing was written and there is nothing
+        // ambiguous to resolve.
+        const message = WRITE_ERROR_MESSAGES[result.reason];
         return { content: [{ type: "text" as const, text: message }], isError: true };
       }
 

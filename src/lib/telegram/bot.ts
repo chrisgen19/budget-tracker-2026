@@ -9,7 +9,12 @@ import { updateBatchId } from "@/lib/telegram/batch-id";
 import { localDay, localTimestamp } from "@/lib/telegram/local-time";
 import { messageIsAllowed, type Allowlist, type TelegramMessage } from "@/lib/telegram/allowlist";
 import { chunkMessage } from "@/lib/telegram/chunk";
-import { McpToolError, UnconfirmedWriteError, replyForError } from "@/lib/telegram/errors";
+import {
+  McpToolError,
+  UnconfirmedWriteError,
+  replyForError,
+  shouldRetryWrite,
+} from "@/lib/telegram/errors";
 import { isPlainShorthand } from "@/lib/telegram/shorthand";
 /**
  * The bot talks to the deployed app over MCP rather than to a database.
@@ -312,7 +317,7 @@ async function createTransactions(
     try {
       return await callTool<CreatedBatch>("create_transactions", { clientBatchId, transactions });
     } catch (err) {
-      if (err instanceof McpToolError) throw err;
+      if (!shouldRetryWrite(err)) throw err;
       if (attempt === delays.length - 1) {
         console.error(
           `[telegram] could not settle batch ${clientBatchId} after ${delays.length} attempts:`,
