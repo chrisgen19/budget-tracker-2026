@@ -288,8 +288,82 @@ async function main() {
     where: { userId: user.id, description: "tz probe" },
     select: { date: true },
   });
-  const localMidnight = new Date(Date.UTC(2026, 2, 1) + -480 * 60_000).toISOString();
-  check("a bare date is anchored to the user's local midnight", tzRow.date.toISOString(), localMidnight);
+  // Anchored to the user's own day, not the server's. A UTC interpretation would put this row on
+  // 28 February locally. The instant within the day is the current clock, so only the day is
+  // asserted here; `validations.test.ts` pins the clock itself.
+  check(
+    "a bare date lands on the user's own calendar day",
+    new Date(tzRow.date.getTime() + 480 * 60_000).toISOString().slice(0, 10),
+    "2026-03-01"
+  );
+
+  // A bare date must record the user's current clock, not midnight: every MCP row sitting at
+  // 12:00 AM was how this was noticed, and no app-created row does that.
+  /** Minutes since local midnight for an instant, at the probe user's UTC+8 offset. */
+  const localMinutes = (at: Date) => {
+    const shifted = new Date(at.getTime() + 480 * 60_000);
+    return shifted.getUTCHours() * 60 + shifted.getUTCMinutes();
+  };
+
+  const bareClient = await connect(writer.token);
+  const bareBefore = new Date();
+  await bareClient.callTool({
+    name: "create_transactions",
+    arguments: {
+      transactions: [
+        { amount: 6, description: "bare clock", type: "EXPENSE", date: "2026-08-25", categoryId: category.id },
+      ],
+      clientBatchId: randomUUID(),
+    },
+  });
+  const bareAfter = new Date();
+  await bareClient.close();
+
+  const bareRow = await prisma.transaction.findFirstOrThrow({
+    where: { userId: user.id, description: "bare clock" },
+    select: { date: true },
+  });
+  const bareLocal = new Date(bareRow.date.getTime() + 480 * 60_000);
+
+  // Asserted as "the clock at the moment of the request", not as "not midnight". The latter is
+  // only usually true: a run during the minute the probe user's local clock reads 00:00 fills
+  // midnight correctly and would have failed a non-midnight check. The window wraps if the
+  // request straddles local midnight, which is why the comparison is written this way.
+  const [lo, hi] = [localMinutes(bareBefore), localMinutes(bareAfter)];
+  const storedMinutes = bareLocal.getUTCHours() * 60 + bareLocal.getUTCMinutes();
+  check(
+    "a bare date is filled with the clock at request time",
+    lo <= hi ? storedMinutes >= lo && storedMinutes <= hi : storedMinutes >= lo || storedMinutes <= hi,
+    true
+  );
+  check(
+    "and it stays on the day that was named",
+    bareLocal.toISOString().slice(0, 10),
+    "2026-08-25"
+  );
+
+  // An explicit evening must survive as an evening.
+  const eveningClient = await connect(writer.token);
+  await eveningClient.callTool({
+    name: "create_transactions",
+    arguments: {
+      transactions: [
+        { amount: 8, description: "last night", type: "EXPENSE", date: "2026-08-25T21:00", categoryId: category.id },
+      ],
+      clientBatchId: randomUUID(),
+    },
+  });
+  await eveningClient.close();
+
+  const evening = await prisma.transaction.findFirstOrThrow({
+    where: { userId: user.id, description: "last night" },
+    select: { date: true },
+  });
+  check(
+    "a stated time is preserved as given",
+    new Date(evening.date.getTime() + 480 * 60_000).toISOString().slice(0, 16),
+    "2026-08-25T21:00"
+  );
 
   // The confirmation the model reads back must name the same day the app shows, not the UTC one.
   const echoed = await callCreate(writer.token, randomUUID());

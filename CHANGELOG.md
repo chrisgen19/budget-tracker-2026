@@ -2,6 +2,38 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-26 - MCP transactions no longer default to midnight
+
+Every transaction written through MCP was landing at 12:00 AM, including ones described as
+happening at a particular time ("last night"). Not a timezone bug: the resolution was correct, the
+time was simply never supplied.
+
+`create_transactions` accepts either a bare date or a timestamp. A bare date carries no time, and
+`resolveTransactionDate` was filling it with local midnight, so anything the user said about
+*when* was discarded at the write. It also nudged the day: "last night" became the next day at
+00:00 rather than that evening.
+
+**Root cause was the tool description.** It read "Calendar date, e.g. 2026-08-25... A full
+timestamp is also accepted", which leads with the date form and never says when a time matters, so
+a model had no reason to turn "last night" into `T21:00`. It now says so explicitly, with worked
+examples, at both the field and the tool level.
+
+**Midnight was also inconsistent with every other writer.** The transaction form uses a
+`datetime-local` prefilled with the current clock, and the receipt scanner's `withLocalTime`
+attaches the current clock to date-only OCR output. Measured on the dev database: **0 of 288**
+app-created rows sit at exactly 00:00 local, while every MCP row did. A bare date now takes the
+user's current wall clock, matching the two existing writers. An explicit time, including an
+explicit midnight, is still used as given.
+
+### Verification
+- `resolveTransactionDate` covers the filled clock, an explicit time surviving unchanged, explicit
+  midnight still being expressible, and a property across five offsets that filling in a clock
+  never moves a row to a different day
+- `verify-mcp-endpoint.ts` 47/47, including a bare date that is not midnight and stays on the named
+  day, and `2026-08-25T21:00` stored as 9pm local
+- One existing check asserted the old midnight behaviour and was rewritten to pin the day rather
+  than the instant
+
 ## 2026-08-25 - Show provenance on the row
 
 Follows #126, which added `transactions.created_via` and an "Added by" filter but no per-row

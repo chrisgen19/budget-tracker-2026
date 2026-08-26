@@ -430,7 +430,11 @@ export const formatLocalDate = (instant: Date, timezoneOffset: number): string =
  *
  * @param timezoneOffset Minutes, `getTimezoneOffset()` convention (UTC+8 is -480).
  */
-export const resolveTransactionDate = (value: string, timezoneOffset: number): string => {
+export const resolveTransactionDate = (
+  value: string,
+  timezoneOffset: number,
+  now = new Date()
+): string => {
   const match = ISO_DATE_TIME.exec(value);
   if (!match) return value;
 
@@ -438,6 +442,20 @@ export const resolveTransactionDate = (value: string, timezoneOffset: number): s
 
   // An explicit `Z` or offset already pins the instant, so it is used as given.
   if (zone) return value;
+
+  // A bare date carries no time, so one has to be chosen. Midnight was the obvious anchor while
+  // this only had to land in the right month, but it turned out to be a tell: every MCP row sat
+  // at 12:00 AM while not one of the app's did. The form uses a `datetime-local` prefilled with
+  // the current clock, and the scanner's `withLocalTime` attaches the current clock to date-only
+  // OCR output, so "the user's current wall clock" is the convention this app already has.
+  //
+  // This only applies when no time was supplied. A model that heard "last night" should send one.
+  const [clockH, clockM] = hs === undefined
+    ? [
+        new Date(now.getTime() - timezoneOffset * 60_000).getUTCHours(),
+        new Date(now.getTime() - timezoneOffset * 60_000).getUTCMinutes(),
+      ]
+    : [Number(hs), mins === undefined ? 0 : Number(mins)];
 
   // Everything else carries a wall-clock reading with no zone: a bare date, or a time such as
   // `2026-08-25T23:30`. `new Date()` would resolve those against the *server's* timezone, which
@@ -448,8 +466,8 @@ export const resolveTransactionDate = (value: string, timezoneOffset: number): s
     Number(ys),
     Number(ms) - 1,
     Number(ds),
-    hs === undefined ? 0 : Number(hs),
-    mins === undefined ? 0 : Number(mins),
+    clockH,
+    clockM,
     secs === undefined ? 0 : Number(secs)
   );
   return new Date(utcMs + timezoneOffset * 60_000).toISOString();

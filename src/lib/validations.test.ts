@@ -255,15 +255,34 @@ describe("formatLocalDate", () => {
 });
 
 describe("resolveTransactionDate", () => {
-  it("anchors a bare date to local midnight, not UTC midnight", () => {
-    // UTC-5. A bare date parses as midnight UTC, which is 28 February locally, so the row would
-    // fall inside February's range and appear in the wrong month.
-    expect(resolveTransactionDate("2026-03-01", 300)).toBe("2026-03-01T05:00:00.000Z");
+  // Fixed "now" so the bare-date cases are deterministic: 14:30 UTC, which is 22:30 at UTC+8
+  // and 09:30 at UTC-5.
+  const NOW = new Date("2026-03-01T14:30:00.000Z");
+
+  it("fills a bare date with the user's current clock, not midnight", () => {
+    // Midnight was a tell: every MCP row sat at 12:00 AM while not one app-created row did. The
+    // form and the receipt scanner both attach the current wall clock, so this matches them.
+    // UTC+8: 22:30 local on 1 March is 14:30 UTC the same day.
+    expect(resolveTransactionDate("2026-03-01", -480, NOW)).toBe("2026-03-01T14:30:00.000Z");
   });
 
-  it("handles an eastern offset", () => {
-    // UTC+8: local midnight on 1 March is 16:00 UTC on 28 February.
-    expect(resolveTransactionDate("2026-03-01", -480)).toBe("2026-02-28T16:00:00.000Z");
+  it("keeps a bare date on the day the user named, whatever the offset", () => {
+    // The property that matters: filling in a clock must not move the row to another day.
+    for (const offset of [-720, -480, 0, 300, 660]) {
+      const stored = new Date(resolveTransactionDate("2026-03-01", offset, NOW));
+      expect(formatLocalDate(stored, offset)).toBe("2026-03-01");
+    }
+  });
+
+  it("still resolves an explicit local midnight correctly", () => {
+    // Midnight is no longer the default, but it must remain expressible.
+    expect(resolveTransactionDate("2026-03-01T00:00", 300, NOW)).toBe("2026-03-01T05:00:00.000Z");
+    expect(resolveTransactionDate("2026-03-01T00:00", -480, NOW)).toBe("2026-02-28T16:00:00.000Z");
+  });
+
+  it("preserves a time the user actually gave", () => {
+    // The case that prompted this: "last night" must survive as an evening, not become 12:00 AM.
+    expect(resolveTransactionDate("2026-08-25T21:00", -480, NOW)).toBe("2026-08-25T13:00:00.000Z");
   });
 
   it("leaves a value that already pins its instant alone", () => {
