@@ -3,6 +3,7 @@ import {
   batchTransactionSchema,
   createMcpTokenSchema,
   formatLocalDate,
+  hasTrustworthyTime,
   isRealDate,
   mcpTransactionSchema,
   receiptBreakdownMetaSchema,
@@ -330,5 +331,45 @@ describe("mcpTransactionSchema", () => {
 
   it("accepts a real date", () => {
     expect(mcpTransactionSchema.safeParse({ ...base, date: "2026-08-25" }).success).toBe(true);
+  });
+});
+
+describe("hasTrustworthyTime", () => {
+  // 2026-08-26T00:09Z is 08:09 on the 26th at UTC+8, and 19:09 on the 25th at UTC-5.
+  const NOW = new Date("2026-08-26T00:09:00.000Z");
+  const MANILA = -480;
+  const NEW_YORK = 300;
+
+  it("trusts a time the caller supplied", () => {
+    expect(hasTrustworthyTime("2026-08-20T21:00", MANILA, NOW)).toBe(true);
+    expect(hasTrustworthyTime("2026-08-20T21:00:00Z", MANILA, NOW)).toBe(true);
+  });
+
+  it("trusts a bare date that is today for the user", () => {
+    // Filling today with the current clock is what the app's own form does anyway.
+    expect(hasTrustworthyTime("2026-08-26", MANILA, NOW)).toBe(true);
+  });
+
+  it("does not trust a bare date in the past", () => {
+    // The clock would be fabricated: yesterday's dinner stamped with this morning's time, which
+    // then falls inside a weekday 05:00-17:00 window and tags a dinner as work spending.
+    expect(hasTrustworthyTime("2026-08-25", MANILA, NOW)).toBe(false);
+    expect(hasTrustworthyTime("2026-01-01", MANILA, NOW)).toBe(false);
+  });
+
+  it("does not trust a bare date in the future", () => {
+    expect(hasTrustworthyTime("2026-08-27", MANILA, NOW)).toBe(false);
+  });
+
+  it("decides today against the user's timezone, not the server's", () => {
+    // The same instant is the 26th in Manila and still the 25th in New York, so the same bare
+    // date is trustworthy for one user and not the other.
+    expect(hasTrustworthyTime("2026-08-26", MANILA, NOW)).toBe(true);
+    expect(hasTrustworthyTime("2026-08-26", NEW_YORK, NOW)).toBe(false);
+    expect(hasTrustworthyTime("2026-08-25", NEW_YORK, NOW)).toBe(true);
+  });
+
+  it("does not trust a value it cannot parse", () => {
+    expect(hasTrustworthyTime("not-a-date", MANILA, NOW)).toBe(false);
   });
 });

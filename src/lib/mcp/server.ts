@@ -25,6 +25,7 @@ import {
 import {
   clientBatchIdSchema,
   formatLocalDate,
+  hasTrustworthyTime,
   mcpTransactionSchema,
   resolveTransactionDate,
   MAX_BATCH_TRANSACTIONS,
@@ -613,7 +614,10 @@ export const createBudgetMcpServer = ({
               labelIds: z
                 .array(z.string())
                 .optional()
-                .describe("Label IDs from get_label_list. Omit or pass [] for none."),
+                .describe(
+                  "Label IDs from get_label_list. Omit to let the user's own auto-apply schedules " +
+                    "decide, which is usually what they want. Pass [] to force no labels."
+                ),
             })
           )
           .min(1)
@@ -686,11 +690,16 @@ export const createBudgetMcpServer = ({
           // Greenwich, so the row would land in the wrong month for those users. Resolved
           // against the user's own offset, matching every other write path in the app.
           date: resolveTransactionDate(t.date, timezoneOffset),
-          // Normalised to an explicit opt-out, never left undefined. `createTransactionBatch`
-          // reads undefined as "auto-apply a scheduled label", and schedules match on time of
-          // day and weekday, which describe when the user spent rather than when a model typed
-          // it in. Leaving it undefined would silently tag rows the tool promises it never tags.
-          labelIds: t.labelIds ?? [],
+          // Labels the caller named are used as given. When none are named, schedules apply
+          // only if the timestamp reflects reality: `undefined` lets `createTransactionBatch`
+          // match them, `[]` opts out.
+          //
+          // The distinction matters because a bare date is filled with the current clock. That
+          // is right for entering something as it happens and wrong for backdating, where
+          // "yesterday's dinner" would carry this morning's time and land inside a weekday
+          // 05:00-17:00 window, tagging a dinner as work spending on the user's busiest label.
+          labelIds:
+            t.labelIds ?? (hasTrustworthyTime(t.date, timezoneOffset) ? undefined : []),
         })),
         clientBatchId: key.data,
         createdVia: "MCP",

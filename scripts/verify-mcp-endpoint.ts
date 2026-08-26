@@ -227,9 +227,10 @@ async function main() {
   check("still exactly one row after the refusal", await prisma.transaction.count({ where: { userId: user.id } }), 1);
   await prisma.user.delete({ where: { id: foreign.id } });
 
-  // The tool must not auto-apply scheduled labels: schedules match on time of day and weekday,
-  // which describe when the user spent, not when a model typed the row in.
-  const scheduledLabel = await prisma.label.create({
+  // A schedule covering every hour of every day, so the only thing that can withhold the label
+  // is the trustworthiness gate rather than the window happening to miss. `callCreate` uses a
+  // date in the past, whose clock is filled with *now* and is therefore invented.
+  const alwaysOnLabel = await prisma.label.create({
     data: {
       name: `probe-schedule-${Date.now()}`,
       color: "#000000",
@@ -245,11 +246,11 @@ async function main() {
     | { transactions: { labels: string[] }[] }
     | undefined;
   check(
-    "omitting labelIds does not auto-apply a scheduled label",
+    "a backdated row escapes even an always-matching schedule",
     unlabelledOut?.transactions[0]?.labels ?? ["<missing>"],
     []
   );
-  await prisma.label.delete({ where: { id: scheduledLabel.id } });
+  await prisma.label.delete({ where: { id: alwaysOnLabel.id } });
 
   // An unparseable date must be named, not retried: it can never succeed.
   const badDateClient = await connect(writer.token);
@@ -364,6 +365,68 @@ async function main() {
     new Date(evening.date.getTime() + 480 * 60_000).toISOString().slice(0, 16),
     "2026-08-25T21:00"
   );
+
+  // --- Scheduled labels apply only when the timestamp is real ---
+  // Mirrors a real setup: a weekday 05:00-17:00 label, like a "Work Budget".
+  const workLabel = await prisma.label.create({
+    data: {
+      name: `work-window-${Date.now()}`,
+      color: "#E07C4F",
+      userId: user.id,
+      applicableTo: "EXPENSE",
+      schedules: { create: { days: [1, 2, 3, 4, 5], startTime: "05:00", endTime: "17:00" } },
+    },
+    select: { id: true, name: true },
+  });
+
+  const labelsOn = async (description: string) => {
+    const row = await prisma.transaction.findFirstOrThrow({
+      where: { userId: user.id, description },
+      include: { labels: { include: { label: true } } },
+    });
+    return row.labels.map((l) => l.label.name);
+  };
+
+  const createAt = async (description: string, date: string) => {
+    const c = await connect(writer.token);
+    await c.callTool({
+      name: "create_transactions",
+      arguments: {
+        transactions: [{ amount: 11, description, type: "EXPENSE", date, categoryId: category.id }],
+        clientBatchId: randomUUID(),
+      },
+    });
+    await c.close();
+  };
+
+  // A stated weekday time inside the window: the schedule should apply, matching the app.
+  await createAt("sched stated in", "2026-08-26T09:00");
+  check("a stated in-window time gets the scheduled label", await labelsOn("sched stated in"), [workLabel.name]);
+
+  // A stated weekday time outside it: no label, because the window genuinely does not cover it.
+  await createAt("sched stated out", "2026-08-26T21:00");
+  check("a stated out-of-window time gets none", await labelsOn("sched stated out"), []);
+
+  // A backdated bare date. The clock is filled with *now*, which may well fall inside the
+  // window, but that time was invented, so the schedule must not act on it.
+  await createAt("sched backdated", "2026-08-20");
+  check("a backdated bare date is never auto-labelled", await labelsOn("sched backdated"), []);
+
+  // An explicit opt-out always wins, even when the schedule would match.
+  const optOutClient = await connect(writer.token);
+  await optOutClient.callTool({
+    name: "create_transactions",
+    arguments: {
+      transactions: [
+        { amount: 12, description: "sched opted out", type: "EXPENSE", date: "2026-08-26T09:00", categoryId: category.id, labelIds: [] },
+      ],
+      clientBatchId: randomUUID(),
+    },
+  });
+  await optOutClient.close();
+  check("an explicit empty list still opts out", await labelsOn("sched opted out"), []);
+
+  await prisma.label.delete({ where: { id: workLabel.id } });
 
   // The confirmation the model reads back must name the same day the app shows, not the UTC one.
   const echoed = await callCreate(writer.token, randomUUID());
