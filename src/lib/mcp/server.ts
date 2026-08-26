@@ -710,7 +710,15 @@ export const createBudgetMcpServer = ({
       const summary =
         `Receipt read: ${r.description} for ${r.amount} on ${r.date}.` +
         (r.dateWarning ? " The year on the receipt looks wrong, so confirm the date." : "") +
-        (r.usedPhotoFallback ? " The receipt's own date was unreadable, so today's was used." : "") +
+        (r.usedPhotoFallback
+          ? // Which fallback was used is not cosmetic. A model that reads "today's was used"
+            // while the structured date says a fortnight ago will offer to correct a date that
+            // is already right. `scanReceipt` sets the date to `capturedAt` in exactly this
+            // case, so comparing them reports what happened rather than guessing at it.
+            capturedAt && r.date === capturedAt
+            ? " The receipt's own date was unreadable, so the time the photo was taken was used instead. That is when the purchase happened, so do not offer to change it to today."
+            : " The receipt's own date was unreadable, so today's was used. Ask the user whether that is right."
+          : "") +
         " Nothing has been saved. Confirm with the user, then call create_transactions.";
 
       return {

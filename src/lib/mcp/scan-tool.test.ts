@@ -22,6 +22,34 @@ const listTools = async (scopes?: string[]) => {
   return tools;
 };
 
+/** Runs a scan with Gemini stubbed, so the summary text can be asserted. */
+const callScanWithResult = async (
+  args: Record<string, unknown>,
+  result: Record<string, unknown>
+) => {
+  vi.doMock("@/lib/receipt-scan", () => ({
+    scanReceipt: async () => ({ ok: true, result }),
+  }));
+  vi.resetModules();
+  const { createBudgetMcpServer: make } = await import("./server");
+
+  const server = make({
+    prisma,
+    userId: "user_1",
+    timezoneOffset: -480,
+    scopes: ["receipts:scan"] as never,
+  });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "test", version: "1.0.0" });
+  await Promise.all([server.connect(st), client.connect(ct)]);
+  const res = await client.callTool({ name: "scan_receipt", arguments: args });
+  await client.close();
+  vi.doUnmock("@/lib/receipt-scan");
+  vi.resetModules();
+
+  return (res.content as { text?: string }[])[0]?.text ?? "";
+};
+
 const callScan = async (scopes: string[], args: Record<string, unknown>) => {
   const server = createBudgetMcpServer({
     prisma,
@@ -95,6 +123,52 @@ describe("scan_receipt", () => {
     });
     // Refused by input validation, so no credit is reserved and Gemini is never called.
     expect(res.isError).toBe(true);
+  });
+
+  // The bug this covers: the summary said "today's was used" whenever the receipt date was
+  // unreadable, even after the capture time became the fallback. A model reads the prose as well
+  // as the structured result, so it would have offered to "correct" a date that was already
+  // right, talking the user out of the accurate answer.
+  it("says the capture time was used when it was", async () => {
+    const capturedAt = "2026-08-01T20:05:04";
+    const text = await callScanWithResult(
+      {
+        imageBase64: Buffer.from("x".repeat(9)).toString("base64"),
+        mimeType: "image/jpeg",
+        photoTakenAt: capturedAt,
+      },
+      {
+        amount: 470,
+        categoryId: "cat_1",
+        date: capturedAt,
+        description: "The Coffee Bean",
+        type: "EXPENSE",
+        multiCategory: false,
+        dateWarning: false,
+        usedPhotoFallback: true,
+      }
+    );
+
+    expect(text).toContain("the time the photo was taken");
+    expect(text).not.toContain("today's was used");
+  });
+
+  it("says today was used when there was no capture time", async () => {
+    const text = await callScanWithResult(
+      { imageBase64: Buffer.from("x".repeat(9)).toString("base64"), mimeType: "image/jpeg" },
+      {
+        amount: 470,
+        categoryId: "cat_1",
+        date: "2026-08-26",
+        description: "The Coffee Bean",
+        type: "EXPENSE",
+        multiCategory: false,
+        dateWarning: false,
+        usedPhotoFallback: true,
+      }
+    );
+
+    expect(text).toContain("today's was used");
   });
 
   it("declares an image size limit in its description, since callers cannot discover it", async () => {

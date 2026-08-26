@@ -1031,8 +1031,8 @@ export async function startTelegramBot(): Promise<void> {
   if (!MCP_TOKEN) {
     throw new Error(
       "TELEGRAM_MCP_TOKEN is not set. Mint one in Profile > MCP Access with the " +
-        "budget:read, transactions:read, bills:read and transactions:write scopes, then set " +
-        "TELEGRAM_MCP_TOKEN."
+        "budget:read, transactions:read, bills:read, receipts:scan and transactions:write " +
+        "scopes, then set TELEGRAM_MCP_TOKEN."
     );
   }
 
