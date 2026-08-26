@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Ban, ChevronDown, ChevronRight, KeyRound, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MCP_SCOPE_LABELS, type McpScope } from "@/lib/mcp/scopes";
+import { isTokenDead } from "@/lib/mcp/token-status";
 
 export interface McpTokenRecord {
   id: string;
@@ -24,16 +25,15 @@ const formatDate = (value: string | null) =>
 /** Revoked and expired both mean "this no longer works", but only one of them is reversible
  *  by minting a longer-lived token, so the row says which it is. */
 const statusOf = (token: McpTokenRecord): { label: string; dead: boolean } => {
+  // `dead` comes from the shared predicate rather than being decided again here, so what the list
+  // offers and what the delete endpoint accepts cannot drift apart.
   if (token.revokedAt) return { label: `Revoked ${formatDate(token.revokedAt)}`, dead: true };
-  if (token.expiresAt && new Date(token.expiresAt) <= new Date()) {
-    return { label: `Expired ${formatDate(token.expiresAt)}`, dead: true };
-  }
+  if (isTokenDead(token)) return { label: `Expired ${formatDate(token.expiresAt)}`, dead: true };
+
   const expiry = token.expiresAt ? `Expires ${formatDate(token.expiresAt)}` : "Never expires";
   const used = token.lastUsedAt ? `last used ${formatDate(token.lastUsedAt)}` : "never used";
   return { label: `${expiry} · ${used}`, dead: false };
 };
-
-export const isDeadToken = (token: McpTokenRecord): boolean => statusOf(token).dead;
 
 interface McpTokenListProps {
   tokens: McpTokenRecord[];

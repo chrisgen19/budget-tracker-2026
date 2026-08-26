@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { mcpTokenSelect } from "@/lib/mcp/tokens";
+import { isTokenDead } from "@/lib/mcp/token-status";
 
 /**
  * Revoke a token, or delete an already-revoked one for good.
@@ -10,7 +11,8 @@ import { mcpTokenSelect } from "@/lib/mcp/tokens";
  * allowed to do, and when was it last used" after the fact: the questions that actually matter
  * once you suspect a token leaked.
  *
- * `?permanent=true` removes the row. It is refused on a live token, which makes deletion a
+ * `?permanent=true` removes the row. It is refused on a token that still works, which makes
+ * deletion a
  * deliberate two-step rather than something one misclick can do to a working credential, and
  * leaves the revocation as the fast path when a token has actually leaked. Transactions the
  * token wrote are untouched: `transactions.mcp_token_id` is deliberately not a foreign key, so
@@ -30,14 +32,17 @@ export async function DELETE(
   // Scoped by userId as well as id, so one user cannot revoke another's token by guessing a cuid.
   const existing = await prisma.mcpToken.findFirst({
     where: { id, userId },
-    select: { id: true, revokedAt: true },
+    select: { id: true, revokedAt: true, expiresAt: true },
   });
   if (!existing) {
     return NextResponse.json({ error: "Token not found" }, { status: 404 });
   }
 
   if (permanent) {
-    if (!existing.revokedAt) {
+    // Expiry counts as well as revocation. Both mean the credential no longer works, which is
+    // the only thing this guard is protecting against, and the list offers Delete on either. A
+    // check for `revoked_at` alone stranded expired tokens: no Revoke button, and a 409 here.
+    if (!isTokenDead(existing)) {
       return NextResponse.json(
         { error: "Revoke this token before deleting it." },
         { status: 409 }
