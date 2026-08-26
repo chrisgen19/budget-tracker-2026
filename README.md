@@ -494,8 +494,12 @@ The confirmation is not politeness. The web app shows a review modal for the sam
 phone photo is exactly where a wrong amount comes from, and a bot that saved silently would put it
 in the budget with nobody having seen it.
 
-Sending the receipt **as a file** rather than a photo reads better on small print, because Telegram
-recompresses photos. Both work. Images must be 4 MB or smaller.
+Sending the receipt **as a file** rather than a photo is worth doing for two reasons. Telegram
+recompresses anything sent as a photo, which costs accuracy on small print, and that recompression
+also strips the image's metadata. Sent as a file, the photo's own capture time survives, and that
+is what the bot falls back to when the date on the receipt cannot be read: a receipt photographed
+on Monday and sent on Thursday then lands on Monday rather than on Thursday. Without it the
+fallback is today, as before. Both work; images must be 4 MB or smaller.
 
 Each scan spends one of your monthly receipt scans, the same allowance the web app uses, because
 the bot scans through the MCP endpoint rather than calling Gemini itself. A scan that fails is

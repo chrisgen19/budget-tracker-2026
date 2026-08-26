@@ -26,6 +26,7 @@ import { readFileSync } from "node:fs";
 import { deflateSync } from "node:zlib";
 import { mintMcpToken } from "../src/lib/mcp/tokens";
 import { MAX_BASE64_LENGTH } from "../src/lib/receipt-limits";
+import { readPhotoTakenAt } from "../src/lib/exif-date";
 
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:3000";
 const ENDPOINT = new URL("/api/mcp", BASE_URL);
@@ -213,9 +214,18 @@ async function main() {
           ? "image/webp"
           : "image/jpeg";
 
+      // Mirrors what the bot does: read the capture time from the image itself, so an
+      // unreadable receipt date falls back to when the photo was taken rather than to today.
+      const takenAt = readPhotoTakenAt(bytes);
+      report("EXIF capture time is readable", takenAt !== null, takenAt ?? "none (falls back to today)");
+
       const scanned = await client.callTool({
         name: "scan_receipt",
-        arguments: { imageBase64: bytes.toString("base64"), mimeType },
+        arguments: {
+          imageBase64: bytes.toString("base64"),
+          mimeType,
+          ...(takenAt && { photoTakenAt: takenAt }),
+        },
       });
 
       report("a real receipt scans", scanned.isError !== true, textOf(scanned).slice(0, 120));

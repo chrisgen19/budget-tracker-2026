@@ -10,6 +10,8 @@ import { localDay, localTimestamp } from "@/lib/telegram/local-time";
 import { messageIsAllowed, type Allowlist, type TelegramMessage } from "@/lib/telegram/allowlist";
 import { chunkMessage } from "@/lib/telegram/chunk";
 import { MAX_IMAGE_BYTES, pickReceiptImage } from "@/lib/telegram/photo";
+import { readPhotoTakenAt } from "@/lib/exif-date";
+import { receiptDateLooksOff } from "@/lib/telegram/date-sanity";
 import { confirmPendingScan } from "@/lib/telegram/confirm-scan";
 import {
   hasPendingScan,
@@ -646,12 +648,19 @@ async function handleReceiptPhoto(
   const superseding = hasPendingScan(chatId);
 
   let scan: ScannedReceipt;
+  let photoTakenAt: string | null = null;
   try {
     const image = await downloadTelegramFile(pick.fileId);
+    // Only survives when the image was sent as a file. Telegram re-encodes anything sent as a
+    // photo, which strips the metadata, so this is null for most uploads and the scan falls back
+    // to today exactly as it did before.
+    photoTakenAt = readPhotoTakenAt(image);
+
     scan = await callTool<ScannedReceipt>("scan_receipt", {
       imageBase64: image.toString("base64"),
       mimeType: pick.mimeType,
       localDate: localTimestamp(TZ_OFFSET).slice(0, 10),
+      ...(photoTakenAt && { photoTakenAt }),
     });
   } catch (err) {
     // Reported here rather than rethrown, so the reply can say which receipt is still pending.
@@ -673,7 +682,15 @@ async function handleReceiptPhoto(
   reply += `\ud83d\udcc1 *Category:* ${categoryName}\n`;
   reply += `\ud83d\udcc5 *Date:* ${scan.date}\n`;
   if (scan.dateWarning) reply += `\n\u26a0\ufe0f The year on the receipt looks wrong. Check the date.\n`;
-  if (scan.usedPhotoFallback) reply += `\n\u26a0\ufe0f I could not read a date on it, so I used today's.\n`;
+  if (scan.usedPhotoFallback) {
+    reply += photoTakenAt
+      ? `\n\u26a0\ufe0f I could not read a date on it, so I used when the photo was taken.\n`
+      : `\n\u26a0\ufe0f I could not read a date on it, so I used today's.\n`;
+  } else if (receiptDateLooksOff(scan.date, photoTakenAt)) {
+    // The receipt's date wins, since that is when the purchase happened. But a wide gap usually
+    // means one of the two was misread, and now is when the user can still check.
+    reply += `\n\u26a0\ufe0f The photo was taken ${photoTakenAt!.slice(0, 10)}, which is a long way from the receipt date. Worth a check.\n`;
+  }
   reply += `\nNothing is saved yet. Reply *yes* to save it, or *no* to discard.`;
 
   // Stored only once the review has actually reached the user, which is the entire point of the

@@ -99,6 +99,15 @@ export async function scanReceipt(params: {
   readBase64: () => Promise<string> | string;
   todayStr: string;
   photoDateStr: string;
+  /**
+   * When the photo was taken, as an offset-less local timestamp, if it is known.
+   *
+   * Used only when the receipt's own date could not be read. It carries a real time as well as a
+   * real date, which matters twice: the transaction lands on the day the purchase actually
+   * happened rather than the day it was uploaded, and the timestamp is genuine, so the user's
+   * label schedules can run against it instead of against a clock that was invented.
+   */
+  capturedAt?: string | null;
 }): Promise<ReceiptScanOutcome> {
   const auth = await authorizeReceiptScan({
     userId: params.userId,
@@ -165,7 +174,14 @@ export async function scanReceipt(params: {
     );
     // Trust Gemini's explicit signal first; fall back to parse-failure detection.
     const usedPhotoFallback = result.data.dateSource === "PHOTO_FALLBACK" || parseFailed;
-    result.data.date = normalizedDate;
+
+    // A bare date has its time filled in downstream from the current clock, which is fabricated
+    // for anything not happening now. When the receipt's own date was unreadable and the photo
+    // told us exactly when it was taken, that timestamp is real, so it is used whole.
+    result.data.date =
+      usedPhotoFallback && params.capturedAt && params.capturedAt.slice(0, 10) === normalizedDate
+        ? params.capturedAt
+        : normalizedDate;
 
     // A categoryId Gemini invented would fail the ownership check on write, so it is corrected
     // here rather than surfaced.

@@ -166,3 +166,87 @@ describe("scan result shape", () => {
     expect(outcome.result).not.toHaveProperty("dateSource");
   });
 });
+
+describe("capture date fallback", () => {
+  const unreadableDate = () =>
+    generate.mockResolvedValue({
+      text: JSON.stringify({
+        amount: 470,
+        categoryId: "cat_1",
+        // Gemini says outright that it could not read the receipt's own date.
+        date: "2026-08-01",
+        dateSource: "PHOTO_FALLBACK",
+        description: "The Coffee Bean",
+        multiCategory: false,
+      }),
+    });
+
+  // The bug this covers: with no capture date the Telegram path fell back to *today*, so a
+  // receipt photographed on Monday and sent on Thursday landed on Thursday. The photo knows
+  // better, and it knows the time too, so the timestamp is real rather than an invented clock.
+  it("uses the capture timestamp whole when the receipt's date was unreadable", async () => {
+    authorize.mockResolvedValue(AUTHORIZED);
+    unreadableDate();
+
+    const outcome = await scanReceipt({
+      userId: "u1",
+      mimeType: "image/jpeg",
+      byteLength: 1_000,
+      readBase64: () => "aW1hZ2U=",
+      todayStr: "2026-08-26",
+      photoDateStr: "2026-08-01",
+      capturedAt: "2026-08-01T20:05:04",
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok || !("result" in outcome)) return;
+    expect(outcome.result.date).toBe("2026-08-01T20:05:04");
+    expect(outcome.result.usedPhotoFallback).toBe(true);
+  });
+
+  it("keeps a bare date when no capture time is known", async () => {
+    authorize.mockResolvedValue(AUTHORIZED);
+    unreadableDate();
+
+    const outcome = await scanReceipt({
+      userId: "u1",
+      mimeType: "image/jpeg",
+      byteLength: 1_000,
+      readBase64: () => "aW1hZ2U=",
+      todayStr: "2026-08-26",
+      photoDateStr: "2026-08-01",
+    });
+
+    if (!outcome.ok || !("result" in outcome)) return;
+    expect(outcome.result.date).toBe("2026-08-01");
+  });
+
+  it("does not override a date the receipt itself supplied", async () => {
+    authorize.mockResolvedValue(AUTHORIZED);
+    generate.mockResolvedValue({
+      text: JSON.stringify({
+        amount: 470,
+        categoryId: "cat_1",
+        date: "2026-08-01",
+        // Read from the receipt, so the capture time is irrelevant: the purchase date is what
+        // matters, and a photo taken later must not move it.
+        dateSource: "OCR",
+        description: "The Coffee Bean",
+        multiCategory: false,
+      }),
+    });
+
+    const outcome = await scanReceipt({
+      userId: "u1",
+      mimeType: "image/jpeg",
+      byteLength: 1_000,
+      readBase64: () => "aW1hZ2U=",
+      todayStr: "2026-08-26",
+      photoDateStr: "2026-08-01",
+      capturedAt: "2026-08-04T11:00:00",
+    });
+
+    if (!outcome.ok || !("result" in outcome)) return;
+    expect(outcome.result.date).toBe("2026-08-01");
+  });
+});

@@ -636,6 +636,15 @@ export const createBudgetMcpServer = ({
             "Today's date in the user's timezone as YYYY-MM-DD. Used to spot a receipt year " +
               "that cannot be right. Defaults to the user's today."
           ),
+        photoTakenAt: z
+          .string()
+          .optional()
+          .describe(
+            "When the photo was taken, if known, as an offset-less local timestamp such as " +
+              "2026-08-01T20:05:04. Used only when the receipt's own date cannot be read, in " +
+              "which case it is far better than today: a receipt photographed on Monday and " +
+              "sent on Thursday belongs on Monday. Read it from the image's EXIF if you have it."
+          ),
       },
       outputSchema: scanReceiptOutput,
       // Not read-only: each call spends a metered, paid resource, so clients must prompt rather
@@ -643,7 +652,7 @@ export const createBudgetMcpServer = ({
       // idempotent either: a second call costs a second scan and Gemini may read it differently.
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ imageBase64, mimeType, localDate }) => {
+    async ({ imageBase64, mimeType, localDate, photoTakenAt }) => {
       const refuse = (text: string) => ({
         content: [{ type: "text" as const, text }],
         isError: true,
@@ -666,6 +675,12 @@ export const createBudgetMcpServer = ({
 
       const today = formatLocalDate(new Date(), timezoneOffset);
       const todayStr = localDate && isRealDate(localDate) ? localDate.slice(0, 10) : today;
+      // Validated the same way as any other caller-supplied date, so a malformed one is ignored
+      // rather than propagated into a transaction.
+      const capturedAt =
+        photoTakenAt && isRealDate(photoTakenAt) && hasTrustworthyTime(photoTakenAt, timezoneOffset)
+          ? photoTakenAt
+          : null;
 
       // Imported here rather than at module scope on purpose: `receipt-scan` pulls in
       // `gemini.ts`, which builds its client on load and throws without GEMINI_API_KEY. At the
@@ -681,9 +696,11 @@ export const createBudgetMcpServer = ({
         // allocation here is bounded before this point rather than by the lazy read.
         readBase64: () => imageBase64,
         todayStr,
-        // The caller has no camera roll to read a capture date from, so today is the only
-        // honest fallback for an unreadable receipt date.
-        photoDateStr: todayStr,
+        // When the receipt's own date cannot be read, the photo's capture time is the best
+        // remaining evidence of when the purchase happened. Today is only the fallback of last
+        // resort, and it is wrong for any receipt photographed before it was sent.
+        photoDateStr: capturedAt ? capturedAt.slice(0, 10) : todayStr,
+        capturedAt,
       });
 
       if ("refusal" in outcome) return refuse(SCAN_REFUSAL_MESSAGES[outcome.refusal.reason](outcome.refusal));
