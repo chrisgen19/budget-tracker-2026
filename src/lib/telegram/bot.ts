@@ -5,6 +5,7 @@ import dns from "node:dns";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { GoogleGenAI } from "@google/genai";
+import { updateBatchId } from "@/lib/telegram/batch-id";
 /**
  * The bot talks to the deployed app over MCP rather than to a database.
  *
@@ -36,6 +37,9 @@ const TZ_OFFSET = Number.isFinite(Number(process.env.TELEGRAM_TZ_OFFSET))
   : new Date().getTimezoneOffset();
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+
+/** The numeric half of the bot token, which identifies the bot and is not the secret half. */
+const BOT_ID = (BOT_TOKEN ?? "").split(":")[0];
 
 /**
  * One client for the process, reconnected on failure.
@@ -157,7 +161,7 @@ async function sendMessage(chatId: number | string, text: string, parseMode: "Ma
         text,
       });
     } catch (err) {
-      console.error("Failed to send message:", err);
+      console.error("[telegram] failed to send a message:", err);
     }
   }
 }
@@ -363,7 +367,7 @@ Return ONLY a JSON object in this format:
     const parsed = JSON.parse(response.text || "{}");
     return parsed;
   } catch (err) {
-    console.error("Gemini parse error:", err);
+    console.error("[telegram] Gemini parse error:", err);
     return null;
   }
 }
@@ -459,11 +463,7 @@ async function handleMessage(message: any, updateId: number) {
       }
 
       const now = new Date();
-      // Derived from the Telegram update id, not the clock. The poller advances its offset
-      // *before* handling a message and keeps it only in memory, so a crash mid-write makes
-      // Telegram redeliver that update on restart. A random key would write the transaction
-      // twice; a stable one replays and returns the original row.
-      const clientBatchId = `telegram-${updateId}`;
+      const clientBatchId = updateBatchId(BOT_ID, updateId);
 
       const result = await callTool<CreatedBatch>("create_transactions", {
         clientBatchId,
@@ -490,11 +490,7 @@ async function handleMessage(message: any, updateId: number) {
     const aiResult = await processNaturalLanguageWithGemini(text, categories);
     if (aiResult?.action === "CREATE_TRANSACTION" && aiResult.transaction) {
       const txData = aiResult.transaction;
-      // Derived from the Telegram update id, not the clock. The poller advances its offset
-      // *before* handling a message and keeps it only in memory, so a crash mid-write makes
-      // Telegram redeliver that update on restart. A random key would write the transaction
-      // twice; a stable one replays and returns the original row.
-      const clientBatchId = `telegram-${updateId}`;
+      const clientBatchId = updateBatchId(BOT_ID, updateId);
       const result = await callTool<CreatedBatch>("create_transactions", {
         clientBatchId,
         transactions: [
@@ -558,9 +554,38 @@ const senderIsAllowed = (from: { id?: number; username?: string } | undefined): 
   return from.username !== undefined && ALLOWED_USERNAMES.has(from.username.toLowerCase());
 };
 
-export async function startTelegramBot(): Promise<void> {
-  console.log("Starting Budget Telegram Bot...");
+/** Attempts the MCP handshake with backoff, and gives up quietly rather than ending the bot. */
+async function probeMcp(): Promise<void> {
+  const delays = [0, 2_000, 5_000, 15_000, 30_000];
 
+  for (const [attempt, delay] of delays.entries()) {
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+    try {
+      const client = await mcpClient();
+      const { tools } = await client.listTools();
+      if (!tools.some((t) => t.name === "create_transactions")) {
+        console.warn(
+          "[telegram] this token has no transactions:write scope, so logging will be refused."
+        );
+      }
+      return;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Dropped so the next attempt reconnects rather than reusing a client whose transport died.
+      mcp = null;
+      if (attempt === delays.length - 1) {
+        console.error(
+          `[telegram] could not reach the MCP endpoint at ${MCP_URL} after ${delays.length} attempts:`,
+          message,
+          "\nPolling anyway; each message will report the failure."
+        );
+        return;
+      }
+    }
+  }
+}
+
+export async function startTelegramBot(): Promise<void> {
   if (!BOT_TOKEN) {
     throw new Error("TELEGRAM_BOT_TOKEN is not set.");
   }
@@ -572,30 +597,27 @@ export async function startTelegramBot(): Promise<void> {
     );
   }
 
-  // Proves the token before serving anyone, so a bad credential fails here rather than as a
+  // Proves the token before serving anyone, so a bad credential surfaces here rather than as a
   // confusing reply to the first message.
-  try {
-    const client = await mcpClient();
-    const { tools } = await client.listTools();
-    const canWrite = tools.some((t) => t.name === "create_transactions");
-    console.log(`Connected to ${MCP_URL}: ${tools.length} tools, write ${canWrite ? "enabled" : "NOT granted"}`);
-    if (!canWrite) {
-      console.warn("This token has no transactions:write scope, so logging will be refused.");
-    }
-  } catch (err: any) {
-    throw new Error(`Could not reach the MCP endpoint at ${MCP_URL}: ${err.message}`);
-  }
+  //
+  // Retried rather than thrown. The bot boots inside the app it talks to: `MCP_URL` points back
+  // at this same deployment, which is not yet serving requests while `instrumentation.ts` runs.
+  // A single failed probe used to end `startTelegramBot`, and nothing restarts it, so an ordering
+  // race at container boot left the bot down until the next deploy. Polling starts either way;
+  // a token that is genuinely wrong then reports itself in the reply to the first message.
+  await probeMcp();
 
   if (ALLOWED_IDS.size === 0 && ALLOWED_USERNAMES.size === 0) {
     console.error(
-      "\nREFUSING TO SERVE: no allowlist configured.\n" +
+      "\n[telegram] REFUSING TO SERVE: no allowlist configured.\n" +
         "Without one, anyone who finds this bot can read your balances and write transactions.\n" +
         "Set TELEGRAM_ALLOWED_IDS (preferred) or TELEGRAM_ALLOWED_USERNAMES in .env.\n" +
         "Message the bot once and its numeric id will be printed here.\n"
     );
   } else {
-    console.log(
-      `Allowlist: ${ALLOWED_IDS.size} id(s), ${ALLOWED_USERNAMES.size} username(s)` +
+    // Only the shape of the allowlist, never who is on it.
+    console.warn(
+      `[telegram] allowlist: ${ALLOWED_IDS.size} id(s), ${ALLOWED_USERNAMES.size} username(s)` +
         (ALLOWED_USERNAMES.size > 0 ? " (usernames are weaker than ids; prefer ids)" : "")
     );
   }
@@ -617,18 +639,34 @@ export async function startTelegramBot(): Promise<void> {
         if (!senderIsAllowed(from)) {
           // The id is logged so it can be copied straight into TELEGRAM_ALLOWED_IDS. Nothing is
           // sent back: a reply would confirm to a stranger that the bot is live and whose it is.
+          // The message text is deliberately not logged, here or anywhere else.
           console.warn(
-            `Denied message from id=${from?.id ?? "unknown"} username=@${from?.username ?? "none"}. ` +
-              `Add the id to TELEGRAM_ALLOWED_IDS in .env to allow it.`
+            `[telegram] denied message from id=${from?.id ?? "unknown"} username=@${from?.username ?? "none"}. ` +
+              `Add the id to TELEGRAM_ALLOWED_IDS to allow it.`
           );
           continue;
         }
 
-        console.log(`Message from @${from?.username || from?.id}: ${update.message.text}`);
-        await handleMessage(update.message, update.update_id);
+        // Caught per update, not per poll. The offset has already moved, so an escaping error
+        // would drop that message silently and the sender would be left waiting on a reply that
+        // never comes. Holding the offset back instead would make one permanently unprocessable
+        // message redeliver forever and wedge every message behind it, so the update is
+        // acknowledged and the failure is reported to the person who sent it.
+        try {
+          await handleMessage(update.message, update.update_id);
+        } catch (err) {
+          console.error(
+            "[telegram] failed to handle an update:",
+            err instanceof Error ? err.message : err
+          );
+          await sendMessage(
+            update.message.chat.id,
+            "Something went wrong handling that. Nothing was saved unless you get a confirmation. Please try again."
+          ).catch(() => {});
+        }
       }
     } catch (err: any) {
-      console.error("Polling error:", err.message);
+      console.error("[telegram] polling error:", err.message);
       await new Promise((r) => setTimeout(r, 3000));
     }
   }
