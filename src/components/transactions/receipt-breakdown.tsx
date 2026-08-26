@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import type { ReceiptBreakdownMeta } from "@/types";
@@ -46,19 +46,30 @@ export function toReceiptBreakdownMeta(raw: unknown): ReceiptBreakdownMeta | nul
 interface ReceiptBreakdownProps {
   breakdown: ReceiptBreakdownMeta;
   currency: string;
-  /** Initial expanded state — defaults to open (transaction form); lists may start collapsed */
+  /** Initial expanded state. Defaults to collapsed: a breakdown may carry up to
+   *  MAX_BREAKDOWN_LINE_ITEMS rows per group, which is too much to paint on open in either
+   *  caller — the transaction modal or the multi-scan list. */
   defaultExpanded?: boolean;
 }
 
-export function ReceiptBreakdown({ breakdown, currency, defaultExpanded = true }: ReceiptBreakdownProps) {
+export function ReceiptBreakdown({ breakdown, currency, defaultExpanded = false }: ReceiptBreakdownProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  // Ties the toggle to the panel it controls. `useId` rather than a constant because a
+  // multi-scan review renders one of these per receipt, and duplicate ids would point every
+  // toggle at the first panel.
+  const panelId = useId();
 
   return (
     <div className="rounded-xl border border-cream-200 bg-cream-50/60">
       {/* Header */}
+      {/* Collapsed is the default, so the hidden state is the normal one: without
+          aria-expanded a screen-reader user is told only "Receipt Breakdown (12 items)",
+          with nothing to indicate that activating it reveals anything. */}
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        aria-controls={panelId}
         className="flex items-center justify-between w-full px-4 py-3 text-left"
       >
         <span className="text-sm font-medium text-warm-600">
@@ -77,7 +88,7 @@ export function ReceiptBreakdown({ breakdown, currency, defaultExpanded = true }
 
       {/* Collapsible content */}
       {expanded && (
-        <div className="border-t border-cream-200">
+        <div id={panelId} className="border-t border-cream-200">
           {/* Items */}
           <div className="divide-y divide-cream-100">
             {breakdown.items.map((item, idx) => (

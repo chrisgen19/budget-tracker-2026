@@ -2,6 +2,93 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-26 - A supermarket receipt could fail its own scan
+
+Uploading a 56-item supermarket receipt returned `POST /api/receipts/scan 500` and "Failed to
+scan receipt. Please try again." The scan had in fact worked: the amount, date, merchant and
+category were all read correctly. What failed was `lineItems`, capped at 50 in
+`receiptBreakdownItemSchema`, and a single weekly grocery run exceeds that. The whole result was
+discarded over the one optional field on it.
+
+Several things were wrong here, so all of them are fixed.
+
+The bound is now `MAX_BREAKDOWN_LINE_ITEMS` (150), one constant shared by the scan-side schema and
+the storage-side `receiptBreakdownMetaSchema`. They were separate copies of 50, and raising only
+the scan would have produced the worse failure: a receipt that scans cleanly and is then rejected
+on save, after the credit is spent. The cap bounds the stored JSON blob rather than describing a
+typical receipt, so it sits well above what one realistically holds.
+
+`scanReceipt` no longer discards a scan when only the breakdown is invalid. It retries the parse
+without that field and returns the rest, keeping `multiCategory` so the review still offers
+Itemize. That is a partial recovery, not a guaranteed one: `/api/receipts/breakdown` validates
+against the same `receiptBreakdownItemSchema` and does not degrade, so it can rebuild a breakdown
+Gemini merely mis-shaped, but not one whose group genuinely exceeds the item cap. A response
+broken anywhere else fails the retry too and still settles as `FAILED`, so this cannot smuggle an
+unusable scan through.
+
+Degrading quietly created a second hazard, so the prompt was tightened to match. `lineItems.amount`
+is `positive()`, and a "FREE 0.00" or "-25.00 SENIOR DISC" line is ordinary on a supermarket
+receipt — the sort of thing that used to fail loudly and *refund* the credit, and would now fail
+silently while still spending it. `buildPrompt` never said amounts must be positive, though the
+breakdown route's prompt always had; it now does, and states the 150-item and 20-group bounds so
+the model stays inside them rather than relying on the drop.
+
+The failure was also invisible: the schema branch returned without logging, so the dev server
+showed a bare 500 and nothing else. Both paths now log — the drop and the outright rejection —
+with the issue list capped, since it carries one entry per bad line item.
+
+Degrading also changed what a scan costs, which the first pass missed. `use-multi-scan` skips the
+second Gemini call when a breakdown is already present — "no second call, no extra credit" — so a
+*dropped* breakdown falls through and Itemize spends another scan credit. The button looked
+identical either way. `scanReceipt` now reports `breakdownDropped`, the review labels that case as
+using another credit, and the MCP output schema carries it too.
+
+`getReceiptItems` needed more than a bigger number. A receipt is several transactions, one per
+category, each holding up to the item cap, so any single-blob default truncates an ordinary
+itemized grocery run — two 100-item groups returned 150 of 200 while `itemCount` said 200. The
+default is now group-aware: a whole receipt's worth when `receiptGroupId` names one, one
+transaction's worth otherwise. Truncation is also stated rather than implied, via a new
+`truncated` flag, because `itemCount` describes every match and a caller that does not compare
+lengths reports a partial receipt as a complete one.
+
+The bounds are named constants in `receipt-limits.ts` — a module with no imports of its own, so
+`budget-queries.ts` can read them without pulling zod and the MCP scope schema into the query
+layer — and the prompts interpolate them instead of restating 20 and 150 in prose.
+
+Two documentation defects turned out to be real bugs. The `get_receipt_items` tool description
+still said "Defaults to 100" after the default moved, and that text is the only contract a model
+ever reads. And the `multiCategory` caveat had been written as a JSDoc comment, which is erased at
+compile time: `output-schemas.ts` uses no `.describe()` at all, so nothing in it reaches the
+client. Both now live in `.describe()`.
+
+`/api/receipts/breakdown` got the same two treatments as the scan path, since it is where a
+dropped breakdown is rebuilt: its prompt states the per-group item cap, and its validation
+failure logs instead of returning a silent 422. Unifying the two parses outright is issue #139.
+
+A third review pass caught the same defect three times over: a fix written on a channel its
+audience cannot read. The `truncated` flag shipped with no `.describe()` — the exact JSDoc trap
+fixed for `multiCategory` one field earlier — while the `limit` text still taught the model to
+compare `items.length` against `itemCount`. The credit warning on Itemize lived only in `title`
+and `aria-label`, neither of which a phone renders, in an app used mostly on phones; it is now a
+visible "1 scan" pill. The promo-line rule was added to the scan prompt but not to
+`/api/receipts/breakdown`, so the recovery path still failed on the very receipt that triggered
+the drop. And `breakdownDropped` was threaded to the client and then never read, with the UI
+re-deriving it from `!breakdown?.length`; it drives the pill now, because only the server knows
+whether an itemization was lost as opposed to never produced. The `scan_receipt` prose summary
+says so too, since prose is what many clients surface.
+
+`scanReceiptOutput` is now pinned to `ScanResultPayload` with `assertExact`, like every read
+schema. The file previously declined the pin as describing "AI output rather than a database
+shape", but the payload is a repo-local interface, and the failure it guards against is
+documented in the same file: a field that reaches `structuredContent` without reaching the
+schema is rejected by the SDK client and breaks every scan at the caller.
+
+Smaller: `summarizeIssues` is a shared leaf module rather than two copies; `get_receipt_items`
+stops pretty-printing its text channel, since it is the one result whose size scales with a
+stored blob and it is already serialized twice; `ReceiptBreakdown` reports `aria-expanded` and
+`aria-controls`, which mattered little while it rendered open and matters now that collapsed is
+the default.
+
 ## 2026-08-26 - Telegram bot runs inside the app
 
 The bot needed somewhere always-on. A second Coolify application would have doubled the build and

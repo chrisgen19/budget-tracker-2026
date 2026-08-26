@@ -8,6 +8,8 @@ import { authorizeReceiptScan, stripCodeFences, type ScanRefusal } from "@/lib/r
 import { settleScanReservation } from "@/lib/scan-quota";
 import { checkReceiptDate } from "@/lib/receipt-date";
 import { receiptScanResultSchema } from "@/lib/validations";
+import { MAX_BREAKDOWN_GROUPS, MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
+import { summarizeIssues } from "@/lib/zod-issue-summary";
 
 /** Why a scan produced nothing usable, once it was authorized and the credit was held. */
 export type ScanFailure =
@@ -29,6 +31,17 @@ export interface ScanResultPayload {
   type: "EXPENSE";
   multiCategory?: boolean;
   breakdown?: unknown;
+  /**
+   * An itemization was produced, failed validation, and was discarded.
+   *
+   * Distinguishes "this receipt has one category" from "it had several and we lost the split",
+   * which `multiCategory` alone cannot: both leave `breakdown` absent. It matters because the two
+   * cost differently. `use-multi-scan` short-circuits Itemize when a breakdown is already present
+   * — "no second call, no extra credit" — so a dropped one falls through to
+   * /api/receipts/breakdown and spends a *second* scan credit. Without this flag the button looks
+   * identical in both cases and the user cannot tell the free expansion from the paid one.
+   */
+  breakdownDropped?: boolean;
   dateWarning: boolean;
   usedPhotoFallback: boolean;
 }
@@ -46,6 +59,8 @@ Return a JSON object with these fields:
 - "description": merchant name + short summary of purchase (max 100 chars).
 - "multiCategory": true if the receipt contains items that span 2 or more DIFFERENT categories from the list below, false if all items belong to a single category. For example, a grocery receipt with food AND cleaning supplies = true, a restaurant bill with only food = false, a single ride receipt = false.
 - "breakdown": ONLY include this field when "multiCategory" is true. Read every line item on the receipt and group them by category. Each entry has: "amount" (sum for that category), "categoryId", "description" (store name + category + 1-2 sample items, max 80 chars), and "lineItems" (array of {"name": "<item name>", "amount": <price>}). The sum of all breakdown amounts should approximately equal the receipt total. Distribute tax/service proportionally or into the largest group. Do NOT include breakdown when multiCategory is false.
+  All amounts must be positive numbers. A discount, promo, void or zero-priced line is NOT its own line item: subtract it from the item it applies to, or from that category's total, and never emit a zero or negative "amount".
+  At most ${MAX_BREAKDOWN_GROUPS} category groups, and at most ${MAX_BREAKDOWN_LINE_ITEMS} lineItems in any one group. If a group would exceed ${MAX_BREAKDOWN_LINE_ITEMS}, merge its smallest items into a single "Other items" line so the group stays within the limit.
 
 CATEGORIES:
 ${categoryList}
@@ -160,11 +175,47 @@ export async function scanReceipt(params: {
       return await fail("NOT_A_RECEIPT");
     }
 
-    const result = receiptScanResultSchema.safeParse({
+    let result = receiptScanResultSchema.safeParse({
       ...(parsed as Record<string, unknown>),
       type: "EXPENSE",
     });
-    if (!result.success) return await fail("FAILED");
+
+    // The breakdown is an enrichment, not the result. A scan whose amount, date, merchant and
+    // category all read correctly was being discarded whole because the optional itemization
+    // broke a bound: a supermarket receipt with 56 items in one group met a 50-item cap and the
+    // user got "Failed to scan receipt" for a scan that had in fact worked.
+    //
+    // So retry without it, keeping `multiCategory` so the review still offers Itemize. That is a
+    // partial recovery, not a guaranteed one: /api/receipts/breakdown validates against the same
+    // `receiptBreakdownItemSchema` and does not degrade, so it can rebuild a breakdown Gemini
+    // simply mis-shaped here, but not one whose group genuinely exceeds the item cap. Unifying
+    // the two is issue-sized work; the prompt above is what keeps either case rare.
+    //
+    // This cannot rescue a genuinely unusable response: anything wrong outside `breakdown` fails
+    // the retry too, and falls through to FAILED as before.
+    let breakdownDropped = false;
+    if (!result.success && parsed && typeof parsed === "object" && "breakdown" in parsed) {
+      const withoutBreakdown: Record<string, unknown> = { ...(parsed as Record<string, unknown>) };
+      delete withoutBreakdown.breakdown;
+
+      const degraded = receiptScanResultSchema.safeParse({ ...withoutBreakdown, type: "EXPENSE" });
+      if (degraded.success) {
+        breakdownDropped = true;
+        console.warn(
+          "[receipt-scan] dropped an invalid breakdown and kept the scan:",
+          summarizeIssues(result.error.issues)
+        );
+        // Only on success: a failed retry's error is about the payload minus its breakdown, which
+        // is the less informative of the two for whoever reads the log below.
+        result = degraded;
+      }
+    }
+    if (!result.success) {
+      // The reason a scan 500s, which used to be logged nowhere: this branch returned silently,
+      // so a rejected response surfaced as a bare 500 and took a reproduction to identify.
+      console.warn("[receipt-scan] response failed validation:", summarizeIssues(result.error.issues));
+      return await fail("FAILED");
+    }
 
     // Normalize date and flag a suspicious year for the caller.
     const { date: normalizedDate, dateWarning, usedPhotoFallback: parseFailed } = checkReceiptDate(
@@ -217,6 +268,9 @@ export async function scanReceipt(params: {
         type: "EXPENSE",
         multiCategory: result.data.multiCategory,
         ...(result.data.breakdown && { breakdown: result.data.breakdown }),
+        // Only when true: an absent flag is the ordinary case, and emitting `false` on every
+        // scan would add a field to every MCP result to say nothing happened.
+        ...(breakdownDropped && { breakdownDropped: true }),
         dateWarning,
         usedPhotoFallback,
       },

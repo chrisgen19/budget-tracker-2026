@@ -11,6 +11,33 @@
 export const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB
 
 /**
+ * Ceiling on the line items a single breakdown group may carry.
+ *
+ * One constant, used by the scan-side schema (`receiptBreakdownItemSchema`), the storage-side one
+ * (`receiptBreakdownMetaSchema`) and `getReceiptItems`' default page size, because they are ends
+ * of one payload: a bound raised on the scan alone yields a receipt that scans cleanly and is
+ * then rejected on save, and a read default below it truncates a receipt while reporting the full
+ * count.
+ *
+ * It lives here rather than in `validations.ts` so `budget-queries.ts` can read it without
+ * pulling zod and the MCP scope schema into the query layer, which the MCP server also loads.
+ *
+ * It was 50, which a single weekly supermarket run exceeds — a 56-item grocery group failed the
+ * whole scan with a 500. The bound caps the stored JSON blob rather than describing a typical
+ * receipt, so it sits well above what one realistically holds.
+ */
+export const MAX_BREAKDOWN_LINE_ITEMS = 150;
+
+/**
+ * Ceiling on the category groups one receipt's itemization may hold.
+ *
+ * Named rather than repeated as a bare `20`, because it bounds two different things that have to
+ * agree: how many groups a scan may return, and — multiplied by the item cap above — how many
+ * flattened items `getReceiptItems` must return to honour "pull one whole receipt".
+ */
+export const MAX_BREAKDOWN_GROUPS = 20;
+
+/**
  * The longest base64 string that can decode to a permitted image.
  *
  * Base64 costs 4 characters per 3 bytes. Callers that receive an encoded payload must check this

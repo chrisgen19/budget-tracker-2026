@@ -6,9 +6,11 @@ import {
   hasTrustworthyTime,
   isRealDate,
   mcpTransactionSchema,
+  receiptBreakdownItemSchema,
   receiptBreakdownMetaSchema,
   resolveTransactionDate,
 } from "./validations";
+import { MAX_BREAKDOWN_LINE_ITEMS } from "./receipt-limits";
 
 /** What the multi-scan flow actually posts (use-multi-scan.ts). */
 const validBlob = {
@@ -60,8 +62,10 @@ describe("receiptBreakdownMetaSchema", () => {
       items: Array.from({ length: n }, (_, i) => ({ name: `i${i}`, amount: 1 })),
     });
 
-    expect(receiptBreakdownMetaSchema.safeParse(many(50)).success).toBe(true);
-    expect(receiptBreakdownMetaSchema.safeParse(many(51)).success).toBe(false);
+    expect(receiptBreakdownMetaSchema.safeParse(many(MAX_BREAKDOWN_LINE_ITEMS)).success).toBe(true);
+    expect(receiptBreakdownMetaSchema.safeParse(many(MAX_BREAKDOWN_LINE_ITEMS + 1)).success).toBe(
+      false
+    );
   });
 
   it("bounds the item name length", () => {
@@ -371,5 +375,36 @@ describe("hasTrustworthyTime", () => {
 
   it("does not trust a value it cannot parse", () => {
     expect(hasTrustworthyTime("not-a-date", MANILA, NOW)).toBe(false);
+  });
+});
+
+describe("receiptBreakdownItemSchema", () => {
+  // The bound was 50 on both schemas and was raised because a real supermarket receipt carries
+  // more. They have to move together: the scan-side schema decides what a scan may return and
+  // the storage-side one decides what may be saved, so a bound raised on one alone produces a
+  // receipt that scans cleanly and is then rejected on save.
+  it("shares one bound with the scan-side schema, so the two cannot drift apart", () => {
+    const lineItems = Array.from({ length: MAX_BREAKDOWN_LINE_ITEMS }, (_, i) => ({
+      name: `i${i}`,
+      amount: 1,
+    }));
+
+    expect(
+      receiptBreakdownItemSchema.safeParse({
+        amount: 100,
+        categoryId: "c1",
+        description: "Groceries",
+        lineItems,
+      }).success
+    ).toBe(true);
+
+    expect(
+      receiptBreakdownItemSchema.safeParse({
+        amount: 100,
+        categoryId: "c1",
+        description: "Groceries",
+        lineItems: [...lineItems, { name: "one too many", amount: 1 }],
+      }).success
+    ).toBe(false);
   });
 });

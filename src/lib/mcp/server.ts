@@ -6,7 +6,12 @@ import {
   WRITE_ERROR_MESSAGES,
 } from "@/lib/mcp/write-errors";
 import { z } from "zod";
-import { MAX_BASE64_LENGTH, isBase64 } from "@/lib/receipt-limits";
+import {
+  MAX_BASE64_LENGTH,
+  MAX_BREAKDOWN_GROUPS,
+  MAX_BREAKDOWN_LINE_ITEMS,
+  isBase64,
+} from "@/lib/receipt-limits";
 import {
   getSpendingByCategory,
   getTopExpenses,
@@ -579,9 +584,14 @@ export const createBudgetMcpServer = ({
           .number()
           .int()
           .min(1)
-          .max(500)
+          .max(MAX_BREAKDOWN_LINE_ITEMS * MAX_BREAKDOWN_GROUPS)
           .optional()
-          .describe("Max items returned. Counts and totals cover every match. Defaults to 100."),
+          .describe(
+            "Max items returned. Defaults to one transaction's worth, or a whole receipt's worth " +
+              "when receiptGroupId is set — one receiptGroupId can span several transactions. " +
+              "`itemCount` and `totalAmount` always cover every match, and the `truncated` flag " +
+              "in the result says whether `items` is the complete list."
+          ),
       },
       outputSchema: receiptItemsOutput,
       annotations: { readOnlyHint: true },
@@ -596,7 +606,13 @@ export const createBudgetMcpServer = ({
       });
       const payload = result;
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+        // Not pretty-printed, unlike the other tools. This is the only result whose size scales
+        // with a stored blob rather than a row count: raising the item bound made a full-ceiling
+        // response MAX_BREAKDOWN_GROUPS x MAX_BREAKDOWN_LINE_ITEMS items, and every result is
+        // already serialized twice — once here and once as structuredContent. Indentation on a
+        // list that size is pure context spend, and `content` is only the fallback channel for
+        // clients that do not read structuredContent.
+        content: [{ type: "text" as const, text: JSON.stringify(payload) }],
         structuredContent: structured(payload),
       };
     }
@@ -718,6 +734,15 @@ export const createBudgetMcpServer = ({
             capturedAt && r.date === capturedAt
             ? " The receipt's own date was unreadable, so the time the photo was taken was used instead. That is when the purchase happened, so do not offer to change it to today."
             : " The receipt's own date was unreadable, so today's was used. Ask the user whether that is right."
+          : "") +
+        (r.breakdownDropped
+          ? // The prose channel is what many clients actually surface, so a caveat that lives
+            // only in structuredContent is one the user never hears. Without this a model reads
+            // a clean single-amount draft and files a multi-category receipt as one lumped row,
+            // never knowing the per-category split existed.
+            " This receipt covers more than one category, but its per-category itemization could" +
+            " not be read and was discarded, so only the total is available here. Rebuilding it" +
+            " is a separate scan that costs another scan credit."
           : "") +
         " Nothing has been saved. Confirm with the user, then call create_transactions.";
 

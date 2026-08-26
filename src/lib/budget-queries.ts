@@ -5,6 +5,7 @@
 // these where-clauses are built as would hide that. It happens to execute correctly on
 // 6.19.2, which is exactly why it needs pinning: nothing would catch it changing.
 import { Prisma } from "@prisma/client";
+import { MAX_BREAKDOWN_GROUPS, MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
 import type {
   PrismaClient,
   SpendingByCategoryParams,
@@ -922,7 +923,20 @@ export const getReceiptItems = async (
   params: ReceiptItemsParams = {}
 ): Promise<ReceiptItems> => {
   const tz = params.timezoneOffset ?? 0;
-  const limit = safeLimit(params.limit, 100);
+  // The default is group-aware, because "every item on this one receipt" and "the most recent
+  // items across all receipts" are different questions with different right answers.
+  //
+  // A receiptGroupId names one receipt, and the tool's contract is that it pulls that receipt
+  // whole — but a receipt is several transactions, one per category, each holding up to
+  // MAX_BREAKDOWN_LINE_ITEMS. Two 100-item groups therefore overflow any single-blob default and
+  // return 150 of 200, while itemCount and totalAmount describe all 200. So when a group is named,
+  // the default covers what a whole receipt can hold rather than what one transaction can.
+  // An explicit `limit` still wins; this only decides what "unspecified" means.
+  const groupCeiling = MAX_BREAKDOWN_LINE_ITEMS * MAX_BREAKDOWN_GROUPS;
+  const limit = safeLimit(
+    params.limit,
+    params.receiptGroupId ? groupCeiling : MAX_BREAKDOWN_LINE_ITEMS
+  );
 
   // DbNull is "the column is SQL NULL", as opposed to a stored JSON `null`. Both are
   // excluded in practice: parseReceiptBreakdown rejects a JSON null too.
@@ -974,6 +988,7 @@ export const getReceiptItems = async (
     month: params.month ?? null,
     itemCount: items.length,
     totalAmount: items.reduce((sum, i) => sum + i.amount, 0),
+    truncated: items.length > limit,
     items: items.slice(0, limit),
   };
 };
