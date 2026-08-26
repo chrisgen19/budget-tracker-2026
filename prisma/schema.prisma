@@ -59,6 +59,7 @@ enum AiInsightKind {
 enum TransactionSource {
   APP
   MCP
+  TELEGRAM
 }
 
 enum ScanStatus {
