@@ -115,7 +115,12 @@ src/
 queries. Gemini only ever *classifies* a message: it is never given transactions, totals or
 balances, and every figure the bot sends comes from an MCP read tool via the same handlers the
 slash commands use. A free-text question is routed to one of those handlers, not answered by the
-model, because a model holding only category names can only refuse or invent. It is an **MCP client**, not a database client: it calls `/api/mcp` with a scoped token,
+model, because a model holding only category names can only refuse or invent. Obvious phrasings
+(`summary`, `my bills please`) are resolved locally in `src/lib/telegram/commands.ts` before
+Gemini is consulted at all: paying a model call to recognise the word "summary" is slow, costs a
+request, and fails outright when `GEMINI_API_KEY` is unset, where the slash command still works.
+Anything ambiguous is left to the model, since a wrong local guess answers a question the user did
+not ask with no sign it misread them. It is an **MCP client**, not a database client: it calls `/api/mcp` with a scoped token,
 so it inherits the scope, the write lease, the rate limit and the audit trail rather than going
 around them, and it holds no database credentials.
 

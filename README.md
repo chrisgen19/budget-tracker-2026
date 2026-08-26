@@ -480,6 +480,13 @@ questions are routed to a real query instead of being answered by the model.
 | `/bills` | Bills due in the next 30 days |
 | `/categories` | Your category list |
 | `/help` | The above, in chat |
+
+The slash is optional. `summary`, `balance`, `recent`, `bills`, `categories` and `help` work on
+their own, as do the obvious phrasings around them (`give summary`, `my bills please`). Those are
+matched locally, so they answer instantly and keep working when Gemini is unavailable. Anything
+more conversational still goes to Gemini, which picks the intent; the figures always come from a
+real query either way.
+
 | *(send a photo)* | Reads the receipt with AI, shows what it found, and waits for `yes` before saving |
 
 Anything with a date or time in it (`yesterday`, `at noon`, `18:00`, `sep 14`) skips the fast path
