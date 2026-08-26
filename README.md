@@ -579,11 +579,13 @@ throwaway user, so none of them touch your own data.
 | `verify-mcp-endpoint.ts` | Bearer auth, the stateless transport, and scope narrowing over real HTTP | a dev server |
 | `verify-batch-idempotency.ts` | A committed batch whose response was lost replays instead of duplicating | a dev server |
 | `verify-receipt-scan.ts` | `scan_receipt` over HTTP, a real Gemini call, and the scan-credit accounting | a dev server + `GEMINI_API_KEY` |
+| `verify-token-delete.ts` | Deleting an MCP token removes the credential and leaves the transactions it wrote untouched | a database |
 
 ```bash
 # database only
 pnpm exec tsx scripts/verify-scan-quota.ts
 pnpm exec tsx scripts/verify-mcp-token-auth.ts
+pnpm exec tsx scripts/verify-token-delete.ts
 
 # dev server in one terminal
 pnpm dev -p 3111
