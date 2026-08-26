@@ -119,3 +119,50 @@ describe("scanReceipt", () => {
     expect(settle).toHaveBeenCalledWith("res_1", "FAILED");
   });
 });
+
+describe("scan result shape", () => {
+  // The bug this covers: the payload was built by spreading receiptScanResultSchema's output,
+  // which carries `dateSource`. That leaked into the MCP tool's structuredContent, and the SDK
+  // *client* validates structuredContent against the declared output schema and rejects unknown
+  // properties, so every successful scan failed at the caller with a schema error. Nothing
+  // in-process caught it; scripts/verify-receipt-scan.ts did, against a real client.
+  it("returns only the fields the output schema declares", async () => {
+    authorize.mockResolvedValue(AUTHORIZED);
+    generate.mockResolvedValue({
+      text: JSON.stringify({
+        amount: 470,
+        categoryId: "cat_1",
+        date: "2026-08-01",
+        dateSource: "OCR",
+        description: "The Coffee Bean",
+        multiCategory: false,
+      }),
+    });
+
+    const outcome = await scanReceipt({
+      userId: "u1",
+      mimeType: "image/jpeg",
+      byteLength: 1_000,
+      readBase64: () => "aW1hZ2U=",
+      todayStr: "2026-08-26",
+      photoDateStr: "2026-08-26",
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok || !("result" in outcome)) return;
+
+    expect(Object.keys(outcome.result).sort()).toEqual(
+      [
+        "amount",
+        "categoryId",
+        "date",
+        "dateWarning",
+        "description",
+        "multiCategory",
+        "type",
+        "usedPhotoFallback",
+      ].sort()
+    );
+    expect(outcome.result).not.toHaveProperty("dateSource");
+  });
+});

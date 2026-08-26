@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_BASE64_LENGTH, MAX_FILE_SIZE } from "@/lib/receipt-limits";
+import { MAX_BASE64_LENGTH, MAX_FILE_SIZE, isBase64 } from "@/lib/receipt-limits";
 
 describe("receipt size limits", () => {
   // The bug this covers: the MCP tool accepted an unbounded string, so an oversized payload was
@@ -30,5 +30,27 @@ describe("receipt size limits", () => {
   it("is not so loose that a rejected payload is still huge", () => {
     // 4 chars per 3 bytes, so the encoded ceiling should sit just above 4/3 of the decoded one.
     expect(MAX_BASE64_LENGTH).toBeLessThan(MAX_FILE_SIZE * 1.4);
+  });
+});
+
+describe("isBase64", () => {
+  it("accepts real base64", () => {
+    expect(isBase64(Buffer.from("image bytes").toString("base64"))).toBe(true);
+    expect(isBase64("AAAA")).toBe(true);
+  });
+
+  // The bug this covers: Buffer.from skips invalid characters rather than failing, so this
+  // decoded to 6 bytes and reached Gemini, spending a scan credit on input that was never an
+  // image. Only the shape of the string can detect it.
+  it("rejects a string that merely contains base64 characters", () => {
+    expect(isBase64("!!!!not base64!!!!")).toBe(false);
+    expect(Buffer.from("!!!!not base64!!!!", "base64").length).toBeGreaterThan(0);
+  });
+
+  it("rejects a data: URL prefix, whitespace, and bad padding", () => {
+    expect(isBase64("data:image/png;base64,AAAA")).toBe(false);
+    expect(isBase64("a b c d")).toBe(false);
+    expect(isBase64("abc")).toBe(false);
+    expect(isBase64("")).toBe(false);
   });
 });

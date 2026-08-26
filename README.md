@@ -455,6 +455,18 @@ pnpm dev -p 3111
 BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-mcp-endpoint.ts
 ```
 
+To exercise `scan_receipt` end to end, including a real Gemini call and the scan-credit
+accounting:
+
+```bash
+pnpm dev -p 3111
+BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-receipt-scan.ts
+# and, to cover a successful scan as well:
+RECEIPT=/path/to/receipt.jpg BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-receipt-scan.ts
+```
+
+It uses a throwaway user, so it never spends your own scan allowance.
+
 `scripts/verify-mcp-token-auth.ts` covers the token lifecycle (expiry, revocation, rate limiting)
 directly against the database. It needs a **non-UTC** database timezone and says so if it finds
 one, since the timestamp behaviour it checks cannot be observed under UTC.

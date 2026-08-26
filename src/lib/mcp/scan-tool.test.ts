@@ -67,6 +67,27 @@ describe("scan_receipt", () => {
     expect((res.content as { text?: string }[])[0].text).toContain("not valid base64");
   });
 
+  // The bug this covers: Buffer.from skips characters outside the base64 alphabet instead of
+  // failing, so "!!!!not base64!!!!" decoded to 6 bytes of nonsense rather than to nothing. The
+  // length check waved it through to Gemini, which cost a real scan credit for input that was
+  // never an image. Found by scripts/verify-receipt-scan.ts, not by a unit test.
+  it("refuses a string that merely contains base64 characters", async () => {
+    const res = await callScan(["receipts:scan"], {
+      imageBase64: "!!!!not base64!!!!",
+      mimeType: "image/jpeg",
+    });
+    expect(res.isError).toBe(true);
+    expect((res.content as { text?: string }[])[0].text).toContain("not valid base64");
+  });
+
+  it("refuses a data: URL prefix, which is the likely mistake", async () => {
+    const res = await callScan(["receipts:scan"], {
+      imageBase64: "data:image/png;base64,AAAA",
+      mimeType: "image/png",
+    });
+    expect(res.isError).toBe(true);
+  });
+
   it("rejects a mime type the scan pipeline cannot accept", async () => {
     const res = await callScan(["receipts:scan"], {
       imageBase64: Buffer.from("x").toString("base64"),

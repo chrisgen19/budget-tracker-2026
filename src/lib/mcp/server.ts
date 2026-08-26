@@ -6,7 +6,7 @@ import {
   WRITE_ERROR_MESSAGES,
 } from "@/lib/mcp/write-errors";
 import { z } from "zod";
-import { MAX_BASE64_LENGTH } from "@/lib/receipt-limits";
+import { MAX_BASE64_LENGTH, isBase64 } from "@/lib/receipt-limits";
 import {
   getSpendingByCategory,
   getTopExpenses,
@@ -655,12 +655,14 @@ export const createBudgetMcpServer = ({
         );
       }
 
-      // Decoded here so a malformed payload is refused before anything is reserved. Buffer.from
-      // ignores invalid base64 rather than throwing, so the round trip is what actually detects it.
-      const buffer = Buffer.from(imageBase64, "base64");
-      if (buffer.length === 0) {
-        return refuse("imageBase64 is not valid base64 image data.");
+      // Checked on the string, not on what it decodes to. Buffer.from skips characters outside
+      // the base64 alphabet instead of failing, so garbage decodes to a short run of nonsense
+      // rather than to nothing, and a length check waves it through to Gemini at the cost of a
+      // scan credit.
+      if (!isBase64(imageBase64)) {
+        return refuse("imageBase64 is not valid base64. Send the raw image bytes, base64 encoded, with no data: URL prefix.");
       }
+      const buffer = Buffer.from(imageBase64, "base64");
 
       const today = formatLocalDate(new Date(), timezoneOffset);
       const todayStr = localDate && isRealDate(localDate) ? localDate.slice(0, 10) : today;

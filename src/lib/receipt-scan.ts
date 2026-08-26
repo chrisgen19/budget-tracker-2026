@@ -186,7 +186,25 @@ export async function scanReceipt(params: {
     // Only a scan the user can actually use consumes their monthly credit.
     await settleScanReservation(reservationId, "SUCCESS");
 
-    return { ok: true, result: { ...result.data, dateWarning, usedPhotoFallback } };
+    // Built field by field rather than spread. `receiptScanResultSchema` carries `dateSource`,
+    // Gemini's own raw signal, which nothing downstream needs once `usedPhotoFallback` has been
+    // derived from it. Spreading leaked it into the MCP tool's `structuredContent`, and the SDK
+    // *client* validates that against the declared output schema and rejects unknown properties,
+    // so every successful scan failed at the caller with a schema error.
+    return {
+      ok: true,
+      result: {
+        amount: result.data.amount,
+        categoryId: result.data.categoryId,
+        date: result.data.date,
+        description: result.data.description,
+        type: "EXPENSE",
+        multiCategory: result.data.multiCategory,
+        ...(result.data.breakdown && { breakdown: result.data.breakdown }),
+        dateWarning,
+        usedPhotoFallback,
+      },
+    };
   } catch (error) {
     console.error("[receipt-scan] scan failed:", error);
     return await fail(isGeminiUnavailable(error) ? "AI_UNAVAILABLE" : "FAILED");
