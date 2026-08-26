@@ -9,6 +9,8 @@ export interface McpTokenRecord {
   name: string;
   prefix: string;
   scopes: string[];
+  /** What the token represents; stamped onto every transaction it writes. */
+  source?: "MCP" | "TELEGRAM";
   expiresAt: string | null;
   revokedAt: string | null;
   lastUsedAt: string | null;
@@ -64,6 +66,11 @@ export function McpTokenList({ tokens, revokingId, onRevoke }: McpTokenListProps
               <div className="min-w-0">
                 <p className="text-sm font-medium text-warm-600 truncate">{token.name}</p>
                 <p className="text-xs text-warm-400 font-mono">{token.prefix}…</p>
+                {token.source === "TELEGRAM" && (
+                  <p className="text-xs text-warm-400 mt-1">
+                    Writes are tagged &ldquo;Added via Telegram&rdquo;
+                  </p>
+                )}
                 <p className="text-xs text-warm-400 mt-1">{status.label}</p>
                 <p className="text-xs text-warm-400 mt-1">
                   {token.scopes

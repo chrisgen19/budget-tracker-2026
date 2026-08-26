@@ -1,4 +1,4 @@
-import { CalendarClock, Receipt, Sparkles } from "lucide-react";
+import { CalendarClock, Receipt, Send, Sparkles } from "lucide-react";
 import type { TransactionSource } from "@prisma/client";
 
 interface TransactionRowBadgesProps {
@@ -17,7 +17,9 @@ interface TransactionRowBadgesProps {
  * exercising them there would mean mounting the whole route with its providers, router and query
  * client to assert on one span.
  *
- * Provenance is icon-only while the other two carry text. A row is already crowded on a narrow
+ * Provenance is icon-only while the other two carry text. Each remote source gets its own glyph:
+ * they all arrive through the same endpoint, so a single marker would have made the Telegram
+ * bot's rows claim Claude wrote them. A row is already crowded on a narrow
  * screen, and unlike "Itemized" and "Bill" this one is answering a question most rows do not
  * raise, so it earns less space. The meaning lives in the accessible name rather than the glyph.
  */
@@ -48,6 +50,16 @@ export function TransactionRowBadges({
           className="shrink-0 inline-flex items-center text-amber-dark"
         >
           <Sparkles className="w-3 h-3" />
+        </span>
+      )}
+      {createdVia === "TELEGRAM" && (
+        <span
+          title="Added via Telegram"
+          aria-label="Added via Telegram"
+          role="img"
+          className="shrink-0 inline-flex items-center text-warm-400"
+        >
+          <Send className="w-3 h-3" />
         </span>
       )}
     </>

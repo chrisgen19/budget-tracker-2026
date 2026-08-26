@@ -7,11 +7,13 @@ import { McpTokenCreate } from "@/components/profile/mcp-token-create";
 import { McpTokenList, type McpTokenRecord } from "@/components/profile/mcp-token-list";
 import { McpWriteAccess } from "@/components/profile/mcp-write-access";
 import type { McpScope } from "@/lib/mcp/scopes";
+import type { McpTokenSource } from "@/lib/validations";
 
 interface CreateInput {
   name: string;
   scopes: McpScope[];
   expiresInDays: number | null;
+  source: McpTokenSource;
 }
 
 export function McpTokensForm() {

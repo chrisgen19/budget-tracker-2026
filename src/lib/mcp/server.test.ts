@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createBudgetMcpServer } from "./server";
@@ -20,6 +20,110 @@ const listToolNames = async (scopes?: readonly McpScope[]) => {
 
   return tools.map((tool) => tool.name).sort();
 };
+
+/**
+ * A Prisma stub for the write path, recording what `create_transactions` asked to be written.
+ *
+ * Only the handful of calls the create path makes are stubbed; the read tools are never invoked
+ * from here.
+ */
+const makeWritePrisma = () => {
+  const created: Record<string, unknown>[] = [];
+  const client = {
+    category: {
+      findMany: vi.fn(async () => [{ id: "cat_1", type: "EXPENSE" }]),
+    },
+    label: { findMany: vi.fn(async () => []) },
+    // Read by the in-transaction lease re-check, which runs immediately before any row is written.
+    user: {
+      findUnique: vi.fn(async () => ({ mcpWritesEnabledUntil: new Date(Date.now() + 60_000) })),
+    },
+    transaction: {
+      create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+        created.push(data);
+        return {
+          id: `tx_${created.length}`,
+          ...data,
+          category: { id: "cat_1", name: "Food", type: "EXPENSE", icon: null, color: null },
+          labels: [],
+        };
+      }),
+      findMany: vi.fn(async () => []),
+    },
+    $transaction: vi.fn(async (arg: unknown) =>
+      Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => unknown)(client)
+    ),
+    $executeRaw: vi.fn(async () => 1),
+  };
+  return { client: client as unknown as PrismaClient, created };
+};
+
+/** Calls `create_transactions` over a real in-memory client/server pair. */
+const callCreate = async (options: Parameters<typeof createBudgetMcpServer>[0]) => {
+  const server = createBudgetMcpServer(options);
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "test", version: "1.0.0" });
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+  await client.callTool({
+    name: "create_transactions",
+    arguments: {
+      clientBatchId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+      transactions: [
+        {
+          amount: 100,
+          description: "Lunch",
+          type: "EXPENSE",
+          date: "2026-08-25",
+          categoryId: "cat_1",
+          labelIds: [],
+        },
+      ],
+    },
+  });
+  await client.close();
+};
+
+describe("create_transactions provenance", () => {
+  /**
+   * Provenance belongs to the credential, not the endpoint.
+   *
+   * Every remote write arrives through `/api/mcp`, so a hardcoded "MCP" made the Telegram bot's
+   * rows claim Claude wrote them. The tool must stamp whatever the token said it was.
+   */
+  it("stamps the source the server was configured with", async () => {
+    const { client, created } = makeWritePrisma();
+
+    await callCreate({
+      prisma: client,
+      userId: "user_1",
+      timezoneOffset: -480,
+      scopes: ["transactions:write"],
+      writesEnabledUntil: new Date(Date.now() + 60_000),
+      tokenId: "tok_telegram",
+      createdVia: "TELEGRAM",
+    });
+
+    expect(created).toHaveLength(1);
+    expect(created[0].createdVia).toBe("TELEGRAM");
+    expect(created[0].mcpTokenId).toBe("tok_telegram");
+  });
+
+  it("defaults to MCP when no source is given, so an existing token keeps its meaning", async () => {
+    const { client, created } = makeWritePrisma();
+
+    await callCreate({
+      prisma: client,
+      userId: "user_1",
+      timezoneOffset: -480,
+      scopes: ["transactions:write"],
+      writesEnabledUntil: new Date(Date.now() + 60_000),
+      tokenId: "tok_claude",
+    });
+
+    expect(created[0].createdVia).toBe("MCP");
+  });
+});
 
 describe("createBudgetMcpServer", () => {
   it("serves every read tool, and no write tool, when no scopes are given", async () => {

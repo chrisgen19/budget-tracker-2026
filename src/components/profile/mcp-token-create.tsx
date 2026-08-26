@@ -11,6 +11,7 @@ import {
   isWriteScope,
   type McpScope,
 } from "@/lib/mcp/scopes";
+import type { McpTokenSource } from "@/lib/validations";
 
 const INPUT_CLASS =
   "w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 placeholder:text-warm-300 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all";
@@ -29,12 +30,29 @@ const EXPIRY_OPTIONS: { label: string; days: number | null }[] = [
  *  the API, which rejects the same combinations regardless of what the form allows. */
 const MAX_WRITE_EXPIRY_DAYS = 90;
 
+/**
+ * What the token represents, stamped onto every transaction it writes.
+ *
+ * Provenance follows the credential rather than the endpoint: every remote write arrives through
+ * `/api/mcp`, so a bot's rows would otherwise be labelled "Added by Claude". `APP` is not offered,
+ * because it means the web app itself, which never carries a token.
+ */
+const SOURCE_OPTIONS: { value: McpTokenSource; label: string; hint: string }[] = [
+  { value: "MCP", label: "AI assistant", hint: "Claude Desktop, Claude Code, or another MCP client" },
+  { value: "TELEGRAM", label: "Telegram bot", hint: "The personal bot that relays messages to this app" },
+];
+
 const allowedExpiry = (days: number | null, write: boolean) =>
   !write || (days !== null && days <= MAX_WRITE_EXPIRY_DAYS);
 
 interface McpTokenCreateProps {
   /** Resolves to whether the token was minted; a rejected save must leave the form intact. */
-  onCreate: (input: { name: string; scopes: McpScope[]; expiresInDays: number | null }) => Promise<boolean>;
+  onCreate: (input: {
+    name: string;
+    scopes: McpScope[];
+    expiresInDays: number | null;
+    source: McpTokenSource;
+  }) => Promise<boolean>;
   creating: boolean;
 }
 
@@ -42,6 +60,7 @@ export function McpTokenCreate({ onCreate, creating }: McpTokenCreateProps) {
   const [name, setName] = useState("");
   const [scopes, setScopes] = useState<McpScope[]>([...DEFAULT_MINT_SCOPES]);
   const [expiresInDays, setExpiresInDays] = useState<number | null>(90);
+  const [source, setSource] = useState<McpTokenSource>("MCP");
 
   const write = grantsWrite(scopes);
 
@@ -69,7 +88,7 @@ export function McpTokenCreate({ onCreate, creating }: McpTokenCreateProps) {
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!canSubmit) return;
-    const created = await onCreate({ name: name.trim(), scopes, expiresInDays });
+    const created = await onCreate({ name: name.trim(), scopes, expiresInDays, source });
     // Only on success: clearing after a transient failure would make the user retype the name
     // just to retry.
     if (created) setName("");
@@ -119,6 +138,32 @@ export function McpTokenCreate({ onCreate, creating }: McpTokenCreateProps) {
         {scopes.length === 0 && (
           <p className="text-xs text-red-600 mt-2">Pick at least one thing it can read.</p>
         )}
+      </fieldset>
+
+      <fieldset>
+        <legend className="text-sm font-medium text-warm-600">Used by</legend>
+        <div className="mt-1.5 flex flex-wrap gap-2">
+          {SOURCE_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              title={option.hint}
+              onClick={() => setSource(option.value)}
+              className={cn(
+                "px-3 py-1.5 rounded-full text-xs font-medium border transition-colors",
+                source === option.value
+                  ? "bg-amber text-white border-amber"
+                  : "border-cream-300 text-warm-500 hover:bg-cream-100"
+              )}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-warm-400 mt-2">
+          {SOURCE_OPTIONS.find((option) => option.value === source)?.hint}. Transactions this token
+          creates are tagged with it, so you can tell later where a row came from.
+        </p>
       </fieldset>
 
       <fieldset>

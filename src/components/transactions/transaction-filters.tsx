@@ -27,7 +27,7 @@ export interface TransactionFilters {
   categoryId: string | null;
   labelId: string | null;
   /** Which surface created the row. "MCP" surfaces what the remote endpoint wrote. */
-  createdVia: "ALL" | "APP" | "MCP";
+  createdVia: "ALL" | "APP" | "MCP" | "TELEGRAM";
   amountMin: number | null;
   amountMax: number | null;
   sortBy: "date" | "amount";
@@ -57,7 +57,14 @@ const SOURCE_OPTIONS = [
   { value: "ALL" as const, label: "Any" },
   { value: "APP" as const, label: "In app" },
   { value: "MCP" as const, label: "Claude" },
+  { value: "TELEGRAM" as const, label: "Telegram" },
 ];
+
+const SOURCE_CHIP_LABELS: Record<Exclude<TransactionFilters["createdVia"], "ALL">, string> = {
+  APP: "Added in app",
+  MCP: "Added by Claude",
+  TELEGRAM: "Added via Telegram",
+};
 
 const DEFAULT_FILTERS: Omit<TransactionFilters, "month"> = {
   search: "",
@@ -295,7 +302,7 @@ export function TransactionFiltersBar({
   }
   if (filters.createdVia !== "ALL") {
     activeChips.push({
-      label: filters.createdVia === "MCP" ? "Added by Claude" : "Added in app",
+      label: SOURCE_CHIP_LABELS[filters.createdVia],
       onRemove: () => update({ createdVia: "ALL" }),
     });
   }

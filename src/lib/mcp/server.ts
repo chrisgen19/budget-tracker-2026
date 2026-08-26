@@ -1,4 +1,5 @@
 import { McpServer, type RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { TransactionSource } from "@prisma/client";
 import { z } from "zod";
 import {
   getSpendingByCategory,
@@ -107,6 +108,14 @@ export interface BudgetMcpServerOptions {
   writesEnabledUntil?: Date | null;
   /** Recorded on every row this server writes, so an incident traces to one credential. */
   tokenId?: string;
+  /**
+   * Stamped onto rows this server writes, taken from the token row.
+   *
+   * Provenance belongs to the credential rather than the endpoint: every remote write arrives
+   * here, so deriving it from the endpoint made a Telegram bot's rows claim Claude wrote them.
+   * Never accepted from tool input, which would let a caller forge it.
+   */
+  createdVia?: TransactionSource;
 }
 
 /**
@@ -123,6 +132,7 @@ export const createBudgetMcpServer = ({
   scopes = READ_ONLY_SCOPES,
   writesEnabledUntil = null,
   tokenId,
+  createdVia = "MCP",
 }: BudgetMcpServerOptions): McpServer => {
   const registered = {} as Record<McpToolName, RegisteredTool>;
 
@@ -704,7 +714,7 @@ export const createBudgetMcpServer = ({
             t.labelIds ?? (hasTrustworthyTime(t.date, timezoneOffset) ? undefined : []),
         })),
         clientBatchId: key.data,
-        createdVia: "MCP",
+        createdVia,
         mcpTokenId: tokenId,
         // The lease was read when the request arrived; a batch can then hold a transaction for
         // up to a minute. Re-read at the moment of the write so "Turn off now" stops work that
