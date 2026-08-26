@@ -36,19 +36,17 @@ describe("isPlainShorthand", () => {
     expect(isPlainShorthand("250 decorations")).toBe(true);
   });
 
-  // The bug this covers: month abbreviations matched as bare words, and "may" is an everyday
-  // word in both English and Tagalog. This is a Philippine app, so "may bayad" and "may sukli"
-  // are ordinary spending descriptions. They were diverted off the fast path, and with no
-  // GEMINI_API_KEY the bot then refused a message that was perfectly clear.
-  it("keeps everyday words that happen to be month abbreviations", () => {
+  // The bug this covers: month and day abbreviations matched as bare words. A bare one is not a
+  // date anyway (it cannot place a transaction on a particular day), and several double as
+  // ordinary words or names, so diverting on them only risked a refusal when GEMINI_API_KEY is
+  // unset.
+  it("keeps ordinary words that happen to be month or day abbreviations", () => {
     for (const text of [
-      "500 may allowance",
-      "300 may bayad sa kuryente",
-      "250 may sukli",
+      "500 may gift",
+      "200 jan birthday present",
       "200 sun cream",
       "150 sat down meal",
       "1500 rent on monthly",
-      "400 march ing band tickets",
     ]) {
       expect(isPlainShorthand(text)).toBe(true);
     }

@@ -19,10 +19,12 @@ const MONTH = "jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec";
  *
  * Both kinds of mistake cost something, so the pattern is deliberately conservative about bare
  * words. A missed date files a transaction on the wrong day. A false positive costs a model call,
- * or, with no GEMINI_API_KEY, refuses a message that was perfectly clear. Month names are the
- * sharp edge: "may" is an everyday word in both English and Tagalog, and this is a Philippine
- * app, so "500 may allowance" and "300 may bayad" must stay on the fast path. Months therefore
- * only count next to a day number, where they are unambiguously a date.
+ * or, with no GEMINI_API_KEY, refuses a message that was perfectly clear.
+ *
+ * Month and day names are where that bites, because a bare one is not a date at all: "may" cannot
+ * place a transaction on a particular day, so diverting on it buys nothing, and "may", "jan" and
+ * "sat" double as ordinary words and names. They therefore only count where they genuinely form a
+ * date: a month beside a day number, or a day name after on/last/this/next.
  */
 const TEMPORAL_HINT = new RegExp(
   [
