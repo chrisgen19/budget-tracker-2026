@@ -595,9 +595,10 @@ behaviour it checks cannot be observed under UTC, so a green run there would pro
 
 ### Testing receipt scanning
 
-`verify-receipt-scan.ts` covers the whole scan path without a receipt to hand, using
-`bill.png` (a screenshot, not a receipt) to exercise the refusal *and* confirm the scan credit is
-refunded. To also cover a successful scan, point it at a real photo:
+`verify-receipt-scan.ts` covers the whole scan path without a receipt to hand: it generates a
+plain single-colour image, which Gemini correctly refuses, and that exercises the refusal *and*
+confirms the scan credit is refunded. Nothing needs to be committed for it. To also cover a
+successful scan, point it at a real photo:
 
 ```bash
 RECEIPT=/path/to/receipt.jpg BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-receipt-scan.ts

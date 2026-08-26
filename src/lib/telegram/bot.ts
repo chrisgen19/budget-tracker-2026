@@ -667,6 +667,27 @@ async function handleReceiptPhoto(
   const categoryName =
     categories.find((c) => c.id === scan.categoryId)?.name ?? "Uncategorised";
 
+  let reply = `\ud83e\uddfe *Receipt read*\n\n`;
+  reply += `\ud83d\udcdd *Description:* ${scan.description}\n`;
+  reply += `\ud83d\udcb0 *Amount:* ${SYMBOL}${scan.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
+  reply += `\ud83d\udcc1 *Category:* ${categoryName}\n`;
+  reply += `\ud83d\udcc5 *Date:* ${scan.date}\n`;
+  if (scan.dateWarning) reply += `\n\u26a0\ufe0f The year on the receipt looks wrong. Check the date.\n`;
+  if (scan.usedPhotoFallback) reply += `\n\u26a0\ufe0f I could not read a date on it, so I used today's.\n`;
+  reply += `\nNothing is saved yet. Reply *yes* to save it, or *no* to discard.`;
+
+  // Stored only once the review has actually reached the user, which is the entire point of the
+  // confirmation step. Storing first meant an undelivered prompt left a draft nobody had seen,
+  // and any bare "yes" in the next ten minutes would save an unreviewed transaction. Ordering it
+  // this way also leaves a superseded draft intact for free: nothing is overwritten until the
+  // replacement has been shown.
+  if (!(await sendMessage(chatId, reply))) {
+    console.error(
+      "[telegram] scanned a receipt but could not deliver the review, so it was discarded."
+    );
+    return;
+  }
+
   putPendingScan(chatId, {
     amount: scan.amount,
     description: scan.description,
@@ -678,17 +699,6 @@ async function handleReceiptPhoto(
     updateId,
     createdAt: Date.now(),
   });
-
-  let reply = `\ud83e\uddfe *Receipt read*\n\n`;
-  reply += `\ud83d\udcdd *Description:* ${scan.description}\n`;
-  reply += `\ud83d\udcb0 *Amount:* ${SYMBOL}${scan.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
-  reply += `\ud83d\udcc1 *Category:* ${categoryName}\n`;
-  reply += `\ud83d\udcc5 *Date:* ${scan.date}\n`;
-  if (scan.dateWarning) reply += `\n\u26a0\ufe0f The year on the receipt looks wrong. Check the date.\n`;
-  if (scan.usedPhotoFallback) reply += `\n\u26a0\ufe0f I could not read a date on it, so I used today's.\n`;
-  reply += `\nNothing is saved yet. Reply *yes* to save it, or *no* to discard.`;
-
-  await sendMessage(chatId, reply);
 }
 
 async function handleMessage(message: TelegramMessage, updateId: number) {

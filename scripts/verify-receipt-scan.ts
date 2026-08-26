@@ -11,8 +11,9 @@
  *   pnpm dev -p 3111
  *   BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-receipt-scan.ts
  *
- * By default it runs only the checks that need no receipt, including a deliberate non-receipt
- * image. To also exercise a successful scan, point it at a photo of a real receipt:
+ * By default it runs only the checks that need no receipt: the non-receipt image it uses is
+ * generated, so a clean checkout needs no fixture. To also exercise a successful scan, point it
+ * at a photo of a real receipt:
  *
  *   RECEIPT=/path/to/receipt.jpg BASE_URL=... pnpm exec tsx scripts/verify-receipt-scan.ts
  *
@@ -22,6 +23,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { PrismaClient } from "@prisma/client";
 import { readFileSync } from "node:fs";
+import { deflateSync } from "node:zlib";
 import { mintMcpToken } from "../src/lib/mcp/tokens";
 import { MAX_BASE64_LENGTH } from "../src/lib/receipt-limits";
 
@@ -65,6 +67,52 @@ const scanCounts = async (userId: string) => {
   });
   const of = (s: string) => rows.find((r) => r.status === s)?._count._all ?? 0;
   return { success: of("SUCCESS"), failed: of("FAILED"), pending: of("PENDING") };
+};
+
+
+/** CRC-32, as PNG chunks require. Written out rather than reached for, since `zlib.crc32` only
+ *  exists from Node 20.15 and this repository's floor is Node 20. */
+const crc32 = (buf: Buffer): number => {
+  let crc = ~0;
+  for (const byte of buf) {
+    crc ^= byte;
+    for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return ~crc >>> 0;
+};
+
+const pngChunk = (type: string, data: Buffer): Buffer => {
+  const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body));
+  return Buffer.concat([length, body, crc]);
+};
+
+/**
+ * A plain single-colour PNG, which is emphatically not a receipt.
+ *
+ * Used to drive the refusal and refund path with a real Gemini call, without committing an image
+ * to the repository or needing one to hand.
+ */
+const solidPng = (size = 256): Buffer => {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // truecolour RGB
+
+  // Each scanline is a filter byte followed by RGB triples.
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(size * 3, 0x4a)]);
+  const raw = Buffer.concat(Array.from({ length: size }, () => row));
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", deflateSync(raw)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
 };
 
 async function main() {
@@ -130,9 +178,10 @@ async function main() {
     );
 
     // --- A real Gemini call on something that is not a receipt ---
-    // bill.png in the repo root is a screenshot of the Bills page. It exercises the whole path,
-    // including the refund, without needing a receipt to hand.
-    const notReceipt = readFileSync("bill.png").toString("base64");
+    // Generated rather than committed. A fixture would have to be either a real receipt, which
+    // means someone's actual spending in the repository, or a checked-in binary that nothing
+    // else uses. This exercises the whole path, including the refund, on any clean checkout.
+    const notReceipt = solidPng().toString("base64");
     const rejected = await client.callTool({
       name: "scan_receipt",
       arguments: { imageBase64: notReceipt, mimeType: "image/png" },
