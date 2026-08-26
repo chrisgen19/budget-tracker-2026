@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { grantsWrite, mcpScopeSchema } from "@/lib/mcp/scopes";
-import { MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
+import { MAX_BREAKDOWN_GROUPS, MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
 
 export const loginSchema = z.object({
   email: z.string().email("Please enter a valid email"),
@@ -149,7 +149,7 @@ const dateSourceSchema = z.enum(["OCR", "PHOTO_FALLBACK"]);
 export const receiptBreakdownResultSchema = z.object({
   date: z.string().min(1),
   dateSource: dateSourceSchema,
-  items: z.array(receiptBreakdownItemSchema).min(1).max(20),
+  items: z.array(receiptBreakdownItemSchema).min(1).max(MAX_BREAKDOWN_GROUPS),
 });
 
 export const receiptScanResultSchema = z.object({
@@ -160,7 +160,7 @@ export const receiptScanResultSchema = z.object({
   description: z.string().max(255),
   type: z.literal("EXPENSE"),
   multiCategory: z.boolean(),
-  breakdown: z.array(receiptBreakdownItemSchema).min(1).max(20).optional(),
+  breakdown: z.array(receiptBreakdownItemSchema).min(1).max(MAX_BREAKDOWN_GROUPS).optional(),
 });
 
 export const updateAppSettingsSchema = z.object({

@@ -122,6 +122,10 @@ export interface MultiScanItem {
     receiptBreakdown?: ReceiptBreakdownMeta;
     /** Whether the receipt has items spanning 2+ spending categories */
     multiCategory?: boolean;
+    /** True when the scan produced an itemization that failed validation and was discarded.
+     *  Distinct from "single-category": both leave `breakdown` unset, but only this one means
+     *  Itemize will spend a second scan credit rebuilding what was lost. */
+    breakdownDropped?: boolean;
     /** Pre-loaded breakdown from combined scan (avoids second Gemini call) */
     breakdown?: Array<{
       amount: number;

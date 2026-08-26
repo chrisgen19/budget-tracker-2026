@@ -6,7 +6,12 @@ import {
   WRITE_ERROR_MESSAGES,
 } from "@/lib/mcp/write-errors";
 import { z } from "zod";
-import { MAX_BASE64_LENGTH, isBase64 } from "@/lib/receipt-limits";
+import {
+  MAX_BASE64_LENGTH,
+  MAX_BREAKDOWN_GROUPS,
+  MAX_BREAKDOWN_LINE_ITEMS,
+  isBase64,
+} from "@/lib/receipt-limits";
 import {
   getSpendingByCategory,
   getTopExpenses,
@@ -579,9 +584,14 @@ export const createBudgetMcpServer = ({
           .number()
           .int()
           .min(1)
-          .max(500)
+          .max(MAX_BREAKDOWN_LINE_ITEMS * MAX_BREAKDOWN_GROUPS)
           .optional()
-          .describe("Max items returned. Counts and totals cover every match. Defaults to 100."),
+          .describe(
+            "Max items returned. Defaults to one transaction's worth, or a whole receipt's worth " +
+              "when receiptGroupId is set. `itemCount` and `totalAmount` cover every match, " +
+              "so a shorter `items` array than `itemCount` means the list was truncated and you " +
+              "have not seen the whole receipt. One receiptGroupId can span several transactions."
+          ),
       },
       outputSchema: receiptItemsOutput,
       annotations: { readOnlyHint: true },

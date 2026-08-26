@@ -37,14 +37,33 @@ The failure was also invisible: the schema branch returned without logging, so t
 showed a bare 500 and nothing else. Both paths now log — the drop and the outright rejection —
 with the issue list capped, since it carries one entry per bad line item.
 
-Two consequences of the higher bound were followed through. `getReceiptItems` defaulted to 100
-items, below what one transaction can now hold, so pulling a single receipt would have returned
-100 of 150 while reporting 150; its default is the bound itself. And `ReceiptBreakdown` renders
-expanded by default, which the transaction modal relied on — it now passes `defaultExpanded={false}`
-as the multi-scan review already did.
+Degrading also changed what a scan costs, which the first pass missed. `use-multi-scan` skips the
+second Gemini call when a breakdown is already present — "no second call, no extra credit" — so a
+*dropped* breakdown falls through and Itemize spends another scan credit. The button looked
+identical either way. `scanReceipt` now reports `breakdownDropped`, the review labels that case as
+using another credit, and the MCP output schema carries it too.
 
-The constant lives in `receipt-limits.ts`, a module with no imports of its own, so `budget-queries.ts`
-can read it without pulling zod and the MCP scope schema into the query layer.
+`getReceiptItems` needed more than a bigger number. A receipt is several transactions, one per
+category, each holding up to the item cap, so any single-blob default truncates an ordinary
+itemized grocery run — two 100-item groups returned 150 of 200 while `itemCount` said 200. The
+default is now group-aware: a whole receipt's worth when `receiptGroupId` names one, one
+transaction's worth otherwise. Truncation is also stated rather than implied, via a new
+`truncated` flag, because `itemCount` describes every match and a caller that does not compare
+lengths reports a partial receipt as a complete one.
+
+The bounds are named constants in `receipt-limits.ts` — a module with no imports of its own, so
+`budget-queries.ts` can read them without pulling zod and the MCP scope schema into the query
+layer — and the prompts interpolate them instead of restating 20 and 150 in prose.
+
+Two documentation defects turned out to be real bugs. The `get_receipt_items` tool description
+still said "Defaults to 100" after the default moved, and that text is the only contract a model
+ever reads. And the `multiCategory` caveat had been written as a JSDoc comment, which is erased at
+compile time: `output-schemas.ts` uses no `.describe()` at all, so nothing in it reaches the
+client. Both now live in `.describe()`.
+
+`/api/receipts/breakdown` got the same two treatments as the scan path, since it is where a
+dropped breakdown is rebuilt: its prompt states the per-group item cap, and its validation
+failure logs instead of returning a silent 422. Unifying the two parses outright is issue #139.
 
 ## 2026-08-26 - Telegram bot runs inside the app
 

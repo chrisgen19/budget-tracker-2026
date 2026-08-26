@@ -149,6 +149,7 @@ export function useMultiScan() {
             date: data.usedPhotoFallback ? photoDateTime : withLocalTime(data.date as string),
             categoryId: data.categoryId,
             multiCategory: data.multiCategory as boolean,
+            breakdownDropped: data.breakdownDropped as boolean | undefined,
             breakdown: data.breakdown as ScanBreakdown | undefined,
             dateWarning: data.dateWarning as boolean,
           },

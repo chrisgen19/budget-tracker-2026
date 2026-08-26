@@ -46,11 +46,13 @@ export function toReceiptBreakdownMeta(raw: unknown): ReceiptBreakdownMeta | nul
 interface ReceiptBreakdownProps {
   breakdown: ReceiptBreakdownMeta;
   currency: string;
-  /** Initial expanded state — defaults to open (transaction form); lists may start collapsed */
+  /** Initial expanded state. Defaults to collapsed: a breakdown may carry up to
+   *  MAX_BREAKDOWN_LINE_ITEMS rows per group, which is too much to paint on open in either
+   *  caller — the transaction modal or the multi-scan list. */
   defaultExpanded?: boolean;
 }
 
-export function ReceiptBreakdown({ breakdown, currency, defaultExpanded = true }: ReceiptBreakdownProps) {
+export function ReceiptBreakdown({ breakdown, currency, defaultExpanded = false }: ReceiptBreakdownProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   return (

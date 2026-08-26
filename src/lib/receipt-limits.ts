@@ -29,6 +29,15 @@ export const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB
 export const MAX_BREAKDOWN_LINE_ITEMS = 150;
 
 /**
+ * Ceiling on the category groups one receipt's itemization may hold.
+ *
+ * Named rather than repeated as a bare `20`, because it bounds two different things that have to
+ * agree: how many groups a scan may return, and — multiplied by the item cap above — how many
+ * flattened items `getReceiptItems` must return to honour "pull one whole receipt".
+ */
+export const MAX_BREAKDOWN_GROUPS = 20;
+
+/**
  * The longest base64 string that can decode to a permitted image.
  *
  * Base64 costs 4 characters per 3 bytes. Callers that receive an encoded payload must check this

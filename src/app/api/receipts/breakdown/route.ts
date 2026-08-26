@@ -4,6 +4,7 @@ import { getAuthUserId } from "@/lib/session";
 import { receiptBreakdownResultSchema } from "@/lib/validations";
 import { parseLocalDate, checkReceiptDate } from "@/lib/receipt-date";
 import { guardReceiptRequest, stripCodeFences } from "@/lib/receipt-guard";
+import { MAX_BREAKDOWN_GROUPS, MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
 import { settleScanReservation } from "@/lib/scan-quota";
 
 export async function POST(request: Request) {
@@ -82,7 +83,8 @@ RULES:
 - Each description should be short: store name, category, and 1-2 sample items (max 80 chars)
 - Each lineItems entry is one product/line from the receipt with its exact name and price
 - If an item has quantity > 1, multiply to get the total and use a single lineItems entry
-- Minimum 1 category group, maximum 20 category groups
+- Minimum 1 category group, maximum ${MAX_BREAKDOWN_GROUPS} category groups
+- At most ${MAX_BREAKDOWN_LINE_ITEMS} lineItems in any one group; if a group would exceed that, merge its smallest items into a single "Other items" line
 - All amounts must be positive numbers
 - Do NOT include tax/service charge as a separate item — distribute proportionally or include in the largest group`;
 
@@ -134,6 +136,16 @@ RULES:
     const result = receiptBreakdownResultSchema.safeParse(parsed);
 
     if (!result.success) {
+      // Logged for the same reason scanReceipt logs it: a silent rejection surfaces to the user
+      // as a flat 422 and to the operator as nothing at all. Capped, since the issue list carries
+      // one entry per bad line item.
+      console.warn(
+        "[receipts/breakdown] response failed validation:",
+        result.error.issues
+          .slice(0, 5)
+          .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+          .join("; ") + (result.error.issues.length > 5 ? ` (+${result.error.issues.length - 5} more)` : "")
+      );
       return await fail("Could not extract item details from this receipt.", 422);
     }
 

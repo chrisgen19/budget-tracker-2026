@@ -364,7 +364,10 @@ export interface ReceiptItemsParams {
   search?: string;
   /** Restrict to one scanned receipt, which may span several transactions */
   receiptGroupId?: string;
-  /** Max items returned. Defaults to 100 */
+  /** Max items returned. Defaults to `MAX_BREAKDOWN_LINE_ITEMS`, which covers one transaction's
+   *  blob but not necessarily a whole receipt: a receiptGroupId may span several transactions,
+   *  each holding up to that many items. `itemCount` always reports every match, so a shorter
+   *  `items` array than `itemCount` means the caller is looking at a truncated list. */
   limit?: number;
   /** User's timezone offset in minutes (`getTimezoneOffset()` convention, so UTC+8 is
    *  -480). Month boundaries are resolved in this timezone. */
@@ -398,5 +401,9 @@ export interface ReceiptItems {
   itemCount: number;
   /** Sum of every matching item's amount, before `limit` was applied */
   totalAmount: number;
+  /** True when `limit` cut the list short, so `items` is a prefix of what matched. Explicit
+   *  because `itemCount` describes every match: without this a caller has to infer truncation
+   *  by comparing lengths, and a caller that forgets reports a partial receipt as a whole one. */
+  truncated: boolean;
   items: ReceiptItem[];
 }

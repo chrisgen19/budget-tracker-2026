@@ -29,6 +29,17 @@ const AUTHORIZED = {
   },
 };
 
+/** The fixed-params call both degrade suites make; defined once so a signature change is one edit. */
+const scan = () =>
+  scanReceipt({
+    userId: "u1",
+    mimeType: "image/jpeg",
+    byteLength: 1_000,
+    readBase64: () => "aW1hZ2U=",
+    todayStr: "2026-08-26",
+    photoDateStr: "2026-08-26",
+  });
+
 beforeEach(() => vi.clearAllMocks());
 
 describe("scanReceipt", () => {
@@ -274,16 +285,6 @@ describe("oversized breakdown", () => {
     ],
   });
 
-  const scan = () =>
-    scanReceipt({
-      userId: "u1",
-      mimeType: "image/jpeg",
-      byteLength: 1_000,
-      readBase64: () => "aW1hZ2U=",
-      todayStr: "2026-08-26",
-      photoDateStr: "2026-08-26",
-    });
-
   beforeEach(() => authorize.mockResolvedValue(AUTHORIZED));
 
   // The bug: lineItems was capped at 50, a real supermarket receipt carried 56, and the whole
@@ -334,16 +335,6 @@ describe("oversized breakdown", () => {
 });
 
 describe("breakdown invalid for reasons other than size", () => {
-  const scan = () =>
-    scanReceipt({
-      userId: "u1",
-      mimeType: "image/jpeg",
-      byteLength: 1_000,
-      readBase64: () => "aW1hZ2U=",
-      todayStr: "2026-08-26",
-      photoDateStr: "2026-08-26",
-    });
-
   beforeEach(() => authorize.mockResolvedValue(AUTHORIZED));
 
   // lineItems.amount is z.number().positive(), and a receipt with a "FREE 0.00" or

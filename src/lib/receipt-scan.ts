@@ -8,6 +8,7 @@ import { authorizeReceiptScan, stripCodeFences, type ScanRefusal } from "@/lib/r
 import { settleScanReservation } from "@/lib/scan-quota";
 import { checkReceiptDate } from "@/lib/receipt-date";
 import { receiptScanResultSchema } from "@/lib/validations";
+import { MAX_BREAKDOWN_GROUPS, MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
 
 /** Why a scan produced nothing usable, once it was authorized and the credit was held. */
 export type ScanFailure =
@@ -45,6 +46,17 @@ export interface ScanResultPayload {
   type: "EXPENSE";
   multiCategory?: boolean;
   breakdown?: unknown;
+  /**
+   * An itemization was produced, failed validation, and was discarded.
+   *
+   * Distinguishes "this receipt has one category" from "it had several and we lost the split",
+   * which `multiCategory` alone cannot: both leave `breakdown` absent. It matters because the two
+   * cost differently. `use-multi-scan` short-circuits Itemize when a breakdown is already present
+   * — "no second call, no extra credit" — so a dropped one falls through to
+   * /api/receipts/breakdown and spends a *second* scan credit. Without this flag the button looks
+   * identical in both cases and the user cannot tell the free expansion from the paid one.
+   */
+  breakdownDropped?: boolean;
   dateWarning: boolean;
   usedPhotoFallback: boolean;
 }
@@ -63,7 +75,7 @@ Return a JSON object with these fields:
 - "multiCategory": true if the receipt contains items that span 2 or more DIFFERENT categories from the list below, false if all items belong to a single category. For example, a grocery receipt with food AND cleaning supplies = true, a restaurant bill with only food = false, a single ride receipt = false.
 - "breakdown": ONLY include this field when "multiCategory" is true. Read every line item on the receipt and group them by category. Each entry has: "amount" (sum for that category), "categoryId", "description" (store name + category + 1-2 sample items, max 80 chars), and "lineItems" (array of {"name": "<item name>", "amount": <price>}). The sum of all breakdown amounts should approximately equal the receipt total. Distribute tax/service proportionally or into the largest group. Do NOT include breakdown when multiCategory is false.
   All amounts must be positive numbers. A discount, promo, void or zero-priced line is NOT its own line item: subtract it from the item it applies to, or from that category's total, and never emit a zero or negative "amount".
-  At most 20 category groups, and at most 150 lineItems in any one group. If a group would exceed 150, merge its smallest items into a single "Other items" line so the group stays within the limit.
+  At most ${MAX_BREAKDOWN_GROUPS} category groups, and at most ${MAX_BREAKDOWN_LINE_ITEMS} lineItems in any one group. If a group would exceed ${MAX_BREAKDOWN_LINE_ITEMS}, merge its smallest items into a single "Other items" line so the group stays within the limit.
 
 CATEGORIES:
 ${categoryList}
@@ -196,12 +208,14 @@ export async function scanReceipt(params: {
     //
     // This cannot rescue a genuinely unusable response: anything wrong outside `breakdown` fails
     // the retry too, and falls through to FAILED as before.
+    let breakdownDropped = false;
     if (!result.success && parsed && typeof parsed === "object" && "breakdown" in parsed) {
       const withoutBreakdown: Record<string, unknown> = { ...(parsed as Record<string, unknown>) };
       delete withoutBreakdown.breakdown;
 
       const degraded = receiptScanResultSchema.safeParse({ ...withoutBreakdown, type: "EXPENSE" });
       if (degraded.success) {
+        breakdownDropped = true;
         console.warn(
           "[receipt-scan] dropped an invalid breakdown and kept the scan:",
           summarizeIssues(result.error.issues)
@@ -269,6 +283,9 @@ export async function scanReceipt(params: {
         type: "EXPENSE",
         multiCategory: result.data.multiCategory,
         ...(result.data.breakdown && { breakdown: result.data.breakdown }),
+        // Only when true: an absent flag is the ordinary case, and emitting `false` on every
+        // scan would add a field to every MCP result to say nothing happened.
+        ...(breakdownDropped && { breakdownDropped: true }),
         dateWarning,
         usedPhotoFallback,
       },

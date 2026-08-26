@@ -196,6 +196,9 @@ export function MultiScanReview({
               })
             : "";
           const canItemize = !!item.imageFile && !item.parentId && !!item.data?.multiCategory;
+          // Itemizing is free when the scan already carried the breakdown, and a second metered
+          // Gemini call when that breakdown was dropped for failing validation.
+          const costsAnotherScan = canItemize && !item.data?.breakdown?.length;
           const isItemizedChild = !!item.parentId;
           const isUnconfirmed = unconfirmedIds.has(item.id);
           const actionsDisabled = isSaving || isUnconfirmed;
@@ -273,8 +276,20 @@ export function MultiScanReview({
                       type="button"
                       onClick={() => onItemize(item.id)}
                       disabled={actionsDisabled}
-                      title="Itemize receipt"
-                      aria-label={`Itemize ${item.data?.description || item.fileName}`}
+                      // A dropped breakdown is the one case where this costs another scan
+                      // credit: `itemizeItem` short-circuits when a breakdown is already
+                      // present, and falls through to a second Gemini call when it is not.
+                      // Same button either way, so the label is what tells them apart.
+                      title={
+                        costsAnotherScan
+                          ? "Itemize receipt (uses another scan credit)"
+                          : "Itemize receipt"
+                      }
+                      aria-label={
+                        costsAnotherScan
+                          ? `Itemize ${item.data?.description || item.fileName} — uses another scan credit`
+                          : `Itemize ${item.data?.description || item.fileName}`
+                      }
                       className="p-2 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <Rows3 className="w-4 h-4" />

@@ -259,6 +259,7 @@ const receiptItems = z.object({
   month: z.string().nullable(),
   itemCount: z.number(),
   totalAmount: z.number(),
+  truncated: z.boolean(),
   items: z.array(
     z.object({
       name: z.string(),
@@ -320,11 +321,38 @@ export const scanReceiptOutput = {
   date: z.string(),
   description: z.string(),
   type: z.literal("EXPENSE"),
-  /** True when the receipt spans more than one category. `breakdown` is usually present with it,
-   *  but not guaranteed: an itemization that fails validation is dropped so the rest of the scan
-   *  survives, so check `breakdown` itself rather than inferring it from this flag. */
-  multiCategory: z.boolean().optional(),
-  breakdown: z.unknown().optional(),
+  /**
+   * True when the receipt spans more than one category.
+   *
+   * Carries `.describe()` rather than only this comment because JSDoc is erased at compile time:
+   * the client is sent the serialized JSON Schema, so `describe` text is the sole channel that
+   * reaches it. A caveat written here alone would be invisible to the audience that needs it.
+   */
+  multiCategory: z
+    .boolean()
+    .optional()
+    .describe(
+      "True when the receipt spans more than one category. This does NOT guarantee `breakdown` " +
+        "is present: an itemization that fails validation is dropped so the rest of the scan " +
+        "survives. Check `breakdown` itself, and never infer per-category splits from this flag."
+    ),
+  breakdown: z
+    .unknown()
+    .optional()
+    .describe(
+      "Per-category itemization, when one was produced. Absent on a single-category receipt and " +
+        "also when `breakdownDropped` is true. Pass through to create_transactions unchanged."
+    ),
+  /** Set when an itemization was produced but rejected, so the caller knows one is missing rather
+   *  than never having existed — and that rebuilding it costs another scan credit. */
+  breakdownDropped: z
+    .boolean()
+    .optional()
+    .describe(
+      "True when the receipt was itemized but the itemization failed validation and was " +
+        "discarded. The scan itself is valid and was charged; rebuilding the breakdown is a " +
+        "separate, separately-metered call."
+    ),
   /** The year read off the receipt does not match the current one, so the date is worth checking. */
   dateWarning: z.boolean(),
   /** The receipt's own date was unreadable, so the photo's date was used instead. */

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { toReceiptBreakdownMeta } from "./receipt-breakdown";
+import { render, screen, fireEvent } from "@testing-library/react";
+import { ReceiptBreakdown, toReceiptBreakdownMeta } from "./receipt-breakdown";
 
 /**
  * Rows written before receiptBreakdownMetaSchema existed carry no guarantee, and the
@@ -49,5 +50,41 @@ describe("toReceiptBreakdownMeta", () => {
     });
 
     expect(result?.total).toBe(42);
+  });
+});
+
+/**
+ * The collapsed default. A breakdown may carry up to MAX_BREAKDOWN_LINE_ITEMS rows per group,
+ * and this renders inside a keyboard-aware modal on mobile, so opening expanded is the wrong
+ * default at that size. Both call sites want collapsed; the prop existing at all is what lets
+ * one of them change its mind later.
+ */
+describe("ReceiptBreakdown expansion", () => {
+  const breakdown = {
+    total: 30,
+    items: [
+      { name: "Rice 5kg", amount: 10 },
+      { name: "Detergent", amount: 20 },
+    ],
+  };
+
+  it("renders collapsed by default, so a long list is not painted on open", () => {
+    render(<ReceiptBreakdown breakdown={breakdown} currency="PHP" />);
+
+    expect(screen.queryByText("Rice 5kg")).toBeNull();
+  });
+
+  it("expands on click", () => {
+    render(<ReceiptBreakdown breakdown={breakdown} currency="PHP" />);
+
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByText("Rice 5kg")).toBeDefined();
+  });
+
+  it("still honours an explicit defaultExpanded", () => {
+    render(<ReceiptBreakdown breakdown={breakdown} currency="PHP" defaultExpanded />);
+
+    expect(screen.getByText("Rice 5kg")).toBeDefined();
   });
 });
