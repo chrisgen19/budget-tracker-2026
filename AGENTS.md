@@ -102,6 +102,31 @@ src/
 - `CRON_SECRET` — Shared secret required by `/api/cron/bill-reminders`. Set in the production (Coolify) environment; a Coolify Scheduled Task reuses the same env var to call the endpoint daily (see **Cron Jobs** below).
 - `AI_ASSESSMENT_DAILY_LIMIT` — Optional; max AI Assessment report generations per user per day (default `10`). The grounded report makes 2 Gemini calls per generation; cached reports and the daily tip don't count against it.
 
+## Telegram bot
+`src/lib/telegram/bot.ts` is a personal Telegram bot that logs transactions and answers summary
+queries. It is an **MCP client**, not a database client: it calls `/api/mcp` with a scoped token,
+so it inherits the scope, the write lease, the rate limit and the audit trail rather than going
+around them, and it holds no database credentials.
+
+Two entry points share the one definition, the same shape as `mcp-server/`:
+- `src/instrumentation.ts` starts it on server boot when `TELEGRAM_BOT_ENABLED=true`, which is how
+  it runs in production. Importing it means Next traces it into `.next/standalone`, so the
+  container needs neither `tsx` nor `scripts/`
+- `scripts/telegram-bot.ts` (`pnpm telegram:bot`) runs it locally
+
+**Only one poller may exist per bot token.** Telegram answers a second concurrent `getUpdates`
+with 409 Conflict, which is why the flag exists: without it every `pnpm dev` would fight the
+deployed bot. Never run it locally while it is enabled in production.
+
+Every message is gated by `TELEGRAM_ALLOWED_IDS` (preferred) or `TELEGRAM_ALLOWED_USERNAMES`.
+With neither set the bot serves nobody and says so at startup, because bot usernames are
+searchable and the `t.me` link is public. Denials log the sender's numeric id and reply with
+nothing, since a reply would confirm the bot is live and whose it is.
+
+`next.config.ts` ignores the bot module for non-node runtimes: `instrumentation.ts` is compiled
+for edge as well (middleware exists), the bot uses `node:https` and `node:dns`, and the
+`NEXT_RUNTIME` guard stops it *running* there without stopping webpack tracing it.
+
 ## Cron Jobs
 Production runs on Coolify. Schedules are configured in the Coolify dashboard under **Application > Scheduled Tasks** (not in the repo). Each task runs its command inside the running container, so it can hit the app at `http://localhost:3000` and reuse the container's env vars.
 
