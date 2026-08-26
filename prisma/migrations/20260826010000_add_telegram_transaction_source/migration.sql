@@ -1,6 +1,8 @@
 -- AlterEnum
--- The Telegram bot writes through the same shared writer as the app and the MCP endpoint, so it
--- needs its own provenance value. Reusing MCP would claim Claude wrote rows that came from a chat
--- message, which is the false attribution `created_via` exists to prevent; leaving them APP would
--- make them indistinguishable from rows typed into the app by hand.
+-- Reserved for a writer that reaches the database without going through /api/mcp. The Telegram
+-- bot no longer does, so nothing sets this yet: rows it creates arrive over MCP and are stamped
+-- MCP with the bot's own token id. Kept because the value is additive and harmless, Postgres
+-- cannot drop an enum value without recreating the type, and the follow-up that would use it
+-- (deriving created_via from the token, so a Telegram token stamps TELEGRAM rather than every
+-- client looking like Claude) needs it.
 ALTER TYPE "TransactionSource" ADD VALUE 'TELEGRAM';

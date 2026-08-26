@@ -7,15 +7,38 @@ try {
 } catch {
   // Ignore if already in process.env
 }
-import { PrismaClient } from "@prisma/client";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { GoogleGenAI } from "@google/genai";
-import {
-  getBudgetOverview,
-  getSpendingByCategory,
-  getUpcomingBills,
-} from "../src/lib/budget-queries";
-import { createTransactionBatch } from "../src/lib/transaction-writes";
-import { formatLocalDate } from "../src/lib/validations";
+/**
+ * The bot talks to the deployed app over MCP rather than to a database.
+ *
+ * Reaching for Prisma directly meant it went around every control the endpoint enforces: the
+ * token scope, the write lease, the rate limit and the audit trail. It also tied the bot to
+ * whatever `DATABASE_URL` happened to point at, which was the local development copy, so nothing
+ * it wrote ever reached the real budget.
+ *
+ * As an MCP client it needs no database credentials at all, and the token decides whose budget it
+ * touches and what it may do there.
+ */
+const MCP_URL = process.env.TELEGRAM_MCP_URL ?? "https://budget.cgdev.site/api/mcp";
+const MCP_TOKEN = process.env.TELEGRAM_MCP_TOKEN;
+/** Only used for display; the server owns every amount and every date boundary. */
+const SYMBOL = process.env.TELEGRAM_CURRENCY_SYMBOL ?? "\u20B1";
+
+/**
+ * The user's timezone offset in minutes, `getTimezoneOffset()` convention so UTC+8 is -480.
+ *
+ * Needed only so Gemini can resolve "yesterday" and "last night" into a date. Every query and
+ * every write is resolved server-side against `users.timezone_offset`, so this affects nothing
+ * else and a wrong value cannot put a transaction in the wrong month.
+ *
+ * Defaults to the host's own offset, which is right whenever the bot runs near the user. Set
+ * TELEGRAM_TZ_OFFSET when it does not, such as on a UTC server.
+ */
+const TZ_OFFSET = Number.isFinite(Number(process.env.TELEGRAM_TZ_OFFSET))
+  ? Number(process.env.TELEGRAM_TZ_OFFSET)
+  : new Date().getTimezoneOffset();
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!BOT_TOKEN) {
@@ -23,7 +46,50 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
-const prisma = new PrismaClient();
+/**
+ * One client for the process, reconnected on failure.
+ *
+ * A client per call would be tidier but costs an extra initialize round trip each time, and the
+ * endpoint's rate limit is 300 requests per 15 minutes per token. Holding one keeps a chatty
+ * session well inside that.
+ */
+let mcp: Client | null = null;
+
+async function mcpClient(): Promise<Client> {
+  if (mcp) return mcp;
+  if (!MCP_TOKEN) throw new Error("TELEGRAM_MCP_TOKEN is not set");
+  const client = new Client({ name: "telegram-bot", version: "1.0.0" });
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(MCP_URL), {
+      requestInit: { headers: { "x-api-key": MCP_TOKEN } },
+    })
+  );
+  mcp = client;
+  return client;
+}
+
+/**
+ * Call one MCP tool.
+ *
+ * A tool that reports `isError` is surfaced as a thrown error carrying the server's own message,
+ * which is written for a model but reads well enough for a chat reply: "writes are switched off",
+ * "that category is not yours". Any failure drops the client so the next call reconnects rather
+ * than reusing a transport that may be finished.
+ */
+async function callTool<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
+  try {
+    const client = await mcpClient();
+    const result = await client.callTool({ name, arguments: args });
+    if (result.isError) {
+      const text = (result.content as { type: string; text?: string }[] | undefined)?.[0]?.text;
+      throw new Error(text ?? `${name} failed`);
+    }
+    return result.structuredContent as T;
+  } catch (err) {
+    mcp = null;
+    throw err;
+  }
+}
 
 // Custom HTTPS Agent to resolve api.telegram.org directly to IP if DNS is sinkholed by firewall
 const agent = new https.Agent({
@@ -118,36 +184,65 @@ function getCurrentMonthKey(tzOffset: number): string {
   return `${year}-${month}`;
 }
 
-async function handleSummary(chatId: number, user: any) {
-  const month = getCurrentMonthKey(user.timezoneOffset);
-  // `timezoneOffset`, not `tzOffset`: the param is optional and silently defaults to UTC, so a
-  // misspelling does not fail, it just resolves month boundaries in the wrong zone.
-  const summary = await getBudgetOverview(prisma, user.id, {
-    month,
-    timezoneOffset: user.timezoneOffset,
-  });
-  const spending = await getSpendingByCategory(prisma, user.id, {
-    month,
-    timezoneOffset: user.timezoneOffset,
-  });
+/** What `create_transactions` returns; see `renderCreated` in the MCP server. */
+interface CreatedBatch {
+  created: number;
+  replayed: boolean;
+  transactions: {
+    id: string;
+    amount: number;
+    description: string;
+    type: string;
+    /** The user's own calendar day, already resolved server-side. */
+    date: string;
+    categoryName: string;
+    /** Label names, including any the user's auto-apply schedules added. */
+    labels: string[];
+  }[];
+}
+
+const formatCreated = (result: CreatedBatch): string => {
+  const tx = result.transactions[0];
+  const labels = tx.labels.join(", ");
+  // A replay wrote nothing: the same update was redelivered after a crash, so saying "logged"
+  // would imply a second row that does not exist.
+  let reply = result.replayed
+    ? `\u2705 *Already logged* (no duplicate created)\n\n`
+    : `\u2705 *Transaction Logged!*\n\n`;
+  reply += `\ud83d\udcdd *Description:* ${tx.description}\n`;
+  reply += `\ud83d\udcb0 *Amount:* ${SYMBOL}${tx.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
+  reply += `\ud83d\udcc1 *Category:* ${tx.categoryName}\n`;
+  reply += `\ud83d\udcc5 *Date:* ${tx.date}\n`;
+  if (labels) reply += `\ud83c\udff7\ufe0f *Labels:* ${labels}\n`;
+  return reply;
+};
+
+async function handleSummary(chatId: number) {
+  // No month is passed: the server resolves the current month in the user's own timezone, which
+  // is the whole reason those queries take an offset.
+  const summary = await callTool<{
+    month: string;
+    totalIncome: number;
+    totalExpenses: number;
+    net: number;
+  }>("get_budget_overview");
+  const spending = await callTool<{
+    categories: { name: string; amount: number; percentage: number }[];
+  }>("get_spending_by_category");
 
   const savingsRate =
     summary.totalIncome > 0 ? Math.round((summary.net / summary.totalIncome) * 100) : 0;
 
-  const currency = user.currency || "PHP";
-  const symbol = currency === "PHP" ? "₱" : `${currency} `;
+  let msg = `\ud83d\udcca *Budget Summary for ${summary.month}*\n\n`;
+  msg += `\ud83d\udcb0 *Total Income:* ${SYMBOL}${summary.totalIncome.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
+  msg += `\ud83d\udcb8 *Total Expenses:* ${SYMBOL}${summary.totalExpenses.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
+  msg += `\ud83e\ude99 *Net Balance:* ${SYMBOL}${summary.net.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
+  msg += `\ud83d\udcc8 *Savings Rate:* ${savingsRate}%\n\n`;
 
-  let msg = `📊 *Budget Summary for ${month}*\n\n`;
-  msg += `💰 *Total Income:* ${symbol}${summary.totalIncome.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
-  msg += `💸 *Total Expenses:* ${symbol}${summary.totalExpenses.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
-  msg += `🪙 *Net Balance:* ${symbol}${summary.net.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
-  msg += `📈 *Savings Rate:* ${savingsRate}%\n\n`;
-
-  if (spending.length > 0) {
-    msg += `📁 *Top Spending Categories:*\n`;
-    const top = spending.slice(0, 5);
-    for (const cat of top) {
-      msg += `• ${cat.name}: ${symbol}${cat.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })} (${cat.percentage}%)\n`;
+  if (spending.categories.length > 0) {
+    msg += `\ud83d\udcc1 *Top Spending Categories:*\n`;
+    for (const cat of spending.categories.slice(0, 5)) {
+      msg += `\u2022 ${cat.name}: ${SYMBOL}${cat.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })} (${cat.percentage}%)\n`;
     }
   } else {
     msg += `No expense records yet this month.\n`;
@@ -156,89 +251,86 @@ async function handleSummary(chatId: number, user: any) {
   await sendMessage(chatId, msg);
 }
 
-async function handleRecent(chatId: number, user: any) {
-  const currency = user.currency || "PHP";
-  const symbol = currency === "PHP" ? "₱" : `${currency} `;
+async function handleRecent(chatId: number) {
+  const result = await callTool<{
+    transactions: {
+      amount: number;
+      description: string;
+      type: string;
+      date: string;
+      categoryName: string;
+      labels: { name: string }[];
+    }[];
+  }>("search_transactions", { limit: 5, sortBy: "date", sortDir: "desc" });
 
-  const txs = await prisma.transaction.findMany({
-    where: { userId: user.id },
-    orderBy: { date: "desc" },
-    take: 5,
-    include: {
-      category: true,
-      labels: { include: { label: true } },
-    },
-  });
-
-  if (txs.length === 0) {
+  if (result.transactions.length === 0) {
     await sendMessage(chatId, "No transactions found.");
     return;
   }
 
-  let msg = `🕒 *Recent Transactions:*\n\n`;
-  for (const t of txs) {
-    const icon = t.type === "INCOME" ? "➕" : "➖";
-    const dateStr = formatLocalDate(t.date, user.timezoneOffset);
-    const labels = t.labels.map((l) => l.label.name).join(", ");
-    msg += `${icon} *${symbol}${t.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}* - ${t.description || t.category.name}\n`;
-    msg += `   📁 ${t.category.name} | 📅 ${dateStr}${labels ? ` | 🏷️ ${labels}` : ""}\n\n`;
+  let msg = `\ud83d\udd52 *Recent Transactions:*\n\n`;
+  for (const t of result.transactions) {
+    const icon = t.type === "INCOME" ? "\u2795" : "\u2796";
+    const labels = t.labels.map((l) => l.name).join(", ");
+    msg += `${icon} *${SYMBOL}${t.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}* - ${t.description || t.categoryName}\n`;
+    msg += `   \ud83d\udcc1 ${t.categoryName} | \ud83d\udcc5 ${t.date.slice(0, 10)}${labels ? ` | \ud83c\udff7\ufe0f ${labels}` : ""}\n\n`;
   }
 
   await sendMessage(chatId, msg);
 }
 
-async function handleBills(chatId: number, user: any) {
-  const currency = user.currency || "PHP";
-  const symbol = currency === "PHP" ? "₱" : `${currency} `;
+async function handleBills(chatId: number) {
+  const result = await callTool<{
+    bills: {
+      description: string;
+      categoryName: string;
+      amount: number;
+      dueDate: string;
+      isOverdue: boolean;
+    }[];
+  }>("get_upcoming_bills", { days: 30 });
 
-  const result = await getUpcomingBills(prisma, user.id, { days: 30 });
   if (result.bills.length === 0) {
-    await sendMessage(chatId, "🎉 No upcoming bills due in the next 30 days!");
+    await sendMessage(chatId, "\ud83c\udf89 No upcoming bills due in the next 30 days!");
     return;
   }
 
-  let msg = `📅 *Upcoming Bills (Next 30 Days):*\n\n`;
+  let msg = `\ud83d\udcc5 *Upcoming Bills (Next 30 Days):*\n\n`;
   for (const b of result.bills) {
-    const due = new Date(b.dueDate).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-    });
-    msg += `• *${b.description || b.categoryName}*: ${symbol}${b.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
+    const due = new Date(b.dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    msg += `\u2022 *${b.description || b.categoryName}*: ${SYMBOL}${b.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
     msg += `   Due: ${due}${b.isOverdue ? " (overdue)" : ""}\n\n`;
   }
 
   await sendMessage(chatId, msg);
 }
 
-async function handleCategories(chatId: number, user: any) {
-  const categories = await prisma.category.findMany({
-    where: {
-      OR: [{ userId: user.id }, { userId: null }],
-    },
-    orderBy: { name: "asc" },
-  });
+async function handleCategories(chatId: number) {
+  const result = await callTool<{ categories: { name: string; type: string }[] }>(
+    "get_category_list"
+  );
 
-  const expense = categories.filter((c) => c.type === "EXPENSE");
-  const income = categories.filter((c) => c.type === "INCOME");
+  const named = (type: string) =>
+    result.categories
+      .filter((c) => c.type === type)
+      .map((c) => `\u2022 ${c.name}`)
+      .join("\n");
 
-  let msg = `📁 *Available Categories:*\n\n`;
-  msg += `*Expense Categories:*\n`;
-  msg += expense.map((c) => `• ${c.name}`).join("\n");
-  msg += `\n\n*Income Categories:*\n`;
-  msg += income.map((c) => `• ${c.name}`).join("\n");
+  let msg = `\ud83d\udcc1 *Available Categories:*\n\n`;
+  msg += `*Expense Categories:*\n${named("EXPENSE")}`;
+  msg += `\n\n*Income Categories:*\n${named("INCOME")}`;
 
   await sendMessage(chatId, msg);
 }
 
 async function processNaturalLanguageWithGemini(
   text: string,
-  user: any,
-  categories: any[]
+  categories: { id: string; name: string; type: string }[]
 ): Promise<any> {
   if (!gemini) return null;
 
   const now = new Date();
-  const localIso = new Date(now.getTime() - user.timezoneOffset * 60_000).toISOString();
+  const localIso = new Date(now.getTime() - TZ_OFFSET * 60_000).toISOString();
   const categoryNames = categories.map((c) => ({ name: c.name, type: c.type, id: c.id }));
 
   const prompt = `You are an AI assistant for a personal budget tracker.
@@ -285,21 +377,17 @@ Return ONLY a JSON object in this format:
   }
 }
 
-async function handleMessage(message: any, user: any, updateId: number) {
+async function handleMessage(message: any, updateId: number) {
   const chatId = message.chat.id;
   const text = (message.text || "").trim();
 
   if (!text) return;
 
-  const currency = user.currency || "PHP";
-  const symbol = currency === "PHP" ? "₱" : `${currency} `;
-
   // Commands
   if (text.startsWith("/start") || text.startsWith("/help")) {
     const msg =
       `👋 *Welcome to Budget Tracker Bot!*\n\n` +
-      `👤 *Account:* ${user.name} (${user.email})\n` +
-      `💼 *Currency:* ${user.currency}\n\n` +
+      `💼 *Currency:* ${SYMBOL}\n\n` +
       `⚡ *Quick Logging:*\n` +
       `Just type your expense or income naturally:\n` +
       `• \`100 breakfast\`\n` +
@@ -318,22 +406,22 @@ async function handleMessage(message: any, user: any, updateId: number) {
   }
 
   if (text === "/summary" || text === "/balance") {
-    await handleSummary(chatId, user);
+    await handleSummary(chatId);
     return;
   }
 
   if (text === "/recent") {
-    await handleRecent(chatId, user);
+    await handleRecent(chatId);
     return;
   }
 
   if (text === "/bills") {
-    await handleBills(chatId, user);
+    await handleBills(chatId);
     return;
   }
 
   if (text === "/categories") {
-    await handleCategories(chatId, user);
+    await handleCategories(chatId);
     return;
   }
 
@@ -341,9 +429,9 @@ async function handleMessage(message: any, user: any, updateId: number) {
   const quickExpenseMatch = /^(\d+(?:\.\d+)?)\s+(.+)$/i.exec(text);
   const quickIncomeMatch = /^\+(\d+(?:\.\d+)?)\s+(.+)$/i.exec(text);
 
-  const categories = await prisma.category.findMany({
-    where: { OR: [{ userId: user.id }, { userId: null }] },
-  });
+  const { categories } = await callTool<{ categories: { id: string; name: string; type: string }[] }>(
+    "get_category_list"
+  );
 
   if (quickIncomeMatch || quickExpenseMatch) {
     const isIncome = !!quickIncomeMatch;
@@ -376,7 +464,7 @@ async function handleMessage(message: any, user: any, updateId: number) {
       }
 
       if (!matchedCat) {
-        matchedCat = matchingCats.find((c) => c.isDefault) || matchingCats[0];
+        matchedCat = matchingCats[0];
       }
 
       const now = new Date();
@@ -386,22 +474,9 @@ async function handleMessage(message: any, user: any, updateId: number) {
       // twice; a stable one replays and returns the original row.
       const clientBatchId = `telegram-${updateId}`;
 
-      const result = await createTransactionBatch({
-        prisma,
-        userId: user.id,
-        createdVia: "TELEGRAM",
-        // The same kill switch that governs MCP writes. A user who turns writes off in
-        // Profile > MCP Access reasonably expects every remote path to stop, and this is one.
-        assertStillPermitted: async (tx) => {
-          const current = await tx.user.findUnique({
-            where: { id: user.id },
-            select: { mcpWritesEnabledUntil: true },
-          });
-          const until = current?.mcpWritesEnabledUntil;
-          return until !== null && until !== undefined && until > new Date();
-        },
+      const result = await callTool<CreatedBatch>("create_transactions", {
         clientBatchId,
-        items: [
+        transactions: [
           {
             amount,
             description: description.charAt(0).toUpperCase() + description.slice(1),
@@ -412,16 +487,8 @@ async function handleMessage(message: any, user: any, updateId: number) {
         ],
       });
 
-      if (result.ok && result.transactions.length > 0) {
-        const tx = result.transactions[0];
-        const labels = tx.labels.map((l) => l.label.name).join(", ");
-        let reply = `✅ *Transaction Logged!*\n\n`;
-        reply += `📝 *Description:* ${tx.description}\n`;
-        reply += `💰 *Amount:* ${symbol}${tx.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
-        reply += `📁 *Category:* ${tx.category.name}\n`;
-        reply += `📅 *Date:* ${formatLocalDate(tx.date, user.timezoneOffset)}\n`;
-        if (labels) reply += `🏷️ *Labels:* ${labels}\n`;
-        await sendMessage(chatId, reply);
+      if (result.transactions.length > 0) {
+        await sendMessage(chatId, formatCreated(result));
         return;
       }
     }
@@ -429,7 +496,7 @@ async function handleMessage(message: any, user: any, updateId: number) {
 
   // Fallback to Gemini AI natural language processing
   if (gemini) {
-    const aiResult = await processNaturalLanguageWithGemini(text, user, categories);
+    const aiResult = await processNaturalLanguageWithGemini(text, categories);
     if (aiResult?.action === "CREATE_TRANSACTION" && aiResult.transaction) {
       const txData = aiResult.transaction;
       // Derived from the Telegram update id, not the clock. The poller advances its offset
@@ -437,22 +504,9 @@ async function handleMessage(message: any, user: any, updateId: number) {
       // Telegram redeliver that update on restart. A random key would write the transaction
       // twice; a stable one replays and returns the original row.
       const clientBatchId = `telegram-${updateId}`;
-      const result = await createTransactionBatch({
-        prisma,
-        userId: user.id,
-        createdVia: "TELEGRAM",
-        // The same kill switch that governs MCP writes. A user who turns writes off in
-        // Profile > MCP Access reasonably expects every remote path to stop, and this is one.
-        assertStillPermitted: async (tx) => {
-          const current = await tx.user.findUnique({
-            where: { id: user.id },
-            select: { mcpWritesEnabledUntil: true },
-          });
-          const until = current?.mcpWritesEnabledUntil;
-          return until !== null && until !== undefined && until > new Date();
-        },
+      const result = await callTool<CreatedBatch>("create_transactions", {
         clientBatchId,
-        items: [
+        transactions: [
           {
             amount: txData.amount,
             description: txData.description,
@@ -463,16 +517,8 @@ async function handleMessage(message: any, user: any, updateId: number) {
         ],
       });
 
-      if (result.ok && result.transactions.length > 0) {
-        const tx = result.transactions[0];
-        const labels = tx.labels.map((l) => l.label.name).join(", ");
-        let reply = `✅ *Transaction Logged!*\n\n`;
-        reply += `📝 *Description:* ${tx.description}\n`;
-        reply += `💰 *Amount:* ${symbol}${tx.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
-        reply += `📁 *Category:* ${tx.category.name}\n`;
-        reply += `📅 *Date:* ${formatLocalDate(tx.date, user.timezoneOffset)}\n`;
-        if (labels) reply += `🏷️ *Labels:* ${labels}\n`;
-        await sendMessage(chatId, reply);
+      if (result.transactions.length > 0) {
+        await sendMessage(chatId, formatCreated(result));
         return;
       }
     }
@@ -524,18 +570,28 @@ const senderIsAllowed = (from: { id?: number; username?: string } | undefined): 
 async function startBot() {
   console.log("Starting Budget Telegram Bot...");
 
-  // Fetch primary user
-  const userId = process.env.BUDGET_USER_ID;
-  let user = userId
-    ? await prisma.user.findUnique({ where: { id: userId } })
-    : await prisma.user.findFirst({ orderBy: { createdAt: "asc" } });
-
-  if (!user) {
-    console.error("No user found in database!");
+  if (!MCP_TOKEN) {
+    console.error(
+      "TELEGRAM_MCP_TOKEN is not set. Mint one in Profile > MCP Access with the\n" +
+        "transactions:write scope, then set TELEGRAM_MCP_TOKEN in .env."
+    );
     process.exit(1);
   }
 
-  console.log(`Connected to user: ${user.name} (${user.email})`);
+  // Proves the token before serving anyone, so a bad credential fails here rather than as a
+  // confusing reply to the first message.
+  try {
+    const client = await mcpClient();
+    const { tools } = await client.listTools();
+    const canWrite = tools.some((t) => t.name === "create_transactions");
+    console.log(`Connected to ${MCP_URL}: ${tools.length} tools, write ${canWrite ? "enabled" : "NOT granted"}`);
+    if (!canWrite) {
+      console.warn("This token has no transactions:write scope, so logging will be refused.");
+    }
+  } catch (err: any) {
+    console.error(`Could not reach the MCP endpoint at ${MCP_URL}: ${err.message}`);
+    process.exit(1);
+  }
 
   if (ALLOWED_IDS.size === 0 && ALLOWED_USERNAMES.size === 0) {
     console.error(
@@ -576,7 +632,7 @@ async function startBot() {
         }
 
         console.log(`Message from @${from?.username || from?.id}: ${update.message.text}`);
-        await handleMessage(update.message, user, update.update_id);
+        await handleMessage(update.message, update.update_id);
       }
     } catch (err: any) {
       console.error("Polling error:", err.message);

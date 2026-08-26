@@ -40,6 +40,22 @@ handling and keeps it only in memory, so a crash mid-write makes Telegram redeli
 restart and the transaction is written twice. The key is now derived from the update id, so a
 redelivery replays instead.
 
+### It talked to the wrong database
+`DATABASE_URL` points at local Postgres, so the bot read and wrote the development copy (288 rows)
+rather than production (705). Nothing it logged ever reached the real budget, and the data a
+stranger could have read was a stale copy rather than the live account.
+
+It is now an MCP client: it calls `/api/mcp` with a scoped token and holds no database credentials
+at all. That reverses the direction of the original problem, since it no longer goes *around* the
+token scope, the write lease, the rate limit and the audit trail but through them. It also drops
+the user lookup entirely, because the token already decides whose budget is being touched.
+
+One consequence worth recording: rows the bot creates now arrive over MCP, so they are stamped
+`createdVia: MCP` with the bot's own token id, and the transactions list marks them "Added by
+Claude". That is inaccurate. The honest fix is to derive `created_via` from the token rather than
+the endpoint, so a token minted for Telegram stamps `TELEGRAM`; the enum value is added here
+against that, unused for now.
+
 ### Two commands were broken outright
 `pnpm type-check` failed with 10 errors in the script. `/summary` called `getMonthlySummary` with
 `month` (the parameter is `months`) and read `.totalIncome` off the returned **array**, so it threw
