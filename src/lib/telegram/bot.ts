@@ -8,6 +8,7 @@ import { GoogleGenAI } from "@google/genai";
 import { updateBatchId } from "@/lib/telegram/batch-id";
 import { localTimestamp } from "@/lib/telegram/local-time";
 import { messageIsAllowed, type Allowlist, type TelegramMessage } from "@/lib/telegram/allowlist";
+import { McpToolError, replyForError } from "@/lib/telegram/errors";
 /**
  * The bot talks to the deployed app over MCP rather than to a database.
  *
@@ -80,10 +81,9 @@ async function mcpClient(): Promise<Client> {
 /**
  * Call one MCP tool.
  *
- * A tool that reports `isError` is surfaced as a thrown error carrying the server's own message,
- * which is written for a model but reads well enough for a chat reply: "writes are switched off",
- * "that category is not yours". Any failure drops the client so the next call reconnects rather
- * than reusing a transport that may be finished.
+ * A tool that reports `isError` is surfaced as a thrown `McpToolError` carrying the server's own
+ * message. Any failure drops the client so the next call reconnects rather than reusing a
+ * transport that may be finished.
  */
 async function callTool<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
   try {
@@ -91,7 +91,7 @@ async function callTool<T>(name: string, args: Record<string, unknown> = {}): Pr
     const result = await client.callTool({ name, arguments: args });
     if (result.isError) {
       const text = (result.content as { type: string; text?: string }[] | undefined)?.[0]?.text;
-      throw new Error(text ?? `${name} failed`);
+      throw new McpToolError(text ?? `${name} failed`);
     }
     return result.structuredContent as T;
   } catch (err) {
@@ -207,14 +207,6 @@ const gemini = process.env.GEMINI_API_KEY
   ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
   : null;
 
-function getCurrentMonthKey(tzOffset: number): string {
-  const now = new Date();
-  const local = new Date(now.getTime() - tzOffset * 60_000);
-  const year = local.getUTCFullYear();
-  const month = String(local.getUTCMonth() + 1).padStart(2, "0");
-  return `${year}-${month}`;
-}
-
 /** What `create_transactions` returns; see `renderCreated` in the MCP server. */
 interface CreatedBatch {
   created: number;
@@ -328,7 +320,15 @@ async function handleBills(chatId: number) {
 
   let msg = `\ud83d\udcc5 *Upcoming Bills (Next 30 Days):*\n\n`;
   for (const b of result.bills) {
-    const due = new Date(b.dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    // Formatted in UTC on purpose. `nextDueDate` is stored as UTC midnight, so reading it in the
+    // container's own zone showed the previous day on any host west of Greenwich. Every other
+    // date the bot prints is a server-resolved string passed through untouched; this was the one
+    // that re-derived a day locally.
+    const due = new Date(b.dueDate).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    });
     msg += `\u2022 *${b.description || b.categoryName}*: ${SYMBOL}${b.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
     msg += `   Due: ${due}${b.isOverdue ? " (overdue)" : ""}\n\n`;
   }
@@ -497,6 +497,17 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
         matchedCat = matchingCats[0];
       }
 
+      // `matchingCats[0]` on an empty list is undefined, and the id is read a few lines down.
+      // Reaching that meant a TypeError surfacing as the generic error reply, with nothing in
+      // the log naming the cause.
+      if (!matchedCat) {
+        await sendMessage(
+          chatId,
+          `You have no ${type} categories yet, so there is nothing to file this under. Add one in the app first.`
+        );
+        return;
+      }
+
       const now = new Date();
       const clientBatchId = updateBatchId(BOT_ID, updateId);
 
@@ -594,9 +605,20 @@ async function probeMcp(): Promise<void> {
     try {
       const client = await mcpClient();
       const { tools } = await client.listTools();
-      if (!tools.some((t) => t.name === "create_transactions")) {
+      const names = new Set(tools.map((t) => t.name));
+      if (!names.has("create_transactions")) {
         console.warn(
           "[telegram] this token has no transactions:write scope, so logging will be refused."
+        );
+      }
+      // Every free-text message reads the category list before it can log anything, and that
+      // tool is gated by budget:read. The setup notes say to mint with transactions:write, so a
+      // token minted literally to that instruction used to start clean and then fail on every
+      // single message.
+      if (!names.has("get_category_list")) {
+        console.warn(
+          "[telegram] this token has no budget:read scope, so every message will fail. " +
+            "Mint one with budget:read as well as transactions:write."
         );
       }
       return;
@@ -692,10 +714,7 @@ export async function startTelegramBot(): Promise<void> {
             "[telegram] failed to handle an update:",
             err instanceof Error ? err.message : err
           );
-          await sendMessage(
-            update.message.chat.id,
-            "Something went wrong handling that. Nothing was saved unless you get a confirmation. Please try again."
-          ).catch(() => {});
+          await sendMessage(update.message.chat.id, replyForError(err)).catch(() => {});
         }
       }
     } catch (err: any) {

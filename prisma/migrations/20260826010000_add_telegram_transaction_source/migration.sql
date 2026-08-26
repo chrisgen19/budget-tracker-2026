@@ -1,8 +1,7 @@
 -- AlterEnum
--- Reserved for a writer that reaches the database without going through /api/mcp. The Telegram
--- bot no longer does, so nothing sets this yet: rows it creates arrive over MCP and are stamped
--- MCP with the bot's own token id. Kept because the value is additive and harmless, Postgres
--- cannot drop an enum value without recreating the type, and the follow-up that would use it
--- (deriving created_via from the token, so a Telegram token stamps TELEGRAM rather than every
--- client looking like Claude) needs it.
+-- The provenance of a row written by the user's Telegram bot.
+--
+-- Every remote write arrives through /api/mcp, so the source cannot be derived from the endpoint:
+-- doing that made the bot's rows claim Claude wrote them. It is taken from the credential instead,
+-- via mcp_tokens.source, which the next migration adds.
 ALTER TYPE "TransactionSource" ADD VALUE 'TELEGRAM';

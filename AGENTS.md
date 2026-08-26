@@ -103,7 +103,7 @@ src/
 - `TELEGRAM_BOT_ENABLED`: starts the bot from `src/instrumentation.ts` on server boot. Set it **only** in the deployed environment: Telegram answers a second concurrent `getUpdates` for one bot token with 409 Conflict, so enabling it locally while production runs the bot makes the two fight. Use `pnpm telegram:bot` to run it locally instead, and not at the same time
 - `TELEGRAM_BOT_TOKEN`: from @BotFather
 - `TELEGRAM_ALLOWED_IDS` / `TELEGRAM_ALLOWED_USERNAMES`: who may message the bot. With neither set it serves nobody. Prefer numeric ids: usernames are weaker, since a released handle can be claimed by someone else
-- `TELEGRAM_MCP_URL` / `TELEGRAM_MCP_TOKEN`: where the bot writes. Mint the token in Profile > MCP Access with `transactions:write`, and give the bot its own so revoking it does not break another client
+- `TELEGRAM_MCP_URL` / `TELEGRAM_MCP_TOKEN`: where the bot writes. Mint the token in Profile > MCP Access with `transactions:write` **and** `budget:read`: every free-text message reads the category list before it can log anything, so a write-only token fails on every message. Give the bot its own token so revoking it does not break another client
 - `TELEGRAM_TZ_OFFSET`: minutes, `getTimezoneOffset()` convention. Only so Gemini can resolve "yesterday"; every query and write is resolved server-side against `users.timezone_offset`
 - `TELEGRAM_CURRENCY_SYMBOL`: display only, defaults to the peso sign
 - `TELEGRAM_API_IP`: only for a network whose DNS sinkholes Telegram, an address to use for `api.telegram.org` instead of the resolver. Unset everywhere else: Telegram rotates these, so a stale pin breaks all bot traffic even where DNS works
