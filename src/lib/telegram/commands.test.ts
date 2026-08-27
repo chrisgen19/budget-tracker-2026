@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { COMMAND_MENU, resolveCommand } from "@/lib/telegram/commands";
+import { COMMAND_MENU, menuRegistrations, resolveCommand } from "@/lib/telegram/commands";
 
 describe("resolveCommand", () => {
   it("resolves the slash commands", () => {
@@ -124,5 +124,58 @@ describe("COMMAND_MENU", () => {
   it("has no duplicates", () => {
     const names = COMMAND_MENU.map((c) => c.command);
     expect(new Set(names).size).toBe(names.length);
+  });
+});
+
+describe("menuRegistrations", () => {
+  // The bug this covers: publishing with no scope puts the menu in Telegram's *default* scope,
+  // which every stranger who finds the bot can see. This bot answers strangers with silence on
+  // purpose, and a default menu advertises "this month's balance" to exactly those people, then
+  // does nothing when they tap it.
+  it("never publishes to the default scope", () => {
+    const calls = menuRegistrations(["7117005308"]);
+    const published = calls.filter((c) => c.method === "setMyCommands");
+
+    expect(published).toHaveLength(1);
+    for (const c of published) {
+      expect(c.params.scope).toEqual({ type: "chat", chat_id: 7117005308 });
+    }
+  });
+
+  it("clears the default scope, in case an earlier build published one", () => {
+    expect(menuRegistrations(["7117005308"])[0]).toEqual({
+      method: "deleteMyCommands",
+      params: {},
+    });
+  });
+
+  it("clears the default scope even with nobody to publish to", () => {
+    const calls = menuRegistrations([]);
+    expect(calls).toEqual([{ method: "deleteMyCommands", params: {} }]);
+  });
+
+  it("publishes one menu per allowed id", () => {
+    const calls = menuRegistrations(["111", "222", "333"]);
+    expect(calls.filter((c) => c.method === "setMyCommands")).toHaveLength(3);
+  });
+
+  it("skips an entry that cannot address a chat", () => {
+    // A username in the numeric list, or anything malformed, would otherwise become NaN.
+    const calls = menuRegistrations(["chrisgen19", "", "12.5", "0", "-5", "111"]);
+    const published = calls.filter((c) => c.method === "setMyCommands");
+    expect(published).toHaveLength(1);
+    expect(published[0].params.scope).toMatchObject({ chat_id: 111 });
+  });
+
+  it("rejects zero, which is a safe integer but not a chat", () => {
+    // Number("") is 0, so a blank entry would otherwise scope the menu to a chat nobody meant.
+    const calls = menuRegistrations(["0", ""]);
+    expect(calls.filter((c) => c.method === "setMyCommands")).toHaveLength(0);
+  });
+
+  it("sends the same menu to every chat", () => {
+    for (const c of menuRegistrations(["111", "222"])) {
+      if (c.method === "setMyCommands") expect(c.params.commands).toBe(COMMAND_MENU);
+    }
   });
 });

@@ -116,7 +116,11 @@ queries. Gemini only ever *classifies* a message: it is never given transactions
 balances, and every figure the bot sends comes from an MCP read tool via the same handlers the
 slash commands use. A free-text question is routed to one of those handlers, not answered by the
 model, because a model holding only category names can only refuse or invent. The command menu is registered with Telegram at startup
-(`setMyCommands`), so every feature is discoverable by typing `/` rather than by remembering a
+(`setMyCommands`), scoped to each allowlisted chat id rather than published to the default scope,
+which every stranger who finds the bot can see: a public menu would advertise "this month's
+balance" to exactly the people the bot answers with silence. The default scope is cleared
+unconditionally, and a username-only allowlist gets no menu at all, since a chat scope needs a
+chat id. Every feature is discoverable by typing `/` rather than by remembering a
 phrasing, and `/examples` prints working messages to copy. A menu entry that resolves to nothing
 is worse than none, so a test asserts every listed command is one the bot handles. Obvious phrasings
 (`summary`, `my bills please`) are resolved locally in `src/lib/telegram/commands.ts` before

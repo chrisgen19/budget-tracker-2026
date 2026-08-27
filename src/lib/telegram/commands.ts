@@ -108,3 +108,44 @@ export const resolveCommand = (text: string): BotCommand | null => {
 
   return PATTERNS.find(({ pattern }) => pattern.test(normalised))?.command ?? null;
 };
+
+/** One Telegram API call: which method, with which payload. */
+export interface MenuCall {
+  method: "deleteMyCommands" | "setMyCommands";
+  params: Record<string, unknown>;
+}
+
+/**
+ * The calls that publish the command menu, given who is allowed to use the bot.
+ *
+ * Extracted from the caller because the decision, not the HTTP, is what has to be right: the
+ * default scope is shown to everyone who finds the bot, and this bot answers strangers with
+ * silence on purpose. Publishing there would list "this month's balance" and "your biggest
+ * expenses" to someone who then gets nothing when they tap any of it.
+ *
+ * The default scope is always cleared, including when there is nobody to publish to, since it is
+ * the scope that leaks. Only numeric ids can be scoped, a chat scope needing a chat id, so a
+ * username-only allowlist yields no menu at all: no menu costs discoverability, a public one
+ * costs the silence the allowlist exists to preserve.
+ */
+export const menuRegistrations = (allowedIds: Iterable<string>): MenuCall[] => {
+  const calls: MenuCall[] = [{ method: "deleteMyCommands", params: {} }];
+
+  for (const id of allowedIds) {
+    // Matched as text before converting. A username cannot address a chat, and `Number("")` is
+    // 0, a perfectly safe integer that would scope the menu to a chat nobody meant. Private
+    // chat ids are the user's own id, always a positive integer, so zero is excluded too.
+    if (!/^[1-9]\d*$/.test(id.trim())) continue;
+
+    const chatId = Number(id.trim());
+    if (!Number.isSafeInteger(chatId)) continue;
+
+    calls.push({
+      method: "setMyCommands",
+      // In a private chat the chat id is the user id, which is what the allowlist holds.
+      params: { commands: COMMAND_MENU, scope: { type: "chat", chat_id: chatId } },
+    });
+  }
+
+  return calls;
+};

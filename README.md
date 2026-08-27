@@ -491,8 +491,10 @@ questions are routed to a real query instead of being answered by the model.
 | *did I pay the water bill* | Checks that recurring bill's history: paid, skipped or snoozed |
 | *(send a photo)* | Reads the receipt with AI, shows what it found, and waits for `yes` before saving |
 
-Typing `/` in the chat shows every command with a description, registered with Telegram at
-startup, and `/examples` prints a list of working messages to copy from. Neither requires
+Typing `/` in the chat shows every command with a description, and `/examples` prints a list of
+working messages to copy from. The menu is registered per allowlisted chat rather than publicly,
+so it is not advertised to strangers the bot deliberately answers with nothing; that needs
+`TELEGRAM_ALLOWED_IDS`, since a username cannot address a chat. Neither requires
 remembering anything.
 
 The slash is optional. `summary`, `balance`, `recent`, `bills`, `categories` and `help` work on
