@@ -483,6 +483,11 @@ questions are routed to a real query instead of being answered by the model.
 | *did I pay meralco this month* | Searches what you logged and shows the matching rows |
 | *how much on transportation in work budget* | Filters by category and label together |
 | *how much did I spend in shopee* | Matches the label when the name is one, not just the description |
+| *am I spending more than last month* | This month against last, with the categories that moved |
+| *show me the last 6 months* | Income, spending and net per month |
+| *what were my biggest expenses* | The ten largest, optionally for one month |
+| *where did my work budget go* | Spending split across labels |
+| *what did I buy at south supermarket* | Individual line items from itemized receipts |
 | *did I pay the water bill* | Checks that recurring bill's history: paid, skipped or snoozed |
 | *(send a photo)* | Reads the receipt with AI, shows what it found, and waits for `yes` before saving |
 
@@ -518,8 +523,8 @@ refunded.
 ### Setup
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
-2. Mint an MCP token in **Profile > MCP Access** with **all six** scopes the handlers need:
-   `budget:read`, `transactions:read`, `labels:read`, `bills:read`, `receipts:scan`, `transactions:write`. Set **Used by** to
+2. Mint an MCP token in **Profile > MCP Access** with **all seven** scopes the handlers need:
+   `budget:read`, `transactions:read`, `labels:read`, `bills:read`, `receipts:read`, `receipts:scan`, `transactions:write`. Set **Used by** to
    **Telegram bot** so its rows are stamped `TELEGRAM` rather than appearing as Claude's. A
    write-only token fails on every message, since each one reads the category list first.
 3. Set the environment variables (see below), then start the app. The bot starts with it.
