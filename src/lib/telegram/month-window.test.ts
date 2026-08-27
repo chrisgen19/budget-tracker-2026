@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { monthsSince } from "@/lib/telegram/month-window";
+import { monthsSince, previousMonthOf } from "@/lib/telegram/month-window";
 
 /** 2026-08-26 18:30 in Manila (UTC+8). */
 const NOW = new Date("2026-08-26T10:30:00.000Z");
@@ -52,5 +52,27 @@ describe("monthsSince", () => {
     for (const bad of ["August", "2026-8", "2026-13", "", "not-a-month"]) {
       expect(monthsSince(bad, MANILA, NOW), bad).toBe(0);
     }
+  });
+});
+
+describe("previousMonthOf", () => {
+  it("steps back one month", () => {
+    expect(previousMonthOf("2026-08")).toBe("2026-07");
+    expect(previousMonthOf("2026-10")).toBe("2026-09");
+  });
+
+  // Done on the string precisely so this case cannot go wrong: constructing a Date from a month
+  // and stepping back is where off-by-one and timezone errors come from.
+  it("crosses the year boundary", () => {
+    expect(previousMonthOf("2026-01")).toBe("2025-12");
+  });
+
+  it("keeps the two-digit padding", () => {
+    expect(previousMonthOf("2026-11")).toBe("2026-10");
+    expect(previousMonthOf("2026-02")).toBe("2026-01");
+  });
+
+  it("passes through anything it cannot parse", () => {
+    for (const bad of ["August", "2026-13", ""]) expect(previousMonthOf(bad)).toBe(bad);
   });
 });

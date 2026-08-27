@@ -14,7 +14,8 @@ import { readPhotoTakenAt } from "@/lib/exif-date";
 import { receiptDateLooksOff } from "@/lib/telegram/date-sanity";
 import { resolveCommand, type BotCommand } from "@/lib/telegram/commands";
 import { parseSearchIntent } from "@/lib/telegram/search-intent";
-import { monthsSince } from "@/lib/telegram/month-window";
+import { parseReportIntent } from "@/lib/telegram/report-intent";
+import { monthsSince, previousMonthOf } from "@/lib/telegram/month-window";
 import { confirmPendingScan } from "@/lib/telegram/confirm-scan";
 import {
   hasPendingScan,
@@ -527,6 +528,10 @@ const MAX_HISTORY_MONTHS = 60;
 
 /** The tool's own ceiling per call. Asking for more is rejected outright. */
 const HISTORY_PAGE = 100;
+
+/** Receipt line items fetched, and how many are listed back. */
+const RECEIPT_ITEM_PAGE = 200;
+const RECEIPT_ITEM_SHOW = 15;
 const SEARCH_SHOW_LIMIT = 10;
 
 /**
@@ -781,6 +786,207 @@ async function upcomingFor(needle: string): Promise<string | null> {
   }
 }
 
+/** Shared money formatter. Every reply below states figures the server computed, never a model's. */
+const peso = (n: number) =>
+  `${SYMBOL}${n.toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+
+/** A signed change, phrased so the direction is unmistakable in a chat. */
+const delta = (change: number, percent: number | null): string => {
+  if (change === 0) return "no change";
+  const dir = change > 0 ? "more" : "less";
+  const pct = percent === null ? "" : ` (${Math.abs(percent).toFixed(0)}%)`;
+  return `${peso(Math.abs(change))} ${dir}${pct}`;
+};
+
+/** "am I spending more than last month?" */
+async function handleTrends(chatId: number, month: string | null): Promise<void> {
+  const current = month ?? localTimestamp(TZ_OFFSET).slice(0, 7);
+  const result = await callTool<{
+    currentTotal: number;
+    previousTotal: number;
+    totalChange: number;
+    totalChangePercent: number | null;
+    byCategory: {
+      name: string;
+      current: number;
+      previous: number;
+      change: number;
+      changePercent: number | null;
+    }[];
+  }>("get_spending_trends", { currentMonth: current, previousMonth: previousMonthOf(current) });
+
+  let msg = `\ud83d\udcc8 *${current} vs ${previousMonthOf(current)}*\n\n`;
+  msg += `Spent *${peso(result.currentTotal)}*, against ${peso(result.previousTotal)}.\n`;
+  msg += `That is *${delta(result.totalChange, result.totalChangePercent)}*.\n`;
+
+  // Only the categories that actually moved, largest swing first. Listing every category turns a
+  // one-line answer into a wall nobody reads.
+  const moved = result.byCategory
+    .filter((c) => c.change !== 0)
+    .sort((a, b) => Math.abs(b.change) - Math.abs(a.change))
+    .slice(0, 6);
+
+  if (moved.length > 0) {
+    msg += `\n*Biggest changes:*\n`;
+    for (const c of moved) {
+      msg += `${c.change > 0 ? "\ud83d\udd3a" : "\ud83d\udd3b"} ${c.name}: ${delta(c.change, c.changePercent)}\n`;
+    }
+  }
+
+  await sendMessage(chatId, msg);
+}
+
+/** "show me the last 6 months" */
+async function handleMonthly(chatId: number, months: number): Promise<void> {
+  const result = await callTool<{
+    months: { month: string; income: number; expenses: number; net: number }[];
+  }>("get_monthly_summary", { months });
+
+  if (result.months.length === 0) {
+    await sendMessage(chatId, "No months with any activity yet.");
+    return;
+  }
+
+  let msg = `\ud83d\udcc5 *Last ${result.months.length} month${result.months.length === 1 ? "" : "s"}*\n\n`;
+  for (const m of result.months) {
+    const sign = m.net >= 0 ? "\u2795" : "\u2796";
+    msg += `*${m.month}*  in ${peso(m.income)} \u00b7 out ${peso(m.expenses)}\n`;
+    msg += `   ${sign} net *${peso(Math.abs(m.net))}*\n`;
+  }
+
+  const net = result.months.reduce((sum, m) => sum + m.net, 0);
+  msg += `\nOver the period: *${peso(Math.abs(net))}* ${net >= 0 ? "saved" : "overspent"}`;
+
+  await sendMessage(chatId, msg);
+}
+
+/** "what were my biggest expenses?" */
+async function handleTopExpenses(chatId: number, month: string | null): Promise<void> {
+  const result = await callTool<{
+    expenses: { amount: number; description: string; date: string; categoryName: string }[];
+  }>("get_top_expenses", { limit: 10, ...(month && { month }) });
+
+  if (result.expenses.length === 0) {
+    await sendMessage(chatId, `No expenses found${month ? ` in ${month}` : ""}.`);
+    return;
+  }
+
+  let msg = `\ud83d\udcb8 *Biggest expenses${month ? ` in ${month}` : ""}*\n\n`;
+  for (const [i, e] of result.expenses.entries()) {
+    msg += `${i + 1}. *${peso(e.amount)}*  ${e.description || e.categoryName}\n`;
+    msg += `    ${localDay(e.date, TZ_OFFSET)} \u00b7 ${e.categoryName}\n`;
+  }
+
+  await sendMessage(chatId, msg);
+}
+
+/** "where did my work budget go?" */
+async function handleLabelBreakdown(chatId: number, month: string | null): Promise<void> {
+  const target = month ?? localTimestamp(TZ_OFFSET).slice(0, 7);
+  const result = await callTool<{
+    total: number;
+    labels: { name: string; amount: number; percentage: number; transactionCount: number }[];
+  }>("get_label_breakdown", { month: target, type: "EXPENSE" });
+
+  if (result.labels.length === 0) {
+    await sendMessage(chatId, `No labelled spending in ${target}.`);
+    return;
+  }
+
+  let msg = `\ud83c\udff7\ufe0f *Spending by label, ${target}*\n\n`;
+  for (const l of result.labels.slice(0, 10)) {
+    msg += `\u2022 *${l.name}*: ${peso(l.amount)} (${l.percentage.toFixed(0)}%, ${l.transactionCount} txn)\n`;
+  }
+  msg += `\nTotal: *${peso(result.total)}*`;
+  // The app splits a transaction's amount evenly across its labels, which is what makes these
+  // percentages add up. Said here because the search handler counts each in full, and the two
+  // figures would otherwise look like a contradiction.
+  msg += `\n\n_A transaction with two labels counts half to each, so these add to 100%._`;
+
+  await sendMessage(chatId, msg);
+}
+
+/**
+ * "what did I buy at South Supermarket?" and "did I buy okra?"
+ *
+ * Two different questions, and the tool only answers one of them directly: its `search` matches
+ * the *item* name, never the merchant. Asking it for "south supermarket" therefore returns
+ * nothing at all, though 461 items from that shop are sitting in the table, which is the same
+ * false negative this bot keeps having to design against.
+ *
+ * So the item-name search is tried first, being cheap and exact, and a miss falls back to
+ * fetching a page and matching the merchant locally. Neither `search_transactions` nor the item
+ * search exposes a receipt group id, so there is no way to chain the two tools instead.
+ */
+async function handleReceiptItems(chatId: number, search: string | null, month: string | null): Promise<void> {
+  type ItemsResult = {
+    itemCount: number;
+    totalAmount: number;
+    truncated: boolean;
+    items: {
+      name: string;
+      amount: number;
+      transactionDescription: string;
+      categoryName: string;
+      date: string;
+    }[];
+  };
+  const fetchItems = (args: Record<string, unknown>) =>
+    callTool<ItemsResult>("get_receipt_items", { limit: RECEIPT_ITEM_PAGE, ...args });
+
+  const monthArgs = month ? { month } : {};
+  let result = search ? await fetchItems({ search, ...monthArgs }) : await fetchItems(monthArgs);
+  let matchedMerchant = false;
+
+  if (search && result.items.length === 0) {
+    const page = await fetchItems(monthArgs);
+    const needle = search.toLowerCase();
+    const items = page.items.filter((i) => i.transactionDescription.toLowerCase().includes(needle));
+    if (items.length > 0) {
+      matchedMerchant = true;
+      result = {
+        items,
+        itemCount: items.length,
+        totalAmount: items.reduce((sum, i) => sum + i.amount, 0),
+        // The page itself may have been capped, so a merchant match is only ever "what I could
+        // see", never "everything".
+        truncated: page.truncated,
+      };
+    }
+  }
+
+  const what = search ? ` for *${search}*` : "";
+  const when = month ? ` in ${month}` : "";
+
+  if (result.items.length === 0) {
+    await sendMessage(
+      chatId,
+      `\ud83e\uddfe No receipt items${what}${when}.\n\n` +
+        `Only receipts scanned with the itemize option keep their line items, and I match either ` +
+        `the item name or the shop.`
+    );
+    return;
+  }
+
+  let msg = `\ud83e\uddfe *Receipt items${what}${when}*\n`;
+  if (matchedMerchant) msg += `_Matched on the shop rather than the item name._\n`;
+  msg += `\n`;
+
+  for (const i of result.items.slice(0, RECEIPT_ITEM_SHOW)) {
+    msg += `\u2022 ${i.name} \u00b7 *${peso(i.amount)}*\n`;
+  }
+  if (result.items.length > RECEIPT_ITEM_SHOW) {
+    msg += `\n_Showing ${RECEIPT_ITEM_SHOW} of ${result.itemCount}._`;
+  }
+
+  msg += `\n\nTotal: *${peso(result.totalAmount)}* across ${result.itemCount} item${result.itemCount === 1 ? "" : "s"}`;
+  if (result.truncated) {
+    msg += `\n_The server capped this list, so the total covers what it returned rather than everything._`;
+  }
+
+  await sendMessage(chatId, msg);
+}
+
 async function handleCategories(chatId: number) {
   const result = await callTool<{ categories: { name: string; type: string }[] }>(
     "get_category_list"
@@ -848,6 +1054,18 @@ Decide what the user wants:
     ("how much have I spent at jollibee"). Use the current timestamp above to resolve
     "this month" and "last month".
   At least one of label, category or search must be set.
+- Comparing one month against the one before ("am I spending more than last month", "how does
+  this month compare") -> "SHOW_TRENDS", with "month" set to the later month in YYYY-MM.
+- Asking across several months ("show me the last 6 months", "how have I done this year")
+  -> "SHOW_MONTHLY", with "months" set to how many they asked for, 1 to 24. Default 6.
+- Asking which purchases were largest ("what were my biggest expenses", "top spending")
+  -> "SHOW_TOP_EXPENSES", with "month" when they named one.
+- Asking how spending divides across labels ("where did my work budget go", "breakdown by
+  label", "which budget am I using most") -> "SHOW_LABEL_BREAKDOWN", with "month" when named.
+  Use this for a breakdown ACROSS labels; use SEARCH_TRANSACTIONS when they ask about ONE label.
+- Asking what individual items were on a receipt ("what did I buy at south supermarket",
+  "what was on that grocery receipt") -> "SHOW_RECEIPT_ITEMS", with "search" set to the shop or
+  item and "month" when named.
 - Anything else -> "UNSUPPORTED", with replyText saying briefly what you cannot do and
   pointing at /summary, /recent, /bills or /help. State no figures.
 
@@ -866,7 +1084,8 @@ If logging a transaction:
 
 Return ONLY a JSON object in this format:
 {
-  "action": "CREATE_TRANSACTION" | "SHOW_SUMMARY" | "SHOW_RECENT" | "SHOW_BILLS" | "CHECK_BILL" | "SEARCH_TRANSACTIONS" | "UNSUPPORTED",
+  "action": "CREATE_TRANSACTION" | "SHOW_SUMMARY" | "SHOW_RECENT" | "SHOW_BILLS" | "CHECK_BILL" | "SEARCH_TRANSACTIONS" | "SHOW_TRENDS" | "SHOW_MONTHLY" | "SHOW_TOP_EXPENSES" | "SHOW_LABEL_BREAKDOWN" | "SHOW_RECEIPT_ITEMS" | "UNSUPPORTED",
+  "months": number | null,
   "search": string | null,
   "type": "EXPENSE" | "INCOME" | null,
   "label": string | null,
@@ -1100,6 +1319,12 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       `\u2022 /bills - Upcoming scheduled bills\n` +
       `\u2022 /categories - List all categories\n` +
       `\u2022 /help - Show this guide\n\n` +
+      `\ud83d\udcca *Reports:*\n` +
+      `\u2022 \`am I spending more than last month\`\n` +
+      `\u2022 \`show me the last 6 months\`\n` +
+      `\u2022 \`what were my biggest expenses\`\n` +
+      `\u2022 \`where did my work budget go\`\n` +
+      `\u2022 \`what did I buy at south supermarket\`\n\n` +
       `\ud83d\udd0d *Ask about what you logged:*\n` +
       `\u2022 \`did I pay meralco this month\`\n` +
       `\u2022 \`how much on transportation in work budget\`\n` +
@@ -1228,6 +1453,33 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
 
     // Validated rather than trusted: see parseSearchIntent for why a bad month is dropped
     // instead of being passed through as a filter.
+    // The reporting intents take a month, or a count of months, and nothing else. Both are
+    // validated the same way as every other model-supplied value: a month the query cannot use
+    // would silently report on the wrong period, and "no spending" reads like an answer.
+    const report = parseReportIntent(aiResult);
+    if (report) {
+      // A report the token cannot reach should say which one, not fail the whole message. The
+      // startup probe already names a missing tool, but a token narrowed after the bot started
+      // would otherwise surface as a bare error on an ordinary question.
+      switch (report.kind) {
+        case "TRENDS":
+          await handleTrends(chatId, report.month);
+          return;
+        case "MONTHLY":
+          await handleMonthly(chatId, report.months);
+          return;
+        case "TOP_EXPENSES":
+          await handleTopExpenses(chatId, report.month);
+          return;
+        case "LABEL_BREAKDOWN":
+          await handleLabelBreakdown(chatId, report.month);
+          return;
+        case "RECEIPT_ITEMS":
+          await handleReceiptItems(chatId, report.search, report.month);
+          return;
+      }
+    }
+
     const intent = parseSearchIntent(aiResult, { labels, categories });
     if (intent) {
       if (intent.kind === "BILL") await handleBillCheck(chatId, intent.search, intent.month);
@@ -1296,6 +1548,11 @@ const REQUIRED_TOOLS = [
   "get_upcoming_bills",
   "get_bill_history",
   "get_label_list",
+  "get_spending_trends",
+  "get_monthly_summary",
+  "get_top_expenses",
+  "get_label_breakdown",
+  "get_receipt_items",
   "create_transactions",
   "scan_receipt",
 ] as const;
@@ -1318,7 +1575,7 @@ async function probeMcp(): Promise<void> {
         // started clean and then failed on everything.
         console.warn(
           `[telegram] this token is missing ${missing.join(", ")}. ` +
-            "Mint one with budget:read, transactions:read, labels:read, bills:read, receipts:scan and transactions:write."
+            "Mint one with budget:read, transactions:read, labels:read, bills:read, receipts:read, receipts:scan and transactions:write."
         );
       }
       return;
@@ -1362,7 +1619,7 @@ export async function startTelegramBot(): Promise<void> {
   if (!MCP_TOKEN) {
     throw new Error(
       "TELEGRAM_MCP_TOKEN is not set. Mint one in Profile > MCP Access with the " +
-        "budget:read, transactions:read, labels:read, bills:read, receipts:scan and transactions:write " +
+        "budget:read, transactions:read, labels:read, bills:read, receipts:read, receipts:scan and transactions:write " +
         "scopes, then set TELEGRAM_MCP_TOKEN."
     );
   }
