@@ -15,6 +15,7 @@ import { receiptDateLooksOff } from "@/lib/telegram/date-sanity";
 import { resolveCommand, type BotCommand } from "@/lib/telegram/commands";
 import { parseSearchIntent } from "@/lib/telegram/search-intent";
 import { parseReportIntent } from "@/lib/telegram/report-intent";
+import { RECEIPT_ITEM_SHOW, renderReceiptItems } from "@/lib/telegram/receipt-reply";
 import { monthsSince, previousMonthOf } from "@/lib/telegram/month-window";
 import { confirmPendingScan } from "@/lib/telegram/confirm-scan";
 import {
@@ -529,9 +530,8 @@ const MAX_HISTORY_MONTHS = 60;
 /** The tool's own ceiling per call. Asking for more is rejected outright. */
 const HISTORY_PAGE = 100;
 
-/** Receipt line items fetched, and how many are listed back. */
+/** Receipt line items fetched per call. How many are listed back lives with the renderer. */
 const RECEIPT_ITEM_PAGE = 200;
-const RECEIPT_ITEM_SHOW = 15;
 const SEARCH_SHOW_LIMIT = 10;
 
 /**
@@ -906,85 +906,138 @@ async function handleLabelBreakdown(chatId: number, month: string | null): Promi
   await sendMessage(chatId, msg);
 }
 
+interface ReceiptItem {
+  name: string;
+  amount: number;
+  transactionId: string;
+  transactionDescription: string;
+  categoryName: string;
+  date: string;
+  receiptGroupId: string | null;
+}
+
+interface ReceiptItemsResult {
+  itemCount: number;
+  totalAmount: number;
+  truncated: boolean;
+  items: ReceiptItem[];
+}
+
 /**
- * "what did I buy at South Supermarket?" and "did I buy okra?"
+ * "what did I buy at South Supermarket?", "did I buy okra?", "what was on that receipt?"
  *
- * Two different questions, and the tool only answers one of them directly: its `search` matches
- * the *item* name, never the merchant. Asking it for "south supermarket" therefore returns
- * nothing at all, though 461 items from that shop are sitting in the table, which is the same
- * false negative this bot keeps having to design against.
+ * Three questions with different scopes, and the tool answers only one of them directly: its
+ * `search` matches the *item* name, never the merchant. Asking it for "south supermarket" returns
+ * nothing at all while hundreds of that shop's items sit in the table.
  *
- * So the item-name search is tried first, being cheap and exact, and a miss falls back to
- * fetching a page and matching the merchant locally. Neither `search_transactions` nor the item
- * search exposes a receipt group id, so there is no way to chain the two tools instead.
+ * So the item name is tried first, being cheap and exact; a miss falls back to matching the
+ * merchant over a fetched page; and a question with no subject at all is read as "the last
+ * receipt" rather than as the whole history, because totalling every itemized receipt ever and
+ * offering it as the answer to a singular question is a different answer to the one asked.
  */
-async function handleReceiptItems(chatId: number, search: string | null, month: string | null): Promise<void> {
-  type ItemsResult = {
-    itemCount: number;
-    totalAmount: number;
-    truncated: boolean;
-    items: {
-      name: string;
-      amount: number;
-      transactionDescription: string;
-      categoryName: string;
-      date: string;
-    }[];
-  };
+async function handleReceiptItems(
+  chatId: number,
+  search: string | null,
+  month: string | null
+): Promise<void> {
   const fetchItems = (args: Record<string, unknown>) =>
-    callTool<ItemsResult>("get_receipt_items", { limit: RECEIPT_ITEM_PAGE, ...args });
+    callTool<ReceiptItemsResult>("get_receipt_items", { limit: RECEIPT_ITEM_PAGE, ...args });
 
   const monthArgs = month ? { month } : {};
-  let result = search ? await fetchItems({ search, ...monthArgs }) : await fetchItems(monthArgs);
-  let matchedMerchant = false;
-
-  if (search && result.items.length === 0) {
-    const page = await fetchItems(monthArgs);
-    const needle = search.toLowerCase();
-    const items = page.items.filter((i) => i.transactionDescription.toLowerCase().includes(needle));
-    if (items.length > 0) {
-      matchedMerchant = true;
-      result = {
-        items,
-        itemCount: items.length,
-        totalAmount: items.reduce((sum, i) => sum + i.amount, 0),
-        // The page itself may have been capped, so a merchant match is only ever "what I could
-        // see", never "everything".
-        truncated: page.truncated,
-      };
-    }
-  }
-
-  const what = search ? ` for *${search}*` : "";
   const when = month ? ` in ${month}` : "";
 
-  if (result.items.length === 0) {
+  // --- "what was on that receipt": no subject, so the newest one is what was meant ---
+  if (!search) {
+    const page = await fetchItems(monthArgs);
+    if (page.items.length === 0) {
+      await sendMessage(chatId, `\ud83e\uddfe No itemized receipts${when} yet.`);
+      return;
+    }
+
+    // Items come back newest first, so the first one identifies the most recent receipt. A
+    // receipt group is the reliable handle; a receipt with no group is a single transaction, and
+    // its own id serves the same purpose.
+    const newest = page.items[0];
+    const scoped = newest.receiptGroupId
+      ? await fetchItems({ receiptGroupId: newest.receiptGroupId })
+      : {
+          ...page,
+          items: page.items.filter((i) => i.transactionId === newest.transactionId),
+        };
+    const items = scoped.items;
+    const total = newest.receiptGroupId
+      ? scoped.totalAmount
+      : items.reduce((sum, i) => sum + i.amount, 0);
+
     await sendMessage(
       chatId,
-      `\ud83e\uddfe No receipt items${what}${when}.\n\n` +
-        `Only receipts scanned with the itemize option keep their line items, and I match either ` +
-        `the item name or the shop.`
+      renderReceiptItems({
+        heading: `Last receipt: *${newest.transactionDescription || newest.categoryName}*`,
+        subheading: localDay(newest.date, TZ_OFFSET),
+        items,
+        itemCount: newest.receiptGroupId ? scoped.itemCount : items.length,
+        total,
+        // A named group is fetched whole, so nothing here is a partial view.
+        partial: false,
+      }, peso)
     );
     return;
   }
 
-  let msg = `\ud83e\uddfe *Receipt items${what}${when}*\n`;
-  if (matchedMerchant) msg += `_Matched on the shop rather than the item name._\n`;
-  msg += `\n`;
-
-  for (const i of result.items.slice(0, RECEIPT_ITEM_SHOW)) {
-    msg += `\u2022 ${i.name} \u00b7 *${peso(i.amount)}*\n`;
+  // --- item name, which the tool matches directly ---
+  const direct = await fetchItems({ search, ...monthArgs });
+  if (direct.items.length > 0) {
+    await sendMessage(
+      chatId,
+      renderReceiptItems({
+        heading: `Receipt items for *${search}*${when}`,
+        items: direct.items,
+        itemCount: direct.itemCount,
+        // The query computes itemCount and totalAmount over every match and slices only the list,
+        // so this total is complete even when the list is not. Calling it partial would make a
+        // correct figure look untrustworthy.
+        total: direct.totalAmount,
+        partial: false,
+      }, peso)
+    );
+    return;
   }
-  if (result.items.length > RECEIPT_ITEM_SHOW) {
-    msg += `\n_Showing ${RECEIPT_ITEM_SHOW} of ${result.itemCount}._`;
+
+  // --- merchant, matched locally because the tool cannot ---
+  const page = await fetchItems(monthArgs);
+  const needle = search.toLowerCase();
+  const matched = page.items.filter((i) =>
+    i.transactionDescription.toLowerCase().includes(needle)
+  );
+
+  if (matched.length === 0) {
+    // The page is capped, so an absence here is only an absence within what was fetched. Saying
+    // "none" would assert something about lines that were never looked at.
+    await sendMessage(
+      chatId,
+      page.truncated
+        ? `\ud83e\uddfe Nothing for *${search}* in the ${page.items.length} most recent receipt lines${when}, ` +
+            `and there are older ones I could not search. Try naming an item, or a month.`
+        : `\ud83e\uddfe No receipt items for *${search}*${when}.\n\n` +
+            `Only receipts scanned with the itemize option keep their line items, and I match ` +
+            `either the item name or the shop.`
+    );
+    return;
   }
 
-  msg += `\n\nTotal: *${peso(result.totalAmount)}* across ${result.itemCount} item${result.itemCount === 1 ? "" : "s"}`;
-  if (result.truncated) {
-    msg += `\n_The server capped this list, so the total covers what it returned rather than everything._`;
-  }
-
-  await sendMessage(chatId, msg);
+  await sendMessage(
+    chatId,
+    renderReceiptItems({
+      heading: `Receipt items for *${search}*${when}`,
+      subheading: "Matched on the shop rather than the item name",
+      items: matched,
+      itemCount: matched.length,
+      total: matched.reduce((sum, i) => sum + i.amount, 0),
+      // Recomputed from a page that may itself have been capped, so this total is only ever
+      // "what I could see". Unlike the direct path above, that caveat is real here.
+      partial: page.truncated,
+    }, peso)
+  );
 }
 
 async function handleCategories(chatId: number) {
