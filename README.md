@@ -491,6 +491,10 @@ questions are routed to a real query instead of being answered by the model.
 | *did I pay the water bill* | Checks that recurring bill's history: paid, skipped or snoozed |
 | *(send a photo)* | Reads the receipt with AI, shows what it found, and waits for `yes` before saving |
 
+Typing `/` in the chat shows every command with a description, registered with Telegram at
+startup, and `/examples` prints a list of working messages to copy from. Neither requires
+remembering anything.
+
 The slash is optional. `summary`, `balance`, `recent`, `bills`, `categories` and `help` work on
 their own, as do the obvious phrasings around them (`give summary`, `my bills please`). Those are
 matched locally, so they answer instantly and keep working when Gemini is unavailable. Anything

@@ -12,7 +12,8 @@ import { chunkMessage } from "@/lib/telegram/chunk";
 import { MAX_IMAGE_BYTES, pickReceiptImage } from "@/lib/telegram/photo";
 import { readPhotoTakenAt } from "@/lib/exif-date";
 import { receiptDateLooksOff } from "@/lib/telegram/date-sanity";
-import { resolveCommand, type BotCommand } from "@/lib/telegram/commands";
+import { COMMAND_MENU, resolveCommand, type BotCommand } from "@/lib/telegram/commands";
+import { EXAMPLES_MESSAGE } from "@/lib/telegram/examples";
 import { parseSearchIntent } from "@/lib/telegram/search-intent";
 import { parseReportIntent } from "@/lib/telegram/report-intent";
 import { RECEIPT_ITEM_SHOW, renderReceiptItems } from "@/lib/telegram/receipt-reply";
@@ -1368,18 +1369,30 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       `\u2022 \`did I pay meralco this month\`\n` +
       `\u2022 \`how much on transportation in work budget\`\n` +
       `\u2022 \`did I pay the water bill\`\n\n` +
-      `The slash is optional: *summary*, *recent*, *bills* and *categories* work on their own, ` +
-      `and you can ask in your own words too.`;
+      `The slash is optional, and you can ask in your own words. Type / for the full menu, ` +
+      `or /examples for a list you can copy from.`;
     await sendMessage(chatId, msg);
     return;
   }
 
+  if (command === "EXAMPLES") {
+    await sendMessage(chatId, EXAMPLES_MESSAGE);
+    return;
+  }
+
   if (command) {
-    const handlers: Record<Exclude<BotCommand, "HELP">, (chatId: number) => Promise<void>> = {
+    const handlers: Record<Exclude<BotCommand, "HELP" | "EXAMPLES">, (chatId: number) => Promise<void>> = {
       SUMMARY: handleSummary,
       RECENT: handleRecent,
       BILLS: handleBills,
       CATEGORIES: handleCategories,
+      // The reporting commands take a month; the slash form asks about the default period, and
+      // the plain-English form is where a month can be named.
+      TRENDS: (id) => handleTrends(id, null),
+      MONTHS: (id) => handleMonthly(id, 6),
+      TOP: (id) => handleTopExpenses(id, null),
+      LABELS: (id) => handleLabelBreakdown(id, null),
+      ITEMS: (id) => handleReceiptItems(id, null, null),
     };
     await handlers[command](chatId);
     return;
@@ -1634,6 +1647,24 @@ async function probeMcp(): Promise<void> {
   }
 }
 
+/**
+ * Register the "/" menu with Telegram.
+ *
+ * Without this the autocomplete list is empty and every feature has to be remembered or looked
+ * up in /help, which is itself something to remember. Telegram stores the list server-side, so
+ * this only needs to succeed once, and a failure costs discoverability rather than function.
+ */
+async function registerCommandMenu(): Promise<void> {
+  try {
+    await telegramApi("setMyCommands", { commands: COMMAND_MENU });
+  } catch (err) {
+    console.warn(
+      "[telegram] could not register the command menu:",
+      err instanceof Error ? err.message : err
+    );
+  }
+}
+
 export async function startTelegramBot(): Promise<void> {
   if (!BOT_TOKEN) {
     throw new Error("TELEGRAM_BOT_TOKEN is not set.");
@@ -1672,6 +1703,7 @@ export async function startTelegramBot(): Promise<void> {
   // race at container boot left the bot down until the next deploy. Polling starts either way;
   // a token that is genuinely wrong then reports itself in the reply to the first message.
   await probeMcp();
+  await registerCommandMenu();
 
   if (ALLOWED_IDS.size === 0 && ALLOWED_USERNAMES.size === 0) {
     // It keeps polling on purpose, and the wording has to say so: every sender is denied, but

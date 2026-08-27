@@ -1,5 +1,16 @@
 /** The things the bot can do without asking a model what was meant. */
-export type BotCommand = "HELP" | "SUMMARY" | "RECENT" | "BILLS" | "CATEGORIES";
+export type BotCommand =
+  | "HELP"
+  | "SUMMARY"
+  | "RECENT"
+  | "BILLS"
+  | "CATEGORIES"
+  | "TRENDS"
+  | "MONTHS"
+  | "TOP"
+  | "LABELS"
+  | "ITEMS"
+  | "EXAMPLES";
 
 /**
  * Wraps a subject in the optional politeness around it: an asking verb, an article, a trailing
@@ -25,6 +36,7 @@ const phrasing = (subject: string) =>
  */
 const PATTERNS: { command: BotCommand; pattern: RegExp }[] = [
   { command: "HELP", pattern: /^(help|commands?|what can you do)$/ },
+  { command: "EXAMPLES", pattern: /^(examples?|show examples?|what can i ask)$/ },
   { command: "SUMMARY", pattern: phrasing("summary|balance|overview|totals?") },
   {
     command: "RECENT",
@@ -43,7 +55,37 @@ const SLASH: Record<string, BotCommand> = {
   "/recent": "RECENT",
   "/bills": "BILLS",
   "/categories": "CATEGORIES",
+  "/trends": "TRENDS",
+  "/months": "MONTHS",
+  "/top": "TOP",
+  "/labels": "LABELS",
+  "/items": "ITEMS",
+  "/examples": "EXAMPLES",
 };
+
+/**
+ * What Telegram shows when the user types "/", and behind the Menu button.
+ *
+ * The reason this exists: every reporting question the bot answers was reachable only by
+ * remembering the phrasing, or by remembering to type /help first. Telegram has a native list
+ * for exactly this, and registering it means the features are discoverable without recall.
+ *
+ * Descriptions are capped at 256 characters by the API and are shown in a narrow dropdown, so
+ * they read as labels rather than sentences.
+ */
+export const COMMAND_MENU: { command: string; description: string }[] = [
+  { command: "summary", description: "This month's balance and top spending" },
+  { command: "recent", description: "Your last 5 transactions" },
+  { command: "bills", description: "Bills due in the next 30 days" },
+  { command: "trends", description: "This month against last month" },
+  { command: "months", description: "Income and spending, last 6 months" },
+  { command: "top", description: "Your biggest expenses" },
+  { command: "labels", description: "Spending split across your labels" },
+  { command: "items", description: "Line items from your last receipt" },
+  { command: "categories", description: "List your categories" },
+  { command: "examples", description: "Things you can type, ready to copy" },
+  { command: "help", description: "Everything you can ask, including plain English" },
+];
 
 /**
  * Which command a message means, or null to let the rest of the pipeline decide.

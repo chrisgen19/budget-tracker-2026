@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveCommand } from "@/lib/telegram/commands";
+import { COMMAND_MENU, resolveCommand } from "@/lib/telegram/commands";
 
 describe("resolveCommand", () => {
   it("resolves the slash commands", () => {
@@ -79,8 +79,50 @@ describe("resolveCommand", () => {
     expect(resolveCommand("/settings")).toBeNull();
   });
 
+  it("resolves the reporting commands", () => {
+    expect(resolveCommand("/trends")).toBe("TRENDS");
+    expect(resolveCommand("/months")).toBe("MONTHS");
+    expect(resolveCommand("/top")).toBe("TOP");
+    expect(resolveCommand("/labels")).toBe("LABELS");
+    expect(resolveCommand("/items")).toBe("ITEMS");
+    expect(resolveCommand("/examples")).toBe("EXAMPLES");
+  });
+
+  it("resolves examples without the slash", () => {
+    expect(resolveCommand("examples")).toBe("EXAMPLES");
+    expect(resolveCommand("what can I ask")).toBe("EXAMPLES");
+  });
+
   it("returns null for an empty message", () => {
     expect(resolveCommand("")).toBeNull();
     expect(resolveCommand("   ")).toBeNull();
+  });
+});
+
+describe("COMMAND_MENU", () => {
+  // The menu is the whole point of registering it: an entry that does nothing when tapped is
+  // worse than no entry, because the user has no way to tell which is which.
+  it("only lists commands the bot actually handles", () => {
+    for (const { command } of COMMAND_MENU) {
+      expect(resolveCommand(`/${command}`), command).not.toBeNull();
+    }
+  });
+
+  it("uses bare lowercase names, which is all Telegram accepts", () => {
+    for (const { command } of COMMAND_MENU) {
+      expect(command, command).toMatch(/^[a-z0-9_]{1,32}$/);
+    }
+  });
+
+  it("keeps descriptions inside Telegram's limit", () => {
+    for (const { description } of COMMAND_MENU) {
+      expect(description.length, description).toBeGreaterThan(0);
+      expect(description.length, description).toBeLessThanOrEqual(256);
+    }
+  });
+
+  it("has no duplicates", () => {
+    const names = COMMAND_MENU.map((c) => c.command);
+    expect(new Set(names).size).toBe(names.length);
   });
 });
