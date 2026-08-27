@@ -1,0 +1,47 @@
+import { describe, expect, it } from "vitest";
+import { monthsSince } from "@/lib/telegram/month-window";
+
+/** 2026-08-26 18:30 in Manila (UTC+8). */
+const NOW = new Date("2026-08-26T10:30:00.000Z");
+const MANILA = -480;
+
+describe("monthsSince", () => {
+  it("is zero for the current month", () => {
+    expect(monthsSince("2026-08", MANILA, NOW)).toBe(0);
+  });
+
+  it("counts back within a year", () => {
+    expect(monthsSince("2026-07", MANILA, NOW)).toBe(1);
+    expect(monthsSince("2026-02", MANILA, NOW)).toBe(6);
+    expect(monthsSince("2026-01", MANILA, NOW)).toBe(7);
+  });
+
+  // The bug this covers: a fixed six-month window returned recent rows for an older question,
+  // so the code saw history, skipped its fallback, and reported that the older occurrence never
+  // existed. The window has to reach the month actually asked about.
+  it("counts back across a year boundary", () => {
+    expect(monthsSince("2025-12", MANILA, NOW)).toBe(8);
+    expect(monthsSince("2025-08", MANILA, NOW)).toBe(12);
+    expect(monthsSince("2024-08", MANILA, NOW)).toBe(24);
+  });
+
+  it("is zero for a future month rather than negative", () => {
+    // A negative window would be nonsense passed to the query rather than merely wrong.
+    expect(monthsSince("2026-09", MANILA, NOW)).toBe(0);
+    expect(monthsSince("2027-01", MANILA, NOW)).toBe(0);
+  });
+
+  it("uses the user's calendar, not the host's", () => {
+    // 2026-08-31T17:00Z is already September in Manila, so August is one month back there and
+    // zero months back in UTC.
+    const lateAugustUtc = new Date("2026-08-31T17:00:00.000Z");
+    expect(monthsSince("2026-08", MANILA, lateAugustUtc)).toBe(1);
+    expect(monthsSince("2026-08", 0, lateAugustUtc)).toBe(0);
+  });
+
+  it("returns zero for anything it cannot parse", () => {
+    for (const bad of ["August", "2026-8", "2026-13", "", "not-a-month"]) {
+      expect(monthsSince(bad, MANILA, NOW), bad).toBe(0);
+    }
+  });
+});

@@ -518,8 +518,8 @@ refunded.
 ### Setup
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
-2. Mint an MCP token in **Profile > MCP Access** with **all five** scopes the handlers need:
-   `budget:read`, `transactions:read`, `bills:read`, `receipts:scan`, `transactions:write`. Set **Used by** to
+2. Mint an MCP token in **Profile > MCP Access** with **all six** scopes the handlers need:
+   `budget:read`, `transactions:read`, `labels:read`, `bills:read`, `receipts:scan`, `transactions:write`. Set **Used by** to
    **Telegram bot** so its rows are stamped `TELEGRAM` rather than appearing as Claude's. A
    write-only token fails on every message, since each one reads the category list first.
 3. Set the environment variables (see below), then start the app. The bot starts with it.
