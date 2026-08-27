@@ -121,8 +121,13 @@ Gemini is consulted at all: paying a model call to recognise the word "summary" 
 request, and fails outright when `GEMINI_API_KEY` is unset, where the slash command still works.
 Anything ambiguous is left to the model, since a wrong local guess answers a question the user did
 not ask with no sign it misread them. That routing covers specific questions too ("did I pay
-meralco this month"): Gemini names a label, a category or a search term, `search-intent.ts`
-resolves those names against the real lists so a hallucinated one cannot reach the query, and a
+meralco this month"). Gemini is given the label and category *names* and picks one;
+`search-intent.ts` resolves the name back to an id against the real list, so a hallucinated one
+cannot reach the query. A label is preferred over a text search whenever the thing named is one,
+because labels are how spending is grouped here and the name usually appears in no description at
+all: "Shopee" is a label with transactions, and a description search for it returns nothing. Every
+unresolvable name or month is dropped rather than passed through, because a filter the query
+cannot satisfy returns zero rows and "no transactions found" reads exactly like a real answer. A
 question about a recurring bill goes to `get_bill_history` instead. It is an **MCP client**, not a database client: it calls `/api/mcp` with a scoped token,
 so it inherits the scope, the write lease, the rate limit and the audit trail rather than going
 around them, and it holds no database credentials.

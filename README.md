@@ -483,6 +483,7 @@ questions are routed to a real query instead of being answered by the model.
 | *did I pay meralco this month* | Searches what you logged and shows the matching rows |
 | *how much on transportation in work budget* | Filters by category and label together |
 | *how much did I spend in shopee* | Matches the label when the name is one, not just the description |
+| *did I pay the water bill* | Checks that recurring bill's history: paid, skipped or snoozed |
 | *(send a photo)* | Reads the receipt with AI, shows what it found, and waits for `yes` before saving |
 
 The slash is optional. `summary`, `balance`, `recent`, `bills`, `categories` and `help` work on

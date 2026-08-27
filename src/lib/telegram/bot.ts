@@ -522,7 +522,17 @@ async function handleBills(chatId: number) {
  * The distinction matters because this is the shape of question a model is most tempted to answer
  * from nothing, and a confident wrong number about your own money is worse than no answer.
  */
-async function handleSearch(chatId: number, search: string, month: string | null): Promise<void> {
+async function handleSearch(
+  chatId: number,
+  filters: {
+    search: string | null;
+    labelId: string | null;
+    categoryId: string | null;
+    month: string | null;
+    subject: string;
+  }
+): Promise<void> {
+  const { subject, month } = filters;
   const result = await callTool<{
     transactions: {
       amount: number;
@@ -533,7 +543,9 @@ async function handleSearch(chatId: number, search: string, month: string | null
     }[];
     pagination: { total: number };
   }>("search_transactions", {
-    search,
+    ...(filters.search && { search: filters.search }),
+    ...(filters.labelId && { labelIds: [filters.labelId] }),
+    ...(filters.categoryId && { categoryId: filters.categoryId }),
     ...(month && { month }),
     limit: 10,
     sortBy: "date",
@@ -548,8 +560,9 @@ async function handleSearch(chatId: number, search: string, month: string | null
     // wording has to make clear it means nothing was found rather than nothing was searched.
     await sendMessage(
       chatId,
-      `\ud83d\udd0d No transactions matching *${search}*${when}.\n\n` +
-        `I match what you typed when logging it, so try the merchant name as it appears on the transaction.`
+      `\ud83d\udd0d Nothing found for *${subject}*${when}.\n\n` +
+        `A plain search matches what you typed when logging it, so try the merchant name as it ` +
+        `appears on the transaction, or the name of a label.`
     );
     return;
   }
@@ -557,7 +570,7 @@ async function handleSearch(chatId: number, search: string, month: string | null
   const total = rows.reduce((sum, r) => sum + (r.type === "EXPENSE" ? r.amount : 0), 0);
   const money = (n: number) => `${SYMBOL}${n.toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
 
-  let msg = `\ud83d\udd0d *${search}*${when}: ${result.pagination.total} match${result.pagination.total === 1 ? "" : "es"}\n\n`;
+  let msg = `\ud83d\udd0d *${subject}*${when}: ${result.pagination.total} match${result.pagination.total === 1 ? "" : "es"}\n\n`;
   for (const r of rows) {
     msg += `\u2022 ${localDay(r.date, TZ_OFFSET)}  *${money(r.amount)}*  ${r.description || r.categoryName}\n`;
   }
@@ -600,7 +613,13 @@ async function handleBillCheck(chatId: number, search: string, month: string | n
   if (matches.length === 0) {
     // Not a scheduled bill, or named differently. A description search still answers the
     // question they actually asked, so fall through rather than saying no.
-    await handleSearch(chatId, search, month);
+    await handleSearch(chatId, {
+      search,
+      labelId: null,
+      categoryId: null,
+      month,
+      subject: search,
+    });
     return;
   }
 
@@ -648,21 +667,26 @@ async function handleCategories(chatId: number) {
 
 async function processNaturalLanguageWithGemini(
   text: string,
-  categories: { id: string; name: string; type: string }[]
+  categories: { id: string; name: string; type: string }[],
+  labels: { id: string; name: string }[]
 ): Promise<any> {
   if (!gemini) return null;
 
   const localIso = localTimestamp(TZ_OFFSET);
   const categoryNames = categories.map((c) => ({ name: c.name, type: c.type, id: c.id }));
+  // Names only. Gemini picks one by name and the bot resolves it against the real list, so a
+  // hallucinated id cannot reach the query.
+  const labelNames = labels.map((l) => l.name);
 
   const prompt = `You are an AI assistant for a personal budget tracker.
 Current timestamp in user timezone: ${localIso}
 User's categories: ${JSON.stringify(categoryNames)}
+User's labels: ${JSON.stringify(labelNames)}
 
 Analyze the user's message: "${text}"
 
 You have NO access to the user's transactions, totals, or balances. You can see only the
-message, the current time, and the category names above. Never state or estimate any amount,
+message, the current time, and the category and label names above. Never state or estimate any amount,
 total, balance or count: you would be inventing it.
 
 Decide what the user wants:
@@ -672,17 +696,23 @@ Decide what the user wants:
 - Asking about upcoming or due bills -> "SHOW_BILLS"
 - Asking whether a specific RECURRING BILL was paid ("did I pay the water bill", "have I paid
   internet this month") -> "CHECK_BILL", with "search" set to the bill's name as they said it
-- Asking whether they bought or paid for something specific, or what they spent on it
-  ("did I pay meralco", "how much did I spend at jollibee", "did I buy coffee last week")
-  -> "SEARCH_TRANSACTIONS", with "search" set to the merchant or item, and "month" set to
-  YYYY-MM when they named one. Use the current timestamp above to resolve "this month" and
-  "last month". Omit "month" when they did not limit it to one.
+- Asking what they spent on something, or whether they bought it
+  ("did I pay meralco", "how much did I spend at jollibee", "how much on transportation in
+  work budget this month") -> "SEARCH_TRANSACTIONS". Fill in whichever of these apply:
+  - "label": one of the label names above, EXACTLY as written there, when the user named one.
+    Labels are how this user groups spending, so prefer a label over a text search whenever the
+    thing they named appears in that list: "shopee" is a label, not a word in a description.
+  - "category": one of the category names above, EXACTLY as written there, when they named one.
+  - "search": free text for a merchant or item that is NOT a label or category name.
+  - "month": YYYY-MM when they limited it to one. Use the current timestamp above to resolve
+    "this month" and "last month". Omit it otherwise.
+  At least one of label, category or search must be set.
 - Anything else -> "UNSUPPORTED", with replyText saying briefly what you cannot do and
   pointing at /summary, /recent, /bills or /help. State no figures.
 
-For the search actions, "search" is matched against the transaction description, so use the word
-the user would have typed when logging it: "meralco", not "electricity". Never guess an amount or
-a date: you are only extracting what to look for.
+"search" is matched against the transaction description, so use the word the user would have typed
+when logging it: "meralco", not "electricity". Never guess an amount or a date: you are only
+extracting what to look for.
 
 The SHOW_* actions are answered from the user's real data, not by you.
 
@@ -697,6 +727,8 @@ Return ONLY a JSON object in this format:
 {
   "action": "CREATE_TRANSACTION" | "SHOW_SUMMARY" | "SHOW_RECENT" | "SHOW_BILLS" | "CHECK_BILL" | "SEARCH_TRANSACTIONS" | "UNSUPPORTED",
   "search": string | null,
+  "label": string | null,
+  "category": string | null,
   "month": string | null,
   "transaction": {
     "amount": number,
@@ -999,7 +1031,11 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
 
   // Fallback to Gemini AI natural language processing
   if (gemini) {
-    const aiResult = await processNaturalLanguageWithGemini(text, categories);
+    // Fetched here rather than above, since only this path needs them: the shorthand logger never
+    // looks at labels. Names are given to the model, ids are resolved from this list afterwards.
+    const { labels } = await callTool<{ labels: { id: string; name: string }[] }>("get_label_list");
+
+    const aiResult = await processNaturalLanguageWithGemini(text, categories, labels);
     if (aiResult?.action === "CREATE_TRANSACTION" && aiResult.transaction) {
       const txData = aiResult.transaction;
       const clientBatchId = updateBatchId(BOT_ID, updateId);
@@ -1037,10 +1073,10 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
 
     // Validated rather than trusted: see parseSearchIntent for why a bad month is dropped
     // instead of being passed through as a filter.
-    const intent = parseSearchIntent(aiResult);
+    const intent = parseSearchIntent(aiResult, { labels, categories });
     if (intent) {
       if (intent.kind === "BILL") await handleBillCheck(chatId, intent.search, intent.month);
-      else await handleSearch(chatId, intent.search, intent.month);
+      else await handleSearch(chatId, intent);
       return;
     }
 
@@ -1104,6 +1140,7 @@ const REQUIRED_TOOLS = [
   "search_transactions",
   "get_upcoming_bills",
   "get_bill_history",
+  "get_label_list",
   "create_transactions",
   "scan_receipt",
 ] as const;
