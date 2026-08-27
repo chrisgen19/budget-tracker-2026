@@ -655,21 +655,27 @@ async function handleBillCheck(chatId: number, search: string, month: string | n
     status: string;
     daysLate: number | null;
   };
+  type Summary = { billId: string; description: string; categoryName: string };
   const history = (args: Record<string, unknown>) =>
-    callTool<{ occurrences: Occurrence[] }>("get_bill_history", args);
+    callTool<{ occurrences: Occurrence[]; summaries: Summary[] }>("get_bill_history", args);
 
-  // The limit is applied to every bill's occurrences together, newest first, so a survey across
-  // all bills only reaches back as far as the busiest ones allow: ten monthly bills exhaust a
-  // hundred rows in under a year. This first call is therefore used to identify the bill, not to
-  // answer the question.
-  const survey = await history({ months, limit: HISTORY_PAGE });
+  // `occurrences` is capped across every bill together, newest first, so a survey only reaches
+  // back as far as the busiest bills allow: ten monthly bills exhaust a hundred rows in under a
+  // year. `summaries` is not capped, and carries one row per bill in the window, so the bill is
+  // identified from there and the occurrences are fetched per bill afterwards. Asking `limit: 1`
+  // makes that explicit: the page is unused.
+  const survey = await history({ months, limit: 1 });
 
   const needle = search.toLowerCase();
   // Matched on the bill's own name only. Including the category name pulled in every other bill
   // sharing it, and the reply then labelled the combined rows with one bill's description, so a
   // second bill's payments were presented as this one's.
-  const named = (o: Occurrence) => o.billDescription.toLowerCase().includes(needle);
-  const billIds = [...new Set(survey.occurrences.filter(named).map((o) => o.billId))];
+  // Matched on the bill's own name only. Including the category name pulled in every other bill
+  // sharing it, and the reply then labelled the combined rows with one bill's description, so a
+  // second bill's payments were presented as this one's.
+  const billIds = survey.summaries
+    .filter((b) => b.description.toLowerCase().includes(needle))
+    .map((b) => b.billId);
 
   // Re-queried per bill, where the same limit covers that bill alone and reaches back years
   // rather than months. Without this a survey that truncated before the month asked about
@@ -694,19 +700,6 @@ async function handleBillCheck(chatId: number, search: string, month: string | n
   }
 
   if (matches.length === 0) {
-    // The survey is truncated when it comes back full, and it is sorted newest first, so a month
-    // older than its oldest row was never looked at. Saying "no payment recorded" then asserts
-    // something about rows that were never fetched.
-    const oldest = survey.occurrences.at(-1)?.dueDate.slice(0, 7);
-    if (month && survey.occurrences.length >= HISTORY_PAGE && oldest && month < oldest) {
-      await sendMessage(
-        chatId,
-        `\ud83d\udcc5 I could not reach ${month} for *${search}*: there are too many bill records ` +
-          `in between. Check it in the app.`
-      );
-      return;
-    }
-
     // A bill whose first occurrence has not been paid, skipped or snoozed has no log rows at
     // all, so an empty history does not mean "not a bill". Asking upcoming bills first is what
     // separates "never scheduled" from "scheduled and still due", which is usually the answer
