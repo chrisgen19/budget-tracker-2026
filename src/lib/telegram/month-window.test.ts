@@ -39,6 +39,15 @@ describe("monthsSince", () => {
     expect(monthsSince("2026-08", 0, lateAugustUtc)).toBe(0);
   });
 
+  // The window is capped, so a month beyond it must be recognised as out of range rather than
+  // answered from a window that never reached it.
+  it("reports a distance past the history cap, so the caller can refuse", () => {
+    expect(monthsSince("2019-08", MANILA, NOW)).toBe(84);
+    expect(monthsSince("2021-01", MANILA, NOW)).toBe(67);
+    // Just inside a 60-month window once the +2 buffer is added.
+    expect(monthsSince("2021-11", MANILA, NOW)).toBe(57);
+  });
+
   it("returns zero for anything it cannot parse", () => {
     for (const bad of ["August", "2026-8", "2026-13", "", "not-a-month"]) {
       expect(monthsSince(bad, MANILA, NOW), bad).toBe(0);

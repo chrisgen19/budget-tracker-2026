@@ -520,6 +520,10 @@ async function handleBills(chatId: number) {
  *  without turning the reply into a wall of text. The fetch limit is the tool's own ceiling:
  *  asking for more is rejected outright, which returns nothing rather than more. */
 const SEARCH_SUM_LIMIT = 100;
+
+/** How far back bill history can be asked for. Beyond this the answer is "I cannot check",
+ *  never "it was not paid". */
+const MAX_HISTORY_MONTHS = 60;
 const SEARCH_SHOW_LIMIT = 10;
 
 /**
@@ -551,6 +555,7 @@ async function handleSearch(
       date: string;
       categoryName: string;
       type: string;
+      labels: { name: string }[];
     }[];
     pagination: { total: number };
   }>("search_transactions", {
@@ -596,6 +601,18 @@ async function handleSearch(
     msg += rows.length < matched
       ? `\n\nTotal of the ${rows.length} most recent: *${money(total)}*`
       : `\n\nTotal: *${money(total)}*`;
+
+    // The app's label breakdown divides a transaction's amount evenly among its labels, so a row
+    // carrying two labels contributes half there and all of it here. Both are defensible for the
+    // question each answers, but a user comparing the two numbers deserves to know why they
+    // differ rather than discovering it as an apparent error. Summing full amounts is what keeps
+    // this total equal to the rows listed above it.
+    const shared = rows.filter((r) => (r.labels?.length ?? 0) > 1).length;
+    if (filters.labelId && shared > 0) {
+      msg +=
+        `\n\n_${shared} of these also carry another label. This total counts each in full, ` +
+        `so the app's label breakdown, which splits them, will show less._`;
+    }
   }
 
   await sendMessage(chatId, msg);
@@ -614,7 +631,12 @@ async function handleBillCheck(chatId: number, search: string, month: string | n
   // for an older question, which skipped the fallback below and then reported that the older
   // occurrence never existed.
   const monthsBack = month ? monthsSince(month, TZ_OFFSET) : 0;
-  const months = Math.min(60, Math.max(6, monthsBack + 2));
+  const wanted = Math.max(6, monthsBack + 2);
+  const months = Math.min(MAX_HISTORY_MONTHS, wanted);
+  // Clamping is silent, so an older month would otherwise be reported as unpaid on the strength
+  // of a window that never reached it. Saying "I cannot check that far back" is the only honest
+  // answer available.
+  const beyondWindow = wanted > MAX_HISTORY_MONTHS;
 
   const result = await callTool<{
     occurrences: {
@@ -637,7 +659,26 @@ async function handleBillCheck(chatId: number, search: string, month: string | n
     o.billDescription.toLowerCase().includes(needle)
   );
 
+  if (beyondWindow && month) {
+    await sendMessage(
+      chatId,
+      `\ud83d\udcc5 I can only check bill history back about ${Math.floor(MAX_HISTORY_MONTHS / 12)} years, ` +
+        `and ${month} is further back than that. Look it up in the app instead.`
+    );
+    return;
+  }
+
   if (matches.length === 0) {
+    // A bill whose first occurrence has not been paid, skipped or snoozed has no log rows at
+    // all, so an empty history does not mean "not a bill". Asking upcoming bills first is what
+    // separates "never scheduled" from "scheduled and still due", which is usually the answer
+    // the question was after.
+    const due = await upcomingFor(needle);
+    if (due) {
+      await sendMessage(chatId, `\ud83d\udcc5 No payment recorded for *${search}* yet.\n\n${due}`);
+      return;
+    }
+
     // Not a scheduled bill, or named differently. A description search still answers the
     // question they actually asked, so fall through rather than saying no.
     await handleSearch(chatId, {
