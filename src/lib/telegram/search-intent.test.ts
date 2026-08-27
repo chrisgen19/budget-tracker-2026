@@ -24,6 +24,7 @@ describe("parseSearchIntent", () => {
       labelId: null,
       categoryId: null,
       month: "2026-08",
+      type: "EXPENSE",
       subject: "meralco",
     });
   });
@@ -99,6 +100,32 @@ describe("parseSearchIntent", () => {
     for (const month of ["2026-01", "2026-09", "2026-12"]) {
       expect(parse({ action: "SEARCH_TRANSACTIONS", search: "x", month }), month).toMatchObject({
         month,
+      });
+    }
+  });
+
+  // The bug this covers: with no type filter, a refund or income row sharing a description was
+  // listed and counted as evidence of paying, while the total quietly excluded it, so the count
+  // and the total described different sets.
+  it("defaults to expenses, which is what every phrasing here means", () => {
+    expect(parse({ action: "SEARCH_TRANSACTIONS", search: "meralco" })).toMatchObject({
+      type: "EXPENSE",
+    });
+    expect(parse({ action: "SEARCH_TRANSACTIONS", search: "meralco", type: "EXPENSE" })).toMatchObject(
+      { type: "EXPENSE" }
+    );
+  });
+
+  it("honours an explicit income question", () => {
+    expect(parse({ action: "SEARCH_TRANSACTIONS", search: "freelance", type: "INCOME" })).toMatchObject(
+      { type: "INCOME" }
+    );
+  });
+
+  it("falls back to expenses for a type it does not recognise", () => {
+    for (const type of ["BOTH", "expense", "", null, 42]) {
+      expect(parse({ action: "SEARCH_TRANSACTIONS", search: "x", type }), String(type)).toMatchObject({
+        type: "EXPENSE",
       });
     }
   });

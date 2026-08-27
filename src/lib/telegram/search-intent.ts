@@ -13,6 +13,15 @@ export type SearchIntent =
       labelId: string | null;
       categoryId: string | null;
       month: string | null;
+      /**
+       * Which side of the ledger the question was about.
+       *
+       * Defaults to EXPENSE because every phrasing this intent serves is a spending one: spent,
+       * paid, bought. Without it a refund or an income row sharing a description was listed and
+       * counted as evidence of paying, while the total quietly excluded it, so the count and the
+       * total described different sets.
+       */
+      type: "EXPENSE" | "INCOME";
       /** What to call this back to the user, built from what actually resolved. */
       subject: string;
     }
@@ -48,7 +57,7 @@ export const parseSearchIntent = (
 ): SearchIntent => {
   if (!result || typeof result !== "object") return null;
 
-  const { action, search, label, category, month } = result as Record<string, unknown>;
+  const { action, search, label, category, month, type } = result as Record<string, unknown>;
   const validMonth = typeof month === "string" && MONTH.test(month) ? month : null;
 
   if (action === "CHECK_BILL") {
@@ -77,6 +86,9 @@ export const parseSearchIntent = (
   return {
     kind: "SEARCH",
     search: term,
+    // Only an explicit INCOME is honoured; anything else, including a value the model invented,
+    // falls back to the spending reading the phrasings imply.
+    type: type === "INCOME" ? "INCOME" : "EXPENSE",
     labelId: matchedLabel?.id ?? null,
     categoryId: matchedCategory?.id ?? null,
     month: validMonth,
