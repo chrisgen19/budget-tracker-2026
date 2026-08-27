@@ -55,13 +55,15 @@ CATEGORIES:
 ${categoryList}
 
 CATEGORY RULES:
-1. Food & Dining: food items, beverages, snacks, condiments, cooking ingredients, fresh produce, meat, dairy, bread, canned food, frozen food, instant noodles, rice, eggs
-2. Personal Care: soap, shampoo, toothpaste, deodorant, lotion, tissue paper, toilet paper, napkins, feminine hygiene, cotton buds, razors
-3. Household: cleaning supplies (detergent, bleach, dishwashing liquid, floor cleaner), garbage bags, sponges, air freshener, insect spray
-4. Healthcare: vitamins, medicine, first aid, health supplements
-5. Shopping: clothing, electronics, toys, home decor, kitchenware
-6. For any item not clearly matching the above, match by comparing to the category name
-7. When in doubt about a food-adjacent item (e.g. plastic wrap, aluminum foil), put it in Household
+1. Groceries: raw or packaged food to cook, prepare or keep at home: fresh produce, meat, seafood, dairy, eggs, bread, rice, instant noodles, condiments, cooking ingredients, canned food, frozen food, packaged snacks and beverages
+2. Food & Dining: food already prepared and ready to eat as sold: a hot deli or food-court item, a brewed or made-to-order drink, a restaurant or fast-food line item on the same receipt
+3. Personal Care: soap, shampoo, toothpaste, deodorant, lotion, tissue paper, toilet paper, napkins, feminine hygiene, cotton buds, razors
+4. Household: cleaning supplies (detergent, bleach, dishwashing liquid, floor cleaner), garbage bags, sponges, air freshener, insect spray
+5. Healthcare: vitamins, medicine, first aid, health supplements
+6. Shopping: clothing, electronics, toys, home decor, kitchenware
+7. For any item not clearly matching the above, match by comparing to the category name
+8. Most items on a supermarket or wet-market receipt are Groceries. Use Food & Dining only for a line that was ready to eat when bought, not for ingredients
+9. When in doubt about a food-adjacent item (e.g. plastic wrap, aluminum foil), put it in Household
 
 RESPONSE FORMAT — return ONLY valid JSON, no markdown or explanation:
 {

@@ -67,7 +67,7 @@ Return a JSON object with these fields:
   This photo was taken on ${photoDateStr}. A receipt is normally photographed within days of the purchase, so the year is almost always ${photoDateStr.slice(0, 4)}. Before answering, re-read the year digits and check them against that. Only report a different year if the receipt plainly prints one — an old receipt is possible, a misread digit is far more likely.
 - "dateSource": "OCR" if you read the date from the receipt itself, or "PHOTO_FALLBACK" if you used the fallback "${photoDateStr}" because the date was unreadable. Always include this field.
 - "description": merchant name + short summary of purchase (max 100 chars).
-- "multiCategory": true if the receipt contains items that span 2 or more DIFFERENT categories from the list below, false if all items belong to a single category. For example, a grocery receipt with food AND cleaning supplies = true, a restaurant bill with only food = false, a single ride receipt = false.
+- "multiCategory": true if the receipt contains items that span 2 or more DIFFERENT categories from the list below, false if all items belong to a single category. For example, a supermarket receipt with groceries AND toiletries = true, a restaurant bill with only food = false, a supermarket run that is entirely groceries = false, a single ride receipt = false.
 - "breakdown": ONLY include this field when "multiCategory" is true. Read every line item on the receipt and group them by category. Each entry has: "amount" (sum for that category), "categoryId", "description" (store name + category + 1-2 sample items, max 80 chars), and "lineItems" (array of {"name": "<item name>", "amount": <price>}). The sum of all breakdown amounts should approximately equal the receipt total. Distribute tax/service proportionally or into the largest group. Do NOT include breakdown when multiCategory is false.
   All amounts must be positive numbers. A discount, promo, void or zero-priced line is NOT its own line item: subtract it from the item it applies to, or from that category's total, and never emit a zero or negative "amount".
   At most ${MAX_BREAKDOWN_GROUPS} category groups, and at most ${MAX_BREAKDOWN_LINE_ITEMS} lineItems in any one group. If a group would exceed ${MAX_BREAKDOWN_LINE_ITEMS}, merge its smallest items into a single "Other items" line so the group stays within the limit.
@@ -76,17 +76,18 @@ CATEGORIES:
 ${categoryList}
 
 CATEGORY RULES (pick categoryId by matching the merchant/items to these rules):
-1. Food & Dining: restaurants, cafes, hawker stalls, food courts, bakeries, fast food, coffee shops, bubble tea, food delivery, supermarkets, grocery stores, wet markets, seafood markets, butchers, convenience stores (7-Eleven, FairPrice, Cold Storage), food items, beverages, snacks, condiments, cooking ingredients, fresh produce, meat, dairy, bread, canned food, frozen food
-2. Transportation: ride-hailing (Grab, Gojek), taxis, MRT/bus top-ups, parking, fuel/petrol, tolls
-3. Shopping: clothing, electronics, department stores, online shopping (Shopee, Lazada, Amazon)
-4. Bills & Utilities: electricity, water, gas, internet, phone bills, subscriptions (Netflix, Spotify)
-5. Entertainment: movies, concerts, theme parks, games, sports, streaming services
-6. Healthcare: doctors, clinics, pharmacies, dental, hospital, health supplements, vitamins, medicine
-7. Personal Care: soap, shampoo, toothpaste, deodorant, lotion, tissue paper, toilet paper, napkins, feminine hygiene, razors
-8. Household: cleaning supplies (detergent, bleach, dishwashing liquid, floor cleaner), garbage bags, sponges, air freshener, insect spray
-9. For any category not listed above, match by comparing the merchant/items to the category name.
-10. When in doubt, prefer "Food & Dining" if the merchant sells any food or beverages.
-11. When in doubt about a food-adjacent item (e.g. plastic wrap, aluminum foil), put it in Household.
+1. Food & Dining: food already prepared and ready to eat as sold: restaurants, cafes, hawker stalls, food courts, fast food, coffee shops, bubble tea, food delivery, and ready-to-eat items from a convenience store (7-Eleven, FairPrice, Cold Storage)
+2. Groceries: raw or packaged food bought to cook, prepare or keep at home: supermarkets, grocery stores, wet markets, palengke, seafood markets, butchers, sari-sari stores, bakeries selling bread to take home, fresh produce, meat, seafood, dairy, eggs, bread, rice, noodles, condiments, cooking ingredients, canned food, frozen food, household snacks and beverages bought by the pack
+3. Transportation: ride-hailing (Grab, Gojek), taxis, MRT/bus top-ups, parking, fuel/petrol, tolls
+4. Shopping: clothing, electronics, department stores, online shopping (Shopee, Lazada, Amazon)
+5. Bills & Utilities: electricity, water, gas, internet, phone bills, subscriptions (Netflix, Spotify)
+6. Entertainment: movies, concerts, theme parks, games, sports, streaming services
+7. Healthcare: doctors, clinics, pharmacies, dental, hospital, health supplements, vitamins, medicine
+8. Personal Care: soap, shampoo, toothpaste, deodorant, lotion, tissue paper, toilet paper, napkins, feminine hygiene, razors
+9. Household: cleaning supplies (detergent, bleach, dishwashing liquid, floor cleaner), garbage bags, sponges, air freshener, insect spray
+10. For any category not listed above, match by comparing the merchant/items to the category name.
+11. Food & Dining vs Groceries is decided by whether the food is ready to eat as sold, NOT by the merchant selling food. A meal, a drink made to order, or anything eaten out or delivered is Food & Dining. Ingredients and packaged goods carried home to cook or store are Groceries. When one receipt holds both (a supermarket with a hot deli counter, a cafe that also sells loaves), pick whichever accounts for more of the total.
+12. When in doubt about a food-adjacent item (e.g. plastic wrap, aluminum foil), put it in Household.
 
 Respond with ONLY valid JSON, no markdown or explanation:
 {"amount": <number>, "categoryId": "<id>", "date": "<YYYY-MM-DD>", "dateSource": "OCR" | "PHOTO_FALLBACK", "description": "<text>", "multiCategory": <boolean>}

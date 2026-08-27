@@ -517,3 +517,66 @@ describe("unreadable responses", () => {
     warn.mockRestore();
   });
 });
+
+/**
+ * The bug these cover: the scan prompt hardcoded "supermarkets, grocery stores, wet markets,
+ * seafood markets, butchers" into the Food & Dining rule, and a tie-breaker that preferred
+ * Food & Dining "if the merchant sells any food or beverages". A user who splits Groceries out
+ * into its own category would have every supermarket receipt filed back under Food & Dining by
+ * their own scanner, with nothing failing to say so.
+ */
+describe("scan prompt category routing", () => {
+  /** Pull the rule line that starts with `<n>. <name>:` out of the prompt Gemini was sent. */
+  const ruleFor = async (category: string) => {
+    authorize.mockResolvedValue(AUTHORIZED);
+    generate.mockResolvedValue({
+      text: JSON.stringify({
+        amount: 350,
+        categoryId: "cat_1",
+        date: "2026-08-26",
+        dateSource: "OCR",
+        description: "SM Supermarket",
+        multiCategory: false,
+      }),
+    });
+    await scan();
+
+    const parts = generate.mock.calls[0][0].contents[0].parts as Array<{ text?: string }>;
+    const prompt = parts.find((p) => typeof p.text === "string")!.text!;
+    const line = prompt
+      .split("\n")
+      .find((l) => new RegExp(`^\\d+\\. ${category}:`).test(l.trim()));
+    return line ?? "";
+  };
+
+  it("routes supermarkets and wet markets to Groceries, not Food & Dining", async () => {
+    const groceries = await ruleFor("Groceries");
+
+    expect(groceries).not.toBe("");
+    for (const merchant of ["supermarkets", "grocery stores", "wet markets", "butchers"]) {
+      expect(groceries).toContain(merchant);
+    }
+  });
+
+  it("leaves only ready-to-eat merchants on the Food & Dining rule", async () => {
+    const dining = await ruleFor("Food & Dining");
+
+    expect(dining).toContain("restaurants");
+    expect(dining).toContain("food delivery");
+    // The exact words that used to send every grocery run here.
+    for (const merchant of ["supermarkets", "grocery stores", "wet markets", "butchers"]) {
+      expect(dining).not.toContain(merchant);
+    }
+  });
+
+  it("does not fall back to Food & Dining merely because a merchant sells food", async () => {
+    const dining = await ruleFor("Food & Dining");
+    const parts = generate.mock.calls[0][0].contents[0].parts as Array<{ text?: string }>;
+    const prompt = parts.find((p) => typeof p.text === "string")!.text!;
+
+    expect(dining).not.toBe("");
+    // The old blanket tie-breaker. Its replacement decides on ready-to-eat instead.
+    expect(prompt).not.toContain('prefer "Food & Dining" if the merchant sells any food');
+    expect(prompt).toContain("ready to eat as sold");
+  });
+});
