@@ -16,6 +16,7 @@ import { resolveCommand, type BotCommand } from "@/lib/telegram/commands";
 import { parseSearchIntent } from "@/lib/telegram/search-intent";
 import { parseReportIntent } from "@/lib/telegram/report-intent";
 import { RECEIPT_ITEM_SHOW, renderReceiptItems } from "@/lib/telegram/receipt-reply";
+import { renderLabelBreakdown } from "@/lib/telegram/label-reply";
 import { monthsSince, previousMonthOf } from "@/lib/telegram/month-window";
 import { confirmPendingScan } from "@/lib/telegram/confirm-scan";
 import {
@@ -888,22 +889,7 @@ async function handleLabelBreakdown(chatId: number, month: string | null): Promi
     labels: { name: string; amount: number; percentage: number; transactionCount: number }[];
   }>("get_label_breakdown", { month: target, type: "EXPENSE" });
 
-  if (result.labels.length === 0) {
-    await sendMessage(chatId, `No labelled spending in ${target}.`);
-    return;
-  }
-
-  let msg = `\ud83c\udff7\ufe0f *Spending by label, ${target}*\n\n`;
-  for (const l of result.labels.slice(0, 10)) {
-    msg += `\u2022 *${l.name}*: ${peso(l.amount)} (${l.percentage.toFixed(0)}%, ${l.transactionCount} txn)\n`;
-  }
-  msg += `\nTotal: *${peso(result.total)}*`;
-  // The app splits a transaction's amount evenly across its labels, which is what makes these
-  // percentages add up. Said here because the search handler counts each in full, and the two
-  // figures would otherwise look like a contradiction.
-  msg += `\n\n_A transaction with two labels counts half to each, so these add to 100%._`;
-
-  await sendMessage(chatId, msg);
+  await sendMessage(chatId, renderLabelBreakdown(target, result.labels, result.total, peso));
 }
 
 interface ReceiptItem {
