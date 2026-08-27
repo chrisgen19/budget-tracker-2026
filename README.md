@@ -480,14 +480,17 @@ questions are routed to a real query instead of being answered by the model.
 | `/bills` | Bills due in the next 30 days |
 | `/categories` | Your category list |
 | `/help` | The above, in chat |
+| *did I pay meralco this month* | Searches what you logged and shows the matching rows |
+| *how much on transportation in work budget* | Filters by category and label together |
+| *how much did I spend in shopee* | Matches the label when the name is one, not just the description |
+| *did I pay the water bill* | Checks that recurring bill's history: paid, skipped or snoozed |
+| *(send a photo)* | Reads the receipt with AI, shows what it found, and waits for `yes` before saving |
 
 The slash is optional. `summary`, `balance`, `recent`, `bills`, `categories` and `help` work on
 their own, as do the obvious phrasings around them (`give summary`, `my bills please`). Those are
 matched locally, so they answer instantly and keep working when Gemini is unavailable. Anything
 more conversational still goes to Gemini, which picks the intent; the figures always come from a
 real query either way.
-
-| *(send a photo)* | Reads the receipt with AI, shows what it found, and waits for `yes` before saving |
 
 Anything with a date or time in it (`yesterday`, `at noon`, `18:00`, `sep 14`) skips the fast path
 and goes to Gemini, because the fast path stamps the current time and has no way to express a date.
@@ -515,8 +518,8 @@ refunded.
 ### Setup
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
-2. Mint an MCP token in **Profile > MCP Access** with **all five** scopes the handlers need:
-   `budget:read`, `transactions:read`, `bills:read`, `receipts:scan`, `transactions:write`. Set **Used by** to
+2. Mint an MCP token in **Profile > MCP Access** with **all six** scopes the handlers need:
+   `budget:read`, `transactions:read`, `labels:read`, `bills:read`, `receipts:scan`, `transactions:write`. Set **Used by** to
    **Telegram bot** so its rows are stamped `TELEGRAM` rather than appearing as Claude's. A
    write-only token fails on every message, since each one reads the category list first.
 3. Set the environment variables (see below), then start the app. The bot starts with it.

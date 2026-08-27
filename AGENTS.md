@@ -103,7 +103,7 @@ src/
 - `TELEGRAM_BOT_ENABLED`: starts the bot from `src/instrumentation.ts` on server boot. Set it **only** in the deployed environment: Telegram answers a second concurrent `getUpdates` for one bot token with 409 Conflict, so enabling it locally while production runs the bot makes the two fight. Use `pnpm telegram:bot` to run it locally instead, and not at the same time
 - `TELEGRAM_BOT_TOKEN`: from @BotFather
 - `TELEGRAM_ALLOWED_IDS` / `TELEGRAM_ALLOWED_USERNAMES`: who may message the bot. With neither set it serves nobody. Prefer numeric ids: usernames are weaker, since a released handle can be claimed by someone else
-- `TELEGRAM_MCP_URL` / `TELEGRAM_MCP_TOKEN`: where the bot writes. The URL is **required and has no default**: it used to fall back to this project's production domain, which is correct for its owner and a trap for a fork or a staging deploy that forgets it, since a write-capable token would then be sent to a host the deployer does not control. The port differs by how it runs: `http://localhost:3111/api/mcp` for `pnpm dev` plus `pnpm telegram:bot`, `http://localhost:3000/api/mcp` inside the deployed container (`next start`), or the public URL when the bot runs on a different machine from the app. Mint the token in Profile > MCP Access with all five scopes the handlers need: `budget:read`, `transactions:read`, `bills:read`, `receipts:scan` and `transactions:write`. A write-only token fails on every message, since each one reads the category list first, and the probe names anything missing at startup. Give the bot its own token so revoking it does not break another client
+- `TELEGRAM_MCP_URL` / `TELEGRAM_MCP_TOKEN`: where the bot writes. The URL is **required and has no default**: it used to fall back to this project's production domain, which is correct for its owner and a trap for a fork or a staging deploy that forgets it, since a write-capable token would then be sent to a host the deployer does not control. The port differs by how it runs: `http://localhost:3111/api/mcp` for `pnpm dev` plus `pnpm telegram:bot`, `http://localhost:3000/api/mcp` inside the deployed container (`next start`), or the public URL when the bot runs on a different machine from the app. Mint the token in Profile > MCP Access with all six scopes the handlers need: `budget:read`, `transactions:read`, `labels:read`, `bills:read`, `receipts:scan` and `transactions:write`. A write-only token fails on every message, since each one reads the category list first, and the probe names anything missing at startup. Give the bot its own token so revoking it does not break another client
 - `TELEGRAM_TZ_OFFSET`: **required, no default**. Minutes, `getTimezoneOffset()` convention, and it must match the account's own timezone. It used to fall back to the host's offset, which is UTC in the app container, so "yesterday" silently resolved to the wrong day. Used to resolve relative dates for Gemini and to render the day in `/recent`; every query and write is still resolved server-side against `users.timezone_offset`, so a wrong value cannot move a stored row, only mislabel one before it is written. That it duplicates `users.timezone_offset` at all is the real defect and can drift: see issue #132
 - `TELEGRAM_CURRENCY_SYMBOL`: display only, defaults to the peso sign
 - `TELEGRAM_API_IP`: only for a network whose DNS sinkholes Telegram, an address to use for `api.telegram.org` instead of the resolver. Unset everywhere else: Telegram rotates these, so a stale pin breaks all bot traffic even where DNS works
@@ -120,7 +120,15 @@ model, because a model holding only category names can only refuse or invent. Ob
 Gemini is consulted at all: paying a model call to recognise the word "summary" is slow, costs a
 request, and fails outright when `GEMINI_API_KEY` is unset, where the slash command still works.
 Anything ambiguous is left to the model, since a wrong local guess answers a question the user did
-not ask with no sign it misread them. It is an **MCP client**, not a database client: it calls `/api/mcp` with a scoped token,
+not ask with no sign it misread them. That routing covers specific questions too ("did I pay
+meralco this month"). Gemini is given the label and category *names* and picks one;
+`search-intent.ts` resolves the name back to an id against the real list, so a hallucinated one
+cannot reach the query. A label is preferred over a text search whenever the thing named is one,
+because labels are how spending is grouped here and the name usually appears in no description at
+all: "Shopee" is a label with transactions, and a description search for it returns nothing. Every
+unresolvable name or month is dropped rather than passed through, because a filter the query
+cannot satisfy returns zero rows and "no transactions found" reads exactly like a real answer. A
+question about a recurring bill goes to `get_bill_history` instead. It is an **MCP client**, not a database client: it calls `/api/mcp` with a scoped token,
 so it inherits the scope, the write lease, the rate limit and the audit trail rather than going
 around them, and it holds no database credentials.
 

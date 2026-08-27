@@ -13,6 +13,8 @@ import { MAX_IMAGE_BYTES, pickReceiptImage } from "@/lib/telegram/photo";
 import { readPhotoTakenAt } from "@/lib/exif-date";
 import { receiptDateLooksOff } from "@/lib/telegram/date-sanity";
 import { resolveCommand, type BotCommand } from "@/lib/telegram/commands";
+import { parseSearchIntent } from "@/lib/telegram/search-intent";
+import { monthsSince } from "@/lib/telegram/month-window";
 import { confirmPendingScan } from "@/lib/telegram/confirm-scan";
 import {
   hasPendingScan,
@@ -514,6 +516,271 @@ async function handleBills(chatId: number) {
   await sendMessage(chatId, msg);
 }
 
+/** Rows fetched for the total, and rows actually listed. Fetching wider makes the total real
+ *  without turning the reply into a wall of text. The fetch limit is the tool's own ceiling:
+ *  asking for more is rejected outright, which returns nothing rather than more. */
+const SEARCH_SUM_LIMIT = 100;
+
+/** How far back bill history can be asked for. Beyond this the answer is "I cannot check",
+ *  never "it was not paid". */
+const MAX_HISTORY_MONTHS = 60;
+
+/** The tool's own ceiling per call. Asking for more is rejected outright. */
+const HISTORY_PAGE = 100;
+const SEARCH_SHOW_LIMIT = 10;
+
+/**
+ * Answer "did I pay X" and "how much did I spend on X" from real rows.
+ *
+ * Gemini extracts only the term and the month; every figure below comes from `search_transactions`.
+ * The distinction matters because this is the shape of question a model is most tempted to answer
+ * from nothing, and a confident wrong number about your own money is worse than no answer.
+ */
+async function handleSearch(
+  chatId: number,
+  filters: {
+    search: string | null;
+    labelId: string | null;
+    categoryId: string | null;
+    month: string | null;
+    type: "EXPENSE" | "INCOME";
+    subject: string;
+  }
+): Promise<void> {
+  const { subject, month } = filters;
+  // Always stated. Filtering is by month only, so a question about "last week" is answered with
+  // that whole month, and the header has to say so rather than letting a wider answer pass for
+  // a narrower one.
+  const when = month ? ` in ${month}` : "";
+  const result = await callTool<{
+    transactions: {
+      amount: number;
+      description: string;
+      date: string;
+      categoryName: string;
+      type: string;
+      labels: { name: string }[];
+    }[];
+    pagination: { total: number };
+  }>("search_transactions", {
+    // Constrained to one side of the ledger, so the count, the listed rows and the total all
+    // describe the same set.
+    type: filters.type,
+    ...(filters.search && { search: filters.search }),
+    ...(filters.labelId && { labelIds: [filters.labelId] }),
+    ...(filters.categoryId && { categoryId: filters.categoryId }),
+    ...(month && { month }),
+    // Fetched wider than shown so the total is the answer to "how much did I spend on X",
+    // rather than the total of the first ten rows dressed up as one.
+    limit: SEARCH_SUM_LIMIT,
+    sortBy: "date",
+    sortDir: "desc",
+  });
+
+  const rows = result.transactions;
+
+  if (rows.length === 0) {
+    // Said plainly rather than dressed up: "no" is a real answer to "did I pay X", and the
+    // wording has to make clear it means nothing was found rather than nothing was searched.
+    await sendMessage(
+      chatId,
+      `\ud83d\udd0d Nothing found for *${subject}*${when}.\n\n` +
+        `A plain search matches what you typed when logging it, so try the merchant name as it ` +
+        `appears on the transaction, or the name of a label.`
+    );
+    return;
+  }
+
+  const matched = result.pagination.total;
+  const total = rows.reduce((sum, r) => sum + r.amount, 0);
+  const money = (n: number) => `${SYMBOL}${n.toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+  const shown = rows.slice(0, SEARCH_SHOW_LIMIT);
+
+  let msg = `\ud83d\udd0d *${subject}*${when}: ${matched} match${matched === 1 ? "" : "es"}\n\n`;
+  for (const r of shown) {
+    msg += `\u2022 ${localDay(r.date, TZ_OFFSET)}  *${money(r.amount)}*  ${r.description || r.categoryName}\n`;
+  }
+  if (shown.length < matched) msg += `\n_Showing the ${shown.length} most recent._`;
+
+  if (total > 0) {
+    // Says which it is. A total over a truncated set presented as "the total" is the same class
+    // of wrong as everything else guarded against here: it reads like an answer.
+    msg += rows.length < matched
+      ? `\n\nTotal of the ${rows.length} most recent: *${money(total)}*`
+      : `\n\nTotal: *${money(total)}*`;
+
+    // The app's label breakdown divides a transaction's amount evenly among its labels, so a row
+    // carrying two labels contributes half there and all of it here. Both are defensible for the
+    // question each answers, but a user comparing the two numbers deserves to know why they
+    // differ rather than discovering it as an apparent error. Summing full amounts is what keeps
+    // this total equal to the rows listed above it.
+    const shared = rows.filter((r) => (r.labels?.length ?? 0) > 1).length;
+    if (filters.labelId && shared > 0) {
+      msg +=
+        `\n\n_${shared} of these also carry another label. This total counts each in full, ` +
+        `so the app's label breakdown, which splits them, will show less._`;
+    }
+  }
+
+  await sendMessage(chatId, msg);
+}
+
+/**
+ * Answer "did I pay the water bill" from the bill's own history.
+ *
+ * Better than a description search for a *recurring* bill: the log records paid, skipped and
+ * snoozed per occurrence, so "no" can be distinguished from "skipped on purpose", and a bill the
+ * user renamed still matches. Falls back to a plain search when nothing matches the name, since
+ * not everything people call a bill is a scheduled one.
+ */
+async function handleBillCheck(chatId: number, search: string, month: string | null): Promise<void> {
+  // Sized from the month asked about, not fixed. A fixed six-month window returned recent rows
+  // for an older question, which skipped the fallback below and then reported that the older
+  // occurrence never existed.
+  const monthsBack = month ? monthsSince(month, TZ_OFFSET) : 0;
+  const wanted = Math.max(6, monthsBack + 2);
+  const months = Math.min(MAX_HISTORY_MONTHS, wanted);
+  // Clamping is silent, so an older month would otherwise be reported as unpaid on the strength
+  // of a window that never reached it. Saying "I cannot check that far back" is the only honest
+  // answer available.
+  const beyondWindow = wanted > MAX_HISTORY_MONTHS;
+
+  type Occurrence = {
+    billId: string;
+    billDescription: string;
+    categoryName: string;
+    amount: number;
+    paidAmount: number | null;
+    dueDate: string;
+    status: string;
+    daysLate: number | null;
+  };
+  type Summary = { billId: string; description: string; categoryName: string };
+  const history = (args: Record<string, unknown>) =>
+    callTool<{ occurrences: Occurrence[]; summaries: Summary[] }>("get_bill_history", args);
+
+  // `occurrences` is capped across every bill together, newest first, so a survey only reaches
+  // back as far as the busiest bills allow: ten monthly bills exhaust a hundred rows in under a
+  // year. `summaries` is not capped, and carries one row per bill in the window, so the bill is
+  // identified from there and the occurrences are fetched per bill afterwards. Asking `limit: 1`
+  // makes that explicit: the page is unused.
+  const survey = await history({ months, limit: 1 });
+
+  const needle = search.toLowerCase();
+  // Matched on the bill's own name only. Including the category name pulled in every other bill
+  // sharing it, and the reply then labelled the combined rows with one bill's description, so a
+  // second bill's payments were presented as this one's.
+  // Matched on the bill's own name only. Including the category name pulled in every other bill
+  // sharing it, and the reply then labelled the combined rows with one bill's description, so a
+  // second bill's payments were presented as this one's.
+  const billIds = survey.summaries
+    .filter((b) => b.description.toLowerCase().includes(needle))
+    .map((b) => b.billId);
+
+  // Re-queried per bill, where the same limit covers that bill alone and reaches back years
+  // rather than months. Without this a survey that truncated before the month asked about
+  // reported "no payment recorded" for an occurrence that is sitting in the table.
+  const matches = billIds.length
+    ? (
+        await Promise.all(
+          billIds.map((billId) => history({ months, billId, limit: HISTORY_PAGE }))
+        )
+      )
+        .flatMap((r) => r.occurrences)
+        .sort((a, b) => b.dueDate.localeCompare(a.dueDate))
+    : [];
+
+  if (beyondWindow && month) {
+    await sendMessage(
+      chatId,
+      `\ud83d\udcc5 I can only check bill history back about ${Math.floor(MAX_HISTORY_MONTHS / 12)} years, ` +
+        `and ${month} is further back than that. Look it up in the app instead.`
+    );
+    return;
+  }
+
+  if (matches.length === 0) {
+    // A bill whose first occurrence has not been paid, skipped or snoozed has no log rows at
+    // all, so an empty history does not mean "not a bill". Asking upcoming bills first is what
+    // separates "never scheduled" from "scheduled and still due", which is usually the answer
+    // the question was after.
+    const due = await upcomingFor(needle);
+    if (due) {
+      await sendMessage(chatId, `\ud83d\udcc5 No payment recorded for *${search}* yet.\n\n${due}`);
+      return;
+    }
+
+    // Not a scheduled bill, or named differently. A description search still answers the
+    // question they actually asked, so fall through rather than saying no.
+    await handleSearch(chatId, {
+      search,
+      labelId: null,
+      categoryId: null,
+      month,
+      type: "EXPENSE",
+      subject: search,
+    });
+    return;
+  }
+
+  const money = (n: number) =>
+    `${SYMBOL}${n.toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+  const line = (o: (typeof matches)[number], withName: boolean) => {
+    const mark = o.status === "PAID" ? "\u2705" : o.status === "SKIPPED" ? "\u23ed\ufe0f" : "\ud83d\udd52";
+    const amount = o.paidAmount ?? o.amount;
+    const late = o.daysLate && o.daysLate > 0 ? ` (${o.daysLate}d late)` : "";
+    const name = withName ? ` ${o.billDescription}` : "";
+    return `${mark} ${localDay(o.dueDate, TZ_OFFSET)}${name}  ${o.status.toLowerCase()}  *${money(amount)}*${late}\n`;
+  };
+
+  // One name can match several bills. Naming each row is the honest way to show that, rather
+  // than titling the lot with whichever happened to sort first.
+  const distinct = new Set(matches.map((o) => o.billId));
+  const withName = distinct.size > 1;
+  const title = withName ? search : matches[0].billDescription;
+
+  const inMonth = month ? matches.filter((o) => o.dueDate.slice(0, 7) === month) : matches;
+
+  if (inMonth.length === 0) {
+    // `get_bill_history` is built from the payment log, so an occurrence that is merely *unpaid*
+    // has no row at all. Saying "no occurrence" would therefore report a bill that is due and
+    // outstanding as one that was never scheduled, which is the opposite of the truth.
+    const due = await upcomingFor(needle);
+    const latest = matches[0];
+    await sendMessage(
+      chatId,
+      `\ud83d\udcc5 No payment recorded for *${title}* in ${month}.\n\n` +
+        (due ? `${due}\n\n` : "") +
+        `Most recent record: ${localDay(latest.dueDate, TZ_OFFSET)}, ${latest.status.toLowerCase()}.`
+    );
+    return;
+  }
+
+  let msg = `\ud83d\udcc5 *${title}*${month ? ` in ${month}` : ""}\n\n`;
+  for (const o of inMonth.slice(0, 8)) msg += line(o, withName);
+
+  await sendMessage(chatId, msg);
+}
+
+/** Whether a bill matching this name is currently due or overdue, phrased for a chat reply. */
+async function upcomingFor(needle: string): Promise<string | null> {
+  try {
+    const { bills } = await callTool<{
+      bills: { description: string; categoryName: string; dueDate: string; isOverdue: boolean }[];
+    }>("get_upcoming_bills", { days: 45 });
+
+    const match = bills.find((b) => (b.description || b.categoryName).toLowerCase().includes(needle));
+    if (!match) return null;
+
+    return match.isOverdue
+      ? `\u26a0\ufe0f It is overdue, due ${localDay(match.dueDate, TZ_OFFSET)}.`
+      : `It is still due on ${localDay(match.dueDate, TZ_OFFSET)}.`;
+  } catch {
+    // Extra context, not the answer. A failure here must not lose the reply.
+    return null;
+  }
+}
+
 async function handleCategories(chatId: number) {
   const result = await callTool<{ categories: { name: string; type: string }[] }>(
     "get_category_list"
@@ -534,21 +801,26 @@ async function handleCategories(chatId: number) {
 
 async function processNaturalLanguageWithGemini(
   text: string,
-  categories: { id: string; name: string; type: string }[]
+  categories: { id: string; name: string; type: string }[],
+  labels: { id: string; name: string }[]
 ): Promise<any> {
   if (!gemini) return null;
 
   const localIso = localTimestamp(TZ_OFFSET);
   const categoryNames = categories.map((c) => ({ name: c.name, type: c.type, id: c.id }));
+  // Names only. Gemini picks one by name and the bot resolves it against the real list, so a
+  // hallucinated id cannot reach the query.
+  const labelNames = labels.map((l) => l.name);
 
   const prompt = `You are an AI assistant for a personal budget tracker.
 Current timestamp in user timezone: ${localIso}
 User's categories: ${JSON.stringify(categoryNames)}
+User's labels: ${JSON.stringify(labelNames)}
 
 Analyze the user's message: "${text}"
 
 You have NO access to the user's transactions, totals, or balances. You can see only the
-message, the current time, and the category names above. Never state or estimate any amount,
+message, the current time, and the category and label names above. Never state or estimate any amount,
 total, balance or count: you would be inventing it.
 
 Decide what the user wants:
@@ -556,8 +828,32 @@ Decide what the user wants:
 - Asking about this month's spending, balance, or where their money went -> "SHOW_SUMMARY"
 - Asking what they recently logged -> "SHOW_RECENT"
 - Asking about upcoming or due bills -> "SHOW_BILLS"
+- Asking whether a specific RECURRING BILL was paid ("did I pay the water bill", "have I paid
+  internet this month") -> "CHECK_BILL", with "search" set to the bill's name as they said it
+- Asking what they spent on something, or whether they bought it
+  ("did I pay meralco", "how much did I spend at jollibee", "how much on transportation in
+  work budget this month", "did I buy coffee last week") -> "SEARCH_TRANSACTIONS". Fill in whichever of these apply:
+  - "label": one of the label names above, EXACTLY as written there, when the user named one.
+    Labels are how this user groups spending, so prefer a label over a text search whenever the
+    thing they named appears in that list: "shopee" is a label, not a word in a description.
+  - "category": one of the category names above, EXACTLY as written there, when they named one.
+  - "search": free text for a merchant or item that is NOT a label or category name.
+  - "type": "INCOME" only when the question is clearly about money coming in ("how much did I
+    earn from X", "did I get paid by X"). Leave it out for anything about spending, paying or
+    buying, which is nearly always what is meant.
+  - "month": YYYY-MM. Set it whenever the user limited the question to ANY period, not only a
+    whole month: for "last week", "yesterday" or a named date, use the month that period falls
+    in. Filtering is only available by month, so a narrower period becomes its month and the
+    reply says which month it covered. Omit it only when they set no time limit at all
+    ("how much have I spent at jollibee"). Use the current timestamp above to resolve
+    "this month" and "last month".
+  At least one of label, category or search must be set.
 - Anything else -> "UNSUPPORTED", with replyText saying briefly what you cannot do and
   pointing at /summary, /recent, /bills or /help. State no figures.
+
+"search" is matched against the transaction description, so use the word the user would have typed
+when logging it: "meralco", not "electricity". Never guess an amount or a date: you are only
+extracting what to look for.
 
 The SHOW_* actions are answered from the user's real data, not by you.
 
@@ -570,7 +866,12 @@ If logging a transaction:
 
 Return ONLY a JSON object in this format:
 {
-  "action": "CREATE_TRANSACTION" | "SHOW_SUMMARY" | "SHOW_RECENT" | "SHOW_BILLS" | "UNSUPPORTED",
+  "action": "CREATE_TRANSACTION" | "SHOW_SUMMARY" | "SHOW_RECENT" | "SHOW_BILLS" | "CHECK_BILL" | "SEARCH_TRANSACTIONS" | "UNSUPPORTED",
+  "search": string | null,
+  "type": "EXPENSE" | "INCOME" | null,
+  "label": string | null,
+  "category": string | null,
+  "month": string | null,
   "transaction": {
     "amount": number,
     "description": string,
@@ -799,6 +1100,10 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       `\u2022 /bills - Upcoming scheduled bills\n` +
       `\u2022 /categories - List all categories\n` +
       `\u2022 /help - Show this guide\n\n` +
+      `\ud83d\udd0d *Ask about what you logged:*\n` +
+      `\u2022 \`did I pay meralco this month\`\n` +
+      `\u2022 \`how much on transportation in work budget\`\n` +
+      `\u2022 \`did I pay the water bill\`\n\n` +
       `The slash is optional: *summary*, *recent*, *bills* and *categories* work on their own, ` +
       `and you can ask in your own words too.`;
     await sendMessage(chatId, msg);
@@ -868,7 +1173,24 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
 
   // Fallback to Gemini AI natural language processing
   if (gemini) {
-    const aiResult = await processNaturalLanguageWithGemini(text, categories);
+    // Fetched here rather than above, since only this path needs them: the shorthand logger never
+    // looks at labels. Names are given to the model, ids are resolved from this list afterwards.
+    //
+    // A failure here is absorbed rather than propagated. `get_label_list` needs `labels:read`,
+    // which older tokens were minted without, and losing labels costs precision on one kind of
+    // question. Letting it throw would have failed *every* message on this path, including
+    // logging, for a scope the setup notes did not ask for.
+    const labels = await callTool<{ labels: { id: string; name: string }[] }>("get_label_list")
+      .then((r) => r.labels)
+      .catch(() => {
+        console.warn(
+          "[telegram] could not read labels, so label filters are unavailable. " +
+            "Mint a token with labels:read to enable them."
+        );
+        return [] as { id: string; name: string }[];
+      });
+
+    const aiResult = await processNaturalLanguageWithGemini(text, categories, labels);
     if (aiResult?.action === "CREATE_TRANSACTION" && aiResult.transaction) {
       const txData = aiResult.transaction;
       const clientBatchId = updateBatchId(BOT_ID, updateId);
@@ -901,6 +1223,15 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     const handler = grounded[aiResult?.action ?? ""];
     if (handler) {
       await handler(chatId);
+      return;
+    }
+
+    // Validated rather than trusted: see parseSearchIntent for why a bad month is dropped
+    // instead of being passed through as a filter.
+    const intent = parseSearchIntent(aiResult, { labels, categories });
+    if (intent) {
+      if (intent.kind === "BILL") await handleBillCheck(chatId, intent.search, intent.month);
+      else await handleSearch(chatId, intent);
       return;
     }
 
@@ -963,6 +1294,8 @@ const REQUIRED_TOOLS = [
   "get_spending_by_category",
   "search_transactions",
   "get_upcoming_bills",
+  "get_bill_history",
+  "get_label_list",
   "create_transactions",
   "scan_receipt",
 ] as const;
@@ -985,7 +1318,7 @@ async function probeMcp(): Promise<void> {
         // started clean and then failed on everything.
         console.warn(
           `[telegram] this token is missing ${missing.join(", ")}. ` +
-            "Mint one with budget:read, transactions:read, bills:read, receipts:scan and transactions:write."
+            "Mint one with budget:read, transactions:read, labels:read, bills:read, receipts:scan and transactions:write."
         );
       }
       return;
@@ -1029,7 +1362,7 @@ export async function startTelegramBot(): Promise<void> {
   if (!MCP_TOKEN) {
     throw new Error(
       "TELEGRAM_MCP_TOKEN is not set. Mint one in Profile > MCP Access with the " +
-        "budget:read, transactions:read, bills:read, receipts:scan and transactions:write " +
+        "budget:read, transactions:read, labels:read, bills:read, receipts:scan and transactions:write " +
         "scopes, then set TELEGRAM_MCP_TOKEN."
     );
   }
