@@ -4,18 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import { useInstallBanner } from "@/components/pwa/install-banner-context";
 import { useBillReminders } from "@/components/bills/bill-reminder-provider";
-import {
-  FAB_BASE_OFFSET_REM,
-  getMobileFabBannerClearance,
-} from "@/components/ui/bottom-overlay-clearance";
+import { getMobileFabBottom } from "@/components/ui/bottom-overlay-clearance";
 
 interface MobileFabProps {
   label: string;
   icon: LucideIcon;
   onClick: () => void;
-  /** Render as an icon-only button when horizontal screen space is scarce. */
+  /** Opt out of the icon-only shape and render the label beside the icon. */
   compact?: boolean;
-  /** Temporarily hide the overlay during page scroll so rows beneath remain readable. */
+  /** Opt out of hiding the overlay during page scroll. */
   hideWhileScrolling?: boolean;
 }
 
@@ -23,8 +20,8 @@ export function MobileFab({
   label,
   icon: Icon,
   onClick,
-  compact = false,
-  hideWhileScrolling = false,
+  compact = true,
+  hideWhileScrolling = true,
 }: MobileFabProps) {
   const { bannerVisible, bannerHeight: installBannerHeight } = useInstallBanner();
   const { bannerHeight: billBannerHeight } = useBillReminders();
@@ -58,21 +55,25 @@ export function MobileFab({
 
   const hiddenForScroll = hideWhileScrolling && isScrolling;
 
-  const bannerClearance = getMobileFabBannerClearance({
+  const restingBottom = getMobileFabBottom({
     billBannerHeight,
     installBannerVisible: bannerVisible,
     installBannerHeight,
   });
 
+  // `disabled` flips the instant a scroll starts, so the fade out is kept
+  // short: a slow one leaves the button looking perfectly tappable for the
+  // length of the transition while it silently ignores taps. Coming back is
+  // unhurried, where there is no such mismatch to hide.
   return (
     <button
       onClick={onClick}
       disabled={hiddenForScroll}
       aria-label={`Add ${label}`}
-      style={{ bottom: `calc(${FAB_BASE_OFFSET_REM}rem + ${bannerClearance} + env(safe-area-inset-bottom))` }}
-      className={`sm:hidden fixed right-4 z-40 min-h-11 inline-flex items-center justify-center rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all duration-300 ${
+      style={{ bottom: `calc(${restingBottom} + env(safe-area-inset-bottom))` }}
+      className={`sm:hidden fixed right-4 z-40 min-h-11 inline-flex items-center justify-center rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all ${
         compact ? "min-w-11 p-3" : "gap-1.5 px-4 py-3"
-      } ${hiddenForScroll ? "translate-y-3 opacity-0" : "opacity-100"}`}
+      } ${hiddenForScroll ? "duration-100 translate-y-3 opacity-0" : "duration-300 opacity-100"}`}
     >
       <Icon className="w-4 h-4" />
       {!compact && label}

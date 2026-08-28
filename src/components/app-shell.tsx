@@ -32,10 +32,7 @@ import { InstallBannerProvider, useInstallBanner } from "@/components/pwa/instal
 import { InstallPromptBanner } from "@/components/pwa/install-prompt-banner";
 import { OfflineBanner } from "@/components/pwa/offline-banner";
 import { useBillReminders } from "@/components/bills/bill-reminder-provider";
-import {
-  MOBILE_FAB_STATIC_CLEARANCE_REM,
-  getMobileFabBannerClearance,
-} from "@/components/ui/bottom-overlay-clearance";
+import { getMobileFabContentClearance } from "@/components/ui/bottom-overlay-clearance";
 import { useBillAction } from "@/hooks/use-bills";
 import { useToast } from "@/components/ui/toast";
 import type { MultiScanItem } from "@/types";
@@ -64,19 +61,19 @@ const MOBILE_NAV_ITEMS = NAV_ITEMS.filter(
 function AppMain({ children }: { children: React.ReactNode }) {
   const { bannerVisible, bannerHeight: installBannerHeight } = useInstallBanner();
   const { bannerHeight: billBannerHeight } = useBillReminders();
-  const bannerClearance = getMobileFabBannerClearance({
+  const contentClearance = getMobileFabContentClearance({
     billBannerHeight,
     installBannerVisible: bannerVisible,
     installBannerHeight,
   });
 
+  // The clearance runs to `lg`, not to `sm`. The FAB is `sm:hidden`, but both
+  // banners are full-width at every width below `lg`, so a flat `sm:pb-24`
+  // left tablet content sitting underneath them.
   return (
     <main
-      style={{
-        "--mobile-fab-static-clearance": `${MOBILE_FAB_STATIC_CLEARANCE_REM}rem`,
-        "--mobile-fab-banner-clearance": bannerClearance,
-      } as CSSProperties}
-      className="lg:pl-64 pt-16 lg:pt-0 pb-[calc(var(--mobile-fab-static-clearance)+var(--mobile-fab-banner-clearance)+env(safe-area-inset-bottom))] sm:pb-24 lg:pb-0 min-h-screen"
+      style={{ "--mobile-fab-content-clearance": contentClearance } as CSSProperties}
+      className="lg:pl-64 pt-16 lg:pt-0 pb-[calc(var(--mobile-fab-content-clearance)+env(safe-area-inset-bottom))] lg:pb-0 min-h-screen"
     >
       {children}
     </main>

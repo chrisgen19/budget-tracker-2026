@@ -1,61 +1,116 @@
 import { describe, expect, it } from "vitest";
 import {
+  BILL_BANNER_BASE_REM,
+  FAB_BASE_OFFSET_REM,
   INSTALL_BANNER_BASE_REM,
-  MOBILE_FAB_STATIC_CLEARANCE_REM,
-  getBillBannerClearancePx,
-  getMobileFabBannerClearance,
+  getInstallBannerBottom,
+  getInstallBannerBottomDesktop,
+  getMobileFabBottom,
+  getMobileFabContentClearance,
 } from "@/components/ui/bottom-overlay-clearance";
 
-describe("getMobileFabBannerClearance", () => {
-  it("adds no dynamic clearance when both banners are hidden", () => {
-    expect(getMobileFabBannerClearance({
-      billBannerHeight: 0,
-      installBannerVisible: false,
-      installBannerHeight: 0,
-    })).toBe("calc(0px + 0px)");
+/**
+ * The offsets are CSS expressions, so resolve them the way a browser would to
+ * assert on distances rather than on string shape. Only `rem`, `px`, `calc()`
+ * and `max()` appear here, which is little enough to evaluate directly.
+ */
+const ROOT_FONT_PX = 16;
+const resolve = (css: string): number => {
+  const inner = css.trim();
+  // Sum at the top level first: a `max(...)` with a trailing `+ 12px` is an
+  // addition, not a function call, and stripping it as one corrupts the tail.
+  const terms = splitTopLevel(inner, "+");
+  if (terms.length > 1) return terms.reduce((sum, term) => sum + resolve(term), 0);
+  const wraps = (fn: string) => inner.startsWith(`${fn}(`) && inner.endsWith(")");
+  if (wraps("max")) return Math.max(...splitTopLevel(inner.slice(4, -1)).map(resolve));
+  if (wraps("calc")) return resolve(inner.slice(5, -1));
+  if (inner.endsWith("rem")) return parseFloat(inner) * ROOT_FONT_PX;
+  if (inner.endsWith("px")) return parseFloat(inner);
+  throw new Error(`unhandled length: ${inner}`);
+};
+
+const splitTopLevel = (input: string, separator = ",") => {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const char of input) {
+    if (char === "(") depth++;
+    if (char === ")") depth--;
+    if (char === separator && depth === 0) {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  parts.push(current);
+  return parts;
+};
+
+const BILL_H = 180;
+const INSTALL_H = 126;
+const GAP = 12;
+
+describe("getInstallBannerBottom", () => {
+  it("rests at its own base when no bill reminder is showing", () => {
+    expect(resolve(getInstallBannerBottom(0))).toBe(INSTALL_BANNER_BASE_REM * ROOT_FONT_PX);
   });
 
-  it("adds the bill height and gap when the bill banner is visible", () => {
-    expect(getMobileFabBannerClearance({
-      billBannerHeight: 88,
-      installBannerVisible: false,
-      installBannerHeight: 0,
-    })).toBe("calc(100px + 0px)");
-  });
-
-  it("adds the install height relative to its lower base offset", () => {
-    expect(getMobileFabBannerClearance({
-      billBannerHeight: 0,
-      installBannerVisible: true,
-      installBannerHeight: 120,
-    })).toBe("calc(0px + max(0px, calc(132px - 0.5rem)))");
-  });
-
-  it("stacks both banner clearances", () => {
-    expect(getMobileFabBannerClearance({
-      billBannerHeight: 88,
-      installBannerVisible: true,
-      installBannerHeight: 120,
-    })).toBe("calc(100px + max(0px, calc(132px - 0.5rem)))");
+  it("clears the bill reminder by the stack gap, not less", () => {
+    const billTop = BILL_BANNER_BASE_REM * ROOT_FONT_PX + BILL_H;
+    // Regression: the clearance used to be added to the install banner's own
+    // lower base, so the 8px difference between the two bases ate most of the
+    // gap and the banners sat 4px apart.
+    expect(resolve(getInstallBannerBottom(BILL_H)) - billTop).toBe(GAP);
   });
 });
 
-describe("getBillBannerClearancePx", () => {
-  it("adds nothing when no bill reminder is showing", () => {
-    expect(getBillBannerClearancePx(0)).toBe(0);
-  });
-
-  it("adds the reminder's height plus the gap when one is showing", () => {
-    expect(getBillBannerClearancePx(88)).toBe(100);
+describe("getInstallBannerBottomDesktop", () => {
+  it("clears the bill reminder by the stack gap above lg too", () => {
+    const billTop = 2 * ROOT_FONT_PX + BILL_H;
+    expect(resolve(getInstallBannerBottomDesktop(BILL_H)) - billTop).toBe(GAP);
   });
 });
 
-describe("shared offsets", () => {
-  it("still resolve to the values the layout shipped with", () => {
-    // 5rem offset + 2.75rem tap target - 1rem from the nested `p-4` wrapper.
-    expect(MOBILE_FAB_STATIC_CLEARANCE_REM).toBe(6.75);
-    // The install banner renders this as its own resting offset; the FAB
-    // subtracts it from FAB_BASE_OFFSET_REM to sit above the banner.
-    expect(INSTALL_BANNER_BASE_REM).toBe(4.5);
+describe("getMobileFabBottom", () => {
+  const cases = [
+    { name: "no banners", billBannerHeight: 0, installBannerVisible: false, installBannerHeight: 0 },
+    { name: "bill only", billBannerHeight: BILL_H, installBannerVisible: false, installBannerHeight: 0 },
+    { name: "install only", billBannerHeight: 0, installBannerVisible: true, installBannerHeight: INSTALL_H },
+    { name: "both", billBannerHeight: BILL_H, installBannerVisible: true, installBannerHeight: INSTALL_H },
+  ];
+
+  it("rests at its own base when no banner is showing", () => {
+    expect(resolve(getMobileFabBottom(cases[0]))).toBe(FAB_BASE_OFFSET_REM * ROOT_FONT_PX);
+  });
+
+  it.each(cases)("clears every visible banner by the stack gap ($name)", (banners) => {
+    const fabBottom = resolve(getMobileFabBottom(banners));
+    if (banners.billBannerHeight > 0) {
+      const billTop = BILL_BANNER_BASE_REM * ROOT_FONT_PX + banners.billBannerHeight;
+      expect(fabBottom).toBeGreaterThanOrEqual(billTop + GAP);
+    }
+    if (banners.installBannerVisible) {
+      const installTop =
+        resolve(getInstallBannerBottom(banners.billBannerHeight)) + banners.installBannerHeight;
+      // Regression: with both banners up, the FAB compensated for the install
+      // banner's lower base a second time and sat 8px too low.
+      expect(fabBottom).toBe(installTop + GAP);
+    }
+    expect(fabBottom).toBeGreaterThanOrEqual(FAB_BASE_OFFSET_REM * ROOT_FONT_PX);
+  });
+});
+
+describe("getMobileFabContentClearance", () => {
+  it.each([0, BILL_H])("ends content flush with the FAB's top edge (bill %ipx)", (billHeight) => {
+    const banners = {
+      billBannerHeight: billHeight,
+      installBannerVisible: true,
+      installBannerHeight: INSTALL_H,
+    };
+    const FAB_HEIGHT = 44;
+    const NESTED_PADDING = 16; // the `p-4` wrapper inside <main>
+    const fabTop = resolve(getMobileFabBottom(banners)) + FAB_HEIGHT;
+    expect(resolve(getMobileFabContentClearance(banners)) + NESTED_PADDING).toBe(fabTop);
   });
 });
