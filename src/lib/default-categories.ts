@@ -19,6 +19,7 @@ export const DEFAULT_CATEGORIES = [
   { name: "Housing", type: TransactionType.EXPENSE, icon: "Home", color: "#8B6FC0" },
   { name: "Home Supplies", type: TransactionType.EXPENSE, icon: "Droplets", color: "#14B8A6" },
   { name: "Utilities", type: TransactionType.EXPENSE, icon: "Zap", color: "#F5A623" },
+  { name: "Subscriptions", type: TransactionType.EXPENSE, icon: "Film", color: "#FF6B6B" },
   { name: "Entertainment", type: TransactionType.EXPENSE, icon: "Film", color: "#E05B8D" },
   { name: "Shopping", type: TransactionType.EXPENSE, icon: "ShoppingBag", color: "#4ECDC4" },
   { name: "Healthcare", type: TransactionType.EXPENSE, icon: "Heart", color: "#FF6B6B" },

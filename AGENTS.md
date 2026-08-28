@@ -169,7 +169,15 @@ Active tasks:
 
 ## Database
 - `DATABASE_URL` in `.env` points to local PostgreSQL
-- Default categories are seeded (15 total: 10 expense, 5 income)
+- Default categories are seeded (18 total: 13 expense, 5 income) from `src/lib/default-categories.ts`.
+  The seed checks each one individually, so a category added to that list reaches an already-seeded
+  database; it used to skip the whole block whenever any default existed. That per-category check is
+  also the only duplicate protection there is, since `@@unique([name, type, userId])` does not
+  constrain defaults: their `userId` is NULL and Postgres treats NULLs as distinct.
+- Promoting a category people already created by hand into a default leaves both rows in place, and
+  `GET /api/categories` returns `OR: [{ isDefault: true }, { userId }]`, so both appear with the same
+  name. `scripts/merge-custom-category-into-default.ts` repoints transactions, recurring bills and the
+  `quick_*_categories` arrays onto the default and deletes the custom row. Dry run by default
 - Users can create custom categories on top of defaults
 - Key models: `User`, `Category`, `Transaction`, `ScheduledTransaction` (recurring bills; `@@map("scheduled_transactions")` — there is no `Bill` model), `ScheduledTransactionLog` (per-occurrence PAID/SKIPPED/SNOOZED), `BillEmailLog`, `Label`, `LabelSchedule`, `TransactionLabel`, `BillLabel`, `VerificationToken`, `ScanLog`, `AiAssessment`, `AiUsageLog`, `McpToken`, `AppSettings`
 - Notable columns: `users.hide_amounts`, `users.timezone_offset`, `users.email_verified`, `users.default_label_type`, `transactions.receipt_group_id`, `transactions.receipt_breakdown`, `transactions.bill_id`, `transactions.client_batch_id`, `transactions.created_via`, `transactions.mcp_token_id`, `users.mcp_writes_enabled_until`, `mcp_tokens.source`

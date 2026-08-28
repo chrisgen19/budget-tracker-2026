@@ -626,8 +626,9 @@ describe("scan prompt category routing", () => {
     const prompt = call.find((p) => typeof p.text === "string")!.text!;
 
     // Categories that exist per-deployment rather than in the seed. Adding a name here is a
-    // statement that this deployment owns it; a rule naming anything else is a bug.
-    const deploymentSpecific = new Set(["Subscriptions"]);
+    // statement that this deployment owns it; a rule naming anything else is a bug. Empty is the
+    // healthy state: every category the prompt routes to is one every install actually has.
+    const deploymentSpecific = new Set<string>();
     const seeded = new Set(DEFAULT_CATEGORIES.map((c) => c.name));
 
     const named = prompt
