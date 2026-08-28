@@ -331,7 +331,10 @@ export function AppShell({ children }: AppShellProps) {
       </nav>
 
       {/* Main Content */}
-      <main className="lg:pl-64 pt-16 lg:pt-0 pb-24 lg:pb-0 min-h-screen">
+      {/* Below `sm`, reserve the FAB's 5rem bottom offset plus its 2.75rem
+          minimum height. The nested p-4 supplies the final 1rem, so page
+          content clears both the action and the device safe area. */}
+      <main className="lg:pl-64 pt-16 lg:pt-0 pb-[calc(6.75rem+env(safe-area-inset-bottom))] sm:pb-24 lg:pb-0 min-h-screen">
         <div className="max-w-6xl mx-auto p-4 lg:p-8">
           <ScanProvider
             value={{
