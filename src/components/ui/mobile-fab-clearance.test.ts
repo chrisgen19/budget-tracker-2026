@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { getMobileFabBannerClearance } from "@/components/ui/mobile-fab-clearance";
+import {
+  MOBILE_FAB_STATIC_CLEARANCE_REM,
+  getMobileFabBannerClearance,
+} from "@/components/ui/mobile-fab-clearance";
 
 describe("getMobileFabBannerClearance", () => {
   it("adds no dynamic clearance when both banners are hidden", () => {
@@ -32,5 +35,12 @@ describe("getMobileFabBannerClearance", () => {
       installBannerVisible: true,
       installBannerHeight: 120,
     })).toBe("calc(100px + max(0px, calc(132px - 0.5rem)))");
+  });
+});
+
+describe("MOBILE_FAB_STATIC_CLEARANCE_REM", () => {
+  it("still resolves to the clearance the layout shipped with", () => {
+    // 5rem offset + 2.75rem tap target - 1rem from the nested `p-4` wrapper.
+    expect(MOBILE_FAB_STATIC_CLEARANCE_REM).toBe(6.75);
   });
 });
