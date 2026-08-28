@@ -61,15 +61,19 @@ export function MobileFab({
     installBannerHeight,
   });
 
+  // `disabled` flips the instant a scroll starts, so the fade out is kept
+  // short: a slow one leaves the button looking perfectly tappable for the
+  // length of the transition while it silently ignores taps. Coming back is
+  // unhurried, where there is no such mismatch to hide.
   return (
     <button
       onClick={onClick}
       disabled={hiddenForScroll}
       aria-label={`Add ${label}`}
       style={{ bottom: `calc(${restingBottom} + env(safe-area-inset-bottom))` }}
-      className={`sm:hidden fixed right-4 z-40 min-h-11 inline-flex items-center justify-center rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all duration-300 ${
+      className={`sm:hidden fixed right-4 z-40 min-h-11 inline-flex items-center justify-center rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all ${
         compact ? "min-w-11 p-3" : "gap-1.5 px-4 py-3"
-      } ${hiddenForScroll ? "translate-y-3 opacity-0" : "opacity-100"}`}
+      } ${hiddenForScroll ? "duration-100 translate-y-3 opacity-0" : "duration-300 opacity-100"}`}
     >
       <Icon className="w-4 h-4" />
       {!compact && label}

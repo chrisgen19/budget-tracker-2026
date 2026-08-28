@@ -50,12 +50,17 @@ describe("MobileFab responsive behavior", () => {
     fireEvent.scroll(window);
     expect(button.className).toContain("opacity-0");
     expect((button as HTMLButtonElement).disabled).toBe(true);
+    // `disabled` is instant, so the fade out has to be quick or the button
+    // spends the transition looking tappable while ignoring taps.
+    expect(button.className).toContain("duration-100");
+    expect(button.className).not.toContain("duration-300");
     fireEvent.click(button);
     expect(onClick).not.toHaveBeenCalled();
 
     act(() => vi.advanceTimersByTime(180));
     expect(button.className).toContain("opacity-100");
     expect((button as HTMLButtonElement).disabled).toBe(false);
+    expect(button.className).toContain("duration-300");
   });
 
   it("shows immediately when scroll hiding is disabled during the debounce", () => {
