@@ -67,20 +67,58 @@ test.describe("transactions responsive layout", () => {
       timeout: 120_000,
     });
 
-    await dateHeading.scrollIntoViewIfNeeded();
-    await page.mouse.wheel(0, 300);
-
     const fab = page.locator('button[aria-label="Add Transaction"]');
-    await expect(fab).toHaveClass(/pointer-events-none/);
+    await page.evaluate(() => {
+      const button = document.querySelector('button[aria-label="Add Transaction"]');
+      if (!button) throw new Error("Add Transaction button not found");
+
+      document.documentElement.dataset.fabHiddenObserved = "false";
+      const recordHiddenState = () => {
+        if (button.classList.contains("pointer-events-none")) {
+          document.documentElement.dataset.fabHiddenObserved = "true";
+          observer.disconnect();
+        }
+      };
+      const observer = new MutationObserver(recordHiddenState);
+      observer.observe(button, { attributes: true, attributeFilter: ["class"] });
+      recordHiddenState();
+    });
+
+    const before = await dateHeading.boundingBox();
+    expect(before).not.toBeNull();
+    const initialScrollY = await page.evaluate(() => window.scrollY);
+    const headingDocumentY = before!.y + initialScrollY;
+    const targetScrollY = Math.max(0, headingDocumentY - 40);
+
+    await page.evaluate((scrollY) => window.scrollTo(0, scrollY), targetScrollY);
+
+    await expect
+      .poll(() => page.evaluate(() => window.scrollY), {
+        message: "The E2E account needs enough transactions for the page to scroll",
+      })
+      .toBeGreaterThan(initialScrollY);
+    await expect
+      .poll(() =>
+        page.evaluate(() => document.documentElement.dataset.fabHiddenObserved),
+      )
+      .toBe("true");
     await expect.poll(() => fab.getAttribute("class")).not.toContain("pointer-events-none");
 
-    await dateHeading.scrollIntoViewIfNeeded();
     const box = await dateHeading.boundingBox();
     expect(box).not.toBeNull();
-    expect(box!.y).toBeGreaterThanOrEqual(64);
+    expect(box!.y).toBeGreaterThanOrEqual(60);
+    expect(box!.y).toBeLessThanOrEqual(68);
 
     const fabBox = await fab.boundingBox();
     expect(fabBox).not.toBeNull();
+    expect(fabBox!.width).toBeGreaterThanOrEqual(44);
     expect(fabBox!.width).toBeLessThanOrEqual(48);
+    expect(fabBox!.height).toBeGreaterThanOrEqual(44);
+    expect(fabBox!.height).toBeLessThanOrEqual(48);
+
+    const filterToggleBox = await page.getByRole("button", { name: "Toggle filters" }).boundingBox();
+    expect(filterToggleBox).not.toBeNull();
+    expect(filterToggleBox!.width).toBeGreaterThanOrEqual(44);
+    expect(filterToggleBox!.height).toBeGreaterThanOrEqual(44);
   });
 });

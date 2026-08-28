@@ -41,6 +41,8 @@ describe("MobileFab responsive behavior", () => {
     const button = screen.getByRole("button", { name: "Add Transaction" });
     expect(button.textContent).toBe("");
     expect(button.className).toContain("p-3");
+    expect(button.className).toContain("min-h-11");
+    expect(button.className).toContain("min-w-11");
     expect(button.className).toContain("opacity-100");
 
     fireEvent.scroll(window);
@@ -52,11 +54,46 @@ describe("MobileFab responsive behavior", () => {
     expect(button.className).not.toContain("pointer-events-none");
   });
 
+  it("shows immediately when scroll hiding is disabled during the debounce", () => {
+    vi.useFakeTimers();
+
+    const { rerender } = render(
+      <MobileFab
+        label="Transaction"
+        icon={Plus}
+        compact
+        hideWhileScrolling
+        onClick={() => {}}
+      />,
+    );
+
+    const button = screen.getByRole("button", { name: "Add Transaction" });
+    fireEvent.scroll(window);
+    expect(button.className).toContain("pointer-events-none");
+
+    rerender(
+      <MobileFab
+        label="Transaction"
+        icon={Plus}
+        compact
+        hideWhileScrolling={false}
+        onClick={() => {}}
+      />,
+    );
+
+    expect(button.className).toContain("opacity-100");
+    expect(button.className).not.toContain("pointer-events-none");
+    act(() => vi.advanceTimersByTime(180));
+    expect(button.className).toContain("opacity-100");
+  });
+
   it("keeps the labeled variant visible during scroll by default", () => {
     render(<MobileFab label="Bill" icon={Plus} onClick={() => {}} />);
 
     const button = screen.getByRole("button", { name: "Add Bill" });
     expect(button.textContent).toContain("Bill");
+    expect(button.className).toContain("min-h-11");
+    expect(button.className).not.toContain("min-w-11");
     fireEvent.scroll(window);
     expect(button.className).toContain("opacity-100");
   });

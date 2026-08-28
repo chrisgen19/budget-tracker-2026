@@ -33,7 +33,10 @@ export function MobileFab({
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
-    if (!hideWhileScrolling) return;
+    if (!hideWhileScrolling) {
+      setIsScrolling(false);
+      return;
+    }
 
     const handleScroll = () => {
       setIsScrolling(true);
@@ -47,9 +50,14 @@ export function MobileFab({
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => {
       window.removeEventListener("scroll", handleScroll);
-      if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+      if (scrollTimerRef.current) {
+        clearTimeout(scrollTimerRef.current);
+        scrollTimerRef.current = undefined;
+      }
     };
   }, [hideWhileScrolling]);
+
+  const hiddenForScroll = hideWhileScrolling && isScrolling;
 
   const billClearance = billBannerHeight > 0 ? billBannerHeight + BILL_BANNER_GAP_PX : 0;
   const baseRem = BASE_OFFSET_REM;
@@ -62,9 +70,9 @@ export function MobileFab({
       onClick={onClick}
       aria-label={`Add ${label}`}
       style={{ bottom: `calc(${baseRem}rem + ${billClearance}px + ${bannerClearance} + env(safe-area-inset-bottom))` }}
-      className={`sm:hidden fixed right-4 z-40 inline-flex items-center justify-center rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all duration-300 ${
-        compact ? "p-3" : "gap-1.5 px-4 py-3"
-      } ${isScrolling ? "translate-y-3 opacity-0 pointer-events-none" : "opacity-100"}`}
+      className={`sm:hidden fixed right-4 z-40 min-h-11 inline-flex items-center justify-center rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all duration-300 ${
+        compact ? "min-w-11 p-3" : "gap-1.5 px-4 py-3"
+      } ${hiddenForScroll ? "translate-y-3 opacity-0 pointer-events-none" : "opacity-100"}`}
     >
       <Icon className="w-4 h-4" />
       {!compact && label}

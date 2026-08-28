@@ -13,7 +13,6 @@ export default defineConfig({
   reporter: "list",
   use: {
     baseURL,
-    channel: "chrome",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     navigationTimeout: 120_000,

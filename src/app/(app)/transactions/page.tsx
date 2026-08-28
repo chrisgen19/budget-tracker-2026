@@ -509,7 +509,7 @@ export default function TransactionsPage() {
       </AnimatePresence>
 
       {/* Transaction List — date-grouped */}
-      <div className="card overflow-hidden">
+      <div className="card overflow-clip">
         {loading ? (
           <div className="divide-y divide-cream-200">
             {Array.from({ length: 5 }).map((_, i) => (
