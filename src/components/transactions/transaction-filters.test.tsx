@@ -57,6 +57,64 @@ afterEach(() => {
 });
 
 describe("TransactionFiltersBar state updates", () => {
+  it("keeps advanced controls in the compact drawer below the wide desktop breakpoint", () => {
+    const { container } = renderFilters();
+
+    const toggle = screen.getByRole("button", { name: "Toggle filters" });
+    expect(toggle.className).toContain("min-[1440px]:hidden");
+    expect(toggle.className).toContain("min-h-11");
+    expect(toggle.className).toContain("min-w-11");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    const desktopCategory = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Category",
+    );
+    expect(desktopCategory?.parentElement?.className).toContain("hidden min-[1440px]:block");
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("Amount range")).toBeTruthy();
+    expect(screen.getByText("Added by")).toBeTruthy();
+    expect(screen.getByText("Sort by")).toBeTruthy();
+  });
+
+  it("keeps compact menus in flow without stealing desktop dropdown refs", () => {
+    const { container } = renderFilters();
+    const toggle = screen.getByRole("button", { name: "Toggle filters" });
+
+    fireEvent.click(toggle);
+    const compactSortField = screen.getByText("Sort by").parentElement;
+    expect(compactSortField).not.toBeNull();
+    fireEvent.click(within(compactSortField!).getByRole("button", { name: "Date (newest)" }));
+
+    const sortButtons = within(compactSortField!).getAllByRole("button", {
+      name: "Date (newest)",
+    });
+    const compactSortMenu = sortButtons.at(-1)?.parentElement;
+    expect(compactSortMenu?.className).toContain("relative");
+    expect(compactSortMenu?.className).not.toContain("absolute");
+
+    const desktopCategory = Array.from(container.querySelectorAll("button")).find(
+      (button) =>
+        button.textContent?.trim() === "Category" &&
+        button.parentElement?.className.includes("min-[1440px]:block"),
+    );
+    expect(desktopCategory).toBeTruthy();
+    const desktopCategoryContainer = desktopCategory!.parentElement!;
+
+    fireEvent.click(desktopCategory!);
+    const desktopAllCategories = within(desktopCategoryContainer).getByRole("button", {
+      name: "All categories",
+    });
+    fireEvent.mouseDown(desktopAllCategories);
+    expect(desktopCategory!.querySelector("svg")?.getAttribute("class")).toContain("rotate-180");
+
+    fireEvent.mouseDown(document.body);
+    expect(desktopCategory!.querySelector("svg")?.getAttribute("class")).not.toContain(
+      "rotate-180",
+    );
+  });
+
   it("keeps a type change made before the search debounce fires", () => {
     renderFilters();
 

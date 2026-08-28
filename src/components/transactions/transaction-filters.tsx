@@ -180,9 +180,12 @@ export function TransactionFiltersBar({
 
   // Categories for dropdown
   const [categories, setCategories] = useState<Category[]>([]);
-  const categoryDropdown = useDropdown();
-  const labelDropdown = useDropdown();
-  const sortDropdown = useDropdown();
+  const desktopCategoryDropdown = useDropdown();
+  const desktopLabelDropdown = useDropdown();
+  const desktopSortDropdown = useDropdown();
+  const compactCategoryDropdown = useDropdown();
+  const compactLabelDropdown = useDropdown();
+  const compactSortDropdown = useDropdown();
 
   // Labels for dropdown
   const { data: labels = [] } = useLabelsQuery();
@@ -467,9 +470,9 @@ export function TransactionFiltersBar({
           </div>
 
           {/* Desktop: Category Dropdown */}
-          <div ref={categoryDropdown.ref} className="relative hidden sm:block">
+          <div ref={desktopCategoryDropdown.ref} className="relative hidden min-[1440px]:block">
             <button
-              onClick={() => categoryDropdown.setOpen((o) => !o)}
+              onClick={() => desktopCategoryDropdown.setOpen((o) => !o)}
               className={cn(
                 "inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors",
                 filters.categoryId
@@ -491,13 +494,13 @@ export function TransactionFiltersBar({
               <ChevronDown
                 className={cn(
                   "w-3.5 h-3.5 transition-transform duration-200",
-                  categoryDropdown.open && "rotate-180"
+                  desktopCategoryDropdown.open && "rotate-180"
                 )}
               />
             </button>
 
             <AnimatePresence>
-              {categoryDropdown.open && (
+              {desktopCategoryDropdown.open && (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.95, y: -4 }}
                   animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -509,7 +512,7 @@ export function TransactionFiltersBar({
                   <button
                     onClick={() => {
                       update({ categoryId: null });
-                      categoryDropdown.setOpen(false);
+                      desktopCategoryDropdown.setOpen(false);
                     }}
                     className={cn(
                       "flex items-center gap-3 w-full px-4 py-2.5 text-left text-sm transition-colors",
@@ -526,7 +529,7 @@ export function TransactionFiltersBar({
                       key={cat.id}
                       onClick={() => {
                         update({ categoryId: cat.id });
-                        categoryDropdown.setOpen(false);
+                        desktopCategoryDropdown.setOpen(false);
                       }}
                       className={cn(
                         "flex items-center gap-3 w-full px-4 py-2.5 text-left text-sm transition-colors",
@@ -559,9 +562,9 @@ export function TransactionFiltersBar({
 
           {/* Desktop: Label Dropdown */}
           {labels.length > 0 && (
-            <div ref={labelDropdown.ref} className="relative hidden sm:block">
+            <div ref={desktopLabelDropdown.ref} className="relative hidden min-[1440px]:block">
               <button
-                onClick={() => labelDropdown.setOpen((o) => !o)}
+                onClick={() => desktopLabelDropdown.setOpen((o) => !o)}
                 className={cn(
                   "inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors",
                   filters.labelId
@@ -583,13 +586,13 @@ export function TransactionFiltersBar({
                 <ChevronDown
                   className={cn(
                     "w-3.5 h-3.5 transition-transform duration-200",
-                    labelDropdown.open && "rotate-180"
+                    desktopLabelDropdown.open && "rotate-180"
                   )}
                 />
               </button>
 
               <AnimatePresence>
-                {labelDropdown.open && (
+                {desktopLabelDropdown.open && (
                   <motion.div
                     initial={{ opacity: 0, scale: 0.95, y: -4 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -600,7 +603,7 @@ export function TransactionFiltersBar({
                     <button
                       onClick={() => {
                         update({ labelId: null });
-                        labelDropdown.setOpen(false);
+                        desktopLabelDropdown.setOpen(false);
                       }}
                       className={cn(
                         "flex items-center gap-3 w-full px-4 py-2.5 text-left text-sm transition-colors",
@@ -617,7 +620,7 @@ export function TransactionFiltersBar({
                         key={lbl.id}
                         onClick={() => {
                           update({ labelId: lbl.id });
-                          labelDropdown.setOpen(false);
+                          desktopLabelDropdown.setOpen(false);
                         }}
                         className={cn(
                           "flex items-center gap-3 w-full px-4 py-2.5 text-left text-sm transition-colors",
@@ -640,9 +643,9 @@ export function TransactionFiltersBar({
           )}
 
           {/* Desktop: Sort Dropdown */}
-          <div ref={sortDropdown.ref} className="relative hidden sm:block">
+          <div ref={desktopSortDropdown.ref} className="relative hidden min-[1440px]:block">
             <button
-              onClick={() => sortDropdown.setOpen((o) => !o)}
+              onClick={() => desktopSortDropdown.setOpen((o) => !o)}
               className={cn(
                 "inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors",
                 filters.sortBy !== "date" || filters.sortDir !== "desc"
@@ -654,13 +657,13 @@ export function TransactionFiltersBar({
               <ChevronDown
                 className={cn(
                   "w-3.5 h-3.5 transition-transform duration-200",
-                  sortDropdown.open && "rotate-180"
+                  desktopSortDropdown.open && "rotate-180"
                 )}
               />
             </button>
 
             <AnimatePresence>
-              {sortDropdown.open && (
+              {desktopSortDropdown.open && (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.95, y: -4 }}
                   animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -673,7 +676,7 @@ export function TransactionFiltersBar({
                       key={opt.label}
                       onClick={() => {
                         update({ sortBy: opt.sortBy, sortDir: opt.sortDir });
-                        sortDropdown.setOpen(false);
+                        desktopSortDropdown.setOpen(false);
                       }}
                       className={cn(
                         "flex items-center w-full px-4 py-2.5 text-left text-sm transition-colors",
@@ -691,7 +694,7 @@ export function TransactionFiltersBar({
           </div>
 
           {/* Desktop: Amount Range */}
-          <div className="hidden sm:flex items-center gap-1.5">
+          <div className="hidden min-[1440px]:flex items-center gap-1.5">
             <div className="relative">
               <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-warm-300">
                 {currencySymbol}
@@ -722,7 +725,7 @@ export function TransactionFiltersBar({
           </div>
 
           {/* Desktop: Added by */}
-          <div className="hidden sm:flex items-center gap-1 p-1 rounded-lg bg-cream-100">
+          <div className="hidden min-[1440px]:flex items-center gap-1 p-1 rounded-lg bg-cream-100">
             {SOURCE_OPTIONS.map((option) => (
               <button
                 key={option.value}
@@ -746,7 +749,7 @@ export function TransactionFiltersBar({
           {hasActiveFilters(filters) && (
             <button
               onClick={clearAll}
-              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors"
+              className="hidden min-[1440px]:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors"
             >
               <X className="w-3 h-3" />
               Clear all
@@ -756,16 +759,18 @@ export function TransactionFiltersBar({
           {/* Mobile: Filter toggle button */}
           <button
             onClick={() => setExpanded((o) => !o)}
+            aria-label="Toggle filters"
+            aria-expanded={expanded}
             className={cn(
-              "sm:hidden relative p-2 rounded-lg transition-colors",
+              "min-[1440px]:hidden relative min-h-11 min-w-11 p-2 rounded-lg transition-colors",
               expanded || advancedCount > 0
                 ? "bg-amber-light/20 text-amber-dark"
                 : "text-warm-400 hover:text-warm-600 hover:bg-cream-100"
             )}
           >
-            <SlidersHorizontal className="w-4.5 h-4.5" />
+            <SlidersHorizontal className="w-[18px] h-[18px]" />
             {advancedCount > 0 && (
-              <span className="absolute -top-1 -right-1 w-4.5 h-4.5 rounded-full bg-amber text-white text-[10px] font-bold flex items-center justify-center leading-none">
+              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber text-white text-[10px] font-bold flex items-center justify-center leading-none">
                 {advancedCount}
               </span>
             )}
@@ -800,15 +805,15 @@ export function TransactionFiltersBar({
               animate={{ height: "auto", opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="sm:hidden overflow-hidden"
+              className="min-[1440px]:hidden overflow-hidden"
             >
               <div className="pt-2 border-t border-cream-200 space-y-3">
                 {/* Category */}
                 <div>
                   <label className="block text-xs font-medium text-warm-400 mb-1.5">Category</label>
-                  <div ref={categoryDropdown.ref} className="relative">
+                  <div ref={compactCategoryDropdown.ref} className="relative">
                     <button
-                      onClick={() => categoryDropdown.setOpen((o) => !o)}
+                      onClick={() => compactCategoryDropdown.setOpen((o) => !o)}
                       className={cn(
                         "w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg border text-sm transition-colors",
                         filters.categoryId
@@ -830,24 +835,24 @@ export function TransactionFiltersBar({
                       <ChevronDown
                         className={cn(
                           "w-3.5 h-3.5 transition-transform duration-200",
-                          categoryDropdown.open && "rotate-180"
+                          compactCategoryDropdown.open && "rotate-180"
                         )}
                       />
                     </button>
 
                     <AnimatePresence>
-                      {categoryDropdown.open && (
+                      {compactCategoryDropdown.open && (
                         <motion.div
                           initial={{ opacity: 0, scale: 0.95, y: -4 }}
                           animate={{ opacity: 1, scale: 1, y: 0 }}
                           exit={{ opacity: 0, scale: 0.95, y: -4 }}
                           transition={{ duration: 0.15 }}
-                          className="absolute left-0 right-0 top-full mt-1 max-h-52 overflow-y-auto bg-white rounded-xl shadow-soft-lg border border-cream-300/60 z-50"
+                          className="relative mt-1 w-full max-h-52 overflow-y-auto bg-white rounded-xl shadow-soft-lg border border-cream-300/60 z-50"
                         >
                           <button
                             onClick={() => {
                               update({ categoryId: null });
-                              categoryDropdown.setOpen(false);
+                              compactCategoryDropdown.setOpen(false);
                             }}
                             className={cn(
                               "flex items-center gap-3 w-full px-4 py-2.5 text-left text-sm transition-colors",
@@ -864,7 +869,7 @@ export function TransactionFiltersBar({
                               key={cat.id}
                               onClick={() => {
                                 update({ categoryId: cat.id });
-                                categoryDropdown.setOpen(false);
+                                compactCategoryDropdown.setOpen(false);
                               }}
                               className={cn(
                                 "flex items-center gap-3 w-full px-4 py-2.5 text-left text-sm transition-colors",
@@ -900,9 +905,9 @@ export function TransactionFiltersBar({
                 {labels.length > 0 && (
                   <div>
                     <label className="block text-xs font-medium text-warm-400 mb-1.5">Label</label>
-                    <div ref={labelDropdown.ref} className="relative">
+                    <div ref={compactLabelDropdown.ref} className="relative">
                       <button
-                        onClick={() => labelDropdown.setOpen((o) => !o)}
+                        onClick={() => compactLabelDropdown.setOpen((o) => !o)}
                         className={cn(
                           "w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg border text-sm transition-colors",
                           filters.labelId
@@ -924,24 +929,24 @@ export function TransactionFiltersBar({
                         <ChevronDown
                           className={cn(
                             "w-3.5 h-3.5 transition-transform duration-200",
-                            labelDropdown.open && "rotate-180"
+                            compactLabelDropdown.open && "rotate-180"
                           )}
                         />
                       </button>
 
                       <AnimatePresence>
-                        {labelDropdown.open && (
+                        {compactLabelDropdown.open && (
                           <motion.div
                             initial={{ opacity: 0, scale: 0.95, y: -4 }}
                             animate={{ opacity: 1, scale: 1, y: 0 }}
                             exit={{ opacity: 0, scale: 0.95, y: -4 }}
                             transition={{ duration: 0.15 }}
-                            className="absolute left-0 right-0 top-full mt-1 max-h-52 overflow-y-auto bg-white rounded-xl shadow-soft-lg border border-cream-300/60 z-50"
+                            className="relative mt-1 w-full max-h-52 overflow-y-auto bg-white rounded-xl shadow-soft-lg border border-cream-300/60 z-50"
                           >
                             <button
                               onClick={() => {
                                 update({ labelId: null });
-                                labelDropdown.setOpen(false);
+                                compactLabelDropdown.setOpen(false);
                               }}
                               className={cn(
                                 "flex items-center gap-3 w-full px-4 py-2.5 text-left text-sm transition-colors",
@@ -958,7 +963,7 @@ export function TransactionFiltersBar({
                                 key={lbl.id}
                                 onClick={() => {
                                   update({ labelId: lbl.id });
-                                  labelDropdown.setOpen(false);
+                                  compactLabelDropdown.setOpen(false);
                                 }}
                                 className={cn(
                                   "flex items-center gap-3 w-full px-4 py-2.5 text-left text-sm transition-colors",
@@ -1039,9 +1044,9 @@ export function TransactionFiltersBar({
                 {/* Sort */}
                 <div>
                   <label className="block text-xs font-medium text-warm-400 mb-1.5">Sort by</label>
-                  <div ref={sortDropdown.ref} className="relative">
+                  <div ref={compactSortDropdown.ref} className="relative">
                     <button
-                      onClick={() => sortDropdown.setOpen((o) => !o)}
+                      onClick={() => compactSortDropdown.setOpen((o) => !o)}
                       className={cn(
                         "w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg border text-sm transition-colors",
                         filters.sortBy !== "date" || filters.sortDir !== "desc"
@@ -1053,26 +1058,26 @@ export function TransactionFiltersBar({
                       <ChevronDown
                         className={cn(
                           "w-3.5 h-3.5 transition-transform duration-200",
-                          sortDropdown.open && "rotate-180"
+                          compactSortDropdown.open && "rotate-180"
                         )}
                       />
                     </button>
 
                     <AnimatePresence>
-                      {sortDropdown.open && (
+                      {compactSortDropdown.open && (
                         <motion.div
                           initial={{ opacity: 0, scale: 0.95, y: -4 }}
                           animate={{ opacity: 1, scale: 1, y: 0 }}
                           exit={{ opacity: 0, scale: 0.95, y: -4 }}
                           transition={{ duration: 0.15 }}
-                          className="absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-soft-lg border border-cream-300/60 z-50"
+                          className="relative mt-1 w-full bg-white rounded-xl shadow-soft-lg border border-cream-300/60 z-50"
                         >
                           {SORT_OPTIONS.map((opt) => (
                             <button
                               key={opt.label}
                               onClick={() => {
                                 update({ sortBy: opt.sortBy, sortDir: opt.sortDir });
-                                sortDropdown.setOpen(false);
+                                compactSortDropdown.setOpen(false);
                               }}
                               className={cn(
                                 "flex items-center w-full px-4 py-2.5 text-left text-sm transition-colors",
