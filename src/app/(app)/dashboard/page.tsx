@@ -37,6 +37,7 @@ import { TransactionLabelPills } from "@/components/transactions/transaction-lab
 import { MobileFab } from "@/components/ui/mobile-fab";
 import type { TransactionInput } from "@/lib/validations";
 import type { TransactionWithCategory } from "@/types";
+import { accountMonthKey } from "@/lib/account-time";
 
 export default function DashboardPage() {
   const [showForm, setShowForm] = useState(false);
@@ -46,10 +47,9 @@ export default function DashboardPage() {
   const { user } = useUser();
   const { canScan, openScan, scanLimitReached, scansRemaining, hasLimit } = useScan();
   const currency = user.currency;
-  const [currentMonth, setCurrentMonth] = useState(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  });
+  const [currentMonth, setCurrentMonth] = useState(() =>
+    accountMonthKey(new Date(), user.timezoneOffset)
+  );
 
   const [editingTransaction, setEditingTransaction] = useState<TransactionWithCategory | null>(null);
   const [deletingTransaction, setDeletingTransaction] = useState<TransactionWithCategory | null>(null);
@@ -91,8 +91,11 @@ export default function DashboardPage() {
   };
 
   const recentDateGroups = useMemo(
-    () => (stats?.recentTransactions ? groupByDate(stats.recentTransactions) : []),
-    [stats?.recentTransactions],
+    () =>
+      stats?.recentTransactions
+        ? groupByDate(stats.recentTransactions, user.timezoneOffset)
+        : [],
+    [stats?.recentTransactions, user.timezoneOffset],
   );
 
   useEffect(() => {
@@ -487,7 +490,7 @@ export default function DashboardPage() {
                                 : `${tx.type === "INCOME" ? "+" : "-"}${formatCurrency(tx.amount, currency)}`}
                             </p>
                             <p className="text-[11px] text-warm-300 tabular-nums">
-                              {formatTime(tx.date)}
+                              {formatTime(tx.date, user.timezoneOffset)}
                             </p>
                           </div>
                         </div>

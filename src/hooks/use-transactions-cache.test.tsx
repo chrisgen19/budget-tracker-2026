@@ -62,9 +62,9 @@ describe("useBatchCreateTransactions cache insertion", () => {
     const mcpFilters = { ...baseFilters, createdVia: "MCP" as const };
     const appFilters = { ...baseFilters, createdVia: "APP" as const };
 
-    client.setQueryData(queryKeys.transactions.infinite(anyFilters), seedPage());
-    client.setQueryData(queryKeys.transactions.infinite(mcpFilters), seedPage());
-    client.setQueryData(queryKeys.transactions.infinite(appFilters), seedPage());
+    client.setQueryData(queryKeys.transactions.infinite(anyFilters, -480), seedPage());
+    client.setQueryData(queryKeys.transactions.infinite(mcpFilters, -480), seedPage());
+    client.setQueryData(queryKeys.transactions.infinite(appFilters, -480), seedPage());
 
     vi.stubGlobal(
       "fetch",
@@ -89,21 +89,21 @@ describe("useBatchCreateTransactions cache insertion", () => {
     });
 
     await waitFor(() =>
-      expect(idsIn(client.getQueryData(queryKeys.transactions.infinite(anyFilters)))).toContain(
+      expect(idsIn(client.getQueryData(queryKeys.transactions.infinite(anyFilters, -480)))).toContain(
         "tx_app"
       )
     );
 
     // The row belongs in "any" and in "app", and must never appear under "Claude".
-    expect(idsIn(client.getQueryData(queryKeys.transactions.infinite(appFilters)))).toContain(
+    expect(idsIn(client.getQueryData(queryKeys.transactions.infinite(appFilters, -480)))).toContain(
       "tx_app"
     );
-    expect(idsIn(client.getQueryData(queryKeys.transactions.infinite(mcpFilters)))).not.toContain(
+    expect(idsIn(client.getQueryData(queryKeys.transactions.infinite(mcpFilters, -480)))).not.toContain(
       "tx_app"
     );
 
     // The MCP cache is left intact rather than emptied.
-    expect(idsIn(client.getQueryData(queryKeys.transactions.infinite(mcpFilters)))).toEqual([
+    expect(idsIn(client.getQueryData(queryKeys.transactions.infinite(mcpFilters, -480)))).toEqual([
       "tx_existing",
     ]);
   });

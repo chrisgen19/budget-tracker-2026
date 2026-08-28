@@ -5,8 +5,16 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion, AnimatePresence } from "framer-motion";
 import { AlertCircle, ArrowLeft, CalendarDays, ChevronRight, Plus, Trash2 } from "lucide-react";
-import { transactionSchema, type TransactionInput } from "@/lib/validations";
-import { formatDateInput, getCurrencySymbol, cn } from "@/lib/utils";
+import {
+  resolveTransactionDate,
+  transactionSchema,
+  type TransactionInput,
+} from "@/lib/validations";
+import { getCurrencySymbol, cn } from "@/lib/utils";
+import {
+  formatAccountDateInput,
+  relativeAccountDateInput,
+} from "@/lib/account-time";
 import { MAX_QUICK_CATEGORIES, resolveQuickCategories } from "@/lib/quick-categories";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { ReceiptBreakdown, toReceiptBreakdownMeta } from "@/components/transactions/receipt-breakdown";
@@ -46,16 +54,22 @@ const formatAmountDisplay = (value: number) =>
 
 type DateMode = "today" | "yesterday" | "custom";
 
-/** Determine if a date string matches today or yesterday */
-const getDateMode = (dateStr: string): DateMode => {
-  const d = new Date(dateStr);
+/** Determine if an account-local date string matches today or yesterday. */
+const getDateMode = (dateStr: string, timezoneOffset: number): DateMode => {
+  const day = dateStr.slice(0, 10);
   const now = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  if (d.toDateString() === now.toDateString()) return "today";
-  if (d.toDateString() === yesterday.toDateString()) return "yesterday";
+  if (day === formatAccountDateInput(now, timezoneOffset).slice(0, 10)) return "today";
+  if (day === relativeAccountDateInput(now, timezoneOffset, -1).slice(0, 10)) {
+    return "yesterday";
+  }
   return "custom";
 };
+
+/** Draft inputs already carry wall time. Only explicitly zoned instants need conversion. */
+const initialDateInput = (date: string, timezoneOffset: number): string =>
+  /(?:Z|[+-]\d{2}:?\d{2})$/i.test(date)
+    ? formatAccountDateInput(date, timezoneOffset)
+    : date;
 
 const slideVariants = {
   enterFromRight: { x: 80, opacity: 0 },
@@ -75,8 +89,18 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     return "";
   });
   const [dateMode, setDateMode] = useState<DateMode>(() => {
-    if (transaction) return getDateMode(formatDateInput(transaction.date));
-    if (initialData?.date) return getDateMode(initialData.date);
+    if (transaction) {
+      return getDateMode(
+        formatAccountDateInput(transaction.date, user.timezoneOffset),
+        user.timezoneOffset,
+      );
+    }
+    if (initialData?.date) {
+      return getDateMode(
+        initialDateInput(initialData.date, user.timezoneOffset),
+        user.timezoneOffset,
+      );
+    }
     return "today";
   });
   const dateInputRef = useRef<HTMLInputElement>(null);
@@ -96,8 +120,10 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
       amount: transaction?.amount ?? initialData?.amount ?? undefined,
       description: transaction?.description ?? initialData?.description ?? "",
       date: transaction
-        ? formatDateInput(transaction.date)
-        : initialData?.date ?? formatDateInput(new Date()),
+        ? formatAccountDateInput(transaction.date, user.timezoneOffset)
+        : initialData?.date
+          ? initialDateInput(initialData.date, user.timezoneOffset)
+          : formatAccountDateInput(new Date(), user.timezoneOffset),
       categoryId: transaction?.categoryId ?? initialData?.categoryId ?? "",
       labelIds: transaction?.labels?.map((tl) => tl.labelId) ?? initialData?.labelIds ?? [],
     },
@@ -225,14 +251,12 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
 
   const setDateToToday = () => {
     setDateMode("today");
-    setValue("date", formatDateInput(new Date()));
+    setValue("date", formatAccountDateInput(new Date(), user.timezoneOffset));
   };
 
   const setDateToYesterday = () => {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
     setDateMode("yesterday");
-    setValue("date", formatDateInput(yesterday));
+    setValue("date", relativeAccountDateInput(new Date(), user.timezoneOffset, -1));
   };
 
   const handleCustomDate = () => {
@@ -318,7 +342,10 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
           <form
             onSubmit={handleSubmit((data) => {
               const { labelIds, ...rest } = data;
-              const payload = { ...rest, date: new Date(data.date).toISOString() };
+              const payload = {
+                ...rest,
+                date: resolveTransactionDate(data.date, user.timezoneOffset),
+              };
               // Omit labelIds when:
               // - the picker is hidden (server should auto-apply), OR
               // - the picker is visible but the user never interacted with labels

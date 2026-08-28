@@ -33,14 +33,15 @@ export const queryKeys = {
   transactions: {
     all: ["transactions"] as const,
     lists: ["transactions", "list"] as const,
-    list: (filters: TransactionFilters, page: number) =>
-      ["transactions", "list", filters, page] as const,
-    infinite: (filters: TransactionFilters) =>
-      ["transactions", "infinite", filters] as const,
+    list: (filters: TransactionFilters, page: number, timezoneOffset: number) =>
+      ["transactions", "list", filters, page, timezoneOffset] as const,
+    infinite: (filters: TransactionFilters, timezoneOffset: number) =>
+      ["transactions", "infinite", filters, timezoneOffset] as const,
   },
   dashboard: {
     all: ["dashboard"] as const,
-    byMonth: (month: string) => ["dashboard", month] as const,
+    byMonth: (month: string, timezoneOffset: number) =>
+      ["dashboard", month, timezoneOffset] as const,
   },
 };
 
@@ -91,7 +92,7 @@ const fetchDashboard = async (month: string, tz: number): Promise<DashboardStats
 /** Paginated transactions (non-infinite mode) */
 export function useTransactionsQuery(filters: TransactionFilters, page: number, tz: number) {
   return useQuery({
-    queryKey: queryKeys.transactions.list(filters, page),
+    queryKey: queryKeys.transactions.list(filters, page, tz),
     queryFn: () => fetchTransactionsPage(filters, page, tz),
     placeholderData: (previousData) => previousData,
   });
@@ -100,7 +101,7 @@ export function useTransactionsQuery(filters: TransactionFilters, page: number, 
 /** Infinite scroll transactions */
 export function useTransactionsInfiniteQuery(filters: TransactionFilters, tz: number) {
   return useInfiniteQuery({
-    queryKey: queryKeys.transactions.infinite(filters),
+    queryKey: queryKeys.transactions.infinite(filters, tz),
     queryFn: ({ pageParam }) => fetchTransactionsPage(filters, pageParam, tz),
     initialPageParam: 1,
     getNextPageParam: (lastPage) =>
@@ -113,7 +114,7 @@ export function useTransactionsInfiniteQuery(filters: TransactionFilters, tz: nu
 /** Dashboard stats */
 export function useDashboardQuery(month: string, tz: number) {
   return useQuery({
-    queryKey: queryKeys.dashboard.byMonth(month),
+    queryKey: queryKeys.dashboard.byMonth(month, tz),
     queryFn: () => fetchDashboard(month, tz),
   });
 }

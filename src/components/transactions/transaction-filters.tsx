@@ -1,6 +1,13 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import {
   Search,
   X,
@@ -14,6 +21,7 @@ import { cn, getCurrencySymbol } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { useUser } from "@/components/user-provider";
 import { useLabelsQuery } from "@/hooks/use-labels";
+import { accountMonthKey } from "@/lib/account-time";
 import type { Category } from "@/types";
 
 /* ------------------------------------------------------------------ */
@@ -36,7 +44,7 @@ export interface TransactionFilters {
 
 export interface TransactionFiltersBarProps {
   filters: TransactionFilters;
-  onChange: (filters: TransactionFilters) => void;
+  onChange: Dispatch<SetStateAction<TransactionFilters>>;
   totalCount: number | null;
 }
 
@@ -85,9 +93,11 @@ const DEFAULT_FILTERS: Omit<TransactionFilters, "month"> = {
 const getMonthLabel = (month: string) => {
   if (month === "ALL") return "All Time";
   const [year, m] = month.split("-").map(Number);
-  return new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(
-    new Date(year, m - 1)
-  );
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(year, m - 1)));
 };
 
 /** Count how many "advanced" filters are active (category, amount, sort) */
@@ -154,6 +164,12 @@ export function TransactionFiltersBar({
 }: TransactionFiltersBarProps) {
   const { user } = useUser();
   const currencySymbol = getCurrencySymbol(user.currency);
+  const update = useCallback(
+    (partial: Partial<TransactionFilters>) => {
+      onChange((current) => ({ ...current, ...partial }));
+    },
+    [onChange],
+  );
 
   // Mobile expand state
   const [expanded, setExpanded] = useState(false);
@@ -178,7 +194,8 @@ export function TransactionFiltersBar({
   const [amountMaxInput, setAmountMaxInput] = useState(
     filters.amountMax !== null ? String(filters.amountMax) : ""
   );
-  const amountTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const amountMinTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const amountMaxTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // Fetch categories when type changes
   useEffect(() => {
@@ -200,21 +217,33 @@ export function TransactionFiltersBar({
     if (prevTypeRef.current !== filters.type) {
       prevTypeRef.current = filters.type;
       if (filters.categoryId) {
-        onChange({ ...filters, categoryId: null });
+        update({ categoryId: null });
       }
     }
-  }, [filters, onChange]);
+  }, [filters.categoryId, filters.type, update]);
 
   // Sync search input when filters.search changes externally (e.g. clear all)
   useEffect(() => {
     setSearchInput(filters.search);
   }, [filters.search]);
 
-  // Sync amount inputs when filters change externally
+  // Sync each amount independently. Updating one bound must not erase local input waiting
+  // for the other bound's debounce.
   useEffect(() => {
     setAmountMinInput(filters.amountMin !== null ? String(filters.amountMin) : "");
+  }, [filters.amountMin]);
+
+  useEffect(() => {
     setAmountMaxInput(filters.amountMax !== null ? String(filters.amountMax) : "");
-  }, [filters.amountMin, filters.amountMax]);
+  }, [filters.amountMax]);
+
+  useEffect(() => {
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+      if (amountMinTimerRef.current) clearTimeout(amountMinTimerRef.current);
+      if (amountMaxTimerRef.current) clearTimeout(amountMaxTimerRef.current);
+    };
+  }, []);
 
   // Debounced search handler
   const handleSearchChange = useCallback(
@@ -222,10 +251,10 @@ export function TransactionFiltersBar({
       setSearchInput(value);
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
       searchTimerRef.current = setTimeout(() => {
-        onChange({ ...filters, search: value });
+        update({ search: value });
       }, 300);
     },
-    [filters, onChange]
+    [update]
   );
 
   // Debounced amount handler
@@ -234,28 +263,37 @@ export function TransactionFiltersBar({
       if (field === "amountMin") setAmountMinInput(value);
       else setAmountMaxInput(value);
 
-      if (amountTimerRef.current) clearTimeout(amountTimerRef.current);
-      amountTimerRef.current = setTimeout(() => {
+      const applyValue = () => {
         const parsed = value === "" ? null : parseFloat(value);
         const numValue = parsed !== null && isNaN(parsed) ? null : parsed;
-        onChange({ ...filters, [field]: numValue });
-      }, 500);
+        update({ [field]: numValue });
+      };
+
+      if (field === "amountMin") {
+        if (amountMinTimerRef.current) clearTimeout(amountMinTimerRef.current);
+        amountMinTimerRef.current = setTimeout(applyValue, 500);
+      } else {
+        if (amountMaxTimerRef.current) clearTimeout(amountMaxTimerRef.current);
+        amountMaxTimerRef.current = setTimeout(applyValue, 500);
+      }
     },
-    [filters, onChange]
+    [update]
   );
 
-  const update = (partial: Partial<TransactionFilters>) => {
-    onChange({ ...filters, ...partial });
-  };
-
   const navigateMonth = (direction: -1 | 1) => {
+    // All Time is a lookup state used by transaction highlight links, not a calendar month.
+    // Either arrow safely returns to the account's current month instead of constructing NaN.
+    if (filters.month === "ALL") {
+      update({ month: accountMonthKey(new Date(), user.timezoneOffset) });
+      return;
+    }
     const [year, m] = filters.month.split("-").map(Number);
-    const d = new Date(year, m - 1 + direction, 1);
-    update({ month: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}` });
+    const d = new Date(Date.UTC(year, m - 1 + direction, 1));
+    update({ month: `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}` });
   };
 
   const clearAll = () => {
-    onChange({ ...filters, ...DEFAULT_FILTERS });
+    update(DEFAULT_FILTERS);
     setSearchInput("");
     setAmountMinInput("");
     setAmountMaxInput("");
