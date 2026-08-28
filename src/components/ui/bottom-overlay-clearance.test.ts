@@ -4,7 +4,7 @@ import {
   MOBILE_FAB_STATIC_CLEARANCE_REM,
   getBillBannerClearancePx,
   getMobileFabBannerClearance,
-} from "@/components/ui/mobile-fab-clearance";
+} from "@/components/ui/bottom-overlay-clearance";
 
 describe("getMobileFabBannerClearance", () => {
   it("adds no dynamic clearance when both banners are hidden", () => {

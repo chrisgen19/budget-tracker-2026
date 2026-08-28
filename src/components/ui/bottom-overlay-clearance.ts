@@ -1,3 +1,10 @@
+/**
+ * Geometry for the stack of fixed elements pinned to the bottom of the mobile
+ * viewport: the bill reminder, the install prompt, and the FAB above them.
+ * They position themselves relative to each other, so the measurements live
+ * here rather than in the components, which cannot agree by convention alone.
+ */
+
 /** Distance from the viewport bottom to the resting FAB. */
 export const FAB_BASE_OFFSET_REM = 5;
 /** The FAB's minimum tap target (`min-h-11`). */

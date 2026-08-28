@@ -7,7 +7,7 @@ import { useBillReminders } from "@/components/bills/bill-reminder-provider";
 import {
   FAB_BASE_OFFSET_REM,
   getMobileFabBannerClearance,
-} from "@/components/ui/mobile-fab-clearance";
+} from "@/components/ui/bottom-overlay-clearance";
 
 interface MobileFabProps {
   label: string;

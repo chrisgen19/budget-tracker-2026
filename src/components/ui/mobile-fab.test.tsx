@@ -5,7 +5,7 @@ import { MobileFab } from "@/components/ui/mobile-fab";
 import {
   FAB_BASE_OFFSET_REM,
   getMobileFabBannerClearance,
-} from "@/components/ui/mobile-fab-clearance";
+} from "@/components/ui/bottom-overlay-clearance";
 
 const overlayMocks = vi.hoisted(() => ({
   install: { bannerVisible: false, bannerHeight: 0 },

@@ -9,7 +9,7 @@ import { useBillReminders } from "@/components/bills/bill-reminder-provider";
 import {
   INSTALL_BANNER_BASE_REM,
   getBillBannerClearancePx,
-} from "@/components/ui/mobile-fab-clearance";
+} from "@/components/ui/bottom-overlay-clearance";
 import { cn } from "@/lib/utils";
 
 const DISMISS_KEY = "pwa-install-dismissed-at";
@@ -156,7 +156,7 @@ export function InstallPromptBanner() {
 
   // Sit above the bill reminder rather than over it -- MobileFab already sums
   // both clearances, so it assumes the two banners stack. The resting offset
-  // comes from mobile-fab-clearance.ts because the FAB positions itself
+  // comes from bottom-overlay-clearance.ts because the FAB positions itself
   // relative to this banner and must move with it.
   const billClearance = getBillBannerClearancePx(billBannerHeight);
 

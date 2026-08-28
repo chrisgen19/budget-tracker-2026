@@ -35,7 +35,7 @@ import { useBillReminders } from "@/components/bills/bill-reminder-provider";
 import {
   MOBILE_FAB_STATIC_CLEARANCE_REM,
   getMobileFabBannerClearance,
-} from "@/components/ui/mobile-fab-clearance";
+} from "@/components/ui/bottom-overlay-clearance";
 import { useBillAction } from "@/hooks/use-bills";
 import { useToast } from "@/components/ui/toast";
 import type { MultiScanItem } from "@/types";
@@ -358,7 +358,7 @@ export function AppShell({ children }: AppShellProps) {
       </nav>
 
       {/* Main Content */}
-      {/* Below `sm`, reserve room for the FAB; see mobile-fab-clearance.ts. */}
+      {/* Below `sm`, reserve room for the FAB; see bottom-overlay-clearance.ts. */}
       <AppMain>
         <div className="max-w-6xl mx-auto p-4 lg:p-8">
           <ScanProvider
