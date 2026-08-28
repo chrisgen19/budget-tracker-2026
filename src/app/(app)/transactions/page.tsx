@@ -788,13 +788,7 @@ export default function TransactionsPage() {
       />
 
       {/* Mobile FAB */}
-      <MobileFab
-        label="Transaction"
-        icon={Plus}
-        compact
-        hideWhileScrolling
-        onClick={() => setShowForm(true)}
-      />
+      <MobileFab label="Transaction" icon={Plus} onClick={() => setShowForm(true)} />
     </div>
   );
 }

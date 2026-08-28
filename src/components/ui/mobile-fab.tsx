@@ -10,9 +10,9 @@ interface MobileFabProps {
   label: string;
   icon: LucideIcon;
   onClick: () => void;
-  /** Render as an icon-only button when horizontal screen space is scarce. */
+  /** Opt out of the icon-only shape and render the label beside the icon. */
   compact?: boolean;
-  /** Temporarily hide the overlay during page scroll so rows beneath remain readable. */
+  /** Opt out of hiding the overlay during page scroll. */
   hideWhileScrolling?: boolean;
 }
 
@@ -20,8 +20,8 @@ export function MobileFab({
   label,
   icon: Icon,
   onClick,
-  compact = false,
-  hideWhileScrolling = false,
+  compact = true,
+  hideWhileScrolling = true,
 }: MobileFabProps) {
   const { bannerVisible, bannerHeight: installBannerHeight } = useInstallBanner();
   const { bannerHeight: billBannerHeight } = useBillReminders();

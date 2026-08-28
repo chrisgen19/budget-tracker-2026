@@ -91,8 +91,30 @@ describe("MobileFab responsive behavior", () => {
     expect(button.className).toContain("opacity-100");
   });
 
-  it("keeps the labeled variant visible during scroll by default", () => {
+  it("is compact and scroll-aware with no props, which is what every page relies on", () => {
+    vi.useFakeTimers();
+
     render(<MobileFab label="Bill" icon={Plus} onClick={() => {}} />);
+
+    const button = screen.getByRole("button", { name: "Add Bill" });
+    expect(button.textContent).toBe("");
+    expect(button.className).toContain("min-w-11");
+    fireEvent.scroll(window);
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    act(() => vi.advanceTimersByTime(180));
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("renders the labeled, always-visible variant when both are opted out", () => {
+    render(
+      <MobileFab
+        label="Bill"
+        icon={Plus}
+        compact={false}
+        hideWhileScrolling={false}
+        onClick={() => {}}
+      />,
+    );
 
     const button = screen.getByRole("button", { name: "Add Bill" });
     expect(button.textContent).toContain("Bill");
@@ -100,6 +122,7 @@ describe("MobileFab responsive behavior", () => {
     expect(button.className).not.toContain("min-w-11");
     fireEvent.scroll(window);
     expect(button.className).toContain("opacity-100");
+    expect((button as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("stacks above bill and install banners instead of overlapping them", () => {
