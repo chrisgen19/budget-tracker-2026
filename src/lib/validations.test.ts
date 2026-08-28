@@ -7,6 +7,7 @@ import {
   isRealDate,
   mcpTransactionSchema,
   receiptBreakdownItemSchema,
+  quickPickIdsSchema,
   receiptBreakdownMetaSchema,
   resolveTransactionDate,
 } from "./validations";
@@ -406,5 +407,50 @@ describe("receiptBreakdownItemSchema", () => {
         lineItems: [...lineItems, { name: "one too many", amount: 1 }],
       }).success
     ).toBe(false);
+  });
+});
+
+describe("quickPickIdsSchema", () => {
+  /**
+   * The columns behind these lists are plain String[] with no foreign key, and each picker counts
+   * the stored list against its slot limit. A repeated id therefore consumes a slot while showing
+   * one tile selected, which is how a user ends up unable to fill the last slot.
+   */
+
+  it("rejects a repeated id", () => {
+    const result = quickPickIdsSchema(4).safeParse(["food", "food", "food", "food"]);
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a single duplicate inside an otherwise valid list", () => {
+    expect(quickPickIdsSchema(4).safeParse(["food", "transport", "food"]).success).toBe(false);
+  });
+
+  it("accepts distinct ids up to the cap", () => {
+    const ids = ["food", "transport", "shopping", "housing"];
+    const result = quickPickIdsSchema(4).safeParse(ids);
+    expect(result.success).toBe(true);
+    expect(result.success && result.data).toEqual(ids);
+  });
+
+  it("rejects more ids than the cap", () => {
+    expect(
+      quickPickIdsSchema(4).safeParse(["a", "b", "c", "d", "e"]).success
+    ).toBe(false);
+  });
+
+  it("accepts an empty list, which is how a user clears their picks", () => {
+    expect(quickPickIdsSchema(4).safeParse([]).success).toBe(true);
+  });
+
+  it("rejects a non-array and non-string members", () => {
+    expect(quickPickIdsSchema(4).safeParse("food").success).toBe(false);
+    expect(quickPickIdsSchema(4).safeParse([1, 2]).success).toBe(false);
+  });
+
+  it("applies the caller's cap, so labels get six", () => {
+    const six = ["a", "b", "c", "d", "e", "f"];
+    expect(quickPickIdsSchema(6).safeParse(six).success).toBe(true);
+    expect(quickPickIdsSchema(4).safeParse(six).success).toBe(false);
   });
 });

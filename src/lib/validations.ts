@@ -532,3 +532,24 @@ export const mcpWriteLeaseSchema = z
   .positive()
   .max(MAX_WRITE_LEASE_MINUTES)
   .nullable();
+
+/**
+ * Quick-pick id lists (`users.quick_expense_categories`, `quick_income_categories`, `quick_labels`).
+ *
+ * Uniqueness is enforced here rather than left to the resolver. These columns are plain `String[]`
+ * with no foreign key, and the pickers count the stored list against their slot limit: four copies
+ * of one id passed the old `length > 4` check, so the picker would count four entries while
+ * rendering one tile selected and disable every remaining slot. That is the same dead end a
+ * deleted category used to cause, reached from the other side.
+ *
+ * A duplicate is rejected rather than silently deduped. Neither picker can produce one (toggling
+ * an already-selected id removes it), so a duplicate means a broken or hostile client, and quietly
+ * rewriting the payload would hide that while still returning 200.
+ */
+export const quickPickIdsSchema = (max: number) =>
+  z
+    .array(z.string())
+    .max(max)
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: "must not contain duplicate ids",
+    });
