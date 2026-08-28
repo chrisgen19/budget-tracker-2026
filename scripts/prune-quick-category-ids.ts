@@ -72,14 +72,21 @@ const main = async () => {
 
     if (!APPLY) continue;
 
-    // Filtered against the ids read above rather than re-read here: these are whole-array writes,
-    // so a user editing their quick-picks concurrently would lose that edit. The window is a few
-    // milliseconds on a repair that runs once, and narrowing it further would mean locking the
-    // row; worst case the operator re-runs the dry run and sees nothing left to do.
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { quickExpenseCategories: expense, quickIncomeCategories: income },
-    });
+    // Subtract the dead ids from whatever the row holds *now*, rather than writing back the arrays
+    // read before the loop started. These are whole-array writes, so replacing them with a snapshot
+    // would silently discard any quick-pick edit made since the scan began — and for users late in
+    // the loop that window spans every preceding update, not a few milliseconds. Worse, the loss
+    // leaves no trace: a second run finds no dead ids and reports success either way.
+    // array_remove is evaluated server-side against the current row, so the read and the write
+    // cannot straddle someone else's change. Same statement the delete route uses.
+    for (const dead of [...deadExpense, ...deadIncome]) {
+      await prisma.$executeRaw`
+        UPDATE users
+        SET quick_expense_categories = array_remove(quick_expense_categories, ${dead}),
+            quick_income_categories = array_remove(quick_income_categories, ${dead})
+        WHERE id = ${user.id}
+      `;
+    }
     console.log(`    repaired`);
   }
 

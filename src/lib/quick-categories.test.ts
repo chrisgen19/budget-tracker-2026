@@ -53,6 +53,26 @@ describe("resolveQuickCategories", () => {
     expect(selectedIds).toEqual([]);
   });
 
+  it("does not let a repeated id occupy more than one slot", () => {
+    // PATCH /api/preferences checks only `length > 4`, so four copies of one id are storable. The
+    // picker would count four and show one tile selected: full, with three slots unreachable.
+    const { display, selectedIds } = resolveQuickCategories(
+      ["food", "food", "food", "food"],
+      ALL
+    );
+    expect(selectedIds).toEqual(["food"]);
+    expect(display.map((c) => c.id)).toEqual(["food"]);
+  });
+
+  it("never resolves more than the limit", () => {
+    const { display, selectedIds } = resolveQuickCategories(
+      ["food", "transport", "shopping", "housing", "pet"],
+      ALL
+    );
+    expect(selectedIds).toHaveLength(MAX_QUICK_CATEGORIES);
+    expect(display).toHaveLength(MAX_QUICK_CATEGORIES);
+  });
+
   it("drops a duplicate that no longer resolves", () => {
     // array_remove strips every occurrence; nothing else should reintroduce one.
     const { selectedIds } = resolveQuickCategories(["food", "gone", "gone"], ALL);

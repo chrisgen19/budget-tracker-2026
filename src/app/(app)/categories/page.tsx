@@ -35,9 +35,16 @@ export default function CategoriesPage() {
   // TanStack Query hooks
   const listType = filter === "ALL" ? undefined : filter;
   const { data: categories = [], isLoading: loading } = useCategoriesQuery(listType);
-  const { data: expenseCategories = [] } = useCategoriesQuery("EXPENSE");
-  const { data: incomeCategories = [] } = useCategoriesQuery("INCOME");
-  const { data: quickPrefs, isLoading: quickLoading } = useQuickPreferencesQuery();
+  const { data: expenseCategories = [], isLoading: loadingExpense } = useCategoriesQuery("EXPENSE");
+  const { data: incomeCategories = [], isLoading: loadingIncome } = useCategoriesQuery("INCOME");
+  const { data: quickPrefs, isLoading: loadingQuickPrefs } = useQuickPreferencesQuery();
+
+  // The quick section reads preferences *through* the category lists, so it is only ready once all
+  // three have landed. Gating on preferences alone let the section render during the window where
+  // prefs had resolved but categories had not: every stored id resolved to nothing, so the row
+  // showed four empty "Add" slots and the picker opened with nothing selected. Saving from there
+  // would have written that empty selection over the user's real quick picks.
+  const quickLoading = loadingQuickPrefs || loadingExpense || loadingIncome;
 
   // Mutation hooks
   const createCategory = useCreateCategory();

@@ -30,9 +30,15 @@ export const resolveQuickCategories = <T extends { id: string }>(
   storedIds: string[],
   allCategories: T[]
 ): QuickCategorySelection<T> => {
-  const stored = storedIds
+  // Deduplicated and capped here rather than trusted from the column. PATCH /api/preferences checks
+  // only `length > 4` and the element type, so a caller that posts the same id four times gets it
+  // stored verbatim; the picker would then count four entries against its limit while showing one
+  // tile selected, which is the same dead end a deleted id used to cause. The cap is unreachable
+  // through that route today and is kept so the function's guarantee holds for any caller.
+  const stored = [...new Set(storedIds)]
     .map((id) => allCategories.find((c) => c.id === id))
-    .filter((c): c is T => c != null);
+    .filter((c): c is T => c != null)
+    .slice(0, MAX_QUICK_CATEGORIES);
 
   return {
     // The fallback is display only. Feeding it back to the picker would open a first-time picker
