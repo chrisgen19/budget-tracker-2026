@@ -17,10 +17,15 @@
  * The Restrict rules are the safety net. If this script missed a referencing row the final
  * delete would fail and the whole transaction would roll back, rather than leaving orphans.
  *
- * Dry run by default; APPLY=true writes. tsx does not read .env on its own, so pass it:
+ * Dry run by default; APPLY=true writes.
  *
- *   pnpm exec tsx --env-file=.env scripts/merge-custom-category-into-default.ts NAME=Subscriptions
- *   pnpm exec tsx --env-file=.env scripts/merge-custom-category-into-default.ts NAME=Subscriptions APPLY=true
+ *   pnpm exec tsx scripts/merge-custom-category-into-default.ts NAME=Subscriptions
+ *   pnpm exec tsx scripts/merge-custom-category-into-default.ts NAME=Subscriptions APPLY=true
+ *
+ * tsx does not read .env on its own, so DATABASE_URL has to reach it somehow: `--env-file=.env`
+ * locally, already-set variables inside the container, or an explicit `DATABASE_URL=...` prefix
+ * when running against production from a local checkout. Check which database it printed before
+ * passing APPLY=true — the dry run names the category and user ids it is about to move.
  */
 import { PrismaClient, TransactionType } from "@prisma/client";
 

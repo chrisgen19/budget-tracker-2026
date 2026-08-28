@@ -7,10 +7,10 @@ const main = async () => {
   // Seeded one at a time rather than as an all-or-nothing batch. The previous version skipped
   // the whole block when any default existed, so a category added to the list later never
   // reached a database that had already been seeded — it was dead code everywhere but a fresh
-  // install. Checking per category is also the only duplicate protection there is: the
-  // @@unique([name, type, userId]) index does not constrain defaults, because their userId is
-  // NULL and Postgres treats NULLs as distinct, so the same default can be inserted twice with
-  // no error.
+  // install. @@unique([name, type, userId]) does not constrain defaults, because their userId is
+  // NULL and Postgres treats NULLs as distinct; the partial unique index added in
+  // 20260828100000_unique_default_categories is what actually prevents a duplicate default, and
+  // the check below just avoids relying on a caught error for the ordinary case.
   let created = 0;
   for (const cat of DEFAULT_CATEGORIES) {
     const existing = await prisma.category.findFirst({
@@ -72,10 +72,17 @@ const main = async () => {
     for (const [key, count] of byName) {
       console.warn(`  ${key} — ${count} user${count === 1 ? "" : "s"}`);
     }
+    // The command deliberately carries no --env-file. This warning is printed by whichever run
+    // just seeded, and that run may have been pointed at its database by an exported
+    // DATABASE_URL rather than by .env — seeding production from a local checkout is the
+    // documented fallback when the container has no tsx. Hardcoding --env-file=.env there
+    // prints a command aimed at a different database than the one being warned about.
     console.warn(
       "\nBoth copies now appear in the picker with the same name. Merge each one with:\n" +
-        "  pnpm exec tsx --env-file=.env scripts/merge-custom-category-into-default.ts NAME=<name>\n" +
-        "(dry run by default; add APPLY=true to write)"
+        "  pnpm exec tsx scripts/merge-custom-category-into-default.ts NAME=<name>\n\n" +
+        "Dry run by default; add APPLY=true to write. It resolves DATABASE_URL the same way\n" +
+        "this seed did, so make sure that points at the database warned about above.\n" +
+        "Locally that usually means adding --env-file=.env; in the container it is already set."
     );
   }
 
