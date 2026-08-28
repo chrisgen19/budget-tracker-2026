@@ -1,9 +1,14 @@
 import { PrismaClient } from "@prisma/client";
 import { DEFAULT_CATEGORIES, findOrphanedDefaults } from "../src/lib/default-categories";
+import { describeDatabaseUrl } from "../src/lib/database-identity";
 
 const prisma = new PrismaClient();
 
 const main = async () => {
+  // Named up front so the collision warning below can tell operators to check "the database
+  // warned about above" and have that mean something. Seeding production from a local checkout
+  // is a documented fallback, so which database this is cannot be assumed from the command.
+  console.log(`Seeding ${describeDatabaseUrl(process.env.DATABASE_URL)}\n`);
   // Seeded one at a time rather than as an all-or-nothing batch. The previous version skipped
   // the whole block when any default existed, so a category added to the list later never
   // reached a database that had already been seeded — it was dead code everywhere but a fresh
@@ -81,8 +86,9 @@ const main = async () => {
       "\nBoth copies now appear in the picker with the same name. Merge each one with:\n" +
         "  pnpm exec tsx scripts/merge-custom-category-into-default.ts NAME=<name>\n\n" +
         "Dry run by default; add APPLY=true to write. It resolves DATABASE_URL the same way\n" +
-        "this seed did, so make sure that points at the database warned about above.\n" +
-        "Locally that usually means adding --env-file=.env; in the container it is already set."
+        `this seed did, and prints what it resolved to. Check that reads ${describeDatabaseUrl(process.env.DATABASE_URL)},\n` +
+        "the database warned about here, before passing APPLY=true. Locally that usually means\n" +
+        "adding --env-file=.env; in the container it is already set."
     );
   }
 

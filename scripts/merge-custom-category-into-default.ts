@@ -28,6 +28,7 @@
  * passing APPLY=true — the dry run names the category and user ids it is about to move.
  */
 import { PrismaClient, TransactionType } from "@prisma/client";
+import { describeDatabaseUrl } from "../src/lib/database-identity";
 
 const prisma = new PrismaClient();
 
@@ -41,6 +42,13 @@ const APPLY = (arg("APPLY") ?? "").toLowerCase() === "true";
 
 const main = async () => {
   if (!NAME) throw new Error("NAME is required, e.g. NAME=Subscriptions");
+
+  // Announced before any query, so it covers every exit — including "Nothing to do" and the
+  // missing-default error, which are precisely the outputs an operator on the wrong database
+  // would see. Everything else this prints is cuids and counts, which differ between databases
+  // but identify neither, so without this line a plausible-looking dry run could be read as
+  // proof that production was already done when the connection was actually local.
+  console.log(`${APPLY ? "APPLYING" : "DRY RUN"} on ${describeDatabaseUrl(process.env.DATABASE_URL)}\n`);
 
   const target = await prisma.category.findFirst({
     where: { name: NAME, type: TYPE, isDefault: true },
@@ -59,7 +67,7 @@ const main = async () => {
     return;
   }
 
-  console.log(`${APPLY ? "APPLYING" : "DRY RUN"} — merging into default ${target.id}\n`);
+  console.log(`merging into default ${target.id}\n`);
 
   for (const custom of customs) {
     const [txns, bills, quickExpense, quickIncome] = await Promise.all([
