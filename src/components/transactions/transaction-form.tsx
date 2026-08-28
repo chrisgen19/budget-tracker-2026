@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { AlertCircle, ArrowLeft, CalendarDays, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { transactionSchema, type TransactionInput } from "@/lib/validations";
 import { formatDateInput, getCurrencySymbol, cn } from "@/lib/utils";
+import { MAX_QUICK_CATEGORIES, resolveQuickCategories } from "@/lib/quick-categories";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { ReceiptBreakdown, toReceiptBreakdownMeta } from "@/components/transactions/receipt-breakdown";
 import { useUser } from "@/components/user-provider";
@@ -14,7 +15,7 @@ import { useCategoriesQuery, useQuickPreferencesQuery } from "@/hooks/use-catego
 import { LabelPicker } from "@/components/transactions/label-picker";
 import { useScheduledLabel } from "@/hooks/use-scheduled-label";
 import { useLabelsQuery } from "@/hooks/use-labels";
-import type { Category, TransactionWithCategory } from "@/types";
+import type { TransactionWithCategory } from "@/types";
 
 export interface InitialTransactionData {
   amount?: number;
@@ -64,7 +65,6 @@ const slideVariants = {
   exitToRight: { x: 80, opacity: 0 },
 };
 
-const QUICK_CATEGORY_COUNT = 4;
 
 export function TransactionForm({ transaction, initialData, dateWarning, hideLabelPicker, onSubmit, onCancel, onDelete }: TransactionFormProps) {
   const { user } = useUser();
@@ -137,18 +137,13 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
 
   const selectedCategory = categories.find((c) => c.id === watchedCategoryId);
 
-  // Resolve personalized quick categories from prefs
-  const quickCategories = (() => {
-    if (!quickPrefs) return categories.slice(0, QUICK_CATEGORY_COUNT);
-    const prefIds = selectedType === "EXPENSE"
-      ? quickPrefs.quickExpenseCategories
-      : quickPrefs.quickIncomeCategories;
-    if (prefIds.length === 0) return categories.slice(0, QUICK_CATEGORY_COUNT);
-    const resolved = prefIds
-      .map((id) => categories.find((c) => c.id === id))
-      .filter((c): c is Category => c != null);
-    return resolved.length > 0 ? resolved : categories.slice(0, QUICK_CATEGORY_COUNT);
-  })();
+  // Resolve personalized quick categories from prefs. Shared with the categories page so the tiles
+  // shown here cannot disagree with the ones the picker there offers.
+  const prefIds =
+    selectedType === "EXPENSE"
+      ? quickPrefs?.quickExpenseCategories
+      : quickPrefs?.quickIncomeCategories;
+  const quickCategories = resolveQuickCategories(prefIds ?? [], categories).display;
 
   const isSelectedInQuick = quickCategories.some((c) => c.id === watchedCategoryId);
 
@@ -491,7 +486,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                   )}
 
                   {/* More categories button */}
-                  {categories.length > QUICK_CATEGORY_COUNT && (
+                  {categories.length > MAX_QUICK_CATEGORIES && (
                     <button
                       type="button"
                       onClick={() => setShowCategoryPicker(true)}

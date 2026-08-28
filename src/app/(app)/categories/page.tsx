@@ -5,6 +5,7 @@ import { Plus, Pencil, Trash2, Tags, Lock, X, Zap, Tag, ChevronRight } from "luc
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { resolveQuickCategories } from "@/lib/quick-categories";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
@@ -34,9 +35,16 @@ export default function CategoriesPage() {
   // TanStack Query hooks
   const listType = filter === "ALL" ? undefined : filter;
   const { data: categories = [], isLoading: loading } = useCategoriesQuery(listType);
-  const { data: expenseCategories = [] } = useCategoriesQuery("EXPENSE");
-  const { data: incomeCategories = [] } = useCategoriesQuery("INCOME");
-  const { data: quickPrefs, isLoading: quickLoading } = useQuickPreferencesQuery();
+  const { data: expenseCategories = [], isLoading: loadingExpense } = useCategoriesQuery("EXPENSE");
+  const { data: incomeCategories = [], isLoading: loadingIncome } = useCategoriesQuery("INCOME");
+  const { data: quickPrefs, isLoading: loadingQuickPrefs } = useQuickPreferencesQuery();
+
+  // The quick section reads preferences *through* the category lists, so it is only ready once all
+  // three have landed. Gating on preferences alone let the section render during the window where
+  // prefs had resolved but categories had not: every stored id resolved to nothing, so the row
+  // showed four empty "Add" slots and the picker opened with nothing selected. Saving from there
+  // would have written that empty selection over the user's real quick picks.
+  const quickLoading = loadingQuickPrefs || loadingExpense || loadingIncome;
 
   // Mutation hooks
   const createCategory = useCreateCategory();
@@ -44,19 +52,18 @@ export default function CategoriesPage() {
   const deleteCategory = useDeleteCategory();
   const saveQuickPrefs = useSaveQuickPreferences();
 
-  /** Resolve quick IDs to category objects, falling back to first 4 */
-  const resolveQuickCategories = (ids: string[], allCats: Category[]): Category[] => {
-    if (ids.length === 0) return allCats.slice(0, 4);
-    const resolved = ids
-      .map((id) => allCats.find((c) => c.id === id))
-      .filter((c): c is Category => c != null);
-    return resolved.length > 0 ? resolved : allCats.slice(0, 4);
-  };
-
-  const quickExpenseIds = quickPrefs?.quickExpenseCategories ?? [];
-  const quickIncomeIds = quickPrefs?.quickIncomeCategories ?? [];
-  const quickExpenseCategories = resolveQuickCategories(quickExpenseIds, expenseCategories);
-  const quickIncomeCategories = resolveQuickCategories(quickIncomeIds, incomeCategories);
+  const quickExpense = resolveQuickCategories(
+    quickPrefs?.quickExpenseCategories ?? [],
+    expenseCategories
+  );
+  const quickIncome = resolveQuickCategories(
+    quickPrefs?.quickIncomeCategories ?? [],
+    incomeCategories
+  );
+  const quickExpenseCategories = quickExpense.display;
+  const quickIncomeCategories = quickIncome.display;
+  const quickExpenseIds = quickExpense.selectedIds;
+  const quickIncomeIds = quickIncome.selectedIds;
 
   const handleQuickSave = (ids: string[]) => {
     if (!quickPickerType) return;

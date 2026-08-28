@@ -4,9 +4,8 @@ import { useState } from "react";
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
+import { MAX_QUICK_CATEGORIES } from "@/lib/quick-categories";
 import type { Category } from "@/types";
-
-const MAX_QUICK_CATEGORIES = 4;
 
 interface QuickCategoryPickerProps {
   selectedIds: string[];
