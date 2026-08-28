@@ -579,6 +579,10 @@ describe("scan prompt category routing", () => {
     // The old blanket tie-breaker. Its replacement decides on ready-to-eat instead.
     expect(prompt).not.toContain('prefer "Food & Dining" if the merchant sells any food');
     expect(prompt).toContain("ready to eat as sold");
+    // "ready to eat as sold" alone also appears in rule 1, so asserting it does not pin the
+    // tie-breaker. What resolves a receipt holding both is the dominant share of the total,
+    // and deleting that sentence must fail this test.
+    expect(prompt).toContain("pick whichever accounts for more of the total");
   });
 
   /**
@@ -630,8 +634,9 @@ describe("scan prompt category routing", () => {
       .split("\n")
       .map((l) => /^\d+\. ([^:]+):/.exec(l.trim())?.[1])
       .filter((n): n is string => !!n)
-      // Tie-breaker rules read "A vs B:", which is prose, not a category name.
-      .filter((n) => !n.includes(" vs "));
+      // Prose rules also carry colons ("A vs B: ...", "Housing: rent, not things bought for it").
+      // A category name is short and holds no sentence break.
+      .filter((n) => !n.includes(" vs ") && !n.includes(".") && n.length <= 30);
 
     expect(named.length).toBeGreaterThan(5);
     for (const name of named) {
