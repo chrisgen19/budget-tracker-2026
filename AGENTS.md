@@ -169,7 +169,30 @@ Active tasks:
 
 ## Database
 - `DATABASE_URL` in `.env` points to local PostgreSQL
-- Default categories are seeded (15 total: 10 expense, 5 income)
+- Default categories are seeded (18 total: 13 expense, 5 income) from `src/lib/default-categories.ts`.
+  The seed checks each one individually, so a category added to that list reaches an already-seeded
+  database; it used to skip the whole block whenever any default existed. `@@unique([name, type,
+  userId])` does not constrain defaults, since their `userId` is NULL and Postgres treats NULLs as
+  distinct, so a partial unique index on `(name, type) WHERE user_id IS NULL` enforces it instead
+  (migration `20260828100000`). Prisma cannot express a partial index, so the schema's `@@unique`
+  line is not the whole story. The seed's insert treats `P2002` as success, since a concurrent seed
+  winning the race produces exactly the row it wanted.
+- Promoting a category people already created by hand into a default leaves both rows in place, and
+  `GET /api/categories` returns `OR: [{ isDefault: true }, { userId }]`, so both appear with the same
+  name. `scripts/merge-custom-category-into-default.ts` repoints transactions, recurring bills and the
+  `quick_*_categories` arrays onto the default and deletes the custom row. Dry run by default
+- `pnpm db:seed` is **not** part of a deploy. `pnpm build` is `prisma generate && prisma migrate deploy
+  && next build`, and `nixpacks.toml` runs only that, so merging a change to the seed list ships the
+  new prompts while the categories they route to do not exist yet. Run the seed by hand from a
+  Coolify terminal after deploying one. Do not add it to the build command: it would run on every
+  deploy, and the merge script below must never run unattended. `tsx` is a devDependency and may be
+  absent from the standalone image, so run `merge-custom-category-into-default.ts` locally against
+  the production `DATABASE_URL` if the container cannot; inside the container drop `--env-file`,
+  since the variables are already set
+- Removing a name from `DEFAULT_CATEGORIES` does not delete the row it already created. The leftover
+  keeps `isDefault: true`, and `DELETE /api/categories/[id]` filters on `isDefault: false`, so it
+  cannot be removed through the app. The seed reports these (`findOrphanedDefaults`) rather than
+  repairing them: renaming one preserves its id and its transactions, but also relabels real spending
 - Users can create custom categories on top of defaults
 - Key models: `User`, `Category`, `Transaction`, `ScheduledTransaction` (recurring bills; `@@map("scheduled_transactions")` — there is no `Bill` model), `ScheduledTransactionLog` (per-occurrence PAID/SKIPPED/SNOOZED), `BillEmailLog`, `Label`, `LabelSchedule`, `TransactionLabel`, `BillLabel`, `VerificationToken`, `ScanLog`, `AiAssessment`, `AiUsageLog`, `McpToken`, `AppSettings`
 - Notable columns: `users.hide_amounts`, `users.timezone_offset`, `users.email_verified`, `users.default_label_type`, `transactions.receipt_group_id`, `transactions.receipt_breakdown`, `transactions.bill_id`, `transactions.client_batch_id`, `transactions.created_via`, `transactions.mcp_token_id`, `users.mcp_writes_enabled_until`, `mcp_tokens.source`

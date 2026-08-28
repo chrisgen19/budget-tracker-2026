@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
+import { DEFAULT_CATEGORIES } from "@/lib/default-categories";
 
 const authorize = vi.hoisted(() => vi.fn());
 const settle = vi.hoisted(() => vi.fn(async () => {}));
@@ -17,7 +18,7 @@ vi.mock("@/lib/gemini", () => ({
   isGeminiUnavailable: () => false,
 }));
 
-const { scanReceipt } = await import("@/lib/receipt-scan");
+const { scanReceipt, SCAN_CATEGORY_RULES } = await import("@/lib/receipt-scan");
 
 const AUTHORIZED = {
   ok: true,
@@ -515,5 +516,219 @@ describe("unreadable responses", () => {
     const logged = warn.mock.calls[0]?.[0] as string;
     expect(logged).toContain("startsAsJson=false");
     warn.mockRestore();
+  });
+});
+
+/**
+ * The bug these cover: the scan prompt hardcoded "supermarkets, grocery stores, wet markets,
+ * seafood markets, butchers" into the Food & Dining rule, and a tie-breaker that preferred
+ * Food & Dining "if the merchant sells any food or beverages". A user who splits Groceries out
+ * into its own category would have every supermarket receipt filed back under Food & Dining by
+ * their own scanner, with nothing failing to say so.
+ */
+describe("scan prompt category routing", () => {
+  /** Pull the rule line that starts with `<n>. <name>:` out of the prompt Gemini was sent. */
+  const ruleFor = async (category: string) => {
+    authorize.mockResolvedValue(AUTHORIZED);
+    generate.mockResolvedValue({
+      text: JSON.stringify({
+        amount: 350,
+        categoryId: "cat_1",
+        date: "2026-08-26",
+        dateSource: "OCR",
+        description: "SM Supermarket",
+        multiCategory: false,
+      }),
+    });
+    await scan();
+
+    const parts = generate.mock.calls[0][0].contents[0].parts as Array<{ text?: string }>;
+    const prompt = parts.find((p) => typeof p.text === "string")!.text!;
+    const line = prompt
+      .split("\n")
+      .find((l) => new RegExp(`^\\d+\\. ${category}:`).test(l.trim()));
+    return line ?? "";
+  };
+
+  it("routes supermarkets and wet markets to Groceries, not Food & Dining", async () => {
+    const groceries = await ruleFor("Groceries");
+
+    expect(groceries).not.toBe("");
+    for (const merchant of ["supermarkets", "grocery stores", "wet markets", "butchers"]) {
+      expect(groceries).toContain(merchant);
+    }
+  });
+
+  it("leaves only ready-to-eat merchants on the Food & Dining rule", async () => {
+    const dining = await ruleFor("Food & Dining");
+
+    expect(dining).toContain("restaurants");
+    expect(dining).toContain("food delivery");
+    // The exact words that used to send every grocery run here.
+    for (const merchant of ["supermarkets", "grocery stores", "wet markets", "butchers"]) {
+      expect(dining).not.toContain(merchant);
+    }
+  });
+
+  it("does not fall back to Food & Dining merely because a merchant sells food", async () => {
+    const dining = await ruleFor("Food & Dining");
+    const parts = generate.mock.calls[0][0].contents[0].parts as Array<{ text?: string }>;
+    const prompt = parts.find((p) => typeof p.text === "string")!.text!;
+
+    expect(dining).not.toBe("");
+    // The old blanket tie-breaker. Its replacement decides on ready-to-eat instead.
+    expect(prompt).not.toContain('prefer "Food & Dining" if the merchant sells any food');
+    expect(prompt).toContain("ready to eat as sold");
+    // "ready to eat as sold" alone also appears in rule 1, so asserting it does not pin the
+    // tie-breaker. What resolves a receipt holding both is the dominant share of the total,
+    // and deleting that sentence must fail this test.
+    expect(prompt).toContain("pick whichever accounts for more of the total");
+  });
+
+  /**
+   * The bug this covers: the rules named a "Household" category that does not exist here, so
+   * rule 12's name-matching fallback resolved it to the nearest string, which is "Housing" —
+   * the rent category. A supermarket run for sponges and cleaners was filed next to rent
+   * (seen in production as "SOUTH SUPERMARKET - PASIG Household (sponges, cleaners, bags)"
+   * landing in Housing). The category is now named Home Supplies, which collides with nothing.
+   */
+  it("names Home Supplies rather than Household, which collided with Housing", async () => {
+    const supplies = await ruleFor("Home Supplies");
+    const parts = generate.mock.calls[0][0].contents[0].parts as Array<{ text?: string }>;
+    const prompt = parts.find((p) => typeof p.text === "string")!.text!;
+
+    expect(supplies).toContain("cleaning supplies");
+    expect(supplies).toContain("garbage bags");
+    // "Household" is one letter from "Housing"; nothing may reintroduce it.
+    expect(prompt).not.toContain("Household");
+  });
+
+  it("gives Housing its own rule so rent stops relying on name matching", async () => {
+    const housing = await ruleFor("Housing");
+
+    expect(housing).toContain("rent");
+    expect(housing).toContain("condo dues");
+    // Housing is the dwelling, never the consumables bought for it.
+    expect(housing).not.toContain("cleaning supplies");
+  });
+
+  /**
+   * The root cause behind both the Household and the "Bills & Utilities" bugs: a rule may name
+   * any category it likes, and a name that matches nothing does not fail. The prompt's fallback
+   * quietly matches by name similarity instead, so the misroute is invisible until someone reads
+   * the transactions. Anything the prompt names must therefore be seeded, or be a deliberate
+   * choice recorded here.
+   */
+  it("names only categories that are actually seeded", async () => {
+    const seeded = new Set(DEFAULT_CATEGORIES.map((c) => c.name));
+
+    // Read straight off the rule list rather than parsed back out of the finished prompt.
+    // Telling a category rule from a prose rule in rendered text needs a heuristic, and any
+    // heuristic has a blind spot: a rule named "Household Cleaning and Maintenance" is long
+    // enough to be skipped as prose while still routing to a category nobody has.
+    expect(SCAN_CATEGORY_RULES.length).toBeGreaterThan(5);
+    for (const rule of SCAN_CATEGORY_RULES) {
+      expect(seeded.has(rule.category), `rule names "${rule.category}"`).toBe(true);
+    }
+  });
+
+  it("renders every rule into the prompt it ships", async () => {
+    await ruleFor("Food & Dining");
+    const call = generate.mock.calls[0][0].contents[0].parts as Array<{ text?: string }>;
+    const prompt = call.find((p) => typeof p.text === "string")!.text!;
+
+    // The list only guards anything if the prompt is actually built from it.
+    for (const rule of SCAN_CATEGORY_RULES) {
+      expect(prompt).toContain(`${rule.category}: ${rule.matches}`);
+    }
+  });
+
+  it("uses the real Utilities and Subscriptions names, not 'Bills & Utilities'", async () => {
+    const utilities = await ruleFor("Utilities");
+    const subscriptions = await ruleFor("Subscriptions");
+    const parts = generate.mock.calls[0][0].contents[0].parts as Array<{ text?: string }>;
+    const prompt = parts.find((p) => typeof p.text === "string")!.text!;
+
+    expect(utilities).toContain("electricity");
+    // Netflix and Spotify belong to Subscriptions, which is its own category here.
+    expect(utilities).not.toContain("Netflix");
+    expect(subscriptions).toContain("Netflix");
+    expect(prompt).not.toContain("Bills & Utilities");
+  });
+});
+
+/**
+ * The bug these cover: when Gemini returns a categoryId that is not in the user's list, the
+ * result is corrected rather than surfaced. That correction looked for a category named "Other",
+ * which no installation has — the seeded name is "Other Expense" — so the lookup always missed
+ * and every unmatched scan fell through to `categories[0]`. Categories are ordered
+ * `isDefault desc, name asc`, so that is whichever default sorts first alphabetically:
+ * "Entertainment" on a standard install. A misread receipt was silently filed as entertainment
+ * spending, and nothing surfaced the substitution.
+ */
+describe("invented category fallback", () => {
+  const CATEGORIES = [
+    { id: "c_ent", name: "Entertainment" },
+    { id: "c_food", name: "Food & Dining" },
+    { id: "c_other", name: "Other Expense" },
+  ];
+
+  const authorizeWith = () =>
+    authorize.mockResolvedValue({
+      ok: true,
+      context: {
+        categories: CATEGORIES,
+        categoryList: CATEGORIES.map((c) => `- "${c.name}" (id: "${c.id}")`).join("\n"),
+        timezoneOffset: -480,
+        reservationId: "res_1",
+      },
+    });
+
+  const scanReturning = (categoryId: string, breakdown?: unknown) => {
+    generate.mockResolvedValue({
+      text: JSON.stringify({
+        amount: 350,
+        categoryId,
+        date: "2026-08-26",
+        dateSource: "OCR",
+        description: "South Supermarket",
+        multiCategory: !!breakdown,
+        ...(breakdown ? { breakdown } : {}),
+      }),
+    });
+    return scan();
+  };
+
+  it("files an unmatched categoryId under Other Expense, not the first category", async () => {
+    authorizeWith();
+    const outcome = await scanReturning("cat_hallucinated");
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok || !("result" in outcome)) return;
+    expect(outcome.result.categoryId).toBe("c_other");
+    // "Entertainment" sorts first, so the old fallback landed every misread receipt there.
+    expect(outcome.result.categoryId).not.toBe("c_ent");
+  });
+
+  it("applies the same correction to each breakdown line", async () => {
+    authorizeWith();
+    const outcome = await scanReturning("c_food", [
+      { amount: 200, categoryId: "c_food", description: "Deli", lineItems: [{ name: "Roast", amount: 200 }] },
+      { amount: 150, categoryId: "cat_hallucinated", description: "Misc", lineItems: [{ name: "Bleach", amount: 150 }] },
+    ]);
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok || !("result" in outcome)) return;
+    const ids = (outcome.result.breakdown as Array<{ categoryId: string }>).map((b) => b.categoryId);
+    expect(ids).toEqual(["c_food", "c_other"]);
+  });
+
+  it("leaves a valid categoryId alone", async () => {
+    authorizeWith();
+    const outcome = await scanReturning("c_food");
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok || !("result" in outcome)) return;
+    expect(outcome.result.categoryId).toBe("c_food");
   });
 });

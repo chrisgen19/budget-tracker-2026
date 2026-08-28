@@ -4,7 +4,8 @@ import { getAuthUserId } from "@/lib/session";
 import { receiptBreakdownResultSchema } from "@/lib/validations";
 import { parseLocalDate, checkReceiptDate } from "@/lib/receipt-date";
 import { guardReceiptRequest, stripCodeFences } from "@/lib/receipt-guard";
-import { MAX_BREAKDOWN_GROUPS, MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
+import { resolveFallbackCategory } from "@/lib/category-fallback";
+import { buildBreakdownPrompt } from "@/lib/receipt-breakdown-prompt";
 import { summarizeIssues } from "@/lib/zod-issue-summary";
 import { settleScanReservation } from "@/lib/scan-quota";
 
@@ -41,53 +42,7 @@ export async function POST(request: Request) {
     const arrayBuffer = await file.arrayBuffer();
     const base64 = Buffer.from(arrayBuffer).toString("base64");
 
-    const prompt = `You are an expert receipt analyzer. Read EVERY line item on this receipt and group them by spending category.
-
-If the image is NOT a receipt (e.g. a random photo, screenshot, or document), respond with exactly: {"error": "NOT_A_RECEIPT"}
-
-INSTRUCTIONS:
-1. Read every individual item/product on the receipt
-2. Assign each item to one of the categories below based on these rules
-3. Group items by category and sum their amounts per group
-4. Return one entry per category, with the individual line items listed inside
-
-CATEGORIES:
-${categoryList}
-
-CATEGORY RULES:
-1. Food & Dining: food items, beverages, snacks, condiments, cooking ingredients, fresh produce, meat, dairy, bread, canned food, frozen food, instant noodles, rice, eggs
-2. Personal Care: soap, shampoo, toothpaste, deodorant, lotion, tissue paper, toilet paper, napkins, feminine hygiene, cotton buds, razors
-3. Household: cleaning supplies (detergent, bleach, dishwashing liquid, floor cleaner), garbage bags, sponges, air freshener, insect spray
-4. Healthcare: vitamins, medicine, first aid, health supplements
-5. Shopping: clothing, electronics, toys, home decor, kitchenware
-6. For any item not clearly matching the above, match by comparing to the category name
-7. When in doubt about a food-adjacent item (e.g. plastic wrap, aluminum foil), put it in Household
-
-RESPONSE FORMAT — return ONLY valid JSON, no markdown or explanation:
-{
-  "date": "<YYYY-MM-DD — the TRANSACTION/purchase date, usually near the top of the receipt next to the time. IGNORE any 'Date of Issuance', PTU accreditation, permit, or BIR registration dates. Use ${photoDateStr} if unreadable>",
-  "dateSource": "<\"OCR\" if you read the date from the receipt, or \"PHOTO_FALLBACK\" if you used the fallback ${photoDateStr} because the date was unreadable. Always include this field.>",
-  "items": [
-    {
-      "amount": <sum of items in this category>,
-      "categoryId": "<id>",
-      "description": "<store name> - <category name>: <1-2 sample items>",
-      "lineItems": [
-        { "name": "<item name as printed on receipt>", "amount": <price> }
-      ]
-    }
-  ]
-}
-
-RULES:
-- The sum of all item amounts should approximately equal the receipt total (small rounding differences are OK)
-- Each description should be short: store name, category, and 1-2 sample items (max 80 chars)
-- Each lineItems entry is one product/line from the receipt with its exact name and price
-- If an item has quantity > 1, multiply to get the total and use a single lineItems entry
-- Minimum 1 category group, maximum ${MAX_BREAKDOWN_GROUPS} category groups
-- At most ${MAX_BREAKDOWN_LINE_ITEMS} lineItems in any one group; if a group would exceed that, merge its smallest items into a single "Other items" line
-- All amounts must be positive numbers. A discount, promo, void or zero-priced line is NOT its own item: subtract it from the item it applies to, or from that group's total, and never emit a zero or negative "amount"
-- Do NOT include tax/service charge as a separate item — distribute proportionally or include in the largest group`;
+    const prompt = buildBreakdownPrompt(categoryList, photoDateStr);
 
     const response = await generateContentWithRetry({
       model: GEMINI_MODEL,
@@ -153,10 +108,10 @@ RULES:
     const usedPhotoFallback = result.data.dateSource === "PHOTO_FALLBACK" || parseFailed;
     result.data.date = normalizedDate;
 
-    // Verify each categoryId exists, fall back to "Other" if not
+    // Verify each categoryId exists, fall back to "Other Expense" if not
     const categoryIds = new Set(categories.map((c) => c.id));
     const fallbackCategory =
-      categories.find((c) => c.name === "Other") ?? categories[0];
+      resolveFallbackCategory(categories);
 
     for (const item of result.data.items) {
       if (!categoryIds.has(item.categoryId) && fallbackCategory) {
