@@ -161,6 +161,7 @@ Open [http://localhost:3111](http://localhost:3111), register an account, and st
 | `pnpm type-check` | Run TypeScript type checker |
 | `pnpm test` | Run the test suite once (CI mode) |
 | `pnpm test:watch` | Run the test suite in watch mode |
+| `pnpm test:e2e` | Install Chromium and run the authenticated Playwright suite |
 | `pnpm telegram:bot` | Run the Telegram bot locally (never while it is enabled in production) |
 | `pnpm db:migrate` | Run Prisma migrations |
 | `pnpm db:seed` | Seed default categories + set admin role |
@@ -582,6 +583,27 @@ cd mcp-server && pnpm type-check   # excluded from the root config, so run it se
 
 Vitest with React Testing Library, jsdom environment. Tests are colocated as
 `src/**/*.test.ts(x)`, so nothing imports them and they stay out of the Next.js bundle.
+
+### Responsive E2E tests
+
+The Playwright suite signs in as a real account and checks the Transactions page across supported
+viewport widths. Supply an account with at least one transaction and enough transactions for the
+page to scroll:
+
+```bash
+E2E_EMAIL="user@example.com" E2E_PASSWORD="password" pnpm test:e2e
+```
+
+Without `E2E_BASE_URL`, Playwright starts `pnpm dev` and tests
+`http://127.0.0.1:3111`. Set it to exercise an already-running or deployed app instead:
+
+```bash
+E2E_BASE_URL="https://example.com" E2E_EMAIL="user@example.com" E2E_PASSWORD="password" pnpm test:e2e
+```
+
+Both `E2E_EMAIL` and `E2E_PASSWORD` are required for the tests to execute. If either is missing,
+Playwright reports the entire suite as skipped and exits successfully; that result does not provide
+responsive-layout coverage.
 
 ### Verification scripts
 
