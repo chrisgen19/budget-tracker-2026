@@ -11,6 +11,7 @@ import {
   getLabelList,
   getBillHistory,
   getReceiptItems,
+  getCategoryList,
 } from "./budget-queries";
 
 /** Asia/Manila. `getTimezoneOffset()` returns -480 for UTC+8, matching users.timezone_offset. */
@@ -978,5 +979,42 @@ describe("row limits never silently truncate or reverse a result", () => {
     const result = await getBillHistory(prisma, "u1", { limit: -1, months: 24 });
 
     expect(result.occurrences).toHaveLength(3);
+  });
+});
+
+describe("getCategoryList ordering", () => {
+  /**
+   * The order is load-bearing, not cosmetic.
+   *
+   * The Telegram bot's shorthand matcher picks with `.find()`, which takes the first hit, so the
+   * list order silently decides every tie. `isDefault: "desc"` is what makes a seeded category
+   * beat a user's similarly named custom one: with plain alphabetical ordering a user who created
+   * "Fast Food" would have every unmatched food shorthand rerouted there instead of to
+   * "Food & Dining", with nothing in the reply to show it happened. `matchCategory` proves the
+   * consequence; this proves the order it depends on. Change one and the other should fail.
+   */
+  const captureOrderBy = () => {
+    const seen: unknown[] = [];
+    const prisma = {
+      category: {
+        findMany: vi.fn(async ({ orderBy }: { orderBy: unknown }) => {
+          seen.push(orderBy);
+          return [];
+        }),
+      },
+    } as unknown as PrismaClient;
+    return { prisma, seen };
+  };
+
+  it("returns defaults before custom categories, each alphabetically", async () => {
+    const { prisma, seen } = captureOrderBy();
+    await getCategoryList(prisma, "user-1");
+    expect(seen[0]).toEqual([{ isDefault: "desc" }, { name: "asc" }]);
+  });
+
+  it("keeps that order when filtered by type", async () => {
+    const { prisma, seen } = captureOrderBy();
+    await getCategoryList(prisma, "user-1", { type: "EXPENSE" });
+    expect(seen[0]).toEqual([{ isDefault: "desc" }, { name: "asc" }]);
   });
 });

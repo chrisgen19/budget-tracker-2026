@@ -103,3 +103,39 @@ describe("findOtherCategory", () => {
     expect(findOtherCategory("INCOME", CATEGORIES)).toBeNull();
   });
 });
+
+/**
+ * The matcher picks with `.find()`, so when two categories both satisfy a needle the list order
+ * decides, and `get_category_list` orders defaults first (`getCategoryList ordering` in
+ * budget-queries.test.ts pins that). A user's custom category is therefore never allowed to
+ * shadow the seeded one it happens to resemble.
+ *
+ * This is the coupling to notice if that query is ever reworked: dropping `isDefault: "desc"` for
+ * plain alphabetical ordering compiles, passes every other test, and silently reroutes the bot.
+ */
+describe("ordering decides which of two matching categories wins", () => {
+  const DEFAULT_FIRST: BotCategory[] = [
+    { id: "food-dining", name: "Food & Dining", type: "EXPENSE" },
+    { id: "fast-food", name: "Fast Food", type: "EXPENSE" },
+  ];
+
+  it("prefers the seeded default over a custom category matching the same keyword", () => {
+    expect(matchCategory("jollibee lunch", "EXPENSE", DEFAULT_FIRST)?.name).toBe("Food & Dining");
+  });
+
+  it("would pick the custom one if the list were ordered alphabetically instead", () => {
+    // Not desired behaviour: this is the regression that dropping `isDefault: "desc"` would cause,
+    // written down so the cost of that change is visible rather than inferred.
+    const alphabetical = [...DEFAULT_FIRST].sort((a, b) => a.name.localeCompare(b.name));
+    expect(alphabetical[0].name).toBe("Fast Food");
+    expect(matchCategory("jollibee lunch", "EXPENSE", alphabetical)?.name).toBe("Fast Food");
+  });
+
+  it("prefers the seeded unsorted bucket over a custom category also starting with other", () => {
+    const buckets: BotCategory[] = [
+      { id: "other-expense", name: "Other Expense", type: "EXPENSE" },
+      { id: "other-stuff", name: "Other Stuff", type: "EXPENSE" },
+    ];
+    expect(findOtherCategory("EXPENSE", buckets)?.name).toBe("Other Expense");
+  });
+});
