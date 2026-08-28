@@ -170,7 +170,7 @@ export function InstallPromptBanner() {
         "--install-banner-bottom": restingBottom,
         "--install-banner-bottom-lg": restingBottomDesktop,
       } as CSSProperties}
-      className="fixed bottom-[calc(var(--install-banner-bottom)+env(safe-area-inset-bottom))] lg:bottom-[var(--install-banner-bottom-lg)] left-4 right-4 lg:left-auto lg:right-6 lg:w-80 z-40 animate-fade-in-up"
+      className="fixed bottom-[calc(var(--install-banner-bottom)+env(safe-area-inset-bottom))] lg:bottom-[calc(var(--install-banner-bottom-lg)+env(safe-area-inset-bottom))] left-4 right-4 lg:left-auto lg:right-6 lg:w-80 z-40 animate-fade-in-up"
     >
       <div className="bg-white rounded-2xl shadow-soft-md border border-cream-300/50 p-4">
         <div className="flex items-start gap-3">
