@@ -579,4 +579,44 @@ describe("scan prompt category routing", () => {
     expect(prompt).not.toContain('prefer "Food & Dining" if the merchant sells any food');
     expect(prompt).toContain("ready to eat as sold");
   });
+
+  /**
+   * The bug this covers: the rules named a "Household" category that does not exist here, so
+   * rule 12's name-matching fallback resolved it to the nearest string, which is "Housing" —
+   * the rent category. A supermarket run for sponges and cleaners was filed next to rent
+   * (seen in production as "SOUTH SUPERMARKET - PASIG Household (sponges, cleaners, bags)"
+   * landing in Housing). The category is now named Home Supplies, which collides with nothing.
+   */
+  it("names Home Supplies rather than Household, which collided with Housing", async () => {
+    const supplies = await ruleFor("Home Supplies");
+    const parts = generate.mock.calls[0][0].contents[0].parts as Array<{ text?: string }>;
+    const prompt = parts.find((p) => typeof p.text === "string")!.text!;
+
+    expect(supplies).toContain("cleaning supplies");
+    expect(supplies).toContain("garbage bags");
+    // "Household" is one letter from "Housing"; nothing may reintroduce it.
+    expect(prompt).not.toContain("Household");
+  });
+
+  it("gives Housing its own rule so rent stops relying on name matching", async () => {
+    const housing = await ruleFor("Housing");
+
+    expect(housing).toContain("rent");
+    expect(housing).toContain("condo dues");
+    // Housing is the dwelling, never the consumables bought for it.
+    expect(housing).not.toContain("cleaning supplies");
+  });
+
+  it("uses the real Utilities and Subscriptions names, not 'Bills & Utilities'", async () => {
+    const utilities = await ruleFor("Utilities");
+    const subscriptions = await ruleFor("Subscriptions");
+    const parts = generate.mock.calls[0][0].contents[0].parts as Array<{ text?: string }>;
+    const prompt = parts.find((p) => typeof p.text === "string")!.text!;
+
+    expect(utilities).toContain("electricity");
+    // Netflix and Spotify belong to Subscriptions, which is its own category here.
+    expect(utilities).not.toContain("Netflix");
+    expect(subscriptions).toContain("Netflix");
+    expect(prompt).not.toContain("Bills & Utilities");
+  });
 });

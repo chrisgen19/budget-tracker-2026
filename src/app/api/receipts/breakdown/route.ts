@@ -58,12 +58,13 @@ CATEGORY RULES:
 1. Groceries: raw or packaged food to cook, prepare or keep at home: fresh produce, meat, seafood, dairy, eggs, bread, rice, instant noodles, condiments, cooking ingredients, canned food, frozen food, packaged snacks and beverages
 2. Food & Dining: food already prepared and ready to eat as sold: a hot deli or food-court item, a brewed or made-to-order drink, a restaurant or fast-food line item on the same receipt
 3. Personal Care: soap, shampoo, toothpaste, deodorant, lotion, tissue paper, toilet paper, napkins, feminine hygiene, cotton buds, razors
-4. Household: cleaning supplies (detergent, bleach, dishwashing liquid, floor cleaner), garbage bags, sponges, air freshener, insect spray
+4. Home Supplies: cleaning supplies (detergent, bleach, dishwashing liquid, floor cleaner), garbage bags, sponges, air freshener, insect spray
 5. Healthcare: vitamins, medicine, first aid, health supplements
 6. Shopping: clothing, electronics, toys, home decor, kitchenware
 7. For any item not clearly matching the above, match by comparing to the category name
 8. Most items on a supermarket or wet-market receipt are Groceries. Use Food & Dining only for a line that was ready to eat when bought, not for ingredients
-9. When in doubt about a food-adjacent item (e.g. plastic wrap, aluminum foil), put it in Household
+9. Cleaners, garbage bags and sponges on a supermarket receipt are Home Supplies. Never assign a supermarket line item to Housing: Housing is rent and dues, not things bought for the home
+10. When in doubt about a food-adjacent item (e.g. plastic wrap, aluminum foil), put it in Home Supplies
 
 RESPONSE FORMAT — return ONLY valid JSON, no markdown or explanation:
 {

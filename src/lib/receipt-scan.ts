@@ -80,14 +80,17 @@ CATEGORY RULES (pick categoryId by matching the merchant/items to these rules):
 2. Groceries: raw or packaged food bought to cook, prepare or keep at home: supermarkets, grocery stores, wet markets, palengke, seafood markets, butchers, sari-sari stores, bakeries selling bread to take home, fresh produce, meat, seafood, dairy, eggs, bread, rice, noodles, condiments, cooking ingredients, canned food, frozen food, household snacks and beverages bought by the pack
 3. Transportation: ride-hailing (Grab, Gojek), taxis, MRT/bus top-ups, parking, fuel/petrol, tolls
 4. Shopping: clothing, electronics, department stores, online shopping (Shopee, Lazada, Amazon)
-5. Bills & Utilities: electricity, water, gas, internet, phone bills, subscriptions (Netflix, Spotify)
-6. Entertainment: movies, concerts, theme parks, games, sports, streaming services
-7. Healthcare: doctors, clinics, pharmacies, dental, hospital, health supplements, vitamins, medicine
-8. Personal Care: soap, shampoo, toothpaste, deodorant, lotion, tissue paper, toilet paper, napkins, feminine hygiene, razors
-9. Household: cleaning supplies (detergent, bleach, dishwashing liquid, floor cleaner), garbage bags, sponges, air freshener, insect spray
-10. For any category not listed above, match by comparing the merchant/items to the category name.
-11. Food & Dining vs Groceries is decided by whether the food is ready to eat as sold, NOT by the merchant selling food. A meal, a drink made to order, or anything eaten out or delivered is Food & Dining. Ingredients and packaged goods carried home to cook or store are Groceries. When one receipt holds both (a supermarket with a hot deli counter, a cafe that also sells loaves), pick whichever accounts for more of the total.
-12. When in doubt about a food-adjacent item (e.g. plastic wrap, aluminum foil), put it in Household.
+5. Utilities: electricity, water, gas, internet, phone and mobile bills
+6. Subscriptions: recurring digital services billed monthly or yearly (Netflix, Spotify, iCloud, streaming, software)
+7. Entertainment: movies, concerts, theme parks, games, sports
+8. Healthcare: doctors, clinics, pharmacies, dental, hospital, health supplements, vitamins, medicine
+9. Personal Care: soap, shampoo, toothpaste, deodorant, lotion, tissue paper, toilet paper, napkins, feminine hygiene, razors
+10. Home Supplies: cleaning supplies (detergent, bleach, dishwashing liquid, floor cleaner), garbage bags, sponges, air freshener, insect spray
+11. Housing: the home itself, not things bought for it: rent, condo dues, association fees, home repairs and maintenance
+12. For any category not listed above, match by comparing the merchant/items to the category name.
+13. Food & Dining vs Groceries is decided by whether the food is ready to eat as sold, NOT by the merchant selling food. A meal, a drink made to order, or anything eaten out or delivered is Food & Dining. Ingredients and packaged goods carried home to cook or store are Groceries. When one receipt holds both (a supermarket with a hot deli counter, a cafe that also sells loaves), pick whichever accounts for more of the total.
+14. Housing vs Home Supplies: Housing is the dwelling itself (rent, dues, repairs), Home Supplies is consumables bought for it. A supermarket or hardware receipt for cleaners, bags or sponges is Home Supplies and is NEVER Housing.
+15. When in doubt about a food-adjacent item (e.g. plastic wrap, aluminum foil), put it in Home Supplies.
 
 Respond with ONLY valid JSON, no markdown or explanation:
 {"amount": <number>, "categoryId": "<id>", "date": "<YYYY-MM-DD>", "dateSource": "OCR" | "PHOTO_FALLBACK", "description": "<text>", "multiCategory": <boolean>}
