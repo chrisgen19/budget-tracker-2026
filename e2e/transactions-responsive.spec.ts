@@ -13,11 +13,11 @@ const login = async (page: Page) => {
 
 const assertNoHorizontalOverflow = async (page: Page, width: number) => {
   const dimensions = await page.evaluate(() => ({
-    innerWidth: window.innerWidth,
+    clientWidth: document.documentElement.clientWidth,
     scrollWidth: document.documentElement.scrollWidth,
   }));
   expect(dimensions.scrollWidth, `${width}px document width`).toBeLessThanOrEqual(
-    dimensions.innerWidth,
+    dimensions.clientWidth,
   );
 };
 
@@ -74,13 +74,13 @@ test.describe("transactions responsive layout", () => {
 
       document.documentElement.dataset.fabHiddenObserved = "false";
       const recordHiddenState = () => {
-        if (button.classList.contains("pointer-events-none")) {
+        if ((button as HTMLButtonElement).disabled) {
           document.documentElement.dataset.fabHiddenObserved = "true";
           observer.disconnect();
         }
       };
       const observer = new MutationObserver(recordHiddenState);
-      observer.observe(button, { attributes: true, attributeFilter: ["class"] });
+      observer.observe(button, { attributes: true, attributeFilter: ["disabled"] });
       recordHiddenState();
     });
 
@@ -102,12 +102,15 @@ test.describe("transactions responsive layout", () => {
         page.evaluate(() => document.documentElement.dataset.fabHiddenObserved),
       )
       .toBe("true");
-    await expect.poll(() => fab.getAttribute("class")).not.toContain("pointer-events-none");
+    await expect(fab).toBeEnabled();
 
     const box = await dateHeading.boundingBox();
     expect(box).not.toBeNull();
-    expect(box!.y).toBeGreaterThanOrEqual(60);
-    expect(box!.y).toBeLessThanOrEqual(68);
+    const headerBox = await page.locator("header").boundingBox();
+    expect(headerBox).not.toBeNull();
+    const headerBottom = headerBox!.y + headerBox!.height;
+    expect(box!.y).toBeGreaterThanOrEqual(headerBottom - 1);
+    expect(box!.y).toBeLessThanOrEqual(headerBottom + 1);
 
     const fabBox = await fab.boundingBox();
     expect(fabBox).not.toBeNull();

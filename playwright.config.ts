@@ -22,7 +22,7 @@ export default defineConfig({
     : {
         command: "pnpm dev",
         url: baseURL,
-        reuseExistingServer: true,
+        reuseExistingServer: !process.env.CI,
         timeout: 120_000,
       },
 });

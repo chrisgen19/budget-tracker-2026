@@ -603,7 +603,8 @@ E2E_BASE_URL="https://example.com" E2E_EMAIL="user@example.com" E2E_PASSWORD="pa
 
 Both `E2E_EMAIL` and `E2E_PASSWORD` are required for the tests to execute. If either is missing,
 Playwright reports the entire suite as skipped and exits successfully; that result does not provide
-responsive-layout coverage.
+responsive-layout coverage. This authenticated suite is currently manual-only: GitHub CI does not
+run it because the workflow does not provision a seeded account or credentials.
 
 ### Verification scripts
 

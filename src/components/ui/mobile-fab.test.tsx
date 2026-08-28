@@ -25,8 +25,9 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("MobileFab responsive behavior", () => {
-  it("renders a compact accessible action and clears it while the page is scrolling", () => {
+  it("renders a compact accessible action and disables it while the page is scrolling", () => {
     vi.useFakeTimers();
+    const onClick = vi.fn();
 
     render(
       <MobileFab
@@ -34,7 +35,7 @@ describe("MobileFab responsive behavior", () => {
         icon={Plus}
         compact
         hideWhileScrolling
-        onClick={() => {}}
+        onClick={onClick}
       />,
     );
 
@@ -47,11 +48,13 @@ describe("MobileFab responsive behavior", () => {
 
     fireEvent.scroll(window);
     expect(button.className).toContain("opacity-0");
-    expect(button.className).toContain("pointer-events-none");
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(button);
+    expect(onClick).not.toHaveBeenCalled();
 
     act(() => vi.advanceTimersByTime(180));
     expect(button.className).toContain("opacity-100");
-    expect(button.className).not.toContain("pointer-events-none");
+    expect((button as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("shows immediately when scroll hiding is disabled during the debounce", () => {
@@ -69,7 +72,7 @@ describe("MobileFab responsive behavior", () => {
 
     const button = screen.getByRole("button", { name: "Add Transaction" });
     fireEvent.scroll(window);
-    expect(button.className).toContain("pointer-events-none");
+    expect((button as HTMLButtonElement).disabled).toBe(true);
 
     rerender(
       <MobileFab
@@ -82,7 +85,7 @@ describe("MobileFab responsive behavior", () => {
     );
 
     expect(button.className).toContain("opacity-100");
-    expect(button.className).not.toContain("pointer-events-none");
+    expect((button as HTMLButtonElement).disabled).toBe(false);
     act(() => vi.advanceTimersByTime(180));
     expect(button.className).toContain("opacity-100");
   });

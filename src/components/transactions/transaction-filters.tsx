@@ -768,9 +768,9 @@ export function TransactionFiltersBar({
                 : "text-warm-400 hover:text-warm-600 hover:bg-cream-100"
             )}
           >
-            <SlidersHorizontal className="w-4.5 h-4.5" />
+            <SlidersHorizontal className="w-[18px] h-[18px]" />
             {advancedCount > 0 && (
-              <span className="absolute -top-1 -right-1 w-4.5 h-4.5 rounded-full bg-amber text-white text-[10px] font-bold flex items-center justify-center leading-none">
+              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber text-white text-[10px] font-bold flex items-center justify-center leading-none">
                 {advancedCount}
               </span>
             )}
