@@ -67,10 +67,13 @@ function AppMain({ children }: { children: React.ReactNode }) {
     installBannerHeight,
   });
 
+  // The clearance runs to `lg`, not to `sm`. The FAB is `sm:hidden`, but both
+  // banners are full-width at every width below `lg`, so a flat `sm:pb-24`
+  // left tablet content sitting underneath them.
   return (
     <main
       style={{ "--mobile-fab-content-clearance": contentClearance } as CSSProperties}
-      className="lg:pl-64 pt-16 lg:pt-0 pb-[calc(var(--mobile-fab-content-clearance)+env(safe-area-inset-bottom))] sm:pb-24 lg:pb-0 min-h-screen"
+      className="lg:pl-64 pt-16 lg:pt-0 pb-[calc(var(--mobile-fab-content-clearance)+env(safe-area-inset-bottom))] lg:pb-0 min-h-screen"
     >
       {children}
     </main>

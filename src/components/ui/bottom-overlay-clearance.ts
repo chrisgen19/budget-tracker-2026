@@ -8,11 +8,19 @@
  * an element cannot lose distance to a neighbour that rests on a different
  * base. `env(safe-area-inset-bottom)` is added by each consumer, since it
  * applies once to the whole stack rather than per gap.
+ *
+ * The bottom nav is not modelled as a stop -- see the base offsets below.
  */
 
-/** Where the bill reminder rests when nothing is below it. */
+/**
+ * Where each overlay rests when nothing is below it. These are hand-tuned
+ * against the bottom nav (72px, or 4.5rem, at the default font) rather than
+ * derived from it: the install prompt is docked flush to the nav and the bill
+ * reminder floats 8px above it, so the gap to the *nav* is deliberately not
+ * `STACK_GAP_PX`. Changing the nav's height moves it out from under both, and
+ * nothing here will notice.
+ */
 export const BILL_BANNER_BASE_REM = 5;
-/** Where the install prompt rests when nothing is below it. */
 export const INSTALL_BANNER_BASE_REM = 4.5;
 /** The same two, above `lg`, where there is no bottom nav to clear. */
 export const BILL_BANNER_BASE_DESKTOP_REM = 2;
@@ -23,7 +31,7 @@ export const FAB_BASE_OFFSET_REM = 5;
 export const FAB_MIN_HEIGHT_REM = 2.75;
 /** Bottom padding the nested content wrapper (`p-4`) already contributes. */
 const CONTENT_PADDING_REM = 1;
-/** Space kept between any two stacked overlays. */
+/** Space kept between two overlays that stack on each other. */
 const STACK_GAP_PX = 12;
 
 interface BannerState {
