@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
+import { DEFAULT_CATEGORIES } from "@/lib/default-categories";
 
 const authorize = vi.hoisted(() => vi.fn());
 const settle = vi.hoisted(() => vi.fn(async () => {}));
@@ -605,6 +606,37 @@ describe("scan prompt category routing", () => {
     expect(housing).toContain("condo dues");
     // Housing is the dwelling, never the consumables bought for it.
     expect(housing).not.toContain("cleaning supplies");
+  });
+
+  /**
+   * The root cause behind both the Household and the "Bills & Utilities" bugs: a rule may name
+   * any category it likes, and a name that matches nothing does not fail. The prompt's fallback
+   * quietly matches by name similarity instead, so the misroute is invisible until someone reads
+   * the transactions. Anything the prompt names must therefore be seeded, or be a deliberate
+   * choice recorded here.
+   */
+  it("names only categories that are actually seeded", async () => {
+    // Any rule lookup drives one scan, which is what puts the prompt on the mock.
+    await ruleFor("Food & Dining");
+    const call = generate.mock.calls[0][0].contents[0].parts as Array<{ text?: string }>;
+    const prompt = call.find((p) => typeof p.text === "string")!.text!;
+
+    // Categories that exist per-deployment rather than in the seed. Adding a name here is a
+    // statement that this deployment owns it; a rule naming anything else is a bug.
+    const deploymentSpecific = new Set(["Subscriptions"]);
+    const seeded = new Set(DEFAULT_CATEGORIES.map((c) => c.name));
+
+    const named = prompt
+      .split("\n")
+      .map((l) => /^\d+\. ([^:]+):/.exec(l.trim())?.[1])
+      .filter((n): n is string => !!n)
+      // Tie-breaker rules read "A vs B:", which is prose, not a category name.
+      .filter((n) => !n.includes(" vs "));
+
+    expect(named.length).toBeGreaterThan(5);
+    for (const name of named) {
+      expect(seeded.has(name) || deploymentSpecific.has(name), `rule names "${name}"`).toBe(true);
+    }
   });
 
   it("uses the real Utilities and Subscriptions names, not 'Bills & Utilities'", async () => {
