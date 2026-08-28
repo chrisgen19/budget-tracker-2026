@@ -18,17 +18,26 @@ const main = async () => {
     });
     if (existing) continue;
 
-    await prisma.category.create({
-      data: {
-        name: cat.name,
-        type: cat.type,
-        icon: cat.icon,
-        color: cat.color,
-        isDefault: true,
-        userId: null,
-      },
-    });
-    created += 1;
+    try {
+      await prisma.category.create({
+        data: {
+          name: cat.name,
+          type: cat.type,
+          icon: cat.icon,
+          color: cat.color,
+          isDefault: true,
+          userId: null,
+        },
+      });
+      created += 1;
+    } catch (e) {
+      // The check above and this insert are two statements, so a second seed running
+      // concurrently can pass the same check and reach here first. P2002 means it won this
+      // race and the row now exists, which is the outcome we wanted: not an error. Enforced by
+      // the partial unique index in 20260828100000_unique_default_categories, without which
+      // both inserts would simply succeed and leave a duplicate default behind.
+      if ((e as { code?: string }).code !== "P2002") throw e;
+    }
   }
 
   console.log(

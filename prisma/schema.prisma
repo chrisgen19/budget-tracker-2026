@@ -163,6 +163,11 @@ model Category {
   scheduledTransactions ScheduledTransaction[]
   createdAt    DateTime        @default(now()) @map("created_at")
 
+  // NOTE: this constraint does NOT cover defaults. Their userId is NULL, and Postgres treats
+  // NULLs as distinct in a unique index, so the same default could be inserted twice. A partial
+  // unique index on (name, type) WHERE user_id IS NULL closes that (migration
+  // 20260828100000_unique_default_categories). Prisma cannot express a partial index, so the DB
+  // constraint is authoritative; do not assume this line is the whole story.
   @@unique([name, type, userId])
   @@map("categories")
 }

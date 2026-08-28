@@ -90,13 +90,27 @@ const main = async () => {
 
       // Swap the id in place and dedupe, in case the user already had both pinned.
       const swap = (ids: string[]) => [...new Set(ids.map((i) => (i === custom.id ? target.id : i)))];
-      for (const u of quickExpense) {
+
+      // Re-read inside the transaction rather than reusing the arrays counted above. Those were
+      // fetched before it opened, and a user editing their quick-picks in between would have the
+      // change silently overwritten by a stale array: these are plain String[] columns, so the
+      // write replaces the whole list rather than touching one element.
+      const expenseNow = await tx.user.findMany({
+        where: { quickExpenseCategories: { has: custom.id } },
+        select: { id: true, quickExpenseCategories: true },
+      });
+      for (const u of expenseNow) {
         await tx.user.update({
           where: { id: u.id },
           data: { quickExpenseCategories: swap(u.quickExpenseCategories) },
         });
       }
-      for (const u of quickIncome) {
+
+      const incomeNow = await tx.user.findMany({
+        where: { quickIncomeCategories: { has: custom.id } },
+        select: { id: true, quickIncomeCategories: true },
+      });
+      for (const u of incomeNow) {
         await tx.user.update({
           where: { id: u.id },
           data: { quickIncomeCategories: swap(u.quickIncomeCategories) },
