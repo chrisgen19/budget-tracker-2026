@@ -657,3 +657,79 @@ describe("scan prompt category routing", () => {
     expect(prompt).not.toContain("Bills & Utilities");
   });
 });
+
+/**
+ * The bug these cover: when Gemini returns a categoryId that is not in the user's list, the
+ * result is corrected rather than surfaced. That correction looked for a category named "Other",
+ * which no installation has — the seeded name is "Other Expense" — so the lookup always missed
+ * and every unmatched scan fell through to `categories[0]`. Categories are ordered
+ * `isDefault desc, name asc`, so that is whichever default sorts first alphabetically:
+ * "Entertainment" on a standard install. A misread receipt was silently filed as entertainment
+ * spending, and nothing surfaced the substitution.
+ */
+describe("invented category fallback", () => {
+  const CATEGORIES = [
+    { id: "c_ent", name: "Entertainment" },
+    { id: "c_food", name: "Food & Dining" },
+    { id: "c_other", name: "Other Expense" },
+  ];
+
+  const authorizeWith = () =>
+    authorize.mockResolvedValue({
+      ok: true,
+      context: {
+        categories: CATEGORIES,
+        categoryList: CATEGORIES.map((c) => `- "${c.name}" (id: "${c.id}")`).join("\n"),
+        timezoneOffset: -480,
+        reservationId: "res_1",
+      },
+    });
+
+  const scanReturning = (categoryId: string, breakdown?: unknown) => {
+    generate.mockResolvedValue({
+      text: JSON.stringify({
+        amount: 350,
+        categoryId,
+        date: "2026-08-26",
+        dateSource: "OCR",
+        description: "South Supermarket",
+        multiCategory: !!breakdown,
+        ...(breakdown ? { breakdown } : {}),
+      }),
+    });
+    return scan();
+  };
+
+  it("files an unmatched categoryId under Other Expense, not the first category", async () => {
+    authorizeWith();
+    const outcome = await scanReturning("cat_hallucinated");
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok || !("result" in outcome)) return;
+    expect(outcome.result.categoryId).toBe("c_other");
+    // "Entertainment" sorts first, so the old fallback landed every misread receipt there.
+    expect(outcome.result.categoryId).not.toBe("c_ent");
+  });
+
+  it("applies the same correction to each breakdown line", async () => {
+    authorizeWith();
+    const outcome = await scanReturning("c_food", [
+      { amount: 200, categoryId: "c_food", description: "Deli", lineItems: [{ name: "Roast", amount: 200 }] },
+      { amount: 150, categoryId: "cat_hallucinated", description: "Misc", lineItems: [{ name: "Bleach", amount: 150 }] },
+    ]);
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok || !("result" in outcome)) return;
+    const ids = (outcome.result.breakdown as Array<{ categoryId: string }>).map((b) => b.categoryId);
+    expect(ids).toEqual(["c_food", "c_other"]);
+  });
+
+  it("leaves a valid categoryId alone", async () => {
+    authorizeWith();
+    const outcome = await scanReturning("c_food");
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok || !("result" in outcome)) return;
+    expect(outcome.result.categoryId).toBe("c_food");
+  });
+});

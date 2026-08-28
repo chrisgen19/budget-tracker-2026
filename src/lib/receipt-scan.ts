@@ -5,6 +5,7 @@ import {
   isGeminiUnavailable,
 } from "@/lib/gemini";
 import { authorizeReceiptScan, stripCodeFences, type ScanRefusal } from "@/lib/receipt-guard";
+import { resolveFallbackCategory } from "@/lib/category-fallback";
 import { settleScanReservation } from "@/lib/scan-quota";
 import { checkReceiptDate } from "@/lib/receipt-date";
 import { receiptScanResultSchema } from "@/lib/validations";
@@ -282,7 +283,7 @@ export async function scanReceipt(params: {
     // A categoryId Gemini invented would fail the ownership check on write, so it is corrected
     // here rather than surfaced.
     const categoryIds = new Set(categories.map((c) => c.id));
-    const fallbackCategory = categories.find((c) => c.name === "Other") ?? categories[0];
+    const fallbackCategory = resolveFallbackCategory(categories);
 
     if (!categoryIds.has(result.data.categoryId) && fallbackCategory) {
       result.data.categoryId = fallbackCategory.id;

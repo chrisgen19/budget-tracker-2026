@@ -4,6 +4,7 @@ import { getAuthUserId } from "@/lib/session";
 import { receiptBreakdownResultSchema } from "@/lib/validations";
 import { parseLocalDate, checkReceiptDate } from "@/lib/receipt-date";
 import { guardReceiptRequest, stripCodeFences } from "@/lib/receipt-guard";
+import { resolveFallbackCategory } from "@/lib/category-fallback";
 import { buildBreakdownPrompt } from "@/lib/receipt-breakdown-prompt";
 import { summarizeIssues } from "@/lib/zod-issue-summary";
 import { settleScanReservation } from "@/lib/scan-quota";
@@ -107,10 +108,10 @@ export async function POST(request: Request) {
     const usedPhotoFallback = result.data.dateSource === "PHOTO_FALLBACK" || parseFailed;
     result.data.date = normalizedDate;
 
-    // Verify each categoryId exists, fall back to "Other" if not
+    // Verify each categoryId exists, fall back to "Other Expense" if not
     const categoryIds = new Set(categories.map((c) => c.id));
     const fallbackCategory =
-      categories.find((c) => c.name === "Other") ?? categories[0];
+      resolveFallbackCategory(categories);
 
     for (const item of result.data.items) {
       if (!categoryIds.has(item.categoryId) && fallbackCategory) {
