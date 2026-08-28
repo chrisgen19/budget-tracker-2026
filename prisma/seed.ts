@@ -58,7 +58,7 @@ const main = async () => {
       byName.set(key, (byName.get(key) ?? 0) + 1);
     }
     console.warn(
-      `\nWARNING: ${collisions.length} user-owned categor${collisions.length === 1 ? "y" : "ies"} share a name with a default:`
+      `\nWARNING: ${collisions.length} user-owned ${collisions.length === 1 ? "category shares" : "categories share"} a name with a default:`
     );
     for (const [key, count] of byName) {
       console.warn(`  ${key} — ${count} user${count === 1 ? "" : "s"}`);
