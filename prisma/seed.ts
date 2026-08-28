@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import { DEFAULT_CATEGORIES } from "../src/lib/default-categories";
+import { DEFAULT_CATEGORIES, findOrphanedDefaults } from "../src/lib/default-categories";
 
 const prisma = new PrismaClient();
 
@@ -67,6 +67,29 @@ const main = async () => {
       "\nBoth copies now appear in the picker with the same name. Merge each one with:\n" +
         "  pnpm exec tsx --env-file=.env scripts/merge-custom-category-into-default.ts NAME=<name>\n" +
         "(dry run by default; add APPLY=true to write)"
+    );
+  }
+
+  // A name dropped from DEFAULT_CATEGORIES leaves behind the row it already created, still
+  // flagged isDefault. DELETE /api/categories/[id] filters on isDefault: false, so the leftover
+  // cannot be removed through the app: it stays in every picker and splits reporting with
+  // whatever replaced it. Renaming Education to Fun is what produced this case.
+  const storedDefaults = await prisma.category.findMany({
+    where: { isDefault: true },
+    select: { name: true, type: true },
+  });
+  const orphans = findOrphanedDefaults(storedDefaults);
+
+  if (orphans.length > 0) {
+    console.warn(
+      `\nWARNING: ${orphans.length} default categor${orphans.length === 1 ? "y is" : "ies are"} no longer seeded:`
+    );
+    for (const o of orphans) console.warn(`  ${o.name} (${o.type})`);
+    console.warn(
+      "\nThese were removed from the seed list but still exist, and a default cannot be deleted\n" +
+        "through the app. Rename one in place to keep its transactions, or delete it directly once\n" +
+        "nothing references it. Left alone rather than repaired here: renaming relabels real\n" +
+        "spending, which is not a call this script should make.\n"
     );
   }
 

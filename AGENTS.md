@@ -178,6 +178,18 @@ Active tasks:
   `GET /api/categories` returns `OR: [{ isDefault: true }, { userId }]`, so both appear with the same
   name. `scripts/merge-custom-category-into-default.ts` repoints transactions, recurring bills and the
   `quick_*_categories` arrays onto the default and deletes the custom row. Dry run by default
+- `pnpm db:seed` is **not** part of a deploy. `pnpm build` is `prisma generate && prisma migrate deploy
+  && next build`, and `nixpacks.toml` runs only that, so merging a change to the seed list ships the
+  new prompts while the categories they route to do not exist yet. Run the seed by hand from a
+  Coolify terminal after deploying one. Do not add it to the build command: it would run on every
+  deploy, and the merge script below must never run unattended. `tsx` is a devDependency and may be
+  absent from the standalone image, so run `merge-custom-category-into-default.ts` locally against
+  the production `DATABASE_URL` if the container cannot; inside the container drop `--env-file`,
+  since the variables are already set
+- Removing a name from `DEFAULT_CATEGORIES` does not delete the row it already created. The leftover
+  keeps `isDefault: true`, and `DELETE /api/categories/[id]` filters on `isDefault: false`, so it
+  cannot be removed through the app. The seed reports these (`findOrphanedDefaults`) rather than
+  repairing them: renaming one preserves its id and its transactions, but also relabels real spending
 - Users can create custom categories on top of defaults
 - Key models: `User`, `Category`, `Transaction`, `ScheduledTransaction` (recurring bills; `@@map("scheduled_transactions")` — there is no `Bill` model), `ScheduledTransactionLog` (per-occurrence PAID/SKIPPED/SNOOZED), `BillEmailLog`, `Label`, `LabelSchedule`, `TransactionLabel`, `BillLabel`, `VerificationToken`, `ScanLog`, `AiAssessment`, `AiUsageLog`, `McpToken`, `AppSettings`
 - Notable columns: `users.hide_amounts`, `users.timezone_offset`, `users.email_verified`, `users.default_label_type`, `transactions.receipt_group_id`, `transactions.receipt_breakdown`, `transactions.bill_id`, `transactions.client_batch_id`, `transactions.created_via`, `transactions.mcp_token_id`, `users.mcp_writes_enabled_until`, `mcp_tokens.source`

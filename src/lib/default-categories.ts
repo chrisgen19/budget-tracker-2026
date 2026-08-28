@@ -34,3 +34,31 @@ export const DEFAULT_CATEGORIES = [
   { name: "Side Business", type: TransactionType.INCOME, icon: "Store", color: "#E07C4F" },
   { name: "Other Income", type: TransactionType.INCOME, icon: "MoreHorizontal", color: "#5B8DEF" },
 ];
+
+/** The minimum shape needed to compare a stored category against the seeded list. */
+export interface CategoryIdentity {
+  name: string;
+  type: TransactionType;
+}
+
+/**
+ * Defaults that exist in the database but are no longer in `DEFAULT_CATEGORIES`.
+ *
+ * Dropping a name from the list does not remove the row it already created: the seed only adds
+ * what is missing. The leftover keeps `isDefault: true`, and `DELETE /api/categories/[id]`
+ * filters on `isDefault: false`, so it cannot be removed through the app at all — it sits in
+ * every picker permanently and splits reporting with whatever replaced it. Renaming `Education`
+ * to `Fun` is what produced this case here.
+ *
+ * Reported rather than repaired. Renaming the leftover would preserve its id and carry its
+ * transactions across for free, which is tempting, but it also relabels real spending: an
+ * install with genuine Education transactions would have them silently become Fun. That call
+ * belongs to whoever owns the data.
+ */
+export const findOrphanedDefaults = <T extends CategoryIdentity>(
+  storedDefaults: readonly T[],
+  seeded: readonly CategoryIdentity[] = DEFAULT_CATEGORIES
+): T[] => {
+  const known = new Set(seeded.map((c) => `${c.name}|${c.type}`));
+  return storedDefaults.filter((c) => !known.has(`${c.name}|${c.type}`));
+};
