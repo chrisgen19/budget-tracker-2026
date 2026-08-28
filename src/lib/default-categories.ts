@@ -22,7 +22,7 @@ export const DEFAULT_CATEGORIES = [
   { name: "Entertainment", type: TransactionType.EXPENSE, icon: "Film", color: "#E05B8D" },
   { name: "Shopping", type: TransactionType.EXPENSE, icon: "ShoppingBag", color: "#4ECDC4" },
   { name: "Healthcare", type: TransactionType.EXPENSE, icon: "Heart", color: "#FF6B6B" },
-  { name: "Education", type: TransactionType.EXPENSE, icon: "GraduationCap", color: "#45B7D1" },
+  { name: "Fun", type: TransactionType.EXPENSE, icon: "Gift", color: "#45B7D1" },
   { name: "Personal Care", type: TransactionType.EXPENSE, icon: "Sparkles", color: "#C8702A" },
   { name: "Other Expense", type: TransactionType.EXPENSE, icon: "MoreHorizontal", color: "#8B7E6A" },
 
