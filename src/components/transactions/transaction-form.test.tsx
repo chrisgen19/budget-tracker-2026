@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import type { TransactionInput } from "@/lib/validations";
 
+const scheduledLabelMocks = vi.hoisted(() => ({
+  useScheduledLabel: vi.fn(() => ({ scheduledLabelId: null })),
+}));
+
 vi.mock("@/components/user-provider", () => ({
   useUser: () => ({
     user: {
@@ -44,7 +48,7 @@ vi.mock("@/hooks/use-labels", () => ({
 }));
 
 vi.mock("@/hooks/use-scheduled-label", () => ({
-  useScheduledLabel: () => ({ scheduledLabelId: null }),
+  useScheduledLabel: scheduledLabelMocks.useScheduledLabel,
 }));
 
 vi.mock("@/components/transactions/label-picker", () => ({
@@ -54,6 +58,27 @@ vi.mock("@/components/transactions/label-picker", () => ({
 afterEach(() => vi.useRealTimers());
 
 describe("TransactionForm account-local dates", () => {
+  it("passes an absolute instant to schedule matching instead of account wall time", () => {
+    render(
+      <TransactionForm
+        initialData={{
+          amount: 12,
+          description: "Dinner",
+          type: "EXPENSE",
+          date: "2026-08-27T17:30",
+          categoryId: "food",
+        }}
+        onSubmit={() => Promise.resolve()}
+        onCancel={() => {}}
+      />,
+    );
+
+    expect(scheduledLabelMocks.useScheduledLabel).toHaveBeenLastCalledWith(
+      "2026-08-28T00:30:00.000Z",
+      "EXPENSE",
+    );
+  });
+
   it("resolves a datetime-local value with the saved account offset on submit", async () => {
     const onSubmit = vi.fn((_data: TransactionInput) => Promise.resolve());
 

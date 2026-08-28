@@ -37,6 +37,14 @@ export const accountMonthKey = (
   timezoneOffset: number,
 ): string => formatAccountDateInput(instant, timezoneOffset).slice(0, 7);
 
+/** Combine a calendar date with an instant's clock time in the saved account timezone. */
+export const combineAccountDateWithTime = (
+  date: string,
+  instant: Date | string,
+  timezoneOffset: number,
+): string =>
+  `${date.slice(0, 10)}T${formatAccountDateInput(instant, timezoneOffset).slice(11)}`;
+
 /** Return an account-local datetime input shifted by a whole number of calendar days. */
 export const relativeAccountDateInput = (
   instant: Date | string,

@@ -65,7 +65,7 @@ const getDateMode = (dateStr: string, timezoneOffset: number): DateMode => {
   return "custom";
 };
 
-/** Draft inputs already carry wall time. Only explicitly zoned instants need conversion. */
+/** Draft inputs carry account wall time. Only explicitly zoned instants need conversion. */
 const initialDateInput = (date: string, timezoneOffset: number): string =>
   /(?:Z|[+-]\d{2}:?\d{2})$/i.test(date)
     ? formatAccountDateInput(date, timezoneOffset)
@@ -144,7 +144,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   // Auto-label scheduling — only for new transactions; edits preserve user's label choices
   const isEditing = !!transaction;
   const { scheduledLabelId } = useScheduledLabel(
-    isEditing ? undefined : watchedDate,
+    isEditing ? undefined : resolveTransactionDate(watchedDate, user.timezoneOffset),
     selectedType,
   );
   const userRemovedAutoLabels = useRef<Set<string>>(new Set());

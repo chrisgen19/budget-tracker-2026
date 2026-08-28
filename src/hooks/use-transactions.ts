@@ -125,9 +125,12 @@ export function useDashboardQuery(month: string, tz: number) {
 
 type InfiniteTransactionsData = InfiniteData<TransactionsResponse, number>;
 
-/** Insert a new transaction into the correct date-sorted position in infinite data */
-/** Both transaction cache keys carry their filters at index 2:
- *  `["transactions", "list", filters, page]` and `["transactions", "infinite", filters]`. */
+/**
+ * Insert a new transaction into the correct date-sorted position in infinite data.
+ * Both transaction cache keys carry their filters at index 2:
+ * `["transactions", "list", filters, page, timezoneOffset]` and
+ * `["transactions", "infinite", filters, timezoneOffset]`.
+ */
 const filtersOfKey = (key: readonly unknown[]): TransactionFilters | undefined =>
   key[0] === "transactions" && typeof key[2] === "object" && key[2] !== null
     ? (key[2] as TransactionFilters)

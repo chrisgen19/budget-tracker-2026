@@ -9,6 +9,7 @@ import { CategoryIcon } from "@/components/ui/icon-map";
 import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import { useBillReminders } from "@/components/bills/bill-reminder-provider";
+import { combineAccountDateWithTime } from "@/lib/account-time";
 
 /** Derive display text entirely from server-provided values to stay consistent
  *  with the OVERDUE badge and sort order (avoids client/server timezone mismatch). */
@@ -117,14 +118,12 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
     // getFullYear/getMonth/getDate shifted the prefilled date back a day for
     // anyone behind UTC.
     const datePart = reminder.dueDate.slice(0, 10);
-    const hours = String(new Date().getHours()).padStart(2, "0");
-    const minutes = String(new Date().getMinutes()).padStart(2, "0");
 
     onPayAndEdit({
       amount: bill.amount,
       description: bill.description,
       type: bill.type,
-      date: `${datePart}T${hours}:${minutes}`,
+      date: combineAccountDateWithTime(datePart, new Date(), user.timezoneOffset),
       categoryId: bill.categoryId,
       billId: bill.id,
       billDueDate: reminder.dueDate,

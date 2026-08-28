@@ -84,6 +84,37 @@ describe("TransactionFiltersBar state updates", () => {
     expect((screen.getByPlaceholderText("max") as HTMLInputElement).value).toBe("200");
   });
 
+  it("does not restore pending inputs after clearing all filters", () => {
+    renderFilters({ ...baseFilters, type: "EXPENSE" });
+
+    fireEvent.change(screen.getByPlaceholderText("Search transactions..."), {
+      target: { value: "Amazon" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("min"), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+
+    act(() => vi.advanceTimersByTime(500));
+
+    expect(currentFilters).toMatchObject({ search: "", type: "ALL", amountMin: null });
+    expect((screen.getByPlaceholderText("Search transactions...") as HTMLInputElement).value)
+      .toBe("");
+    expect((screen.getByPlaceholderText("min") as HTMLInputElement).value).toBe("");
+  });
+
+  it("does not restore an amount after its chip cancels a pending replacement", () => {
+    renderFilters({ ...baseFilters, amountMin: 50 });
+
+    fireEvent.change(screen.getByPlaceholderText("min"), { target: { value: "100" } });
+    const chip = screen.getByText("Min: ₱50").closest("span");
+    expect(chip).not.toBeNull();
+    fireEvent.click(within(chip!).getByRole("button"));
+
+    act(() => vi.advanceTimersByTime(500));
+
+    expect(currentFilters.amountMin).toBeNull();
+    expect((screen.getByPlaceholderText("min") as HTMLInputElement).value).toBe("");
+  });
+
   it("returns safely from All Time to the account current month", () => {
     vi.setSystemTime(new Date("2026-08-31T17:00:00.000Z"));
     renderFilters({ ...baseFilters, month: "ALL" });

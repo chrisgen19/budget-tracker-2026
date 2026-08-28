@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   accountDateKey,
   accountMonthKey,
+  combineAccountDateWithTime,
   formatAccountDateInput,
   relativeAccountDateInput,
 } from "@/lib/account-time";
@@ -21,6 +22,15 @@ describe("account time helpers", () => {
     expect(accountMonthKey(monthBoundary, -480)).toBe("2026-09");
     expect(accountDateKey(monthBoundary, 420)).toBe("2026-08-31");
     expect(accountMonthKey(monthBoundary, 420)).toBe("2026-08");
+  });
+
+  it("combines a calendar date with the account clock rather than the browser clock", () => {
+    expect(combineAccountDateWithTime("2026-09-05", INSTANT, -480)).toBe(
+      "2026-09-05T08:30",
+    );
+    expect(combineAccountDateWithTime("2026-09-05T00:00:00.000Z", INSTANT, 420)).toBe(
+      "2026-09-05T17:30",
+    );
   });
 
   it("moves relative days on the account calendar without using local Date accessors", () => {

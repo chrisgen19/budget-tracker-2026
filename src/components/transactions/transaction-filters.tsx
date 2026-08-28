@@ -197,6 +197,24 @@ export function TransactionFiltersBar({
   const amountMinTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const amountMaxTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
+  const cancelPendingDebounces = useCallback(
+    (field?: "search" | "amountMin" | "amountMax") => {
+      if (!field || field === "search") {
+        if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+        searchTimerRef.current = undefined;
+      }
+      if (!field || field === "amountMin") {
+        if (amountMinTimerRef.current) clearTimeout(amountMinTimerRef.current);
+        amountMinTimerRef.current = undefined;
+      }
+      if (!field || field === "amountMax") {
+        if (amountMaxTimerRef.current) clearTimeout(amountMaxTimerRef.current);
+        amountMaxTimerRef.current = undefined;
+      }
+    },
+    [],
+  );
+
   // Fetch categories when type changes
   useEffect(() => {
     const fetchCategories = async () => {
@@ -238,23 +256,20 @@ export function TransactionFiltersBar({
   }, [filters.amountMax]);
 
   useEffect(() => {
-    return () => {
-      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-      if (amountMinTimerRef.current) clearTimeout(amountMinTimerRef.current);
-      if (amountMaxTimerRef.current) clearTimeout(amountMaxTimerRef.current);
-    };
-  }, []);
+    return cancelPendingDebounces;
+  }, [cancelPendingDebounces]);
 
   // Debounced search handler
   const handleSearchChange = useCallback(
     (value: string) => {
       setSearchInput(value);
-      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+      cancelPendingDebounces("search");
       searchTimerRef.current = setTimeout(() => {
+        searchTimerRef.current = undefined;
         update({ search: value });
       }, 300);
     },
-    [update]
+    [cancelPendingDebounces, update]
   );
 
   // Debounced amount handler
@@ -270,14 +285,20 @@ export function TransactionFiltersBar({
       };
 
       if (field === "amountMin") {
-        if (amountMinTimerRef.current) clearTimeout(amountMinTimerRef.current);
-        amountMinTimerRef.current = setTimeout(applyValue, 500);
+        cancelPendingDebounces("amountMin");
+        amountMinTimerRef.current = setTimeout(() => {
+          amountMinTimerRef.current = undefined;
+          applyValue();
+        }, 500);
       } else {
-        if (amountMaxTimerRef.current) clearTimeout(amountMaxTimerRef.current);
-        amountMaxTimerRef.current = setTimeout(applyValue, 500);
+        cancelPendingDebounces("amountMax");
+        amountMaxTimerRef.current = setTimeout(() => {
+          amountMaxTimerRef.current = undefined;
+          applyValue();
+        }, 500);
       }
     },
-    [update]
+    [cancelPendingDebounces, update]
   );
 
   const navigateMonth = (direction: -1 | 1) => {
@@ -293,6 +314,7 @@ export function TransactionFiltersBar({
   };
 
   const clearAll = () => {
+    cancelPendingDebounces();
     update(DEFAULT_FILTERS);
     setSearchInput("");
     setAmountMinInput("");
@@ -317,7 +339,11 @@ export function TransactionFiltersBar({
   if (filters.search) {
     activeChips.push({
       label: `"${filters.search}"`,
-      onRemove: () => { update({ search: "" }); setSearchInput(""); },
+      onRemove: () => {
+        cancelPendingDebounces("search");
+        update({ search: "" });
+        setSearchInput("");
+      },
     });
   }
   if (filters.type !== "ALL") {
@@ -347,13 +373,21 @@ export function TransactionFiltersBar({
   if (filters.amountMin !== null) {
     activeChips.push({
       label: `Min: ${currencySymbol}${filters.amountMin}`,
-      onRemove: () => { update({ amountMin: null }); setAmountMinInput(""); },
+      onRemove: () => {
+        cancelPendingDebounces("amountMin");
+        update({ amountMin: null });
+        setAmountMinInput("");
+      },
     });
   }
   if (filters.amountMax !== null) {
     activeChips.push({
       label: `Max: ${currencySymbol}${filters.amountMax}`,
-      onRemove: () => { update({ amountMax: null }); setAmountMaxInput(""); },
+      onRemove: () => {
+        cancelPendingDebounces("amountMax");
+        update({ amountMax: null });
+        setAmountMaxInput("");
+      },
     });
   }
   if (filters.sortBy !== "date" || filters.sortDir !== "desc") {
