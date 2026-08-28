@@ -2,10 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Plus } from "lucide-react";
 import { MobileFab } from "@/components/ui/mobile-fab";
-import {
-  FAB_BASE_OFFSET_REM,
-  getMobileFabBannerClearance,
-} from "@/components/ui/bottom-overlay-clearance";
+import { getMobileFabBottom } from "@/components/ui/bottom-overlay-clearance";
 
 const overlayMocks = vi.hoisted(() => ({
   install: { bannerVisible: false, bannerHeight: 0 },
@@ -106,16 +103,23 @@ describe("MobileFab responsive behavior", () => {
   });
 
   it("stacks above bill and install banners instead of overlapping them", () => {
-    overlayMocks.install.bannerVisible = true;
-    overlayMocks.install.bannerHeight = 100;
-    overlayMocks.bills.bannerHeight = 80;
+    const offsetFor = (install: boolean, installHeight: number, billHeight: number) => {
+      overlayMocks.install.bannerVisible = install;
+      overlayMocks.install.bannerHeight = installHeight;
+      overlayMocks.bills.bannerHeight = billHeight;
+      const { unmount } = render(<MobileFab label="Transaction" icon={Plus} onClick={() => {}} />);
+      const bottom = screen.getByRole("button", { name: "Add Transaction" }).style.bottom;
+      unmount();
+      return bottom;
+    };
 
-    render(<MobileFab label="Transaction" icon={Plus} onClick={() => {}} />);
-
-    const bottom = screen.getByRole("button", { name: "Add Transaction" }).style.bottom;
-    expect(bottom).toContain("92px");
-    expect(bottom).toContain("112px");
-    expect(bottom).toContain("safe-area-inset-bottom");
+    const resting = offsetFor(false, 0, 0);
+    const raised = offsetFor(true, 100, 80);
+    expect(resting).toContain("safe-area-inset-bottom");
+    expect(raised).toContain("safe-area-inset-bottom");
+    // Banner state has to reach the rendered offset; the exact geometry is
+    // covered in bottom-overlay-clearance.test.ts.
+    expect(raised).not.toBe(resting);
   });
 
   it("composes its resting offset from the shared clearance helper", () => {
@@ -125,7 +129,7 @@ describe("MobileFab responsive behavior", () => {
 
     render(<MobileFab label="Transaction" icon={Plus} onClick={() => {}} />);
 
-    const shared = getMobileFabBannerClearance({
+    const shared = getMobileFabBottom({
       billBannerHeight: 80,
       installBannerVisible: true,
       installBannerHeight: 100,
@@ -133,7 +137,7 @@ describe("MobileFab responsive behavior", () => {
     // jsdom's CSSOM rewrites `max()` on round-trip, so compare the expected
     // offset after the same serializer rather than against the raw string.
     const probe = document.createElement("div");
-    probe.style.bottom = `calc(${FAB_BASE_OFFSET_REM}rem + ${shared} + env(safe-area-inset-bottom))`;
+    probe.style.bottom = `calc(${shared} + env(safe-area-inset-bottom))`;
     expect(probe.style.bottom).not.toBe("");
     expect(screen.getByRole("button", { name: "Add Transaction" }).style.bottom).toBe(
       probe.style.bottom,

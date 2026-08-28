@@ -4,10 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import { useInstallBanner } from "@/components/pwa/install-banner-context";
 import { useBillReminders } from "@/components/bills/bill-reminder-provider";
-import {
-  FAB_BASE_OFFSET_REM,
-  getMobileFabBannerClearance,
-} from "@/components/ui/bottom-overlay-clearance";
+import { getMobileFabBottom } from "@/components/ui/bottom-overlay-clearance";
 
 interface MobileFabProps {
   label: string;
@@ -58,7 +55,7 @@ export function MobileFab({
 
   const hiddenForScroll = hideWhileScrolling && isScrolling;
 
-  const bannerClearance = getMobileFabBannerClearance({
+  const restingBottom = getMobileFabBottom({
     billBannerHeight,
     installBannerVisible: bannerVisible,
     installBannerHeight,
@@ -69,7 +66,7 @@ export function MobileFab({
       onClick={onClick}
       disabled={hiddenForScroll}
       aria-label={`Add ${label}`}
-      style={{ bottom: `calc(${FAB_BASE_OFFSET_REM}rem + ${bannerClearance} + env(safe-area-inset-bottom))` }}
+      style={{ bottom: `calc(${restingBottom} + env(safe-area-inset-bottom))` }}
       className={`sm:hidden fixed right-4 z-40 min-h-11 inline-flex items-center justify-center rounded-full bg-amber hover:bg-amber-dark text-white font-medium text-sm shadow-soft-lg active:scale-95 transition-all duration-300 ${
         compact ? "min-w-11 p-3" : "gap-1.5 px-4 py-3"
       } ${hiddenForScroll ? "translate-y-3 opacity-0" : "opacity-100"}`}

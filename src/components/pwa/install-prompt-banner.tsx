@@ -7,8 +7,8 @@ import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import { useInstallBanner } from "@/components/pwa/install-banner-context";
 import { useBillReminders } from "@/components/bills/bill-reminder-provider";
 import {
-  INSTALL_BANNER_BASE_REM,
-  getBillBannerClearancePx,
+  getInstallBannerBottom,
+  getInstallBannerBottomDesktop,
 } from "@/components/ui/bottom-overlay-clearance";
 import { cn } from "@/lib/utils";
 
@@ -154,11 +154,11 @@ export function InstallPromptBanner() {
 
   if (!visible) return null;
 
-  // Sit above the bill reminder rather than over it -- MobileFab already sums
-  // both clearances, so it assumes the two banners stack. The resting offset
-  // comes from bottom-overlay-clearance.ts because the FAB positions itself
-  // relative to this banner and must move with it.
-  const billClearance = getBillBannerClearancePx(billBannerHeight);
+  // Sit above the bill reminder rather than over it. The offset comes from
+  // bottom-overlay-clearance.ts because the FAB positions itself relative to
+  // this banner and has to move with it.
+  const restingBottom = getInstallBannerBottom(billBannerHeight);
+  const restingBottomDesktop = getInstallBannerBottomDesktop(billBannerHeight);
 
   return (
     <div
@@ -167,10 +167,10 @@ export function InstallPromptBanner() {
       role="region"
       aria-label="Install Budget Tracker"
       style={{
-        "--install-banner-base": `${INSTALL_BANNER_BASE_REM}rem`,
-        "--bill-clearance": `${billClearance}px`,
+        "--install-banner-bottom": restingBottom,
+        "--install-banner-bottom-lg": restingBottomDesktop,
       } as CSSProperties}
-      className="fixed bottom-[calc(var(--install-banner-base)+var(--bill-clearance)+env(safe-area-inset-bottom))] lg:bottom-[calc(1.5rem+var(--bill-clearance))] left-4 right-4 lg:left-auto lg:right-6 lg:w-80 z-40 animate-fade-in-up"
+      className="fixed bottom-[calc(var(--install-banner-bottom)+env(safe-area-inset-bottom))] lg:bottom-[var(--install-banner-bottom-lg)] left-4 right-4 lg:left-auto lg:right-6 lg:w-80 z-40 animate-fade-in-up"
     >
       <div className="bg-white rounded-2xl shadow-soft-md border border-cream-300/50 p-4">
         <div className="flex items-start gap-3">
