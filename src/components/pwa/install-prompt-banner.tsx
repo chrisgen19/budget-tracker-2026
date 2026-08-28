@@ -6,13 +6,16 @@ import { Download, X, Share } from "lucide-react";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import { useInstallBanner } from "@/components/pwa/install-banner-context";
 import { useBillReminders } from "@/components/bills/bill-reminder-provider";
+import {
+  INSTALL_BANNER_BASE_REM,
+  getBillBannerClearancePx,
+} from "@/components/ui/bottom-overlay-clearance";
 import { cn } from "@/lib/utils";
 
 const DISMISS_KEY = "pwa-install-dismissed-at";
 const MIN_VISITS_KEY = "pwa-visit-count";
 const MIN_VISITS = 3;
 const DISMISS_DAYS = 14;
-const BILL_BANNER_GAP_PX = 12;
 
 // Storage access throws in embedded webviews and when site data is blocked, and
 // writes can throw in Safari private mode. This banner is cosmetic, so a storage
@@ -152,8 +155,10 @@ export function InstallPromptBanner() {
   if (!visible) return null;
 
   // Sit above the bill reminder rather than over it -- MobileFab already sums
-  // both clearances, so it assumes the two banners stack.
-  const billClearance = billBannerHeight > 0 ? billBannerHeight + BILL_BANNER_GAP_PX : 0;
+  // both clearances, so it assumes the two banners stack. The resting offset
+  // comes from bottom-overlay-clearance.ts because the FAB positions itself
+  // relative to this banner and must move with it.
+  const billClearance = getBillBannerClearancePx(billBannerHeight);
 
   return (
     <div
@@ -161,8 +166,11 @@ export function InstallPromptBanner() {
       onKeyDown={handleKeyDown}
       role="region"
       aria-label="Install Budget Tracker"
-      style={{ "--bill-clearance": `${billClearance}px` } as CSSProperties}
-      className="fixed bottom-[calc(4.5rem+var(--bill-clearance)+env(safe-area-inset-bottom))] lg:bottom-[calc(1.5rem+var(--bill-clearance))] left-4 right-4 lg:left-auto lg:right-6 lg:w-80 z-40 animate-fade-in-up"
+      style={{
+        "--install-banner-base": `${INSTALL_BANNER_BASE_REM}rem`,
+        "--bill-clearance": `${billClearance}px`,
+      } as CSSProperties}
+      className="fixed bottom-[calc(var(--install-banner-base)+var(--bill-clearance)+env(safe-area-inset-bottom))] lg:bottom-[calc(1.5rem+var(--bill-clearance))] left-4 right-4 lg:left-auto lg:right-6 lg:w-80 z-40 animate-fade-in-up"
     >
       <div className="bg-white rounded-2xl shadow-soft-md border border-cream-300/50 p-4">
         <div className="flex items-start gap-3">
