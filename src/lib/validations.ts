@@ -427,7 +427,7 @@ export const formatLocalDate = (instant: Date, timezoneOffset: number): string =
   new Date(instant.getTime() - timezoneOffset * 60_000).toISOString().slice(0, 10);
 
 /**
- * Resolve a model-supplied date to the instant the app would have stored.
+ * Resolve an account-local date or datetime to its stored UTC instant.
  *
  * A bare `YYYY-MM-DD` parses as **midnight UTC**, which is the previous day for anyone west of
  * Greenwich: a 1 March transaction from a UTC-5 user lands inside February's range and shows up
@@ -437,7 +437,8 @@ export const formatLocalDate = (instant: Date, timezoneOffset: number): string =
  * the same `Date.UTC(y, m, d) + tzOffset * 60000` formula the rest of the app uses for day and
  * month boundaries.
  *
- * A value that already carries a time is passed through untouched.
+ * A zone-less time is the user's saved wall clock and is resolved with `timezoneOffset`.
+ * A value carrying `Z` or an explicit offset already identifies an instant and is preserved.
  *
  * @param timezoneOffset Minutes, `getTimezoneOffset()` convention (UTC+8 is -480).
  */

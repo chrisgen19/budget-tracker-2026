@@ -4,10 +4,12 @@ import { useUser } from "@/components/user-provider";
 import { getScheduledLabelId, type ScheduleRule } from "@/lib/schedule-matching";
 
 /**
- * Computes the auto-matching scheduled label for a given transaction date and type.
+ * Computes the auto-matching scheduled label for a transaction instant and type.
+ * `transactionInstant` must carry `Z` or an explicit offset; a zone-less wall time would
+ * otherwise be parsed in the browser timezone before the account offset is applied.
  * Returns the labelId that should be auto-applied, or null if none match.
  */
-export function useScheduledLabel(transactionDate: string | undefined, transactionType?: string) {
+export function useScheduledLabel(transactionInstant: string | undefined, transactionType?: string) {
   const { data: labels = [] } = useLabelsQuery();
   const { user } = useUser();
 
@@ -29,11 +31,11 @@ export function useScheduledLabel(transactionDate: string | undefined, transacti
   }, [labels]);
 
   const scheduledLabelId = useMemo(() => {
-    if (!transactionDate || scheduleRules.length === 0) return null;
-    const dateUTC = new Date(transactionDate);
+    if (!transactionInstant || scheduleRules.length === 0) return null;
+    const dateUTC = new Date(transactionInstant);
     if (isNaN(dateUTC.getTime())) return null;
     return getScheduledLabelId(dateUTC, user.timezoneOffset, scheduleRules, transactionType);
-  }, [transactionDate, scheduleRules, user.timezoneOffset, transactionType]);
+  }, [transactionInstant, scheduleRules, user.timezoneOffset, transactionType]);
 
   return { scheduledLabelId };
 }

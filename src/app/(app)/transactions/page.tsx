@@ -45,36 +45,20 @@ import {
 } from "@/hooks/use-transactions";
 import type { TransactionInput } from "@/lib/validations";
 import { groupByDate, formatTime } from "@/lib/transaction-helpers";
+import { accountMonthKey } from "@/lib/account-time";
+import { generateTransactionsCsv } from "@/lib/transaction-csv";
 import type { TransactionWithCategory } from "@/types";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-/** Generate CSV string from transactions */
-const generateCsv = (transactions: TransactionWithCategory[]) => {
-  const header = ["Date", "Time", "Description", "Category", "Type", "Amount"];
-  const rows = transactions.map((tx) => {
-    const d = new Date(tx.date);
-    return [
-      d.toLocaleDateString("en-US"),
-      formatTime(d),
-      `"${tx.description.replace(/"/g, '""')}"`,
-      `"${tx.category.name}"`,
-      tx.type,
-      tx.type === "INCOME" ? tx.amount : -tx.amount,
-    ];
-  });
-  return [header.join(","), ...rows.map((r) => r.join(","))].join("\n");
-};
-
 /** Build initial filters with current month */
-const createInitialFilters = (): TransactionFilters => {
-  const now = new Date();
+const createInitialFilters = (timezoneOffset: number): TransactionFilters => {
   return {
     search: "",
     type: "ALL",
-    month: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`,
+    month: accountMonthKey(new Date(), timezoneOffset),
     categoryId: null,
     labelId: null,
     createdVia: "ALL",
@@ -103,9 +87,9 @@ export default function TransactionsPage() {
   const [filters, setFilters] = useState<TransactionFilters>(() => {
     // If highlighting a transaction, clear the month filter so we search all data
     if (searchParams.get("highlight")) {
-      return { ...createInitialFilters(), month: "ALL" };
+      return { ...createInitialFilters(user.timezoneOffset), month: "ALL" };
     }
-    return createInitialFilters();
+    return createInitialFilters(user.timezoneOffset);
   });
   const [page, setPage] = useState(1);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -184,10 +168,18 @@ export default function TransactionsPage() {
     if (tx) {
       highlightHandledRef.current = true;
       setEditingTransaction(tx);
+      // Leave the all-time lookup on the transaction's own account-local month so the
+      // month arrows keep their normal meaning after the edit modal closes.
+      const transactionMonth = accountMonthKey(tx.date, user.timezoneOffset);
+      setFilters((current) =>
+        current.month === transactionMonth
+          ? current
+          : { ...current, month: transactionMonth }
+      );
       // Clean up URL
       router.replace("/transactions", { scroll: false });
     }
-  }, [highlightId, router]);
+  }, [highlightId, router, user.timezoneOffset]);
 
   const locateTransactionPage = useCallback(
     async (transactionId: string) => {
@@ -199,7 +191,7 @@ export default function TransactionsPage() {
       try {
         while (nextPage <= totalPagesToCheck) {
           const data = await queryClient.fetchQuery({
-            queryKey: queryKeys.transactions.list(filters, nextPage),
+            queryKey: queryKeys.transactions.list(filters, nextPage, user.timezoneOffset),
             queryFn: () => fetchTransactionsPage(filters, nextPage, user.timezoneOffset),
           });
 
@@ -284,7 +276,7 @@ export default function TransactionsPage() {
   const totalCount = paginationData?.total ?? null;
   const totalPages = paginationData?.totalPages ?? 1;
 
-  const dateGroups = groupByDate(sourceTransactions);
+  const dateGroups = groupByDate(sourceTransactions, user.timezoneOffset);
 
   /* ---- Selection handlers ---- */
 
@@ -365,7 +357,7 @@ export default function TransactionsPage() {
   const handleExport = () => {
     if (sourceTransactions.length === 0 || selectedIds.size === 0) return;
     const selected = sourceTransactions.filter((tx) => selectedIds.has(tx.id));
-    const csv = generateCsv(selected);
+    const csv = generateTransactionsCsv(selected, user.timezoneOffset);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -650,7 +642,7 @@ export default function TransactionsPage() {
                               : `${tx.type === "INCOME" ? "+" : "-"}${formatCurrency(tx.amount, currency)}`}
                           </p>
                           <p className="text-[11px] text-warm-300 tabular-nums">
-                            {formatTime(tx.date)}
+                            {formatTime(tx.date, user.timezoneOffset)}
                           </p>
                         </div>
 

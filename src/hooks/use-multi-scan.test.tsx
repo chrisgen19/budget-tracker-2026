@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui/toast";
 import { UserProvider } from "@/components/user-provider";
 import { useMultiScan } from "@/hooks/use-multi-scan";
@@ -62,7 +62,8 @@ const createWrapper = () => {
             name: "Test",
             email: "test@example.com",
             currency: "PHP",
-            timezoneOffset: -480,
+            // Deliberately differs from the test process (Asia/Shanghai, UTC+8).
+            timezoneOffset: 420,
             receiptScanEnabled: true,
             transactionLayout: "infinite",
             transactionAmountAutofocus: true,
@@ -90,8 +91,15 @@ const setup = () => renderHook(() => useMultiScan(), { wrapper: createWrapper() 
 let fetchMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  vi.stubEnv("TZ", "UTC");
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 describe("scanSingle", () => {
@@ -110,6 +118,19 @@ describe("scanSingle", () => {
     expect(result.current.showReview).toBe(false);
     expect(result.current.items).toHaveLength(1);
     expect(result.current.items[0].status).toBe("success");
+  });
+
+  it("uses the account clock for a scanned receipt date", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-28T00:30:00.000Z"));
+    fetchMock.mockResolvedValue(scanOk({ date: "2026-08-28" }));
+    const { result } = setup();
+
+    await act(async () => {
+      await result.current.scanSingle(receipt());
+    });
+
+    expect(result.current.items[0].data?.date).toBe("2026-08-28T17:30");
   });
 
   it("reports failure rather than reading the row back out of state", async () => {
@@ -306,7 +327,7 @@ describe("response validation", () => {
     });
 
     expect(ok).toBe(true);
-    expect(result.current.items[0].data?.date).toBeTruthy();
+    expect(result.current.items[0].data?.date).toBe("2026-08-01T03:00");
   });
 });
 

@@ -1,4 +1,5 @@
 import type { TransactionWithCategory } from "@/types";
+import { accountDateKey, toAccountWallClock } from "@/lib/account-time";
 
 export interface DateGroup {
   dateKey: string;
@@ -9,40 +10,45 @@ export interface DateGroup {
   subtotal: number;
 }
 
-/** Format date key from a Date: "2026-02-18" */
-export const toDateKey = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-
 /** "2026-02-18" → "February 18, 2026" */
 export const formatDateLabel = (key: string) =>
   new Intl.DateTimeFormat("en-US", {
     month: "long",
     day: "numeric",
     year: "numeric",
-  }).format(new Date(key + "T00:00:00"));
+    timeZone: "UTC",
+  }).format(new Date(key + "T00:00:00Z"));
 
 /** "2026-02-18" → "Wednesday" */
 export const formatDayNameFull = (key: string) =>
-  new Intl.DateTimeFormat("en-US", { weekday: "long" }).format(new Date(key + "T00:00:00"));
+  new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "UTC" }).format(
+    new Date(key + "T00:00:00Z")
+  );
 
 /** "2026-02-18" → "Wed" */
 export const formatDayNameShort = (key: string) =>
-  new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(new Date(key + "T00:00:00"));
+  new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "UTC" }).format(
+    new Date(key + "T00:00:00Z")
+  );
 
-/** Date object → "3:27 PM" */
-export const formatTime = (date: string | Date) =>
+/** Instant → account-local "3:27 PM" */
+export const formatTime = (date: string | Date, timezoneOffset: number) =>
   new Intl.DateTimeFormat("en-US", {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
-  }).format(new Date(date));
+    timeZone: "UTC",
+  }).format(toAccountWallClock(date, timezoneOffset));
 
 /** Group transactions by date, sorted most recent first */
-export const groupByDate = (transactions: TransactionWithCategory[]): DateGroup[] => {
+export const groupByDate = (
+  transactions: TransactionWithCategory[],
+  timezoneOffset: number,
+): DateGroup[] => {
   const map = new Map<string, TransactionWithCategory[]>();
 
   for (const tx of transactions) {
-    const key = toDateKey(new Date(tx.date));
+    const key = accountDateKey(tx.date, timezoneOffset);
     if (!map.has(key)) map.set(key, []);
     map.get(key)!.push(tx);
   }

@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { compressImage, formatDateInput, toLocalDateString } from "@/lib/utils";
+import { compressImage } from "@/lib/utils";
+import {
+  accountDateKey,
+  combineAccountDateWithTime,
+  formatAccountDateInput,
+} from "@/lib/account-time";
 import { useUser } from "@/components/user-provider";
 import { useToast } from "@/components/ui/toast";
 import { BatchSaveError, useBatchCreateTransactions } from "@/hooks/use-transactions";
@@ -13,13 +18,6 @@ const CONCURRENCY = 3;
 
 type ScanData = NonNullable<MultiScanItem["data"]>;
 type ScanBreakdown = NonNullable<ScanData["breakdown"]>;
-
-/** Take a date string from Gemini (YYYY-MM-DD or YYYY-MM-DDTHH:mm) and
- *  replace the time portion with the user's current local time. */
-const withLocalTime = (dateStr: string): string => {
-  const dateOnly = dateStr.slice(0, 10);
-  return formatDateInput(new Date(dateOnly + "T" + new Date().toTimeString().slice(0, 5)));
-};
 
 /** Read a JSON body without throwing. An error response is not guaranteed to be JSON —
  *  an unhandled server fault returns HTML, and letting `res.json()` reject there would
@@ -52,7 +50,7 @@ type ScanOutcome = { ok: true } | { ok: false; error: string };
  * all of this inline.
  */
 export function useMultiScan() {
-  const { setUser } = useUser();
+  const { user, setUser } = useUser();
   const { showToast } = useToast();
   const batchCreateMutation = useBatchCreateTransactions();
 
@@ -108,7 +106,7 @@ export function useMultiScan() {
       try {
         const formData = new FormData();
         formData.append("receipt", file);
-        formData.append("localDate", toLocalDateString(new Date()));
+        formData.append("localDate", accountDateKey(new Date(), user.timezoneOffset));
         formData.append("photoDate", photoDate);
 
         const res = await fetch("/api/receipts/scan", { method: "POST", body: formData });
@@ -146,7 +144,13 @@ export function useMultiScan() {
             amount: data.amount,
             description: typeof data.description === "string" ? data.description : "",
             type: "EXPENSE",
-            date: data.usedPhotoFallback ? photoDateTime : withLocalTime(data.date as string),
+            date: data.usedPhotoFallback
+              ? photoDateTime
+              : combineAccountDateWithTime(
+                  data.date as string,
+                  new Date(),
+                  user.timezoneOffset,
+                ),
             categoryId: data.categoryId,
             multiCategory: data.multiCategory as boolean,
             breakdownDropped: data.breakdownDropped as boolean | undefined,
@@ -164,7 +168,7 @@ export function useMultiScan() {
         return { ok: false, error };
       }
     },
-    [patchItem, setUser, syncQuotaExhausted],
+    [patchItem, setUser, syncQuotaExhausted, user.timezoneOffset],
   );
 
   /** Single capture from the camera. Drives the scan sheet's own loading and error state.
@@ -179,8 +183,8 @@ export function useMultiScan() {
 
       // Capture the photo timestamp before compression — canvas re-encoding loses metadata.
       const photoMoment = file.lastModified ? new Date(file.lastModified) : new Date();
-      const photoDate = toLocalDateString(photoMoment);
-      const photoDateTime = formatDateInput(photoMoment);
+      const photoDate = accountDateKey(photoMoment, user.timezoneOffset);
+      const photoDateTime = formatAccountDateInput(photoMoment, user.timezoneOffset);
 
       let compressed: File;
       try {
@@ -216,7 +220,7 @@ export function useMultiScan() {
 
       return true;
     },
-    [scanOne],
+    [scanOne, user.timezoneOffset],
   );
 
   /** Batch upload. Compression runs in parallel; uploads start as each file finishes. */
@@ -227,8 +231,12 @@ export function useMultiScan() {
       const photoMoments = files.map((f) =>
         f.lastModified ? new Date(f.lastModified) : new Date(),
       );
-      const photoDates = photoMoments.map(toLocalDateString);
-      const photoDateTimes = photoMoments.map(formatDateInput);
+      const photoDates = photoMoments.map((moment) =>
+        accountDateKey(moment, user.timezoneOffset),
+      );
+      const photoDateTimes = photoMoments.map((moment) =>
+        formatAccountDateInput(moment, user.timezoneOffset),
+      );
 
       const initialItems: MultiScanItem[] = files.map((f, i) => ({
         id: `${Date.now()}-${i}`,
@@ -288,7 +296,7 @@ export function useMultiScan() {
         ),
       );
     },
-    [patchItem, scanOne],
+    [patchItem, scanOne, user.timezoneOffset],
   );
 
   /** Re-run a failed scan. The credit for the failed attempt was refunded server-side. */
@@ -300,11 +308,12 @@ export function useMultiScan() {
       await scanOne({
         itemId: id,
         file: item.imageFile,
-        photoDate: item.photoDate ?? toLocalDateString(new Date()),
-        photoDateTime: item.photoDateTime ?? formatDateInput(new Date()),
+        photoDate: item.photoDate ?? accountDateKey(new Date(), user.timezoneOffset),
+        photoDateTime:
+          item.photoDateTime ?? formatAccountDateInput(new Date(), user.timezoneOffset),
       });
     },
-    [scanOne],
+    [scanOne, user.timezoneOffset],
   );
 
   /** Replace a multi-category receipt with one row per category. */
@@ -373,12 +382,12 @@ export function useMultiScan() {
         const photoMoment = item.imageFile.lastModified
           ? new Date(item.imageFile.lastModified)
           : new Date();
-        const photoDateTime = formatDateInput(photoMoment);
+        const photoDateTime = formatAccountDateInput(photoMoment, user.timezoneOffset);
 
         const formData = new FormData();
         formData.append("receipt", item.imageFile);
-        formData.append("localDate", toLocalDateString(new Date()));
-        formData.append("photoDate", toLocalDateString(photoMoment));
+        formData.append("localDate", accountDateKey(new Date(), user.timezoneOffset));
+        formData.append("photoDate", accountDateKey(photoMoment, user.timezoneOffset));
 
         const res = await fetch("/api/receipts/breakdown", { method: "POST", body: formData });
         const data = await readJson(res);
@@ -393,7 +402,11 @@ export function useMultiScan() {
 
         const finalDate = data.usedPhotoFallback
           ? photoDateTime
-          : withLocalTime(data.date as string);
+          : combineAccountDateWithTime(
+              data.date as string,
+              new Date(),
+              user.timezoneOffset,
+            );
 
         expandBreakdown(
           id,
@@ -408,7 +421,15 @@ export function useMultiScan() {
         showToast("Network error. Please check your connection and try again.", "error");
       }
     },
-    [expandBreakdown, patchItem, setUser, showToast, syncQuotaExhausted, unconfirmedIds],
+    [
+      expandBreakdown,
+      patchItem,
+      setUser,
+      showToast,
+      syncQuotaExhausted,
+      unconfirmedIds,
+      user.timezoneOffset,
+    ],
   );
 
   const isUnconfirmed = useCallback(
