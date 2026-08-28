@@ -57,6 +57,25 @@ afterEach(() => {
 });
 
 describe("TransactionFiltersBar state updates", () => {
+  it("keeps advanced controls in the compact drawer below the wide desktop breakpoint", () => {
+    const { container } = renderFilters();
+
+    const toggle = screen.getByRole("button", { name: "Toggle filters" });
+    expect(toggle.className).toContain("min-[1440px]:hidden");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    const desktopCategory = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Category",
+    );
+    expect(desktopCategory?.parentElement?.className).toContain("hidden min-[1440px]:block");
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("Amount range")).toBeTruthy();
+    expect(screen.getByText("Added by")).toBeTruthy();
+    expect(screen.getByText("Sort by")).toBeTruthy();
+  });
+
   it("keeps a type change made before the search debounce fires", () => {
     renderFilters();
 

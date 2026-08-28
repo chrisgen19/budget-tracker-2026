@@ -467,7 +467,7 @@ export function TransactionFiltersBar({
           </div>
 
           {/* Desktop: Category Dropdown */}
-          <div ref={categoryDropdown.ref} className="relative hidden sm:block">
+          <div ref={categoryDropdown.ref} className="relative hidden min-[1440px]:block">
             <button
               onClick={() => categoryDropdown.setOpen((o) => !o)}
               className={cn(
@@ -559,7 +559,7 @@ export function TransactionFiltersBar({
 
           {/* Desktop: Label Dropdown */}
           {labels.length > 0 && (
-            <div ref={labelDropdown.ref} className="relative hidden sm:block">
+            <div ref={labelDropdown.ref} className="relative hidden min-[1440px]:block">
               <button
                 onClick={() => labelDropdown.setOpen((o) => !o)}
                 className={cn(
@@ -640,7 +640,7 @@ export function TransactionFiltersBar({
           )}
 
           {/* Desktop: Sort Dropdown */}
-          <div ref={sortDropdown.ref} className="relative hidden sm:block">
+          <div ref={sortDropdown.ref} className="relative hidden min-[1440px]:block">
             <button
               onClick={() => sortDropdown.setOpen((o) => !o)}
               className={cn(
@@ -691,7 +691,7 @@ export function TransactionFiltersBar({
           </div>
 
           {/* Desktop: Amount Range */}
-          <div className="hidden sm:flex items-center gap-1.5">
+          <div className="hidden min-[1440px]:flex items-center gap-1.5">
             <div className="relative">
               <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-warm-300">
                 {currencySymbol}
@@ -722,7 +722,7 @@ export function TransactionFiltersBar({
           </div>
 
           {/* Desktop: Added by */}
-          <div className="hidden sm:flex items-center gap-1 p-1 rounded-lg bg-cream-100">
+          <div className="hidden min-[1440px]:flex items-center gap-1 p-1 rounded-lg bg-cream-100">
             {SOURCE_OPTIONS.map((option) => (
               <button
                 key={option.value}
@@ -746,7 +746,7 @@ export function TransactionFiltersBar({
           {hasActiveFilters(filters) && (
             <button
               onClick={clearAll}
-              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors"
+              className="hidden min-[1440px]:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors"
             >
               <X className="w-3 h-3" />
               Clear all
@@ -756,8 +756,10 @@ export function TransactionFiltersBar({
           {/* Mobile: Filter toggle button */}
           <button
             onClick={() => setExpanded((o) => !o)}
+            aria-label="Toggle filters"
+            aria-expanded={expanded}
             className={cn(
-              "sm:hidden relative p-2 rounded-lg transition-colors",
+              "min-[1440px]:hidden relative p-2 rounded-lg transition-colors",
               expanded || advancedCount > 0
                 ? "bg-amber-light/20 text-amber-dark"
                 : "text-warm-400 hover:text-warm-600 hover:bg-cream-100"
@@ -800,7 +802,7 @@ export function TransactionFiltersBar({
               animate={{ height: "auto", opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="sm:hidden overflow-hidden"
+              className="min-[1440px]:hidden overflow-hidden"
             >
               <div className="pt-2 border-t border-cream-200 space-y-3">
                 {/* Category */}

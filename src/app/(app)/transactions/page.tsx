@@ -384,7 +384,7 @@ export default function TransactionsPage() {
   const hasActiveSearch = filters.search !== "" || filters.createdVia !== "ALL";
 
   return (
-    <div>
+    <div className="pb-16 sm:pb-0">
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
@@ -529,7 +529,10 @@ export default function TransactionsPage() {
             {dateGroups.map((group) => (
               <div key={group.dateKey}>
                 {/* Date header */}
-                <div className="flex items-center justify-between px-5 py-2.5 bg-cream-50 border-b border-cream-200 sticky top-0 z-10">
+                <div
+                  data-transaction-date-heading
+                  className="flex items-center justify-between px-5 py-2.5 bg-cream-50 border-b border-cream-200 sticky top-16 lg:top-0 z-10"
+                >
                   <span className="text-xs font-semibold text-warm-500 uppercase tracking-wide">
                     {group.dateLabel}
                     {user.showDayName && (
@@ -785,7 +788,13 @@ export default function TransactionsPage() {
       />
 
       {/* Mobile FAB */}
-      <MobileFab label="Transaction" icon={Plus} onClick={() => setShowForm(true)} />
+      <MobileFab
+        label="Transaction"
+        icon={Plus}
+        compact
+        hideWhileScrolling
+        onClick={() => setShowForm(true)}
+      />
     </div>
   );
 }
