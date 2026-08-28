@@ -4,8 +4,12 @@ export const FAB_BASE_OFFSET_REM = 5;
 export const FAB_MIN_HEIGHT_REM = 2.75;
 /** Bottom padding the nested content wrapper (`p-4`) already contributes. */
 const CONTENT_PADDING_REM = 1;
-/** The install banner measures its own offset from a lower base than the FAB. */
-const INSTALL_BANNER_BASE_REM = 4.5;
+/**
+ * Where the install prompt rests, measured from the viewport bottom. Lower
+ * than the FAB, which is why the FAB subtracts the difference below. The
+ * banner reads this rather than restating it, so the two cannot drift.
+ */
+export const INSTALL_BANNER_BASE_REM = 4.5;
 const FAB_INSTALL_OFFSET_DIFFERENCE_REM = FAB_BASE_OFFSET_REM - INSTALL_BANNER_BASE_REM;
 const BILL_BANNER_GAP_PX = 12;
 const INSTALL_BANNER_GAP_PX = 12;
@@ -16,6 +20,15 @@ const INSTALL_BANNER_GAP_PX = 12;
  */
 export const MOBILE_FAB_STATIC_CLEARANCE_REM =
   FAB_BASE_OFFSET_REM + FAB_MIN_HEIGHT_REM - CONTENT_PADDING_REM;
+
+/**
+ * Distance an element must rise to clear the bill reminder, or 0 when no
+ * reminder is showing. Shared by everything that stacks above it: the FAB,
+ * the install prompt, and the page padding that keeps content clear of both.
+ */
+export function getBillBannerClearancePx(billBannerHeight: number) {
+  return billBannerHeight > 0 ? billBannerHeight + BILL_BANNER_GAP_PX : 0;
+}
 
 interface MobileFabBannerClearanceOptions {
   billBannerHeight: number;
@@ -35,9 +48,7 @@ export function getMobileFabBannerClearance({
   installBannerVisible,
   installBannerHeight,
 }: MobileFabBannerClearanceOptions) {
-  const billClearance = billBannerHeight > 0
-    ? billBannerHeight + BILL_BANNER_GAP_PX
-    : 0;
+  const billClearance = getBillBannerClearancePx(billBannerHeight);
   const installClearance = installBannerVisible
     ? `max(0px, calc(${installBannerHeight + INSTALL_BANNER_GAP_PX}px - ${FAB_INSTALL_OFFSET_DIFFERENCE_REM}rem))`
     : "0px";
