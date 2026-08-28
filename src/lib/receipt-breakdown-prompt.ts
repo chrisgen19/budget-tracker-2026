@@ -1,4 +1,38 @@
 import { MAX_BREAKDOWN_GROUPS, MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
+import { renderCategoryRules, type CategoryRule } from "@/lib/category-rules";
+
+/** Per-line-item routing. See `category-rules.ts` for why these are data and not prose. */
+export const BREAKDOWN_CATEGORY_RULES: readonly CategoryRule[] = [
+  {
+    category: "Groceries",
+    matches:
+      "raw or packaged food to cook, prepare or keep at home: fresh produce, meat, seafood, dairy, eggs, bread, rice, instant noodles, condiments, cooking ingredients, canned food, frozen food, packaged snacks and beverages",
+  },
+  {
+    category: "Food & Dining",
+    matches:
+      "food already prepared and ready to eat as sold: a hot deli or food-court item, a brewed or made-to-order drink, a restaurant or fast-food line item on the same receipt",
+  },
+  {
+    category: "Personal Care",
+    matches:
+      "soap, shampoo, toothpaste, deodorant, lotion, tissue paper, toilet paper, napkins, feminine hygiene, cotton buds, razors",
+  },
+  {
+    category: "Home Supplies",
+    matches:
+      "cleaning supplies (detergent, bleach, dishwashing liquid, floor cleaner), garbage bags, sponges, air freshener, insect spray",
+  },
+  { category: "Healthcare", matches: "vitamins, medicine, first aid, health supplements" },
+  { category: "Shopping", matches: "clothing, electronics, toys, home decor, kitchenware" },
+];
+
+const BREAKDOWN_GUIDANCE_RULES: readonly string[] = [
+  "For any item not clearly matching the above, match by comparing to the category name",
+  "Most items on a supermarket or wet-market receipt are Groceries. Use Food & Dining only for a line that was ready to eat when bought, not for ingredients",
+  "Cleaners, garbage bags and sponges on a supermarket receipt are Home Supplies. Never assign a supermarket line item to Housing: Housing is rent and dues, not things bought for the home",
+  "When in doubt about a food-adjacent item (e.g. plastic wrap, aluminum foil), put it in Home Supplies",
+];
 
 /**
  * The itemisation prompt for POST /api/receipts/breakdown, which groups a receipt's individual
@@ -26,16 +60,7 @@ CATEGORIES:
 ${categoryList}
 
 CATEGORY RULES:
-1. Groceries: raw or packaged food to cook, prepare or keep at home: fresh produce, meat, seafood, dairy, eggs, bread, rice, instant noodles, condiments, cooking ingredients, canned food, frozen food, packaged snacks and beverages
-2. Food & Dining: food already prepared and ready to eat as sold: a hot deli or food-court item, a brewed or made-to-order drink, a restaurant or fast-food line item on the same receipt
-3. Personal Care: soap, shampoo, toothpaste, deodorant, lotion, tissue paper, toilet paper, napkins, feminine hygiene, cotton buds, razors
-4. Home Supplies: cleaning supplies (detergent, bleach, dishwashing liquid, floor cleaner), garbage bags, sponges, air freshener, insect spray
-5. Healthcare: vitamins, medicine, first aid, health supplements
-6. Shopping: clothing, electronics, toys, home decor, kitchenware
-7. For any item not clearly matching the above, match by comparing to the category name
-8. Most items on a supermarket or wet-market receipt are Groceries. Use Food & Dining only for a line that was ready to eat when bought, not for ingredients
-9. Cleaners, garbage bags and sponges on a supermarket receipt are Home Supplies. Never assign a supermarket line item to Housing: Housing is rent and dues, not things bought for the home
-10. When in doubt about a food-adjacent item (e.g. plastic wrap, aluminum foil), put it in Home Supplies
+${renderCategoryRules(BREAKDOWN_CATEGORY_RULES, BREAKDOWN_GUIDANCE_RULES)}
 
 RESPONSE FORMAT — return ONLY valid JSON, no markdown or explanation:
 {

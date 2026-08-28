@@ -18,7 +18,7 @@ vi.mock("@/lib/gemini", () => ({
   isGeminiUnavailable: () => false,
 }));
 
-const { scanReceipt } = await import("@/lib/receipt-scan");
+const { scanReceipt, SCAN_CATEGORY_RULES } = await import("@/lib/receipt-scan");
 
 const AUTHORIZED = {
   ok: true,
@@ -620,28 +620,26 @@ describe("scan prompt category routing", () => {
    * choice recorded here.
    */
   it("names only categories that are actually seeded", async () => {
-    // Any rule lookup drives one scan, which is what puts the prompt on the mock.
+    const seeded = new Set(DEFAULT_CATEGORIES.map((c) => c.name));
+
+    // Read straight off the rule list rather than parsed back out of the finished prompt.
+    // Telling a category rule from a prose rule in rendered text needs a heuristic, and any
+    // heuristic has a blind spot: a rule named "Household Cleaning and Maintenance" is long
+    // enough to be skipped as prose while still routing to a category nobody has.
+    expect(SCAN_CATEGORY_RULES.length).toBeGreaterThan(5);
+    for (const rule of SCAN_CATEGORY_RULES) {
+      expect(seeded.has(rule.category), `rule names "${rule.category}"`).toBe(true);
+    }
+  });
+
+  it("renders every rule into the prompt it ships", async () => {
     await ruleFor("Food & Dining");
     const call = generate.mock.calls[0][0].contents[0].parts as Array<{ text?: string }>;
     const prompt = call.find((p) => typeof p.text === "string")!.text!;
 
-    // Categories that exist per-deployment rather than in the seed. Adding a name here is a
-    // statement that this deployment owns it; a rule naming anything else is a bug. Empty is the
-    // healthy state: every category the prompt routes to is one every install actually has.
-    const deploymentSpecific = new Set<string>();
-    const seeded = new Set(DEFAULT_CATEGORIES.map((c) => c.name));
-
-    const named = prompt
-      .split("\n")
-      .map((l) => /^\d+\. ([^:]+):/.exec(l.trim())?.[1])
-      .filter((n): n is string => !!n)
-      // Prose rules also carry colons ("A vs B: ...", "Housing: rent, not things bought for it").
-      // A category name is short and holds no sentence break.
-      .filter((n) => !n.includes(" vs ") && !n.includes(".") && n.length <= 30);
-
-    expect(named.length).toBeGreaterThan(5);
-    for (const name of named) {
-      expect(seeded.has(name) || deploymentSpecific.has(name), `rule names "${name}"`).toBe(true);
+    // The list only guards anything if the prompt is actually built from it.
+    for (const rule of SCAN_CATEGORY_RULES) {
+      expect(prompt).toContain(`${rule.category}: ${rule.matches}`);
     }
   });
 

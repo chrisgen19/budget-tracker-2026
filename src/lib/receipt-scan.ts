@@ -11,6 +11,7 @@ import { checkReceiptDate } from "@/lib/receipt-date";
 import { receiptScanResultSchema } from "@/lib/validations";
 import { MAX_BREAKDOWN_GROUPS, MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
 import { summarizeIssues } from "@/lib/zod-issue-summary";
+import { renderCategoryRules, type CategoryRule } from "@/lib/category-rules";
 
 /** Why a scan produced nothing usable, once it was authorized and the credit was held. */
 export type ScanFailure =
@@ -56,6 +57,73 @@ export interface ScanResultPayload {
   usedPhotoFallback: boolean;
 }
 
+/**
+ * The category rules, as data rather than prose baked into the prompt string.
+ *
+ * Structured because the invariant that matters cannot be checked on rendered text: a rule may
+ * name any category it likes, and one matching nothing does not fail — the prompt's fallback
+ * quietly matches by name similarity, which is how "Household" resolved to "Housing" and filed
+ * cleaning supplies beside rent. Parsing `N. Name:` back out of the finished prompt needs a
+ * heuristic to tell a category rule from a prose rule that also contains a colon, and any such
+ * heuristic has a blind spot where a mistake can hide. Here the category name is a field, so
+ * `receipt-scan.test.ts` can check every one against DEFAULT_CATEGORIES exactly.
+ */
+export const SCAN_CATEGORY_RULES: readonly CategoryRule[] = [
+  {
+    category: "Food & Dining",
+    matches:
+      "food already prepared and ready to eat as sold: restaurants, cafes, hawker stalls, food courts, fast food, coffee shops, bubble tea, food delivery, and ready-to-eat items from a convenience store (7-Eleven, FairPrice, Cold Storage)",
+  },
+  {
+    category: "Groceries",
+    matches:
+      "raw or packaged food bought to cook, prepare or keep at home: supermarkets, grocery stores, wet markets, palengke, seafood markets, butchers, sari-sari stores, bakeries selling bread to take home, fresh produce, meat, seafood, dairy, eggs, bread, rice, noodles, condiments, cooking ingredients, canned food, frozen food, household snacks and beverages bought by the pack",
+  },
+  {
+    category: "Transportation",
+    matches: "ride-hailing (Grab, Gojek), taxis, MRT/bus top-ups, parking, fuel/petrol, tolls",
+  },
+  {
+    category: "Shopping",
+    matches: "clothing, electronics, department stores, online shopping (Shopee, Lazada, Amazon)",
+  },
+  { category: "Utilities", matches: "electricity, water, gas, internet, phone and mobile bills" },
+  {
+    category: "Subscriptions",
+    matches:
+      "recurring digital services billed monthly or yearly (Netflix, Spotify, iCloud, streaming, software)",
+  },
+  { category: "Entertainment", matches: "movies, concerts, theme parks, games, sports" },
+  {
+    category: "Healthcare",
+    matches:
+      "doctors, clinics, pharmacies, dental, hospital, health supplements, vitamins, medicine",
+  },
+  {
+    category: "Personal Care",
+    matches:
+      "soap, shampoo, toothpaste, deodorant, lotion, tissue paper, toilet paper, napkins, feminine hygiene, razors",
+  },
+  {
+    category: "Home Supplies",
+    matches:
+      "cleaning supplies (detergent, bleach, dishwashing liquid, floor cleaner), garbage bags, sponges, air freshener, insect spray",
+  },
+  {
+    category: "Housing",
+    matches:
+      "the home itself, not things bought for it: rent, condo dues, association fees, home repairs and maintenance",
+  },
+];
+
+/** Rules that resolve ambiguity rather than describe a category. Numbered after the rules above. */
+const SCAN_GUIDANCE_RULES: readonly string[] = [
+  "For any category not listed above, match by comparing the merchant/items to the category name.",
+  "Food & Dining vs Groceries is decided by whether the food is ready to eat as sold, NOT by the merchant selling food. A meal, a drink made to order, or anything eaten out or delivered is Food & Dining. Ingredients and packaged goods carried home to cook or store are Groceries. When one receipt holds both (a supermarket with a hot deli counter, a cafe that also sells loaves), pick whichever accounts for more of the total.",
+  "Housing vs Home Supplies: Housing is the dwelling itself (rent, dues, repairs), Home Supplies is consumables bought for it. A supermarket or hardware receipt for cleaners, bags or sponges is Home Supplies and is NEVER Housing.",
+  "When in doubt about a food-adjacent item (e.g. plastic wrap, aluminum foil), put it in Home Supplies.",
+];
+
 const buildPrompt = (categoryList: string, photoDateStr: string) =>
   `Extract transaction data from this receipt image.
 
@@ -77,21 +145,7 @@ CATEGORIES:
 ${categoryList}
 
 CATEGORY RULES (pick categoryId by matching the merchant/items to these rules):
-1. Food & Dining: food already prepared and ready to eat as sold: restaurants, cafes, hawker stalls, food courts, fast food, coffee shops, bubble tea, food delivery, and ready-to-eat items from a convenience store (7-Eleven, FairPrice, Cold Storage)
-2. Groceries: raw or packaged food bought to cook, prepare or keep at home: supermarkets, grocery stores, wet markets, palengke, seafood markets, butchers, sari-sari stores, bakeries selling bread to take home, fresh produce, meat, seafood, dairy, eggs, bread, rice, noodles, condiments, cooking ingredients, canned food, frozen food, household snacks and beverages bought by the pack
-3. Transportation: ride-hailing (Grab, Gojek), taxis, MRT/bus top-ups, parking, fuel/petrol, tolls
-4. Shopping: clothing, electronics, department stores, online shopping (Shopee, Lazada, Amazon)
-5. Utilities: electricity, water, gas, internet, phone and mobile bills
-6. Subscriptions: recurring digital services billed monthly or yearly (Netflix, Spotify, iCloud, streaming, software)
-7. Entertainment: movies, concerts, theme parks, games, sports
-8. Healthcare: doctors, clinics, pharmacies, dental, hospital, health supplements, vitamins, medicine
-9. Personal Care: soap, shampoo, toothpaste, deodorant, lotion, tissue paper, toilet paper, napkins, feminine hygiene, razors
-10. Home Supplies: cleaning supplies (detergent, bleach, dishwashing liquid, floor cleaner), garbage bags, sponges, air freshener, insect spray
-11. Housing: the home itself, not things bought for it: rent, condo dues, association fees, home repairs and maintenance
-12. For any category not listed above, match by comparing the merchant/items to the category name.
-13. Food & Dining vs Groceries is decided by whether the food is ready to eat as sold, NOT by the merchant selling food. A meal, a drink made to order, or anything eaten out or delivered is Food & Dining. Ingredients and packaged goods carried home to cook or store are Groceries. When one receipt holds both (a supermarket with a hot deli counter, a cafe that also sells loaves), pick whichever accounts for more of the total.
-14. Housing vs Home Supplies: Housing is the dwelling itself (rent, dues, repairs), Home Supplies is consumables bought for it. A supermarket or hardware receipt for cleaners, bags or sponges is Home Supplies and is NEVER Housing.
-15. When in doubt about a food-adjacent item (e.g. plastic wrap, aluminum foil), put it in Home Supplies.
+${renderCategoryRules(SCAN_CATEGORY_RULES, SCAN_GUIDANCE_RULES)}
 
 Respond with ONLY valid JSON, no markdown or explanation:
 {"amount": <number>, "categoryId": "<id>", "date": "<YYYY-MM-DD>", "dateSource": "OCR" | "PHOTO_FALLBACK", "description": "<text>", "multiCategory": <boolean>}

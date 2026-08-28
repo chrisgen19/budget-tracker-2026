@@ -37,6 +37,39 @@ const main = async () => {
       : `All ${DEFAULT_CATEGORIES.length} default categories already present`
   );
 
+  // Making a name a shared default does not replace the copies people already created by hand:
+  // both rows survive, and `GET /api/categories` returns `OR: [{ isDefault: true }, { userId }]`,
+  // so the picker shows two entries with the same name and new transactions land on whichever
+  // one happens to be chosen. This is reported rather than merged: reconciling means repointing
+  // transactions and bills and then deleting a category, which a seed has no business doing
+  // silently to data it did not create.
+  const collisions = await prisma.category.findMany({
+    where: {
+      isDefault: false,
+      OR: DEFAULT_CATEGORIES.map((c) => ({ name: c.name, type: c.type })),
+    },
+    select: { name: true, type: true, userId: true },
+  });
+
+  if (collisions.length > 0) {
+    const byName = new Map<string, number>();
+    for (const c of collisions) {
+      const key = `${c.name} (${c.type})`;
+      byName.set(key, (byName.get(key) ?? 0) + 1);
+    }
+    console.warn(
+      `\nWARNING: ${collisions.length} user-owned categor${collisions.length === 1 ? "y" : "ies"} share a name with a default:`
+    );
+    for (const [key, count] of byName) {
+      console.warn(`  ${key} — ${count} user${count === 1 ? "" : "s"}`);
+    }
+    console.warn(
+      "\nBoth copies now appear in the picker with the same name. Merge each one with:\n" +
+        "  pnpm exec tsx --env-file=.env scripts/merge-custom-category-into-default.ts NAME=<name>\n" +
+        "(dry run by default; add APPLY=true to write)"
+    );
+  }
+
   // Set admin role for the primary admin account (always runs)
   const adminResult = await prisma.user.updateMany({
     where: { email: "chrisgen19@gmail.com" },

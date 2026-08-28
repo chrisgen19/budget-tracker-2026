@@ -1,20 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildBreakdownPrompt } from "@/lib/receipt-breakdown-prompt";
+import { buildBreakdownPrompt, BREAKDOWN_CATEGORY_RULES } from "@/lib/receipt-breakdown-prompt";
 import { DEFAULT_CATEGORIES } from "@/lib/default-categories";
 
 const PROMPT = buildBreakdownPrompt('- "Groceries" (id: "cat_1")', "2026-08-26");
-
-/**
- * Pull the `N. <Name>:` category rules out of a prompt, skipping the prose rules that also
- * happen to contain a colon ("Never assign a supermarket line item to Housing: ...") and the
- * "A vs B:" tie-breakers. A category name is short and holds no sentence break.
- */
-const ruleNames = (prompt: string) =>
-  prompt
-    .split("\n")
-    .map((l) => /^\d+\. ([^:]+):/.exec(l.trim())?.[1])
-    .filter((n): n is string => !!n)
-    .filter((n) => !n.includes(" vs ") && !n.includes(".") && n.length <= 30);
 
 const ruleFor = (category: string) =>
   PROMPT.split("\n").find((l) => new RegExp(`^\\d+\\. ${category}:`).test(l.trim())) ?? "";
@@ -58,11 +46,19 @@ describe("breakdown prompt category routing", () => {
 
   it("names only categories that are actually seeded", () => {
     const seeded = new Set(DEFAULT_CATEGORIES.map((c) => c.name));
-    const named = ruleNames(PROMPT);
 
-    expect(named.length).toBeGreaterThan(3);
-    for (const name of named) {
-      expect(seeded.has(name), `rule names "${name}"`).toBe(true);
+    // Read straight off the rule list. Parsing names back out of the rendered prompt needed a
+    // heuristic to skip prose rules, and a long or punctuated name slipped through it unchecked.
+    expect(BREAKDOWN_CATEGORY_RULES.length).toBeGreaterThan(3);
+    for (const rule of BREAKDOWN_CATEGORY_RULES) {
+      expect(seeded.has(rule.category), `rule names "${rule.category}"`).toBe(true);
+    }
+  });
+
+  it("renders every rule into the prompt it ships", () => {
+    // The list is only an invariant worth checking if the prompt is actually built from it.
+    for (const rule of BREAKDOWN_CATEGORY_RULES) {
+      expect(PROMPT).toContain(`${rule.category}: ${rule.matches}`);
     }
   });
 });
