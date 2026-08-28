@@ -3,9 +3,8 @@
 import { useState } from "react";
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { MAX_QUICK_LABELS } from "@/lib/quick-labels";
 import type { LabelWithCountAndSchedules } from "@/types";
-
-const MAX_QUICK_LABELS = 6;
 
 interface QuickLabelPickerProps {
   selectedIds: string[];

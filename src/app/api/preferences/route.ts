@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
-import { mcpWriteLeaseSchema } from "@/lib/validations";
+import { mcpWriteLeaseSchema, quickPickIdsSchema } from "@/lib/validations";
+import { MAX_QUICK_CATEGORIES } from "@/lib/quick-categories";
+import { MAX_QUICK_LABELS } from "@/lib/quick-labels";
 
 export async function GET() {
   const userId = await getAuthUserId();
@@ -70,39 +72,25 @@ export async function PATCH(request: Request) {
       lease.data === null ? null : new Date(Date.now() + lease.data * 60_000);
   }
 
-  // Handle quick category preferences
-  if ("quickExpenseCategories" in body) {
-    const ids = body.quickExpenseCategories;
-    if (!Array.isArray(ids) || ids.length > 4 || !ids.every((id: unknown) => typeof id === "string")) {
-      return NextResponse.json(
-        { error: "quickExpenseCategories must be a string array with max 4 items" },
-        { status: 400 }
-      );
-    }
-    data.quickExpenseCategories = ids;
-  }
+  // Handle quick-pick preferences. Each list is capped and must hold distinct ids: the pickers
+  // count the stored list against their slot limit, so a repeated id silently consumes a slot the
+  // user can never fill. See quickPickIdsSchema.
+  const quickLists = [
+    { field: "quickExpenseCategories", max: MAX_QUICK_CATEGORIES },
+    { field: "quickIncomeCategories", max: MAX_QUICK_CATEGORIES },
+    { field: "quickLabels", max: MAX_QUICK_LABELS },
+  ] as const;
 
-  if ("quickIncomeCategories" in body) {
-    const ids = body.quickIncomeCategories;
-    if (!Array.isArray(ids) || ids.length > 4 || !ids.every((id: unknown) => typeof id === "string")) {
+  for (const { field, max } of quickLists) {
+    if (!(field in body)) continue;
+    const parsed = quickPickIdsSchema(max).safeParse(body[field]);
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: "quickIncomeCategories must be a string array with max 4 items" },
+        { error: `${field} must be a string array of at most ${max} distinct ids` },
         { status: 400 }
       );
     }
-    data.quickIncomeCategories = ids;
-  }
-
-  // Handle quick label preferences (single list, max 6)
-  if ("quickLabels" in body) {
-    const ids = body.quickLabels;
-    if (!Array.isArray(ids) || ids.length > 6 || !ids.every((id: unknown) => typeof id === "string")) {
-      return NextResponse.json(
-        { error: "quickLabels must be a string array with max 6 items" },
-        { status: 400 }
-      );
-    }
-    data.quickLabels = ids;
+    data[field] = parsed.data;
   }
 
   if ("transactionLayout" in body) {
