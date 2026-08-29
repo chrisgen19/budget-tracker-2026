@@ -123,6 +123,22 @@ describe("TransactionFiltersBar", () => {
     expect(toolbar.className).not.toContain("pointer-events-none");
   });
 
+  it("still hides after a toolbar button was tapped", () => {
+    renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    const previousMonth = screen.getAllByRole("button", { name: "Previous month" })[0];
+
+    // A button keeps focus after a tap. Only text entry may pin the toolbar open,
+    // or one tap on a month arrow stops it ducking for the rest of the visit.
+    fireEvent.click(previousMonth);
+    previousMonth.focus();
+    expect(toolbar.contains(document.activeElement)).toBe(true);
+
+    fireEvent.scroll(window);
+
+    expect(toolbar.className).toContain("-translate-y-full");
+  });
+
   it("keeps the sticky toolbar visible while scrolling at desktop widths", () => {
     vi.stubGlobal(
       "matchMedia",

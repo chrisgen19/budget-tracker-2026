@@ -27,8 +27,21 @@ export function useFilterToolbarScroll() {
       timerRef.current = undefined;
     };
 
+    /**
+     * Only text entry inside the toolbar holds it open. The guard exists so a scroll
+     * cannot blur the search field and close the on-screen keyboard mid-query — a
+     * button keeps focus after a tap and suffers nothing from being hidden, so
+     * testing the whole subtree meant one tap on a month arrow or the type toggle
+     * pinned the toolbar open for the rest of the visit.
+     */
+    const holdsTextEntry = () => {
+      const active = document.activeElement;
+      if (!active || !toolbarRef.current?.contains(active)) return false;
+      return active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
+    };
+
     const handleScroll = () => {
-      if (desktopQuery.matches || toolbarRef.current?.contains(document.activeElement)) {
+      if (desktopQuery.matches || holdsTextEntry()) {
         setIsScrolling(false);
         clearTimer();
         return;
