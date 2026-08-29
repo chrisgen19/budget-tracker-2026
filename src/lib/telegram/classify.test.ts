@@ -14,23 +14,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const generateContentWithRetry = vi.fn();
 
-/**
- * Controlled per test rather than inherited from the environment.
- *
- * `GEMINI_TIMEOUT_MS=0` is a supported configuration ("0 disables"), and reading the real one
- * meant the timeout assertion below crashed with a TypeError on any machine that set it,
- * rather than testing the branch. A getter, because the value is read per call inside
- * `classifyMessage`, not captured at module scope.
- */
-let timeoutMs = 60_000;
-vi.mock("@/lib/gemini-limits", () => ({
-  get GEMINI_TIMEOUT_MS() {
-    return timeoutMs;
-  },
-}));
+vi.mock("@/lib/gemini-limits", () => ({ GEMINI_MAX_ATTEMPTS: 3 }));
+
+/** Stand-ins for the two helpers classify.ts must reach for. What they *return* is gemini.ts's
+ *  business and is covered in gemini.test.ts; what matters here is that this call site uses them
+ *  rather than hand-rolling a config, which is how the thinking level drifts in the first place. */
+const CLASSIFY_CONFIG = { responseMimeType: "application/json", thinkingConfig: "MINIMAL-SENTINEL" };
+const minimalThinkingFor = vi.fn(() => ({ thinkingLevel: "MINIMAL" }));
 
 vi.mock("@/lib/gemini", () => ({
   GEMINI_MODEL: "configured-model",
+  classifyConfig: () => CLASSIFY_CONFIG,
+  minimalThinkingFor,
   generateContentWithRetry: (...args: unknown[]) => generateContentWithRetry(...args),
 }));
 
@@ -48,7 +43,6 @@ const reply = (payload: unknown) => ({ text: JSON.stringify(payload) });
 
 beforeEach(() => {
   generateContentWithRetry.mockReset();
-  timeoutMs = 60_000;
 });
 
 afterEach(() => {
@@ -78,33 +72,27 @@ describe("classifyMessage", () => {
     expect(generateContentWithRetry).toHaveBeenCalled();
   });
 
-  it("still bounds each attempt, which the wrapper does not do for it", async () => {
-    // `generateContentWithRetry` adds retries and a fallback model but no timeout of its own, so
-    // dropping this would leave every attempt unbounded — and the poll loop awaits each update in
-    // turn, so one unbounded call stops the bot answering anyone.
-    timeoutMs = 45_000;
+  it("asks for minimal thinking, unlike the receipt scanner", async () => {
+    // Classification picks one of eleven labels from a prompt that lists them. Running it at the
+    // model's default cost latency on the hot path of every free-text message and bought nothing
+    // (#163 Phase 2). Receipt scanning keeps the configured level; these must not share a knob.
     generateContentWithRetry.mockResolvedValue(reply({ action: "SHOW_SUMMARY" }));
     const { classifyMessage } = await loadClassify("key");
 
     await classifyMessage("summary", CATEGORIES, LABELS, -480);
 
-    const { config } = generateContentWithRetry.mock.calls[0][0];
-    expect(config.responseMimeType).toBe("application/json");
-    expect(config.httpOptions).toEqual({ timeout: 45_000 });
+    expect(generateContentWithRetry.mock.calls[0][0].config).toBe(CLASSIFY_CONFIG);
   });
 
-  it("omits httpOptions entirely when the timeout is disabled", async () => {
-    // GEMINI_TIMEOUT_MS=0 is supported and documented as "0 disables". Passing
-    // `httpOptions: { timeout: 0 }` is not the same thing as passing nothing.
-    timeoutMs = 0;
+  it("carries the minimal-thinking intent into the fallback model", async () => {
+    // The fallback path rebuilds thinkingConfig for whichever model it switches to. Passing
+    // nothing let it rebuild from GEMINI_THINKING_LEVEL, silently restoring `medium` mid-retry.
     generateContentWithRetry.mockResolvedValue(reply({ action: "SHOW_SUMMARY" }));
     const { classifyMessage } = await loadClassify("key");
 
     await classifyMessage("summary", CATEGORIES, LABELS, -480);
 
-    const { config } = generateContentWithRetry.mock.calls[0][0];
-    expect(config.responseMimeType).toBe("application/json");
-    expect(config.httpOptions).toBeUndefined();
+    expect(generateContentWithRetry.mock.calls[0][2]).toBe(minimalThinkingFor);
   });
 
   it("resolves 'now' against the caller's timezone, not the host's", async () => {

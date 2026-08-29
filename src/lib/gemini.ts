@@ -56,21 +56,97 @@ export const GEMINI_THINKING_LEVEL =
  *  importing this module's client. */
 export { GEMINI_TIMEOUT_MS };
 
+/**
+ * A model id with the resource prefix removed.
+ *
+ * The SDK accepts both `gemini-2.5-flash` and the resource form `models/gemini-2.5-flash`, and
+ * passes the latter through untouched (see `tModel` in @google/genai), so both can reach us from
+ * `GEMINI_MODEL`. Testing the raw string would read the prefixed form as generation-less and pick
+ * the wrong knob — and sending `thinkingLevel` to a 2.x model is a non-retryable 400.
+ */
+const bareModel = (model: string): string => model.replace(/^models\//, "");
+
+/**
+ * Whether a model takes the legacy `thinkingBudget` rather than `thinkingLevel`.
+ *
+ * A model id that names no generation — the hot-swapping aliases such as `gemini-flash-latest` —
+ * falls to the `thinkingLevel` side deliberately. That is the knob every current and future model
+ * uses; the 2.x line is being retired, and the alias that historically pointed at a 2.x model now
+ * resolves to a 3.x one. Guessing forwards is right for every model that exists today and wrong
+ * only for a regression that is not going to happen.
+ */
+const isLegacyThinkingModel = (model: string): boolean => /^gemini-[12]\./.test(bareModel(model));
+
 /** Pick the right thinking knob per model generation:
  *  Gemini 1.x/2.x use thinkingBudget; Gemini 3+ use thinkingLevel
  *  (thinkingBudget is only backwards-compat there and performs worse). */
 const thinkingConfigFor = (model: string): ThinkingConfig =>
-  /^gemini-[12]\./.test(model)
+  isLegacyThinkingModel(model)
     ? { thinkingBudget: GEMINI_THINKING_BUDGET }
     : { thinkingLevel: GEMINI_THINKING_LEVEL };
 
-/** Generation config for receipt scanning: JSON-only responses (no markdown fences)
- *  + env-configurable thinking matched to the model's generation + per-attempt timeout */
-export const receiptScanConfig = (model: string = GEMINI_MODEL) => ({
+/**
+ * Models documented to accept the cheapest level. Everything else falls back to `low`, which
+ * appears in every row of the support table — 3.7 Flash, both Pro previews included.
+ *
+ * The floor is deliberately conservative because the cost is asymmetric. Too much thinking is
+ * some latency; an *unsupported* value is a 400, which `classifyMessage` catches and turns into
+ * `null`, reaching the user as "I couldn't understand that command" on every free-text message.
+ *
+ * This is not hypothetical, and it is not only a Pro-model problem: `gemini-3.7-flash` does not
+ * support `minimal` either. Assuming a generation shares one floor is the same mistake as
+ * assuming a model id can be written at a call site (#163) — it holds until the day it does not.
+ */
+const MINIMAL_LEVEL_MODELS = /^gemini-3\.(5|6)-flash/;
+
+/** 2.5 Flash and Flash-Lite accept a zero budget. 2.5 Pro cannot disable thinking at all: its
+ *  documented range starts at 128, so that is the lowest thing it can be asked for. */
+const ZERO_BUDGET_MODELS = /^gemini-2\.5-flash/;
+
+/** The floor for a 2.x model that does not accept zero. Documented minimum for 2.5 Pro. */
+const MIN_THINKING_BUDGET = 128;
+
+/**
+ * The cheapest thinking a *given model* actually supports, in whichever knob its generation uses.
+ *
+ * For work that is *classification* rather than reasoning. The Telegram classifier picks one of
+ * eleven action labels from a prompt that already names every option; deliberating over that buys
+ * nothing and costs latency on the hot path of every free-text message (#163).
+ *
+ * Per model rather than per generation, because the capability genuinely varies within one:
+ * `gemini-3.6-flash` and `gemini-3.5-flash` take `minimal`, `gemini-3.7-flash` and the Pro
+ * previews do not. See the table-driven test for the documented matrix.
+ *
+ * Exported so `generateContentWithRetry` can rebuild it for the fallback model — see the
+ * `thinkingFor` parameter there for why passing the primary's config through would be wrong.
+ */
+export const minimalThinkingFor = (model: string): ThinkingConfig =>
+  isLegacyThinkingModel(model)
+    ? { thinkingBudget: ZERO_BUDGET_MODELS.test(bareModel(model)) ? 0 : MIN_THINKING_BUDGET }
+    : {
+        thinkingLevel: MINIMAL_LEVEL_MODELS.test(bareModel(model))
+          ? ThinkingLevel.MINIMAL
+          : ThinkingLevel.LOW,
+      };
+
+/** JSON-only responses (no markdown fences) + a per-attempt timeout, with thinking supplied by
+ *  the caller. Shared so the two configs below cannot drift on anything but the thinking. */
+const jsonConfig = (thinking: ThinkingConfig) => ({
   responseMimeType: "application/json",
-  thinkingConfig: thinkingConfigFor(model),
+  thinkingConfig: thinking,
   ...(GEMINI_TIMEOUT_MS > 0 && { httpOptions: { timeout: GEMINI_TIMEOUT_MS } }),
 });
+
+/** Receipt scanning: env-configurable thinking matched to the model's generation. This is the one
+ *  call where reasoning earns its cost — OCR on a crumpled phone photo — so it keeps the default. */
+export const receiptScanConfig = (model: string = GEMINI_MODEL) =>
+  jsonConfig(thinkingConfigFor(model));
+
+/** Intent classification: minimal thinking, deliberately not env-configurable. `GEMINI_THINKING_LEVEL`
+ *  is shared with receipt scanning, so turning it down globally would trade scan accuracy for
+ *  classifier latency — the wrong trade, and the reason this is a separate config rather than a knob. */
+export const classifyConfig = (model: string = GEMINI_MODEL) =>
+  jsonConfig(minimalThinkingFor(model));
 
 /** Transient Gemini errors worth retrying, per Google's error guidance:
  *  429 (rate limit), 500 (INTERNAL — unexpected error on Google's side),
@@ -111,10 +187,18 @@ const attemptWithRetries = async (
  * If the primary model stays overloaded after all attempts, retries once on
  * GEMINI_FALLBACK_MODEL (with thinking config rebuilt for that model) before
  * giving up. Non-retryable errors are rethrown immediately.
+ *
+ * `thinkingFor` is how a caller keeps its thinking *intent* across the fallback. The config is
+ * rebuilt rather than carried over because the two models need not be the same generation — the
+ * README suggests `gemini-2.5-flash-lite` as a fast fallback, and a `thinkingLevel` built for a
+ * 3.x primary is the wrong knob for it. Passing the caller's config through unchanged would send
+ * that wrong knob; ignoring the caller, as this used to, silently restored the default and undid
+ * a deliberate `minimal` mid-retry.
  */
 export const generateContentWithRetry = async (
   params: GenerateContentParameters,
-  maxAttempts = GEMINI_MAX_ATTEMPTS
+  maxAttempts = GEMINI_MAX_ATTEMPTS,
+  thinkingFor: (model: string) => ThinkingConfig = thinkingConfigFor
 ) => {
   try {
     return await attemptWithRetries(params, maxAttempts);
@@ -133,7 +217,7 @@ export const generateContentWithRetry = async (
       {
         ...params,
         model: GEMINI_FALLBACK_MODEL,
-        config: { ...params.config, thinkingConfig: thinkingConfigFor(GEMINI_FALLBACK_MODEL) },
+        config: { ...params.config, thinkingConfig: thinkingFor(GEMINI_FALLBACK_MODEL) },
       },
       GEMINI_FALLBACK_ATTEMPTS
     );

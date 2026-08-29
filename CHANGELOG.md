@@ -2,6 +2,49 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-29 - Two calls, one thinking budget, opposite needs
+
+Phase 1 moved every Gemini call to `gemini-3.6-flash`. The Telegram classifier came back accurate
+and, measured in production, "not fast but tolerable" — which is the answer that made the second
+step worth taking rather than assuming.
+
+The cause was that `classify.ts` sent no `thinkingConfig` at all, so the model ran at its own
+default, `medium`. That is full reasoning effort spent choosing one of eleven action labels from a
+prompt that already lists all eleven, paid on the hot path of every free-text message.
+
+The obvious fix is wrong. `GEMINI_THINKING_LEVEL` is shared with receipt scanning, and OCR on a
+crumpled phone photo is the one call in this app where deliberation genuinely earns its cost.
+Turning it down globally would have bought classifier latency with scan accuracy. So the level is
+now per call site: `receiptScanConfig()` keeps the configured level, `classifyConfig()` pins
+minimal, and both are built from one `jsonConfig` helper so they cannot drift on anything else.
+
+"Minimal" is not one value, and the first cut of this got it wrong in a way review caught. Picking
+the knob by generation — `thinkingBudget` for 1.x/2.x, `thinkingLevel` for 3+ — is necessary but
+not sufficient, because the *floor* varies inside a generation. Per Google's support table,
+`gemini-3.7-flash` accepts only low/medium/high; `gemini-3-pro-preview` accepts only low/high; and
+`gemini-2.5-pro` cannot disable thinking at all, its range starting at 128. Asking any of them for
+the cheapest setting a sibling model supports is a 400, which `classifyMessage` catches and turns
+into `null`, reaching the user as "I couldn't understand that command" on every free-text message.
+
+So `minimalThinkingFor` resolves per model, and falls back to `low` — the one level present in
+every row of the table — rather than to the cheapest one imaginable. The asymmetry is the point:
+too much thinking costs latency, an unsupported value costs the whole feature. Note this is not a
+Pro-model caveat; the model it would have broken first is a Flash one, and newer than the model
+this release moved to. The matrix is now a table-driven test, so a model that ships without
+`minimal` degrades instead of taking the bot down.
+
+The subtle half was the fallback. `generateContentWithRetry` rebuilds `thinkingConfig` for whatever
+model it switches to, and rebuilt it from the env default regardless of what the caller asked for
+— so a deliberate `minimal` was silently restored to `medium` the moment the primary was
+overloaded. It now takes a `thinkingFor` callback, defaulted so the four existing callers are
+untouched. Rebuilding rather than carrying the caller's config across matters because the two
+models need not share a generation: the README suggests `gemini-2.5-flash-lite` as a fast
+fallback, and a `thinkingLevel` built for a 3.x primary is the wrong knob for it.
+
+`gemini.ts` had no tests at all, which is how the fallback overwrite survived being written down as
+a known trap without being fixed. It has them now, and both reverts were confirmed to fail before
+this shipped.
+
 ## 2026-08-29 - The model the Telegram bot was actually running
 
 Production sets `GEMINI_MODEL=gemini-3.6-flash`. The Telegram bot was running `gemini-2.5-flash`,

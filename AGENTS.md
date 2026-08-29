@@ -94,7 +94,7 @@ src/
 - `GEMINI_MODEL` — Optional; Gemini model for **every** AI call (receipt scanning, itemization, AI Assessment, Telegram classification). Defaults to `gemini-3.6-flash`. Import it from `src/lib/gemini.ts`; never write a model id at a call site — the Telegram classifier pinned a literal and silently ran two generations behind (#163)
 - `GEMINI_FALLBACK_MODEL` — Optional; model retried once when the primary stays overloaded (503) after retries (defaults to `gemini-3.5-flash`, a generation behind the primary on purpose; `""` disables fallback)
 - `GEMINI_THINKING_BUDGET` — Optional; thinking budget for **Gemini 2.x** models. `-1` = dynamic thinking (default, best quality), `0` = off (speed mode), `128`-`24576` = fixed token budget
-- `GEMINI_THINKING_LEVEL` — Optional; thinking level for **Gemini 3+** models (they use `thinkingLevel`, not `thinkingBudget`): `minimal` (speed mode) | `low` | `medium` (default, best quality) | `high`. This is the knob that applies by default, since the default model is now 3.x
+- `GEMINI_THINKING_LEVEL` — Optional; thinking level for **Gemini 3+** models (they use `thinkingLevel`, not `thinkingBudget`): `minimal` (speed mode) | `low` | `medium` (default, best quality) | `high`. This is the knob that applies by default, since the default model is now 3.x. It governs receipt scanning and AI Assessment only: the Telegram classifier is pinned to minimal via `classifyConfig()` and deliberately ignores it, because the two want opposite things and one variable cannot say both
 - `GEMINI_TIMEOUT_MS` — Optional; per-attempt request timeout in ms (default `60000`, `0` disables). Timed-out attempts are retried like 503s. Lower it (e.g. `30000`) when running speed mode
 - `RESEND_API_KEY` — Email sending (verification + password reset)
 - `EMAIL_FROM` — Sender address (optional; defaults to `Budget Tracker <noreply@resend.dev>` if unset). Use a verified Resend domain in production, e.g. `Budget Tracker <noreply@yourdomain.com>`.
@@ -136,7 +136,13 @@ because labels are how spending is grouped here and the name usually appears in 
 all: "Shopee" is a label with transactions, and a description search for it returns nothing. Every
 unresolvable name or month is dropped rather than passed through, because a filter the query
 cannot satisfy returns zero rows and "no transactions found" reads exactly like a real answer. A
-question about a recurring bill goes to `get_bill_history` instead. `classify.ts` imports `@/lib/gemini` *dynamically*, and exports `GEMINI_ENABLED` read from the
+question about a recurring bill goes to `get_bill_history` instead. `classify.ts` uses `classifyConfig()` rather than `receiptScanConfig()`: classification picks one
+of eleven action labels from a prompt that already lists them, so the reasoning budget buys
+nothing and is paid on the hot path of every free-text message. OCR on a crumpled photo is the
+opposite case and keeps the configured level. It also passes `minimalThinkingFor` as
+`generateContentWithRetry`'s `thinkingFor`, since the fallback path rebuilds `thinkingConfig`
+for whichever model it switches to and would otherwise restore `medium` mid-retry.
+`classify.ts` imports `@/lib/gemini` *dynamically*, and exports `GEMINI_ENABLED` read from the
 environment rather than from a client: `gemini.ts` constructs `GoogleGenAI` at module scope and
 throws without `GEMINI_API_KEY`, so a static import would take the bot down at boot on a
 deployment with no key, where it should degrade to shorthand-only logging. It is an **MCP
