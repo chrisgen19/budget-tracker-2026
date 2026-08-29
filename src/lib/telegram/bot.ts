@@ -298,18 +298,21 @@ async function sendMessage(
   text: string,
   parseMode: "Markdown" | "HTML" = "Markdown",
   replyMarkup?: Record<string, unknown>
-): Promise<boolean> {
+): Promise<number | null> {
   // Telegram rejects an over-long message outright, and the plain-text fallback is the same
   // length, so every attempt failed and the user was answered with silence.
   const parts = chunkMessage(text);
   if (parts.length > 1) {
+    let lastId: number | null = null;
     let allSent = true;
     for (const [i, part] of parts.entries()) {
       // Buttons belong on the last chunk, where the question they answer ends up.
       const markup = i === parts.length - 1 ? replyMarkup : undefined;
-      if (!(await sendOne(chatId, part, parseMode, markup))) allSent = false;
+      const id = await sendOne(chatId, part, parseMode, markup);
+      if (id === null) allSent = false;
+      else lastId = id;
     }
-    return allSent;
+    return allSent ? lastId : null;
   }
 
   return sendOne(chatId, text, parseMode, replyMarkup);
@@ -320,16 +323,16 @@ async function sendOne(
   text: string,
   parseMode: "Markdown" | "HTML",
   replyMarkup?: Record<string, unknown>
-): Promise<boolean> {
+): Promise<number | null> {
   const markup = replyMarkup ? { reply_markup: replyMarkup } : {};
   try {
-    await telegramApi("sendMessage", {
+    const sent = await telegramApi("sendMessage", {
       chat_id: chatId,
       text,
       parse_mode: parseMode,
       ...markup,
     });
-    return true;
+    return typeof sent?.message_id === "number" ? sent.message_id : null;
   } catch {
     // Unescaped special characters in the text; plain text is the only thing that can work.
   }
@@ -337,14 +340,14 @@ async function sendOne(
   for (const delay of [0, 2_000]) {
     if (delay > 0) await new Promise((r) => setTimeout(r, delay));
     try {
-      await telegramApi("sendMessage", { chat_id: chatId, text, ...markup });
-      return true;
+      const sent = await telegramApi("sendMessage", { chat_id: chatId, text, ...markup });
+      return typeof sent?.message_id === "number" ? sent.message_id : null;
     } catch (err) {
       console.error("[telegram] failed to send a message:", err instanceof Error ? err.message : err);
     }
   }
 
-  return false;
+  return null;
 }
 
 /** What `create_transactions` returns; see `renderCreated` in the MCP server. */
@@ -1179,7 +1182,8 @@ async function handleReceiptPhoto(
     ],
   };
 
-  if (!(await sendMessage(chatId, reply, "Markdown", buttons))) {
+  const reviewMessageId = await sendMessage(chatId, reply, "Markdown", buttons);
+  if (!reviewMessageId) {
     console.error(
       "[telegram] scanned a receipt but could not deliver the review, so it was discarded."
     );
@@ -1195,6 +1199,7 @@ async function handleReceiptPhoto(
     // Keyed to the photo's update, not the confirming message, so a redelivered "yes" replays
     // the same batch instead of writing a second row.
     updateId,
+    reviewMessageId,
     createdAt: Date.now(),
   });
 }
@@ -1206,6 +1211,10 @@ async function handleReceiptPhoto(
  * been taken from the pending map, so every failure path inside `confirmPendingScan` puts it back.
  */
 async function saveConfirmedScan(chatId: number, scan: PendingScan): Promise<void> {
+  // Whichever way it was answered. A typed "yes" used to leave the keyboard live on a review that
+  // was already saved, so tapping it later said the receipt was gone.
+  if (scan.reviewMessageId) await clearButtons(chatId, scan.reviewMessageId);
+
   const outcome = await confirmPendingScan(scan, {
     save: (key, s) =>
       createTransactions(key, [
@@ -1286,9 +1295,8 @@ async function handleCallback(query: TelegramCallbackQuery): Promise<void> {
     return;
   }
 
-  await clearButtons(chatId, messageId);
-
   if (parsed.action === "discard") {
+    await clearButtons(chatId, messageId);
     await answerCallback(query.id, "Discarded.");
     await sendMessage(chatId, "Discarded. Nothing was saved.");
     return;
@@ -1361,6 +1369,7 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
   if (isRejection(text)) {
     const scan = takePendingScan(chatId);
     if (scan) {
+      if (scan.reviewMessageId) await clearButtons(chatId, scan.reviewMessageId);
       await sendMessage(chatId, "Discarded. Nothing was saved.");
       return;
     }

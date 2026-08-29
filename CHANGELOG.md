@@ -28,6 +28,15 @@ exists to prevent.
 The typed path still works, and has to: correcting a description needs free text regardless, and
 the two now share `saveConfirmedScan` so a button and a typed "yes" cannot drift apart.
 
+That sharing was not enough on its own, as review caught. Clearing the keyboard only happened on
+the button path, because the typed path had no idea which message carried it — so answering by
+typing left the buttons live on a review that had already been saved, and tapping them later
+reported the receipt as expired. True of the draft, misleading about the receipt. `PendingScan` now
+holds the review's message id, which is why `sendMessage` returns an id rather than a boolean, and
+both terminal paths take the keyboard off. A correction deliberately leaves the buttons in place:
+the scan is still waiting under the same update id, so tapping Save then saves the corrected
+version, which is what the user would expect.
+
 ## 2026-08-29 - The correction the review would not take
 
 The receipt review asked for yes or no and meant it literally. Anything else fell through to

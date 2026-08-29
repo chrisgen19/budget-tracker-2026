@@ -177,3 +177,25 @@ describe("a frozen scan", () => {
     expect(revisePendingScan(7, "Groceries at SM")).toMatchObject({ status: "revised" });
   });
 });
+
+describe("the review message id", () => {
+  it("survives a correction, so a typed answer can still clear the buttons", () => {
+    // The buttons live on the original review. A correction sends a new message but leaves that
+    // one in place, and answering by typing still has to take its keyboard off.
+    putPendingScan(7, scan({ reviewMessageId: 555 }));
+
+    const result = revisePendingScan(7, "Groceries at SM");
+
+    expect(result).toMatchObject({ status: "revised", scan: { reviewMessageId: 555 } });
+    expect(takePendingScan(7)?.reviewMessageId).toBe(555);
+  });
+
+  it("survives a restore after a failed save", () => {
+    // confirmPendingScan puts the draft back on failure; losing the id here would leave the
+    // keyboard live forever once the retry finally succeeded.
+    const original = scan({ reviewMessageId: 555 });
+    putPendingScan(7, { ...original, createdAt: Date.now(), frozen: true });
+
+    expect(takePendingScan(7)?.reviewMessageId).toBe(555);
+  });
+});
