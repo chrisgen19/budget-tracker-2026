@@ -14,6 +14,7 @@ import {
   type TelegramMessage,
 } from "@/lib/telegram/allowlist";
 import { encodeScanCallback, parseScanCallback } from "@/lib/telegram/callback-data";
+import { appBaseUrl, openInAppKeyboard } from "@/lib/telegram/app-link";
 import { chunkMessage } from "@/lib/telegram/chunk";
 import { MAX_IMAGE_BYTES, pickReceiptImage } from "@/lib/telegram/photo";
 import { readPhotoTakenAt } from "@/lib/exif-date";
@@ -85,6 +86,15 @@ const env = (name: string): string | undefined => {
  */
 const MCP_URL = env("TELEGRAM_MCP_URL");
 const MCP_TOKEN = env("TELEGRAM_MCP_TOKEN");
+/**
+ * Where the app lives, for the "Edit in app" link on a logged transaction.
+ *
+ * Null disables the button rather than sending a broken one: Telegram rejects the entire message
+ * when a keyboard carries an invalid URL, so a missing base URL must cost the button, never the
+ * confirmation itself.
+ */
+const APP_URL = appBaseUrl(process.env);
+
 /** Only used for display; the server owns every amount and every date boundary. */
 const SYMBOL = env("TELEGRAM_CURRENCY_SYMBOL") ?? "\u20B1";
 
@@ -453,7 +463,15 @@ async function createTransactions(
  * naming the rows that exist, so a duplicate can be found instead of guessed at.
  */
 async function confirmCreated(chatId: number, result: CreatedBatch): Promise<void> {
-  if (await sendMessage(chatId, formatCreated(result))) return;
+  // The bot cannot edit or delete: `create_transactions` is its only write, and that is
+  // deliberate, so a mistyped amount is fixed in the app rather than by giving a chat token
+  // destructive powers. One row per batch today, and the link is only meaningful for one.
+  const keyboard =
+    result.transactions.length === 1
+      ? openInAppKeyboard(APP_URL, result.transactions[0].id)
+      : undefined;
+
+  if (await sendMessage(chatId, formatCreated(result), "Markdown", keyboard)) return;
 
   console.error(
     "[telegram] wrote transactions but could not confirm them to the user. " +

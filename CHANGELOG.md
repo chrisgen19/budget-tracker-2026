@@ -2,6 +2,28 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-29 - A way out of the chat
+
+A mistyped shorthand — `1000 breakfast` for a hundred-peso meal — meant opening the app, finding
+the row and fixing it. The obvious answer is an undo button, and the obvious answer is wrong.
+
+The bot cannot edit or delete anything. `create_transactions` is the only write among its fourteen
+MCP tools, and that absence is a property rather than a gap: a leaked bot token can add junk rows,
+but it can never destroy or rewrite financial history. Adding a delete tool to fix occasional typos
+would trade that away permanently, and a bug in a delete path is unrecoverable in a way a bug in a
+create path is not.
+
+So the confirmation now carries a link instead. `?highlight=<id>` was already a route contract,
+used by the bill history: the transactions page clears the month filter, finds that row across all
+time and opens its edit modal — which is where editing and deleting already live, with a real UI
+for choosing which field was wrong. One tap leaves Telegram; nothing gains destructive power.
+
+The base URL is read from `TELEGRAM_APP_URL` or `NEXTAUTH_URL` and is never hardcoded, on the same
+reasoning as `TELEGRAM_MCP_URL`: a fork or a staging deploy must not be handed a link into someone
+else's budget. An unusable one omits the button rather than sending a broken URL, because Telegram
+rejects the entire message when a keyboard carries one — the failure would cost the confirmation,
+not just the link.
+
 ## 2026-08-29 - Stopping the bot on purpose
 
 Six consecutive deploys produced an identical signature: exactly five `409 Conflict` lines, seven
