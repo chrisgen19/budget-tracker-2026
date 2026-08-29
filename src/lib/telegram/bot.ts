@@ -1203,7 +1203,8 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
           ]),
         // Restored with a fresh timestamp so a save that failed near the TTL does not leave the
         // user a scan they can no longer confirm.
-        restore: (s) => putPendingScan(chatId, { ...s, createdAt: Date.now() }),
+        restore: (s, { frozen }) =>
+          putPendingScan(chatId, { ...s, createdAt: Date.now(), frozen }),
         batchKey: (s) => updateBatchId(BOT_ID, s.updateId),
       });
 
@@ -1223,8 +1224,21 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
   // while the scan sat waiting. Nothing is re-scanned: the correction is the user's own words, and
   // a second scan would spend another credit for a field they have already supplied.
   if (isScanCorrection(text)) {
-    const revised = revisePendingScan(chatId, correctedDescription(text));
-    if (revised) {
+    const result = revisePendingScan(chatId, correctedDescription(text));
+
+    if (result.status === "frozen") {
+      // The save never settled, so the row may already exist. A retry replays the same key and
+      // would return the original, silently discarding this edit — so it is refused rather than
+      // accepted and lost. Same rule the web app's review applies to a pinned row.
+      await sendMessage(
+        chatId,
+        "I could not confirm whether that receipt saved, so it can't be edited now — answering *yes* has to replay exactly what was sent. Reply *yes* to settle it, or check the app and reply *no*."
+      );
+      return;
+    }
+
+    if (result.status === "revised") {
+      const { scan: revised } = result;
       let msg = `\u270f\ufe0f *Description updated*\n\n`;
       msg += `\ud83d\udcdd *Description:* ${revised.description}\n`;
       msg += `\ud83d\udcb0 *Amount:* ${SYMBOL}${revised.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;

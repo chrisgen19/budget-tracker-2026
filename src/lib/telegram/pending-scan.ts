@@ -9,6 +9,19 @@ export interface PendingScan {
    *  confirming message, so a redelivered "yes" replays instead of writing a second row. */
   updateId: number;
   createdAt: number;
+  /**
+   * Set when a save failed without settling, so nobody knows whether the row exists.
+   *
+   * A retry replays the same `updateId` key. If the first write did commit, the server returns the
+   * *original* row and any edit made in between is silently discarded — the user would be shown a
+   * corrected description and saved the old one. So an unsettled draft is frozen: it can still be
+   * confirmed, which is what resolves the ambiguity, but not edited.
+   *
+   * The web app's multi-scan review has the same rule for the same reason ("Unacknowledged saves"
+   * in AGENTS.md): rows pinned by an unknown outcome are frozen, and the UI does not offer editing.
+   * A deterministic refusal is different — nothing was written, so the draft stays editable.
+   */
+  frozen?: boolean;
 }
 
 /**
@@ -59,17 +72,24 @@ export const hasPendingScan = (chatId: number, now = Date.now()): boolean => {
  * `updateId` is deliberately untouched: the idempotency key derives from the photo's update, so a
  * corrected scan still replays rather than writing a second row.
  */
+export type ReviseResult =
+  | { status: "revised"; scan: PendingScan }
+  /** Waiting, but pinned by an unsettled write: a replay would discard the edit. */
+  | { status: "frozen" }
+  | { status: "none" };
+
 export const revisePendingScan = (
   chatId: number,
   description: string,
   now = Date.now()
-): PendingScan | null => {
+): ReviseResult => {
   const scan = pending.get(chatId);
-  if (!scan || now - scan.createdAt > PENDING_TTL_MS) return null;
+  if (!scan || now - scan.createdAt > PENDING_TTL_MS) return { status: "none" };
+  if (scan.frozen) return { status: "frozen" };
 
   const revised = { ...scan, description, createdAt: now };
   pending.set(chatId, revised);
-  return revised;
+  return { status: "revised", scan: revised };
 };
 
 export const clearPendingScan = (chatId: number): void => {

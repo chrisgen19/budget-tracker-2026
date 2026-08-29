@@ -21,6 +21,16 @@ Nothing is re-scanned. The user supplied the words, so there is nothing for the 
 field already known. The category is left alone, which is the honest limit of a description
 correction and a separate decision if it turns out to matter.
 
+One state does not accept a correction. When a save fails without settling, the draft is restored
+so the user can retry — and the retry replays the same idempotency key. If the first write did
+commit, the server returns the original row, so an edit made in between would be shown to the user
+and then silently discarded. Such a draft is now marked `frozen` and refuses corrections while
+still accepting a yes, which is what actually resolves the ambiguity. This is not a new rule: the
+web app's multi-scan review already freezes rows pinned by an unknown outcome, for exactly this
+reason, and the first cut of this feature reintroduced the hazard that rule exists to prevent. A
+deterministic refusal is different — a lapsed write lease is raised before anything is written — so
+those drafts stay editable.
+
 The asymmetry with photo captions is worth stating, since the two look alike and were decided
 opposite ways. A caption arrives unbidden and is often not a description at all — "here you go" is
 an ordinary thing to send with a photo — so it goes to the model as a hint and is weighed against
