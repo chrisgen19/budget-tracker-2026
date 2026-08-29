@@ -116,13 +116,16 @@ export function ActionFab({
   const hidden =
     isDesktop === null ? true : isDesktop ? !scrolledPast : hideWhileScrolling && isScrolling;
 
-  // A menu left open while the button fades out floats on its own, so scrolling
-  // back to the top closes it.
-  useEffect(() => {
-    if (hidden) setMenuOpen(false);
-  }, [hidden]);
-
   const hasMenu = isDesktop === true && !!items?.length;
+
+  // A menu left open while the button fades out floats on its own, so scrolling
+  // back to the top closes it. Losing the menu entirely has to close it too:
+  // dropping below `sm` only unmounts the panel, so a window narrowed past the
+  // breakpoint and widened again -- or a phone rotated to portrait and back --
+  // would otherwise bring it back open with no one having asked for it.
+  useEffect(() => {
+    if (hidden || !hasMenu) setMenuOpen(false);
+  }, [hidden, hasMenu]);
 
   const restingBottom = getFabBottom({
     billBannerHeight,
@@ -154,14 +157,6 @@ export function ActionFab({
         hidden ? "pointer-events-none" : "pointer-events-auto"
       }`}
     >
-      {hasMenu && items && (
-        <DropdownMenu
-          open={menuOpen}
-          items={items}
-          onSelect={() => setMenuOpen(false)}
-          placement="top"
-        />
-      )}
       <button
         onClick={() => (hasMenu ? setMenuOpen((prev) => !prev) : onClick())}
         disabled={hidden}
@@ -181,6 +176,18 @@ export function ActionFab({
         <Icon className="w-4 h-4" />
         {!compact && label}
       </button>
+      {/* After the trigger, not before it: the panel is absolutely positioned,
+          so DOM order costs nothing visually, but it is what a forward Tab
+          follows. Rendered first, opening the menu from the keyboard sent the
+          next Tab past it into the page. */}
+      {hasMenu && items && (
+        <DropdownMenu
+          open={menuOpen}
+          items={items}
+          onSelect={() => setMenuOpen(false)}
+          placement="top"
+        />
+      )}
     </div>
   );
 }

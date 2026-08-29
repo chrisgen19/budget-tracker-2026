@@ -22,18 +22,39 @@ vi.mock("@/components/bills/bill-reminder-provider", () => ({
  * of the FAB that CSS cannot express -- "scrolled past" is not a media query --
  * so it reads the breakpoint through `matchMedia` and the tests drive it here.
  */
+type MediaListener = EventListenerOrEventListenerObject;
+
+let mediaListeners: Array<[MediaListener, () => void]> = [];
+let mediaMatches = false;
+
 const setViewport = (desktop: boolean) => {
+  mediaMatches = desktop;
+  mediaListeners = [];
   window.matchMedia = ((query: string) =>
     ({
-      matches: desktop,
+      // A getter, not a snapshot: the component reads `matches` when its own
+      // change listener fires, which is the whole point of crossBreakpoint.
+      get matches() {
+        return mediaMatches;
+      },
       media: query,
       onchange: null,
-      addEventListener: () => {},
-      removeEventListener: () => {},
+      addEventListener: (_type: string, listener: MediaListener) => {
+        mediaListeners.push([listener, () => (listener as EventListener)(new Event("change"))]);
+      },
+      removeEventListener: (_type: string, listener: MediaListener) => {
+        mediaListeners = mediaListeners.filter(([registered]) => registered !== listener);
+      },
       addListener: () => {},
       removeListener: () => {},
       dispatchEvent: () => false,
-    }) as MediaQueryList) as typeof window.matchMedia;
+    }) as unknown as MediaQueryList) as typeof window.matchMedia;
+};
+
+/** Cross the `sm` boundary on a mounted component, the way a resize or a device rotation does. */
+const crossBreakpoint = (desktop: boolean) => {
+  mediaMatches = desktop;
+  act(() => mediaListeners.forEach(([, fire]) => fire()));
 };
 
 const scrollTo = (y: number) => {
@@ -248,6 +269,43 @@ describe("ActionFab at sm and above", () => {
     // Otherwise the panel is left floating over the page with nothing under it.
     scrollTo(0);
     expect(button.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("does not reopen the menu after the viewport crosses below sm and back", () => {
+    vi.useFakeTimers();
+    render(<ActionFab label="Transaction" icon={Plus} items={menuItems} onClick={() => {}} />);
+    const button = screen.getByRole("button", { name: "Add Transaction" });
+
+    scrollTo(400);
+    // Settle the mobile scroll debounce first. Crossing the breakpoint mid-scroll
+    // would hide the button and close the menu that way, which is a different
+    // path and would pass whether or not the breakpoint itself closes it.
+    act(() => vi.advanceTimersByTime(200));
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+
+    // Below `sm` the panel unmounts, but the page is at rest, so the button is
+    // not hidden and nothing else would clear the open state.
+    crossBreakpoint(false);
+    expect(screen.queryByRole("menu")).toBeNull();
+
+    // Rotating back must not bring it up again with no one having asked.
+    crossBreakpoint(true);
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("puts the menu after the trigger, so a forward Tab reaches its actions", () => {
+    render(<ActionFab label="Transaction" icon={Plus} items={menuItems} onClick={() => {}} />);
+    const button = screen.getByRole("button", { name: "Add Transaction" });
+
+    scrollTo(400);
+    fireEvent.click(button);
+
+    // Tab order follows the DOM, and the panel is positioned absolutely, so
+    // rendering it before the trigger sent the next Tab into the page instead.
+    const menu = screen.getByRole("menu");
+    expect(button.compareDocumentPosition(menu) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("dismisses the menu on Escape", () => {
