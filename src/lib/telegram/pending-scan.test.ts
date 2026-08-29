@@ -6,6 +6,7 @@ import {
   isConfirmation,
   isRejection,
   putPendingScan,
+  revisePendingScan,
   takePendingScan,
   type PendingScan,
 } from "@/lib/telegram/pending-scan";
@@ -113,5 +114,66 @@ describe("confirmation parsing", () => {
       expect(isConfirmation(t), t).toBe(false);
       expect(isRejection(t), t).toBe(false);
     }
+  });
+});
+
+describe("revisePendingScan", () => {
+  it("replaces the description and keeps the idempotency key", () => {
+    // updateId derives the batch key. Changing it on a correction would let the corrected save
+    // write a second row instead of replaying the photo's.
+    putPendingScan(7, scan({ description: "SM Supermarket", updateId: 42 }));
+
+    const result = revisePendingScan(7, "Groceries at SM");
+
+    expect(result).toMatchObject({
+      status: "revised",
+      scan: { description: "Groceries at SM", updateId: 42, amount: 350 },
+    });
+    // Still waiting: a correction is not a confirmation.
+    expect(hasPendingScan(7)).toBe(true);
+  });
+
+  it("refreshes the TTL, since correcting is active engagement", () => {
+    const start = Date.now();
+    putPendingScan(7, scan({ createdAt: start }));
+
+    const later = start + PENDING_TTL_MS - 1_000;
+    const result = revisePendingScan(7, "Groceries", later);
+
+    expect(result).toMatchObject({ status: "revised", scan: { createdAt: later } });
+    // Would have expired on the original stamp; does not on the refreshed one.
+    expect(hasPendingScan(7, later + PENDING_TTL_MS - 1_000)).toBe(true);
+  });
+
+  it("returns null when nothing is waiting", () => {
+    expect(revisePendingScan(999, "Groceries")).toEqual({ status: "none" });
+  });
+
+  it("returns null for an expired scan rather than reviving it", () => {
+    const start = Date.now();
+    putPendingScan(7, scan({ createdAt: start }));
+    expect(revisePendingScan(7, "Groceries", start + PENDING_TTL_MS + 1)).toEqual({
+      status: "none",
+    });
+  });
+});
+
+describe("a frozen scan", () => {
+  it("refuses a correction, because a replay would discard it", () => {
+    // The save never settled, so the row may already exist. The retry replays the same updateId
+    // key: if the first write committed, the server returns the original row and any edit made in
+    // between vanishes. Accepting the edit would show the user one thing and save another.
+    putPendingScan(7, scan({ frozen: true }));
+
+    expect(revisePendingScan(7, "Groceries at SM")).toEqual({ status: "frozen" });
+    // Still confirmable — answering yes is what actually settles the ambiguity.
+    expect(hasPendingScan(7)).toBe(true);
+    expect(takePendingScan(7)?.description).toBe("SM Supermarket");
+  });
+
+  it("stays editable when the refusal was deterministic", () => {
+    // A lapsed write lease is raised before anything is written, so there is nothing to replay.
+    putPendingScan(7, scan({ frozen: false }));
+    expect(revisePendingScan(7, "Groceries at SM")).toMatchObject({ status: "revised" });
   });
 });

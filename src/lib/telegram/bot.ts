@@ -24,8 +24,10 @@ import {
   isConfirmation,
   isRejection,
   putPendingScan,
+  revisePendingScan,
   takePendingScan,
 } from "@/lib/telegram/pending-scan";
+import { correctedDescription, isScanCorrection } from "@/lib/telegram/scan-correction";
 import {
   McpToolError,
   UnconfirmedWriteError,
@@ -1139,7 +1141,7 @@ async function handleReceiptPhoto(
   // ignored, and this is the moment they can still correct it. Same principle as the date repair:
   // an inference the user cannot see is one they cannot undo.
   if (caption) reply += `\n\u2139\ufe0f I used your caption as a hint.\n`;
-  reply += `\nNothing is saved yet. Reply *yes* to save it, or *no* to discard.`;
+  reply += `\nNothing is saved yet. Reply *yes* to save it, *no* to discard, or send a short description to correct it.`;
 
   // Stored only once the review has actually reached the user, which is the entire point of the
   // confirmation step. Storing first meant an undelivered prompt left a draft nobody had seen,
@@ -1201,7 +1203,8 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
           ]),
         // Restored with a fresh timestamp so a save that failed near the TTL does not leave the
         // user a scan they can no longer confirm.
-        restore: (s) => putPendingScan(chatId, { ...s, createdAt: Date.now() }),
+        restore: (s, { frozen }) =>
+          putPendingScan(chatId, { ...s, createdAt: Date.now(), frozen }),
         batchKey: (s) => updateBatchId(BOT_ID, s.updateId),
       });
 
@@ -1211,6 +1214,38 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       }
 
       await sendMessage(chatId, "I could not save that receipt. Reply *yes* to try again.");
+      return;
+    }
+  }
+
+  // A reply that is not yes or no, and is not already something this bot does, corrects the
+  // description. It used to fall through and be classified as an unrelated message, so the most
+  // natural way to fix a wrong description — just typing the right one — was silently dropped
+  // while the scan sat waiting. Nothing is re-scanned: the correction is the user's own words, and
+  // a second scan would spend another credit for a field they have already supplied.
+  if (isScanCorrection(text)) {
+    const result = revisePendingScan(chatId, correctedDescription(text));
+
+    if (result.status === "frozen") {
+      // The save never settled, so the row may already exist. A retry replays the same key and
+      // would return the original, silently discarding this edit — so it is refused rather than
+      // accepted and lost. Same rule the web app's review applies to a pinned row.
+      await sendMessage(
+        chatId,
+        "I could not confirm whether that receipt saved, so it can't be edited now — answering *yes* has to replay exactly what was sent. Reply *yes* to settle it, or check the app and reply *no*."
+      );
+      return;
+    }
+
+    if (result.status === "revised") {
+      const { scan: revised } = result;
+      let msg = `\u270f\ufe0f *Description updated*\n\n`;
+      msg += `\ud83d\udcdd *Description:* ${revised.description}\n`;
+      msg += `\ud83d\udcb0 *Amount:* ${SYMBOL}${revised.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
+      msg += `\ud83d\udcc1 *Category:* ${revised.categoryName}\n`;
+      msg += `\ud83d\udcc5 *Date:* ${revised.date}\n`;
+      msg += `\nStill not saved. Reply *yes* to save it, or *no* to discard.`;
+      await sendMessage(chatId, msg);
       return;
     }
   }

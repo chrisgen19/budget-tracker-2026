@@ -50,7 +50,9 @@ describe("confirmPendingScan", () => {
     );
 
     await expect(confirmPendingScan(SCAN, d)).rejects.toThrow(McpToolError);
-    expect(restore).toHaveBeenCalledWith(SCAN);
+    // Not frozen: the server refused before opening a transaction, so nothing was written and the
+    // draft is still safe to edit before the retry.
+    expect(restore).toHaveBeenCalledWith(SCAN, { frozen: false });
   });
 
   // The likeliest trigger in practice: mcp_writes_enabled_until is a lease and lapses by design,
@@ -75,7 +77,9 @@ describe("confirmPendingScan", () => {
     );
 
     await expect(confirmPendingScan(SCAN, d)).rejects.toThrow(UnconfirmedWriteError);
-    expect(restore).toHaveBeenCalledWith(SCAN);
+    // Frozen: the row may already exist, and the retry replays this same key. An edit made in
+    // between would be silently discarded by the replay, so it must not be accepted.
+    expect(restore).toHaveBeenCalledWith(SCAN, { frozen: true });
   });
 
   it("puts the scan back when the batch comes back empty", async () => {
@@ -83,6 +87,6 @@ describe("confirmPendingScan", () => {
     const outcome = await confirmPendingScan(SCAN, d);
 
     expect(outcome.status).toBe("retryable");
-    expect(restore).toHaveBeenCalledWith(SCAN);
+    expect(restore).toHaveBeenCalledWith(SCAN, { frozen: false });
   });
 });

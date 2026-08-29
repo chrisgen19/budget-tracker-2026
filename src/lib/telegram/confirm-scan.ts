@@ -1,4 +1,5 @@
 import type { PendingScan } from "@/lib/telegram/pending-scan";
+import { UnconfirmedWriteError } from "@/lib/telegram/errors";
 
 /** A batch as `create_transactions` returns it, narrowed to what this step reads. */
 export interface SavedBatch {
@@ -8,8 +9,15 @@ export interface SavedBatch {
 export interface ConfirmScanDeps {
   /** Writes the batch. Throws on a refusal or an unconfirmed write, as `createTransactions` does. */
   save: (clientBatchId: string, scan: PendingScan) => Promise<SavedBatch>;
-  /** Puts the scan back so a retry does not have to buy the same information again. */
-  restore: (scan: PendingScan) => void;
+  /**
+   * Puts the scan back so a retry does not have to buy the same information again.
+   *
+   * `frozen` says the write never settled, so nobody knows whether the row exists. The retry
+   * replays the same key, and if the first write did commit the server returns the original row —
+   * so an edit made in between would be silently discarded. The caller must refuse edits in that
+   * state, exactly as the web app's review freezes rows pinned by an unknown outcome.
+   */
+  restore: (scan: PendingScan, opts: { frozen: boolean }) => void;
   /** The idempotency key for this scan. Derived from the photo's update id. */
   batchKey: (scan: PendingScan) => string;
 }
@@ -43,12 +51,15 @@ export async function confirmPendingScan(
   try {
     batch = await deps.save(deps.batchKey(scan), scan);
   } catch (err) {
-    deps.restore(scan);
+    // Only an unsettled write is ambiguous. A refusal the server authored — a lapsed write
+    // lease is the common one — is raised before anything is written, so that draft stays editable.
+    deps.restore(scan, { frozen: err instanceof UnconfirmedWriteError });
     throw err;
   }
 
   if (batch.transactions.length > 0) return { status: "saved", batch };
 
-  deps.restore(scan);
+  // The call returned and wrote nothing, so there is nothing to be ambiguous about.
+  deps.restore(scan, { frozen: false });
   return { status: "retryable" };
 }
