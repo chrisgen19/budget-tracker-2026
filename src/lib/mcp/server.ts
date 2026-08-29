@@ -661,6 +661,15 @@ export const createBudgetMcpServer = ({
               "which case it is far better than today: a receipt photographed on Monday and " +
               "sent on Thursday belongs on Monday. Read it from the image's EXIF if you have it."
           ),
+        caption: z
+          .string()
+          .max(1024)
+          .optional()
+          .describe(
+            "Free text the user attached to the image, if any. Used as a hint for the category " +
+              "and description; the receipt itself wins wherever the two disagree, and it never " +
+              "affects the amount or the date. Send it verbatim rather than summarising it."
+          ),
       },
       outputSchema: scanReceiptOutput,
       // Not read-only: each call spends a metered, paid resource, so clients must prompt rather
@@ -668,7 +677,7 @@ export const createBudgetMcpServer = ({
       // idempotent either: a second call costs a second scan and Gemini may read it differently.
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ imageBase64, mimeType, localDate, photoTakenAt }) => {
+    async ({ imageBase64, mimeType, localDate, photoTakenAt, caption }) => {
       const refuse = (text: string) => ({
         content: [{ type: "text" as const, text }],
         isError: true,
@@ -717,6 +726,7 @@ export const createBudgetMcpServer = ({
         // resort, and it is wrong for any receipt photographed before it was sent.
         photoDateStr: capturedAt ? capturedAt.slice(0, 10) : todayStr,
         capturedAt,
+        caption,
       });
 
       if ("refusal" in outcome) return refuse(SCAN_REFUSAL_MESSAGES[outcome.refusal.reason](outcome.refusal));
