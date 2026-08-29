@@ -62,6 +62,11 @@ const stubSentinelTop = (container: HTMLElement, top: number) => {
   vi.spyOn(sentinel, "getBoundingClientRect").mockReturnValue({ top } as DOMRect);
 };
 
+/** jsdom's `scrollY` is a read-only getter, so a scroll position has to be defined in. */
+const setScrollY = (y: number) => {
+  Object.defineProperty(window, "scrollY", { value: y, writable: true, configurable: true });
+};
+
 const openFilters = () => {
   const trigger = screen.getByRole("button", { name: /^Filters/ });
   fireEvent.click(trigger);
@@ -70,6 +75,7 @@ const openFilters = () => {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  setScrollY(0);
   currentFilters = baseFilters;
   filterOptionState.value.categories = [];
   filterOptionState.value.categoriesPending = false;
@@ -144,6 +150,35 @@ describe("TransactionFiltersBar", () => {
 
     stubSentinelTop(container, 0);
     fireEvent.scroll(window);
+    expect(toolbar.className).toContain("-translate-y-full");
+  });
+
+  it("reveals immediately when the page is scrolled back up", () => {
+    const { container } = renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    stubSentinelTop(container, -10);
+
+    setScrollY(400);
+    fireEvent.scroll(window);
+    expect(toolbar.className).toContain("-translate-y-full");
+
+    // Reaching back for the filters hands them over without waiting out the settle.
+    setScrollY(340);
+    fireEvent.scroll(window);
+    expect(toolbar.className).toContain("opacity-100");
+    expect(toolbar.className).toContain("pointer-events-auto");
+  });
+
+  it("ignores a pixel of upward jitter mid-flick", () => {
+    const { container } = renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    stubSentinelTop(container, -10);
+
+    setScrollY(400);
+    fireEvent.scroll(window);
+    setScrollY(399);
+    fireEvent.scroll(window);
+
     expect(toolbar.className).toContain("-translate-y-full");
   });
 
