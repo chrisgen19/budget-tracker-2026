@@ -1759,28 +1759,35 @@ async function registerCommandMenu(): Promise<void> {
 }
 
 /**
- * Tell Telegram everything below `offset` is done, so the next container is not handed it again.
+ * Tell Telegram everything below `offset` is done, so no other container is handed it again.
  *
- * This one call is the whole point of the graceful stop. Advancing the local `offset` confirms
- * nothing: an update is settled only when a *later* `getUpdates` is made with a higher offset, and
- * that normally happens on the next iteration — which never comes when the process is killed. The
- * batch is then redelivered, and a receipt inside it is scanned and charged a second time, because
- * `scan_receipt` is deliberately not idempotent (#165).
+ * Advancing the local `offset` settles nothing: an update is confirmed only when a *later*
+ * `getUpdates` carries a higher offset. Normally that happens on the next loop iteration, so the
+ * exposed window is exactly "while a handler is running" — and a process killed inside one leaves
+ * the batch unconfirmed for the next container to replay. Writes survive that (`create_transactions`
+ * keys on the update id) but `scan_receipt` does not, so the receipt is charged twice (#165).
  *
- * `timeout: 0` so it returns at once rather than parking for another long poll, and `limit: 1`
- * because nothing here reads the response — only the offset it carries matters. Best effort: the
- * process is exiting either way, and a failure here is exactly the redelivery that happened
- * before, not a new failure mode.
+ * Called immediately after each handled update rather than only at shutdown. Doing it at shutdown
+ * covers SIGTERM and nothing else, and in this deployment it does not reliably cover even that:
+ * the bot runs inside the Next server, whose own signal handler calls `process.exit(0)` as soon as
+ * the HTTP server closes, so a shutdown-time confirmation is racing it. Confirming as we go needs
+ * no cooperation from anything — it holds for SIGKILL, an OOM kill and a lost race alike.
+ *
+ * `timeout: 0` so it returns at once instead of parking for another long poll, and `limit: 1`
+ * because nothing reads the response; only the offset it carries matters. Best effort: a failure
+ * here is the redelivery that already happened before this existed, not a new failure mode.
  */
-async function confirmProcessed(offset: number): Promise<void> {
+async function confirmProcessed(offset: number, context = "stopped"): Promise<void> {
   if (offset === 0) return;
 
   try {
     await telegramApi("getUpdates", { offset, timeout: 0, limit: 1 });
-    console.warn(`[telegram] stopped cleanly; updates confirmed up to ${offset - 1}.`);
+    if (context === "stopped") {
+      console.warn(`[telegram] stopped cleanly; updates confirmed up to ${offset - 1}.`);
+    }
   } catch (err) {
     console.error(
-      "[telegram] stopped, but could not confirm the last updates, so they may be redelivered:",
+      `[telegram] ${context}, but could not confirm update ${offset - 1}, so it may be redelivered:`,
       err instanceof Error ? err.message : err
     );
   }
@@ -1910,6 +1917,9 @@ export async function startTelegramBot(): Promise<void> {
           } finally {
             shutdown.handling = false;
           }
+          // Settled now rather than on the next poll, so being killed between the two cannot
+          // hand this update to another container.
+          await confirmProcessed(offset, "handled a button press");
           continue;
         }
 
@@ -1946,6 +1956,9 @@ export async function startTelegramBot(): Promise<void> {
         } finally {
           shutdown.handling = false;
         }
+        // Settled immediately: a receipt scan is the expensive thing in here, and a replay after
+        // one has already run spends a second credit.
+        await confirmProcessed(offset, "handled an update");
       }
     } catch (err: any) {
       shutdown.abortIdlePoll = undefined;

@@ -22,6 +22,13 @@
  *
  * So the flag is checked between updates, an idle poll is interrupted, and a busy one is left to
  * complete before the loop exits and confirms.
+ *
+ * This is a courtesy, not the guarantee. The correctness of #165 rests on each update being
+ * confirmed the moment its handler returns, which needs no signal at all and therefore survives
+ * SIGKILL and an OOM kill too. It has to: the bot runs inside the Next server, and Next's own
+ * signal handler calls `process.exit(0)` once the HTTP server closes, so anything asynchronous
+ * this schedules is racing that exit. What a clean stop still buys is not finishing a handler
+ * halfway and not leaving the final batch unconfirmed when the race is won.
  */
 export interface ShutdownState {
   /** True once a stop has been requested. Checked between updates. */

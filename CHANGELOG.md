@@ -27,7 +27,21 @@ idle bot gets SIGKILLed anyway. A handler in flight is never interrupted — aba
 thing this exists to prevent. Then one final `getUpdates` at the advanced offset confirms the batch
 before the process exits.
 
-That last call is the entire fix; everything else is arranging to be able to make it.
+Review then found the flaw in doing that only at shutdown. This bot runs inside the Next server,
+and Next installs its own SIGTERM handler that calls `process.exit(0)` as soon as the HTTP server
+closes — so a confirmation scheduled from our handler is racing that exit, with no guarantee of
+winning. The graceful stop was real but its guarantee was not.
+
+So the confirmation moved to where it needs no cooperation from anything: immediately after each
+handler returns. That covers SIGTERM, SIGKILL, an OOM kill and a lost race identically, and it
+costs one cheap call per handled update, which for a personal bot is nothing. The signal handling
+stays, because not abandoning a handler halfway is still worth having, but it is now a courtesy
+rather than the mechanism.
+
+What remains unclosed is narrower and architectural: during the handover both containers are
+polling, and Telegram hands an update to whichever wins. The replacement can therefore be given an
+update the outgoing container is still handling. Closing that needs single-poller ownership or an
+idempotent scan, neither of which belongs in this change.
 
 ## 2026-08-29 - Buttons on the receipt review
 

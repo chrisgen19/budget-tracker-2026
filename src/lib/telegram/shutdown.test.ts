@@ -58,3 +58,15 @@ describe("requestShutdown", () => {
     expect(shouldStop(newShutdownState())).toBe(false);
   });
 });
+
+/**
+ * What this module is *not*.
+ *
+ * The bot runs inside the Next server, whose own SIGTERM handler calls `process.exit(0)` as soon
+ * as the HTTP server closes. Anything asynchronous scheduled from here is racing that exit, so a
+ * shutdown-time confirmation cannot be the guarantee — the poll loop confirms each update as soon
+ * as its handler returns, which needs no signal and survives SIGKILL too.
+ *
+ * Pinned as a comment rather than a test because the behaviour under test lives in Next, not here.
+ * The point is that a future reader does not mistake this for the mechanism.
+ */
