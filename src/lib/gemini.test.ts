@@ -69,6 +69,29 @@ describe("thinking config per call site", () => {
     expect(classifyConfig(model as string).thinkingConfig).toEqual(expected);
   });
 
+  it.each([
+    ["models/gemini-2.5-flash", { thinkingBudget: 0 }],
+    ["models/gemini-2.5-pro", { thinkingBudget: 128 }],
+    ["models/gemini-3.6-flash", { thinkingLevel: ThinkingLevel.MINIMAL }],
+    ["models/gemini-3.7-flash", { thinkingLevel: ThinkingLevel.LOW }],
+  ])("reads the generation through the resource prefix on %s", (model, expected) => {
+    // The SDK accepts both `gemini-2.5-flash` and `models/gemini-2.5-flash` and passes the
+    // prefixed form through untouched, so both can arrive from GEMINI_MODEL. Testing the raw
+    // string read the prefixed form as generation-less and sent thinkingLevel to a 2.x model,
+    // which is a non-retryable 400.
+    expect(minimalThinkingFor(model as string)).toEqual(expected);
+  });
+
+  it("treats a generation-less alias as a current-generation model", () => {
+    // `gemini-flash-latest` and friends hot-swap and name no generation, so the knob cannot be
+    // derived from the string. thinkingLevel is the forward-correct guess: it is what every
+    // current and future model takes, and the alias that once pointed at a 2.x model now
+    // resolves to a 3.x one. `low` keeps it inside what every 3.x model supports.
+    expect(minimalThinkingFor("gemini-flash-latest")).toEqual({
+      thinkingLevel: ThinkingLevel.LOW,
+    });
+  });
+
   it("never asks an unknown model for a level outside the universal set", () => {
     // A model shipped after this code was written is the case that matters — that is how #163
     // happened. `low` and a 128 budget are both accepted by every model in the table above.

@@ -56,11 +56,32 @@ export const GEMINI_THINKING_LEVEL =
  *  importing this module's client. */
 export { GEMINI_TIMEOUT_MS };
 
+/**
+ * A model id with the resource prefix removed.
+ *
+ * The SDK accepts both `gemini-2.5-flash` and the resource form `models/gemini-2.5-flash`, and
+ * passes the latter through untouched (see `tModel` in @google/genai), so both can reach us from
+ * `GEMINI_MODEL`. Testing the raw string would read the prefixed form as generation-less and pick
+ * the wrong knob — and sending `thinkingLevel` to a 2.x model is a non-retryable 400.
+ */
+const bareModel = (model: string): string => model.replace(/^models\//, "");
+
+/**
+ * Whether a model takes the legacy `thinkingBudget` rather than `thinkingLevel`.
+ *
+ * A model id that names no generation — the hot-swapping aliases such as `gemini-flash-latest` —
+ * falls to the `thinkingLevel` side deliberately. That is the knob every current and future model
+ * uses; the 2.x line is being retired, and the alias that historically pointed at a 2.x model now
+ * resolves to a 3.x one. Guessing forwards is right for every model that exists today and wrong
+ * only for a regression that is not going to happen.
+ */
+const isLegacyThinkingModel = (model: string): boolean => /^gemini-[12]\./.test(bareModel(model));
+
 /** Pick the right thinking knob per model generation:
  *  Gemini 1.x/2.x use thinkingBudget; Gemini 3+ use thinkingLevel
  *  (thinkingBudget is only backwards-compat there and performs worse). */
 const thinkingConfigFor = (model: string): ThinkingConfig =>
-  /^gemini-[12]\./.test(model)
+  isLegacyThinkingModel(model)
     ? { thinkingBudget: GEMINI_THINKING_BUDGET }
     : { thinkingLevel: GEMINI_THINKING_LEVEL };
 
@@ -100,10 +121,10 @@ const MIN_THINKING_BUDGET = 128;
  * `thinkingFor` parameter there for why passing the primary's config through would be wrong.
  */
 export const minimalThinkingFor = (model: string): ThinkingConfig =>
-  /^gemini-[12]\./.test(model)
-    ? { thinkingBudget: ZERO_BUDGET_MODELS.test(model) ? 0 : MIN_THINKING_BUDGET }
+  isLegacyThinkingModel(model)
+    ? { thinkingBudget: ZERO_BUDGET_MODELS.test(bareModel(model)) ? 0 : MIN_THINKING_BUDGET }
     : {
-        thinkingLevel: MINIMAL_LEVEL_MODELS.test(model)
+        thinkingLevel: MINIMAL_LEVEL_MODELS.test(bareModel(model))
           ? ThinkingLevel.MINIMAL
           : ThinkingLevel.LOW,
       };
