@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { getAuthUserId } from "@/lib/session";
 import { billActionSchema } from "@/lib/validations";
-import { advanceToNextUnpaidOccurrence } from "@/lib/bill-utils";
+import { addUtcDays, advanceToNextUnpaidOccurrence, utcDayStart } from "@/lib/bill-utils";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 
 export async function POST(
@@ -227,9 +227,9 @@ export async function POST(
     if (action === "snooze") {
       // Snooze for N days (default 1) — do NOT advance nextDueDate
       const days = snoozeDays ?? 1;
-      const snoozeUntil = new Date();
-      snoozeUntil.setDate(snoozeUntil.getDate() + days);
-      snoozeUntil.setHours(0, 0, 0, 0);
+      // UTC throughout: the process zone would put this at a different instant on a non-UTC
+      // host, and `localSnoozeUntil` converts it back through the *user's* offset on read.
+      const snoozeUntil = utcDayStart(addUtcDays(new Date(), days));
 
       await prisma.scheduledTransactionLog.create({
         data: {

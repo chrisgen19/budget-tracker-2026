@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { computeNextDueDate } from "@/lib/bill-utils";
+import { addUtcDays, computeNextDueDate, utcDayStart } from "@/lib/bill-utils";
 import type { PendingReminder, ScheduledTransactionWithCategory } from "@/types";
 
 /**
@@ -40,14 +40,11 @@ export async function getPendingRemindersForUser(
   const reminders: PendingReminder[] = [];
 
   for (const bill of bills) {
-    const reminderDate = new Date(bill.nextDueDate);
-    reminderDate.setDate(reminderDate.getDate() - bill.reminderDaysBefore);
-    reminderDate.setHours(0, 0, 0, 0);
+    const reminderDate = utcDayStart(addUtcDays(bill.nextDueDate, -bill.reminderDaysBefore));
 
     if (reminderDate > today) continue;
 
-    const dueDate = new Date(bill.nextDueDate);
-    dueDate.setHours(0, 0, 0, 0);
+    const dueDate = utcDayStart(bill.nextDueDate);
 
     const billLogs = logsByBillId.get(bill.id) ?? [];
     const dueDateMs = bill.nextDueDate.getTime();

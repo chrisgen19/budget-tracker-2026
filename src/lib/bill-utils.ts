@@ -1,4 +1,8 @@
 import type { BillFrequency, BillOccurrenceStatus } from "@/types";
+import { addUtcDays, clampToMonth, utcDayStart } from "@/lib/bill-dates";
+
+export { addUtcDays, utcDayStart } from "@/lib/bill-dates";
+
 
 /**
  * Advance a due date by the given frequency.
@@ -15,39 +19,35 @@ export const computeNextDueDate = (
   originalStartDay: number,
   customIntervalDays?: number | null,
 ): Date => {
-  const next = new Date(currentDueDate);
+  // Every branch works in UTC. These values are date-only and stored at midnight UTC, so local
+  // getters read the *previous* day on any host behind Greenwich, and MONTHLY/ANNUALLY then set
+  // the day-of-month one day late. Truncating afterwards cannot recover that.
+  const year = currentDueDate.getUTCFullYear();
+  const month = currentDueDate.getUTCMonth();
+  const day = currentDueDate.getUTCDate();
 
   switch (frequency) {
     case "DAILY":
-      next.setDate(next.getDate() + 1);
-      break;
+      return new Date(Date.UTC(year, month, day + 1));
 
     case "WEEKLY":
-      next.setDate(next.getDate() + 7);
-      break;
-
-    case "MONTHLY": {
-      // Move to next month, then clamp day to last day of that month
-      next.setMonth(next.getMonth() + 1);
-      const lastDayOfMonth = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
-      next.setDate(Math.min(originalStartDay, lastDayOfMonth));
-      break;
-    }
-
-    case "ANNUALLY": {
-      next.setFullYear(next.getFullYear() + 1);
-      // Handle Feb 29 → Feb 28 in non-leap years
-      const lastDay = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
-      next.setDate(Math.min(originalStartDay, lastDay));
-      break;
-    }
+      return new Date(Date.UTC(year, month, day + 7));
 
     case "CUSTOM":
-      next.setDate(next.getDate() + (customIntervalDays ?? 1));
-      break;
+      return new Date(Date.UTC(year, month, day + (customIntervalDays ?? 1)));
+
+    case "MONTHLY":
+      // Built from components rather than `setMonth(+1)`, which overflows forward out of the
+      // month it was aiming at: from 31 January it lands on 3 March, and the clamp that follows
+      // then reads March's length and returns 31 March, skipping February altogether.
+      return clampToMonth(year, month + 1, originalStartDay);
+
+    case "ANNUALLY":
+      // Same shape, and it is what turns 29 February into 28 February in a non-leap year.
+      return clampToMonth(year + 1, month, originalStartDay);
   }
 
-  return next;
+  return new Date(currentDueDate);
 };
 
 /**
@@ -80,21 +80,17 @@ export const advanceToNextUnpaidOccurrence = (
   const terminalDueDates = new Set(
     logs
       .filter((log) => log.status === "PAID" || log.status === "SKIPPED")
-      .map((log) => {
-        const d = new Date(log.dueDate);
-        d.setHours(0, 0, 0, 0);
-        return d.getTime();
-      }),
+      .map((log) => utcDayStart(log.dueDate).getTime()),
   );
 
-  let candidate = new Date(startingDueDate);
-  candidate.setHours(0, 0, 0, 0);
+  let candidate = utcDayStart(startingDueDate);
 
   for (let i = 0; i < maxIterations; i++) {
     if (endDate && candidate > endDate) return null;
     if (!terminalDueDates.has(candidate.getTime())) return candidate;
-    candidate = computeNextDueDate(candidate, frequency, originalStartDay, customIntervalDays);
-    candidate.setHours(0, 0, 0, 0);
+    candidate = utcDayStart(
+      computeNextDueDate(candidate, frequency, originalStartDay, customIntervalDays)
+    );
   }
 
   return null;

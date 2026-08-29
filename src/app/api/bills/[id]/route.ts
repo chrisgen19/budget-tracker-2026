@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { scheduledTransactionSchema } from "@/lib/validations";
-import { advanceToNextUnpaidOccurrence } from "@/lib/bill-utils";
+import { advanceToNextUnpaidOccurrence, utcDayStart } from "@/lib/bill-utils";
 
 const billInclude = {
   category: true,
@@ -139,9 +139,9 @@ export async function PATCH(
     return NextResponse.json({ error: "Bill is already active" }, { status: 400 });
   }
 
-  // Reactivate and reset nextDueDate to today if it's in the past
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // Reactivate and reset nextDueDate to today if it's in the past. UTC, because this value can
+  // be *written* as a due date, and every reader takes due dates to be at UTC midnight.
+  const today = utcDayStart(new Date());
   const nextDueDate = existing.nextDueDate < today ? today : existing.nextDueDate;
 
   const bill = await prisma.scheduledTransaction.update({

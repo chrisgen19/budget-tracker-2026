@@ -9,6 +9,9 @@ import { MAX_BREAKDOWN_GROUPS, MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-li
 // The same helper `create_transactions` echoes its confirmations with. The read path used to
 // return raw UTC and leave every client to redo the conversion, which is where it goes wrong.
 import { formatLocalDate } from "@/lib/validations";
+// One definition of "the calendar day of a date-only bill value", shared with the write paths
+// so a due date cannot be truncated one way going in and another coming out.
+import { utcDayStart } from "@/lib/bill-dates";
 import type {
   PrismaClient,
   SpendingByCategoryParams,
@@ -637,8 +640,9 @@ export const getUpcomingBills = async (
     const localNow = new Date(Date.now() - params.timezoneOffset * 60 * 1000);
     today = new Date(Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), localNow.getUTCDate()));
   } else {
-    today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // UTC, not the process zone. Due dates are stored at UTC midnight, so comparing them
+    // against a locally-truncated "today" mixes two conventions on a non-UTC host.
+    today = utcDayStart(new Date());
   }
 
   const cutoff = new Date(today);
@@ -655,8 +659,7 @@ export const getUpcomingBills = async (
   });
 
   const upcomingBills = bills.map((bill) => {
-    const dueDate = new Date(bill.nextDueDate);
-    dueDate.setHours(0, 0, 0, 0);
+    const dueDate = utcDayStart(bill.nextDueDate);
 
     return {
       id: bill.id,
@@ -834,16 +837,6 @@ const localDayStart = (date: Date, tzOffset: number): Date => {
   const local = toLocal(date, tzOffset);
   return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()));
 };
-
-/**
- * Truncate a date-only value to its stored calendar day, with no timezone conversion.
- *
- * Bill due dates carry no time component: they are stored at midnight UTC and mean "the 5th",
- * not an instant. Shifting one into a timezone west of UTC moves it to the 4th, which turns
- * every on-time payment into a day late. Only real instants get `localDayStart`.
- */
-const utcDayStart = (date: Date): Date =>
-  new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 
 /**
  * N months before a day, clamped to the target month's last day.
