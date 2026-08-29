@@ -52,6 +52,19 @@ const renderFilters = (initial: TransactionFilters = baseFilters) => {
   return render(<Harness />);
 };
 
+/**
+ * Positions the flow marker that tracks the toolbar's own place in the page. jsdom
+ * applies no Tailwind, so the toolbar's resting `top` reads as 0 there: a negative
+ * marker top means the toolbar has scrolled under the header and is overlaying the
+ * list, a positive one means it is still sitting in its own place at the top.
+ */
+const setToolbarOverlaying = (container: HTMLElement, overlaying: boolean) => {
+  const marker = container.querySelector("[data-filter-toolbar-marker]")!;
+  vi.spyOn(marker, "getBoundingClientRect").mockReturnValue({
+    top: overlaying ? -10 : 200,
+  } as DOMRect);
+};
+
 const openFilters = () => {
   const trigger = screen.getByRole("button", { name: /^Filters/ });
   fireEvent.click(trigger);
@@ -92,8 +105,9 @@ describe("TransactionFiltersBar", () => {
   });
 
   it("hides while scrolling and returns after the scroll settles", () => {
-    renderFilters();
+    const { container } = renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    setToolbarOverlaying(container, true);
 
     expect(toolbar.className).toContain("opacity-100");
     fireEvent.scroll(window);
@@ -110,6 +124,44 @@ describe("TransactionFiltersBar", () => {
     expect(toolbar.className).toContain("pointer-events-auto");
   });
 
+  it("does not move at all while it is still in its own place at the top", () => {
+    const { container } = renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    setToolbarOverlaying(container, false);
+
+    // Rubber-band and momentum settling fire scroll events up here too.
+    fireEvent.scroll(window);
+    fireEvent.scroll(window);
+    fireEvent.scroll(window);
+
+    expect(toolbar.className).toContain("opacity-100");
+    expect(toolbar.className).toContain("pointer-events-auto");
+    expect(toolbar.className).not.toContain("-translate-y-full");
+  });
+
+  it("renders with no transition while it is in its own place at the top", () => {
+    const { container } = renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    setToolbarOverlaying(container, false);
+
+    fireEvent.scroll(window);
+
+    expect(toolbar.className).not.toContain("transition-all");
+  });
+
+  it("starts hiding once it has scrolled under the header", () => {
+    const { container } = renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+
+    setToolbarOverlaying(container, false);
+    fireEvent.scroll(window);
+    expect(toolbar.className).not.toContain("-translate-y-full");
+
+    setToolbarOverlaying(container, true);
+    fireEvent.scroll(window);
+    expect(toolbar.className).toContain("-translate-y-full");
+  });
+
   it("does not hide or blur while a toolbar control has focus", () => {
     renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
@@ -124,8 +176,9 @@ describe("TransactionFiltersBar", () => {
   });
 
   it("still hides after a toolbar button was tapped", () => {
-    renderFilters();
+    const { container } = renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    setToolbarOverlaying(container, true);
     // Index 1 is the mobile navigator. Index 0 is the `hidden sm:flex` copy, which
     // jsdom still returns because it applies no Tailwind, and which is display:none
     // at the only widths this behaviour applies to.
@@ -145,9 +198,10 @@ describe("TransactionFiltersBar", () => {
     expect(toolbar.className).toContain("-translate-y-full");
   });
 
-  it("does not duck on the scroll that brings a newly focused control into view", () => {
-    renderFilters();
+  it("does not hide on the scroll that brings a newly focused control into view", () => {
+    const { container } = renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    setToolbarOverlaying(container, true);
     const previousMonth = screen.getAllByRole("button", { name: "Previous month" })[1];
 
     // Tabbing into the toolbar makes the browser scroll the control into view.

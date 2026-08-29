@@ -94,7 +94,8 @@ export function TransactionFiltersBar({
   const [monthPickerYear, setMonthPickerYear] = useState(() =>
     Number(filters.month === "ALL" ? accountMonthKey(new Date(), user.timezoneOffset).slice(0, 4) : filters.month.slice(0, 4)),
   );
-  const { toolbarRef, isScrolling, handleToolbarFocus } = useFilterToolbarScroll();
+  const { toolbarRef, markerRef, isScrolling, isOverlaying, handleToolbarFocus } =
+    useFilterToolbarScroll();
 
   const update = useCallback(
     (partial: Partial<TransactionFilters>) => {
@@ -163,15 +164,23 @@ export function TransactionFiltersBar({
 
   return (
     <>
+      {/* Marks the toolbar's own place in the page. While this is still on screen the
+          toolbar has not scrolled under the header yet, so it does not move at all. */}
+      <div ref={markerRef} data-filter-toolbar-marker aria-hidden="true" className="h-px -mb-px" />
+
       <section
         ref={toolbarRef}
         aria-label="Transaction filters"
         onFocusCapture={handleToolbarFocus}
         className={cn(
           "card sticky top-[61px] lg:top-0 z-20 mb-4 overflow-hidden border-cream-300/70 bg-white shadow-soft motion-reduce:transition-none",
-          isScrolling
-            ? "pointer-events-none -translate-y-full opacity-0 transition-all duration-100"
-            : "pointer-events-auto translate-y-0 opacity-100 transition-all duration-300",
+          // Still in its own place at the top: fixed in position, and no transition,
+          // so nothing animates up there even as the state around it changes.
+          !isOverlaying
+            ? "pointer-events-auto translate-y-0 opacity-100"
+            : isScrolling
+              ? "pointer-events-none -translate-y-full opacity-0 transition-all duration-100"
+              : "pointer-events-auto translate-y-0 opacity-100 transition-all duration-300",
         )}
       >
         <div className="p-2.5 sm:p-3">
