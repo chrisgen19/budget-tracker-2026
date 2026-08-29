@@ -230,7 +230,15 @@ const upcomingBills = z.object({
       categoryIcon: z.string(),
       categoryColor: z.string(),
       amount: z.number(),
-      dueDate: z.string(),
+      dueDate: z.string().describe("The stored value as an ISO instant."),
+      localDueDate: z
+        .string()
+        .describe(
+          "The calendar day the bill falls due, YYYY-MM-DD. Report this rather than slicing " +
+            "`dueDate`. It is deliberately NOT timezone-converted: a due date means \"the 5th\" " +
+            "for everyone, and shifting one west of UTC would move it to the 4th and make an " +
+            "on-time payment look late."
+        ),
       isOverdue: z.boolean(),
     })
   ),
@@ -307,13 +315,27 @@ const billHistory = z.object({
       categoryName: z.string(),
       amount: z.number(),
       paidAmount: z.number().nullable(),
-      dueDate: z.string(),
+      dueDate: z.string().describe("The stored value as an ISO instant."),
+      localDueDate: z
+        .string()
+        .describe("The calendar day the occurrence fell due, YYYY-MM-DD. Date-only, so not converted."),
       status: z.enum(["PAID", "SKIPPED", "SNOOZED"]),
-      actionDate: z.string().nullable(),
+      actionDate: z.string().nullable().describe("When it was settled, as an ISO instant."),
+      localActionDate: z
+        .string()
+        .nullable()
+        .describe(
+          "The user's own calendar day for `actionDate`. This one IS converted: settling a bill " +
+            "happens at a moment, so the same rule as a transaction's `localDate` applies."
+        ),
       daysLate: z.number().nullable(),
       snoozeCount: z.number(),
       transactionId: z.string().nullable(),
       snoozeUntil: z.string().nullable(),
+      localSnoozeUntil: z
+        .string()
+        .nullable()
+        .describe("The calendar day the snooze runs to, YYYY-MM-DD. Date-only, so not converted."),
     })
   ),
   summaries: z.array(

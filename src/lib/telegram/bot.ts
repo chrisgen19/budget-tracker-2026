@@ -5,7 +5,7 @@ import dns from "node:dns";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { updateBatchId } from "@/lib/telegram/batch-id";
-import { localDay, localTimestamp } from "@/lib/telegram/local-time";
+import { localTimestamp } from "@/lib/telegram/local-time";
 import { describeWindow, type ReportedPeriod } from "@/lib/telegram/period-label";
 import {
   callbackIsAllowed,
@@ -559,7 +559,7 @@ async function handleBills(chatId: number) {
       description: string;
       categoryName: string;
       amount: number;
-      dueDate: string;
+      localDueDate: string;
       isOverdue: boolean;
     }[];
   }>("get_upcoming_bills", { days: 30 });
@@ -575,7 +575,10 @@ async function handleBills(chatId: number) {
     // container's own zone showed the previous day on any host west of Greenwich. Every other
     // date the bot prints is a server-resolved string passed through untouched; this was the one
     // that re-derived a day locally.
-    const due = new Date(b.dueDate).toLocaleDateString("en-US", {
+    // Formatted from the server's calendar day rather than re-derived from an instant. A due
+    // date is date-only, so it is pinned to UTC midnight and read back in UTC: the one thing
+    // that must not happen is a timezone shift, which would move it a day for a western reader.
+    const due = new Date(`${b.localDueDate}T00:00:00Z`).toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
       timeZone: "UTC",
@@ -734,7 +737,9 @@ async function handleBillCheck(chatId: number, search: string, month: string | n
     categoryName: string;
     amount: number;
     paidAmount: number | null;
+    /** ISO instant, used for ordering and matching. Render `localDueDate` instead. */
     dueDate: string;
+    localDueDate: string;
     status: string;
     daysLate: number | null;
   };
@@ -817,7 +822,7 @@ async function handleBillCheck(chatId: number, search: string, month: string | n
     const amount = o.paidAmount ?? o.amount;
     const late = o.daysLate && o.daysLate > 0 ? ` (${o.daysLate}d late)` : "";
     const name = withName ? ` ${o.billDescription}` : "";
-    return `${mark} ${localDay(o.dueDate, TZ_OFFSET)}${name}  ${o.status.toLowerCase()}  *${money(amount)}*${late}\n`;
+    return `${mark} ${o.localDueDate}${name}  ${o.status.toLowerCase()}  *${money(amount)}*${late}\n`;
   };
 
   // One name can match several bills. Naming each row is the honest way to show that, rather
@@ -838,7 +843,7 @@ async function handleBillCheck(chatId: number, search: string, month: string | n
       chatId,
       `\ud83d\udcc5 No payment recorded for *${title}* in ${month}.\n\n` +
         (due ? `${due}\n\n` : "") +
-        `Most recent record: ${localDay(latest.dueDate, TZ_OFFSET)}, ${latest.status.toLowerCase()}.`
+        `Most recent record: ${latest.localDueDate}, ${latest.status.toLowerCase()}.`
     );
     return;
   }
@@ -853,15 +858,20 @@ async function handleBillCheck(chatId: number, search: string, month: string | n
 async function upcomingFor(needle: string): Promise<string | null> {
   try {
     const { bills } = await callTool<{
-      bills: { description: string; categoryName: string; dueDate: string; isOverdue: boolean }[];
+      bills: {
+        description: string;
+        categoryName: string;
+        localDueDate: string;
+        isOverdue: boolean;
+      }[];
     }>("get_upcoming_bills", { days: 45 });
 
     const match = bills.find((b) => (b.description || b.categoryName).toLowerCase().includes(needle));
     if (!match) return null;
 
     return match.isOverdue
-      ? `\u26a0\ufe0f It is overdue, due ${localDay(match.dueDate, TZ_OFFSET)}.`
-      : `It is still due on ${localDay(match.dueDate, TZ_OFFSET)}.`;
+      ? `\u26a0\ufe0f It is overdue, due ${match.localDueDate}.`
+      : `It is still due on ${match.localDueDate}.`;
   } catch {
     // Extra context, not the answer. A failure here must not lose the reply.
     return null;

@@ -293,7 +293,18 @@ export interface UpcomingBill {
   categoryIcon: string;
   categoryColor: string;
   amount: number;
+  /** The stored value as an ISO instant. Kept for callers that already read it. */
   dueDate: string;
+  /**
+   * The calendar day the bill falls due, YYYY-MM-DD.
+   *
+   * Deliberately *not* timezone-converted, unlike a transaction's `localDate`. A due date is a
+   * date-only fact stored at midnight UTC and meaning "the 5th"; shifting it into a zone west of
+   * UTC moves it to the 4th, which turns every on-time payment into a day late. So this is the
+   * same day for every reader, and reporting it as a bare day is what stops a model reading
+   * `2026-08-05T00:00:00.000Z` and calling it 4 August.
+   */
+  localDueDate: string;
   isOverdue: boolean;
 }
 
@@ -411,11 +422,19 @@ export interface BillOccurrence {
    *  Matches `paidAmount` on `/api/bills/[id]/history`. */
   paidAmount: number | null;
   /** The date this occurrence was due */
+  /** The stored value as an ISO instant. */
   dueDate: string;
+  /** The calendar day the occurrence fell due, YYYY-MM-DD. Date-only, so not converted --
+   *  see `UpcomingBill.localDueDate`. */
+  localDueDate: string;
   /** The settled outcome (PAID or SKIPPED), or SNOOZED while still outstanding */
   status: BillOccurrenceStatus;
   /** When it was settled, or the most recent snooze if it never was */
   actionDate: string | null;
+  /** The user's own calendar day for `actionDate`, YYYY-MM-DD. This one *is* converted: paying
+   *  a bill happens at a moment, not on a date-only field, so the same rules as a transaction's
+   *  `localDate` apply. Null when the occurrence is unsettled. */
+  localActionDate: string | null;
   /** Whole calendar days between the due day and the day it was paid. The due day is the
    *  stored calendar date; only the action instant is converted to the user's timezone.
    *  Negative means paid early. `null` unless the occurrence was PAID. */
@@ -425,6 +444,9 @@ export interface BillOccurrence {
   /** Whether paying it created a transaction */
   transactionId: string | null;
   snoozeUntil: string | null;
+  /** The calendar day the snooze runs to, YYYY-MM-DD. Stored at midnight like a due date, so
+   *  not converted. */
+  localSnoozeUntil: string | null;
 }
 
 export interface BillHistorySummary {
