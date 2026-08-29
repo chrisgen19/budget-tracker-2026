@@ -2,6 +2,41 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-29 - Buttons on the receipt review
+
+Answering a receipt meant typing "yes", which is the most repeated interaction in the bot and the
+most tedious one on a phone. The review now carries Save and Discard buttons.
+
+The bot could not receive them. `if (!update.message) continue` dropped every `callback_query`, so
+buttons would have rendered and done nothing at all.
+
+Two things needed care rather than wiring.
+
+A press is not a message: the sender is top-level and the chat hangs off the message the button was
+attached to. So it gets `callbackIsAllowed` rather than a widened `messageIsAllowed` — the same two
+rules, allowlisted sender and private chat, written separately because reusing the message check
+would mean reading `from` off an object that does not carry it, and that fails open. A message
+carrying buttons can be forwarded, and the press then arrives from whoever tapped it, so what is
+authenticated is the press.
+
+And buttons never expire. A review from an hour ago is still tappable, so `callback_data` carries
+the photo's update id and a press whose id does not match the waiting scan is refused. Without
+that, scrolling up and tapping Save would confirm whichever scan happens to be pending now —
+showing the user one amount and saving another, which is the same failure the frozen-draft rule
+exists to prevent.
+
+The typed path still works, and has to: correcting a description needs free text regardless, and
+the two now share `saveConfirmedScan` so a button and a typed "yes" cannot drift apart.
+
+That sharing was not enough on its own, as review caught. Clearing the keyboard only happened on
+the button path, because the typed path had no idea which message carried it — so answering by
+typing left the buttons live on a review that had already been saved, and tapping them later
+reported the receipt as expired. True of the draft, misleading about the receipt. `PendingScan` now
+holds the review's message id, which is why `sendMessage` returns an id rather than a boolean, and
+both terminal paths take the keyboard off. A correction deliberately leaves the buttons in place:
+the scan is still waiting under the same update id, so tapping Save then saves the corrected
+version, which is what the user would expect.
+
 ## 2026-08-29 - The correction the review would not take
 
 The receipt review asked for yes or no and meant it literally. Anything else fell through to

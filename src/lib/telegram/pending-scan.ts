@@ -8,6 +8,15 @@ export interface PendingScan {
   /** The update the photo arrived on. The idempotency key derives from this rather than from the
    *  confirming message, so a redelivered "yes" replays instead of writing a second row. */
   updateId: number;
+  /**
+   * The review message carrying the Save/Discard buttons.
+   *
+   * Held so a *typed* yes or no can take the buttons off too. Without it the keyboard stayed
+   * visibly active after the review had already been answered by typing, and tapping it later
+   * reported the receipt as expired or stale — true of the draft, misleading about the receipt,
+   * which had in fact been saved.
+   */
+  reviewMessageId?: number;
   createdAt: number;
   /**
    * Set when a save failed without settling, so nobody knows whether the row exists.
@@ -90,6 +99,13 @@ export const revisePendingScan = (
   const revised = { ...scan, description, createdAt: now };
   pending.set(chatId, revised);
   return { status: "revised", scan: revised };
+};
+
+/** The waiting scan itself, without consuming it. A button press has to check which scan it
+ *  belongs to *before* deciding to act on it. */
+export const peekPendingScan = (chatId: number, now = Date.now()): PendingScan | null => {
+  const scan = pending.get(chatId);
+  return scan && now - scan.createdAt <= PENDING_TTL_MS ? scan : null;
 };
 
 export const clearPendingScan = (chatId: number): void => {
