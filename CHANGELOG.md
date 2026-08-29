@@ -2,6 +2,30 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-29 - The correction the review would not take
+
+The receipt review asked for yes or no and meant it literally. Anything else fell through to
+normal handling and was classified as an unrelated message, so answering "groceries at SM" — the
+most natural way to fix a description the OCR got wrong — did nothing at all. The scan sat waiting
+until its ten-minute TTL, and nothing said the correction had been dropped.
+
+That fall-through was deliberate and is preserved: its comment reads "typing another expense logs
+it rather than being refused", and that stays true. So a correction is defined by exclusion rather
+than by trying to recognise a description, which has no recognisable shape. A reply corrects the
+scan only when it is not a yes or no, does not start with an amount, and is not a command. Both
+exclusions are load-bearing and have tests that fail without them: without the first, "100
+breakfast" would stop logging while any review was open.
+
+Nothing is re-scanned. The user supplied the words, so there is nothing for the model to read, and
+`scan_receipt` is deliberately not idempotent — a second read would spend another scan credit for a
+field already known. The category is left alone, which is the honest limit of a description
+correction and a separate decision if it turns out to matter.
+
+The asymmetry with photo captions is worth stating, since the two look alike and were decided
+opposite ways. A caption arrives unbidden and is often not a description at all — "here you go" is
+an ordinary thing to send with a photo — so it goes to the model as a hint and is weighed against
+what the receipt says. A reply to an explicit invitation is unambiguous, so it is simply used.
+
 ## 2026-08-29 - The caption the bot read and threw away
 
 `caption` had been declared on the Telegram message type since photos were supported, with a

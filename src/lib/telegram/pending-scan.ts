@@ -49,6 +49,29 @@ export const hasPendingScan = (chatId: number, now = Date.now()): boolean => {
   return !!scan && now - scan.createdAt <= PENDING_TTL_MS;
 };
 
+/**
+ * Replace a waiting scan's description, without consuming it.
+ *
+ * The timestamp is refreshed because a correction is the user actively engaged with the review,
+ * and the TTL exists to stop a *forgotten* scan being saved by a stale "yes" — the same reasoning
+ * `confirmPendingScan` uses when it restores a scan after a failed save.
+ *
+ * `updateId` is deliberately untouched: the idempotency key derives from the photo's update, so a
+ * corrected scan still replays rather than writing a second row.
+ */
+export const revisePendingScan = (
+  chatId: number,
+  description: string,
+  now = Date.now()
+): PendingScan | null => {
+  const scan = pending.get(chatId);
+  if (!scan || now - scan.createdAt > PENDING_TTL_MS) return null;
+
+  const revised = { ...scan, description, createdAt: now };
+  pending.set(chatId, revised);
+  return revised;
+};
+
 export const clearPendingScan = (chatId: number): void => {
   pending.delete(chatId);
 };

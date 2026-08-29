@@ -6,6 +6,7 @@ import {
   isConfirmation,
   isRejection,
   putPendingScan,
+  revisePendingScan,
   takePendingScan,
   type PendingScan,
 } from "@/lib/telegram/pending-scan";
@@ -113,5 +114,43 @@ describe("confirmation parsing", () => {
       expect(isConfirmation(t), t).toBe(false);
       expect(isRejection(t), t).toBe(false);
     }
+  });
+});
+
+describe("revisePendingScan", () => {
+  it("replaces the description and keeps the idempotency key", () => {
+    // updateId derives the batch key. Changing it on a correction would let the corrected save
+    // write a second row instead of replaying the photo's.
+    putPendingScan(7, scan({ description: "SM Supermarket", updateId: 42 }));
+
+    const revised = revisePendingScan(7, "Groceries at SM");
+
+    expect(revised?.description).toBe("Groceries at SM");
+    expect(revised?.updateId).toBe(42);
+    expect(revised?.amount).toBe(350);
+    // Still waiting: a correction is not a confirmation.
+    expect(hasPendingScan(7)).toBe(true);
+  });
+
+  it("refreshes the TTL, since correcting is active engagement", () => {
+    const start = Date.now();
+    putPendingScan(7, scan({ createdAt: start }));
+
+    const later = start + PENDING_TTL_MS - 1_000;
+    const revised = revisePendingScan(7, "Groceries", later);
+
+    expect(revised?.createdAt).toBe(later);
+    // Would have expired on the original stamp; does not on the refreshed one.
+    expect(hasPendingScan(7, later + PENDING_TTL_MS - 1_000)).toBe(true);
+  });
+
+  it("returns null when nothing is waiting", () => {
+    expect(revisePendingScan(999, "Groceries")).toBeNull();
+  });
+
+  it("returns null for an expired scan rather than reviving it", () => {
+    const start = Date.now();
+    putPendingScan(7, scan({ createdAt: start }));
+    expect(revisePendingScan(7, "Groceries", start + PENDING_TTL_MS + 1)).toBeNull();
   });
 });
