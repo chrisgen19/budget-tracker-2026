@@ -94,7 +94,7 @@ export function TransactionFiltersBar({
   const [monthPickerYear, setMonthPickerYear] = useState(() =>
     Number(filters.month === "ALL" ? accountMonthKey(new Date(), user.timezoneOffset).slice(0, 4) : filters.month.slice(0, 4)),
   );
-  const { toolbarRef, isScrolling, revealToolbar } = useFilterToolbarScroll();
+  const { toolbarRef, isScrolling, handleToolbarFocus } = useFilterToolbarScroll();
 
   const update = useCallback(
     (partial: Partial<TransactionFilters>) => {
@@ -166,7 +166,7 @@ export function TransactionFiltersBar({
       <section
         ref={toolbarRef}
         aria-label="Transaction filters"
-        onFocusCapture={revealToolbar}
+        onFocusCapture={handleToolbarFocus}
         className={cn(
           "card sticky top-[61px] lg:top-0 z-20 mb-4 overflow-hidden border-cream-300/70 bg-white shadow-soft motion-reduce:transition-none",
           isScrolling
