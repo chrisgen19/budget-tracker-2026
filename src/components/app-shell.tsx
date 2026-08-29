@@ -32,7 +32,10 @@ import { InstallBannerProvider, useInstallBanner } from "@/components/pwa/instal
 import { InstallPromptBanner } from "@/components/pwa/install-prompt-banner";
 import { OfflineBanner } from "@/components/pwa/offline-banner";
 import { useBillReminders } from "@/components/bills/bill-reminder-provider";
-import { getMobileFabContentClearance } from "@/components/ui/bottom-overlay-clearance";
+import {
+  getFabContentClearance,
+  getFabContentClearanceDesktop,
+} from "@/components/ui/bottom-overlay-clearance";
 import { useBillAction } from "@/hooks/use-bills";
 import { useToast } from "@/components/ui/toast";
 import type { MultiScanItem } from "@/types";
@@ -54,19 +57,25 @@ const NAV_ITEMS = [
 function AppMain({ children }: { children: React.ReactNode }) {
   const { bannerVisible, bannerHeight: installBannerHeight } = useInstallBanner();
   const { bannerHeight: billBannerHeight } = useBillReminders();
-  const contentClearance = getMobileFabContentClearance({
+  const banners = {
     billBannerHeight,
     installBannerVisible: bannerVisible,
     installBannerHeight,
-  });
+  };
 
-  // The clearance runs to `lg`, not to `sm`. The FAB is `sm:hidden`, but both
-  // banners are full-width at every width below `lg`, so a flat `sm:pb-24`
-  // left tablet content sitting underneath them.
+  // Reserved at every width: the FAB floats over the last row above `lg` too,
+  // and both banners are full-width below it, so a flat `sm:pb-24` left tablet
+  // content sitting underneath them. The two clearances differ for the same
+  // reason the FAB's own offsets do -- above `lg` there is no bottom nav.
   return (
     <main
-      style={{ "--mobile-fab-content-clearance": contentClearance } as CSSProperties}
-      className="lg:pl-64 pt-16 lg:pt-0 pb-[calc(var(--mobile-fab-content-clearance)+env(safe-area-inset-bottom))] lg:pb-0 min-h-screen"
+      style={
+        {
+          "--fab-content-clearance": getFabContentClearance(banners),
+          "--fab-content-clearance-lg": getFabContentClearanceDesktop(banners),
+        } as CSSProperties
+      }
+      className="lg:pl-64 pt-16 lg:pt-0 pb-[calc(var(--fab-content-clearance)+env(safe-area-inset-bottom))] lg:pb-[calc(var(--fab-content-clearance-lg)+env(safe-area-inset-bottom))] min-h-screen"
     >
       {children}
     </main>
@@ -298,7 +307,7 @@ export function AppShell({ children }: AppShellProps) {
       />
 
       {/* Main Content */}
-      {/* Below `sm`, reserve room for the FAB; see bottom-overlay-clearance.ts. */}
+      {/* Reserves room for the FAB; see bottom-overlay-clearance.ts. */}
       <AppMain>
         <div className="max-w-6xl mx-auto p-4 lg:p-8">
           <ScanProvider

@@ -9,7 +9,7 @@ import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LabelForm } from "@/components/labels/label-form";
 import { QuickLabelPicker } from "@/components/labels/quick-label-picker";
-import { MobileFab } from "@/components/ui/mobile-fab";
+import { ActionFab } from "@/components/ui/action-fab";
 import {
   useLabelsQuery,
   useCreateLabel,
@@ -455,7 +455,7 @@ export default function LabelsPage() {
       </AnimatePresence>
 
       {/* Mobile FAB */}
-      <MobileFab label="Label" icon={Plus} onClick={() => setShowForm(true)} />
+      <ActionFab label="Label" icon={Plus} onClick={() => setShowForm(true)} />
     </div>
   );
 }

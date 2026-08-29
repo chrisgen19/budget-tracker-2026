@@ -35,7 +35,7 @@ src/
 │   │   └── admin/          # Admin panel (settings)
 │   └── api/                # REST API routes
 ├── components/
-│   ├── ui/                 # Shared UI: Modal, EmptyState, IconMap, MobileFab, ConfirmModal, Toast, DropdownButton
+│   ├── ui/                 # Shared UI: Modal, EmptyState, IconMap, ActionFab, ConfirmModal, Toast, DropdownButton
 │   ├── analytics/          # Analytics charts (IncomeExpenses, CashFlow, CategoryBreakdown, LabelBreakdown)
 │   ├── dashboard/          # Chart components
 │   ├── transactions/       # Transaction form, LabelPicker, ReceiptBreakdown
@@ -242,7 +242,7 @@ Active tasks:
 - **ScanProvider** (`src/components/scan-provider.tsx`) — receipt capture state (captured images, scan results, multi-scan queue)
 - **BillReminderProvider** (`src/components/bills/bill-reminder-provider.tsx`) — manages upcoming/overdue bill banners across the app
 - **App layout** (`src/app/(app)/layout.tsx`) wraps pages with `Providers > PrivacyProvider > AppShell`
-- **MobileFab** (`src/components/ui/mobile-fab.tsx`) — shared FAB component used on dashboard, transactions, categories, and bills; auto-accounts for install banner height via `ResizeObserver`
+- **ActionFab** (`src/components/ui/action-fab.tsx`) — the floating create button on dashboard, transactions, bills, categories and labels, at *every* width. It was `sm:hidden`, which left desktop with only the page-header button: that scrolls away, so adding a transaction from the bottom of a long list meant scrolling back to the top. Two breakpoints are in play and they deliberately differ. **Visibility** switches at `sm`, mirroring the header button's own gate: below it the FAB rests in place and ducks out of the way while the page scrolls, above it the header button is on screen at the top, so the FAB stays hidden until the page has scrolled past `REVEAL_SCROLL_PX`. **Geometry** switches at `lg`, which is where `MobileTabBar` (`lg:hidden`) stops occupying the bottom of the viewport — a tablet reveals on scroll but still has a nav to clear. Visibility is React state, since "scrolled past" is not expressible as a media query; the offset is CSS custom properties the `lg:` variant switches between, the same way both bottom banners do it. `isDesktop` starts `null` and the button renders hidden *without a transition* until the mount effect resolves it, so the server and first client render agree and desktop never flashes a button at the top of the page only to fade it back out. `disabled` tracks the hidden state and `pointer-events-none` goes on the wrapper, because an invisible button still wins the hit test and would swallow clicks meant for the page beneath it. An optional `items` opens the same `DropdownMenu` as the header dropdown (`placement="top"`, since a bottom-anchored trigger has no room below it) and is **ignored below `sm`**, where the tab bar already carries scan; dashboard and transactions pass the one array to both so the two menus cannot drift. `<main>` reserves matching bottom clearance at both breakpoints (`getFabContentClearance`/`…Desktop` in `bottom-overlay-clearance.ts`), or the last row of a list sits under the button
 - **ConfirmModal** (`src/components/ui/confirm-modal.tsx`) — reusable delete/deactivate confirmation dialog
 - **Modal** (`src/components/ui/modal.tsx`) — uses `visualViewport` API for keyboard-aware positioning on iOS Safari
 - **Receipt scanning** is opt-in per user — toggled in Profile Settings > Features; uses Gemini AI for OCR and per-category itemization

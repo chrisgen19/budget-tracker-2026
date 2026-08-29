@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  BILL_BANNER_BASE_DESKTOP_REM,
   BILL_BANNER_BASE_REM,
+  FAB_BASE_OFFSET_DESKTOP_REM,
   FAB_BASE_OFFSET_REM,
   INSTALL_BANNER_BASE_REM,
+  getFabBottom,
+  getFabBottomDesktop,
+  getFabContentClearance,
+  getFabContentClearanceDesktop,
   getInstallBannerBottom,
   getInstallBannerBottomDesktop,
-  getMobileFabBottom,
-  getMobileFabContentClearance,
 } from "@/components/ui/bottom-overlay-clearance";
 
 /**
@@ -72,36 +76,66 @@ describe("getInstallBannerBottomDesktop", () => {
   });
 });
 
-describe("getMobileFabBottom", () => {
-  const cases = [
-    { name: "no banners", billBannerHeight: 0, installBannerVisible: false, installBannerHeight: 0 },
-    { name: "bill only", billBannerHeight: BILL_H, installBannerVisible: false, installBannerHeight: 0 },
-    { name: "install only", billBannerHeight: 0, installBannerVisible: true, installBannerHeight: INSTALL_H },
-    { name: "both", billBannerHeight: BILL_H, installBannerVisible: true, installBannerHeight: INSTALL_H },
-  ];
+const bannerCases = [
+  { name: "no banners", billBannerHeight: 0, installBannerVisible: false, installBannerHeight: 0 },
+  { name: "bill only", billBannerHeight: BILL_H, installBannerVisible: false, installBannerHeight: 0 },
+  { name: "install only", billBannerHeight: 0, installBannerVisible: true, installBannerHeight: INSTALL_H },
+  { name: "both", billBannerHeight: BILL_H, installBannerVisible: true, installBannerHeight: INSTALL_H },
+];
 
+/**
+ * The two variants differ only in which set of base offsets they stack over,
+ * so they get the same assertions. Above `lg` there is no bottom nav under the
+ * stack, which is the whole reason the desktop bases are lower.
+ */
+const variants = [
+  {
+    name: "below lg",
+    fabBottom: getFabBottom,
+    clearance: getFabContentClearance,
+    installBottom: getInstallBannerBottom,
+    fabBase: FAB_BASE_OFFSET_REM,
+    billBase: BILL_BANNER_BASE_REM,
+  },
+  {
+    name: "above lg",
+    fabBottom: getFabBottomDesktop,
+    clearance: getFabContentClearanceDesktop,
+    installBottom: getInstallBannerBottomDesktop,
+    fabBase: FAB_BASE_OFFSET_DESKTOP_REM,
+    billBase: BILL_BANNER_BASE_DESKTOP_REM,
+  },
+];
+
+describe.each(variants)("getFabBottom ($name)", (variant) => {
   it("rests at its own base when no banner is showing", () => {
-    expect(resolve(getMobileFabBottom(cases[0]))).toBe(FAB_BASE_OFFSET_REM * ROOT_FONT_PX);
+    expect(resolve(variant.fabBottom(bannerCases[0]))).toBe(variant.fabBase * ROOT_FONT_PX);
   });
 
-  it.each(cases)("clears every visible banner by the stack gap ($name)", (banners) => {
-    const fabBottom = resolve(getMobileFabBottom(banners));
+  it.each(bannerCases)("clears every visible banner by the stack gap ($name)", (banners) => {
+    const fabBottom = resolve(variant.fabBottom(banners));
     if (banners.billBannerHeight > 0) {
-      const billTop = BILL_BANNER_BASE_REM * ROOT_FONT_PX + banners.billBannerHeight;
+      const billTop = variant.billBase * ROOT_FONT_PX + banners.billBannerHeight;
       expect(fabBottom).toBeGreaterThanOrEqual(billTop + GAP);
     }
     if (banners.installBannerVisible) {
       const installTop =
-        resolve(getInstallBannerBottom(banners.billBannerHeight)) + banners.installBannerHeight;
+        resolve(variant.installBottom(banners.billBannerHeight)) + banners.installBannerHeight;
       // Regression: with both banners up, the FAB compensated for the install
       // banner's lower base a second time and sat 8px too low.
       expect(fabBottom).toBe(installTop + GAP);
     }
-    expect(fabBottom).toBeGreaterThanOrEqual(FAB_BASE_OFFSET_REM * ROOT_FONT_PX);
+    expect(fabBottom).toBeGreaterThanOrEqual(variant.fabBase * ROOT_FONT_PX);
   });
 });
 
-describe("getMobileFabContentClearance", () => {
+describe("getFabBottomDesktop", () => {
+  it.each(bannerCases)("rests lower than below lg, where no bottom nav is left to clear ($name)", (banners) => {
+    expect(resolve(getFabBottomDesktop(banners))).toBeLessThan(resolve(getFabBottom(banners)));
+  });
+});
+
+describe.each(variants)("getFabContentClearance ($name)", (variant) => {
   it.each([0, BILL_H])("ends content flush with the FAB's top edge (bill %ipx)", (billHeight) => {
     const banners = {
       billBannerHeight: billHeight,
@@ -110,7 +144,7 @@ describe("getMobileFabContentClearance", () => {
     };
     const FAB_HEIGHT = 44;
     const NESTED_PADDING = 16; // the `p-4` wrapper inside <main>
-    const fabTop = resolve(getMobileFabBottom(banners)) + FAB_HEIGHT;
-    expect(resolve(getMobileFabContentClearance(banners)) + NESTED_PADDING).toBe(fabTop);
+    const fabTop = resolve(variant.fabBottom(banners)) + FAB_HEIGHT;
+    expect(resolve(variant.clearance(banners)) + NESTED_PADDING).toBe(fabTop);
   });
 });

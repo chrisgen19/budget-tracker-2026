@@ -27,6 +27,8 @@ export const BILL_BANNER_BASE_DESKTOP_REM = 2;
 export const INSTALL_BANNER_BASE_DESKTOP_REM = 1.5;
 /** Where the FAB rests when no banner is showing. */
 export const FAB_BASE_OFFSET_REM = 5;
+/** The same, above `lg`. Aligned with the bill reminder's own desktop base. */
+export const FAB_BASE_OFFSET_DESKTOP_REM = 2;
 /** The FAB's minimum tap target (`min-h-11`). */
 export const FAB_MIN_HEIGHT_REM = 2.75;
 /** Bottom padding the nested content wrapper (`p-4`) already contributes. */
@@ -75,24 +77,48 @@ export function getInstallBannerBottomDesktop(billBannerHeight: number) {
   );
 }
 
+function fabBottom(
+  { billBannerHeight, installBannerVisible, installBannerHeight }: BannerState,
+  fabBase: number,
+  billBase: number,
+  installBottom: string,
+) {
+  const stops = [`${fabBase}rem`];
+  const billTop = billBannerTop(billBannerHeight, billBase);
+  if (billTop) stops.push(`calc(${billTop} + ${STACK_GAP_PX}px)`);
+  if (installBannerVisible) {
+    stops.push(`calc(${installBottom} + ${installBannerHeight}px + ${STACK_GAP_PX}px)`);
+  }
+  return highest(stops);
+}
+
 /**
  * Where the FAB rests: its own base, or clear of whichever banners are
  * showing. Both are listed as stops rather than summed, because the install
  * prompt may already be riding above the bill reminder.
  */
-export function getMobileFabBottom({
-  billBannerHeight,
-  installBannerVisible,
-  installBannerHeight,
-}: BannerState) {
-  const stops = [`${FAB_BASE_OFFSET_REM}rem`];
-  const billTop = billBannerTop(billBannerHeight, BILL_BANNER_BASE_REM);
-  if (billTop) stops.push(`calc(${billTop} + ${STACK_GAP_PX}px)`);
-  if (installBannerVisible) {
-    const installTop = `calc(${getInstallBannerBottom(billBannerHeight)} + ${installBannerHeight}px)`;
-    stops.push(`calc(${installTop} + ${STACK_GAP_PX}px)`);
-  }
-  return highest(stops);
+export function getFabBottom(banners: BannerState) {
+  return fabBottom(
+    banners,
+    FAB_BASE_OFFSET_REM,
+    BILL_BANNER_BASE_REM,
+    getInstallBannerBottom(banners.billBannerHeight),
+  );
+}
+
+/**
+ * The same, above `lg`, where there is no bottom nav under the stack. The
+ * breakpoint is `lg` and not `sm` because that is where `MobileTabBar` stops
+ * occupying the bottom of the viewport -- the FAB is *visible* from `sm`, but
+ * a tablet still has a nav to clear.
+ */
+export function getFabBottomDesktop(banners: BannerState) {
+  return fabBottom(
+    banners,
+    FAB_BASE_OFFSET_DESKTOP_REM,
+    BILL_BANNER_BASE_DESKTOP_REM,
+    getInstallBannerBottomDesktop(banners.billBannerHeight),
+  );
 }
 
 /**
@@ -100,7 +126,13 @@ export function getMobileFabBottom({
  * the button's own offset and height, less the padding the nested wrapper
  * already supplies.
  */
-export function getMobileFabContentClearance(banners: BannerState) {
+export function getFabContentClearance(banners: BannerState) {
   const reserved = FAB_MIN_HEIGHT_REM - CONTENT_PADDING_REM;
-  return `calc(${getMobileFabBottom(banners)} + ${reserved}rem)`;
+  return `calc(${getFabBottom(banners)} + ${reserved}rem)`;
+}
+
+/** The same, above `lg`. */
+export function getFabContentClearanceDesktop(banners: BannerState) {
+  const reserved = FAB_MIN_HEIGHT_REM - CONTENT_PADDING_REM;
+  return `calc(${getFabBottomDesktop(banners)} + ${reserved}rem)`;
 }

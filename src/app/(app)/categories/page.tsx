@@ -11,7 +11,7 @@ import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CategoryForm } from "@/components/categories/category-form";
-import { MobileFab } from "@/components/ui/mobile-fab";
+import { ActionFab } from "@/components/ui/action-fab";
 import { QuickCategoryPicker } from "@/components/categories/quick-category-picker";
 import {
   useCategoriesQuery,
@@ -496,7 +496,7 @@ export default function CategoriesPage() {
       />
 
       {/* Mobile FAB */}
-      <MobileFab label="Category" icon={Plus} onClick={() => setShowForm(true)} />
+      <ActionFab label="Category" icon={Plus} onClick={() => setShowForm(true)} />
     </div>
   );
 }
