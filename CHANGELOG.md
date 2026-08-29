@@ -17,9 +17,17 @@ wrong and the one a caption is most likely to settle.
 So it goes to the model instead, quoted into the prompt as a hint, bounded so a long caption
 cannot crowd out the rules that follow it. The model weighs it against what it reads: the receipt
 wins wherever the two disagree, because the receipt is evidence and the caption is memory, and the
-caption is explicitly barred from influencing `amount` or `date`, which are read from the image
-alone. A caption that says nothing about the purchase is ignored rather than forced into the
-answer.
+model is told to read `amount` and `date` from the image alone. A caption that says nothing about
+the purchase is ignored rather than forced into the answer.
+
+Two things worth being precise about, both raised in review. The amount/date rule is a steer and
+not a guarantee: a prose instruction cannot bind a model, so a caption naming a figure could in
+principle be echoed into `amount`. What protects those fields is the confirmation step, which this
+flow has always required for exactly that reason — OCR on a crumpled photo is where a wrong amount
+comes from, and nothing is written until the user has seen it. And the caption block sits *below*
+the category rules rather than above them; the first cut placed it above and told the model to
+"follow only the rules above it", which excluded the category list, the category rules and the
+response format — an instruction that contradicted itself.
 
 `scan_receipt` grew an optional `caption`, so this is available to every MCP client rather than
 only the bot, and every field that comes back is still validated the same way — `amount` positive,
