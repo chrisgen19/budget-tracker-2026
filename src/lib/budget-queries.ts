@@ -1003,10 +1003,11 @@ export const getBillHistory = async (
       snoozeCount: group.snoozeCount,
       transactionId: group.settled?.transactionId ?? null,
       snoozeUntil: group.latestSnooze?.snoozeUntil?.toISOString() ?? null,
-      // Converted, unlike the due date: this one is derived from the server clock at snooze
-      // time, not from a calendar day the user named.
+      // Date-only, like the due date. The snooze is written as the *user's* target calendar day
+      // at UTC midnight, so converting it here would shift it back off that day by an offset it
+      // has already accounted for.
       localSnoozeUntil: group.latestSnooze?.snoozeUntil
-        ? formatLocalDate(group.latestSnooze.snoozeUntil, tz)
+        ? dayKey(utcDayStart(group.latestSnooze.snoozeUntil))
         : null,
     });
 

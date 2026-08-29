@@ -456,13 +456,12 @@ export interface BillOccurrence {
   transactionId: string | null;
   snoozeUntil: string | null;
   /**
-   * The user's own calendar day the snooze runs to, YYYY-MM-DD.
+   * The calendar day the snooze runs to, YYYY-MM-DD.
    *
-   * Converted, unlike `localDueDate`, because its provenance is an instant and not a calendar
-   * day: `POST /api/bills/[id]/action` computes it as `new Date()` plus N days off the *server*
-   * clock. Someone at UTC-4 snoozing for a day at 20:00 local has that stored as the day after
-   * next in UTC, so reading it as date-only would tell them the snooze runs a day longer than
-   * they asked for.
+   * Date-only and not converted, the same as `localDueDate`. `POST /api/bills/[id]/action`
+   * resolves the user's own day before adding the snooze length and stores that at UTC midnight,
+   * so the offset is already accounted for; converting again here would move it back off the day
+   * the user actually chose.
    */
   localSnoozeUntil: string | null;
 }

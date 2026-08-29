@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { scheduledTransactionSchema } from "@/lib/validations";
-import { advanceToNextUnpaidOccurrence, utcDayStart } from "@/lib/bill-utils";
+import { advanceToNextUnpaidOccurrence } from "@/lib/bill-utils";
+import { userToday } from "@/lib/bill-dates";
 
 const billInclude = {
   category: true,
@@ -49,7 +50,7 @@ export async function PUT(
       recalculatedNextDue = advanceToNextUnpaidOccurrence(
         startDate,
         billData.frequency,
-        startDate.getDate(),
+        startDate.getUTCDate(),
         billData.customIntervalDays ?? null,
         logs,
         { endDate },
@@ -139,9 +140,14 @@ export async function PATCH(
     return NextResponse.json({ error: "Bill is already active" }, { status: 400 });
   }
 
-  // Reactivate and reset nextDueDate to today if it's in the past. UTC, because this value can
-  // be *written* as a due date, and every reader takes due dates to be at UTC midnight.
-  const today = utcDayStart(new Date());
+  // Reactivate and reset nextDueDate to today if it's in the past. "Today" is the *user's*
+  // calendar day encoded at UTC midnight: between their midnight and UTC's, a plain
+  // `utcDayStart(new Date())` is still yesterday, so the bill would come back already overdue.
+  const { timezoneOffset } = (await prisma.user.findUnique({
+    where: { id: userId },
+    select: { timezoneOffset: true },
+  })) ?? { timezoneOffset: 0 };
+  const today = userToday(timezoneOffset ?? 0);
   const nextDueDate = existing.nextDueDate < today ? today : existing.nextDueDate;
 
   const bill = await prisma.scheduledTransaction.update({

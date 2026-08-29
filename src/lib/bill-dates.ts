@@ -39,3 +39,15 @@ export const clampToMonth = (year: number, month: number, day: number): Date => 
   const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
   return new Date(Date.UTC(year, month, Math.min(day, lastDay)));
 };
+
+/**
+ * The user's current calendar day, encoded as a UTC-midnight date-only value.
+ *
+ * "Today" for a bill is the user's today, not the server's and not UTC's. At 02:00 on 30 August
+ * in Manila the UTC day is still the 29th, so a bill reset to `utcDayStart(new Date())` would be
+ * written a day in the past and read as immediately overdue.
+ *
+ * @param timezoneOffset Minutes, `getTimezoneOffset()` convention, so UTC+8 is -480.
+ */
+export const userToday = (timezoneOffset: number, now: Date = new Date()): Date =>
+  utcDayStart(new Date(now.getTime() - timezoneOffset * 60_000));

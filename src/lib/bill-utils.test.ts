@@ -1,10 +1,6 @@
 import { describe, it, expect } from "vitest";
-import {
-  computeNextDueDate,
-  advanceToNextUnpaidOccurrence,
-  utcDayStart,
-  addUtcDays,
-} from "./bill-utils";
+import { computeNextDueDate, advanceToNextUnpaidOccurrence } from "./bill-utils";
+import { addUtcDays, userToday, utcDayStart } from "./bill-dates";
 
 /** Bill dates are date-only values stored at midnight UTC. */
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
@@ -103,5 +99,49 @@ describe("the UTC date helpers", () => {
   it("adds and subtracts whole days without touching the time", () => {
     expect(key(addUtcDays(day("2026-03-01"), -1))).toBe("2026-02-28");
     expect(key(addUtcDays(day("2026-12-31"), 1))).toBe("2027-01-01");
+  });
+});
+
+describe("originalStartDay must be read in UTC", () => {
+  it("advances to the 31st, not the 30th, when the start date is read in UTC", () => {
+    const start = day("2026-01-31");
+    // getUTCDate() is 31; a local getDate() on a host behind UTC reads 30 and the bill would
+    // then advance to the 30th of every later month.
+    expect(key(computeNextDueDate(day("2026-03-31"), "MONTHLY", start.getUTCDate()))).toBe(
+      "2026-04-30"
+    );
+    expect(key(computeNextDueDate(day("2026-04-30"), "MONTHLY", start.getUTCDate()))).toBe(
+      "2026-05-31"
+    );
+  });
+});
+
+describe("userToday", () => {
+  it("is the user's calendar day, not UTC's, between their midnight and UTC's", () => {
+    // 02:00 on 30 August in Manila is still 29 August in UTC.
+    const now = new Date("2026-08-29T18:00:00.000Z");
+    expect(key(userToday(-480, now))).toBe("2026-08-30");
+    expect(key(utcDayStart(now))).toBe("2026-08-29");
+  });
+
+  it("is the previous day for a user behind UTC after their midnight has passed in UTC", () => {
+    // 21:00 on 29 August in New York is already 30 August in UTC.
+    const now = new Date("2026-08-30T01:00:00.000Z");
+    expect(key(userToday(240, now))).toBe("2026-08-29");
+    expect(key(utcDayStart(now))).toBe("2026-08-30");
+  });
+
+  it("encodes the result at UTC midnight, so it can be stored as a due date", () => {
+    expect(userToday(-480, new Date("2026-08-29T18:00:00.000Z")).toISOString()).toBe(
+      "2026-08-30T00:00:00.000Z"
+    );
+  });
+
+  it("gives a snooze the user's full N days rather than expiring the same morning", () => {
+    // The reported failure: snoozing one day at 02:00 Manila. Off the raw clock the target is
+    // 30 August 00:00Z, which is 08:00 that same morning for them.
+    const now = new Date("2026-08-29T18:00:00.000Z");
+    expect(key(addUtcDays(userToday(-480, now), 1))).toBe("2026-08-31");
+    expect(key(addUtcDays(utcDayStart(now), 1))).toBe("2026-08-30");
   });
 });

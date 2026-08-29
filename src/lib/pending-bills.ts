@@ -76,7 +76,7 @@ export async function getPendingRemindersForUser(
       let checkDate = computeNextDueDate(
         bill.nextDueDate,
         bill.frequency,
-        bill.startDate.getDate(),
+        bill.startDate.getUTCDate(),
         bill.customIntervalDays,
       );
 
@@ -104,7 +104,7 @@ export async function getPendingRemindersForUser(
         checkDate = computeNextDueDate(
           checkDate,
           bill.frequency,
-          bill.startDate.getDate(),
+          bill.startDate.getUTCDate(),
           bill.customIntervalDays,
         );
         missedCount++;
