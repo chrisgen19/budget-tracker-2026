@@ -34,7 +34,7 @@ import { useDashboardQuery, useCreateTransaction, useUpdateTransaction, useDelet
 import { useUpcomingBillsQuery } from "@/hooks/use-bills";
 import { UpcomingBillRow } from "@/components/dashboard/upcoming-bill-row";
 import { TransactionLabelPills } from "@/components/transactions/transaction-label-pills";
-import { MobileFab } from "@/components/ui/mobile-fab";
+import { ActionFab } from "@/components/ui/action-fab";
 import type { TransactionInput } from "@/lib/validations";
 import type { TransactionWithCategory } from "@/types";
 import { accountMonthKey } from "@/lib/account-time";
@@ -137,6 +137,27 @@ export default function DashboardPage() {
     show: { opacity: 1, y: 0, transition: { duration: 0.4 } },
   };
 
+  // Shared by the header dropdown and the FAB that replaces it once the header
+  // scrolls away, so the two menus cannot drift apart.
+  const addTransactionItems: DropdownItem[] = [
+    {
+      label: "Add Transaction",
+      icon: Plus,
+      onClick: () => setShowForm(true),
+    },
+    {
+      label: "Scan Receipt",
+      icon: ScanLine,
+      onClick: openScan,
+      disabled: scanLimitReached,
+      sublabel: scanLimitReached
+        ? "Monthly limit reached"
+        : hasLimit
+          ? `${scansRemaining} scan${scansRemaining === 1 ? "" : "s"} left`
+          : undefined,
+    },
+  ];
+
   return (
     <div>
       {/* Page Header */}
@@ -157,24 +178,7 @@ export default function DashboardPage() {
               label="Add Transaction"
               icon={Plus}
               className="hidden sm:inline-flex"
-              items={[
-                {
-                  label: "Add Transaction",
-                  icon: Plus,
-                  onClick: () => setShowForm(true),
-                },
-                {
-                  label: "Scan Receipt",
-                  icon: ScanLine,
-                  onClick: openScan,
-                  disabled: scanLimitReached,
-                  sublabel: scanLimitReached
-                    ? "Monthly limit reached"
-                    : hasLimit
-                      ? `${scansRemaining} scan${scansRemaining === 1 ? "" : "s"} left`
-                      : undefined,
-                },
-              ] satisfies DropdownItem[]}
+              items={addTransactionItems}
             />
           ) : (
             <button
@@ -519,8 +523,14 @@ export default function DashboardPage() {
         </motion.div>
       ) : null}
 
-      {/* Mobile FAB */}
-      <MobileFab label="Transaction" icon={Plus} onClick={() => setShowForm(true)} />
+      {/* Floating create button. Above `sm` it carries the same menu as the
+          header dropdown, which by then has scrolled out of reach. */}
+      <ActionFab
+        label="Transaction"
+        icon={Plus}
+        onClick={() => setShowForm(true)}
+        items={canScan ? addTransactionItems : undefined}
+      />
 
       {/* Add Transaction Modal */}
       <Modal

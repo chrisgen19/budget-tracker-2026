@@ -11,7 +11,7 @@ import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BillForm } from "@/components/bills/bill-form";
-import { MobileFab } from "@/components/ui/mobile-fab";
+import { ActionFab } from "@/components/ui/action-fab";
 import {
   useBillsQuery,
   useCreateBill,
@@ -358,7 +358,7 @@ export default function BillsPage() {
       />
 
       {/* Mobile FAB */}
-      <MobileFab label="Bill" icon={Plus} onClick={() => setShowForm(true)} />
+      <ActionFab label="Bill" icon={Plus} onClick={() => setShowForm(true)} />
     </div>
   );
 }
