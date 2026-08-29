@@ -1084,6 +1084,7 @@ async function handleReceiptPhoto(
   // recovering the first receipt meant scanning it again and spending a second credit. A
   // successful scan replaces it below, so a stale draft cannot linger either.
   const superseding = hasPendingScan(chatId);
+  const caption = message.caption?.trim();
 
   let scan: ScannedReceipt;
   let photoTakenAt: string | null = null;
@@ -1094,11 +1095,16 @@ async function handleReceiptPhoto(
     // to today exactly as it did before.
     photoTakenAt = readPhotoTakenAt(image);
 
+    // The caption is the one piece of context the user volunteered, and it was being read off
+    // the message and thrown away. It goes to the scanner as a hint rather than being pasted over
+    // the description afterwards: "here you go" is an ordinary thing to send with a photo, and
+    // overwriting a correctly-read merchant name with it would be worse than ignoring it.
     scan = await callTool<ScannedReceipt>("scan_receipt", {
       imageBase64: image.toString("base64"),
       mimeType: pick.mimeType,
       localDate: localTimestamp(TZ_OFFSET).slice(0, 10),
       ...(photoTakenAt && { photoTakenAt }),
+      ...(caption && { caption }),
     });
   } catch (err) {
     // Reported here rather than rethrown, so the reply can say which receipt is still pending.
@@ -1129,6 +1135,10 @@ async function handleReceiptPhoto(
     // means one of the two was misread, and now is when the user can still check.
     reply += `\n\u26a0\ufe0f The photo was taken ${photoTakenAt!.slice(0, 10)}, which is a long way from the receipt date. Worth a check.\n`;
   }
+  // Said out loud, because the user cannot otherwise tell whether their caption was read or
+  // ignored, and this is the moment they can still correct it. Same principle as the date repair:
+  // an inference the user cannot see is one they cannot undo.
+  if (caption) reply += `\n\u2139\ufe0f I used your caption as a hint.\n`;
   reply += `\nNothing is saved yet. Reply *yes* to save it, or *no* to discard.`;
 
   // Stored only once the review has actually reached the user, which is the entire point of the

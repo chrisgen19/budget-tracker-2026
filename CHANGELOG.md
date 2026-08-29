@@ -2,6 +2,34 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-29 - The caption the bot read and threw away
+
+`caption` had been declared on the Telegram message type since photos were supported, with a
+comment explaining what it was for, and was read by nothing. Sending a receipt captioned
+"groceries at SM" discarded the one piece of context the user had volunteered.
+
+The obvious fix is to use it as the description once the scan returns, and it is the wrong one. A
+caption is free text and often is not a description at all — "here you go" is a perfectly ordinary
+thing to send with a photo — so a blind substitution would overwrite a correctly-read merchant
+name with noise. It also could never reach `categoryId`, which is the field OCR actually gets
+wrong and the one a caption is most likely to settle.
+
+So it goes to the model instead, quoted into the prompt as a hint, bounded so a long caption
+cannot crowd out the rules that follow it. The model weighs it against what it reads: the receipt
+wins wherever the two disagree, because the receipt is evidence and the caption is memory, and the
+caption is explicitly barred from influencing `amount` or `date`, which are read from the image
+alone. A caption that says nothing about the purchase is ignored rather than forced into the
+answer.
+
+`scan_receipt` grew an optional `caption`, so this is available to every MCP client rather than
+only the bot, and every field that comes back is still validated the same way — `amount` positive,
+`categoryId` resolved against the user's own list — so a caption cannot talk the scanner into a
+bad row.
+
+The review now says "I used your caption as a hint" when one was sent. Same rule as the repaired
+receipt year: an inference the user cannot see is one they cannot undo, and the confirmation step
+is the moment they can still correct it.
+
 ## 2026-08-29 - Two calls, one thinking budget, opposite needs
 
 Phase 1 moved every Gemini call to `gemini-3.6-flash`. The Telegram classifier came back accurate
