@@ -96,10 +96,10 @@ NEXTAUTH_URL="http://localhost:3111"
 
 # Google Gemini (optional — enables receipt scanning)
 GEMINI_API_KEY=""
-GEMINI_MODEL="gemini-2.5-flash"
+GEMINI_MODEL="gemini-3.6-flash"
 
 # Gemini tuning (all optional — these are the defaults used when unset)
-GEMINI_FALLBACK_MODEL="gemini-2.5-flash"   # "" disables fallback
+GEMINI_FALLBACK_MODEL="gemini-3.5-flash"   # "" disables fallback
 GEMINI_THINKING_LEVEL="medium"             # used by Gemini 3+ models
 GEMINI_THINKING_BUDGET="-1"                # used by Gemini 2.x models
 GEMINI_TIMEOUT_MS="60000"                  # per-attempt timeout; 0 disables
@@ -124,7 +124,8 @@ All four are optional — when unset, the defaults shown above apply. The right 
 
 | Variable | Possible values | Notes |
 |---|---|---|
-| `GEMINI_FALLBACK_MODEL` | any Gemini model id, or `""` | Tried once when `GEMINI_MODEL` stays overloaded (503/504) after retries. `""` disables fallback. Fast alternative: `gemini-2.5-flash-lite` |
+| `GEMINI_MODEL` | any Gemini model id | Used by **every** AI call. Default `gemini-3.6-flash`. Import it from `src/lib/gemini.ts` rather than writing a literal at a call site |
+| `GEMINI_FALLBACK_MODEL` | any Gemini model id, or `""` | Tried once when `GEMINI_MODEL` stays overloaded (503/504) after retries. Default `gemini-3.5-flash`, a generation behind the primary on purpose. `""` disables fallback |
 | `GEMINI_THINKING_LEVEL` | `minimal` \| `low` \| `medium` \| `high` | **Gemini 3+ models only** (e.g. `gemini-3.5-flash`). `medium` (default) = model's native reasoning; `minimal` = speed mode |
 | `GEMINI_THINKING_BUDGET` | `-1` \| `0` \| `128`–`24576` | **Gemini 2.x models only** (e.g. `gemini-2.5-flash`). `-1` (default) = dynamic thinking, `0` = speed mode, number = fixed token budget. Valid range varies per model |
 | `GEMINI_TIMEOUT_MS` | milliseconds, or `0` | Aborts hung attempts so retry/fallback kicks in sooner; timed-out attempts are retried like 503s. `0` disables. Default `60000` suits thinking-enabled scans; `30000` suits speed mode |

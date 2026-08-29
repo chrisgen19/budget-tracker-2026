@@ -91,10 +91,10 @@ src/
 - `DATABASE_URL` — PostgreSQL connection string
 - `NEXTAUTH_SECRET` / `NEXTAUTH_URL` — NextAuth session config
 - `GEMINI_API_KEY` — Google Gemini AI for receipt scanning
-- `GEMINI_MODEL` — Optional; Gemini model for receipt scanning (defaults to `gemini-2.5-flash`)
-- `GEMINI_FALLBACK_MODEL` — Optional; model retried once when the primary stays overloaded (503) after retries (defaults to `gemini-2.5-flash`; `""` disables fallback)
+- `GEMINI_MODEL` — Optional; Gemini model for **every** AI call (receipt scanning, itemization, AI Assessment, Telegram classification). Defaults to `gemini-3.6-flash`. Import it from `src/lib/gemini.ts`; never write a model id at a call site — the Telegram classifier pinned a literal and silently ran two generations behind (#163)
+- `GEMINI_FALLBACK_MODEL` — Optional; model retried once when the primary stays overloaded (503) after retries (defaults to `gemini-3.5-flash`, a generation behind the primary on purpose; `""` disables fallback)
 - `GEMINI_THINKING_BUDGET` — Optional; thinking budget for **Gemini 2.x** models. `-1` = dynamic thinking (default, best quality), `0` = off (speed mode), `128`-`24576` = fixed token budget
-- `GEMINI_THINKING_LEVEL` — Optional; thinking level for **Gemini 3+** models (they use `thinkingLevel`, not `thinkingBudget`): `minimal` (speed mode) | `low` | `medium` (default, best quality) | `high`
+- `GEMINI_THINKING_LEVEL` — Optional; thinking level for **Gemini 3+** models (they use `thinkingLevel`, not `thinkingBudget`): `minimal` (speed mode) | `low` | `medium` (default, best quality) | `high`. This is the knob that applies by default, since the default model is now 3.x
 - `GEMINI_TIMEOUT_MS` — Optional; per-attempt request timeout in ms (default `60000`, `0` disables). Timed-out attempts are retried like 503s. Lower it (e.g. `30000`) when running speed mode
 - `RESEND_API_KEY` — Email sending (verification + password reset)
 - `EMAIL_FROM` — Sender address (optional; defaults to `Budget Tracker <noreply@resend.dev>` if unset). Use a verified Resend domain in production, e.g. `Budget Tracker <noreply@yourdomain.com>`.
@@ -112,7 +112,8 @@ src/
 
 ## Telegram bot
 `src/lib/telegram/bot.ts` is a personal Telegram bot that logs transactions and answers summary
-queries. Gemini only ever *classifies* a message: it is never given transactions, totals or
+queries. Gemini only ever *classifies* a message, in `src/lib/telegram/classify.ts`: it is never
+given transactions, totals or
 balances, and every figure the bot sends comes from an MCP read tool via the same handlers the
 slash commands use. A free-text question is routed to one of those handlers, not answered by the
 model, because a model holding only category names can only refuse or invent. The command menu is registered with Telegram at startup
@@ -135,7 +136,11 @@ because labels are how spending is grouped here and the name usually appears in 
 all: "Shopee" is a label with transactions, and a description search for it returns nothing. Every
 unresolvable name or month is dropped rather than passed through, because a filter the query
 cannot satisfy returns zero rows and "no transactions found" reads exactly like a real answer. A
-question about a recurring bill goes to `get_bill_history` instead. It is an **MCP client**, not a database client: it calls `/api/mcp` with a scoped token,
+question about a recurring bill goes to `get_bill_history` instead. `classify.ts` imports `@/lib/gemini` *dynamically*, and exports `GEMINI_ENABLED` read from the
+environment rather than from a client: `gemini.ts` constructs `GoogleGenAI` at module scope and
+throws without `GEMINI_API_KEY`, so a static import would take the bot down at boot on a
+deployment with no key, where it should degrade to shorthand-only logging. It is an **MCP
+client**, not a database client: it calls `/api/mcp` with a scoped token,
 so it inherits the scope, the write lease, the rate limit and the audit trail rather than going
 around them, and it holds no database credentials.
 
