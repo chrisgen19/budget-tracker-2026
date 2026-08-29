@@ -19,6 +19,15 @@ export interface TelegramMessage {
   caption?: string;
 }
 
+/** The fields of a button press this bot reads. A different shape from a message: the sender is
+ *  top-level, and the chat hangs off the message the button was attached to. */
+export interface TelegramCallbackQuery {
+  id: string;
+  from?: { id?: number; username?: string };
+  message?: { chat?: { id: number; type?: string }; message_id: number };
+  data?: string;
+}
+
 export interface Allowlist {
   ids: ReadonlySet<string>;
   usernames: ReadonlySet<string>;
@@ -51,6 +60,31 @@ export const messageIsAllowed = (
   if (message.chat?.type !== "private") return false;
 
   const from = message.from;
+  if (!from) return false;
+  if (from.id !== undefined && ids.has(String(from.id))) return true;
+  return from.username !== undefined && usernames.has(from.username.toLowerCase());
+};
+
+/**
+ * Whether this bot may act on a button press.
+ *
+ * Deliberately its own function rather than a widened `messageIsAllowed`. A `callback_query` is a
+ * different shape — the sender is top-level and the chat is nested under the message the button
+ * was attached to — so reusing the message check would have meant reading `from` off an object
+ * that does not carry it, which fails *open* only if someone later "fixes" it carelessly.
+ *
+ * The rules are the same and must stay the same: the sender is on the allowlist, and the chat is
+ * private. A message with buttons can be forwarded, and the press then arrives from whoever
+ * tapped it, so authenticating the press rather than the original message is what matters.
+ */
+export const callbackIsAllowed = (
+  query: TelegramCallbackQuery | undefined,
+  { ids, usernames }: Allowlist
+): boolean => {
+  if (!query) return false;
+  if (query.message?.chat?.type !== "private") return false;
+
+  const from = query.from;
   if (!from) return false;
   if (from.id !== undefined && ids.has(String(from.id))) return true;
   return from.username !== undefined && usernames.has(from.username.toLowerCase());

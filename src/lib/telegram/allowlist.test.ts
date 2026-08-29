@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { messageIsAllowed, type TelegramMessage } from "@/lib/telegram/allowlist";
+import { callbackIsAllowed, messageIsAllowed, type TelegramMessage } from "@/lib/telegram/allowlist";
 
 const LIST = { ids: new Set(["12345"]), usernames: new Set(["chrisgen19"]) };
 const EMPTY = { ids: new Set<string>(), usernames: new Set<string>() };
@@ -47,5 +47,51 @@ describe("messageIsAllowed", () => {
 
   it("denies an undefined message", () => {
     expect(messageIsAllowed(undefined, LIST)).toBe(false);
+  });
+});
+
+describe("callbackIsAllowed", () => {
+  const query = (over: Record<string, unknown> = {}) => ({
+    id: "cb1",
+    from: { id: 42, username: "owner" },
+    message: { chat: { id: 42, type: "private" }, message_id: 9 },
+    data: "rs:y:1",
+    ...over,
+  });
+
+  it("allows an allowlisted sender in a private chat", () => {
+    expect(callbackIsAllowed(query(), { ids: new Set(["42"]), usernames: new Set() })).toBe(true);
+  });
+
+  it("denies a stranger who taps a forwarded review", () => {
+    // The message was sent to the owner; the press arrives from whoever tapped it. Authenticating
+    // the press rather than the original message is the whole point.
+    expect(
+      callbackIsAllowed(query({ from: { id: 999, username: "stranger" } }), {
+        ids: new Set(["42"]),
+        usernames: new Set(),
+      })
+    ).toBe(false);
+  });
+
+  it("denies a press outside a private chat", () => {
+    expect(
+      callbackIsAllowed(query({ message: { chat: { id: -100, type: "group" }, message_id: 9 } }), {
+        ids: new Set(["42"]),
+        usernames: new Set(),
+      })
+    ).toBe(false);
+  });
+
+  it("denies when the payload is missing pieces, rather than guessing", () => {
+    const list = { ids: new Set(["42"]), usernames: new Set<string>() };
+    expect(callbackIsAllowed(undefined, list)).toBe(false);
+    expect(callbackIsAllowed(query({ from: undefined }), list)).toBe(false);
+    expect(callbackIsAllowed(query({ message: undefined }), list)).toBe(false);
+    expect(callbackIsAllowed(query({ message: { message_id: 9 } }), list)).toBe(false);
+  });
+
+  it("denies everyone when the allowlist is empty", () => {
+    expect(callbackIsAllowed(query(), { ids: new Set(), usernames: new Set() })).toBe(false);
   });
 });

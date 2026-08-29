@@ -6,7 +6,14 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { updateBatchId } from "@/lib/telegram/batch-id";
 import { localDay, localTimestamp } from "@/lib/telegram/local-time";
-import { messageIsAllowed, type Allowlist, type TelegramMessage } from "@/lib/telegram/allowlist";
+import {
+  callbackIsAllowed,
+  messageIsAllowed,
+  type Allowlist,
+  type TelegramCallbackQuery,
+  type TelegramMessage,
+} from "@/lib/telegram/allowlist";
+import { encodeScanCallback, parseScanCallback } from "@/lib/telegram/callback-data";
 import { chunkMessage } from "@/lib/telegram/chunk";
 import { MAX_IMAGE_BYTES, pickReceiptImage } from "@/lib/telegram/photo";
 import { readPhotoTakenAt } from "@/lib/exif-date";
@@ -23,9 +30,11 @@ import {
   hasPendingScan,
   isConfirmation,
   isRejection,
+  peekPendingScan,
   putPendingScan,
   revisePendingScan,
   takePendingScan,
+  type PendingScan,
 } from "@/lib/telegram/pending-scan";
 import { correctedDescription, isScanCorrection } from "@/lib/telegram/scan-correction";
 import {
@@ -287,29 +296,39 @@ async function downloadTelegramFile(fileId: string): Promise<Buffer> {
 async function sendMessage(
   chatId: number | string,
   text: string,
-  parseMode: "Markdown" | "HTML" = "Markdown"
+  parseMode: "Markdown" | "HTML" = "Markdown",
+  replyMarkup?: Record<string, unknown>
 ): Promise<boolean> {
   // Telegram rejects an over-long message outright, and the plain-text fallback is the same
   // length, so every attempt failed and the user was answered with silence.
   const parts = chunkMessage(text);
   if (parts.length > 1) {
     let allSent = true;
-    for (const part of parts) {
-      if (!(await sendOne(chatId, part, parseMode))) allSent = false;
+    for (const [i, part] of parts.entries()) {
+      // Buttons belong on the last chunk, where the question they answer ends up.
+      const markup = i === parts.length - 1 ? replyMarkup : undefined;
+      if (!(await sendOne(chatId, part, parseMode, markup))) allSent = false;
     }
     return allSent;
   }
 
-  return sendOne(chatId, text, parseMode);
+  return sendOne(chatId, text, parseMode, replyMarkup);
 }
 
 async function sendOne(
   chatId: number | string,
   text: string,
-  parseMode: "Markdown" | "HTML"
+  parseMode: "Markdown" | "HTML",
+  replyMarkup?: Record<string, unknown>
 ): Promise<boolean> {
+  const markup = replyMarkup ? { reply_markup: replyMarkup } : {};
   try {
-    await telegramApi("sendMessage", { chat_id: chatId, text, parse_mode: parseMode });
+    await telegramApi("sendMessage", {
+      chat_id: chatId,
+      text,
+      parse_mode: parseMode,
+      ...markup,
+    });
     return true;
   } catch {
     // Unescaped special characters in the text; plain text is the only thing that can work.
@@ -318,7 +337,7 @@ async function sendOne(
   for (const delay of [0, 2_000]) {
     if (delay > 0) await new Promise((r) => setTimeout(r, delay));
     try {
-      await telegramApi("sendMessage", { chat_id: chatId, text });
+      await telegramApi("sendMessage", { chat_id: chatId, text, ...markup });
       return true;
     } catch (err) {
       console.error("[telegram] failed to send a message:", err instanceof Error ? err.message : err);
@@ -1141,14 +1160,26 @@ async function handleReceiptPhoto(
   // ignored, and this is the moment they can still correct it. Same principle as the date repair:
   // an inference the user cannot see is one they cannot undo.
   if (caption) reply += `\n\u2139\ufe0f I used your caption as a hint.\n`;
-  reply += `\nNothing is saved yet. Reply *yes* to save it, *no* to discard, or send a short description to correct it.`;
+  reply += `\nNothing is saved yet. Tap a button below, or send a short description to correct it.`;
 
   // Stored only once the review has actually reached the user, which is the entire point of the
   // confirmation step. Storing first meant an undelivered prompt left a draft nobody had seen,
   // and any bare "yes" in the next ten minutes would save an unreviewed transaction. Ordering it
   // this way also leaves a superseded draft intact for free: nothing is overwritten until the
   // replacement has been shown.
-  if (!(await sendMessage(chatId, reply))) {
+  // Buttons carry the *photo's* update id. They never expire from chat history, so an old
+  // review stays tappable: without the id, scrolling up and tapping Save would confirm whichever
+  // scan is pending now, showing one amount and saving another.
+  const buttons = {
+    inline_keyboard: [
+      [
+        { text: "\u2705 Save", callback_data: encodeScanCallback({ action: "save", updateId }) },
+        { text: "\u274c Discard", callback_data: encodeScanCallback({ action: "discard", updateId }) },
+      ],
+    ],
+  };
+
+  if (!(await sendMessage(chatId, reply, "Markdown", buttons))) {
     console.error(
       "[telegram] scanned a receipt but could not deliver the review, so it was discarded."
     );
@@ -1166,6 +1197,105 @@ async function handleReceiptPhoto(
     updateId,
     createdAt: Date.now(),
   });
+}
+
+/**
+ * Save a confirmed scan and tell the user what happened.
+ *
+ * Shared by the typed "yes" and the Save button so the two cannot drift. The scan has already
+ * been taken from the pending map, so every failure path inside `confirmPendingScan` puts it back.
+ */
+async function saveConfirmedScan(chatId: number, scan: PendingScan): Promise<void> {
+  const outcome = await confirmPendingScan(scan, {
+    save: (key, s) =>
+      createTransactions(key, [
+        {
+          amount: s.amount,
+          description: s.description,
+          type: "EXPENSE",
+          categoryId: s.categoryId,
+          date: s.date,
+        },
+      ]),
+    // Restored with a fresh timestamp so a save that failed near the TTL does not leave the
+    // user a scan they can no longer confirm.
+    restore: (s, { frozen }) => putPendingScan(chatId, { ...s, createdAt: Date.now(), frozen }),
+    batchKey: (s) => updateBatchId(BOT_ID, s.updateId),
+  });
+
+  if (outcome.status === "saved") {
+    await confirmCreated(chatId, outcome.batch as CreatedBatch);
+    return;
+  }
+
+  await sendMessage(chatId, "I could not save that receipt. Reply *yes* to try again.");
+}
+
+/** Acknowledge a press so the client stops spinning. Best effort: a failure here costs a spinner,
+ *  never the action, so it must not abort what the press asked for. */
+async function answerCallback(id: string, text?: string): Promise<void> {
+  await telegramApi("answerCallbackQuery", {
+    callback_query_id: id,
+    ...(text && { text }),
+  }).catch(() => {});
+}
+
+/** Take the buttons off a review that has been answered, so it cannot be tapped twice. */
+async function clearButtons(chatId: number, messageId: number): Promise<void> {
+  await telegramApi("editMessageReplyMarkup", {
+    chat_id: chatId,
+    message_id: messageId,
+    reply_markup: { inline_keyboard: [] },
+  }).catch(() => {});
+}
+
+/**
+ * Act on a Save or Discard press.
+ *
+ * The identity check is the whole reason `callback_data` carries an update id. Buttons persist in
+ * chat history indefinitely, so a review from an hour ago is still tappable, and acting on the
+ * currently pending scan would save something the user is not looking at.
+ */
+async function handleCallback(query: TelegramCallbackQuery): Promise<void> {
+  const chatId = query.message?.chat?.id;
+  const messageId = query.message?.message_id;
+  if (chatId === undefined || messageId === undefined) return;
+
+  const parsed = parseScanCallback(query.data);
+  if (!parsed) {
+    await answerCallback(query.id, "I don't recognise that button.");
+    return;
+  }
+
+  const pending = peekPendingScan(chatId);
+  if (!pending) {
+    await answerCallback(query.id, "That receipt is no longer waiting.");
+    await clearButtons(chatId, messageId);
+    return;
+  }
+  if (pending.updateId !== parsed.updateId) {
+    // An older review. Left tappable-looking rather than silently acting on the wrong scan.
+    await answerCallback(query.id, "That's an older receipt. Use the most recent one.");
+    await clearButtons(chatId, messageId);
+    return;
+  }
+
+  const scan = takePendingScan(chatId);
+  if (!scan) {
+    await answerCallback(query.id, "That receipt is no longer waiting.");
+    return;
+  }
+
+  await clearButtons(chatId, messageId);
+
+  if (parsed.action === "discard") {
+    await answerCallback(query.id, "Discarded.");
+    await sendMessage(chatId, "Discarded. Nothing was saved.");
+    return;
+  }
+
+  await answerCallback(query.id, "Saving...");
+  await saveConfirmedScan(chatId, scan);
 }
 
 async function handleMessage(message: TelegramMessage, updateId: number) {
@@ -1190,33 +1320,11 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
   if (isConfirmation(text)) {
     const scan = takePendingScan(chatId);
     if (scan) {
-      const outcome = await confirmPendingScan(scan, {
-        save: (key, s) =>
-          createTransactions(key, [
-            {
-              amount: s.amount,
-              description: s.description,
-              type: "EXPENSE",
-              categoryId: s.categoryId,
-              date: s.date,
-            },
-          ]),
-        // Restored with a fresh timestamp so a save that failed near the TTL does not leave the
-        // user a scan they can no longer confirm.
-        restore: (s, { frozen }) =>
-          putPendingScan(chatId, { ...s, createdAt: Date.now(), frozen }),
-        batchKey: (s) => updateBatchId(BOT_ID, s.updateId),
-      });
-
-      if (outcome.status === "saved") {
-        await confirmCreated(chatId, outcome.batch as CreatedBatch);
-        return;
-      }
-
-      await sendMessage(chatId, "I could not save that receipt. Reply *yes* to try again.");
+      await saveConfirmedScan(chatId, scan);
       return;
     }
   }
+
 
   // A reply that is not yes or no, and is not already something this bot does, corrects the
   // description. It used to fall through and be classified as an unrelated message, so the most
@@ -1690,6 +1798,34 @@ export async function startTelegramBot(): Promise<void> {
 
       for (const update of updates) {
         offset = update.update_id + 1;
+
+        // A button press is a callback_query, not a message, and used to be dropped by the check
+        // below. It carries its own allowlist: the shape differs, and a message with buttons can
+        // be forwarded, so what matters is who tapped it rather than who was sent it.
+        if (update.callback_query) {
+          const presser = update.callback_query.from;
+          if (!callbackIsAllowed(update.callback_query, ALLOWLIST)) {
+            console.warn(
+              `[telegram] denied a button press from id=${presser?.id ?? "unknown"} ` +
+                `username=@${presser?.username ?? "none"}. Only private chats are answered.`
+            );
+            continue;
+          }
+          try {
+            await handleCallback(update.callback_query);
+          } catch (err) {
+            console.error(
+              "[telegram] failed to handle a button press:",
+              err instanceof Error ? err.message : err
+            );
+            const chatId = update.callback_query.message?.chat?.id;
+            if (chatId !== undefined) {
+              await sendMessage(chatId, replyForError(err)).catch(() => {});
+            }
+          }
+          continue;
+        }
+
         if (!update.message) continue;
 
         const from = update.message.from;

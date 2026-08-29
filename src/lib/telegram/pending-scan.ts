@@ -92,6 +92,13 @@ export const revisePendingScan = (
   return { status: "revised", scan: revised };
 };
 
+/** The waiting scan itself, without consuming it. A button press has to check which scan it
+ *  belongs to *before* deciding to act on it. */
+export const peekPendingScan = (chatId: number, now = Date.now()): PendingScan | null => {
+  const scan = pending.get(chatId);
+  return scan && now - scan.createdAt <= PENDING_TTL_MS ? scan : null;
+};
+
 export const clearPendingScan = (chatId: number): void => {
   pending.delete(chatId);
 };
