@@ -52,6 +52,16 @@ const renderFilters = (initial: TransactionFilters = baseFilters) => {
   return render(<Harness />);
 };
 
+/**
+ * Positions the flow sentinel that marks the toolbar's natural place. A `top` above
+ * the 61px header means the page has scrolled past the toolbar and it is stuck;
+ * below it, the toolbar is still sitting in its own place in the document.
+ */
+const stubSentinelTop = (container: HTMLElement, top: number) => {
+  const sentinel = container.querySelector("[data-filter-toolbar-sentinel]")!;
+  vi.spyOn(sentinel, "getBoundingClientRect").mockReturnValue({ top } as DOMRect);
+};
+
 const openFilters = () => {
   const trigger = screen.getByRole("button", { name: /^Filters/ });
   fireEvent.click(trigger);
@@ -92,8 +102,9 @@ describe("TransactionFiltersBar", () => {
   });
 
   it("hides while scrolling and returns after the scroll settles", () => {
-    renderFilters();
+    const { container } = renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    stubSentinelTop(container, -10);
 
     expect(toolbar.className).toContain("opacity-100");
     fireEvent.scroll(window);
@@ -108,6 +119,32 @@ describe("TransactionFiltersBar", () => {
     act(() => vi.advanceTimersByTime(1));
     expect(toolbar.className).toContain("opacity-100");
     expect(toolbar.className).toContain("pointer-events-auto");
+  });
+
+  it("stays put while the page is still above the toolbar's own position", () => {
+    const { container } = renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    stubSentinelTop(container, 200);
+
+    fireEvent.scroll(window);
+    fireEvent.scroll(window);
+
+    expect(toolbar.className).toContain("opacity-100");
+    expect(toolbar.className).toContain("pointer-events-auto");
+    expect(toolbar.className).not.toContain("-translate-y-full");
+  });
+
+  it("starts ducking once the page has scrolled the toolbar into its sticky spot", () => {
+    const { container } = renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+
+    stubSentinelTop(container, 200);
+    fireEvent.scroll(window);
+    expect(toolbar.className).toContain("opacity-100");
+
+    stubSentinelTop(container, 0);
+    fireEvent.scroll(window);
+    expect(toolbar.className).toContain("-translate-y-full");
   });
 
   it("does not hide or blur while a toolbar control has focus", () => {
