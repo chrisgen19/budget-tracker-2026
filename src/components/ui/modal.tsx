@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useId, useRef, useState, useCallback } from "react";
 import { X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -75,6 +75,15 @@ const useVisualViewport = (enabled: boolean) => {
 let scrollLockCount = 0;
 let savedOverflow = "";
 let savedScrollY = 0;
+const modalStack: symbol[] = [];
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])",
+].join(",");
 
 const lockBodyScroll = () => {
   if (scrollLockCount === 0) {
@@ -113,7 +122,10 @@ interface ModalProps {
 }
 
 export function Modal({ open, onClose, title, children }: ModalProps) {
+  const titleId = useId();
+  const modalTokenRef = useRef(Symbol("modal"));
   const overlayRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   const isMobile = useIsMobile();
@@ -128,12 +140,41 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
     if (!open) return;
 
     lockBodyScroll();
+    const modalToken = modalTokenRef.current;
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    modalStack.push(modalToken);
 
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCloseRef.current();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (modalStack.at(-1) !== modalToken) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+      ).filter((element) => element.getAttribute("aria-hidden") !== "true");
+      const first = focusable[0];
+      const last = focusable.at(-1);
+
+      if (!first || !last) {
+        event.preventDefault();
+        dialog.focus();
+      } else if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
     };
 
-    document.addEventListener("keydown", handleEscape);
+    document.addEventListener("keydown", handleKeyDown);
 
     // Move focus into the modal if no child has autoFocus.
     // Delay slightly so the animation can render the content first.
@@ -146,8 +187,11 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
 
     return () => {
       clearTimeout(focusTimer);
-      document.removeEventListener("keydown", handleEscape);
+      document.removeEventListener("keydown", handleKeyDown);
+      const stackIndex = modalStack.lastIndexOf(modalToken);
+      if (stackIndex !== -1) modalStack.splice(stackIndex, 1);
       unlockBodyScroll();
+      if (previouslyFocused?.isConnected) previouslyFocused.focus({ preventScroll: true });
     };
   }, [open]);
 
@@ -212,6 +256,11 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
 
           {/* Modal Card */}
           <motion.div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            tabIndex={-1}
             className={cn(
               "relative bg-white shadow-soft-lg w-full grain-overlay flex flex-col",
               isMobile
@@ -252,10 +301,12 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
 
             {/* Sticky Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-cream-200/80 shrink-0">
-              <h2 className="font-serif text-xl text-warm-700">{title}</h2>
+              <h2 id={titleId} className="font-serif text-xl text-warm-700">{title}</h2>
               <button
+                type="button"
                 onClick={onClose}
-                className="p-2 -mr-2 rounded-xl text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors"
+                aria-label={`Close ${title}`}
+                className="-mr-2 flex min-h-11 min-w-11 items-center justify-center rounded-xl text-warm-400 transition-colors hover:bg-cream-100 hover:text-warm-600"
               >
                 <X className="w-5 h-5" />
               </button>

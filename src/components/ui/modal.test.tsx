@@ -1,5 +1,5 @@
-import { render } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { Modal } from "@/components/ui/modal";
 
 /**
@@ -98,5 +98,40 @@ describe("Modal body scroll lock", () => {
     expect(document.body.style.overflow).toBe("clip");
 
     document.body.style.overflow = "";
+  });
+
+  it("cycles keyboard focus within the topmost modal", () => {
+    render(
+      <Modal open onClose={() => {}} title="Review">
+        <button type="button">Cancel</button>
+        <button type="button">Save</button>
+      </Modal>,
+    );
+    const close = screen.getByRole("button", { name: "Close Review" });
+    const save = screen.getByRole("button", { name: "Save" });
+
+    save.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(document.activeElement).toBe(close);
+
+    close.focus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(save);
+  });
+
+  it("lets only the topmost modal handle Escape", () => {
+    const closeOuter = vi.fn();
+    const closeInner = vi.fn();
+    render(
+      <>
+        <Modal open onClose={closeOuter} title="Review"><button>Outer action</button></Modal>
+        <Modal open onClose={closeInner} title="Discard?"><button>Inner action</button></Modal>
+      </>,
+    );
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(closeInner).toHaveBeenCalledOnce();
+    expect(closeOuter).not.toHaveBeenCalled();
   });
 });

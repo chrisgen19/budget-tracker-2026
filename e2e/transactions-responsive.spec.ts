@@ -46,18 +46,21 @@ test.describe("transactions responsive layout", () => {
       await page.waitForTimeout(100);
       await assertNoHorizontalOverflow(page, width);
 
-      const compactFilters = page.getByRole("button", { name: "Toggle filters" });
-      if (width < 1440) {
-        await expect(compactFilters).toBeVisible();
-      } else {
-        await expect(compactFilters).toBeHidden();
-      }
+      await expect(page.getByRole("button", { name: /^Filters/ })).toBeVisible();
 
       await capture(page, testInfo, width);
     }
+
+    await page.setViewportSize({ width: 320, height: 700 });
+    await page.getByRole("button", { name: /^Filters/ }).click();
+    await expect(page.getByRole("dialog", { name: "Filter & sort" })).toBeVisible();
+    await expect(page.getByPlaceholder("Minimum")).toBeVisible();
+    await expect(page.getByPlaceholder("Maximum")).toBeVisible();
+    await assertNoHorizontalOverflow(page, 320);
+    await page.getByRole("button", { name: "Close Filter & sort" }).click();
   });
 
-  test("keeps mobile sticky headings and the FAB clear during scroll", async ({ page }) => {
+  test("keeps the mobile filter toolbar and FAB clear during scroll", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await login(page);
     await page.goto("/transactions", { waitUntil: "domcontentloaded" });
@@ -84,11 +87,25 @@ test.describe("transactions responsive layout", () => {
       recordHiddenState();
     });
 
-    const before = await dateHeading.boundingBox();
+    const filterToolbar = page.getByRole("region", { name: "Transaction filters" });
+    await page.evaluate(() => {
+      const toolbar = document.querySelector('[aria-label="Transaction filters"]');
+      if (!toolbar) throw new Error("Transaction filters not found");
+
+      document.documentElement.dataset.filterHiddenObserved = "false";
+      const observer = new MutationObserver(() => {
+        if (toolbar.classList.contains("pointer-events-none")) {
+          document.documentElement.dataset.filterHiddenObserved = "true";
+          observer.disconnect();
+        }
+      });
+      observer.observe(toolbar, { attributes: true, attributeFilter: ["class"] });
+    });
+    const before = await filterToolbar.boundingBox();
     expect(before).not.toBeNull();
     const initialScrollY = await page.evaluate(() => window.scrollY);
-    const headingDocumentY = before!.y + initialScrollY;
-    const targetScrollY = Math.max(0, headingDocumentY - 40);
+    const toolbarDocumentY = before!.y + initialScrollY;
+    const targetScrollY = Math.max(0, toolbarDocumentY + 160);
 
     await page.evaluate((scrollY) => window.scrollTo(0, scrollY), targetScrollY);
 
@@ -103,14 +120,26 @@ test.describe("transactions responsive layout", () => {
       )
       .toBe("true");
     await expect(fab).toBeEnabled();
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.dataset.filterHiddenObserved))
+      .toBe("true");
+    await expect(filterToolbar).toBeVisible();
 
-    const box = await dateHeading.boundingBox();
-    expect(box).not.toBeNull();
     const headerBox = await page.locator("header").boundingBox();
     expect(headerBox).not.toBeNull();
     const headerBottom = headerBox!.y + headerBox!.height;
-    expect(box!.y).toBeGreaterThanOrEqual(headerBottom - 1);
-    expect(box!.y).toBeLessThanOrEqual(headerBottom + 1);
+    await expect
+      .poll(async () => {
+        const box = await filterToolbar.boundingBox();
+        return box ? Math.round(box.y) : null;
+      })
+      .toBeGreaterThanOrEqual(Math.round(headerBottom) - 1);
+    await expect
+      .poll(async () => {
+        const box = await filterToolbar.boundingBox();
+        return box ? Math.round(box.y) : null;
+      })
+      .toBeLessThanOrEqual(Math.round(headerBottom) + 1);
 
     const fabBox = await fab.boundingBox();
     expect(fabBox).not.toBeNull();
@@ -119,7 +148,7 @@ test.describe("transactions responsive layout", () => {
     expect(fabBox!.height).toBeGreaterThanOrEqual(44);
     expect(fabBox!.height).toBeLessThanOrEqual(48);
 
-    const filterToggleBox = await page.getByRole("button", { name: "Toggle filters" }).boundingBox();
+    const filterToggleBox = await page.getByRole("button", { name: /^Filters/ }).boundingBox();
     expect(filterToggleBox).not.toBeNull();
     expect(filterToggleBox!.width).toBeGreaterThanOrEqual(44);
     expect(filterToggleBox!.height).toBeGreaterThanOrEqual(44);

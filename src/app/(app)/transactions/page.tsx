@@ -535,7 +535,7 @@ export default function TransactionsPage() {
                 {/* Date header */}
                 <div
                   data-transaction-date-heading
-                  className="flex items-center justify-between px-5 py-2.5 bg-cream-50 border-b border-cream-200 sticky top-[61px] lg:top-0 z-10"
+                  className="flex items-center justify-between px-5 py-2.5 bg-cream-50 border-b border-cream-200"
                 >
                   <span className="text-xs font-semibold text-warm-500 uppercase tracking-wide">
                     {group.dateLabel}

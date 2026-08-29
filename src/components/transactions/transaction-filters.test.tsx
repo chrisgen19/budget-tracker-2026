@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   TransactionFiltersBar,
@@ -10,8 +10,21 @@ vi.mock("@/components/user-provider", () => ({
   useUser: () => ({ user: { currency: "PHP", timezoneOffset: -480 } }),
 }));
 
-vi.mock("@/hooks/use-labels", () => ({
-  useLabelsQuery: () => ({ data: [] }),
+const filterOptionState = vi.hoisted(() => ({
+  value: {
+    categories: [] as { id: string; name: string }[],
+    categoriesPending: false,
+    categoriesError: false,
+    retryCategories: vi.fn(),
+    labels: [] as { id: string; name: string }[],
+    labelsPending: false,
+    labelsError: false,
+    retryLabels: vi.fn(),
+  },
+}));
+
+vi.mock("@/hooks/use-transaction-filter-options", () => ({
+  useTransactionFilterOptions: () => filterOptionState.value,
 }));
 
 const baseFilters: TransactionFilters = {
@@ -33,22 +46,29 @@ const renderFilters = (initial: TransactionFilters = baseFilters) => {
   function Harness() {
     const [filters, setFilters] = useState(initial);
     currentFilters = filters;
-    return (
-      <TransactionFiltersBar
-        filters={filters}
-        onChange={setFilters}
-        totalCount={10}
-      />
-    );
+    return <TransactionFiltersBar filters={filters} onChange={setFilters} totalCount={10} />;
   }
 
   return render(<Harness />);
 };
 
+const openFilters = () => {
+  const trigger = screen.getByRole("button", { name: /^Filters/ });
+  fireEvent.click(trigger);
+  return { trigger, dialog: screen.getByText("Filter & sort").closest("div")! };
+};
+
 beforeEach(() => {
   vi.useFakeTimers();
   currentFilters = baseFilters;
-  vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: false } as Response)));
+  filterOptionState.value.categories = [];
+  filterOptionState.value.categoriesPending = false;
+  filterOptionState.value.categoriesError = false;
+  filterOptionState.value.labels = [];
+  filterOptionState.value.labelsPending = false;
+  filterOptionState.value.labelsError = false;
+  filterOptionState.value.retryCategories.mockClear();
+  filterOptionState.value.retryLabels.mockClear();
 });
 
 afterEach(() => {
@@ -56,132 +76,232 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("TransactionFiltersBar state updates", () => {
-  it("keeps advanced controls in the compact drawer below the wide desktop breakpoint", () => {
-    const { container } = renderFilters();
+describe("TransactionFiltersBar", () => {
+  it("keeps the compact toolbar sticky and opens advanced filters in a dialog", () => {
+    renderFilters();
 
-    const toggle = screen.getByRole("button", { name: "Toggle filters" });
-    expect(toggle.className).toContain("min-[1440px]:hidden");
-    expect(toggle.className).toContain("min-h-11");
-    expect(toggle.className).toContain("min-w-11");
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    expect(toolbar.className).toContain("sticky");
+    expect(toolbar.className).toContain("top-[61px]");
 
-    const desktopCategory = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.trim() === "Category",
-    );
-    expect(desktopCategory?.parentElement?.className).toContain("hidden min-[1440px]:block");
-
-    fireEvent.click(toggle);
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const { trigger } = openFilters();
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByText("Amount range")).toBeTruthy();
-    expect(screen.getByText("Added by")).toBeTruthy();
+    expect(screen.getByText("Added via")).toBeTruthy();
     expect(screen.getByText("Sort by")).toBeTruthy();
   });
 
-  it("keeps compact menus in flow without stealing desktop dropdown refs", () => {
-    const { container } = renderFilters();
-    const toggle = screen.getByRole("button", { name: "Toggle filters" });
+  it("hides while scrolling and returns after the scroll settles", () => {
+    renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
 
-    fireEvent.click(toggle);
-    const compactSortField = screen.getByText("Sort by").parentElement;
-    expect(compactSortField).not.toBeNull();
-    fireEvent.click(within(compactSortField!).getByRole("button", { name: "Date (newest)" }));
+    expect(toolbar.className).toContain("opacity-100");
+    fireEvent.scroll(window);
+    expect(toolbar.className).toContain("-translate-y-full");
+    expect(toolbar.className).toContain("opacity-0");
+    expect(toolbar.className).toContain("pointer-events-none");
+    expect(toolbar.hasAttribute("inert")).toBe(false);
+    expect(toolbar.getAttribute("aria-hidden")).toBeNull();
 
-    const sortButtons = within(compactSortField!).getAllByRole("button", {
-      name: "Date (newest)",
-    });
-    const compactSortMenu = sortButtons.at(-1)?.parentElement;
-    expect(compactSortMenu?.className).toContain("relative");
-    expect(compactSortMenu?.className).not.toContain("absolute");
+    act(() => vi.advanceTimersByTime(179));
+    expect(toolbar.className).toContain("opacity-0");
+    act(() => vi.advanceTimersByTime(1));
+    expect(toolbar.className).toContain("opacity-100");
+    expect(toolbar.className).toContain("pointer-events-auto");
+  });
 
-    const desktopCategory = Array.from(container.querySelectorAll("button")).find(
-      (button) =>
-        button.textContent?.trim() === "Category" &&
-        button.parentElement?.className.includes("min-[1440px]:block"),
+  it("does not hide or blur while a toolbar control has focus", () => {
+    renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    const search = screen.getByRole("searchbox", { name: "Search transactions" });
+
+    search.focus();
+    fireEvent.scroll(window);
+
+    expect(document.activeElement).toBe(search);
+    expect(toolbar.className).toContain("opacity-100");
+    expect(toolbar.className).not.toContain("pointer-events-none");
+  });
+
+  it("keeps the sticky toolbar visible while scrolling at desktop widths", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) =>
+        ({
+          matches: query === "(min-width: 640px)",
+          media: query,
+          onchange: null,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          addListener: () => {},
+          removeListener: () => {},
+          dispatchEvent: () => false,
+        }) as MediaQueryList,
+      ),
     );
-    expect(desktopCategory).toBeTruthy();
-    const desktopCategoryContainer = desktopCategory!.parentElement!;
+    renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
 
-    fireEvent.click(desktopCategory!);
-    const desktopAllCategories = within(desktopCategoryContainer).getByRole("button", {
-      name: "All categories",
-    });
-    fireEvent.mouseDown(desktopAllCategories);
-    expect(desktopCategory!.querySelector("svg")?.getAttribute("class")).toContain("rotate-180");
+    fireEvent.scroll(window);
 
-    fireEvent.mouseDown(document.body);
-    expect(desktopCategory!.querySelector("svg")?.getAttribute("class")).not.toContain(
-      "rotate-180",
-    );
+    expect(toolbar.className).toContain("opacity-100");
+    expect(toolbar.className).not.toContain("pointer-events-none");
+  });
+
+  it("stages advanced changes until Apply filters is pressed", () => {
+    renderFilters();
+    openFilters();
+
+    fireEvent.click(screen.getByRole("button", { name: "Telegram" }));
+    fireEvent.click(screen.getByRole("button", { name: "Highest amount" }));
+    expect(currentFilters).toMatchObject({ createdVia: "ALL", sortBy: "date" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+    expect(currentFilters).toMatchObject({ createdVia: "TELEGRAM", sortBy: "amount", sortDir: "desc" });
+    expect(screen.getByRole("button", { name: /Filters/ }).getAttribute("aria-expanded")).toBe("false");
+    expect(screen.getByText("Source: Telegram")).toBeTruthy();
+  });
+
+  it("discards staged changes when the dialog is closed", () => {
+    renderFilters();
+    openFilters();
+
+    fireEvent.click(screen.getByRole("button", { name: "Telegram" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Filter & sort" }));
+
+    expect(currentFilters.createdVia).toBe("ALL");
+    expect(screen.getByRole("button", { name: "Filters" }).getAttribute("aria-expanded")).toBe("false");
   });
 
   it("keeps a type change made before the search debounce fires", () => {
     renderFilters();
 
-    fireEvent.change(screen.getByPlaceholderText("Search transactions..."), {
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search transactions" }), {
       target: { value: "Amazon" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Expenses" }));
-
+    fireEvent.click(screen.getAllByRole("button", { name: "Expenses" })[0]);
     act(() => vi.advanceTimersByTime(300));
 
     expect(currentFilters).toMatchObject({ search: "Amazon", type: "EXPENSE" });
   });
 
-  it("retains both amount bounds when they are entered within one debounce window", () => {
+  it("applies both amount bounds together", () => {
     renderFilters();
+    openFilters();
 
-    fireEvent.change(screen.getByPlaceholderText("min"), { target: { value: "100" } });
-    act(() => vi.advanceTimersByTime(100));
-    fireEvent.change(screen.getByPlaceholderText("max"), { target: { value: "200" } });
+    fireEvent.change(screen.getByPlaceholderText("Minimum"), { target: { value: "100" } });
+    fireEvent.change(screen.getByPlaceholderText("Maximum"), { target: { value: "200" } });
+    expect(currentFilters).toMatchObject({ amountMin: null, amountMax: null });
 
-    act(() => vi.advanceTimersByTime(500));
-
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
     expect(currentFilters).toMatchObject({ amountMin: 100, amountMax: 200 });
-    expect((screen.getByPlaceholderText("min") as HTMLInputElement).value).toBe("100");
-    expect((screen.getByPlaceholderText("max") as HTMLInputElement).value).toBe("200");
+    expect(screen.getByText("Amount: ₱100–₱200")).toBeTruthy();
   });
 
-  it("does not restore pending inputs after clearing all filters", () => {
-    renderFilters({ ...baseFilters, type: "EXPENSE" });
+  it("blocks an inverted amount range with a useful error", () => {
+    renderFilters();
+    openFilters();
 
-    fireEvent.change(screen.getByPlaceholderText("Search transactions..."), {
+    fireEvent.change(screen.getByPlaceholderText("Minimum"), { target: { value: "300" } });
+    fireEvent.change(screen.getByPlaceholderText("Maximum"), { target: { value: "100" } });
+
+    expect(screen.getByText(/Maximum amount must be greater/)).toBeTruthy();
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply filters" }).disabled).toBe(true);
+    expect(currentFilters).toMatchObject({ amountMin: null, amountMax: null });
+  });
+
+  it("rejects negative amount bounds", () => {
+    renderFilters();
+    openFilters();
+
+    fireEvent.change(screen.getByPlaceholderText("Minimum"), { target: { value: "-1" } });
+
+    expect(screen.getByText("Amounts must be zero or greater.")).toBeTruthy();
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply filters" }).disabled).toBe(true);
+    expect(currentFilters.amountMin).toBeNull();
+  });
+
+  it("cancels pending search input when Clear all is pressed", () => {
+    renderFilters({ ...baseFilters, createdVia: "TELEGRAM" });
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search transactions" }), {
       target: { value: "Amazon" },
     });
-    fireEvent.change(screen.getByPlaceholderText("min"), { target: { value: "100" } });
     fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+    act(() => vi.advanceTimersByTime(300));
 
-    act(() => vi.advanceTimersByTime(500));
-
-    expect(currentFilters).toMatchObject({ search: "", type: "ALL", amountMin: null });
-    expect((screen.getByPlaceholderText("Search transactions...") as HTMLInputElement).value)
-      .toBe("");
-    expect((screen.getByPlaceholderText("min") as HTMLInputElement).value).toBe("");
+    expect(currentFilters).toMatchObject({ search: "", createdVia: "ALL" });
+    expect(screen.getByRole<HTMLInputElement>("searchbox", { name: "Search transactions" }).value).toBe("");
   });
 
-  it("does not restore an amount after its chip cancels a pending replacement", () => {
-    renderFilters({ ...baseFilters, amountMin: 50 });
-
-    fireEvent.change(screen.getByPlaceholderText("min"), { target: { value: "100" } });
-    const chip = screen.getByText("Min: ₱50").closest("span");
-    expect(chip).not.toBeNull();
-    fireEvent.click(within(chip!).getByRole("button"));
-
-    act(() => vi.advanceTimersByTime(500));
-
-    expect(currentFilters.amountMin).toBeNull();
-    expect((screen.getByPlaceholderText("min") as HTMLInputElement).value).toBe("");
-  });
-
-  it("returns safely from All Time to the account current month", () => {
+  it("returns safely from All time to the account current month", () => {
     vi.setSystemTime(new Date("2026-08-31T17:00:00.000Z"));
     renderFilters({ ...baseFilters, month: "ALL" });
 
-    const monthNavigator = screen.getByText("All Time").parentElement;
-    expect(monthNavigator).not.toBeNull();
-    fireEvent.click(within(monthNavigator!).getAllByRole("button")[1]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Next month" })[0]);
 
     expect(currentFilters.month).toBe("2026-09");
-    expect(screen.getByText("September 2026")).toBeTruthy();
+    expect(screen.getAllByText("September 2026").length).toBeGreaterThan(0);
+  });
+
+  it("lets the user choose any month from the month label", () => {
+    renderFilters();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Choose month, August 2026" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Previous year" }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous year" }));
+    fireEvent.click(screen.getByRole("button", { name: "Feb" }));
+
+    expect(currentFilters.month).toBe("2024-02");
+    expect(screen.getAllByText("February 2024").length).toBeGreaterThan(0);
+  });
+
+  it("renders one consistently formatted result count even without active filters", () => {
+    renderFilters();
+
+    expect(screen.getAllByText("10 transactions")).toHaveLength(1);
+    expect(screen.getAllByText("10 transactions")[0].getAttribute("aria-live")).toBe("polite");
+  });
+
+  it("clears an unavailable selected label from the draft before applying", () => {
+    renderFilters({ ...baseFilters, labelId: "deleted-label" });
+    openFilters();
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+
+    expect(currentFilters.labelId).toBeNull();
+  });
+
+  it("allows both amount inputs to shrink inside a narrow dialog", () => {
+    renderFilters();
+    openFilters();
+
+    expect(screen.getByPlaceholderText("Minimum").parentElement?.className).toContain("min-w-0");
+    expect(screen.getByPlaceholderText("Maximum").parentElement?.className).toContain("min-w-0");
+  });
+
+  it("renders a retryable category error without stale options", () => {
+    filterOptionState.value.categories = [];
+    filterOptionState.value.categoriesError = true;
+    renderFilters({ ...baseFilters, type: "EXPENSE", categoryId: "income-category" });
+    openFilters();
+
+    expect(screen.queryByRole("option", { name: "Salary" })).toBeNull();
+    expect(screen.getByRole("button", { name: /Couldn’t load categories\. Retry/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Couldn’t load categories\. Retry/ }));
+    expect(filterOptionState.value.retryCategories).toHaveBeenCalledOnce();
+  });
+
+  it("uses 44px minimum touch targets for compact filter controls", () => {
+    renderFilters();
+    const search = screen.getByRole("searchbox", { name: "Search transactions" });
+    fireEvent.change(search, { target: { value: "coffee" } });
+
+    expect(screen.getByRole("button", { name: "Clear search" }).className).toContain("min-h-11");
+    expect(screen.getAllByRole("button", { name: "Previous month" })[0].className).toContain("min-w-11");
+    expect(screen.getByRole("button", { name: "All transactions" }).className).toContain("min-w-11");
+
+    act(() => vi.advanceTimersByTime(300));
+    expect(screen.getByRole("button", { name: /Remove Search: coffee filter/ }).className).toContain("min-h-11");
   });
 });
