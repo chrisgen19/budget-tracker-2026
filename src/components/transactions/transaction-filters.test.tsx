@@ -82,6 +82,29 @@ const scrollWindow = () => {
   });
 };
 
+/**
+ * jsdom has no ResizeObserver, so the toolbar's own height changing — a chip row
+ * collapsing, say — cannot be observed without one. This records what was observed
+ * and hands back the callback, so a test can raise the notification itself.
+ */
+const stubResizeObserver = () => {
+  const state: { observed: Element[]; notify?: () => void } = { observed: [] };
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(callback: () => void) {
+        state.notify = callback;
+      }
+      observe(target: Element) {
+        state.observed.push(target);
+      }
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  return state;
+};
+
 const openFilters = () => {
   const trigger = screen.getByRole("button", { name: /^Filters/ });
   fireEvent.click(trigger);
@@ -211,6 +234,43 @@ describe("TransactionFiltersBar", () => {
     // Bottom edge at -110 + 165 = 55, now above it: the space has left the screen.
     setMarkerTop(container, -110);
     scrollWindow();
+    expect(toolbar.className).toContain("sticky");
+  });
+
+  it("recomputes its position when its own height changes, with no scroll", () => {
+    const observer = stubResizeObserver();
+    const { container } = renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+
+    expect(observer.observed).toContain(toolbar);
+
+    setToolbarHeight(165);
+    setMarkerTop(container, -100);
+    scrollWindow();
+    expect(toolbar.className).toContain("relative");
+
+    // The chip row collapses. The toolbar gets shorter, its space moves behind the
+    // header, and nothing scrolls — so only the size notification can catch it.
+    setToolbarHeight(105);
+    act(() => observer.notify!());
+
+    expect(toolbar.className).toContain("sticky");
+  });
+
+  it("recomputes its position when the viewport is resized", () => {
+    const { container } = renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+
+    setToolbarHeight(165);
+    setMarkerTop(container, -100);
+    scrollWindow();
+    expect(toolbar.className).toContain("relative");
+
+    setToolbarHeight(105);
+    act(() => {
+      fireEvent(window, new Event("resize"));
+    });
+
     expect(toolbar.className).toContain("sticky");
   });
 
