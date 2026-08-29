@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
   CalendarDays,
   ChevronLeft,
@@ -20,8 +13,14 @@ import {
   TransactionFilterDialog,
   type AdvancedFilterValues,
 } from "@/components/transactions/transaction-filter-dialog";
+import {
+  TransactionFilterChips,
+  buildFilterChips,
+} from "@/components/transactions/transaction-filter-chips";
 import { TransactionMonthDialog } from "@/components/transactions/transaction-month-dialog";
 import { useUser } from "@/components/user-provider";
+import { useDebouncedSearch } from "@/hooks/use-debounced-search";
+import { useFilterToolbarScroll } from "@/hooks/use-filter-toolbar-scroll";
 import { useTransactionFilterOptions } from "@/hooks/use-transaction-filter-options";
 import { accountMonthKey } from "@/lib/account-time";
 import { cn, getCurrencySymbol } from "@/lib/utils";
@@ -45,21 +44,6 @@ export interface TransactionFiltersBarProps {
   onChange: Dispatch<SetStateAction<TransactionFilters>>;
   totalCount: number | null;
 }
-
-const SORT_OPTIONS = [
-  { label: "Newest first", sortBy: "date" as const, sortDir: "desc" as const },
-  { label: "Oldest first", sortBy: "date" as const, sortDir: "asc" as const },
-  { label: "Highest amount", sortBy: "amount" as const, sortDir: "desc" as const },
-  { label: "Lowest amount", sortBy: "amount" as const, sortDir: "asc" as const },
-];
-
-const SOURCE_CHIP_LABELS: Record<Exclude<TransactionFilters["createdVia"], "ALL">, string> = {
-  APP: "Source: In app",
-  MCP: "Source: Claude",
-  TELEGRAM: "Source: Telegram",
-};
-
-const DESKTOP_QUERY = "(min-width: 640px)";
 
 const DEFAULT_FILTERS: Omit<TransactionFilters, "month"> = {
   search: "",
@@ -110,11 +94,7 @@ export function TransactionFiltersBar({
   const [monthPickerYear, setMonthPickerYear] = useState(() =>
     Number(filters.month === "ALL" ? accountMonthKey(new Date(), user.timezoneOffset).slice(0, 4) : filters.month.slice(0, 4)),
   );
-  const [searchInput, setSearchInput] = useState(filters.search);
-  const [isScrolling, setIsScrolling] = useState(false);
-  const toolbarRef = useRef<HTMLElement>(null);
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const scrollTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const { toolbarRef, isScrolling, revealToolbar } = useFilterToolbarScroll();
 
   const update = useCallback(
     (partial: Partial<TransactionFilters>) => {
@@ -123,10 +103,9 @@ export function TransactionFiltersBar({
     [onChange],
   );
 
-  const cancelSearchDebounce = useCallback(() => {
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    searchTimerRef.current = undefined;
-  }, []);
+  const commitSearch = useCallback((search: string) => update({ search }), [update]);
+  const search = useDebouncedSearch(filters.search, commitSearch);
+  const { reset: resetSearchInput } = search;
 
   const previousTypeRef = useRef(filters.type);
   useEffect(() => {
@@ -134,57 +113,6 @@ export function TransactionFiltersBar({
     previousTypeRef.current = filters.type;
     if (filters.categoryId) update({ categoryId: null });
   }, [filters.categoryId, filters.type, update]);
-
-  useEffect(() => setSearchInput(filters.search), [filters.search]);
-  useEffect(() => cancelSearchDebounce, [cancelSearchDebounce]);
-
-  // Match ActionFab's mobile-only scroll behaviour: get the overlay out of the
-  // reader's way, unless the toolbar owns focus, then return it once scrolling settles.
-  useEffect(() => {
-    const desktopQuery = window.matchMedia(DESKTOP_QUERY);
-
-    const handleScroll = () => {
-      if (desktopQuery.matches || toolbarRef.current?.contains(document.activeElement)) {
-        setIsScrolling(false);
-        if (scrollTimerRef.current) {
-          clearTimeout(scrollTimerRef.current);
-          scrollTimerRef.current = undefined;
-        }
-        return;
-      }
-
-      setIsScrolling(true);
-      if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
-      scrollTimerRef.current = setTimeout(() => {
-        scrollTimerRef.current = undefined;
-        setIsScrolling(false);
-      }, 180);
-    };
-
-    const handleBreakpointChange = () => {
-      if (desktopQuery.matches) setIsScrolling(false);
-    };
-
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    desktopQuery.addEventListener("change", handleBreakpointChange);
-    return () => {
-      window.removeEventListener("scroll", handleScroll);
-      desktopQuery.removeEventListener("change", handleBreakpointChange);
-      if (scrollTimerRef.current) {
-        clearTimeout(scrollTimerRef.current);
-        scrollTimerRef.current = undefined;
-      }
-    };
-  }, []);
-
-  const handleSearchChange = (value: string) => {
-    setSearchInput(value);
-    cancelSearchDebounce();
-    searchTimerRef.current = setTimeout(() => {
-      searchTimerRef.current = undefined;
-      update({ search: value });
-    }, 300);
-  };
 
   const navigateMonth = (direction: -1 | 1) => {
     if (filters.month === "ALL") {
@@ -200,9 +128,7 @@ export function TransactionFiltersBar({
 
   const openMonthDialog = () => {
     const startingMonth =
-      filters.month === "ALL"
-        ? accountMonthKey(new Date(), user.timezoneOffset)
-        : filters.month;
+      filters.month === "ALL" ? accountMonthKey(new Date(), user.timezoneOffset) : filters.month;
     setMonthPickerYear(Number(startingMonth.slice(0, 4)));
     setMonthDialogOpen(true);
   };
@@ -213,13 +139,8 @@ export function TransactionFiltersBar({
   };
 
   const clearAll = () => {
-    cancelSearchDebounce();
+    resetSearchInput();
     update(DEFAULT_FILTERS);
-    setSearchInput("");
-  };
-
-  const openFilterDialog = () => {
-    setFilterDialogOpen(true);
   };
 
   const applyAdvancedFilters = (values: AdvancedFilterValues) => {
@@ -227,85 +148,25 @@ export function TransactionFiltersBar({
     setFilterDialogOpen(false);
   };
 
-  const selectedCategory = filters.categoryId
-    ? categories.find((category) => category.id === filters.categoryId)
-    : null;
-  const selectedLabel = filters.labelId
-    ? labels.find((label) => label.id === filters.labelId)
-    : null;
-  const currentSortLabel =
-    SORT_OPTIONS.find(
-      (option) => option.sortBy === filters.sortBy && option.sortDir === filters.sortDir,
-    )?.label ?? "Newest first";
   const advancedCount = countAdvancedFilters(filters);
-
-  const activeChips: { id: string; label: string; onRemove: () => void }[] = [];
-  if (filters.search) {
-    activeChips.push({
-      id: "search",
-      label: `Search: ${filters.search}`,
-      onRemove: () => {
-        cancelSearchDebounce();
-        update({ search: "" });
-        setSearchInput("");
-      },
-    });
-  }
-  if (filters.type !== "ALL") {
-    activeChips.push({
-      id: "type",
-      label: filters.type === "INCOME" ? "Income" : "Expenses",
-      onRemove: () => update({ type: "ALL" }),
-    });
-  }
-  if (selectedCategory) {
-    activeChips.push({
-      id: "category",
-      label: `Category: ${selectedCategory.name}`,
-      onRemove: () => update({ categoryId: null }),
-    });
-  }
-  if (selectedLabel) {
-    activeChips.push({
-      id: "label",
-      label: `Label: ${selectedLabel.name}`,
-      onRemove: () => update({ labelId: null }),
-    });
-  }
-  if (filters.createdVia !== "ALL") {
-    activeChips.push({
-      id: "source",
-      label: SOURCE_CHIP_LABELS[filters.createdVia],
-      onRemove: () => update({ createdVia: "ALL" }),
-    });
-  }
-  if (filters.amountMin !== null || filters.amountMax !== null) {
-    const amountLabel =
-      filters.amountMin !== null && filters.amountMax !== null
-        ? `${currencySymbol}${filters.amountMin}–${currencySymbol}${filters.amountMax}`
-        : filters.amountMin !== null
-          ? `${currencySymbol}${filters.amountMin}+`
-          : `Up to ${currencySymbol}${filters.amountMax}`;
-    activeChips.push({
-      id: "amount",
-      label: `Amount: ${amountLabel}`,
-      onRemove: () => update({ amountMin: null, amountMax: null }),
-    });
-  }
-  if (filters.sortBy !== "date" || filters.sortDir !== "desc") {
-    activeChips.push({
-      id: "sort",
-      label: `Sort: ${currentSortLabel}`,
-      onRemove: () => update({ sortBy: "date", sortDir: "desc" }),
-    });
-  }
+  const activeChips = buildFilterChips({
+    filters,
+    categoryName: categories.find((category) => category.id === filters.categoryId)?.name ?? null,
+    labelName: labels.find((label) => label.id === filters.labelId)?.name ?? null,
+    currencySymbol,
+    update,
+    onRemoveSearch: () => {
+      resetSearchInput();
+      update({ search: "" });
+    },
+  });
 
   return (
     <>
       <section
         ref={toolbarRef}
         aria-label="Transaction filters"
-        onFocusCapture={() => setIsScrolling(false)}
+        onFocusCapture={revealToolbar}
         className={cn(
           "card sticky top-[61px] lg:top-0 z-20 mb-4 overflow-hidden border-cream-300/70 bg-white shadow-soft motion-reduce:transition-none",
           isScrolling
@@ -315,62 +176,17 @@ export function TransactionFiltersBar({
       >
         <div className="p-2.5 sm:p-3">
           <div className="flex items-center gap-2.5">
-            <div role="search" className="relative min-w-0 flex-1 sm:max-w-sm">
-              <Search aria-hidden="true" className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-warm-300" />
-              <input
-                type="search"
-                value={searchInput}
-                onChange={(event) => handleSearchChange(event.target.value)}
-                placeholder="Search transactions"
-                aria-label="Search transactions"
-                className="min-h-11 w-full rounded-xl border border-cream-200 bg-cream-50/60 py-2.5 pl-10 pr-12 text-sm text-warm-700 outline-none transition placeholder:text-warm-300 focus:border-amber focus:bg-white focus:ring-2 focus:ring-amber/20"
-              />
-              {searchInput && (
-                <button type="button" onClick={() => handleSearchChange("")} aria-label="Clear search" className="absolute right-0 top-1/2 flex min-h-11 min-w-11 -translate-y-1/2 items-center justify-center rounded-lg text-warm-300 transition-colors hover:bg-cream-100 hover:text-warm-600">
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-            </div>
+            <SearchField value={search.input} onChange={search.change} />
 
-            <MonthNavigator
-              filters={filters}
-              onNavigate={navigateMonth}
-              onOpenPicker={openMonthDialog}
-              className="hidden sm:flex"
-            />
+            <MonthNavigator filters={filters} onNavigate={navigateMonth} onOpenPicker={openMonthDialog} className="hidden sm:flex" />
 
             <TypeToggle filters={filters} onChange={update} className="hidden lg:flex" />
 
-            <button
-              type="button"
-              onClick={openFilterDialog}
-              aria-label={advancedCount > 0 ? `Filters, ${advancedCount} active` : "Filters"}
-              aria-haspopup="dialog"
-              aria-expanded={filterDialogOpen}
-              className={cn(
-                "relative inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl border px-3 text-sm font-semibold transition-colors sm:px-4",
-                advancedCount > 0
-                  ? "border-amber/40 bg-amber-light/30 text-amber-dark"
-                  : "border-cream-200 bg-white text-warm-500 hover:border-cream-300 hover:bg-cream-50 hover:text-warm-700",
-              )}
-            >
-              <SlidersHorizontal className="h-[18px] w-[18px]" />
-              <span className="hidden sm:inline">Filters</span>
-              {advancedCount > 0 && (
-                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-amber px-1 text-[11px] font-bold text-white">
-                  {advancedCount}
-                </span>
-              )}
-            </button>
+            <FiltersButton count={advancedCount} expanded={filterDialogOpen} onClick={() => setFilterDialogOpen(true)} />
           </div>
 
           <div className="mt-2.5 flex items-center gap-2 sm:hidden">
-            <MonthNavigator
-              filters={filters}
-              onNavigate={navigateMonth}
-              onOpenPicker={openMonthDialog}
-              className="flex min-w-0 flex-1"
-            />
+            <MonthNavigator filters={filters} onNavigate={navigateMonth} onOpenPicker={openMonthDialog} className="flex min-w-0 flex-1" />
             <TypeToggle filters={filters} onChange={update} compact className="flex" />
           </div>
 
@@ -380,27 +196,7 @@ export function TransactionFiltersBar({
 
           <div className="mt-2.5 flex min-w-0 items-center gap-2 border-t border-cream-100 pt-2.5">
             <ResultCount totalCount={totalCount} />
-
-            {activeChips.length > 0 && (
-              <>
-                <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                  {activeChips.map((chip) => (
-                    <span key={chip.id} className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-full bg-amber-light/35 pl-3 text-xs font-medium text-amber-dark">
-                      {chip.label}
-                      <button type="button" onClick={chip.onRemove} aria-label={`Remove ${chip.label} filter`} className="flex min-h-11 min-w-11 items-center justify-center rounded-full transition-colors hover:bg-amber/15">
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-
-                {hasActiveFilters(filters) && (
-                  <button type="button" onClick={clearAll} className="ml-auto min-h-11 shrink-0 rounded-lg px-2 text-xs font-semibold text-warm-400 transition-colors hover:bg-cream-100 hover:text-warm-700">
-                    Clear all
-                  </button>
-                )}
-              </>
-            )}
+            <TransactionFilterChips chips={activeChips} onClearAll={hasActiveFilters(filters) ? clearAll : null} />
           </div>
         </div>
       </section>
@@ -408,6 +204,53 @@ export function TransactionFiltersBar({
       <TransactionFilterDialog open={filterDialogOpen} onClose={() => setFilterDialogOpen(false)} filters={filters} options={filterOptions} currencySymbol={currencySymbol} onApply={applyAdvancedFilters} />
       <TransactionMonthDialog open={monthDialogOpen} onClose={() => setMonthDialogOpen(false)} year={monthPickerYear} onYearChange={setMonthPickerYear} selectedMonth={filters.month} currentMonth={accountMonthKey(new Date(), user.timezoneOffset)} onSelect={selectMonth} />
     </>
+  );
+}
+
+function SearchField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <div role="search" className="relative min-w-0 flex-1 sm:max-w-sm">
+      <Search aria-hidden="true" className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-warm-300" />
+      <input
+        type="search"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="Search transactions"
+        aria-label="Search transactions"
+        className="min-h-11 w-full rounded-xl border border-cream-200 bg-cream-50/60 py-2.5 pl-10 pr-12 text-sm text-warm-700 outline-none transition placeholder:text-warm-300 focus:border-amber focus:bg-white focus:ring-2 focus:ring-amber/20"
+      />
+      {value && (
+        <button type="button" onClick={() => onChange("")} aria-label="Clear search" className="absolute right-0 top-1/2 flex min-h-11 min-w-11 -translate-y-1/2 items-center justify-center rounded-lg text-warm-300 transition-colors hover:bg-cream-100 hover:text-warm-600">
+          <X className="h-4 w-4" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function FiltersButton({ count, expanded, onClick }: { count: number; expanded: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={count > 0 ? `Filters, ${count} active` : "Filters"}
+      aria-haspopup="dialog"
+      aria-expanded={expanded}
+      className={cn(
+        "relative inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl border px-3 text-sm font-semibold transition-colors sm:px-4",
+        count > 0
+          ? "border-amber/40 bg-amber-light/30 text-amber-dark"
+          : "border-cream-200 bg-white text-warm-500 hover:border-cream-300 hover:bg-cream-50 hover:text-warm-700",
+      )}
+    >
+      <SlidersHorizontal className="h-[18px] w-[18px]" />
+      <span className="hidden sm:inline">Filters</span>
+      {count > 0 && (
+        <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-amber px-1 text-[11px] font-bold text-white">
+          {count}
+        </span>
+      )}
+    </button>
   );
 }
 
@@ -439,6 +282,7 @@ function MonthNavigator({
     </div>
   );
 }
+
 
 function TypeToggle({
   filters,

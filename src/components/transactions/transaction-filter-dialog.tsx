@@ -3,23 +3,13 @@
 import { useEffect, useState } from "react";
 import { ArrowUpDown } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
+import {
+  SORT_OPTIONS,
+  SOURCE_OPTIONS,
+} from "@/components/transactions/transaction-filter-options";
 import type { TransactionFilterOptions } from "@/hooks/use-transaction-filter-options";
 import { cn } from "@/lib/utils";
 import type { TransactionFilters } from "@/components/transactions/transaction-filters";
-
-const SORT_OPTIONS = [
-  { label: "Newest first", sortBy: "date" as const, sortDir: "desc" as const },
-  { label: "Oldest first", sortBy: "date" as const, sortDir: "asc" as const },
-  { label: "Highest amount", sortBy: "amount" as const, sortDir: "desc" as const },
-  { label: "Lowest amount", sortBy: "amount" as const, sortDir: "asc" as const },
-];
-
-const SOURCE_OPTIONS = [
-  { value: "ALL" as const, label: "Any source" },
-  { value: "APP" as const, label: "In app" },
-  { value: "MCP" as const, label: "Claude" },
-  { value: "TELEGRAM" as const, label: "Telegram" },
-];
 
 export type AdvancedFilterValues = Pick<
   TransactionFilters,
