@@ -24,6 +24,8 @@ describe("parseSearchIntent", () => {
       labelId: null,
       categoryId: null,
       month: "2026-08",
+      from: null,
+      to: null,
       type: "EXPENSE",
       subject: "meralco",
     });
@@ -155,6 +157,47 @@ describe("parseSearchIntent", () => {
     expect(parseSearchIntent({ action: "SEARCH_TRANSACTIONS", label: "Shopee" })).toBeNull();
     expect(parseSearchIntent({ action: "SEARCH_TRANSACTIONS", search: "meralco" })).toMatchObject({
       search: "meralco",
+    });
+  });
+
+  describe("explicit day ranges", () => {
+    const range = (extra: Record<string, unknown>) =>
+      parse({ action: "SEARCH_TRANSACTIONS", search: "meralco", ...extra });
+
+    it("passes a real range through", () => {
+      expect(range({ from: "2026-08-24", to: "2026-08-29" })).toMatchObject({
+        month: null,
+        from: "2026-08-24",
+        to: "2026-08-29",
+      });
+    });
+
+    it("keeps one open end", () => {
+      expect(range({ from: "2026-08-24" })).toMatchObject({ from: "2026-08-24", to: null });
+    });
+
+    it("drops the range when a month is also given, rather than sending a pair the server refuses", () => {
+      expect(range({ month: "2026-08", from: "2026-08-24", to: "2026-08-29" })).toMatchObject({
+        month: "2026-08",
+        from: null,
+        to: null,
+      });
+    });
+
+    it("drops a day that is not on the calendar instead of letting it roll forward", () => {
+      // Date.UTC(2026, 1, 31) is 3 March, which would query a window nobody asked for.
+      expect(range({ from: "2026-02-31" })).toMatchObject({ from: null });
+    });
+
+    it("drops a malformed day", () => {
+      expect(range({ from: "August 24" })).toMatchObject({ from: null });
+    });
+
+    it("drops a backwards range whole rather than half-applying it", () => {
+      expect(range({ from: "2026-08-29", to: "2026-08-24" })).toMatchObject({
+        from: null,
+        to: null,
+      });
     });
   });
 });

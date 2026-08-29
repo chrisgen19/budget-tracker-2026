@@ -39,7 +39,9 @@ const captureWhere = () => {
         return 0;
       }),
       aggregate: vi.fn(async () => ({ _sum: { amount: 0 } })),
+      groupBy: vi.fn(async () => []),
     },
+    category: { findMany: vi.fn(async () => []) },
   } as unknown as PrismaClient;
   return { prisma, seen };
 };
@@ -314,7 +316,9 @@ describe("searchTransactions label filter", () => {
           return [];
         }),
         count: vi.fn(async () => 0),
+        groupBy: vi.fn(async () => []),
       },
+      category: { findMany: vi.fn(async () => []) },
     } as unknown as PrismaClient;
     return { prisma, seen };
   };

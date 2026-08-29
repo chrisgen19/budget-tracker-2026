@@ -2,6 +2,56 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-29 - The week the server would not name
+
+Asked what a week's spending came to, the only honest answer involved a caveat: the tools filter by
+month, so a whole month of rows came back and got bucketed into days by hand -- and since every row
+is a UTC instant, a Manila user's 06:00 Wednesday fare, stored as Tuesday 22:00Z, had to be moved
+back to the day it actually happened on. Two separate gaps, both of them the client's problem to
+solve and both of them easy to solve wrongly.
+
+The second one was already solved, on one side. `formatLocalDate` has existed since
+`create_transactions` needed to echo a date back, with a docstring naming this exact failure: a
+UTC+8 user's 1 March row is stored as `2026-02-28T16:00:00Z`, so slicing the ISO string claims 28
+February for a transaction the app shows on 1 March. It was called in exactly one place, the write
+confirmation. Every read query returned `t.date.toISOString()` and left each client to redo the
+conversion. So the read rows now carry `localDate` beside `date` -- the instant is still there, for
+ordering and for label schedules; the calendar day is no longer a thing each caller derives for
+itself.
+
+Ranges are the other half. `parseMonth` already produced a `DateRange`, and every query filters on
+`{ gte, lte }`, so `from`/`to` is mostly plumbing -- with one detail that decides whether it works:
+both bounds are inclusive, so `to` resolves to 23:59:59.999 of that local day. Resolving it to
+midnight would drop everything that happened on the last day of the window while still returning a
+confident answer. `month` together with `from`/`to` is refused rather than resolved by precedence,
+on the same reasoning that makes the Telegram classifier drop an unresolvable label instead of
+passing it through: a filter that applies half of what was asked returns rows indistinguishable
+from a complete answer. An impossible day is refused too, because `Date.UTC(2026, 1, 31)` rolls
+forward to 3 March rather than failing, and would have quietly queried a window nobody asked for.
+
+Filtering rows was never the whole problem, though. Answering "how much" from a filtered list still
+means summing it, and a model summing eighty rows is a model doing arithmetic instead of reasoning.
+`search_transactions` now returns `totals` -- income, expenses, net, and per-category subtotals --
+computed over every match rather than the returned page. Two `groupBy` queries and a name lookup,
+which is cheap next to shipping the rows to be added up.
+
+Two smaller things fell out of the same session. Rows sharing a `receiptGroupId` are one receipt
+split across categories, and nothing in the payload said so, leaving a caller to infer it from
+matching timestamps and a shared description prefix; the id is now on the row. And `compact` drops
+`categoryIcon` and `categoryColor`, which exist for the app's UI, which no analysis reads, and which
+are about a fifth of a page's bytes.
+
+Last, nothing in the tool set said what day it was. A client with a shell can work that out; Claude
+on a phone cannot, and a model that guesses guesses in UTC, which makes "this week" unanswerable
+rather than merely approximate. `get_budget_overview` now reports `today` and `timezoneOffset`. The
+tidier option was an MCP resource, and it was deliberately not taken: `MCP_TOOL_SCOPES` gates tools,
+so a resource would be a data path no scope narrows, and widening the model to cover resources is a
+larger decision than this needed. A field on an existing tool inherits the scope that tool already
+has -- which also means no existing token has to be reminted to get any of this.
+
+Five schemas failed `pnpm type-check` the moment the query layer changed, which is `assertExact`
+doing precisely what it was written for.
+
 ## 2026-08-29 - A way out of the chat
 
 A mistyped shorthand — `1000 breakfast` for a hundred-peso meal — meant opening the app, finding
