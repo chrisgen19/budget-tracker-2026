@@ -2,6 +2,47 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-29 - Stopping the bot on purpose
+
+Six consecutive deploys produced an identical signature: exactly five `409 Conflict` lines, seven
+seconds apart, spanning twenty-eight seconds, then silence. Harmless in themselves — the new
+container starts polling before the old one exits, and the loop retries — but the window they
+measure was not harmless.
+
+`startTelegramBot` was a bare `while (true)` with no exit path, and nothing in the codebase handled
+a signal at all. SIGTERM killed the process wherever it happened to be, including part-way through
+a handler. Telegram settles an update only when a *later* `getUpdates` carries a higher offset;
+advancing the local variable confirms nothing. So a container killed mid-update left its whole
+batch unconfirmed, and the replacement was handed it again.
+
+Replays are survivable for writes, which is what the idempotency work was for: `create_transactions`
+keys on the update id and returns the original rows. `scan_receipt` does not, deliberately — it
+spends a metered credit and a second read may see the photo differently — so a receipt in flight
+during a deploy was scanned and charged twice.
+
+The stop is now deliberate. The flag is checked between updates, never inside one, since a
+half-finished update is the state that causes the problem. An idle poll is aborted rather than
+waited on: it runs twenty seconds and Docker's default grace period is ten, so waiting is how an
+idle bot gets SIGKILLed anyway. A handler in flight is never interrupted — abandoning it is the
+thing this exists to prevent. Then one final `getUpdates` at the advanced offset confirms the batch
+before the process exits.
+
+Review then found the flaw in doing that only at shutdown. This bot runs inside the Next server,
+and Next installs its own SIGTERM handler that calls `process.exit(0)` as soon as the HTTP server
+closes — so a confirmation scheduled from our handler is racing that exit, with no guarantee of
+winning. The graceful stop was real but its guarantee was not.
+
+So the confirmation moved to where it needs no cooperation from anything: immediately after each
+handler returns. That covers SIGTERM, SIGKILL, an OOM kill and a lost race identically, and it
+costs one cheap call per handled update, which for a personal bot is nothing. The signal handling
+stays, because not abandoning a handler halfway is still worth having, but it is now a courtesy
+rather than the mechanism.
+
+What remains unclosed is narrower and architectural: during the handover both containers are
+polling, and Telegram hands an update to whichever wins. The replacement can therefore be given an
+update the outgoing container is still handling. Closing that needs single-poller ownership or an
+idempotent scan, neither of which belongs in this change.
+
 ## 2026-08-29 - Buttons on the receipt review
 
 Answering a receipt meant typing "yes", which is the most repeated interaction in the bot and the

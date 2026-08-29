@@ -156,6 +156,20 @@ Two entry points share the one definition, the same shape as `mcp-server/`:
   container needs neither `tsx` nor `scripts/`
 - `scripts/telegram-bot.ts` (`pnpm telegram:bot`) runs it locally
 
+**Every handled update is confirmed immediately.** `confirmProcessed` issues a `getUpdates` at the
+advanced offset as soon as a handler returns, rather than waiting for the next poll. Advancing the
+local `offset` settles nothing — an update is confirmed only when a *later* poll carries a higher
+offset — so a process killed in between leaves its batch for the next container to replay. Doing it
+per-update rather than only at shutdown is deliberate: the bot runs inside the Next server, and
+Next's own signal handler calls `process.exit(0)` once the HTTP server closes, so a shutdown-time
+confirmation is racing that exit. Confirming as we go needs no cooperation from anything and holds
+for SIGKILL and an OOM kill as well. `startTelegramBot` also installs SIGTERM/SIGINT handlers, but
+that is a courtesy — not finishing a handler halfway — not the guarantee. Writes survive a replay (`create_transactions` is keyed on the
+update id) but `scan_receipt` is not idempotent, so a receipt in flight during a deploy was scanned
+and charged twice (#165). The stop is checked *between* updates, never inside one: an idle long poll
+is aborted, because it runs 20s against Docker's 10s grace period, and a handler in flight is always
+allowed to finish.
+
 **Only one poller may exist per bot token.** Telegram answers a second concurrent `getUpdates`
 with 409 Conflict, which is why the flag exists: without it every `pnpm dev` would fight the
 deployed bot. Never run it locally while it is enabled in production.
