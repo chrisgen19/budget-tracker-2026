@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { getAuthUserId } from "@/lib/session";
 import { billActionSchema } from "@/lib/validations";
 import { advanceToNextUnpaidOccurrence } from "@/lib/bill-utils";
+import { addUtcDays, userToday } from "@/lib/bill-dates";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 
 export async function POST(
@@ -29,7 +30,15 @@ export async function POST(
     const { action, dueDate: dueDateStr, transactionId: existingTransactionId, snoozeDays } = billActionSchema.parse(body);
     const dueDate = new Date(dueDateStr);
 
-    const originalStartDay = bill.startDate.getDate();
+    const originalStartDay = bill.startDate.getUTCDate();
+
+    // "Snooze for a day" means a day in the user's calendar, not the server's and not UTC's.
+    // Computed from `new Date()` alone, a snooze started at 02:00 in Manila expired the same
+    // morning, because the UTC day had not turned over yet.
+    const { timezoneOffset } = (await prisma.user.findUnique({
+      where: { id: userId },
+      select: { timezoneOffset: true },
+    })) ?? { timezoneOffset: 0 };
 
     /**
      * Lock the bill row. Must be a transaction's FIRST statement.
@@ -227,9 +236,9 @@ export async function POST(
     if (action === "snooze") {
       // Snooze for N days (default 1) — do NOT advance nextDueDate
       const days = snoozeDays ?? 1;
-      const snoozeUntil = new Date();
-      snoozeUntil.setDate(snoozeUntil.getDate() + days);
-      snoozeUntil.setHours(0, 0, 0, 0);
+      // The user's own day, N days on, stored at UTC midnight the way a due date is. Readers
+      // therefore take it as date-only and must not convert it back through an offset.
+      const snoozeUntil = addUtcDays(userToday(timezoneOffset ?? 0), days);
 
       await prisma.scheduledTransactionLog.create({
         data: {

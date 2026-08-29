@@ -344,9 +344,8 @@ const billHistory = z.object({
         .string()
         .nullable()
         .describe(
-          "The user's own calendar day the snooze runs to, YYYY-MM-DD. Converted, unlike " +
-            "`localDueDate`: it is derived from the clock at snooze time, not from a calendar " +
-            "day the user named."
+          "The calendar day the snooze runs to, YYYY-MM-DD. Date-only and not converted, like " +
+            "`localDueDate`: the snooze is stored as the user's own target day at UTC midnight."
         ),
     })
   ),

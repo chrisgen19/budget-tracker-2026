@@ -117,8 +117,9 @@ describe("bill history separates the date-only fields from the real instant", ()
               status: "SNOOZED",
               actionDate: new Date("2026-08-04T22:30:00.000Z"),
               transactionId: null,
-              // Written server-side as "now + 1 day", truncated. Read as date-only it would tell
-              // a UTC-4 user their one-day snooze runs to the 31st.
+              // The action route resolves the user's own day before adding the snooze length,
+              // so this already *is* their target day. Converting it again on read would move
+              // it to the 30th for a UTC-4 reader -- a day earlier than they chose.
               snoozeUntil: new Date("2026-08-31T00:00:00.000Z"),
             },
           ]),
@@ -126,13 +127,13 @@ describe("bill history separates the date-only fields from the real instant", ()
         transaction: { findMany: vi.fn(async () => []) },
       }) as unknown as PrismaClient;
 
-  it("converts the snooze day too, since it is derived from a clock and not a calendar", async () => {
+  it("reads the snooze day as date-only, matching how the action route writes it", async () => {
     const result = await getBillHistory(snoozePrisma(), "u1", {
       timezoneOffset: NEW_YORK,
       months: 24,
     });
 
-    expect(result.occurrences[0].localSnoozeUntil).toBe("2026-08-30");
+    expect(result.occurrences[0].localSnoozeUntil).toBe("2026-08-31");
     // The due date beside it is still untouched.
     expect(result.occurrences[0].localDueDate).toBe("2026-08-05");
   });

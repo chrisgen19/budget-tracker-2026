@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
+import { utcDayStart } from "@/lib/bill-utils";
 
 export async function GET(request: Request) {
   const userId = await getAuthUserId();
@@ -29,8 +30,7 @@ export async function GET(request: Request) {
   });
 
   const upcomingBills = bills.map((bill) => {
-    const dueDate = new Date(bill.nextDueDate);
-    dueDate.setHours(0, 0, 0, 0);
+    const dueDate = utcDayStart(bill.nextDueDate);
     const isOverdue = dueDate < today;
     const diffMs = dueDate.getTime() - today.getTime();
     const daysUntilDue = Math.round(diffMs / (1000 * 60 * 60 * 24));

@@ -304,10 +304,10 @@ export interface UpcomingBill {
    * same day for every reader, and reporting it as a bare day is what stops a model reading
    * `2026-08-05T00:00:00.000Z` and calling it 4 August.
    *
-   * That "stored at midnight UTC" is a real dependency and not a guarantee: the write paths
-   * normalise with `setHours(0, 0, 0, 0)`, which is *process-local* midnight, so it holds only
-   * while the server runs in UTC. Production does, by base-image default rather than by
-   * contract, and `nixpacks.toml` pins no `TZ`. Normalising those writes is tracked in #184.
+   * "Stored at midnight UTC" is now enforced rather than assumed: every server-side write and
+   * comparison normalises with `utcDayStart` / `addUtcDays` from `bill-utils.ts`, so the value
+   * no longer depends on the process happening to run in UTC (#184). The browser keeps local
+   * truncation on the bills page, where the process zone *is* the user's.
    */
   localDueDate: string;
   isOverdue: boolean;
@@ -456,13 +456,12 @@ export interface BillOccurrence {
   transactionId: string | null;
   snoozeUntil: string | null;
   /**
-   * The user's own calendar day the snooze runs to, YYYY-MM-DD.
+   * The calendar day the snooze runs to, YYYY-MM-DD.
    *
-   * Converted, unlike `localDueDate`, because its provenance is an instant and not a calendar
-   * day: `POST /api/bills/[id]/action` computes it as `new Date()` plus N days off the *server*
-   * clock. Someone at UTC-4 snoozing for a day at 20:00 local has that stored as the day after
-   * next in UTC, so reading it as date-only would tell them the snooze runs a day longer than
-   * they asked for.
+   * Date-only and not converted, the same as `localDueDate`. `POST /api/bills/[id]/action`
+   * resolves the user's own day before adding the snooze length and stores that at UTC midnight,
+   * so the offset is already accounted for; converting again here would move it back off the day
+   * the user actually chose.
    */
   localSnoozeUntil: string | null;
 }

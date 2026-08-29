@@ -2,6 +2,35 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-29 - Midnight, but whose?
+
+Review of #183 asked what guaranteed a bill due date is stored at midnight UTC, given every
+reader assumes it. Nothing did. Twelve server-side sites normalised with `setHours(0, 0, 0, 0)`,
+which truncates in the *process* zone — a no-op while the container runs in UTC, and `nixpacks.toml`
+pins no `TZ`, so that was luck rather than contract. On a laptop in Asia/Manila, which is the
+documented way to run the bot locally, paying a bill due the 5th stores `2026-09-04T16:00:00Z`,
+and the field added in #183 then reports the 4th.
+
+The fix is boring where it can be: `utcDayStart` and `addUtcDays`, applied everywhere a due date
+is truncated or shifted. What was not boring was `computeNextDueDate`, which turned out to be
+wrong in a second way that had nothing to do with timezones. `setMonth(+1)` on 31 January
+overflows to 3 March; the clamp that follows then reads *March's* length, finds 31, and returns
+31 March. A monthly bill on the 31st skipped February entirely. Building each result from UTC
+components removes both problems at once, because a date assembled from `Date.UTC(y, m, d)` never
+lands in a month nobody asked for.
+
+That function had no tests at all, which is how a bug like that survives in the scheduling core.
+It has fourteen now, including the January case and a check that every result sits exactly on
+midnight UTC.
+
+The helpers live in `bill-dates.ts` rather than beside the rest of the bill logic, and the module
+imports nothing. `bill-utils.ts` imports `@/types`, which augments `next-auth`; `mcp-server/` has
+no such dependency, so the first arrangement type-checked green at the root and failed the MCP
+server's own check — the exact split that check exists to catch, caught by it.
+
+One site keeps process-local truncation: the bills page, which runs in the browser, where the
+process zone *is* the user's.
+
 ## 2026-08-29 - Two kinds of date
 
 #132 asked why `create_transactions` reported "1 September" while the read tools reported

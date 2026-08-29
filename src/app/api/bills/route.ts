@@ -57,7 +57,7 @@ export async function GET(request: Request) {
     const display = advanceToNextUnpaidOccurrence(
       bill.nextDueDate,
       bill.frequency,
-      bill.startDate.getDate(),
+      bill.startDate.getUTCDate(),
       bill.customIntervalDays,
       billLogs,
       { endDate: bill.endDate },
