@@ -10,8 +10,21 @@ vi.mock("@/components/user-provider", () => ({
   useUser: () => ({ user: { currency: "PHP", timezoneOffset: -480 } }),
 }));
 
-vi.mock("@/hooks/use-labels", () => ({
-  useLabelsQuery: () => ({ data: [], isPending: false, isSuccess: true }),
+const filterOptionState = vi.hoisted(() => ({
+  value: {
+    categories: [] as { id: string; name: string }[],
+    categoriesPending: false,
+    categoriesError: false,
+    retryCategories: vi.fn(),
+    labels: [] as { id: string; name: string }[],
+    labelsPending: false,
+    labelsError: false,
+    retryLabels: vi.fn(),
+  },
+}));
+
+vi.mock("@/hooks/use-transaction-filter-options", () => ({
+  useTransactionFilterOptions: () => filterOptionState.value,
 }));
 
 const baseFilters: TransactionFilters = {
@@ -48,7 +61,14 @@ const openFilters = () => {
 beforeEach(() => {
   vi.useFakeTimers();
   currentFilters = baseFilters;
-  vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: false } as Response)));
+  filterOptionState.value.categories = [];
+  filterOptionState.value.categoriesPending = false;
+  filterOptionState.value.categoriesError = false;
+  filterOptionState.value.labels = [];
+  filterOptionState.value.labelsPending = false;
+  filterOptionState.value.labelsError = false;
+  filterOptionState.value.retryCategories.mockClear();
+  filterOptionState.value.retryLabels.mockClear();
 });
 
 afterEach(() => {
@@ -190,6 +210,17 @@ describe("TransactionFiltersBar", () => {
     expect(currentFilters).toMatchObject({ amountMin: null, amountMax: null });
   });
 
+  it("rejects negative amount bounds", () => {
+    renderFilters();
+    openFilters();
+
+    fireEvent.change(screen.getByPlaceholderText("Minimum"), { target: { value: "-1" } });
+
+    expect(screen.getByText("Amounts must be zero or greater.")).toBeTruthy();
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply filters" }).disabled).toBe(true);
+    expect(currentFilters.amountMin).toBeNull();
+  });
+
   it("cancels pending search input when Clear all is pressed", () => {
     renderFilters({ ...baseFilters, createdVia: "TELEGRAM" });
 
@@ -247,5 +278,30 @@ describe("TransactionFiltersBar", () => {
 
     expect(screen.getByPlaceholderText("Minimum").parentElement?.className).toContain("min-w-0");
     expect(screen.getByPlaceholderText("Maximum").parentElement?.className).toContain("min-w-0");
+  });
+
+  it("renders a retryable category error without stale options", () => {
+    filterOptionState.value.categories = [];
+    filterOptionState.value.categoriesError = true;
+    renderFilters({ ...baseFilters, type: "EXPENSE", categoryId: "income-category" });
+    openFilters();
+
+    expect(screen.queryByRole("option", { name: "Salary" })).toBeNull();
+    expect(screen.getByRole("button", { name: /Couldn’t load categories\. Retry/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Couldn’t load categories\. Retry/ }));
+    expect(filterOptionState.value.retryCategories).toHaveBeenCalledOnce();
+  });
+
+  it("uses 44px minimum touch targets for compact filter controls", () => {
+    renderFilters();
+    const search = screen.getByRole("searchbox", { name: "Search transactions" });
+    fireEvent.change(search, { target: { value: "coffee" } });
+
+    expect(screen.getByRole("button", { name: "Clear search" }).className).toContain("min-h-11");
+    expect(screen.getAllByRole("button", { name: "Previous month" })[0].className).toContain("min-w-11");
+    expect(screen.getByRole("button", { name: "All transactions" }).className).toContain("min-w-11");
+
+    act(() => vi.advanceTimersByTime(300));
+    expect(screen.getByRole("button", { name: /Remove Search: coffee filter/ }).className).toContain("min-h-11");
   });
 });

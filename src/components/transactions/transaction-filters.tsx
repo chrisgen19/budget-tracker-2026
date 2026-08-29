@@ -9,7 +9,6 @@ import {
   type SetStateAction,
 } from "react";
 import {
-  ArrowUpDown,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
@@ -17,12 +16,15 @@ import {
   SlidersHorizontal,
   X,
 } from "lucide-react";
-import { Modal } from "@/components/ui/modal";
+import {
+  TransactionFilterDialog,
+  type AdvancedFilterValues,
+} from "@/components/transactions/transaction-filter-dialog";
+import { TransactionMonthDialog } from "@/components/transactions/transaction-month-dialog";
 import { useUser } from "@/components/user-provider";
-import { useLabelsQuery } from "@/hooks/use-labels";
+import { useTransactionFilterOptions } from "@/hooks/use-transaction-filter-options";
 import { accountMonthKey } from "@/lib/account-time";
 import { cn, getCurrencySymbol } from "@/lib/utils";
-import type { Category, LabelWithCountAndSchedules } from "@/types";
 
 export interface TransactionFilters {
   search: string;
@@ -51,36 +53,13 @@ const SORT_OPTIONS = [
   { label: "Lowest amount", sortBy: "amount" as const, sortDir: "asc" as const },
 ];
 
-const SOURCE_OPTIONS = [
-  { value: "ALL" as const, label: "Any source" },
-  { value: "APP" as const, label: "In app" },
-  { value: "MCP" as const, label: "Claude" },
-  { value: "TELEGRAM" as const, label: "Telegram" },
-];
-
 const SOURCE_CHIP_LABELS: Record<Exclude<TransactionFilters["createdVia"], "ALL">, string> = {
   APP: "Source: In app",
   MCP: "Source: Claude",
   TELEGRAM: "Source: Telegram",
 };
 
-const MONTH_NAMES = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-] as const;
-
 const DESKTOP_QUERY = "(min-width: 640px)";
-const EMPTY_LABELS: LabelWithCountAndSchedules[] = [];
 
 const DEFAULT_FILTERS: Omit<TransactionFilters, "month"> = {
   search: "",
@@ -117,12 +96,6 @@ const countAdvancedFilters = (filters: TransactionFilters) => {
 const hasActiveFilters = (filters: TransactionFilters) =>
   filters.search !== "" || filters.type !== "ALL" || countAdvancedFilters(filters) > 0;
 
-const parseOptionalAmount = (value: string) => {
-  if (value.trim() === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
 export function TransactionFiltersBar({
   filters,
   onChange,
@@ -130,19 +103,13 @@ export function TransactionFiltersBar({
 }: TransactionFiltersBarProps) {
   const { user } = useUser();
   const currencySymbol = getCurrencySymbol(user.currency);
-  const labelsQuery = useLabelsQuery();
-  const labels = labelsQuery.data ?? EMPTY_LABELS;
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [categoriesLoaded, setCategoriesLoaded] = useState(false);
-  const [categoriesLoadSucceeded, setCategoriesLoadSucceeded] = useState(false);
+  const filterOptions = useTransactionFilterOptions(filters.type);
+  const { categories, labels } = filterOptions;
   const [filterDialogOpen, setFilterDialogOpen] = useState(false);
   const [monthDialogOpen, setMonthDialogOpen] = useState(false);
   const [monthPickerYear, setMonthPickerYear] = useState(() =>
     Number(filters.month === "ALL" ? accountMonthKey(new Date(), user.timezoneOffset).slice(0, 4) : filters.month.slice(0, 4)),
   );
-  const [draftFilters, setDraftFilters] = useState(filters);
-  const [draftAmountMin, setDraftAmountMin] = useState("");
-  const [draftAmountMax, setDraftAmountMax] = useState("");
   const [searchInput, setSearchInput] = useState(filters.search);
   const [isScrolling, setIsScrolling] = useState(false);
   const toolbarRef = useRef<HTMLElement>(null);
@@ -160,31 +127,6 @@ export function TransactionFiltersBar({
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     searchTimerRef.current = undefined;
   }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-
-    const fetchCategories = async () => {
-      setCategoriesLoaded(false);
-      setCategoriesLoadSucceeded(false);
-      const params = new URLSearchParams();
-      if (filters.type !== "ALL") params.set("type", filters.type);
-      try {
-        const response = await fetch(`/api/categories?${params}`, { signal: controller.signal });
-        if (response.ok) {
-          setCategories((await response.json()) as Category[]);
-          setCategoriesLoadSucceeded(true);
-        }
-      } catch {
-        // Keep the existing options on a transient failure. A selected value is
-        // rendered explicitly below so the draft never disagrees with the UI.
-      } finally {
-        if (!controller.signal.aborted) setCategoriesLoaded(true);
-      }
-    };
-    void fetchCategories();
-    return () => controller.abort();
-  }, [filters.type]);
 
   const previousTypeRef = useRef(filters.type);
   useEffect(() => {
@@ -235,35 +177,6 @@ export function TransactionFiltersBar({
     };
   }, []);
 
-  useEffect(() => {
-    if (!filterDialogOpen) return;
-
-    setDraftFilters((current) => {
-      const categoryId =
-        categoriesLoadSucceeded &&
-        current.categoryId &&
-        !categories.some((category) => category.id === current.categoryId)
-          ? null
-          : current.categoryId;
-      const labelId =
-        labelsQuery.isSuccess &&
-        current.labelId &&
-        !labels.some((label) => label.id === current.labelId)
-          ? null
-          : current.labelId;
-
-      return categoryId === current.categoryId && labelId === current.labelId
-        ? current
-        : { ...current, categoryId, labelId };
-    });
-  }, [
-    categories,
-    categoriesLoadSucceeded,
-    filterDialogOpen,
-    labels,
-    labelsQuery.isSuccess,
-  ]);
-
   const handleSearchChange = (value: string) => {
     setSearchInput(value);
     cancelSearchDebounce();
@@ -306,47 +219,11 @@ export function TransactionFiltersBar({
   };
 
   const openFilterDialog = () => {
-    setDraftFilters(filters);
-    setDraftAmountMin(filters.amountMin === null ? "" : String(filters.amountMin));
-    setDraftAmountMax(filters.amountMax === null ? "" : String(filters.amountMax));
     setFilterDialogOpen(true);
   };
 
-  const resetAdvancedDraft = () => {
-    setDraftFilters((current) => ({
-      ...current,
-      categoryId: null,
-      labelId: null,
-      createdVia: "ALL",
-      amountMin: null,
-      amountMax: null,
-      sortBy: "date",
-      sortDir: "desc",
-    }));
-    setDraftAmountMin("");
-    setDraftAmountMax("");
-  };
-
-  const parsedDraftMin = parseOptionalAmount(draftAmountMin);
-  const parsedDraftMax = parseOptionalAmount(draftAmountMax);
-  const amountRangeInvalid =
-    parsedDraftMin !== null && parsedDraftMax !== null && parsedDraftMin > parsedDraftMax;
-  const filterOptionsLoading =
-    (!categoriesLoaded && draftFilters.categoryId !== null) ||
-    (labelsQuery.isPending && draftFilters.labelId !== null);
-
-  const applyAdvancedFilters = () => {
-    if (amountRangeInvalid || filterOptionsLoading) return;
-    onChange((current) => ({
-      ...current,
-      categoryId: draftFilters.categoryId,
-      labelId: draftFilters.labelId,
-      createdVia: draftFilters.createdVia,
-      amountMin: parsedDraftMin,
-      amountMax: parsedDraftMax,
-      sortBy: draftFilters.sortBy,
-      sortDir: draftFilters.sortDir,
-    }));
+  const applyAdvancedFilters = (values: AdvancedFilterValues) => {
+    onChange((current) => ({ ...current, ...values }));
     setFilterDialogOpen(false);
   };
 
@@ -446,10 +323,10 @@ export function TransactionFiltersBar({
                 onChange={(event) => handleSearchChange(event.target.value)}
                 placeholder="Search transactions"
                 aria-label="Search transactions"
-                className="min-h-11 w-full rounded-xl border border-cream-200 bg-cream-50/60 py-2.5 pl-10 pr-10 text-sm text-warm-700 outline-none transition placeholder:text-warm-300 focus:border-amber focus:bg-white focus:ring-2 focus:ring-amber/20"
+                className="min-h-11 w-full rounded-xl border border-cream-200 bg-cream-50/60 py-2.5 pl-10 pr-12 text-sm text-warm-700 outline-none transition placeholder:text-warm-300 focus:border-amber focus:bg-white focus:ring-2 focus:ring-amber/20"
               />
               {searchInput && (
-                <button type="button" onClick={() => handleSearchChange("")} aria-label="Clear search" className="absolute right-1.5 top-1/2 flex min-h-8 min-w-8 -translate-y-1/2 items-center justify-center rounded-lg text-warm-300 transition-colors hover:bg-cream-100 hover:text-warm-600">
+                <button type="button" onClick={() => handleSearchChange("")} aria-label="Clear search" className="absolute right-0 top-1/2 flex min-h-11 min-w-11 -translate-y-1/2 items-center justify-center rounded-lg text-warm-300 transition-colors hover:bg-cream-100 hover:text-warm-600">
                   <X className="h-4 w-4" />
                 </button>
               )}
@@ -506,140 +383,30 @@ export function TransactionFiltersBar({
 
             {activeChips.length > 0 && (
               <>
-              <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                {activeChips.map((chip) => (
-                  <span key={chip.id} className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded-full bg-amber-light/35 pl-2.5 pr-1 text-xs font-medium text-amber-dark">
-                    {chip.label}
-                    <button type="button" onClick={chip.onRemove} aria-label={`Remove ${chip.label} filter`} className="flex min-h-7 min-w-7 items-center justify-center rounded-full transition-colors hover:bg-amber/15">
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </span>
-                ))}
-              </div>
+                <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  {activeChips.map((chip) => (
+                    <span key={chip.id} className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-full bg-amber-light/35 pl-3 text-xs font-medium text-amber-dark">
+                      {chip.label}
+                      <button type="button" onClick={chip.onRemove} aria-label={`Remove ${chip.label} filter`} className="flex min-h-11 min-w-11 items-center justify-center rounded-full transition-colors hover:bg-amber/15">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
 
-              {hasActiveFilters(filters) && (
-                <button type="button" onClick={clearAll} className="ml-auto shrink-0 rounded-lg px-2 py-1.5 text-xs font-semibold text-warm-400 transition-colors hover:bg-cream-100 hover:text-warm-700">
-                  Clear all
-                </button>
-              )}
+                {hasActiveFilters(filters) && (
+                  <button type="button" onClick={clearAll} className="ml-auto min-h-11 shrink-0 rounded-lg px-2 text-xs font-semibold text-warm-400 transition-colors hover:bg-cream-100 hover:text-warm-700">
+                    Clear all
+                  </button>
+                )}
               </>
             )}
           </div>
         </div>
       </section>
 
-      <Modal open={filterDialogOpen} onClose={() => setFilterDialogOpen(false)} title="Filter & sort">
-        <div className="space-y-5">
-          <p className="text-sm leading-6 text-warm-400">
-            Narrow the list by category, label, amount, or where it was added.
-          </p>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="space-y-1.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-warm-400">Category</span>
-              <select value={draftFilters.categoryId ?? ""} onChange={(event) => setDraftFilters((current) => ({ ...current, categoryId: event.target.value || null }))} disabled={!categoriesLoaded} className="min-h-11 w-full rounded-xl border border-cream-200 bg-cream-50/60 px-3 text-sm text-warm-700 outline-none transition focus:border-amber focus:bg-white focus:ring-2 focus:ring-amber/20 disabled:cursor-wait disabled:text-warm-300">
-                <option value="">{categoriesLoaded ? "All categories" : "Loading categories…"}</option>
-                {draftFilters.categoryId && !categories.some((category) => category.id === draftFilters.categoryId) && (
-                  <option value={draftFilters.categoryId}>
-                    {categoriesLoaded ? "Selected category unavailable" : "Loading selected category…"}
-                  </option>
-                )}
-                {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-              </select>
-            </label>
-
-            <label className="space-y-1.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-warm-400">Label</span>
-              <select value={draftFilters.labelId ?? ""} onChange={(event) => setDraftFilters((current) => ({ ...current, labelId: event.target.value || null }))} disabled={labelsQuery.isPending || (labels.length === 0 && !draftFilters.labelId)} className="min-h-11 w-full rounded-xl border border-cream-200 bg-cream-50/60 px-3 text-sm text-warm-700 outline-none transition focus:border-amber focus:bg-white focus:ring-2 focus:ring-amber/20 disabled:cursor-not-allowed disabled:text-warm-300">
-                <option value="">{labelsQuery.isPending ? "Loading labels…" : labels.length === 0 ? "No labels yet" : "All labels"}</option>
-                {draftFilters.labelId && !labels.some((label) => label.id === draftFilters.labelId) && (
-                  <option value={draftFilters.labelId}>
-                    {labelsQuery.isPending ? "Loading selected label…" : "Selected label unavailable"}
-                  </option>
-                )}
-                {labels.map((label) => <option key={label.id} value={label.id}>{label.name}</option>)}
-              </select>
-            </label>
-          </div>
-
-          <fieldset>
-            <legend className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-warm-400">Amount range</legend>
-            <div className="flex items-center gap-2">
-              <AmountInput label="Minimum amount" value={draftAmountMin} onChange={setDraftAmountMin} placeholder="Minimum" currencySymbol={currencySymbol} />
-              <span aria-hidden="true" className="text-warm-300">–</span>
-              <AmountInput label="Maximum amount" value={draftAmountMax} onChange={setDraftAmountMax} placeholder="Maximum" currencySymbol={currencySymbol} invalid={amountRangeInvalid} describedBy={amountRangeInvalid ? "amount-range-error" : undefined} />
-            </div>
-            {amountRangeInvalid && (
-              <p id="amount-range-error" className="mt-1.5 text-xs font-medium text-expense">
-                Maximum amount must be greater than or equal to minimum amount.
-              </p>
-            )}
-          </fieldset>
-
-          <fieldset>
-            <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-warm-400">Added via</legend>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {SOURCE_OPTIONS.map((option) => (
-                <button key={option.value} type="button" onClick={() => setDraftFilters((current) => ({ ...current, createdVia: option.value }))} aria-pressed={draftFilters.createdVia === option.value} className={cn("min-h-11 rounded-xl border px-3 text-sm font-medium transition-colors", draftFilters.createdVia === option.value ? "border-amber/40 bg-amber-light/30 text-amber-dark" : "border-cream-200 text-warm-500 hover:bg-cream-50")}>
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-
-          <fieldset>
-            <legend className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-warm-400">
-              <ArrowUpDown className="h-3.5 w-3.5" /> Sort by
-            </legend>
-            <div className="grid grid-cols-2 gap-2">
-              {SORT_OPTIONS.map((option) => {
-                const selected = draftFilters.sortBy === option.sortBy && draftFilters.sortDir === option.sortDir;
-                return (
-                  <button key={option.label} type="button" onClick={() => setDraftFilters((current) => ({ ...current, sortBy: option.sortBy, sortDir: option.sortDir }))} aria-pressed={selected} className={cn("min-h-11 rounded-xl border px-3 text-left text-sm font-medium transition-colors", selected ? "border-amber/40 bg-amber-light/30 text-amber-dark" : "border-cream-200 text-warm-500 hover:bg-cream-50")}>
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
-          </fieldset>
-
-          <div className="sticky bottom-0 -mx-6 -mb-6 flex items-center gap-2 border-t border-cream-200 bg-white px-6 py-4">
-            <button type="button" onClick={resetAdvancedDraft} className="min-h-11 rounded-xl px-3 text-sm font-semibold text-warm-400 transition-colors hover:bg-cream-100 hover:text-warm-700">Reset</button>
-            <button type="button" onClick={applyAdvancedFilters} disabled={amountRangeInvalid || filterOptionsLoading} className="min-h-11 flex-1 rounded-xl bg-amber px-5 text-sm font-semibold text-white shadow-soft transition-colors hover:bg-amber-dark disabled:cursor-not-allowed disabled:opacity-50">{filterOptionsLoading ? "Loading filters…" : "Apply filters"}</button>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal open={monthDialogOpen} onClose={() => setMonthDialogOpen(false)} title="Choose month">
-        <div className="space-y-5">
-          <div className="flex items-center justify-between rounded-xl bg-cream-50 p-1">
-            <button type="button" onClick={() => setMonthPickerYear((year) => year - 1)} aria-label="Previous year" className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-warm-400 transition-colors hover:bg-white hover:text-warm-700">
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <span className="font-serif text-xl text-warm-700">{monthPickerYear}</span>
-            <button type="button" onClick={() => setMonthPickerYear((year) => year + 1)} aria-label="Next year" className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-warm-400 transition-colors hover:bg-white hover:text-warm-700">
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-            {MONTH_NAMES.map((monthName, index) => {
-              const value = `${monthPickerYear}-${String(index + 1).padStart(2, "0")}`;
-              const selected = filters.month === value;
-              return (
-                <button key={monthName} type="button" onClick={() => selectMonth(value)} aria-pressed={selected} className={cn("min-h-11 rounded-xl border px-2 text-sm font-medium transition-colors", selected ? "border-amber bg-amber-light/35 text-amber-dark" : "border-cream-200 text-warm-500 hover:border-cream-300 hover:bg-cream-50 hover:text-warm-700")}>
-                  {monthName.slice(0, 3)}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="flex gap-2 border-t border-cream-200 pt-4">
-            <button type="button" onClick={() => selectMonth("ALL")} className="min-h-11 flex-1 rounded-xl border border-cream-200 px-3 text-sm font-semibold text-warm-500 transition-colors hover:bg-cream-50 hover:text-warm-700">All time</button>
-            <button type="button" onClick={() => selectMonth(accountMonthKey(new Date(), user.timezoneOffset))} className="min-h-11 flex-1 rounded-xl bg-amber px-3 text-sm font-semibold text-white transition-colors hover:bg-amber-dark">This month</button>
-          </div>
-        </div>
-      </Modal>
+      <TransactionFilterDialog open={filterDialogOpen} onClose={() => setFilterDialogOpen(false)} filters={filters} options={filterOptions} currencySymbol={currencySymbol} onApply={applyAdvancedFilters} />
+      <TransactionMonthDialog open={monthDialogOpen} onClose={() => setMonthDialogOpen(false)} year={monthPickerYear} onYearChange={setMonthPickerYear} selectedMonth={filters.month} currentMonth={accountMonthKey(new Date(), user.timezoneOffset)} onSelect={selectMonth} />
     </>
   );
 }
@@ -657,16 +424,16 @@ function MonthNavigator({
 }) {
   return (
     <div className={cn("items-center justify-between rounded-xl border border-cream-200 bg-cream-50/60 p-0.5", className)}>
-      <button type="button" onClick={() => onNavigate(-1)} aria-label="Previous month" className="flex min-h-10 min-w-10 items-center justify-center rounded-lg text-warm-400 transition-colors hover:bg-white hover:text-warm-700">
+      <button type="button" onClick={() => onNavigate(-1)} aria-label="Previous month" className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-warm-400 transition-colors hover:bg-white hover:text-warm-700">
         <ChevronLeft className="h-4 w-4" />
       </button>
-      <button type="button" onClick={onOpenPicker} aria-label={`Choose month, ${getMonthLabel(filters.month)}`} aria-haspopup="dialog" className="relative flex min-h-10 min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-1 text-sm font-semibold text-warm-600 transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/20 sm:min-w-32">
+      <button type="button" onClick={onOpenPicker} aria-label={`Choose month, ${getMonthLabel(filters.month)}`} aria-haspopup="dialog" className="relative flex min-h-11 min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-1 text-sm font-semibold text-warm-600 transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/20 sm:min-w-32">
         <CalendarDays aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-warm-400" />
         <span className="min-w-0 select-none truncate text-center">
           {getMonthLabel(filters.month)}
         </span>
       </button>
-      <button type="button" onClick={() => onNavigate(1)} aria-label="Next month" className="flex min-h-10 min-w-10 items-center justify-center rounded-lg text-warm-400 transition-colors hover:bg-white hover:text-warm-700">
+      <button type="button" onClick={() => onNavigate(1)} aria-label="Next month" className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-warm-400 transition-colors hover:bg-white hover:text-warm-700">
         <ChevronRight className="h-4 w-4" />
       </button>
     </div>
@@ -687,37 +454,11 @@ function TypeToggle({
   return (
     <div aria-label="Transaction type" className={cn("shrink-0 items-center gap-0.5 rounded-xl bg-cream-100 p-1", className)}>
       {(["ALL", "INCOME", "EXPENSE"] as const).map((type) => (
-        <button key={type} type="button" onClick={() => onChange({ type })} aria-label={compact ? type === "ALL" ? "All transactions" : type.toLowerCase() : undefined} aria-pressed={filters.type === type} className={cn("min-h-9 rounded-lg text-xs font-semibold transition-colors", compact ? "min-w-9 px-2" : "px-3", filters.type === type ? type === "INCOME" ? "bg-white text-income shadow-warm" : type === "EXPENSE" ? "bg-white text-expense shadow-warm" : "bg-white text-warm-700 shadow-warm" : "text-warm-400 hover:text-warm-600")}>
+        <button key={type} type="button" onClick={() => onChange({ type })} aria-label={compact ? type === "ALL" ? "All transactions" : type.toLowerCase() : undefined} aria-pressed={filters.type === type} className={cn("min-h-11 min-w-11 rounded-lg text-xs font-semibold transition-colors", compact ? "px-2" : "px-3", filters.type === type ? type === "INCOME" ? "bg-white text-income shadow-warm" : type === "EXPENSE" ? "bg-white text-expense shadow-warm" : "bg-white text-warm-700 shadow-warm" : "text-warm-400 hover:text-warm-600")}>
           {compact ? type === "ALL" ? "All" : type === "INCOME" ? "+" : "−" : type === "ALL" ? "All" : type === "INCOME" ? "Income" : "Expenses"}
         </button>
       ))}
     </div>
-  );
-}
-
-function AmountInput({
-  label,
-  value,
-  onChange,
-  placeholder,
-  currencySymbol,
-  invalid = false,
-  describedBy,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-  currencySymbol: string;
-  invalid?: boolean;
-  describedBy?: string;
-}) {
-  return (
-    <label className="relative min-w-0 flex-1">
-      <span className="sr-only">{label}</span>
-      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-warm-300">{currencySymbol}</span>
-      <input type="number" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} min="0" inputMode="decimal" aria-invalid={invalid} aria-describedby={describedBy} className="min-h-11 min-w-0 w-full rounded-xl border border-cream-200 bg-cream-50/60 py-2.5 pl-8 pr-3 text-sm text-warm-700 outline-none transition placeholder:text-warm-300 focus:border-amber focus:bg-white focus:ring-2 focus:ring-amber/20" />
-    </label>
   );
 }
 
