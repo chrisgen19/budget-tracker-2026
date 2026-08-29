@@ -50,6 +50,14 @@ test.describe("transactions responsive layout", () => {
 
       await capture(page, testInfo, width);
     }
+
+    await page.setViewportSize({ width: 320, height: 700 });
+    await page.getByRole("button", { name: /^Filters/ }).click();
+    await expect(page.getByRole("dialog", { name: "Filter & sort" })).toBeVisible();
+    await expect(page.getByPlaceholder("Minimum")).toBeVisible();
+    await expect(page.getByPlaceholder("Maximum")).toBeVisible();
+    await assertNoHorizontalOverflow(page, 320);
+    await page.getByRole("button", { name: "Close Filter & sort" }).click();
   });
 
   test("keeps the mobile filter toolbar and FAB clear during scroll", async ({ page }) => {
@@ -86,12 +94,12 @@ test.describe("transactions responsive layout", () => {
 
       document.documentElement.dataset.filterHiddenObserved = "false";
       const observer = new MutationObserver(() => {
-        if (toolbar.hasAttribute("inert")) {
+        if (toolbar.classList.contains("pointer-events-none")) {
           document.documentElement.dataset.filterHiddenObserved = "true";
           observer.disconnect();
         }
       });
-      observer.observe(toolbar, { attributes: true, attributeFilter: ["inert"] });
+      observer.observe(toolbar, { attributes: true, attributeFilter: ["class"] });
     });
     const before = await filterToolbar.boundingBox();
     expect(before).not.toBeNull();
@@ -117,13 +125,21 @@ test.describe("transactions responsive layout", () => {
       .toBe("true");
     await expect(filterToolbar).toBeVisible();
 
-    const toolbarBox = await filterToolbar.boundingBox();
-    expect(toolbarBox).not.toBeNull();
     const headerBox = await page.locator("header").boundingBox();
     expect(headerBox).not.toBeNull();
     const headerBottom = headerBox!.y + headerBox!.height;
-    expect(toolbarBox!.y).toBeGreaterThanOrEqual(headerBottom - 1);
-    expect(toolbarBox!.y).toBeLessThanOrEqual(headerBottom + 1);
+    await expect
+      .poll(async () => {
+        const box = await filterToolbar.boundingBox();
+        return box ? Math.round(box.y) : null;
+      })
+      .toBeGreaterThanOrEqual(Math.round(headerBottom) - 1);
+    await expect
+      .poll(async () => {
+        const box = await filterToolbar.boundingBox();
+        return box ? Math.round(box.y) : null;
+      })
+      .toBeLessThanOrEqual(Math.round(headerBottom) + 1);
 
     const fabBox = await fab.boundingBox();
     expect(fabBox).not.toBeNull();

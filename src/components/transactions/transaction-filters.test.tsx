@@ -11,7 +11,7 @@ vi.mock("@/components/user-provider", () => ({
 }));
 
 vi.mock("@/hooks/use-labels", () => ({
-  useLabelsQuery: () => ({ data: [] }),
+  useLabelsQuery: () => ({ data: [], isPending: false, isSuccess: true }),
 }));
 
 const baseFilters: TransactionFilters = {
@@ -40,7 +40,7 @@ const renderFilters = (initial: TransactionFilters = baseFilters) => {
 };
 
 const openFilters = () => {
-  const trigger = screen.getByRole("button", { name: "Filters" });
+  const trigger = screen.getByRole("button", { name: /^Filters/ });
   fireEvent.click(trigger);
   return { trigger, dialog: screen.getByText("Filter & sort").closest("div")! };
 };
@@ -79,13 +79,53 @@ describe("TransactionFiltersBar", () => {
     fireEvent.scroll(window);
     expect(toolbar.className).toContain("-translate-y-full");
     expect(toolbar.className).toContain("opacity-0");
-    expect(toolbar.hasAttribute("inert")).toBe(true);
+    expect(toolbar.className).toContain("pointer-events-none");
+    expect(toolbar.hasAttribute("inert")).toBe(false);
+    expect(toolbar.getAttribute("aria-hidden")).toBeNull();
 
     act(() => vi.advanceTimersByTime(179));
     expect(toolbar.className).toContain("opacity-0");
     act(() => vi.advanceTimersByTime(1));
     expect(toolbar.className).toContain("opacity-100");
-    expect(toolbar.hasAttribute("inert")).toBe(false);
+    expect(toolbar.className).toContain("pointer-events-auto");
+  });
+
+  it("does not hide or blur while a toolbar control has focus", () => {
+    renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    const search = screen.getByRole("searchbox", { name: "Search transactions" });
+
+    search.focus();
+    fireEvent.scroll(window);
+
+    expect(document.activeElement).toBe(search);
+    expect(toolbar.className).toContain("opacity-100");
+    expect(toolbar.className).not.toContain("pointer-events-none");
+  });
+
+  it("keeps the sticky toolbar visible while scrolling at desktop widths", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) =>
+        ({
+          matches: query === "(min-width: 640px)",
+          media: query,
+          onchange: null,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          addListener: () => {},
+          removeListener: () => {},
+          dispatchEvent: () => false,
+        }) as MediaQueryList,
+      ),
+    );
+    renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+
+    fireEvent.scroll(window);
+
+    expect(toolbar.className).toContain("opacity-100");
+    expect(toolbar.className).not.toContain("pointer-events-none");
   });
 
   it("stages advanced changes until Apply filters is pressed", () => {
@@ -176,10 +216,36 @@ describe("TransactionFiltersBar", () => {
   it("lets the user choose any month from the month label", () => {
     renderFilters();
 
-    const monthPicker = screen.getAllByLabelText("Choose month")[0];
-    fireEvent.change(monthPicker, { target: { value: "2024-02" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Choose month, August 2026" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Previous year" }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous year" }));
+    fireEvent.click(screen.getByRole("button", { name: "Feb" }));
 
     expect(currentFilters.month).toBe("2024-02");
     expect(screen.getAllByText("February 2024").length).toBeGreaterThan(0);
+  });
+
+  it("renders one consistently formatted result count even without active filters", () => {
+    renderFilters();
+
+    expect(screen.getAllByText("10 transactions")).toHaveLength(1);
+    expect(screen.getAllByText("10 transactions")[0].getAttribute("aria-live")).toBe("polite");
+  });
+
+  it("clears an unavailable selected label from the draft before applying", () => {
+    renderFilters({ ...baseFilters, labelId: "deleted-label" });
+    openFilters();
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+
+    expect(currentFilters.labelId).toBeNull();
+  });
+
+  it("allows both amount inputs to shrink inside a narrow dialog", () => {
+    renderFilters();
+    openFilters();
+
+    expect(screen.getByPlaceholderText("Minimum").parentElement?.className).toContain("min-w-0");
+    expect(screen.getByPlaceholderText("Maximum").parentElement?.className).toContain("min-w-0");
   });
 });
