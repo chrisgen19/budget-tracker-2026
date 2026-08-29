@@ -2,6 +2,33 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-29 - Stopping the bot on purpose
+
+Six consecutive deploys produced an identical signature: exactly five `409 Conflict` lines, seven
+seconds apart, spanning twenty-eight seconds, then silence. Harmless in themselves — the new
+container starts polling before the old one exits, and the loop retries — but the window they
+measure was not harmless.
+
+`startTelegramBot` was a bare `while (true)` with no exit path, and nothing in the codebase handled
+a signal at all. SIGTERM killed the process wherever it happened to be, including part-way through
+a handler. Telegram settles an update only when a *later* `getUpdates` carries a higher offset;
+advancing the local variable confirms nothing. So a container killed mid-update left its whole
+batch unconfirmed, and the replacement was handed it again.
+
+Replays are survivable for writes, which is what the idempotency work was for: `create_transactions`
+keys on the update id and returns the original rows. `scan_receipt` does not, deliberately — it
+spends a metered credit and a second read may see the photo differently — so a receipt in flight
+during a deploy was scanned and charged twice.
+
+The stop is now deliberate. The flag is checked between updates, never inside one, since a
+half-finished update is the state that causes the problem. An idle poll is aborted rather than
+waited on: it runs twenty seconds and Docker's default grace period is ten, so waiting is how an
+idle bot gets SIGKILLed anyway. A handler in flight is never interrupted — abandoning it is the
+thing this exists to prevent. Then one final `getUpdates` at the advanced offset confirms the batch
+before the process exits.
+
+That last call is the entire fix; everything else is arranging to be able to make it.
+
 ## 2026-08-29 - Buttons on the receipt review
 
 Answering a receipt meant typing "yes", which is the most repeated interaction in the bot and the

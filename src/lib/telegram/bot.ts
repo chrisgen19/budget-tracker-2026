@@ -44,6 +44,11 @@ import {
   shouldRetryWrite,
 } from "@/lib/telegram/errors";
 import { isPlainShorthand } from "@/lib/telegram/shorthand";
+import {
+  newShutdownState,
+  requestShutdown,
+  shouldStop,
+} from "@/lib/telegram/shutdown";
 import { GEMINI_ENABLED, classifyMessage } from "@/lib/telegram/classify";
 import { findOtherCategory, matchCategory } from "@/lib/telegram/category-match";
 /**
@@ -196,7 +201,21 @@ const agent = new https.Agent({
  */
 const REQUEST_TIMEOUT_MS = 40_000;
 
-async function telegramApi(method: string, body: Record<string, any> = {}): Promise<any> {
+/**
+ * Raised when a request is deliberately aborted, so the caller can tell it apart from a failure.
+ *
+ * Only the idle long poll is ever aborted, and only on shutdown, where it means "stop waiting"
+ * rather than "something went wrong" — a distinction the poll loop's error branch needs, since it
+ * otherwise logs and sleeps 3 seconds before retrying.
+ */
+class RequestAborted extends Error {}
+
+async function telegramApi(
+  method: string,
+  body: Record<string, any> = {},
+  /** Receives a function that cancels this request. Used to interrupt the idle long poll. */
+  onAbortable?: (abort: () => void) => void
+): Promise<any> {
   return new Promise((resolve, reject) => {
     const postData = JSON.stringify(body);
     const req = https.request(
@@ -232,6 +251,7 @@ async function telegramApi(method: string, body: Record<string, any> = {}): Prom
       // to end, and the resulting error is what rejects the promise.
       req.destroy(new Error(`Telegram ${method} timed out after ${REQUEST_TIMEOUT_MS}ms`));
     });
+    onAbortable?.(() => req.destroy(new RequestAborted(`${method} aborted`)));
     req.on("error", (e) => reject(e));
     req.write(postData);
     req.end();
@@ -1738,6 +1758,34 @@ async function registerCommandMenu(): Promise<void> {
   }
 }
 
+/**
+ * Tell Telegram everything below `offset` is done, so the next container is not handed it again.
+ *
+ * This one call is the whole point of the graceful stop. Advancing the local `offset` confirms
+ * nothing: an update is settled only when a *later* `getUpdates` is made with a higher offset, and
+ * that normally happens on the next iteration — which never comes when the process is killed. The
+ * batch is then redelivered, and a receipt inside it is scanned and charged a second time, because
+ * `scan_receipt` is deliberately not idempotent (#165).
+ *
+ * `timeout: 0` so it returns at once rather than parking for another long poll, and `limit: 1`
+ * because nothing here reads the response — only the offset it carries matters. Best effort: the
+ * process is exiting either way, and a failure here is exactly the redelivery that happened
+ * before, not a new failure mode.
+ */
+async function confirmProcessed(offset: number): Promise<void> {
+  if (offset === 0) return;
+
+  try {
+    await telegramApi("getUpdates", { offset, timeout: 0, limit: 1 });
+    console.warn(`[telegram] stopped cleanly; updates confirmed up to ${offset - 1}.`);
+  } catch (err) {
+    console.error(
+      "[telegram] stopped, but could not confirm the last updates, so they may be redelivered:",
+      err instanceof Error ? err.message : err
+    );
+  }
+}
+
 export async function startTelegramBot(): Promise<void> {
   if (!BOT_TOKEN) {
     throw new Error("TELEGRAM_BOT_TOKEN is not set.");
@@ -1798,14 +1846,41 @@ export async function startTelegramBot(): Promise<void> {
 
   let offset = 0;
 
+  const shutdown = newShutdownState();
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.once(signal, () => {
+      const outcome = requestShutdown(shutdown);
+      console.warn(
+        `[telegram] ${signal} received; ` +
+          (outcome === "aborted_idle_poll"
+            ? "stopping after the current poll."
+            : "finishing the update in flight first.")
+      );
+    });
+  }
+
   while (true) {
     try {
-      const updates = await telegramApi("getUpdates", {
-        offset,
-        timeout: 20,
-      });
+      const updates = await telegramApi(
+        "getUpdates",
+        { offset, timeout: 20 },
+        // Parked here is where the loop spends nearly all its time, and the poll outlasts
+        // Docker's default 10s grace period. Interrupting it is what lets an idle bot exit
+        // promptly instead of being SIGKILLed mid-wait.
+        (abort) => {
+          shutdown.abortIdlePoll = abort;
+        }
+      );
+      shutdown.abortIdlePoll = undefined;
 
       for (const update of updates) {
+        // Between updates, never inside one. A half-finished update is exactly the state that
+        // leaves a batch unconfirmed and gets a receipt scanned twice on the replay.
+        if (shouldStop(shutdown)) {
+          await confirmProcessed(offset);
+          return;
+        }
+
         offset = update.update_id + 1;
 
         // A button press is a callback_query, not a message, and used to be dropped by the check
@@ -1821,6 +1896,7 @@ export async function startTelegramBot(): Promise<void> {
             continue;
           }
           try {
+            shutdown.handling = true;
             await handleCallback(update.callback_query);
           } catch (err) {
             console.error(
@@ -1831,6 +1907,8 @@ export async function startTelegramBot(): Promise<void> {
             if (chatId !== undefined) {
               await sendMessage(chatId, replyForError(err)).catch(() => {});
             }
+          } finally {
+            shutdown.handling = false;
           }
           continue;
         }
@@ -1857,6 +1935,7 @@ export async function startTelegramBot(): Promise<void> {
         // message redeliver forever and wedge every message behind it, so the update is
         // acknowledged and the failure is reported to the person who sent it.
         try {
+          shutdown.handling = true;
           await handleMessage(update.message, update.update_id);
         } catch (err) {
           console.error(
@@ -1864,11 +1943,27 @@ export async function startTelegramBot(): Promise<void> {
             err instanceof Error ? err.message : err
           );
           await sendMessage(update.message.chat.id, replyForError(err)).catch(() => {});
+        } finally {
+          shutdown.handling = false;
         }
       }
     } catch (err: any) {
+      shutdown.abortIdlePoll = undefined;
+      // A deliberate abort is not a failure: it means the shutdown handler interrupted the idle
+      // poll, so the loop should exit rather than log and sleep three seconds before retrying.
+      if (err instanceof RequestAborted) {
+        await confirmProcessed(offset);
+        return;
+      }
       console.error("[telegram] polling error:", err.message);
       await new Promise((r) => setTimeout(r, 3000));
+    }
+
+    // The batch is drained. Confirm it before a stop, so the replacement container is not handed
+    // work this one already did.
+    if (shouldStop(shutdown)) {
+      await confirmProcessed(offset);
+      return;
     }
   }
 }
