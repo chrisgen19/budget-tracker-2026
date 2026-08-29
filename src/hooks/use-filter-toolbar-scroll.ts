@@ -16,10 +16,10 @@ const FOCUS_SCROLL_MS = 150;
  * Mirrors ActionFab's mobile-only scroll behaviour for the transaction toolbar:
  * hide it while the page scrolls, show it again once scrolling settles.
  *
- * `isOverlaying` says whether the toolbar has scrolled up under the header and is
- * now sitting on top of the list. Until it has, it is still in its own place in the
- * page, where hiding it would cover nothing and would leave a toolbar-sized gap
- * behind — so up there it does not move at all, and renders with no transition.
+ * It only hides once it has scrolled up under the header and is sitting on top of
+ * the list. Until then it is still in its own place in the page, where hiding it
+ * would cover nothing and would leave a toolbar-sized gap behind — so up there it
+ * does not move at all, and since nothing changes, nothing animates either.
  *
  * Three further cases never hide it: desktop, where nothing is crowding the
  * viewport; text entry inside the toolbar, because hiding it would blur the search
@@ -32,7 +32,6 @@ export function useFilterToolbarScroll() {
    *  in the page — unlike the toolbar, it is never moved by the hide transform. */
   const markerRef = useRef<HTMLDivElement>(null);
   const [isScrolling, setIsScrolling] = useState(false);
-  const [isOverlaying, setIsOverlaying] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const focusEnteredAtRef = useRef(0);
 
@@ -83,11 +82,8 @@ export function useFilterToolbarScroll() {
       !!toolbarRef.current?.contains(document.activeElement);
 
     const handleScroll = () => {
-      const overlaying = readIsOverlaying();
-      setIsOverlaying(overlaying);
-
       if (
-        !overlaying ||
+        !readIsOverlaying() ||
         desktopQuery.matches ||
         holdsTextEntry() ||
         isFocusDrivenScroll()
@@ -110,9 +106,6 @@ export function useFilterToolbarScroll() {
       if (desktopQuery.matches) setIsScrolling(false);
     };
 
-    // Read once on mount, so a page restored mid-scroll starts in the right state.
-    setIsOverlaying(readIsOverlaying());
-
     window.addEventListener("scroll", handleScroll, { passive: true });
     window.addEventListener("resize", forgetRestingTop);
     desktopQuery.addEventListener("change", handleBreakpointChange);
@@ -124,5 +117,5 @@ export function useFilterToolbarScroll() {
     };
   }, []);
 
-  return { toolbarRef, markerRef, isScrolling, isOverlaying, handleToolbarFocus };
+  return { toolbarRef, markerRef, isScrolling, handleToolbarFocus };
 }

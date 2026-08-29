@@ -139,14 +139,20 @@ describe("TransactionFiltersBar", () => {
     expect(toolbar.className).not.toContain("-translate-y-full");
   });
 
-  it("renders with no transition while it is in its own place at the top", () => {
+  it("keeps its transition at the top, so crossing back fades instead of snapping", () => {
     const { container } = renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
-    setToolbarOverlaying(container, false);
 
+    setToolbarOverlaying(container, true);
     fireEvent.scroll(window);
+    expect(toolbar.className).toContain("-translate-y-full");
 
-    expect(toolbar.className).not.toContain("transition-all");
+    // Scrolling back up until the toolbar is in its own place again. Without a
+    // transition here it jumps from invisible to visible in one frame.
+    setToolbarOverlaying(container, false);
+    fireEvent.scroll(window);
+    expect(toolbar.className).toContain("opacity-100");
+    expect(toolbar.className).toContain("transition-all");
   });
 
   it("starts hiding once it has scrolled under the header", () => {
