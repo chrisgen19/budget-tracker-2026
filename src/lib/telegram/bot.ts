@@ -6,6 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { updateBatchId } from "@/lib/telegram/batch-id";
 import { localDay, localTimestamp } from "@/lib/telegram/local-time";
+import { describeWindow, type ReportedPeriod } from "@/lib/telegram/period-label";
 import {
   callbackIsAllowed,
   messageIsAllowed,
@@ -524,11 +525,17 @@ async function handleRecent(chatId: number) {
       amount: number;
       description: string;
       type: string;
-      date: string;
+      localDate: string;
       categoryName: string;
       labels: { name: string }[];
     }[];
-  }>("search_transactions", { limit: 5, sortBy: "date", sortDir: "desc" });
+  }>("search_transactions", {
+    limit: 5,
+    sortBy: "date",
+    sortDir: "desc",
+    // No icons or colours are rendered here, and they are about a fifth of the payload.
+    compact: true,
+  });
 
   if (result.transactions.length === 0) {
     await sendMessage(chatId, "No transactions found.");
@@ -540,7 +547,7 @@ async function handleRecent(chatId: number) {
     const icon = t.type === "INCOME" ? "\u2795" : "\u2796";
     const labels = t.labels.map((l) => l.name).join(", ");
     msg += `${icon} *${SYMBOL}${t.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}* - ${t.description || t.categoryName}\n`;
-    msg += `   \ud83d\udcc1 ${t.categoryName} | \ud83d\udcc5 ${localDay(t.date, TZ_OFFSET)}${labels ? ` | \ud83c\udff7\ufe0f ${labels}` : ""}\n\n`;
+    msg += `   \ud83d\udcc1 ${t.categoryName} | \ud83d\udcc5 ${t.localDate}${labels ? ` | \ud83c\udff7\ufe0f ${labels}` : ""}\n\n`;
   }
 
   await sendMessage(chatId, msg);
@@ -599,7 +606,7 @@ const SEARCH_SHOW_LIMIT = 10;
 /**
  * Answer "did I pay X" and "how much did I spend on X" from real rows.
  *
- * Gemini extracts only the term and the month; every figure below comes from `search_transactions`.
+ * Gemini extracts only the term and the period; every figure below comes from `search_transactions`.
  * The distinction matters because this is the shape of question a model is most tempted to answer
  * from nothing, and a confident wrong number about your own money is worse than no answer.
  */
@@ -610,24 +617,24 @@ async function handleSearch(
     labelId: string | null;
     categoryId: string | null;
     month: string | null;
+    from: string | null;
+    to: string | null;
     type: "EXPENSE" | "INCOME";
     subject: string;
   }
 ): Promise<void> {
   const { subject, month } = filters;
-  // Always stated. Filtering is by month only, so a question about "last week" is answered with
-  // that whole month, and the header has to say so rather than letting a wider answer pass for
-  // a narrower one.
-  const when = month ? ` in ${month}` : "";
   const result = await callTool<{
     transactions: {
       amount: number;
       description: string;
-      date: string;
+      localDate: string;
       categoryName: string;
       type: string;
       labels: { name: string }[];
     }[];
+    period: ReportedPeriod | null;
+    totals: { count: number; income: number; expenses: number };
     pagination: { total: number };
   }>("search_transactions", {
     // Constrained to one side of the ledger, so the count, the listed rows and the total all
@@ -636,13 +643,23 @@ async function handleSearch(
     ...(filters.search && { search: filters.search }),
     ...(filters.labelId && { labelIds: [filters.labelId] }),
     ...(filters.categoryId && { categoryId: filters.categoryId }),
+    // A month and a day range are mutually exclusive, and `parseSearchIntent` has already made
+    // sure at most one survived. "Last week" is now answerable as last week rather than as the
+    // month it happens to fall in.
     ...(month && { month }),
-    // Fetched wider than shown so the total is the answer to "how much did I spend on X",
-    // rather than the total of the first ten rows dressed up as one.
+    ...(filters.from && { from: filters.from }),
+    ...(filters.to && { to: filters.to }),
+    // Still fetched wider than shown, but no longer to make the total right: `totals` covers
+    // every match. The extra rows are what the shared-label note below is counted from.
     limit: SEARCH_SUM_LIMIT,
     sortBy: "date",
     sortDir: "desc",
+    compact: true,
   });
+
+  // Taken from what the server says it queried, not from what was sent: a day dropped on the way
+  // in would otherwise be described here as though it had been applied.
+  const when = describeWindow(result.period);
 
   const rows = result.transactions;
 
@@ -658,23 +675,22 @@ async function handleSearch(
     return;
   }
 
-  const matched = result.pagination.total;
-  const total = rows.reduce((sum, r) => sum + r.amount, 0);
+  const matched = result.totals.count;
+  // Aggregated by the database over every match, so it no longer depends on how many rows came
+  // back. The reply used to have to say "total of the N most recent" whenever the match count
+  // exceeded the fetch, which is a hedge on the one number the question was actually about.
+  const total = filters.type === "INCOME" ? result.totals.income : result.totals.expenses;
   const money = (n: number) => `${SYMBOL}${n.toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
   const shown = rows.slice(0, SEARCH_SHOW_LIMIT);
 
   let msg = `\ud83d\udd0d *${subject}*${when}: ${matched} match${matched === 1 ? "" : "es"}\n\n`;
   for (const r of shown) {
-    msg += `\u2022 ${localDay(r.date, TZ_OFFSET)}  *${money(r.amount)}*  ${r.description || r.categoryName}\n`;
+    msg += `\u2022 ${r.localDate}  *${money(r.amount)}*  ${r.description || r.categoryName}\n`;
   }
   if (shown.length < matched) msg += `\n_Showing the ${shown.length} most recent._`;
 
   if (total > 0) {
-    // Says which it is. A total over a truncated set presented as "the total" is the same class
-    // of wrong as everything else guarded against here: it reads like an answer.
-    msg += rows.length < matched
-      ? `\n\nTotal of the ${rows.length} most recent: *${money(total)}*`
-      : `\n\nTotal: *${money(total)}*`;
+    msg += `\n\nTotal: *${money(total)}*`;
 
     // The app's label breakdown divides a transaction's amount evenly among its labels, so a row
     // carrying two labels contributes half there and all of it here. Both are defensible for the
@@ -784,6 +800,10 @@ async function handleBillCheck(chatId: number, search: string, month: string | n
       labelId: null,
       categoryId: null,
       month,
+      // A bill question carries a month at most: `get_bill_history` is sized in whole months,
+      // so there is no narrower window to hand on here.
+      from: null,
+      to: null,
       type: "EXPENSE",
       subject: search,
     });
@@ -925,7 +945,12 @@ async function handleMonthly(chatId: number, months: number): Promise<void> {
 /** "what were my biggest expenses?" */
 async function handleTopExpenses(chatId: number, month: string | null): Promise<void> {
   const result = await callTool<{
-    expenses: { amount: number; description: string; date: string; categoryName: string }[];
+    expenses: {
+      amount: number;
+      description: string;
+      localDate: string;
+      categoryName: string;
+    }[];
   }>("get_top_expenses", { limit: 10, ...(month && { month }) });
 
   if (result.expenses.length === 0) {
@@ -936,7 +961,7 @@ async function handleTopExpenses(chatId: number, month: string | null): Promise<
   let msg = `\ud83d\udcb8 *Biggest expenses${month ? ` in ${month}` : ""}*\n\n`;
   for (const [i, e] of result.expenses.entries()) {
     msg += `${i + 1}. *${peso(e.amount)}*  ${e.description || e.categoryName}\n`;
-    msg += `    ${localDay(e.date, TZ_OFFSET)} \u00b7 ${e.categoryName}\n`;
+    msg += `    ${e.localDate} \u00b7 ${e.categoryName}\n`;
   }
 
   await sendMessage(chatId, msg);
@@ -959,7 +984,8 @@ interface ReceiptItem {
   transactionId: string;
   transactionDescription: string;
   categoryName: string;
-  date: string;
+  /** The user's own calendar day, resolved server-side. */
+  localDate: string;
   receiptGroupId: string | null;
 }
 
@@ -1020,7 +1046,7 @@ async function handleReceiptItems(
       chatId,
       renderReceiptItems({
         heading: `Last receipt: *${newest.transactionDescription || newest.categoryName}*`,
-        subheading: localDay(newest.date, TZ_OFFSET),
+        subheading: newest.localDate,
         items,
         itemCount: newest.receiptGroupId ? scoped.itemCount : items.length,
         total,

@@ -13,6 +13,10 @@ export type SearchIntent =
       labelId: string | null;
       categoryId: string | null;
       month: string | null;
+      /** First local day of an explicit range, YYYY-MM-DD. Never set alongside `month`. */
+      from: string | null;
+      /** Last local day of an explicit range, YYYY-MM-DD, inclusive. Never set alongside `month`. */
+      to: string | null;
       /**
        * Which side of the ledger the question was about.
        *
@@ -29,6 +33,29 @@ export type SearchIntent =
   | null;
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * A day that actually exists, not merely one shaped like a date.
+ *
+ * `Date.UTC(2026, 1, 31)` rolls forward to 3 March rather than failing, and the server refuses
+ * such a day outright. Dropping it here keeps the same bargain the rest of this file makes: the
+ * query widens instead of asking for a window nobody meant.
+ */
+const validDay = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const match = DAY.exec(value.trim());
+  if (!match) return null;
+
+  const [year, month, day] = [match[1], match[2], match[3]].map(Number);
+  const rolled = new Date(Date.UTC(year, month - 1, day));
+  const real =
+    rolled.getUTCFullYear() === year &&
+    rolled.getUTCMonth() === month - 1 &&
+    rolled.getUTCDate() === day;
+
+  return real ? value.trim() : null;
+};
 
 /** Case-insensitive exact match. Deliberately not fuzzy: a near miss silently filters on the
  *  wrong label, and "no transactions found" would read like a real answer. */
@@ -42,8 +69,9 @@ const findByName = (refs: NamedRef[], name: unknown): NamedRef | null => {
  * Read a searching intent out of the classifier's reply, or return null to let it fall through.
  *
  * Everything here is validated against real data rather than trusted. Gemini is asked to name a
- * label, a category and a month, and it can return a label that does not exist, "August" instead
- * of "2026-08", or the right action with nothing to search for.
+ * label, a category and a period, and it can return a label that does not exist, "August" instead
+ * of "2026-08", a day that is not on the calendar, a range running backwards, or the right action
+ * with nothing to search for.
  *
  * Every one of those failures is dangerous in the same specific way: a filter the query cannot
  * satisfy returns zero rows, and "no transactions found" reads exactly like a real answer to
@@ -57,8 +85,21 @@ export const parseSearchIntent = (
 ): SearchIntent => {
   if (!result || typeof result !== "object") return null;
 
-  const { action, search, label, category, month, type } = result as Record<string, unknown>;
+  const { action, search, label, category, month, from, to, type } = result as Record<
+    string,
+    unknown
+  >;
   const validMonth = typeof month === "string" && MONTH.test(month) ? month : null;
+
+  // A month and an explicit range cannot both be sent: the server refuses the pair rather than
+  // silently choosing one. When the model returns both, the month wins and the range is dropped,
+  // which is the same trade this file makes everywhere else -- answering wider than asked is
+  // survivable and visible, answering narrower is a false negative dressed as an answer.
+  const rangeFrom = validMonth ? null : validDay(from);
+  const rangeTo = validMonth ? null : validDay(to);
+  // Lexicographic comparison is exact for YYYY-MM-DD. A backwards range matches nothing, so it
+  // is dropped whole rather than half-applied.
+  const backwards = rangeFrom !== null && rangeTo !== null && rangeFrom > rangeTo;
 
   if (action === "CHECK_BILL") {
     const term = typeof search === "string" ? search.trim() : "";
@@ -92,6 +133,8 @@ export const parseSearchIntent = (
     labelId: matchedLabel?.id ?? null,
     categoryId: matchedCategory?.id ?? null,
     month: validMonth,
+    from: backwards ? null : rangeFrom,
+    to: backwards ? null : rangeTo,
     subject,
   };
 };

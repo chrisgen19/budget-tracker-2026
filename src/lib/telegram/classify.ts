@@ -75,12 +75,14 @@ Decide what the user wants:
   - "type": "INCOME" only when the question is clearly about money coming in ("how much did I
     earn from X", "did I get paid by X"). Leave it out for anything about spending, paying or
     buying, which is nearly always what is meant.
-  - "month": YYYY-MM. Set it whenever the user limited the question to ANY period, not only a
-    whole month: for "last week", "yesterday" or a named date, use the month that period falls
-    in. Filtering is only available by month, so a narrower period becomes its month and the
-    reply says which month it covered. Omit it only when they set no time limit at all
-    ("how much have I spent at jollibee"). Use the current timestamp above to resolve
-    "this month" and "last month".
+  - "month": YYYY-MM, for a WHOLE month ("this month", "last month", "in August"). Use the
+    current timestamp above to resolve which.
+  - "from" and "to": YYYY-MM-DD, for any period NARROWER than a month, resolved against the
+    current timestamp above: "last week", "yesterday", "since Monday", "the 24th to the 29th",
+    "the last 3 days". Both ends are inclusive, so "yesterday" sets from and to to the same day.
+    Set only one end when the user gave only one ("since payday").
+  Never set "month" together with "from"/"to" -- pick whichever matches what they asked for.
+  Omit all three only when they set no time limit at all ("how much have I spent at jollibee").
   At least one of label, category or search must be set.
 - Comparing one month against the one before ("am I spending more than last month", "how does
   this month compare") -> "SHOW_TRENDS", with "month" set to the later month in YYYY-MM.
@@ -119,6 +121,8 @@ Return ONLY a JSON object in this format:
   "label": string | null,
   "category": string | null,
   "month": string | null,
+  "from": string | null,
+  "to": string | null,
   "transaction": {
     "amount": number,
     "description": string,
