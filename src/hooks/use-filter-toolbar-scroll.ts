@@ -28,7 +28,14 @@ export function useFilterToolbarScroll() {
     };
 
     const handleScroll = () => {
-      if (desktopQuery.matches || toolbarRef.current?.contains(document.activeElement)) {
+      if (
+        desktopQuery.matches ||
+        // At the top of the page the toolbar covers nothing, and iOS rubber-band and
+        // momentum settling fire scroll events at `scrollY <= 0` — ducking on those
+        // flickered it away and back while the reader was not going anywhere.
+        window.scrollY <= 0 ||
+        toolbarRef.current?.contains(document.activeElement)
+      ) {
         setIsScrolling(false);
         clearTimer();
         return;

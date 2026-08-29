@@ -52,6 +52,11 @@ const renderFilters = (initial: TransactionFilters = baseFilters) => {
   return render(<Harness />);
 };
 
+/** jsdom's `scrollY` is a read-only getter, so a scroll position has to be defined in. */
+const setScrollY = (y: number) => {
+  Object.defineProperty(window, "scrollY", { value: y, writable: true, configurable: true });
+};
+
 const openFilters = () => {
   const trigger = screen.getByRole("button", { name: /^Filters/ });
   fireEvent.click(trigger);
@@ -60,6 +65,7 @@ const openFilters = () => {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  setScrollY(0);
   currentFilters = baseFilters;
   filterOptionState.value.categories = [];
   filterOptionState.value.categoriesPending = false;
@@ -94,6 +100,7 @@ describe("TransactionFiltersBar", () => {
   it("hides while scrolling and returns after the scroll settles", () => {
     renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    setScrollY(400);
 
     expect(toolbar.className).toContain("opacity-100");
     fireEvent.scroll(window);
@@ -108,6 +115,21 @@ describe("TransactionFiltersBar", () => {
     act(() => vi.advanceTimersByTime(1));
     expect(toolbar.className).toContain("opacity-100");
     expect(toolbar.className).toContain("pointer-events-auto");
+  });
+
+  it("stays visible while the page is at the top", () => {
+    renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+
+    // iOS rubber-band and momentum settling fire scroll events at the top.
+    setScrollY(0);
+    fireEvent.scroll(window);
+    fireEvent.scroll(window);
+    fireEvent.scroll(window);
+
+    expect(toolbar.className).toContain("opacity-100");
+    expect(toolbar.className).toContain("pointer-events-auto");
+    expect(toolbar.className).not.toContain("-translate-y-full");
   });
 
   it("does not hide or blur while a toolbar control has focus", () => {
