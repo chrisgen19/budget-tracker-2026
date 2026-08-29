@@ -10,12 +10,22 @@ export const gemini =
 
 if (process.env.NODE_ENV !== "production") globalForGemini.gemini = gemini;
 
-export const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+/**
+ * The model every Gemini call in this app uses.
+ *
+ * The default is kept in step with what production actually sets. It drifted once already:
+ * the Telegram classifier pinned the old default as a literal, so it ran two generations
+ * behind everything else in the same process and degraded as misrouted intent rather than as
+ * an error (#163). Import this; never write a model id at a call site.
+ */
+export const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-3.6-flash";
 
-/** Model to retry on after the primary model exhausts its overload retries.
+/** Model to retry on after the primary model exhausts its overload retries. A generation
+ *  behind the primary on purpose: the failure this covers is the newest model being
+ *  overloaded, which retrying on the same generation does least to escape.
  *  Set GEMINI_FALLBACK_MODEL="" to disable fallback entirely. */
 export const GEMINI_FALLBACK_MODEL =
-  process.env.GEMINI_FALLBACK_MODEL ?? "gemini-2.5-flash";
+  process.env.GEMINI_FALLBACK_MODEL ?? "gemini-3.5-flash";
 
 /** Thinking budget for Gemini 2.x models — -1 enables dynamic thinking (model decides,
  *  best extraction quality), 0 disables thinking (fastest "speed mode"),

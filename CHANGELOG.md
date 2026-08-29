@@ -2,6 +2,50 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-29 - The model the Telegram bot was actually running
+
+Production sets `GEMINI_MODEL=gemini-3.6-flash`. The Telegram bot was running `gemini-2.5-flash`,
+and had been since the day the literal was typed.
+
+It was the only place in the codebase that wrote a model id at a call site. Every other caller —
+receipt scanning, itemization, AI Assessment — imports `GEMINI_MODEL`. The literal matched the
+default when it was written, so it was correct exactly once, and then the env var moved and
+nothing said otherwise. There was no test, because `processNaturalLanguageWithGemini` was a
+private function inside an 1,800-line module: nothing could import it to assert anything about it.
+
+The failure mode is why it survived. A worse classifier does not throw. It routes "did I pay
+meralco this month" to the wrong handler, or returns a label that resolves to nothing, and the
+bot answers something plausible and slightly wrong. Nobody files a bug against a bot for being a
+bit dim.
+
+The same function also called the SDK directly rather than `generateContentWithRetry`, so it got
+one attempt where receipt scanning gets three plus a fallback model, and a transient 503 was
+swallowed and reported to the user as **"I couldn't understand that command."** They rephrase a
+message that was already fine. The retry machinery existed; this caller just never reached it.
+
+The classifier now lives in `src/lib/telegram/classify.ts`, reads `GEMINI_MODEL`, and goes through
+the retry wrapper. Extraction is the part that matters: it is what allows a test to fail when
+either regresses, and both reverts were confirmed to fail the suite before this shipped.
+
+It imports `@/lib/gemini` **dynamically**, and exports `GEMINI_ENABLED` read from the environment
+rather than from a constructed client. `gemini.ts` builds `GoogleGenAI` at module scope and throws
+without `GEMINI_API_KEY`, so a static import would have turned a graceful degradation — no key,
+shorthand-only logging, bot still up — into a crash at boot. The tidier-looking import was the
+regression.
+
+The defaults in `gemini.ts` moved to `gemini-3.6-flash` and `gemini-3.5-flash`, so the shipped
+default matches what production runs and this class of drift closes for every caller rather than
+just this one.
+
+Deliberately unchanged: the thinking level. The classifier is on the hot path of every free-text
+message, where latency matters far more than it does for a receipt scan, and a newer model at
+`medium` may well be slower at what is fundamentally a routing decision. Changing the model and
+the reasoning budget in one step would make a latency regression unattributable, so the model
+moved alone and the measurement comes next. Worth knowing before that lands:
+`generateContentWithRetry` injects `thinkingConfig` on its fallback path regardless of what the
+caller set, so primary and fallback attempts currently reason at different levels, and a per-call
+setting would be silently overwritten mid-retry.
+
 ## 2026-08-26 - A misread year, and the failures nobody could see
 
 A production scan of a receipt printing `08/26/2026` came back as **2023**-08-26. Month and day
