@@ -25,6 +25,7 @@ import type {
   BillHistory,
   ReceiptItems,
 } from "../budget-query-types";
+import type { ResolvedPeriod, TransactionTotals } from "../budget-query-types";
 import type { ScanResultPayload } from "../receipt-scan";
 
 /**
@@ -55,6 +56,14 @@ const assertExact = <A, B>(_proof: Exact<A, B>) => {};
 
 const transactionType = z.enum(["INCOME", "EXPENSE"]);
 
+/** The window a query actually ran over, in the user's own calendar days. */
+const resolvedPeriod = z.object({
+  month: z.string().nullable().describe("The month covered, or null for an explicit day range."),
+  from: z.string().nullable().describe("First local day included, YYYY-MM-DD."),
+  to: z.string().nullable().describe("Last local day included, YYYY-MM-DD, inclusive."),
+});
+assertExact<z.infer<typeof resolvedPeriod>, ResolvedPeriod>(true);
+
 // --- get_spending_by_category ---
 
 const categorySpending = z.object({
@@ -67,7 +76,10 @@ const categorySpending = z.object({
 });
 assertExact<z.infer<typeof categorySpending>, CategorySpending>(true);
 
-export const spendingByCategoryOutput = { categories: z.array(categorySpending) };
+export const spendingByCategoryOutput = {
+  categories: z.array(categorySpending),
+  period: resolvedPeriod,
+};
 
 // --- get_top_expenses ---
 
@@ -75,13 +87,17 @@ const topExpense = z.object({
   id: z.string(),
   amount: z.number(),
   description: z.string(),
-  date: z.string(),
+  date: z.string().describe("The stored instant, ISO 8601 in UTC."),
+  localDate: z.string().describe("The user's own calendar day for that instant, YYYY-MM-DD."),
   categoryName: z.string(),
   categoryIcon: z.string(),
 });
 assertExact<z.infer<typeof topExpense>, TopExpense>(true);
 
-export const topExpensesOutput = { expenses: z.array(topExpense) };
+export const topExpensesOutput = {
+  expenses: z.array(topExpense),
+  period: resolvedPeriod.nullable().describe("The window queried, or null for all time."),
+};
 
 // --- get_monthly_summary ---
 
@@ -118,6 +134,22 @@ export const spendingTrendsOutput = spendingTrends.shape;
 
 // --- search_transactions ---
 
+const transactionTotals = z.object({
+  count: z.number(),
+  income: z.number(),
+  expenses: z.number(),
+  net: z.number(),
+  byCategory: z.array(
+    z.object({
+      categoryId: z.string(),
+      categoryName: z.string(),
+      amount: z.number(),
+      count: z.number(),
+    })
+  ),
+});
+assertExact<z.infer<typeof transactionTotals>, TransactionTotals>(true);
+
 const searchTransactions = z.object({
   transactions: z.array(
     z.object({
@@ -125,12 +157,30 @@ const searchTransactions = z.object({
       amount: z.number(),
       description: z.string(),
       type: transactionType,
-      date: z.string(),
+      date: z.string().describe("The stored instant, ISO 8601 in UTC."),
+      localDate: z
+        .string()
+        .describe(
+          "The same moment as the user's own calendar day, YYYY-MM-DD. Use this to group by " +
+            "day, not a slice of `date`: east of UTC a late-evening transaction belongs to the " +
+            "next local day than its UTC timestamp shows."
+        ),
       categoryName: z.string(),
-      categoryIcon: z.string(),
-      categoryColor: z.string(),
+      categoryIcon: z.string().optional(),
+      categoryColor: z.string().optional(),
+      receiptGroupId: z
+        .string()
+        .nullable()
+        .describe(
+          "Rows sharing one of these came from a single scanned receipt split across " +
+            "categories. Treat them as one purchase rather than several."
+        ),
       labels: z.array(z.object({ id: z.string(), name: z.string(), color: z.string() })),
     })
+  ),
+  period: resolvedPeriod.nullable().describe("The window queried, or null when unfiltered."),
+  totals: transactionTotals.describe(
+    "Aggregates over every match, not just this page. Prefer these to summing `transactions`."
   ),
   pagination: z.object({
     page: z.number(),
@@ -146,7 +196,17 @@ export const searchTransactionsOutput = searchTransactions.shape;
 // --- get_budget_overview ---
 
 const budgetOverview = z.object({
-  month: z.string(),
+  month: z.string().nullable(),
+  period: resolvedPeriod,
+  today: z
+    .string()
+    .describe(
+      "The user's current calendar day, YYYY-MM-DD. Anchor relative dates such as " +
+        "\"this week\" to this rather than to the client's own clock."
+    ),
+  timezoneOffset: z
+    .number()
+    .describe("Minutes, getTimezoneOffset() convention: UTC+8 is -480."),
   totalIncome: z.number(),
   totalExpenses: z.number(),
   net: z.number(),
@@ -196,7 +256,8 @@ export const categoryListOutput = { categories: z.array(categoryItem) };
 // --- get_label_breakdown ---
 
 const labelBreakdown = z.object({
-  month: z.string(),
+  month: z.string().nullable(),
+  period: resolvedPeriod,
   type: transactionType,
   total: z.number(),
   labels: z.array(
@@ -280,6 +341,7 @@ export const billHistoryOutput = billHistory.shape;
 
 const receiptItems = z.object({
   month: z.string().nullable(),
+  period: resolvedPeriod.nullable().describe("The window queried, or null when unfiltered."),
   itemCount: z.number(),
   totalAmount: z.number(),
   truncated: z
@@ -297,7 +359,8 @@ const receiptItems = z.object({
       transactionDescription: z.string(),
       transactionAmount: z.number(),
       categoryName: z.string(),
-      date: z.string(),
+      date: z.string().describe("The transaction's stored instant, ISO 8601 in UTC."),
+      localDate: z.string().describe("The user's own calendar day for that instant, YYYY-MM-DD."),
       receiptGroupId: z.string().nullable(),
       breakdownTotal: z.number(),
     })

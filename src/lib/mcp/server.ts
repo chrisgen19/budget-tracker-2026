@@ -13,6 +13,8 @@ import {
   isBase64,
 } from "@/lib/receipt-limits";
 import {
+  describePeriod,
+  describePeriodOrCurrentMonth,
   getSpendingByCategory,
   getTopExpenses,
   getMonthlySummary,
@@ -69,6 +71,53 @@ import {
  */
 const structured = (value: object): Record<string, unknown> =>
   Object.fromEntries(Object.entries(value));
+
+const LOCAL_DAY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The `from`/`to` day bounds every period-taking tool offers alongside `month`.
+ *
+ * Declared once so the six tools cannot drift in what they accept or in how they describe it.
+ * They are mutually exclusive with `month` rather than one silently winning: a filter that
+ * applies half of what was asked returns rows that read exactly like a complete answer.
+ */
+const periodInput = {
+  from: z
+    .string()
+    .regex(LOCAL_DAY_REGEX)
+    .optional()
+    .describe(
+      "First day to include, YYYY-MM-DD in the user's own timezone. Cannot be combined with `month`."
+    ),
+  to: z
+    .string()
+    .regex(LOCAL_DAY_REGEX)
+    .optional()
+    .describe(
+      "Last day to include, YYYY-MM-DD, inclusive of the whole day. Cannot be combined with `month`."
+    ),
+};
+
+/**
+ * Run a period-taking handler, turning an unusable window into an answer the model can act on.
+ *
+ * `resolvePeriod` throws a `RangeError` for a contradictory window (`month` with `from`), an
+ * impossible day (31 February), or a backwards range. Left uncaught those surface as a
+ * transport-level failure with no guidance, which a model retries unchanged; named back, it can
+ * correct the call. Anything else still throws -- a bug should not be reported as bad input.
+ */
+const withPeriodErrors = async <T>(
+  run: () => Promise<T>
+): Promise<T | { content: Array<{ type: "text"; text: string }>; isError: true }> => {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof RangeError) {
+      return { content: [{ type: "text" as const, text: err.message }], isError: true };
+    }
+    throw err;
+  }
+};
 
 /**
  * Render a create result, shared by the write path and the lease-lapsed replay path so both
@@ -175,32 +224,41 @@ export const createBudgetMcpServer = ({
     "get_spending_by_category",
     {
       title: "Spending by category",
-      description: "Get spending grouped by category for a given month. Returns expense categories sorted by amount with percentages.",
+      description:
+        "Get spending grouped by category over a month or an explicit day range. Returns expense " +
+        "categories sorted by amount with percentages. `period` reports the window actually used.",
       inputSchema: {
         month: z
           .string()
           .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
           .optional()
-          .describe("Month in YYYY-MM format. Defaults to current month."),
+          .describe("Month in YYYY-MM format. Defaults to the current month."),
+        ...periodInput,
       },
       outputSchema: spendingByCategoryOutput,
       annotations: { readOnlyHint: true },
     },
-    async ({ month }) => {
-      const result = await getSpendingByCategory(prisma, userId, { month, timezoneOffset });
-      const payload = { categories: result };
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-        structuredContent: structured(payload),
-      };
-    }
+    async ({ month, from, to }) =>
+      withPeriodErrors(async () => {
+        const params = { month, from, to, timezoneOffset };
+        const payload = {
+          categories: await getSpendingByCategory(prisma, userId, params),
+          period: describePeriodOrCurrentMonth(params, timezoneOffset),
+        };
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+          structuredContent: structured(payload),
+        };
+      })
   );
 
   registered.get_top_expenses = server.registerTool(
     "get_top_expenses",
     {
       title: "Top expenses",
-      description: "Get the largest individual expense transactions, optionally filtered by month.",
+      description:
+        "Get the largest individual expense transactions, optionally within a month or an " +
+        "explicit day range. Each row carries `localDate`, the user's own calendar day.",
       inputSchema: {
         limit: z
           .number()
@@ -213,19 +271,24 @@ export const createBudgetMcpServer = ({
           .string()
           .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
           .optional()
-          .describe("Month in YYYY-MM format. If omitted, returns all-time."),
+          .describe("Month in YYYY-MM format. If omitted, covers all time."),
+        ...periodInput,
       },
       outputSchema: topExpensesOutput,
       annotations: { readOnlyHint: true },
     },
-    async ({ limit, month }) => {
-      const result = await getTopExpenses(prisma, userId, { limit, month, timezoneOffset });
-      const payload = { expenses: result };
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-        structuredContent: structured(payload),
-      };
-    }
+    async ({ limit, month, from, to }) =>
+      withPeriodErrors(async () => {
+        const params = { month, from, to, timezoneOffset };
+        const payload = {
+          expenses: await getTopExpenses(prisma, userId, { ...params, limit }),
+          period: describePeriod(params, timezoneOffset),
+        };
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+          structuredContent: structured(payload),
+        };
+      })
   );
 
   registered.get_monthly_summary = server.registerTool(
@@ -291,7 +354,12 @@ export const createBudgetMcpServer = ({
     "search_transactions",
     {
       title: "Search transactions",
-      description: "Search and filter transactions by description, category, amount range, type, and month. Supports pagination and sorting.",
+      description:
+        "Search and filter transactions by description, category, amount range, type, and either " +
+        "a month or an explicit day range. Supports pagination and sorting. `totals` aggregates " +
+        "every match rather than the page, so use it instead of summing rows; each row's " +
+        "`localDate` is the user's own calendar day, and rows sharing a `receiptGroupId` are one " +
+        "receipt split across categories.",
       inputSchema: {
         search: z
           .string()
@@ -310,6 +378,7 @@ export const createBudgetMcpServer = ({
           .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
           .optional()
           .describe("Filter by month in YYYY-MM format."),
+        ...periodInput,
         amountMin: z.number().optional().describe("Minimum amount filter."),
         amountMax: z.number().optional().describe("Maximum amount filter."),
         sortBy: z
@@ -347,43 +416,60 @@ export const createBudgetMcpServer = ({
               "through this endpoint, TELEGRAM for rows the user's Telegram bot wrote. Use it to " +
               "review what you added."
           ),
+        compact: z
+          .boolean()
+          .optional()
+          .describe(
+            "Omit each row's categoryIcon and categoryColor. They exist for the app's UI, no " +
+              "analysis reads them, and they are roughly a fifth of a page's bytes."
+          ),
       },
       outputSchema: searchTransactionsOutput,
       annotations: { readOnlyHint: true },
     },
-    async (params) => {
-      const result = await searchTransactions(prisma, userId, { ...params, timezoneOffset });
-      const payload = result;
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-        structuredContent: structured(payload),
-      };
-    }
+    async (params) =>
+      withPeriodErrors(async () => {
+        const payload = await searchTransactions(prisma, userId, { ...params, timezoneOffset });
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+          structuredContent: structured(payload),
+        };
+      })
   );
 
   registered.get_budget_overview = server.registerTool(
     "get_budget_overview",
     {
       title: "Budget overview",
-      description: "Get a high-level monthly summary: total income, expenses, net, running balance, and transaction count.",
+      description:
+        "Get a high-level summary for a month or an explicit day range: total income, expenses, " +
+        "net, running balance, and transaction count. Also reports `today` and `timezoneOffset`, " +
+        "so call this first to anchor any relative period (\"this week\", \"yesterday\") to the " +
+        "user's own calendar rather than to your clock or to UTC.",
       inputSchema: {
         month: z
           .string()
           .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
           .optional()
-          .describe("Month in YYYY-MM format. Defaults to current month."),
+          .describe("Month in YYYY-MM format. Defaults to the current month."),
+        ...periodInput,
       },
       outputSchema: budgetOverviewOutput,
       annotations: { readOnlyHint: true },
     },
-    async ({ month }) => {
-      const result = await getBudgetOverview(prisma, userId, { month, timezoneOffset });
-      const payload = result;
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-        structuredContent: structured(payload),
-      };
-    }
+    async ({ month, from, to }) =>
+      withPeriodErrors(async () => {
+        const payload = await getBudgetOverview(prisma, userId, {
+          month,
+          from,
+          to,
+          timezoneOffset,
+        });
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+          structuredContent: structured(payload),
+        };
+      })
   );
 
   registered.get_upcoming_bills = server.registerTool(
@@ -451,7 +537,8 @@ export const createBudgetMcpServer = ({
           .string()
           .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
           .optional()
-          .describe("Month in YYYY-MM format. Defaults to current month."),
+          .describe("Month in YYYY-MM format. Defaults to the current month."),
+        ...periodInput,
         type: z
           .enum(["INCOME", "EXPENSE"])
           .optional()
@@ -460,18 +547,20 @@ export const createBudgetMcpServer = ({
       outputSchema: labelBreakdownOutput,
       annotations: { readOnlyHint: true },
     },
-    async ({ month, type }) => {
-      const result = await getLabelBreakdown(prisma, userId, {
-        month,
-        type,
-        timezoneOffset,
-      });
-      const payload = result;
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-        structuredContent: structured(payload),
-      };
-    }
+    async ({ month, from, to, type }) =>
+      withPeriodErrors(async () => {
+        const payload = await getLabelBreakdown(prisma, userId, {
+          month,
+          from,
+          to,
+          type,
+          timezoneOffset,
+        });
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+          structuredContent: structured(payload),
+        };
+      })
   );
 
   registered.get_label_list = server.registerTool(
@@ -564,14 +653,16 @@ export const createBudgetMcpServer = ({
         "Get individual line items from scanned receipts, with the transaction and category " +
         "each was itemized under. Answers what was actually bought, not just the total: " +
         "'what did I buy at the grocery?', 'how much have I spent on coffee this month?'. " +
-        "Filter by month, by item name, or by receiptGroupId to pull one whole receipt " +
-        "(a receipt spanning several categories becomes several transactions sharing that id).",
+        "Filter by month, by an explicit day range, by item name, or by receiptGroupId to pull " +
+        "one whole receipt (a receipt spanning several categories becomes several transactions " +
+        "sharing that id).",
       inputSchema: {
         month: z
           .string()
           .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
           .optional()
           .describe("Month in YYYY-MM format. Omit for all time."),
+        ...periodInput,
         search: z
           .string()
           .optional()
@@ -596,26 +687,28 @@ export const createBudgetMcpServer = ({
       outputSchema: receiptItemsOutput,
       annotations: { readOnlyHint: true },
     },
-    async ({ month, search, receiptGroupId, limit }) => {
-      const result = await getReceiptItems(prisma, userId, {
-        month,
-        search,
-        receiptGroupId,
-        limit,
-        timezoneOffset,
-      });
-      const payload = result;
-      return {
-        // Not pretty-printed, unlike the other tools. This is the only result whose size scales
-        // with a stored blob rather than a row count: raising the item bound made a full-ceiling
-        // response MAX_BREAKDOWN_GROUPS x MAX_BREAKDOWN_LINE_ITEMS items, and every result is
-        // already serialized twice — once here and once as structuredContent. Indentation on a
-        // list that size is pure context spend, and `content` is only the fallback channel for
-        // clients that do not read structuredContent.
-        content: [{ type: "text" as const, text: JSON.stringify(payload) }],
-        structuredContent: structured(payload),
-      };
-    }
+    async ({ month, from, to, search, receiptGroupId, limit }) =>
+      withPeriodErrors(async () => {
+        const payload = await getReceiptItems(prisma, userId, {
+          month,
+          from,
+          to,
+          search,
+          receiptGroupId,
+          limit,
+          timezoneOffset,
+        });
+        return {
+          // Not pretty-printed, unlike the other tools. This is the only result whose size scales
+          // with a stored blob rather than a row count: raising the item bound made a full-ceiling
+          // response MAX_BREAKDOWN_GROUPS x MAX_BREAKDOWN_LINE_ITEMS items, and every result is
+          // already serialized twice — once here and once as structuredContent. Indentation on a
+          // list that size is pure context spend, and `content` is only the fallback channel for
+          // clients that do not read structuredContent.
+          content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+          structuredContent: structured(payload),
+        };
+      })
   );
 
   registered.scan_receipt = server.registerTool(

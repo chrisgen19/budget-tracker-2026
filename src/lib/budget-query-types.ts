@@ -11,13 +11,49 @@ export interface DateRange {
   endDate: Date;
 }
 
+/**
+ * A date window, given as either a month or an explicit range of local days.
+ *
+ * `month` and `from`/`to` are mutually exclusive rather than one quietly winning: a filter that
+ * applies half of what was asked returns rows that read exactly like a complete answer, which is
+ * the same reason an unresolvable label name is dropped rather than passed through.
+ *
+ * Both range bounds are inclusive and resolved in the user's timezone, so `to: "2026-08-29"`
+ * covers that whole day rather than stopping at its first instant.
+ */
+export interface PeriodParams {
+  /** Format: YYYY-MM. Mutually exclusive with `from`/`to`. */
+  month?: string;
+  /** First local day to include, YYYY-MM-DD. Open at the start when omitted. */
+  from?: string;
+  /** Last local day to include, YYYY-MM-DD, inclusive of the whole day. Open at the end when omitted. */
+  to?: string;
+}
+
+/**
+ * The window a query actually ran over, echoed back to the caller.
+ *
+ * Every row comes back as a UTC instant, so a client asking for "this week" would otherwise have
+ * to re-derive the window from timestamps and its own idea of the timezone -- which is exactly
+ * where a UTC+8 user's late-evening row lands on the wrong day. Stating the resolved window in
+ * the user's own calendar days lets the caller report the period it was given instead of
+ * inferring one.
+ */
+export interface ResolvedPeriod {
+  /** The month filtered on in YYYY-MM, or null when an explicit `from`/`to` range was used. */
+  month: string | null;
+  /** First local day included, YYYY-MM-DD. Null when the window is open at the start. */
+  from: string | null;
+  /** Last local day included, YYYY-MM-DD. Null when the window is open at the end. */
+  to: string | null;
+}
+
 // --- get_spending_by_category ---
 
-export interface SpendingByCategoryParams {
-  /** Format: YYYY-MM. Defaults to current month */
-  month?: string;
+/** Defaults to the current month when no period is given. */
+export interface SpendingByCategoryParams extends PeriodParams {
   /** User's timezone offset in minutes (`getTimezoneOffset()` convention, so UTC+8 is
-   *  -480), matching `users.timezone_offset`. Month boundaries are resolved in this
+   *  -480), matching `users.timezone_offset`. Period boundaries are resolved in this
    *  timezone. Omit to fall back to UTC. */
   timezoneOffset?: number;
 }
@@ -33,13 +69,12 @@ export interface CategorySpending {
 
 // --- get_top_expenses ---
 
-export interface TopExpensesParams {
+/** Covers all time when no period is given. */
+export interface TopExpensesParams extends PeriodParams {
   /** Number of results to return. Defaults to 10 */
   limit?: number;
-  /** Format: YYYY-MM. If omitted, returns all-time */
-  month?: string;
   /** User's timezone offset in minutes (`getTimezoneOffset()` convention, so UTC+8 is
-   *  -480), matching `users.timezone_offset`. Month boundaries are resolved in this
+   *  -480), matching `users.timezone_offset`. Period boundaries are resolved in this
    *  timezone. Omit to fall back to UTC. */
   timezoneOffset?: number;
 }
@@ -48,7 +83,10 @@ export interface TopExpense {
   id: string;
   amount: number;
   description: string;
+  /** The stored instant, ISO 8601 in UTC. */
   date: string;
+  /** The same moment as the user's own calendar day, YYYY-MM-DD. See `SearchTransactionsResult`. */
+  localDate: string;
   categoryName: string;
   categoryIcon: string;
 }
@@ -102,15 +140,14 @@ export interface SpendingTrends {
 
 // --- search_transactions ---
 
-export interface SearchTransactionsParams {
+/** Covers all time when no period is given. */
+export interface SearchTransactionsParams extends PeriodParams {
   /** Search term for description (case-insensitive) */
   search?: string;
   /** Filter by type */
   type?: TransactionType;
   /** Filter by category ID */
   categoryId?: string;
-  /** Format: YYYY-MM */
-  month?: string;
   /** Minimum amount */
   amountMin?: number;
   /** Maximum amount */
@@ -127,10 +164,30 @@ export interface SearchTransactionsParams {
   limit?: number;
   /** Only transactions carrying at least one of these label IDs */
   labelIds?: string[];
+  /** Drop `categoryIcon` and `categoryColor` from each row. They exist for the app's UI and no
+   *  analysis reads them, but they are ~20% of a page's bytes, which is context a model spends
+   *  instead of reasoning. */
+  compact?: boolean;
   /** User's timezone offset in minutes (`getTimezoneOffset()` convention, so UTC+8 is
    *  -480), matching `users.timezone_offset`. Month boundaries are resolved in this
    *  timezone. Omit to fall back to UTC. */
   timezoneOffset?: number;
+}
+
+export interface TransactionTotals {
+  /** Every matching row, not just the page. */
+  count: number;
+  income: number;
+  expenses: number;
+  /** `income - expenses`. */
+  net: number;
+  /** Every matching row grouped by category, largest first. */
+  byCategory: Array<{
+    categoryId: string;
+    categoryName: string;
+    amount: number;
+    count: number;
+  }>;
 }
 
 export interface SearchTransactionsResult {
@@ -139,12 +196,32 @@ export interface SearchTransactionsResult {
     amount: number;
     description: string;
     type: TransactionType;
+    /** The stored instant, ISO 8601 in UTC. Keep using this for ordering and time-of-day. */
     date: string;
+    /**
+     * The same moment rendered as the user's own calendar day, YYYY-MM-DD.
+     *
+     * A UTC+8 user's 26 August 06:00 row is stored as `2026-08-25T22:00:00Z`, so a caller
+     * slicing `date` reports the 25th for a transaction the app shows on the 26th. The write
+     * path has echoed the local day since it was written; the read path returned raw UTC and
+     * left every client to redo the conversion, which is precisely where it goes wrong.
+     */
+    localDate: string;
     categoryName: string;
-    categoryIcon: string;
-    categoryColor: string;
+    /** Omitted when `compact` was set. */
+    categoryIcon?: string;
+    /** Omitted when `compact` was set. */
+    categoryColor?: string;
+    /** Ties together the rows of one multi-category receipt, `null` for an ordinary transaction.
+     *  Three rows sharing one of these are one shop, not three; without it a caller can only
+     *  guess that from matching timestamps and a shared description prefix. */
+    receiptGroupId: string | null;
     labels: Array<{ id: string; name: string; color: string }>;
   }>;
+  /** The window actually queried, or null when no period was given. */
+  period: ResolvedPeriod | null;
+  /** Aggregates over every match, so a caller never has to sum a page to answer "how much". */
+  totals: TransactionTotals;
   pagination: {
     page: number;
     limit: number;
@@ -155,17 +232,30 @@ export interface SearchTransactionsResult {
 
 // --- get_budget_overview ---
 
-export interface BudgetOverviewParams {
-  /** Format: YYYY-MM. Defaults to current month */
-  month?: string;
+/** Defaults to the current month when no period is given. */
+export interface BudgetOverviewParams extends PeriodParams {
   /** User's timezone offset in minutes (`getTimezoneOffset()` convention, so UTC+8 is
-   *  -480), matching `users.timezone_offset`. Month boundaries are resolved in this
+   *  -480), matching `users.timezone_offset`. Period boundaries are resolved in this
    *  timezone. Omit to fall back to UTC. */
   timezoneOffset?: number;
 }
 
 export interface BudgetOverview {
-  month: string;
+  /** The month covered, or null when an explicit `from`/`to` range was used. */
+  month: string | null;
+  /** The window actually queried. */
+  period: ResolvedPeriod;
+  /**
+   * The user's current calendar day, YYYY-MM-DD.
+   *
+   * Nothing else in the tool set tells a client what "today" is. A client with a shell can work
+   * it out; Claude on mobile and an editor agent cannot, and a model that guesses guesses in UTC
+   * -- which makes "this week" unanswerable rather than merely approximate.
+   */
+  today: string;
+  /** Minutes, `getTimezoneOffset()` convention (UTC+8 is -480), so a client can resolve its own
+   *  relative dates against the same zone the server used. */
+  timezoneOffset: number;
   totalIncome: number;
   totalExpenses: number;
   net: number;
@@ -218,13 +308,12 @@ export interface CategoryItem {
 
 // --- get_label_breakdown ---
 
-export interface LabelBreakdownParams {
-  /** Format: YYYY-MM. Defaults to current month */
-  month?: string;
+/** Defaults to the current month when no period is given. */
+export interface LabelBreakdownParams extends PeriodParams {
   /** Restrict to one transaction type. Defaults to EXPENSE */
   type?: TransactionType;
   /** User's timezone offset in minutes (`getTimezoneOffset()` convention, so UTC+8 is
-   *  -480), matching `users.timezone_offset`. Month boundaries are resolved in this
+   *  -480), matching `users.timezone_offset`. Period boundaries are resolved in this
    *  timezone. Omit to fall back to UTC. */
   timezoneOffset?: number;
 }
@@ -243,7 +332,10 @@ export interface LabelBreakdownItem {
 }
 
 export interface LabelBreakdown {
-  month: string;
+  /** The month covered, or null when an explicit `from`/`to` range was used. */
+  month: string | null;
+  /** The window actually queried. */
+  period: ResolvedPeriod;
   type: TransactionType;
   /** Total across all transactions of this type in the period, labeled or not */
   total: number;
@@ -357,9 +449,8 @@ export interface BillHistory {
 
 // --- get_receipt_items ---
 
-export interface ReceiptItemsParams {
-  /** Format: YYYY-MM. Omit for all time */
-  month?: string;
+/** Covers all time when no period is given. */
+export interface ReceiptItemsParams extends PeriodParams {
   /** Case-insensitive substring match on the item name */
   search?: string;
   /** Restrict to one scanned receipt, which may span several transactions */
@@ -383,8 +474,10 @@ export interface ReceiptItem {
   transactionDescription: string;
   transactionAmount: number;
   categoryName: string;
-  /** ISO date of the transaction */
+  /** The transaction's stored instant, ISO 8601 in UTC. */
   date: string;
+  /** The same moment as the user's own calendar day, YYYY-MM-DD. */
+  localDate: string;
   /** Ties together the transactions of one multi-category receipt. `null` for a receipt that
    *  produced a single transaction. */
   receiptGroupId: string | null;
@@ -395,8 +488,10 @@ export interface ReceiptItem {
 }
 
 export interface ReceiptItems {
-  /** The month filtered on, or null when unfiltered */
+  /** The month filtered on, or null when unfiltered or an explicit `from`/`to` range was used */
   month: string | null;
+  /** The window actually queried, or null when unfiltered. */
+  period: ResolvedPeriod | null;
   /** Matching items, before `limit` was applied */
   itemCount: number;
   /** Sum of every matching item's amount, before `limit` was applied */

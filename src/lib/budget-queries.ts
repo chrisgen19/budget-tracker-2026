@@ -6,6 +6,9 @@
 // 6.19.2, which is exactly why it needs pinning: nothing would catch it changing.
 import { Prisma } from "@prisma/client";
 import { MAX_BREAKDOWN_GROUPS, MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
+// The same helper `create_transactions` echoes its confirmations with. The read path used to
+// return raw UTC and leave every client to redo the conversion, which is where it goes wrong.
+import { formatLocalDate } from "@/lib/validations";
 import type {
   PrismaClient,
   SpendingByCategoryParams,
@@ -38,6 +41,9 @@ import type {
   ReceiptItems,
   ReceiptItem,
   DateRange,
+  PeriodParams,
+  ResolvedPeriod,
+  TransactionTotals,
 } from "./budget-query-types";
 
 /**
@@ -64,6 +70,124 @@ const toLocal = (date: Date, tzOffset: number): Date =>
 /** Format a local-shifted date as its "YYYY-MM" month key. */
 const monthKey = (local: Date): string =>
   `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, "0")}`;
+
+/** YYYY-MM-DD for a local-shifted date. */
+const dayKey = (local: Date): string =>
+  `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, "0")}-${String(local.getUTCDate()).padStart(2, "0")}`;
+
+const LOCAL_DAY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** The largest instant a `Date` can hold, used as the open end of a half-bounded range. */
+const MAX_INSTANT = 8_640_000_000_000_000;
+
+/**
+ * Parse a local `YYYY-MM-DD` into the UTC instant bounding that day in the user's timezone.
+ *
+ * Same formula as `parseMonth` and `/api/dashboard`: `Date.UTC(y, m, d) + tzOffset * 60000`.
+ *
+ * `endOfDay` pushes to 23:59:59.999 local because both range bounds are inclusive. Without it
+ * `to: "2026-08-29"` resolves to that day's *first* instant and silently excludes everything
+ * that happened on it -- a whole day missing from an answer that still reads complete.
+ *
+ * The round-trip check is not ceremony: `Date.UTC(2026, 1, 31)` rolls forward to 3 March rather
+ * than failing, so an impossible day would quietly query a window nobody asked for. That is the
+ * same overflow `monthsBefore` guards against.
+ */
+const parseLocalDay = (day: string, tzOffset: number, endOfDay: boolean): Date => {
+  const match = LOCAL_DAY_PATTERN.exec(day);
+  if (!match) throw new RangeError(`Expected a date as YYYY-MM-DD, got "${day}".`);
+
+  const [year, month, date] = [match[1], match[2], match[3]].map(Number);
+  const base = endOfDay
+    ? Date.UTC(year, month - 1, date, 23, 59, 59, 999)
+    : Date.UTC(year, month - 1, date);
+
+  const rolled = new Date(base);
+  if (
+    rolled.getUTCFullYear() !== year ||
+    rolled.getUTCMonth() !== month - 1 ||
+    rolled.getUTCDate() !== date
+  ) {
+    throw new RangeError(`"${day}" is not a real date.`);
+  }
+
+  return new Date(base + tzOffset * 60 * 1000);
+};
+
+/** A month as both the instants to filter on and the local days to echo back. */
+const describeMonth = (
+  month: string,
+  tzOffset: number
+): { range: DateRange; period: ResolvedPeriod } => {
+  const range = parseMonth(month, tzOffset);
+  return {
+    range,
+    period: {
+      month,
+      from: dayKey(toLocal(range.startDate, tzOffset)),
+      to: dayKey(toLocal(range.endDate, tzOffset)),
+    },
+  };
+};
+
+/**
+ * Resolve a caller's period into the instants to filter on plus the window to report.
+ *
+ * Returns null when the caller named no period at all, which every "all time" query reads as
+ * "no date filter". `month` and `from`/`to` together is an error rather than a precedence rule:
+ * a filter that applies half of what was asked returns rows indistinguishable from a complete
+ * answer, and the caller has no way to notice.
+ */
+const resolvePeriod = (
+  params: PeriodParams,
+  tzOffset: number
+): { range: DateRange; period: ResolvedPeriod } | null => {
+  const { month, from, to } = params;
+
+  if (month && (from || to)) {
+    throw new RangeError(
+      "Pass either `month` or `from`/`to`, not both -- they would each filter a different window."
+    );
+  }
+
+  if (month) return describeMonth(month, tzOffset);
+  if (!from && !to) return null;
+
+  const startDate = from ? parseLocalDay(from, tzOffset, false) : new Date(0);
+  const endDate = to ? parseLocalDay(to, tzOffset, true) : new Date(MAX_INSTANT);
+
+  if (startDate > endDate) {
+    throw new RangeError(`\`from\` (${from}) is after \`to\` (${to}).`);
+  }
+
+  return {
+    range: { startDate, endDate },
+    period: { month: null, from: from ?? null, to: to ?? null },
+  };
+};
+
+/** `resolvePeriod` for queries that always cover some window, defaulting to the current month. */
+const resolvePeriodOrCurrentMonth = (
+  params: PeriodParams,
+  tzOffset: number
+): { range: DateRange; period: ResolvedPeriod } =>
+  resolvePeriod(params, tzOffset) ?? describeMonth(currentMonth(tzOffset), tzOffset);
+
+/**
+ * The window a period-taking query would run over, without running it.
+ *
+ * Exported for the MCP layer, whose `get_spending_by_category` and `get_top_expenses` envelopes
+ * echo the period beside a result the query itself returns as a bare array. Sharing this rather
+ * than re-deriving bounds there keeps one formula for where a month starts.
+ */
+export const describePeriod = (params: PeriodParams, tzOffset = 0): ResolvedPeriod | null =>
+  resolvePeriod(params, tzOffset)?.period ?? null;
+
+/** `describePeriod` for the queries that fall back to the current month rather than all time. */
+export const describePeriodOrCurrentMonth = (
+  params: PeriodParams,
+  tzOffset = 0
+): ResolvedPeriod => resolvePeriodOrCurrentMonth(params, tzOffset).period;
 
 /**
  * Coerce a caller-supplied row limit into something safe to slice or hand to Prisma's `take`.
@@ -92,7 +216,9 @@ export const getSpendingByCategory = async (
   params: SpendingByCategoryParams = {}
 ): Promise<CategorySpending[]> => {
   const tz = params.timezoneOffset ?? 0;
-  const { startDate, endDate } = parseMonth(params.month ?? currentMonth(tz), tz);
+  const {
+    range: { startDate, endDate },
+  } = resolvePeriodOrCurrentMonth(params, tz);
 
   const transactions = await prisma.transaction.findMany({
     where: {
@@ -146,11 +272,12 @@ export const getTopExpenses = async (
 ): Promise<TopExpense[]> => {
   const limit = safeLimit(params.limit, 10);
 
+  const tz = params.timezoneOffset ?? 0;
   const where: Record<string, unknown> = { userId, type: "EXPENSE" };
 
-  if (params.month) {
-    const { startDate, endDate } = parseMonth(params.month, params.timezoneOffset ?? 0);
-    where.date = { gte: startDate, lte: endDate };
+  const resolved = resolvePeriod(params, tz);
+  if (resolved) {
+    where.date = { gte: resolved.range.startDate, lte: resolved.range.endDate };
   }
 
   const transactions = await prisma.transaction.findMany({
@@ -165,6 +292,7 @@ export const getTopExpenses = async (
     amount: t.amount,
     description: t.description,
     date: t.date.toISOString(),
+    localDate: formatLocalDate(t.date, tz),
     categoryName: t.category.name,
     categoryIcon: t.category.icon,
   }));
@@ -288,6 +416,7 @@ export const searchTransactions = async (
   userId: string,
   params: SearchTransactionsParams = {}
 ): Promise<SearchTransactionsResult> => {
+  const tz = params.timezoneOffset ?? 0;
   const page = params.page ?? 1;
   const limit = safeLimit(params.limit, 20);
 
@@ -297,9 +426,9 @@ export const searchTransactions = async (
     where.type = params.type;
   }
 
-  if (params.month) {
-    const { startDate, endDate } = parseMonth(params.month, params.timezoneOffset ?? 0);
-    where.date = { gte: startDate, lte: endDate };
+  const resolved = resolvePeriod(params, tz);
+  if (resolved) {
+    where.date = { gte: resolved.range.startDate, lte: resolved.range.endDate };
   }
 
   if (params.categoryId) {
@@ -339,7 +468,10 @@ export const searchTransactions = async (
           { id: "asc" as const },
         ];
 
-  const [transactions, total] = await Promise.all([
+  // The aggregates cover every match, not the page, which is the whole point of returning them:
+  // a caller asking "how much did I spend this week" would otherwise page through rows and add
+  // them up itself, and a model doing that arithmetic gets it wrong long before the rows run out.
+  const [transactions, total, byType, byCategory] = await Promise.all([
     prisma.transaction.findMany({
       where,
       include: { category: true, labels: { include: { label: true } } },
@@ -348,7 +480,45 @@ export const searchTransactions = async (
       take: limit,
     }),
     prisma.transaction.count({ where }),
+    prisma.transaction.groupBy({ by: ["type"], where, _sum: { amount: true } }),
+    prisma.transaction.groupBy({
+      by: ["categoryId"],
+      where,
+      _sum: { amount: true },
+      _count: { _all: true },
+    }),
   ]);
+
+  // groupBy returns ids; the page's own rows only cover the categories that happen to be on it.
+  const categoryNames = new Map(
+    (
+      await prisma.category.findMany({
+        where: { id: { in: byCategory.map((g) => g.categoryId) } },
+        select: { id: true, name: true },
+      })
+    ).map((c) => [c.id, c.name])
+  );
+
+  const sumOf = (type: "INCOME" | "EXPENSE") =>
+    byType.find((g) => g.type === type)?._sum.amount ?? 0;
+
+  const income = sumOf("INCOME");
+  const expenses = sumOf("EXPENSE");
+
+  const totals: TransactionTotals = {
+    count: total,
+    income,
+    expenses,
+    net: income - expenses,
+    byCategory: byCategory
+      .map((g) => ({
+        categoryId: g.categoryId,
+        categoryName: categoryNames.get(g.categoryId) ?? "Unknown",
+        amount: g._sum.amount ?? 0,
+        count: g._count._all,
+      }))
+      .sort((a, b) => b.amount - a.amount),
+  };
 
   return {
     transactions: transactions.map((t) => ({
@@ -357,15 +527,22 @@ export const searchTransactions = async (
       description: t.description,
       type: t.type as "INCOME" | "EXPENSE",
       date: t.date.toISOString(),
+      localDate: formatLocalDate(t.date, tz),
       categoryName: t.category.name,
-      categoryIcon: t.category.icon,
-      categoryColor: t.category.color,
+      // Spread rather than set to undefined: an explicit `categoryIcon: undefined` survives into
+      // the JSON payload as a key, which is exactly the byte the flag exists to remove.
+      ...(params.compact
+        ? {}
+        : { categoryIcon: t.category.icon, categoryColor: t.category.color }),
+      receiptGroupId: t.receiptGroupId ?? null,
       labels: t.labels.map((tl) => ({
         id: tl.label.id,
         name: tl.label.name,
         color: tl.label.color,
       })),
     })),
+    period: resolved?.period ?? null,
+    totals,
     pagination: {
       page,
       limit,
@@ -384,8 +561,10 @@ export const getBudgetOverview = async (
   params: BudgetOverviewParams = {}
 ): Promise<BudgetOverview> => {
   const tz = params.timezoneOffset ?? 0;
-  const monthStr = params.month ?? currentMonth(tz);
-  const { startDate, endDate } = parseMonth(monthStr, tz);
+  const {
+    range: { startDate, endDate },
+    period,
+  } = resolvePeriodOrCurrentMonth(params, tz);
 
   const [transactions, runningIncome, runningExpenses] = await Promise.all([
     prisma.transaction.findMany({
@@ -419,7 +598,10 @@ export const getBudgetOverview = async (
     (runningIncome._sum.amount ?? 0) - (runningExpenses._sum.amount ?? 0);
 
   return {
-    month: monthStr,
+    month: period.month,
+    period,
+    today: formatLocalDate(new Date(), tz),
+    timezoneOffset: tz,
     totalIncome,
     totalExpenses,
     net: totalIncome - totalExpenses,
@@ -534,8 +716,10 @@ export const getLabelBreakdown = async (
 ): Promise<LabelBreakdown> => {
   const tz = params.timezoneOffset ?? 0;
   const type = params.type ?? "EXPENSE";
-  const monthStr = params.month ?? currentMonth(tz);
-  const { startDate, endDate } = parseMonth(monthStr, tz);
+  const {
+    range: { startDate, endDate },
+    period,
+  } = resolvePeriodOrCurrentMonth(params, tz);
 
   const transactions = await prisma.transaction.findMany({
     where: { userId, type, date: { gte: startDate, lte: endDate } },
@@ -593,7 +777,7 @@ export const getLabelBreakdown = async (
 
   labels.sort((a, b) => b.amount - a.amount);
 
-  return { month: monthStr, type, total, labels };
+  return { month: period.month, period, type, total, labels };
 };
 
 /**
@@ -650,10 +834,6 @@ const localDayStart = (date: Date, tzOffset: number): Date => {
  */
 const utcDayStart = (date: Date): Date =>
   new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-
-/** YYYY-MM-DD for a local-shifted date. */
-const dayKey = (local: Date): string =>
-  `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, "0")}-${String(local.getUTCDate()).padStart(2, "0")}`;
 
 /**
  * N months before a day, clamped to the target month's last day.
@@ -945,9 +1125,9 @@ export const getReceiptItems = async (
     NOT: { receiptBreakdown: { equals: Prisma.DbNull } },
   };
 
-  if (params.month) {
-    const { startDate, endDate } = parseMonth(params.month, tz);
-    where.date = { gte: startDate, lte: endDate };
+  const resolved = resolvePeriod(params, tz);
+  if (resolved) {
+    where.date = { gte: resolved.range.startDate, lte: resolved.range.endDate };
   }
 
   if (params.receiptGroupId) {
@@ -978,6 +1158,7 @@ export const getReceiptItems = async (
         transactionAmount: t.amount,
         categoryName: t.category.name,
         date: t.date.toISOString(),
+        localDate: formatLocalDate(t.date, tz),
         receiptGroupId: t.receiptGroupId ?? null,
         breakdownTotal: breakdown.total,
       });
@@ -985,7 +1166,8 @@ export const getReceiptItems = async (
   }
 
   return {
-    month: params.month ?? null,
+    month: resolved?.period.month ?? null,
+    period: resolved?.period ?? null,
     itemCount: items.length,
     totalAmount: items.reduce((sum, i) => sum + i.amount, 0),
     truncated: items.length > limit,
