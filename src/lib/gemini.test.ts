@@ -40,12 +40,44 @@ beforeEach(() => {
 });
 
 describe("thinking config per call site", () => {
-  it("gives classification the cheapest knob its generation offers", () => {
-    // 3.x uses thinkingLevel; 2.x has no such field and needs the budget set to zero instead.
-    expect(classifyConfig("gemini-3.6-flash").thinkingConfig).toEqual({
-      thinkingLevel: ThinkingLevel.MINIMAL,
+  /**
+   * The documented support matrix, per https://ai.google.dev/gemini-api/docs/thinking.
+   *
+   * The capability varies *within* a generation, which is the whole reason this is not a simple
+   * 3.x/2.x branch: `gemini-3.7-flash` is a Flash model that does not accept `minimal`, and
+   * `gemini-2.5-pro` cannot disable thinking at all (its range starts at 128).
+   *
+   * An unsupported value is a 400. `classifyMessage` catches it and returns null, so it reaches
+   * the user as "I couldn't understand that command" on every free-text message — which is why
+   * the fallback is `low` (present in every 3.x row) rather than anything cleverer.
+   */
+  it.each([
+    // 3.x — thinkingLevel
+    ["gemini-3.6-flash", { thinkingLevel: ThinkingLevel.MINIMAL }],
+    ["gemini-3.5-flash", { thinkingLevel: ThinkingLevel.MINIMAL }],
+    ["gemini-3.5-flash-lite", { thinkingLevel: ThinkingLevel.MINIMAL }],
+    // No `minimal` in the docs for these three, so they must degrade rather than 400.
+    ["gemini-3.7-flash", { thinkingLevel: ThinkingLevel.LOW }],
+    ["gemini-3.1-pro-preview", { thinkingLevel: ThinkingLevel.LOW }],
+    ["gemini-3-pro-preview", { thinkingLevel: ThinkingLevel.LOW }],
+    // 2.x — thinkingBudget. Sending both knobs at once is a 400, hence one or the other.
+    ["gemini-2.5-flash", { thinkingBudget: 0 }],
+    ["gemini-2.5-flash-lite", { thinkingBudget: 0 }],
+    ["gemini-2.5-pro", { thinkingBudget: 128 }],
+  ])("asks %s for the cheapest thinking it actually supports", (model, expected) => {
+    expect(minimalThinkingFor(model as string)).toEqual(expected);
+    expect(classifyConfig(model as string).thinkingConfig).toEqual(expected);
+  });
+
+  it("never asks an unknown model for a level outside the universal set", () => {
+    // A model shipped after this code was written is the case that matters — that is how #163
+    // happened. `low` and a 128 budget are both accepted by every model in the table above.
+    expect(classifyConfig("gemini-9.9-flash-experimental").thinkingConfig).toEqual({
+      thinkingLevel: ThinkingLevel.LOW,
     });
-    expect(classifyConfig("gemini-2.5-flash").thinkingConfig).toEqual({ thinkingBudget: 0 });
+    expect(classifyConfig("gemini-2.9-pro-experimental").thinkingConfig).toEqual({
+      thinkingBudget: 128,
+    });
   });
 
   it("leaves receipt scanning on the configured level", () => {

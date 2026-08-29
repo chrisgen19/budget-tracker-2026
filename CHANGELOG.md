@@ -18,9 +18,20 @@ Turning it down globally would have bought classifier latency with scan accuracy
 now per call site: `receiptScanConfig()` keeps the configured level, `classifyConfig()` pins
 minimal, and both are built from one `jsonConfig` helper so they cannot drift on anything else.
 
-"Minimal" is not one value. Gemini 1.x/2.x have no `thinkingLevel` field and need `thinkingBudget:
-0` instead, so `minimalThinkingFor` picks the knob by generation, exactly as `thinkingConfigFor`
-already did.
+"Minimal" is not one value, and the first cut of this got it wrong in a way review caught. Picking
+the knob by generation — `thinkingBudget` for 1.x/2.x, `thinkingLevel` for 3+ — is necessary but
+not sufficient, because the *floor* varies inside a generation. Per Google's support table,
+`gemini-3.7-flash` accepts only low/medium/high; `gemini-3-pro-preview` accepts only low/high; and
+`gemini-2.5-pro` cannot disable thinking at all, its range starting at 128. Asking any of them for
+the cheapest setting a sibling model supports is a 400, which `classifyMessage` catches and turns
+into `null`, reaching the user as "I couldn't understand that command" on every free-text message.
+
+So `minimalThinkingFor` resolves per model, and falls back to `low` — the one level present in
+every row of the table — rather than to the cheapest one imaginable. The asymmetry is the point:
+too much thinking costs latency, an unsupported value costs the whole feature. Note this is not a
+Pro-model caveat; the model it would have broken first is a Flash one, and newer than the model
+this release moved to. The matrix is now a table-driven test, so a model that ships without
+`minimal` degrades instead of taking the bot down.
 
 The subtle half was the fallback. `generateContentWithRetry` rebuilds `thinkingConfig` for whatever
 model it switches to, and rebuilt it from the env default regardless of what the caller asked for

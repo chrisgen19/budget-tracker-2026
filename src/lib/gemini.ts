@@ -65,19 +65,48 @@ const thinkingConfigFor = (model: string): ThinkingConfig =>
     : { thinkingLevel: GEMINI_THINKING_LEVEL };
 
 /**
- * The cheapest thinking the model offers, expressed in whichever knob its generation uses.
+ * Models documented to accept the cheapest level. Everything else falls back to `low`, which
+ * appears in every row of the support table — 3.7 Flash, both Pro previews included.
+ *
+ * The floor is deliberately conservative because the cost is asymmetric. Too much thinking is
+ * some latency; an *unsupported* value is a 400, which `classifyMessage` catches and turns into
+ * `null`, reaching the user as "I couldn't understand that command" on every free-text message.
+ *
+ * This is not hypothetical, and it is not only a Pro-model problem: `gemini-3.7-flash` does not
+ * support `minimal` either. Assuming a generation shares one floor is the same mistake as
+ * assuming a model id can be written at a call site (#163) — it holds until the day it does not.
+ */
+const MINIMAL_LEVEL_MODELS = /^gemini-3\.(5|6)-flash/;
+
+/** 2.5 Flash and Flash-Lite accept a zero budget. 2.5 Pro cannot disable thinking at all: its
+ *  documented range starts at 128, so that is the lowest thing it can be asked for. */
+const ZERO_BUDGET_MODELS = /^gemini-2\.5-flash/;
+
+/** The floor for a 2.x model that does not accept zero. Documented minimum for 2.5 Pro. */
+const MIN_THINKING_BUDGET = 128;
+
+/**
+ * The cheapest thinking a *given model* actually supports, in whichever knob its generation uses.
  *
  * For work that is *classification* rather than reasoning. The Telegram classifier picks one of
  * eleven action labels from a prompt that already names every option; deliberating over that buys
  * nothing and costs latency on the hot path of every free-text message (#163).
+ *
+ * Per model rather than per generation, because the capability genuinely varies within one:
+ * `gemini-3.6-flash` and `gemini-3.5-flash` take `minimal`, `gemini-3.7-flash` and the Pro
+ * previews do not. See the table-driven test for the documented matrix.
  *
  * Exported so `generateContentWithRetry` can rebuild it for the fallback model — see the
  * `thinkingFor` parameter there for why passing the primary's config through would be wrong.
  */
 export const minimalThinkingFor = (model: string): ThinkingConfig =>
   /^gemini-[12]\./.test(model)
-    ? { thinkingBudget: 0 }
-    : { thinkingLevel: ThinkingLevel.MINIMAL };
+    ? { thinkingBudget: ZERO_BUDGET_MODELS.test(model) ? 0 : MIN_THINKING_BUDGET }
+    : {
+        thinkingLevel: MINIMAL_LEVEL_MODELS.test(model)
+          ? ThinkingLevel.MINIMAL
+          : ThinkingLevel.LOW,
+      };
 
 /** JSON-only responses (no markdown fences) + a per-attempt timeout, with thinking supplied by
  *  the caller. Shared so the two configs below cannot drift on anything but the thinking. */
