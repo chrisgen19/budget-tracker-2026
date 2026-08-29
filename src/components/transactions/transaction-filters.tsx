@@ -94,7 +94,8 @@ export function TransactionFiltersBar({
   const [monthPickerYear, setMonthPickerYear] = useState(() =>
     Number(filters.month === "ALL" ? accountMonthKey(new Date(), user.timezoneOffset).slice(0, 4) : filters.month.slice(0, 4)),
   );
-  const { toolbarRef, markerRef, isScrolling, handleToolbarFocus } = useFilterToolbarScroll();
+  const { toolbarRef, markerRef, isScrolling, isInPlace, handleToolbarFocus } =
+    useFilterToolbarScroll();
 
   const update = useCallback(
     (partial: Partial<TransactionFilters>) => {
@@ -173,13 +174,14 @@ export function TransactionFiltersBar({
         onFocusCapture={handleToolbarFocus}
         className={cn(
           "card sticky top-[61px] lg:top-0 z-20 mb-4 overflow-hidden border-cream-300/70 bg-white shadow-soft motion-reduce:transition-none",
-          // The transition stays on at every position. Nothing animates while the
-          // toolbar is in its own place because nothing changes up there — the hook
-          // never sets the hiding state — and keeping it means crossing back over
-          // the boundary fades in instead of snapping from invisible to visible.
           isScrolling
             ? "pointer-events-none -translate-y-full opacity-0 transition-all duration-100"
-            : "pointer-events-auto translate-y-0 opacity-100 transition-all duration-300",
+            // Back in its own space, which has only just come back on screen: no
+            // transition, so the toolbar and its space arrive together and there is
+            // never a moment with the space showing and the toolbar not in it.
+            : isInPlace
+              ? "pointer-events-auto translate-y-0 opacity-100"
+              : "pointer-events-auto translate-y-0 opacity-100 transition-all duration-300",
         )}
       >
         <div className="p-2.5 sm:p-3">

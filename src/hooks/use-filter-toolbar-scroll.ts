@@ -16,10 +16,12 @@ const FOCUS_SCROLL_MS = 150;
  * Mirrors ActionFab's mobile-only scroll behaviour for the transaction toolbar:
  * hide it while the page scrolls, show it again once scrolling settles.
  *
- * It only hides once it has scrolled up under the header and is sitting on top of
- * the list. Until then it is still in its own place in the page, where hiding it
- * would cover nothing and would leave a toolbar-sized gap behind — so up there it
- * does not move at all, and since nothing changes, nothing animates either.
+ * It only hides once its own space in the page has scrolled *entirely* off the top.
+ * Hiding it any sooner leaves a toolbar-sized hole on screen where it used to be,
+ * and scrolling back up then shows that hole a moment before the toolbar fills it.
+ * Past that point the space is off screen, so the toolbar and its space come back
+ * at the same instant and there is nothing to animate — which is why `isInPlace`
+ * renders without a transition.
  *
  * Three further cases never hide it: desktop, where nothing is crowding the
  * viewport; text entry inside the toolbar, because hiding it would blur the search
@@ -32,6 +34,7 @@ export function useFilterToolbarScroll() {
    *  in the page — unlike the toolbar, it is never moved by the hide transform. */
   const markerRef = useRef<HTMLDivElement>(null);
   const [isScrolling, setIsScrolling] = useState(false);
+  const [isInPlace, setIsInPlace] = useState(true);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const focusEnteredAtRef = useRef(0);
 
@@ -64,10 +67,17 @@ export function useFilterToolbarScroll() {
       return restingTop;
     };
 
-    /** True once the toolbar's own place in the page has scrolled off the top. */
-    const readIsOverlaying = () => {
+    /**
+     * True once the toolbar's own space in the page sits entirely above where the
+     * toolbar comes to rest — that is, once that space is off screen. Measured from
+     * the marker, which the hide transform never moves, plus `offsetHeight`, which
+     * is a layout box and so is not moved by the transform either.
+     */
+    const readIsPastTop = () => {
       const marker = markerRef.current;
-      return marker ? marker.getBoundingClientRect().top < readRestingTop() : false;
+      const toolbar = toolbarRef.current;
+      if (!marker || !toolbar) return false;
+      return marker.getBoundingClientRect().top + toolbar.offsetHeight <= readRestingTop();
     };
 
     /** Only text entry holds the toolbar open; a button suffers nothing from hiding. */
@@ -82,8 +92,11 @@ export function useFilterToolbarScroll() {
       !!toolbarRef.current?.contains(document.activeElement);
 
     const handleScroll = () => {
+      const pastTop = readIsPastTop();
+      setIsInPlace(!pastTop);
+
       if (
-        !readIsOverlaying() ||
+        !pastTop ||
         desktopQuery.matches ||
         holdsTextEntry() ||
         isFocusDrivenScroll()
@@ -106,6 +119,9 @@ export function useFilterToolbarScroll() {
       if (desktopQuery.matches) setIsScrolling(false);
     };
 
+    // Read once on mount, so a page restored mid-scroll starts in the right state.
+    setIsInPlace(!readIsPastTop());
+
     window.addEventListener("scroll", handleScroll, { passive: true });
     window.addEventListener("resize", forgetRestingTop);
     desktopQuery.addEventListener("change", handleBreakpointChange);
@@ -117,5 +133,5 @@ export function useFilterToolbarScroll() {
     };
   }, []);
 
-  return { toolbarRef, markerRef, isScrolling, handleToolbarFocus };
+  return { toolbarRef, markerRef, isScrolling, isInPlace, handleToolbarFocus };
 }

@@ -53,12 +53,12 @@ const renderFilters = (initial: TransactionFilters = baseFilters) => {
 };
 
 /**
- * Positions the flow marker that tracks the toolbar's own place in the page. jsdom
- * applies no Tailwind, so the toolbar's resting `top` reads as 0 there: a negative
- * marker top means the toolbar has scrolled under the header and is overlaying the
- * list, a positive one means it is still sitting in its own place at the top.
+ * Positions the flow marker that tracks the toolbar's own space in the page. jsdom
+ * applies no Tailwind and reports `offsetHeight` as 0, so the toolbar's resting top
+ * reads as 0 there: a negative marker top means that space has scrolled entirely
+ * off the top, a positive one means it is still on screen.
  */
-const setToolbarOverlaying = (container: HTMLElement, overlaying: boolean) => {
+const setToolbarPastTop = (container: HTMLElement, overlaying: boolean) => {
   const marker = container.querySelector("[data-filter-toolbar-marker]")!;
   vi.spyOn(marker, "getBoundingClientRect").mockReturnValue({
     top: overlaying ? -10 : 200,
@@ -107,7 +107,7 @@ describe("TransactionFiltersBar", () => {
   it("hides while scrolling and returns after the scroll settles", () => {
     const { container } = renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
-    setToolbarOverlaying(container, true);
+    setToolbarPastTop(container, true);
 
     expect(toolbar.className).toContain("opacity-100");
     fireEvent.scroll(window);
@@ -127,7 +127,7 @@ describe("TransactionFiltersBar", () => {
   it("does not move at all while it is still in its own place at the top", () => {
     const { container } = renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
-    setToolbarOverlaying(container, false);
+    setToolbarPastTop(container, false);
 
     // Rubber-band and momentum settling fire scroll events up here too.
     fireEvent.scroll(window);
@@ -139,31 +139,31 @@ describe("TransactionFiltersBar", () => {
     expect(toolbar.className).not.toContain("-translate-y-full");
   });
 
-  it("keeps its transition at the top, so crossing back fades instead of snapping", () => {
+  it("comes back with no transition once its own space is back on screen", () => {
     const { container } = renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
 
-    setToolbarOverlaying(container, true);
+    setToolbarPastTop(container, true);
     fireEvent.scroll(window);
     expect(toolbar.className).toContain("-translate-y-full");
 
-    // Scrolling back up until the toolbar is in its own place again. Without a
-    // transition here it jumps from invisible to visible in one frame.
-    setToolbarOverlaying(container, false);
+    // Scrolling back up to the top. The toolbar's space and the toolbar itself have
+    // to arrive together: a transition here shows the empty space filling in.
+    setToolbarPastTop(container, false);
     fireEvent.scroll(window);
     expect(toolbar.className).toContain("opacity-100");
-    expect(toolbar.className).toContain("transition-all");
+    expect(toolbar.className).not.toContain("transition-all");
   });
 
   it("starts hiding once it has scrolled under the header", () => {
     const { container } = renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
 
-    setToolbarOverlaying(container, false);
+    setToolbarPastTop(container, false);
     fireEvent.scroll(window);
     expect(toolbar.className).not.toContain("-translate-y-full");
 
-    setToolbarOverlaying(container, true);
+    setToolbarPastTop(container, true);
     fireEvent.scroll(window);
     expect(toolbar.className).toContain("-translate-y-full");
   });
@@ -184,7 +184,7 @@ describe("TransactionFiltersBar", () => {
   it("still hides after a toolbar button was tapped", () => {
     const { container } = renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
-    setToolbarOverlaying(container, true);
+    setToolbarPastTop(container, true);
     // Index 1 is the mobile navigator. Index 0 is the `hidden sm:flex` copy, which
     // jsdom still returns because it applies no Tailwind, and which is display:none
     // at the only widths this behaviour applies to.
@@ -207,7 +207,7 @@ describe("TransactionFiltersBar", () => {
   it("does not hide on the scroll that brings a newly focused control into view", () => {
     const { container } = renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
-    setToolbarOverlaying(container, true);
+    setToolbarPastTop(container, true);
     const previousMonth = screen.getAllByRole("button", { name: "Previous month" })[1];
 
     // Tabbing into the toolbar makes the browser scroll the control into view.
