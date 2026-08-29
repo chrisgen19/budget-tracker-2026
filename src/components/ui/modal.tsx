@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useId, useRef, useState, useCallback } from "react";
 import { X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -113,6 +113,7 @@ interface ModalProps {
 }
 
 export function Modal({ open, onClose, title, children }: ModalProps) {
+  const titleId = useId();
   const overlayRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -212,6 +213,9 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
 
           {/* Modal Card */}
           <motion.div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
             className={cn(
               "relative bg-white shadow-soft-lg w-full grain-overlay flex flex-col",
               isMobile
@@ -252,9 +256,11 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
 
             {/* Sticky Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-cream-200/80 shrink-0">
-              <h2 className="font-serif text-xl text-warm-700">{title}</h2>
+              <h2 id={titleId} className="font-serif text-xl text-warm-700">{title}</h2>
               <button
+                type="button"
                 onClick={onClose}
+                aria-label={`Close ${title}`}
                 className="p-2 -mr-2 rounded-xl text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors"
               >
                 <X className="w-5 h-5" />
