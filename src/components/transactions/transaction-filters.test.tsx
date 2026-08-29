@@ -126,7 +126,10 @@ describe("TransactionFiltersBar", () => {
   it("still hides after a toolbar button was tapped", () => {
     renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
-    const previousMonth = screen.getAllByRole("button", { name: "Previous month" })[0];
+    // Index 1 is the mobile navigator. Index 0 is the `hidden sm:flex` copy, which
+    // jsdom still returns because it applies no Tailwind, and which is display:none
+    // at the only widths this behaviour applies to.
+    const previousMonth = screen.getAllByRole("button", { name: "Previous month" })[1];
 
     // A button keeps focus after a tap. Only text entry may pin the toolbar open,
     // or one tap on a month arrow stops it ducking for the rest of the visit.
