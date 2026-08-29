@@ -240,10 +240,16 @@ export const createBudgetMcpServer = ({
     },
     async ({ month, from, to }) =>
       withPeriodErrors(async () => {
-        const params = { month, from, to, timezoneOffset };
+        // Resolved once, before the query, and then handed to it. Resolving the current-month
+        // default a second time after the await let a request in flight across local midnight
+        // return one month's categories under the next month's name.
+        const period = describePeriodOrCurrentMonth({ month, from, to }, timezoneOffset);
+        const window = period.month
+          ? { month: period.month }
+          : { ...(period.from && { from: period.from }), ...(period.to && { to: period.to }) };
         const payload = {
-          categories: await getSpendingByCategory(prisma, userId, params),
-          period: describePeriodOrCurrentMonth(params, timezoneOffset),
+          categories: await getSpendingByCategory(prisma, userId, { ...window, timezoneOffset }),
+          period,
         };
         return {
           content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],

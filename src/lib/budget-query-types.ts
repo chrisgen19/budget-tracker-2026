@@ -12,6 +12,19 @@ export interface DateRange {
 }
 
 /**
+ * A window that may be open at either end.
+ *
+ * A one-sided range is a real request ("everything since payday"), and the missing side has to
+ * stay missing. Substituting the epoch or the maximum instant for it looks harmless and is not:
+ * `new Date(0)` silently excludes anything recorded before 1970, and it makes a lone
+ * `to: "1969-12-31"` fail an ordering check against a `from` the caller never sent.
+ */
+export interface OpenDateRange {
+  startDate: Date | null;
+  endDate: Date | null;
+}
+
+/**
  * A date window, given as either a month or an explicit range of local days.
  *
  * `month` and `from`/`to` are mutually exclusive rather than one quietly winning: a filter that

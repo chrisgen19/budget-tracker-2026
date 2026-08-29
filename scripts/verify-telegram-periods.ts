@@ -29,6 +29,10 @@ const CASES: Array<{ text: string; expect: Expectation }> = [
   { text: "how much on transportation in the last 3 days", expect: "RANGE" },
   { text: "how much did I spend on food this month", expect: "MONTH" },
   { text: "how much have I spent on transportation", expect: "NO_PERIOD" },
+  // An anchor the model cannot date from anything it was given. Inventing a boundary here would
+  // silently hide real rows; answering wider and naming the window does not.
+  { text: "how much on food since payday", expect: "NO_PERIOD" },
+  { text: "what did I spend on transportation since I got back", expect: "NO_PERIOD" },
 ];
 
 let failures = 0;

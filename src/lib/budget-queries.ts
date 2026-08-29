@@ -41,6 +41,7 @@ import type {
   ReceiptItems,
   ReceiptItem,
   DateRange,
+  OpenDateRange,
   PeriodParams,
   ResolvedPeriod,
   TransactionTotals,
@@ -77,8 +78,17 @@ const dayKey = (local: Date): string =>
 
 const LOCAL_DAY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
-/** The largest instant a `Date` can hold, used as the open end of a half-bounded range. */
-const MAX_INSTANT = 8_640_000_000_000_000;
+/**
+ * The Prisma `date` predicate for a window, leaving out whichever bound the caller left open.
+ *
+ * Filling an open end with a sentinel instant is the tempting shortcut and the wrong one: an
+ * epoch `gte` quietly drops anything from before 1970, and it turns a legitimate one-sided
+ * `to` into an ordering error against a `from` nobody supplied.
+ */
+const dateFilter = ({ startDate, endDate }: OpenDateRange): { gte?: Date; lte?: Date } => ({
+  ...(startDate ? { gte: startDate } : {}),
+  ...(endDate ? { lte: endDate } : {}),
+});
 
 /**
  * Parse a local `YYYY-MM-DD` into the UTC instant bounding that day in the user's timezone.
@@ -141,7 +151,7 @@ const describeMonth = (
 const resolvePeriod = (
   params: PeriodParams,
   tzOffset: number
-): { range: DateRange; period: ResolvedPeriod } | null => {
+): { range: OpenDateRange; period: ResolvedPeriod } | null => {
   const { month, from, to } = params;
 
   if (month && (from || to)) {
@@ -153,10 +163,12 @@ const resolvePeriod = (
   if (month) return describeMonth(month, tzOffset);
   if (!from && !to) return null;
 
-  const startDate = from ? parseLocalDay(from, tzOffset, false) : new Date(0);
-  const endDate = to ? parseLocalDay(to, tzOffset, true) : new Date(MAX_INSTANT);
+  const startDate = from ? parseLocalDay(from, tzOffset, false) : null;
+  const endDate = to ? parseLocalDay(to, tzOffset, true) : null;
 
-  if (startDate > endDate) {
+  // Only meaningful when both ends were given. With one side open there is nothing for the
+  // other to be backwards of, and checking against a sentinel would reject a valid request.
+  if (startDate && endDate && startDate > endDate) {
     throw new RangeError(`\`from\` (${from}) is after \`to\` (${to}).`);
   }
 
@@ -170,7 +182,7 @@ const resolvePeriod = (
 const resolvePeriodOrCurrentMonth = (
   params: PeriodParams,
   tzOffset: number
-): { range: DateRange; period: ResolvedPeriod } =>
+): { range: OpenDateRange; period: ResolvedPeriod } =>
   resolvePeriod(params, tzOffset) ?? describeMonth(currentMonth(tzOffset), tzOffset);
 
 /**
@@ -216,15 +228,13 @@ export const getSpendingByCategory = async (
   params: SpendingByCategoryParams = {}
 ): Promise<CategorySpending[]> => {
   const tz = params.timezoneOffset ?? 0;
-  const {
-    range: { startDate, endDate },
-  } = resolvePeriodOrCurrentMonth(params, tz);
+  const { range } = resolvePeriodOrCurrentMonth(params, tz);
 
   const transactions = await prisma.transaction.findMany({
     where: {
       userId,
       type: "EXPENSE",
-      date: { gte: startDate, lte: endDate },
+      date: dateFilter(range),
     },
     include: { category: true },
   });
@@ -277,7 +287,7 @@ export const getTopExpenses = async (
 
   const resolved = resolvePeriod(params, tz);
   if (resolved) {
-    where.date = { gte: resolved.range.startDate, lte: resolved.range.endDate };
+    where.date = dateFilter(resolved.range);
   }
 
   const transactions = await prisma.transaction.findMany({
@@ -428,7 +438,7 @@ export const searchTransactions = async (
 
   const resolved = resolvePeriod(params, tz);
   if (resolved) {
-    where.date = { gte: resolved.range.startDate, lte: resolved.range.endDate };
+    where.date = dateFilter(resolved.range);
   }
 
   if (params.categoryId) {
@@ -561,27 +571,27 @@ export const getBudgetOverview = async (
   params: BudgetOverviewParams = {}
 ): Promise<BudgetOverview> => {
   const tz = params.timezoneOffset ?? 0;
-  const {
-    range: { startDate, endDate },
-    period,
-  } = resolvePeriodOrCurrentMonth(params, tz);
+  const { range, period } = resolvePeriodOrCurrentMonth(params, tz);
+  // The running balance is everything up to the end of the window. An open end means there is
+  // no cut-off, so the balance is simply all-time rather than everything before a sentinel.
+  const upToEnd = range.endDate ? { date: { lte: range.endDate } } : {};
 
   const [transactions, runningIncome, runningExpenses] = await Promise.all([
     prisma.transaction.findMany({
       where: {
         userId,
-        date: { gte: startDate, lte: endDate },
+        date: dateFilter(range),
       },
       select: { amount: true, type: true },
     }),
 
     prisma.transaction.aggregate({
-      where: { userId, type: "INCOME", date: { lte: endDate } },
+      where: { userId, type: "INCOME", ...upToEnd },
       _sum: { amount: true },
     }),
 
     prisma.transaction.aggregate({
-      where: { userId, type: "EXPENSE", date: { lte: endDate } },
+      where: { userId, type: "EXPENSE", ...upToEnd },
       _sum: { amount: true },
     }),
   ]);
@@ -716,13 +726,10 @@ export const getLabelBreakdown = async (
 ): Promise<LabelBreakdown> => {
   const tz = params.timezoneOffset ?? 0;
   const type = params.type ?? "EXPENSE";
-  const {
-    range: { startDate, endDate },
-    period,
-  } = resolvePeriodOrCurrentMonth(params, tz);
+  const { range, period } = resolvePeriodOrCurrentMonth(params, tz);
 
   const transactions = await prisma.transaction.findMany({
-    where: { userId, type, date: { gte: startDate, lte: endDate } },
+    where: { userId, type, date: dateFilter(range) },
     include: { labels: { include: { label: true } } },
   });
 
@@ -1127,7 +1134,7 @@ export const getReceiptItems = async (
 
   const resolved = resolvePeriod(params, tz);
   if (resolved) {
-    where.date = { gte: resolved.range.startDate, lte: resolved.range.endDate };
+    where.date = dateFilter(resolved.range);
   }
 
   if (params.receiptGroupId) {

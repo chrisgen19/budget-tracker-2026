@@ -67,26 +67,53 @@ describe("explicit from/to ranges", () => {
   it("includes a transaction made late on the last local day of the range", async () => {
     const { prisma, seen } = fakePrisma();
 
+    // 2026-08-25T22:00Z is 06:00 on the 26th in Manila. Ending the range on the 26th must
+    // therefore cover it -- and it only does if `to` resolves to the *end* of that local day.
+    // Asserting only the exclusion case (a range ending on the 25th) would pass either way,
+    // since a start-of-day bound excludes the row too, for the wrong reason.
+    await searchTransactions(prisma, "u1", {
+      from: "2026-08-24",
+      to: "2026-08-26",
+      timezoneOffset: MANILA,
+    });
+
+    const inclusive = dateRange(seen[0]);
+    expect(LATE_EVENING_UTC <= inclusive.lte!).toBe(true);
+    expect(LATE_EVENING_UTC >= inclusive.gte!).toBe(true);
+  });
+
+  it("excludes it from a range ending the local day before", async () => {
+    const { prisma, seen } = fakePrisma();
+
     await searchTransactions(prisma, "u1", {
       from: "2026-08-24",
       to: "2026-08-25",
       timezoneOffset: MANILA,
     });
 
-    // 2026-08-25T22:00Z is 06:00 on the 26th in Manila, so it must fall *outside* a range
-    // ending on the 25th -- and inside one ending on the 26th.
-    const { gte, lte } = dateRange(seen[0]);
-    expect(LATE_EVENING_UTC <= lte!).toBe(false);
-    expect(LATE_EVENING_UTC >= gte!).toBe(true);
+    expect(LATE_EVENING_UTC <= dateRange(seen[0]).lte!).toBe(false);
   });
 
-  it("leaves the far end open when only `from` is given", async () => {
+  it("leaves the far end genuinely absent when only `from` is given", async () => {
     const { prisma, seen } = fakePrisma();
 
     await searchTransactions(prisma, "u1", { from: "2026-08-24", timezoneOffset: MANILA });
 
+    // Not a sentinel instant: a `lte` of the maximum Date is a bound Postgres still has to
+    // compare against, and the mirrored `gte: new Date(0)` would drop pre-1970 rows outright.
     expect(dateRange(seen[0]).gte?.toISOString()).toBe("2026-08-23T16:00:00.000Z");
-    expect(dateRange(seen[0]).lte!.getTime()).toBe(8_640_000_000_000_000);
+    expect("lte" in dateRange(seen[0])).toBe(false);
+  });
+
+  it("leaves the near end absent when only `to` is given, and does not call it backwards", async () => {
+    const { prisma, seen } = fakePrisma();
+
+    // With no `from`, there is nothing for `to` to be earlier than. Comparing against an epoch
+    // sentinel rejected this outright while naming a `from` the caller never sent.
+    await searchTransactions(prisma, "u1", { to: "1969-12-31", timezoneOffset: MANILA });
+
+    expect("gte" in dateRange(seen[0])).toBe(false);
+    expect(dateRange(seen[0]).lte?.toISOString()).toBe("1969-12-31T15:59:59.999Z");
   });
 
   it("applies no date filter at all when no period is given", async () => {

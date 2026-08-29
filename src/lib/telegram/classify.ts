@@ -80,7 +80,11 @@ Decide what the user wants:
   - "from" and "to": YYYY-MM-DD, for any period NARROWER than a month, resolved against the
     current timestamp above: "last week", "yesterday", "since Monday", "the 24th to the 29th",
     "the last 3 days". Both ends are inclusive, so "yesterday" sets from and to to the same day.
-    Set only one end when the user gave only one ("since payday").
+    Set only one end when the user gave only one AND its date is explicit or resolvable from
+    the current timestamp ("since Monday", "since the 20th"). If the anchor is something you
+    cannot date from what you have been given ("since payday", "since I got back"), set no
+    period at all rather than inventing a boundary: a made-up start silently hides real
+    transactions, and a wider answer that says which window it used does not.
   Never set "month" together with "from"/"to" -- pick whichever matches what they asked for.
   Omit all three only when they set no time limit at all ("how much have I spent at jollibee").
   At least one of label, category or search must be set.
