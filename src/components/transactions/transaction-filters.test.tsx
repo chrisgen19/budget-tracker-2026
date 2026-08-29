@@ -90,12 +90,25 @@ afterEach(() => {
 });
 
 describe("TransactionFiltersBar", () => {
-  it("keeps the compact toolbar sticky and opens advanced filters in a dialog", () => {
-    renderFilters();
-
+  it("pins itself only once its own space has left the screen", () => {
+    const { container } = renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+
+    // In its own place it is an ordinary container that scrolls away with the list.
+    setToolbarPastTop(container, false);
+    fireEvent.scroll(window);
+    expect(toolbar.className).toContain("relative");
+    expect(toolbar.className).not.toContain("sticky");
+
+    // Once that space is off the top it becomes an overlay pinned under the header.
+    setToolbarPastTop(container, true);
+    fireEvent.scroll(window);
     expect(toolbar.className).toContain("sticky");
     expect(toolbar.className).toContain("top-[61px]");
+  });
+
+  it("opens advanced filters in a dialog", () => {
+    renderFilters();
 
     const { trigger } = openFilters();
     expect(trigger.getAttribute("aria-expanded")).toBe("true");

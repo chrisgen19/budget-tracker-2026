@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const DESKTOP_QUERY = "(min-width: 640px)";
+/** Where the toolbar stops tucking under the mobile header. Mirrors its `lg:` variant. */
+const HEADER_GONE_QUERY = "(min-width: 1024px)";
+/** The mobile header's height, and so the toolbar's `top-[61px]` when it does pin. */
+const HEADER_HEIGHT_PX = 61;
 const SETTLE_MS = 180;
 
 /**
@@ -16,12 +20,15 @@ const FOCUS_SCROLL_MS = 150;
  * Mirrors ActionFab's mobile-only scroll behaviour for the transaction toolbar:
  * hide it while the page scrolls, show it again once scrolling settles.
  *
- * It only hides once its own space in the page has scrolled *entirely* off the top.
- * Hiding it any sooner leaves a toolbar-sized hole on screen where it used to be,
- * and scrolling back up then shows that hole a moment before the toolbar fills it.
- * Past that point the space is off screen, so the toolbar and its space come back
- * at the same instant and there is nothing to animate — which is why `isInPlace`
- * renders without a transition.
+ * `isInPlace` is true while the toolbar's own space in the page is still on screen.
+ * Up there it is an ordinary container: it scrolls away with the list, it does not
+ * pin itself under the header, and it never hides. Only once that space has gone
+ * entirely off the top does it become a pinned overlay that hides while the page
+ * scrolls and returns when scrolling stops.
+ *
+ * Drawn that way, the overlay only ever exists where its own space is off screen,
+ * so it can appear and disappear with nothing on screen to flash against — which
+ * is why the in-place state carries no transition.
  *
  * Three further cases never hide it: desktop, where nothing is crowding the
  * viewport; text entry inside the toolbar, because hiding it would blur the search
@@ -51,21 +58,11 @@ export function useFilterToolbarScroll() {
       timerRef.current = undefined;
     };
 
-    // Where the toolbar comes to rest is a breakpoint away from changing
-    // (`top-[61px] lg:top-0`), so it is read off the element rather than hardcoded —
-    // and cached, since `getComputedStyle` on every scroll forces a style recalc.
-    let restingTop: number | null = null;
-    const forgetRestingTop = () => {
-      restingTop = null;
-    };
-    const readRestingTop = () => {
-      if (restingTop !== null) return restingTop;
-      const toolbar = toolbarRef.current;
-      if (!toolbar) return 0;
-      const parsed = Number.parseFloat(getComputedStyle(toolbar).top);
-      restingTop = Number.isFinite(parsed) ? parsed : 0;
-      return restingTop;
-    };
+    // Where the toolbar pins itself when it is an overlay. It cannot be read off the
+    // element, because the element is only `sticky` while it is one — in its own
+    // place it is an ordinary container whose computed `top` is `auto`.
+    const headerGoneQuery = window.matchMedia(HEADER_GONE_QUERY);
+    const readRestingTop = () => (headerGoneQuery.matches ? 0 : HEADER_HEIGHT_PX);
 
     /**
      * True once the toolbar's own space in the page sits entirely above where the
@@ -115,7 +112,6 @@ export function useFilterToolbarScroll() {
     };
 
     const handleBreakpointChange = () => {
-      forgetRestingTop();
       if (desktopQuery.matches) setIsScrolling(false);
     };
 
@@ -123,11 +119,9 @@ export function useFilterToolbarScroll() {
     setIsInPlace(!readIsPastTop());
 
     window.addEventListener("scroll", handleScroll, { passive: true });
-    window.addEventListener("resize", forgetRestingTop);
     desktopQuery.addEventListener("change", handleBreakpointChange);
     return () => {
       window.removeEventListener("scroll", handleScroll);
-      window.removeEventListener("resize", forgetRestingTop);
       desktopQuery.removeEventListener("change", handleBreakpointChange);
       clearTimer();
     };

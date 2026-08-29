@@ -173,15 +173,18 @@ export function TransactionFiltersBar({
         aria-label="Transaction filters"
         onFocusCapture={handleToolbarFocus}
         className={cn(
-          "card sticky top-[61px] lg:top-0 z-20 mb-4 overflow-hidden border-cream-300/70 bg-white shadow-soft motion-reduce:transition-none",
-          isScrolling
-            ? "pointer-events-none -translate-y-full opacity-0 transition-all duration-100"
-            // Back in its own space, which has only just come back on screen: no
-            // transition, so the toolbar and its space arrive together and there is
-            // never a moment with the space showing and the toolbar not in it.
-            : isInPlace
-              ? "pointer-events-auto translate-y-0 opacity-100"
-              : "pointer-events-auto translate-y-0 opacity-100 transition-all duration-300",
+          "card z-20 mb-4 overflow-hidden border-cream-300/70 bg-white shadow-soft motion-reduce:transition-none",
+          isInPlace
+            // Its own space is still on screen, so it is an ordinary container: it
+            // scrolls away with the list, does not pin itself under the header, and
+            // never hides. No transition either — nothing changes up here.
+            ? "relative translate-y-0 opacity-100 pointer-events-auto"
+            // Its space has gone off the top, so it becomes a pinned overlay. It can
+            // appear and disappear freely now: there is nothing on screen behind it
+            // for the change to flash against.
+            : isScrolling
+              ? "sticky top-[61px] lg:top-0 pointer-events-none -translate-y-full opacity-0 transition-all duration-100"
+              : "sticky top-[61px] lg:top-0 pointer-events-auto translate-y-0 opacity-100 transition-all duration-300",
         )}
       >
         <div className="p-2.5 sm:p-3">
