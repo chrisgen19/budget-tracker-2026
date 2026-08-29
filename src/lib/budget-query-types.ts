@@ -435,9 +435,16 @@ export interface BillOccurrence {
   status: BillOccurrenceStatus;
   /** When it was settled, or the most recent snooze if it never was */
   actionDate: string | null;
-  /** The user's own calendar day for `actionDate`, YYYY-MM-DD. This one *is* converted: paying
-   *  a bill happens at a moment, not on a date-only field, so the same rules as a transaction's
-   *  `localDate` apply. Null when the occurrence is unsettled. */
+  /**
+   * The user's own calendar day for `actionDate`, YYYY-MM-DD.
+   *
+   * Converted, unlike `localDueDate`: acting on a bill happens at a moment rather than on a
+   * date-only field, so the same rule as a transaction's `localDate` applies.
+   *
+   * Follows `actionDate` exactly, which means it is the *snooze* time on an occurrence that is
+   * still outstanding -- `record` is `settled ?? latestSnooze`. Null only when neither exists.
+   * Do not read it as a settlement time without checking `status`.
+   */
   localActionDate: string | null;
   /** Whole calendar days between the due day and the day it was paid. The due day is the
    *  stored calendar date; only the action instant is converted to the user's timezone.

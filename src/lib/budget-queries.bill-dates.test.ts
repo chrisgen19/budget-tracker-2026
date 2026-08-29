@@ -96,8 +96,7 @@ describe("bill history separates the date-only fields from the real instant", ()
     expect(occurrence.actionDate).toBe("2026-08-04T22:30:00.000Z");
   });
 
-  it("converts the snooze day too, since it is derived from a clock and not a calendar", async () => {
-    const snoozePrisma = () =>
+  const snoozePrisma = () =>
       ({
         scheduledTransaction: {
           findMany: vi.fn(async () => [
@@ -127,6 +126,7 @@ describe("bill history separates the date-only fields from the real instant", ()
         transaction: { findMany: vi.fn(async () => []) },
       }) as unknown as PrismaClient;
 
+  it("converts the snooze day too, since it is derived from a clock and not a calendar", async () => {
     const result = await getBillHistory(snoozePrisma(), "u1", {
       timezoneOffset: NEW_YORK,
       months: 24,
@@ -135,6 +135,21 @@ describe("bill history separates the date-only fields from the real instant", ()
     expect(result.occurrences[0].localSnoozeUntil).toBe("2026-08-30");
     // The due date beside it is still untouched.
     expect(result.occurrences[0].localDueDate).toBe("2026-08-05");
+  });
+
+  it("reports the snooze time in localActionDate while an occurrence is outstanding", async () => {
+    // `record` is `settled ?? latestSnooze`, so an unsettled occurrence carries the snooze's
+    // action time here -- not null, and not a settlement. A reader that assumes otherwise
+    // reports a snoozed bill as paid.
+    const result = await getBillHistory(snoozePrisma(), "u1", {
+      timezoneOffset: NEW_YORK,
+      months: 24,
+    });
+    const [occurrence] = result.occurrences;
+
+    expect(occurrence.status).toBe("SNOOZED");
+    expect(occurrence.localActionDate).toBe("2026-08-04");
+    expect(occurrence.actionDate).toBe("2026-08-04T22:30:00.000Z");
   });
 
   it("reports the action date in the user's own zone, not UTC", async () => {

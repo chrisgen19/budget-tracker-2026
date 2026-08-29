@@ -320,13 +320,21 @@ const billHistory = z.object({
         .string()
         .describe("The calendar day the occurrence fell due, YYYY-MM-DD. Date-only, so not converted."),
       status: z.enum(["PAID", "SKIPPED", "SNOOZED"]),
-      actionDate: z.string().nullable().describe("When it was settled, as an ISO instant."),
+      actionDate: z
+        .string()
+        .nullable()
+        .describe(
+          "When the occurrence was settled, as an ISO instant -- or, while it is still " +
+            "outstanding, when it was most recently snoozed. Check `status` before calling it " +
+            "a payment."
+        ),
       localActionDate: z
         .string()
         .nullable()
         .describe(
-          "The user's own calendar day for `actionDate`. This one IS converted: settling a bill " +
-            "happens at a moment, so the same rule as a transaction's `localDate` applies."
+          "The user's own calendar day for `actionDate`. Converted, unlike `localDueDate`, " +
+            "because acting on a bill happens at a moment. It follows `actionDate` exactly, so " +
+            "on a SNOOZED occurrence it is the snooze time, not a settlement."
         ),
       daysLate: z.number().nullable(),
       snoozeCount: z.number(),
