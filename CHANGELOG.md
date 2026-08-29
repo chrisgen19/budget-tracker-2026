@@ -2,6 +2,32 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-29 - Two kinds of date
+
+#132 asked why `create_transactions` reported "1 September" while the read tools reported
+`2026-08-31T17:00:00.000Z` for the same row, and nothing said which convention was which. The
+transaction half was settled by adding `localDate` beside the instant. The bill half was left,
+deliberately, because it is not the same problem wearing a different hat.
+
+A transaction happens at a moment. A bill due date does not: `nextDueDate` is stored at midnight
+UTC and means "the 5th", the way a calendar means it. Running that through `formatLocalDate` looks
+like consistency and is a bug -- for anyone west of Greenwich it renders the 4th, and every payment
+made on time reads as a day late. So `localDueDate` and `localSnoozeUntil` are produced with
+`dayKey(utcDayStart(...))`, which takes the day the value already had and never shifts it, while
+`localActionDate` *is* converted, because paying a bill is a moment and 22:30Z on the 4th really is
+the 5th in Manila. Three fields, two conventions, and the schemas now say which is which rather
+than leaving a model to infer it from a string that looks the same either way.
+
+The tests pin both directions, which matters more than usual here: the plausible mistake is not
+forgetting to convert, it is converting the thing that must not be. Reverting the due date to
+`formatLocalDate` fails three; leaving the action date unconverted fails one.
+
+`localDay` in `src/lib/telegram/local-time.ts` is deleted. It existed only because the read tools
+returned instants, and the bot had to redo the conversion the server could have done; its
+docstring said so. With the server naming the day, the workaround is dead code, and the bot now
+derives no calendar day at all -- which is what `TELEGRAM_TZ_OFFSET` drifting was ever able to
+break.
+
 ## 2026-08-29 - The week the server would not name
 
 Asked what a week's spending came to, the only honest answer involved a caveat: the tools filter by

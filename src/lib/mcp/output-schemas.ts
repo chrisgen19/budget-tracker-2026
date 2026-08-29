@@ -230,7 +230,15 @@ const upcomingBills = z.object({
       categoryIcon: z.string(),
       categoryColor: z.string(),
       amount: z.number(),
-      dueDate: z.string(),
+      dueDate: z.string().describe("The stored value as an ISO instant."),
+      localDueDate: z
+        .string()
+        .describe(
+          "The calendar day the bill falls due, YYYY-MM-DD. Report this rather than slicing " +
+            "`dueDate`. It is deliberately NOT timezone-converted: a due date means \"the 5th\" " +
+            "for everyone, and shifting one west of UTC would move it to the 4th and make an " +
+            "on-time payment look late."
+        ),
       isOverdue: z.boolean(),
     })
   ),
@@ -307,13 +315,39 @@ const billHistory = z.object({
       categoryName: z.string(),
       amount: z.number(),
       paidAmount: z.number().nullable(),
-      dueDate: z.string(),
+      dueDate: z.string().describe("The stored value as an ISO instant."),
+      localDueDate: z
+        .string()
+        .describe("The calendar day the occurrence fell due, YYYY-MM-DD. Date-only, so not converted."),
       status: z.enum(["PAID", "SKIPPED", "SNOOZED"]),
-      actionDate: z.string().nullable(),
+      actionDate: z
+        .string()
+        .nullable()
+        .describe(
+          "When the occurrence was settled, as an ISO instant -- or, while it is still " +
+            "outstanding, when it was most recently snoozed. Check `status` before calling it " +
+            "a payment."
+        ),
+      localActionDate: z
+        .string()
+        .nullable()
+        .describe(
+          "The user's own calendar day for `actionDate`. Converted, unlike `localDueDate`, " +
+            "because acting on a bill happens at a moment. It follows `actionDate` exactly, so " +
+            "on a SNOOZED occurrence it is the snooze time, not a settlement."
+        ),
       daysLate: z.number().nullable(),
       snoozeCount: z.number(),
       transactionId: z.string().nullable(),
       snoozeUntil: z.string().nullable(),
+      localSnoozeUntil: z
+        .string()
+        .nullable()
+        .describe(
+          "The user's own calendar day the snooze runs to, YYYY-MM-DD. Converted, unlike " +
+            "`localDueDate`: it is derived from the clock at snooze time, not from a calendar " +
+            "day the user named."
+        ),
     })
   ),
   summaries: z.array(

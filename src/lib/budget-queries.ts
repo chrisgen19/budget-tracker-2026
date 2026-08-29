@@ -666,6 +666,9 @@ export const getUpcomingBills = async (
       categoryColor: bill.category.color,
       amount: bill.amount,
       dueDate: bill.nextDueDate.toISOString(),
+      // `dayKey(utcDayStart(...))`, never `formatLocalDate`: a due date is date-only, and the
+      // timezone shift that is correct for a transaction is wrong here.
+      localDueDate: dayKey(utcDayStart(bill.nextDueDate)),
       isOverdue: dueDate < today,
     };
   });
@@ -997,12 +1000,21 @@ export const getBillHistory = async (
         ? paidAmounts.get(group.settled.transactionId) ?? null
         : null,
       dueDate: group.dueDate.toISOString(),
+      localDueDate: dayKey(utcDayStart(group.dueDate)),
       status,
       actionDate: record.actionDate?.toISOString() ?? null,
+      // Converted, unlike the two date-only fields either side of it: this one is the instant
+      // the user actually paid or skipped.
+      localActionDate: record.actionDate ? formatLocalDate(record.actionDate, tz) : null,
       daysLate,
       snoozeCount: group.snoozeCount,
       transactionId: group.settled?.transactionId ?? null,
       snoozeUntil: group.latestSnooze?.snoozeUntil?.toISOString() ?? null,
+      // Converted, unlike the due date: this one is derived from the server clock at snooze
+      // time, not from a calendar day the user named.
+      localSnoozeUntil: group.latestSnooze?.snoozeUntil
+        ? formatLocalDate(group.latestSnooze.snoozeUntil, tz)
+        : null,
     });
 
     let entry = stats.get(bill.id);

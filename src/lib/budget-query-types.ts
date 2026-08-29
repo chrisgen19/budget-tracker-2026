@@ -293,7 +293,23 @@ export interface UpcomingBill {
   categoryIcon: string;
   categoryColor: string;
   amount: number;
+  /** The stored value as an ISO instant. Kept for callers that already read it. */
   dueDate: string;
+  /**
+   * The calendar day the bill falls due, YYYY-MM-DD.
+   *
+   * Deliberately *not* timezone-converted, unlike a transaction's `localDate`. A due date is a
+   * date-only fact stored at midnight UTC and meaning "the 5th"; shifting it into a zone west of
+   * UTC moves it to the 4th, which turns every on-time payment into a day late. So this is the
+   * same day for every reader, and reporting it as a bare day is what stops a model reading
+   * `2026-08-05T00:00:00.000Z` and calling it 4 August.
+   *
+   * That "stored at midnight UTC" is a real dependency and not a guarantee: the write paths
+   * normalise with `setHours(0, 0, 0, 0)`, which is *process-local* midnight, so it holds only
+   * while the server runs in UTC. Production does, by base-image default rather than by
+   * contract, and `nixpacks.toml` pins no `TZ`. Normalising those writes is tracked in #184.
+   */
+  localDueDate: string;
   isOverdue: boolean;
 }
 
@@ -410,12 +426,26 @@ export interface BillOccurrence {
    *  `amount` for every past occurrence. `null` unless the occurrence created a transaction.
    *  Matches `paidAmount` on `/api/bills/[id]/history`. */
   paidAmount: number | null;
-  /** The date this occurrence was due */
+  /** The date this occurrence was due, as an ISO instant. Render `localDueDate` instead. */
   dueDate: string;
+  /** The calendar day the occurrence fell due, YYYY-MM-DD. Date-only, so not converted --
+   *  see `UpcomingBill.localDueDate`. */
+  localDueDate: string;
   /** The settled outcome (PAID or SKIPPED), or SNOOZED while still outstanding */
   status: BillOccurrenceStatus;
   /** When it was settled, or the most recent snooze if it never was */
   actionDate: string | null;
+  /**
+   * The user's own calendar day for `actionDate`, YYYY-MM-DD.
+   *
+   * Converted, unlike `localDueDate`: acting on a bill happens at a moment rather than on a
+   * date-only field, so the same rule as a transaction's `localDate` applies.
+   *
+   * Follows `actionDate` exactly, which means it is the *snooze* time on an occurrence that is
+   * still outstanding -- `record` is `settled ?? latestSnooze`. Null only when neither exists.
+   * Do not read it as a settlement time without checking `status`.
+   */
+  localActionDate: string | null;
   /** Whole calendar days between the due day and the day it was paid. The due day is the
    *  stored calendar date; only the action instant is converted to the user's timezone.
    *  Negative means paid early. `null` unless the occurrence was PAID. */
@@ -425,6 +455,16 @@ export interface BillOccurrence {
   /** Whether paying it created a transaction */
   transactionId: string | null;
   snoozeUntil: string | null;
+  /**
+   * The user's own calendar day the snooze runs to, YYYY-MM-DD.
+   *
+   * Converted, unlike `localDueDate`, because its provenance is an instant and not a calendar
+   * day: `POST /api/bills/[id]/action` computes it as `new Date()` plus N days off the *server*
+   * clock. Someone at UTC-4 snoozing for a day at 20:00 local has that stored as the day after
+   * next in UTC, so reading it as date-only would tell them the snooze runs a day longer than
+   * they asked for.
+   */
+  localSnoozeUntil: string | null;
 }
 
 export interface BillHistorySummary {
