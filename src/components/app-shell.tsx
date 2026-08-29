@@ -11,7 +11,6 @@ import {
   Tags,
   Tag,
   Wallet,
-  ScanLine,
   Shield,
   AlertTriangle,
 } from "lucide-react";
@@ -19,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { useUser } from "@/components/user-provider";
 import { ProfileMenu } from "@/components/profile-menu";
+import { MobileTabBar } from "@/components/mobile-tab-bar";
 import { ScanProvider } from "@/components/scan-provider";
 import { ScanReceiptSheet } from "@/components/scan-receipt-sheet";
 import { Modal } from "@/components/ui/modal";
@@ -50,13 +50,6 @@ const NAV_ITEMS = [
   { href: "/categories", label: "Categories", icon: Tags },
   { href: "/labels", label: "Labels", icon: Tag },
 ];
-
-/** Hidden from the mobile bottom nav — reachable via the profile menu instead.
- *  Labels avoids overflow; Bills/Categories live in the profile menu. */
-const MOBILE_NAV_EXCLUDED = ["/labels", "/bills", "/categories"];
-const MOBILE_NAV_ITEMS = NAV_ITEMS.filter(
-  (item) => !MOBILE_NAV_EXCLUDED.includes(item.href)
-);
 
 function AppMain({ children }: { children: React.ReactNode }) {
   const { bannerVisible, bannerHeight: installBannerHeight } = useInstallBanner();
@@ -292,67 +285,17 @@ export function AppShell({ children }: AppShellProps) {
         </div>
       </header>
 
-      {/* Mobile Bottom Navigation */}
-      <nav className="lg:hidden fixed bottom-0 inset-x-0 bg-white/90 backdrop-blur-md border-t border-cream-300/60 z-30 px-2 pb-[env(safe-area-inset-bottom)]">
-        <div className="flex items-start justify-around py-2">
-          {MOBILE_NAV_ITEMS.map((item) => {
-            const isActive = pathname === item.href;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "flex flex-col items-center gap-1 px-1 py-2 rounded-xl transition-all duration-200 flex-1 basis-0 min-w-0",
-                  isActive
-                    ? "text-amber"
-                    : "text-warm-300"
-                )}
-              >
-                <item.icon className="w-5 h-5 shrink-0" />
-                <span className="text-[10px] font-medium truncate w-full text-center">
-                  {item.label}
-                </span>
-                {isActive && (
-                  <motion.div
-                    layoutId="mobile-active"
-                    className="absolute -top-0.5 w-8 h-0.5 bg-amber rounded-full"
-                    transition={{ type: "spring", duration: 0.4, bounce: 0.15 }}
-                  />
-                )}
-              </Link>
-            );
-          })}
-          {user.receiptScanEnabled && user.roleScanEnabled && (
-            <button
-              type="button"
-              onClick={() => setScanOpen(true)}
-              disabled={scanLimitReached}
-              className={cn(
-                "flex flex-col items-center gap-1 px-1 py-2 rounded-xl transition-all duration-200 flex-1 basis-0 min-w-0 relative",
-                scanLimitReached ? "text-warm-200 cursor-not-allowed" : "text-warm-300"
-              )}
-            >
-              <ScanLine className="w-5 h-5 shrink-0" />
-              <span className="text-[10px] font-medium truncate w-full text-center">Scan</span>
-              {hasLimit && (
-                <span className={cn(
-                  "text-[9px] font-medium",
-                  scanLimitReached ? "text-expense" : "text-warm-400"
-                )}>
-                  {user.scansUsedThisMonth}/{user.monthlyScanLimit}
-                </span>
-              )}
-            </button>
-          )}
-          <ProfileMenu
-            variant="mobile"
-            triggerStyle="tab"
-            name={user.name}
-            email={user.email}
-            isAdmin={user.role === "ADMIN"}
-          />
-        </div>
-      </nav>
+      <MobileTabBar
+        pathname={pathname}
+        name={user.name}
+        email={user.email}
+        isAdmin={user.role === "ADMIN"}
+        scanEnabled={user.receiptScanEnabled && user.roleScanEnabled}
+        scanLimitReached={!!scanLimitReached}
+        hasScanLimit={hasLimit}
+        scansRemaining={scansRemaining}
+        onScan={() => setScanOpen(true)}
+      />
 
       {/* Main Content */}
       {/* Below `sm`, reserve room for the FAB; see bottom-overlay-clearance.ts. */}

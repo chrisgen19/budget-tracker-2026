@@ -18,10 +18,12 @@ import {
   User,
   CalendarClock,
   Tags,
+  Tag,
   Shield,
   LogOut,
   Eye,
   EyeOff,
+  Ellipsis,
   type LucideProps,
 } from "lucide-react";
 import { usePrivacy } from "@/components/privacy-provider";
@@ -44,8 +46,10 @@ interface ProfileMenuProps {
   name: string;
   email: string;
   isAdmin: boolean;
-  /** Mobile trigger appearance: a header icon button or a bottom-nav tab */
-  triggerStyle?: "icon" | "tab";
+  /** Mobile trigger appearance: a header icon, legacy tab, or Liquid Glass More tab. */
+  triggerStyle?: "icon" | "tab" | "liquid-tab";
+  active?: boolean;
+  compact?: boolean;
 }
 
 interface MenuViewProps {
@@ -60,40 +64,57 @@ interface MenuViewProps {
 interface BuildMenuItemsArgs {
   isAdmin: boolean;
   hideAmounts: boolean;
-  router: ReturnType<typeof useRouter>;
+  router: Pick<ReturnType<typeof useRouter>, "push">;
   toggleHideAmounts: () => void;
 }
 
 /** Builds the shared menu item list (data only — no rendering). */
-function buildMenuItems({
+export const buildMenuItems = ({
   isAdmin,
   hideAmounts,
   router,
   toggleHideAmounts,
-}: BuildMenuItemsArgs): MenuItem[] {
-  return [
-    { key: "profile", label: "My Profile", icon: User, onSelect: () => router.push("/profile") },
-    { key: "bills", label: "Bills", icon: CalendarClock, onSelect: () => router.push("/bills"), mobileOnly: true },
-    { key: "categories", label: "Categories", icon: Tags, onSelect: () => router.push("/categories"), mobileOnly: true },
-    ...(isAdmin
-      ? [{ key: "admin", label: "Admin", icon: Shield, onSelect: () => router.push("/admin") }]
-      : []),
-    {
-      key: "privacy",
-      label: hideAmounts ? "Show amounts" : "Hide amounts",
-      icon: hideAmounts ? Eye : EyeOff,
-      onSelect: toggleHideAmounts,
-      keepOpen: true,
-    },
-    {
-      key: "logout",
-      label: "Log out",
-      icon: LogOut,
-      onSelect: () => signOut({ callbackUrl: "/login" }),
-      danger: true,
-    },
-  ];
-}
+}: BuildMenuItemsArgs): MenuItem[] => [
+  { key: "profile", label: "My Profile", icon: User, onSelect: () => router.push("/profile") },
+  {
+    key: "bills",
+    label: "Bills",
+    icon: CalendarClock,
+    onSelect: () => router.push("/bills"),
+    mobileOnly: true,
+  },
+  {
+    key: "categories",
+    label: "Categories",
+    icon: Tags,
+    onSelect: () => router.push("/categories"),
+    mobileOnly: true,
+  },
+  {
+    key: "labels",
+    label: "Labels",
+    icon: Tag,
+    onSelect: () => router.push("/labels"),
+    mobileOnly: true,
+  },
+  ...(isAdmin
+    ? [{ key: "admin", label: "Admin", icon: Shield, onSelect: () => router.push("/admin") }]
+    : []),
+  {
+    key: "privacy",
+    label: hideAmounts ? "Show amounts" : "Hide amounts",
+    icon: hideAmounts ? Eye : EyeOff,
+    onSelect: toggleHideAmounts,
+    keepOpen: true,
+  },
+  {
+    key: "logout",
+    label: "Log out",
+    icon: LogOut,
+    onSelect: () => signOut({ callbackUrl: "/login" }),
+    danger: true,
+  },
+];
 
 /** Closes the mobile sheet once the viewport reaches the desktop (lg) breakpoint.
  *  Vaul portals the sheet onto document.body, so `lg:hidden` on the trigger won't
@@ -145,6 +166,8 @@ export function ProfileMenu({
   email,
   isAdmin,
   triggerStyle = "icon",
+  active = false,
+  compact = false,
 }: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
   const router = useRouter();
@@ -169,7 +192,12 @@ export function ProfileMenu({
   };
 
   return variant === "mobile" ? (
-    <MobileMenu {...viewProps} triggerStyle={triggerStyle} />
+    <MobileMenu
+      {...viewProps}
+      triggerStyle={triggerStyle}
+      active={active}
+      compact={compact}
+    />
   ) : (
     <DesktopMenu {...viewProps} />
   );
@@ -225,58 +253,128 @@ function MenuList({
   );
 }
 
+type MobileTriggerStyle = "icon" | "tab" | "liquid-tab";
+
+const mobileTriggerClassName = (
+  triggerStyle: MobileTriggerStyle,
+  active: boolean,
+  compact: boolean
+) =>
+  cn(
+    "transition-colors",
+    triggerStyle === "liquid-tab"
+      ? cn(
+          "relative flex min-w-0 flex-1 flex-col items-center justify-center rounded-[1.25rem] px-1",
+          "transition-[color,min-height] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/60 focus-visible:ring-offset-1",
+          "motion-reduce:transition-none",
+          compact ? "min-h-11" : "min-h-[52px]",
+          active ? "text-amber-dark" : "text-warm-400 hover:text-warm-600"
+        )
+      : triggerStyle === "tab"
+        ? "flex flex-col items-center gap-1 px-1 py-2 rounded-xl flex-1 basis-0 min-w-0 text-warm-300 hover:text-warm-600"
+        : "p-2 rounded-xl text-warm-400 hover:text-warm-600 hover:bg-cream-100"
+  );
+
+function LiquidTabTriggerContent({ active, compact }: { active: boolean; compact: boolean }) {
+  return (
+    <>
+      {active && (
+        <motion.span
+          layoutId="mobile-tab-selection"
+          aria-hidden="true"
+          className="absolute inset-0 rounded-[1.25rem] bg-white/55 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_5px_rgba(44,36,23,0.06)]"
+          transition={{ type: "spring", duration: 0.42, bounce: 0.16 }}
+        />
+      )}
+      <Ellipsis
+        aria-hidden="true"
+        className={cn("relative z-10 h-5 w-5 shrink-0", active && "scale-105 stroke-[2.25]")}
+      />
+      <span
+        className={cn(
+          "relative z-10 overflow-hidden truncate text-center text-[11px] font-medium leading-none",
+          "transition-[max-height,margin,opacity] duration-200 motion-reduce:transition-none",
+          compact ? "mt-0 max-h-0 opacity-0" : "mt-1 max-h-4 opacity-100"
+        )}
+      >
+        More
+      </span>
+    </>
+  );
+}
+
+function MobileMenuTrigger({
+  triggerStyle,
+  active,
+  compact,
+}: {
+  triggerStyle: MobileTriggerStyle;
+  active: boolean;
+  compact: boolean;
+}) {
+  const isLiquidTab = triggerStyle === "liquid-tab";
+
+  return (
+    <Drawer.Trigger
+      aria-label={isLiquidTab ? "Open more navigation" : "Open profile menu"}
+      className={mobileTriggerClassName(triggerStyle, active, compact)}
+    >
+      {isLiquidTab ? (
+        <LiquidTabTriggerContent active={active} compact={compact} />
+      ) : (
+        <>
+          <User aria-hidden="true" className="h-5 w-5 shrink-0" />
+          {triggerStyle === "tab" && (
+            <span className="w-full truncate text-center text-[10px] font-medium">Profile</span>
+          )}
+        </>
+      )}
+    </Drawer.Trigger>
+  );
+}
+
+function MobileMenuSheet({ name, email, items, onSelect }: Omit<MenuViewProps, "open" | "setOpen">) {
+  return (
+    <Drawer.Portal>
+      <Drawer.Overlay className="fixed inset-0 bg-warm-900/30 backdrop-blur-sm z-50" />
+      <Drawer.Content className="fixed bottom-0 inset-x-0 z-50 flex flex-col bg-white rounded-t-2xl shadow-soft-lg grain-overlay pb-[env(safe-area-inset-bottom)] focus:outline-none">
+        <Drawer.Description className="sr-only">Account and quick navigation menu</Drawer.Description>
+        <div className="flex justify-center pt-3 pb-1 shrink-0">
+          <div className="w-10 h-1 rounded-full bg-cream-300" />
+        </div>
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-cream-200/80">
+          <div className="w-10 h-10 rounded-full bg-cream-200 flex items-center justify-center shrink-0">
+            <User className="w-5 h-5 text-warm-400" />
+          </div>
+          <div className="min-w-0">
+            <Drawer.Title className="text-sm font-medium text-warm-700 truncate">
+              {name}
+            </Drawer.Title>
+            <p className="text-xs text-warm-400 truncate">{email}</p>
+          </div>
+        </div>
+        <div className="py-2">
+          <MenuList items={items} onSelect={onSelect} size="lg" />
+        </div>
+      </Drawer.Content>
+    </Drawer.Portal>
+  );
+}
+
 function MobileMenu({
   open,
   setOpen,
-  name,
-  email,
-  items,
-  onSelect,
   triggerStyle,
-}: MenuViewProps & { triggerStyle: "icon" | "tab" }) {
+  active,
+  compact,
+  ...sheetProps
+}: MenuViewProps & { triggerStyle: MobileTriggerStyle; active: boolean; compact: boolean }) {
   useCloseOnDesktop(setOpen);
 
   return (
     <Drawer.Root open={open} onOpenChange={setOpen}>
-      <Drawer.Trigger
-        aria-label="Open profile menu"
-        className={cn(
-          "transition-colors",
-          triggerStyle === "tab"
-            ? "flex flex-col items-center gap-1 px-1 py-2 rounded-xl flex-1 basis-0 min-w-0 text-warm-300 hover:text-warm-600"
-            : "p-2 rounded-xl text-warm-400 hover:text-warm-600 hover:bg-cream-100"
-        )}
-      >
-        <User className="w-5 h-5 shrink-0" />
-        {triggerStyle === "tab" && (
-          <span className="text-[10px] font-medium truncate w-full text-center">Profile</span>
-        )}
-      </Drawer.Trigger>
-      <Drawer.Portal>
-        <Drawer.Overlay className="fixed inset-0 bg-warm-900/30 backdrop-blur-sm z-50" />
-        <Drawer.Content className="fixed bottom-0 inset-x-0 z-50 flex flex-col bg-white rounded-t-2xl shadow-soft-lg grain-overlay pb-[env(safe-area-inset-bottom)] focus:outline-none">
-          <Drawer.Description className="sr-only">
-            Account and quick navigation menu
-          </Drawer.Description>
-          <div className="flex justify-center pt-3 pb-1 shrink-0">
-            <div className="w-10 h-1 rounded-full bg-cream-300" />
-          </div>
-          <div className="flex items-center gap-3 px-6 py-4 border-b border-cream-200/80">
-            <div className="w-10 h-10 rounded-full bg-cream-200 flex items-center justify-center shrink-0">
-              <User className="w-5 h-5 text-warm-400" />
-            </div>
-            <div className="min-w-0">
-              <Drawer.Title className="text-sm font-medium text-warm-700 truncate">
-                {name}
-              </Drawer.Title>
-              <p className="text-xs text-warm-400 truncate">{email}</p>
-            </div>
-          </div>
-          <div className="py-2">
-            <MenuList items={items} onSelect={onSelect} size="lg" />
-          </div>
-        </Drawer.Content>
-      </Drawer.Portal>
+      <MobileMenuTrigger triggerStyle={triggerStyle} active={active} compact={compact} />
+      <MobileMenuSheet {...sheetProps} />
     </Drawer.Root>
   );
 }

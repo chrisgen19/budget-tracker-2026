@@ -51,6 +51,36 @@
     @apply shadow-soft-md -translate-y-0.5;
   }
 
+  /*
+   * Floating navigation material inspired by iOS 26's regular Liquid Glass.
+   * It is intentionally reserved for controls that sit above the content
+   * layer; cards and page backgrounds continue to use opaque paper surfaces.
+   */
+  .liquid-glass-surface {
+    background:
+      linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(255, 250, 244, 0.58)),
+      rgba(250, 247, 242, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.74);
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    backdrop-filter: blur(22px) saturate(180%);
+    box-shadow:
+      0 12px 34px rgba(44, 36, 23, 0.16),
+      0 2px 8px rgba(44, 36, 23, 0.08),
+      inset 0 1px 0 rgba(255, 255, 255, 0.92),
+      inset 0 -1px 0 rgba(139, 126, 106, 0.12);
+  }
+
+  .liquid-tab-bar {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    .liquid-glass-surface {
+      background: rgba(255, 252, 248, 0.96);
+    }
+  }
+
   /* Warm grain overlay for special sections */
   .grain-overlay {
     position: relative;
@@ -64,6 +94,23 @@
     pointer-events: none;
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
     border-radius: inherit;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .liquid-glass-surface {
+    background: #fffdfa;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    border-color: #e8e0d4;
+  }
+}
+
+@media (forced-colors: active) {
+  .liquid-glass-surface {
+    background: Canvas;
+    border: 1px solid CanvasText;
+    box-shadow: none;
   }
 }
 
