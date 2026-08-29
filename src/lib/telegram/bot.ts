@@ -367,10 +367,14 @@ async function sendOne(
     // Unescaped special characters in the text; plain text is the only thing that can work.
   }
 
+  // The keyboard is dropped from here on. Telegram rejects the whole message when a button
+  // carries a URL it will not accept, and that failure repeats identically on every retry — so a
+  // committed transaction would go unconfirmed, and a user who assumes it failed resends it,
+  // which writes a second row under a new update id. The link is worth less than the receipt.
   for (const delay of [0, 2_000]) {
     if (delay > 0) await new Promise((r) => setTimeout(r, delay));
     try {
-      const sent = await telegramApi("sendMessage", { chat_id: chatId, text, ...markup });
+      const sent = await telegramApi("sendMessage", { chat_id: chatId, text });
       return typeof sent?.message_id === "number" ? sent.message_id : null;
     } catch (err) {
       console.error("[telegram] failed to send a message:", err instanceof Error ? err.message : err);

@@ -24,6 +24,19 @@ else's budget. An unusable one omits the button rather than sending a broken URL
 rejects the entire message when a keyboard carries one — the failure would cost the confirmation,
 not just the link.
 
+The first cut checked that with a prefix pattern, which review caught: it accepts
+`https://app.example invalid`, exactly the shape `new URL` refuses. It also used `??` to choose
+between the two variables, so a blank `TELEGRAM_APP_URL` — an empty Coolify field — would have been
+selected over a perfectly good `NEXTAUTH_URL` and silently disabled the button. That is the same
+mistake this file already documents for `TELEGRAM_CURRENCY_SYMBOL` and `TELEGRAM_TZ_OFFSET`, made
+again in a new place.
+
+Both are fixed, and the failure they share is now blocked one level lower as well: the plain-text
+retries in `sendOne` drop the keyboard. An invalid button fails identically on every attempt, so
+the retry loop could not help, and the message it would lose is the confirmation that a
+transaction committed — which a user reads as failure and resends, writing a second row under a
+new update id. The link is worth less than the receipt.
+
 ## 2026-08-29 - Stopping the bot on purpose
 
 Six consecutive deploys produced an identical signature: exactly five `409 Conflict` lines, seven

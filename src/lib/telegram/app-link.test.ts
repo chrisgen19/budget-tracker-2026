@@ -20,11 +20,36 @@ describe("appBaseUrl", () => {
   });
 
   it("returns null for anything Telegram would reject", () => {
-    // Blank counts as unset, as it does for every TELEGRAM_ variable.
-    for (const url of ["", "   ", "budget.example.com", "ftp://a.test", "not a url"]) {
+    for (const url of [
+      "",
+      "   ",
+      "budget.example.com",
+      "ftp://a.test",
+      "not a url",
+      // Prefix-matching accepted both of these; new URL rejects them. The cost of being wrong is
+      // not a missing button but a rejected message, since Telegram refuses the whole send.
+      "https://app.example invalid",
+      "https://app.example:bad",
+    ]) {
       expect(appBaseUrl({ NEXTAUTH_URL: url })).toBeNull();
     }
     expect(appBaseUrl({})).toBeNull();
+  });
+
+  it("treats a blank override as unset and falls back", () => {
+    // The rule every TELEGRAM_ variable follows: an empty Coolify field is absent, not "". `??`
+    // alone would select the blank override and silently disable the button.
+    for (const blank of ["", "   "]) {
+      expect(appBaseUrl({ TELEGRAM_APP_URL: blank, NEXTAUTH_URL: "https://b.test" })).toBe(
+        "https://b.test"
+      );
+    }
+  });
+
+  it("keeps a path prefix but drops anything unparsed", () => {
+    expect(appBaseUrl({ NEXTAUTH_URL: "https://a.test/budget" })).toBe("https://a.test/budget");
+    // Query and fragment are not part of a base URL and would corrupt the ?highlight= link.
+    expect(appBaseUrl({ NEXTAUTH_URL: "https://a.test?x=1#y" })).toBe("https://a.test");
   });
 
   it("hardcodes nothing", () => {

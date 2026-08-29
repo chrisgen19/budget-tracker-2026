@@ -12,9 +12,32 @@
  * deleting already live.
  */
 
-/** Telegram rejects a keyboard whose URL is not a valid http(s) one, and rejects the *whole*
- *  message with it, so an unusable base URL must yield no button rather than a broken send. */
-const USABLE = /^https?:\/\/[^\s/]+/i;
+/**
+ * A base URL Telegram will actually accept, or null.
+ *
+ * Parsed rather than pattern-matched. A prefix test passes `https://app.example invalid` and
+ * `https://app.example:bad`, which `new URL` rejects outright — and the cost of getting that wrong
+ * is not a missing button: Telegram rejects the *whole message* when a keyboard carries an invalid
+ * URL, so the confirmation that a transaction saved would be lost with it.
+ */
+const parseBase = (raw: string): string | null => {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    // Rebuilt from the parsed parts, so nothing unparsed rides along into the link.
+    return `${url.protocol}//${url.host}${url.pathname}`.replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
+};
+
+/** Blank counts as unset, the rule every other TELEGRAM_ variable follows. `??` alone does not do
+ *  that: an empty Coolify field would be *selected* over a perfectly good NEXTAUTH_URL and would
+ *  silently disable the button the fallback exists to guarantee. */
+const set = (value: string | undefined): string | undefined => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+};
 
 /**
  * The base URL of the deployed app, or null when there is nothing usable to link to.
@@ -24,9 +47,8 @@ const USABLE = /^https?:\/\/[^\s/]+/i;
  * a link into someone else's budget, the same rule `TELEGRAM_MCP_URL` follows.
  */
 export const appBaseUrl = (env: Record<string, string | undefined>): string | null => {
-  const raw = (env.TELEGRAM_APP_URL ?? env.NEXTAUTH_URL ?? "").trim();
-  if (!raw || !USABLE.test(raw)) return null;
-  return raw.replace(/\/+$/, "");
+  const raw = set(env.TELEGRAM_APP_URL) ?? set(env.NEXTAUTH_URL);
+  return raw ? parseBase(raw) : null;
 };
 
 /** The deep link to one transaction's edit modal, or null when there is no base URL. */
