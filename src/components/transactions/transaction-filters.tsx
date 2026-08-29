@@ -182,8 +182,12 @@ export function TransactionFiltersBar({
             // Its space has gone off the top, so it becomes a pinned overlay. It can
             // appear and disappear freely now: there is nothing on screen behind it
             // for the change to flash against.
+            // Hidden carries no transition. Becoming an overlay pins it at the top of
+            // the viewport, so animating *into* the hidden state means one frame with
+            // the whole toolbar back in view at full opacity before it fades — a
+            // flash of the entire bar every time the page scrolls past it.
             : isScrolling
-              ? "sticky top-[61px] lg:top-0 pointer-events-none -translate-y-full opacity-0 transition-all duration-100"
+              ? "sticky top-[61px] lg:top-0 pointer-events-none -translate-y-full opacity-0"
               : "sticky top-[61px] lg:top-0 pointer-events-auto translate-y-0 opacity-100 transition-all duration-300",
         )}
       >
