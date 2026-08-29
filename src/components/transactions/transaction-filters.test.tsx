@@ -137,8 +137,29 @@ describe("TransactionFiltersBar", () => {
     previousMonth.focus();
     expect(toolbar.contains(document.activeElement)).toBe(true);
 
+    // Past the window in which a scroll is taken to be the browser bringing a newly
+    // focused control into view — this is the reader scrolling the list afterwards.
+    act(() => vi.advanceTimersByTime(150));
     fireEvent.scroll(window);
 
+    expect(toolbar.className).toContain("-translate-y-full");
+  });
+
+  it("does not duck on the scroll that brings a newly focused control into view", () => {
+    renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    const previousMonth = screen.getAllByRole("button", { name: "Previous month" })[1];
+
+    // Tabbing into the toolbar makes the browser scroll the control into view.
+    // Ducking on that scroll would hide the control the reader was just handed.
+    fireEvent.focus(previousMonth);
+    previousMonth.focus();
+    fireEvent.scroll(window);
+    expect(toolbar.className).toContain("opacity-100");
+
+    // A scroll later, with that button still focused, is the reader moving the page.
+    act(() => vi.advanceTimersByTime(150));
+    fireEvent.scroll(window);
     expect(toolbar.className).toContain("-translate-y-full");
   });
 
