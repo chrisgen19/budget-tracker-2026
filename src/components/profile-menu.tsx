@@ -22,6 +22,7 @@ import {
   LogOut,
   Eye,
   EyeOff,
+  Ellipsis,
   type LucideProps,
 } from "lucide-react";
 import { usePrivacy } from "@/components/privacy-provider";
@@ -44,8 +45,10 @@ interface ProfileMenuProps {
   name: string;
   email: string;
   isAdmin: boolean;
-  /** Mobile trigger appearance: a header icon button or a bottom-nav tab */
-  triggerStyle?: "icon" | "tab";
+  /** Mobile trigger appearance: a header icon, legacy tab, or Liquid Glass More tab. */
+  triggerStyle?: "icon" | "tab" | "liquid-tab";
+  active?: boolean;
+  compact?: boolean;
 }
 
 interface MenuViewProps {
@@ -145,6 +148,8 @@ export function ProfileMenu({
   email,
   isAdmin,
   triggerStyle = "icon",
+  active = false,
+  compact = false,
 }: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
   const router = useRouter();
@@ -169,7 +174,12 @@ export function ProfileMenu({
   };
 
   return variant === "mobile" ? (
-    <MobileMenu {...viewProps} triggerStyle={triggerStyle} />
+    <MobileMenu
+      {...viewProps}
+      triggerStyle={triggerStyle}
+      active={active}
+      compact={compact}
+    />
   ) : (
     <DesktopMenu {...viewProps} />
   );
@@ -233,23 +243,64 @@ function MobileMenu({
   items,
   onSelect,
   triggerStyle,
-}: MenuViewProps & { triggerStyle: "icon" | "tab" }) {
+  active,
+  compact,
+}: MenuViewProps & {
+  triggerStyle: "icon" | "tab" | "liquid-tab";
+  active: boolean;
+  compact: boolean;
+}) {
   useCloseOnDesktop(setOpen);
+  const isLiquidTab = triggerStyle === "liquid-tab";
+  const TriggerIcon = isLiquidTab ? Ellipsis : User;
 
   return (
     <Drawer.Root open={open} onOpenChange={setOpen}>
       <Drawer.Trigger
-        aria-label="Open profile menu"
+        aria-label={isLiquidTab ? "Open more navigation" : "Open profile menu"}
         className={cn(
           "transition-colors",
-          triggerStyle === "tab"
+          isLiquidTab
+            ? cn(
+                "relative flex min-w-0 flex-1 flex-col items-center justify-center rounded-[1.25rem] px-1",
+                "transition-[color,min-height] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/60 focus-visible:ring-offset-1",
+                "motion-reduce:transition-none",
+                compact ? "min-h-11" : "min-h-[52px]",
+                active ? "text-amber-dark" : "text-warm-400 hover:text-warm-600"
+              )
+            : triggerStyle === "tab"
             ? "flex flex-col items-center gap-1 px-1 py-2 rounded-xl flex-1 basis-0 min-w-0 text-warm-300 hover:text-warm-600"
             : "p-2 rounded-xl text-warm-400 hover:text-warm-600 hover:bg-cream-100"
         )}
       >
-        <User className="w-5 h-5 shrink-0" />
+        {isLiquidTab && active && (
+          <motion.span
+            layoutId="mobile-tab-selection"
+            aria-hidden="true"
+            className="absolute inset-0 rounded-[1.25rem] bg-white/55 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_5px_rgba(44,36,23,0.06)]"
+            transition={{ type: "spring", duration: 0.42, bounce: 0.16 }}
+          />
+        )}
+        <TriggerIcon
+          aria-hidden="true"
+          className={cn(
+            "relative z-10 h-5 w-5 shrink-0",
+            isLiquidTab && active && "scale-105 stroke-[2.25]"
+          )}
+        />
         {triggerStyle === "tab" && (
           <span className="text-[10px] font-medium truncate w-full text-center">Profile</span>
+        )}
+        {isLiquidTab && (
+          <span
+            className={cn(
+              "relative z-10 overflow-hidden truncate text-center text-[11px] font-medium leading-none",
+              "transition-[max-height,margin,opacity] duration-200 motion-reduce:transition-none",
+              compact ? "mt-0 max-h-0 opacity-0" : "mt-1 max-h-4 opacity-100"
+            )}
+          >
+            More
+          </span>
         )}
       </Drawer.Trigger>
       <Drawer.Portal>
