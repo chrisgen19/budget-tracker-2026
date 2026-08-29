@@ -96,6 +96,47 @@ describe("bill history separates the date-only fields from the real instant", ()
     expect(occurrence.actionDate).toBe("2026-08-04T22:30:00.000Z");
   });
 
+  it("converts the snooze day too, since it is derived from a clock and not a calendar", async () => {
+    const snoozePrisma = () =>
+      ({
+        scheduledTransaction: {
+          findMany: vi.fn(async () => [
+            {
+              id: "b1",
+              description: "Meralco",
+              amount: 8350,
+              nextDueDate: DUE_5TH,
+              category: { name: "Utilities", icon: "Zap", color: "#F5A623" },
+            },
+          ]),
+        },
+        scheduledTransactionLog: {
+          findMany: vi.fn(async () => [
+            {
+              scheduledTransactionId: "b1",
+              dueDate: DUE_5TH,
+              status: "SNOOZED",
+              actionDate: new Date("2026-08-04T22:30:00.000Z"),
+              transactionId: null,
+              // Written server-side as "now + 1 day", truncated. Read as date-only it would tell
+              // a UTC-4 user their one-day snooze runs to the 31st.
+              snoozeUntil: new Date("2026-08-31T00:00:00.000Z"),
+            },
+          ]),
+        },
+        transaction: { findMany: vi.fn(async () => []) },
+      }) as unknown as PrismaClient;
+
+    const result = await getBillHistory(snoozePrisma(), "u1", {
+      timezoneOffset: NEW_YORK,
+      months: 24,
+    });
+
+    expect(result.occurrences[0].localSnoozeUntil).toBe("2026-08-30");
+    // The due date beside it is still untouched.
+    expect(result.occurrences[0].localDueDate).toBe("2026-08-05");
+  });
+
   it("reports the action date in the user's own zone, not UTC", async () => {
     const result = await getBillHistory(prisma(), "u1", { timezoneOffset: 0, months: 24 });
 

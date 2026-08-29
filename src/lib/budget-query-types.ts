@@ -303,6 +303,11 @@ export interface UpcomingBill {
    * UTC moves it to the 4th, which turns every on-time payment into a day late. So this is the
    * same day for every reader, and reporting it as a bare day is what stops a model reading
    * `2026-08-05T00:00:00.000Z` and calling it 4 August.
+   *
+   * That "stored at midnight UTC" is a real dependency and not a guarantee: the write paths
+   * normalise with `setHours(0, 0, 0, 0)`, which is *process-local* midnight, so it holds only
+   * while the server runs in UTC. Production does, by base-image default rather than by
+   * contract, and `nixpacks.toml` pins no `TZ`. Normalising those writes is tracked in #184.
    */
   localDueDate: string;
   isOverdue: boolean;
@@ -421,8 +426,7 @@ export interface BillOccurrence {
    *  `amount` for every past occurrence. `null` unless the occurrence created a transaction.
    *  Matches `paidAmount` on `/api/bills/[id]/history`. */
   paidAmount: number | null;
-  /** The date this occurrence was due */
-  /** The stored value as an ISO instant. */
+  /** The date this occurrence was due, as an ISO instant. Render `localDueDate` instead. */
   dueDate: string;
   /** The calendar day the occurrence fell due, YYYY-MM-DD. Date-only, so not converted --
    *  see `UpcomingBill.localDueDate`. */
@@ -444,8 +448,15 @@ export interface BillOccurrence {
   /** Whether paying it created a transaction */
   transactionId: string | null;
   snoozeUntil: string | null;
-  /** The calendar day the snooze runs to, YYYY-MM-DD. Stored at midnight like a due date, so
-   *  not converted. */
+  /**
+   * The user's own calendar day the snooze runs to, YYYY-MM-DD.
+   *
+   * Converted, unlike `localDueDate`, because its provenance is an instant and not a calendar
+   * day: `POST /api/bills/[id]/action` computes it as `new Date()` plus N days off the *server*
+   * clock. Someone at UTC-4 snoozing for a day at 20:00 local has that stored as the day after
+   * next in UTC, so reading it as date-only would tell them the snooze runs a day longer than
+   * they asked for.
+   */
   localSnoozeUntil: string | null;
 }
 
