@@ -2,6 +2,38 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-29 - Two calls, one thinking budget, opposite needs
+
+Phase 1 moved every Gemini call to `gemini-3.6-flash`. The Telegram classifier came back accurate
+and, measured in production, "not fast but tolerable" — which is the answer that made the second
+step worth taking rather than assuming.
+
+The cause was that `classify.ts` sent no `thinkingConfig` at all, so the model ran at its own
+default, `medium`. That is full reasoning effort spent choosing one of eleven action labels from a
+prompt that already lists all eleven, paid on the hot path of every free-text message.
+
+The obvious fix is wrong. `GEMINI_THINKING_LEVEL` is shared with receipt scanning, and OCR on a
+crumpled phone photo is the one call in this app where deliberation genuinely earns its cost.
+Turning it down globally would have bought classifier latency with scan accuracy. So the level is
+now per call site: `receiptScanConfig()` keeps the configured level, `classifyConfig()` pins
+minimal, and both are built from one `jsonConfig` helper so they cannot drift on anything else.
+
+"Minimal" is not one value. Gemini 1.x/2.x have no `thinkingLevel` field and need `thinkingBudget:
+0` instead, so `minimalThinkingFor` picks the knob by generation, exactly as `thinkingConfigFor`
+already did.
+
+The subtle half was the fallback. `generateContentWithRetry` rebuilds `thinkingConfig` for whatever
+model it switches to, and rebuilt it from the env default regardless of what the caller asked for
+— so a deliberate `minimal` was silently restored to `medium` the moment the primary was
+overloaded. It now takes a `thinkingFor` callback, defaulted so the four existing callers are
+untouched. Rebuilding rather than carrying the caller's config across matters because the two
+models need not share a generation: the README suggests `gemini-2.5-flash-lite` as a fast
+fallback, and a `thinkingLevel` built for a 3.x primary is the wrong knob for it.
+
+`gemini.ts` had no tests at all, which is how the fallback overwrite survived being written down as
+a known trap without being fixed. It has them now, and both reverts were confirmed to fail before
+this shipped.
+
 ## 2026-08-29 - The model the Telegram bot was actually running
 
 Production sets `GEMINI_MODEL=gemini-3.6-flash`. The Telegram bot was running `gemini-2.5-flash`,

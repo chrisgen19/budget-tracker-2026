@@ -64,13 +64,39 @@ const thinkingConfigFor = (model: string): ThinkingConfig =>
     ? { thinkingBudget: GEMINI_THINKING_BUDGET }
     : { thinkingLevel: GEMINI_THINKING_LEVEL };
 
-/** Generation config for receipt scanning: JSON-only responses (no markdown fences)
- *  + env-configurable thinking matched to the model's generation + per-attempt timeout */
-export const receiptScanConfig = (model: string = GEMINI_MODEL) => ({
+/**
+ * The cheapest thinking the model offers, expressed in whichever knob its generation uses.
+ *
+ * For work that is *classification* rather than reasoning. The Telegram classifier picks one of
+ * eleven action labels from a prompt that already names every option; deliberating over that buys
+ * nothing and costs latency on the hot path of every free-text message (#163).
+ *
+ * Exported so `generateContentWithRetry` can rebuild it for the fallback model — see the
+ * `thinkingFor` parameter there for why passing the primary's config through would be wrong.
+ */
+export const minimalThinkingFor = (model: string): ThinkingConfig =>
+  /^gemini-[12]\./.test(model)
+    ? { thinkingBudget: 0 }
+    : { thinkingLevel: ThinkingLevel.MINIMAL };
+
+/** JSON-only responses (no markdown fences) + a per-attempt timeout, with thinking supplied by
+ *  the caller. Shared so the two configs below cannot drift on anything but the thinking. */
+const jsonConfig = (thinking: ThinkingConfig) => ({
   responseMimeType: "application/json",
-  thinkingConfig: thinkingConfigFor(model),
+  thinkingConfig: thinking,
   ...(GEMINI_TIMEOUT_MS > 0 && { httpOptions: { timeout: GEMINI_TIMEOUT_MS } }),
 });
+
+/** Receipt scanning: env-configurable thinking matched to the model's generation. This is the one
+ *  call where reasoning earns its cost — OCR on a crumpled phone photo — so it keeps the default. */
+export const receiptScanConfig = (model: string = GEMINI_MODEL) =>
+  jsonConfig(thinkingConfigFor(model));
+
+/** Intent classification: minimal thinking, deliberately not env-configurable. `GEMINI_THINKING_LEVEL`
+ *  is shared with receipt scanning, so turning it down globally would trade scan accuracy for
+ *  classifier latency — the wrong trade, and the reason this is a separate config rather than a knob. */
+export const classifyConfig = (model: string = GEMINI_MODEL) =>
+  jsonConfig(minimalThinkingFor(model));
 
 /** Transient Gemini errors worth retrying, per Google's error guidance:
  *  429 (rate limit), 500 (INTERNAL — unexpected error on Google's side),
@@ -111,10 +137,18 @@ const attemptWithRetries = async (
  * If the primary model stays overloaded after all attempts, retries once on
  * GEMINI_FALLBACK_MODEL (with thinking config rebuilt for that model) before
  * giving up. Non-retryable errors are rethrown immediately.
+ *
+ * `thinkingFor` is how a caller keeps its thinking *intent* across the fallback. The config is
+ * rebuilt rather than carried over because the two models need not be the same generation — the
+ * README suggests `gemini-2.5-flash-lite` as a fast fallback, and a `thinkingLevel` built for a
+ * 3.x primary is the wrong knob for it. Passing the caller's config through unchanged would send
+ * that wrong knob; ignoring the caller, as this used to, silently restored the default and undid
+ * a deliberate `minimal` mid-retry.
  */
 export const generateContentWithRetry = async (
   params: GenerateContentParameters,
-  maxAttempts = GEMINI_MAX_ATTEMPTS
+  maxAttempts = GEMINI_MAX_ATTEMPTS,
+  thinkingFor: (model: string) => ThinkingConfig = thinkingConfigFor
 ) => {
   try {
     return await attemptWithRetries(params, maxAttempts);
@@ -133,7 +167,7 @@ export const generateContentWithRetry = async (
       {
         ...params,
         model: GEMINI_FALLBACK_MODEL,
-        config: { ...params.config, thinkingConfig: thinkingConfigFor(GEMINI_FALLBACK_MODEL) },
+        config: { ...params.config, thinkingConfig: thinkingFor(GEMINI_FALLBACK_MODEL) },
       },
       GEMINI_FALLBACK_ATTEMPTS
     );

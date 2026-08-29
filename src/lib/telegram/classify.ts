@@ -1,5 +1,5 @@
 import { localTimestamp } from "@/lib/telegram/local-time";
-import { GEMINI_TIMEOUT_MS } from "@/lib/gemini-limits";
+import { GEMINI_MAX_ATTEMPTS } from "@/lib/gemini-limits";
 
 /**
  * Ask Gemini what a free-text message meant.
@@ -37,7 +37,8 @@ export async function classifyMessage(
   // on load and throws without GEMINI_API_KEY, so a static import would take the whole bot
   // down at boot on a deployment that has no key, where today it degrades to shorthand-only
   // logging. Same reason `receipt-scan.ts` is imported inside the MCP tool handler.
-  const { GEMINI_MODEL, generateContentWithRetry } = await import("@/lib/gemini");
+  const { GEMINI_MODEL, classifyConfig, generateContentWithRetry, minimalThinkingFor } =
+    await import("@/lib/gemini");
 
   const localIso = localTimestamp(tzOffset);
   const categoryNames = categories.map((c) => ({ name: c.name, type: c.type, id: c.id }));
@@ -129,24 +130,25 @@ Return ONLY a JSON object in this format:
 }`;
 
   try {
-    const response = await generateContentWithRetry({
-      // Read, never pinned. A literal here was correct on the day it was written and silently
-      // wrong the moment GEMINI_MODEL moved, which is exactly what #163 was: the classifier ran
-      // two generations behind every other caller in the same process, and it degraded as
-      // misrouted intent rather than as an error, so nothing surfaced it.
-      model: GEMINI_MODEL,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        // The poll loop awaits each update in turn, so a request with no deadline stops the bot
-        // answering anyone until it settles, which a stalled call may never do. Same knob the
-        // receipt scanner uses, so one setting bounds every Gemini call the app makes.
-        //
-        // Set here rather than inherited: `generateContentWithRetry` adds retries and a fallback
-        // model but no timeout of its own, so dropping this would leave each attempt unbounded.
-        ...(GEMINI_TIMEOUT_MS > 0 && { httpOptions: { timeout: GEMINI_TIMEOUT_MS } }),
+    const response = await generateContentWithRetry(
+      {
+        // Read, never pinned. A literal here was correct on the day it was written and silently
+        // wrong the moment GEMINI_MODEL moved, which is exactly what #163 was: the classifier ran
+        // two generations behind every other caller in the same process, and it degraded as
+        // misrouted intent rather than as an error, so nothing surfaced it.
+        model: GEMINI_MODEL,
+        contents: prompt,
+        // Minimal thinking, unlike the receipt scanner. This call chooses one of eleven action
+        // labels from a prompt that already lists them; the reasoning budget buys nothing and is
+        // paid on the hot path of every free-text message. Measured as "not fast but tolerable"
+        // at the model default before this changed.
+        config: classifyConfig(),
       },
-    });
+      GEMINI_MAX_ATTEMPTS,
+      // Carries the *intent* across the fallback. Without it the fallback path rebuilds thinking
+      // from GEMINI_THINKING_LEVEL and quietly restores `medium` mid-retry.
+      minimalThinkingFor
+    );
 
     const parsed = JSON.parse(response.text || "{}");
     return parsed;
