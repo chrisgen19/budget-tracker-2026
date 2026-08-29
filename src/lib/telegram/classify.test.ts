@@ -14,6 +14,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const generateContentWithRetry = vi.fn();
 
+/**
+ * Controlled per test rather than inherited from the environment.
+ *
+ * `GEMINI_TIMEOUT_MS=0` is a supported configuration ("0 disables"), and reading the real one
+ * meant the timeout assertion below crashed with a TypeError on any machine that set it,
+ * rather than testing the branch. A getter, because the value is read per call inside
+ * `classifyMessage`, not captured at module scope.
+ */
+let timeoutMs = 60_000;
+vi.mock("@/lib/gemini-limits", () => ({
+  get GEMINI_TIMEOUT_MS() {
+    return timeoutMs;
+  },
+}));
+
 vi.mock("@/lib/gemini", () => ({
   GEMINI_MODEL: "configured-model",
   generateContentWithRetry: (...args: unknown[]) => generateContentWithRetry(...args),
@@ -33,6 +48,7 @@ const reply = (payload: unknown) => ({ text: JSON.stringify(payload) });
 
 beforeEach(() => {
   generateContentWithRetry.mockReset();
+  timeoutMs = 60_000;
 });
 
 afterEach(() => {
@@ -63,6 +79,10 @@ describe("classifyMessage", () => {
   });
 
   it("still bounds each attempt, which the wrapper does not do for it", async () => {
+    // `generateContentWithRetry` adds retries and a fallback model but no timeout of its own, so
+    // dropping this would leave every attempt unbounded — and the poll loop awaits each update in
+    // turn, so one unbounded call stops the bot answering anyone.
+    timeoutMs = 45_000;
     generateContentWithRetry.mockResolvedValue(reply({ action: "SHOW_SUMMARY" }));
     const { classifyMessage } = await loadClassify("key");
 
@@ -70,7 +90,21 @@ describe("classifyMessage", () => {
 
     const { config } = generateContentWithRetry.mock.calls[0][0];
     expect(config.responseMimeType).toBe("application/json");
-    expect(config.httpOptions.timeout).toBeGreaterThan(0);
+    expect(config.httpOptions).toEqual({ timeout: 45_000 });
+  });
+
+  it("omits httpOptions entirely when the timeout is disabled", async () => {
+    // GEMINI_TIMEOUT_MS=0 is supported and documented as "0 disables". Passing
+    // `httpOptions: { timeout: 0 }` is not the same thing as passing nothing.
+    timeoutMs = 0;
+    generateContentWithRetry.mockResolvedValue(reply({ action: "SHOW_SUMMARY" }));
+    const { classifyMessage } = await loadClassify("key");
+
+    await classifyMessage("summary", CATEGORIES, LABELS, -480);
+
+    const { config } = generateContentWithRetry.mock.calls[0][0];
+    expect(config.responseMimeType).toBe("application/json");
+    expect(config.httpOptions).toBeUndefined();
   });
 
   it("resolves 'now' against the caller's timezone, not the host's", async () => {
