@@ -94,7 +94,7 @@ export function TransactionFiltersBar({
   const [monthPickerYear, setMonthPickerYear] = useState(() =>
     Number(filters.month === "ALL" ? accountMonthKey(new Date(), user.timezoneOffset).slice(0, 4) : filters.month.slice(0, 4)),
   );
-  const { toolbarRef, sentinelRef, isScrolling, revealToolbar } = useFilterToolbarScroll();
+  const { toolbarRef, isScrolling, revealToolbar } = useFilterToolbarScroll();
 
   const update = useCallback(
     (partial: Partial<TransactionFilters>) => {
@@ -163,10 +163,6 @@ export function TransactionFiltersBar({
 
   return (
     <>
-      {/* Marks where the toolbar sits in the flow. While this is still on screen the
-          toolbar is not stuck, so it stays put instead of ducking on every scroll. */}
-      <div ref={sentinelRef} data-filter-toolbar-sentinel aria-hidden="true" className="h-px -mb-px" />
-
       <section
         ref={toolbarRef}
         aria-label="Transaction filters"

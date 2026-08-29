@@ -52,14 +52,9 @@ const renderFilters = (initial: TransactionFilters = baseFilters) => {
   return render(<Harness />);
 };
 
-/**
- * Positions the flow sentinel that marks the toolbar's natural place. A `top` above
- * the 61px header means the page has scrolled past the toolbar and it is stuck;
- * below it, the toolbar is still sitting in its own place in the document.
- */
-const stubSentinelTop = (container: HTMLElement, top: number) => {
-  const sentinel = container.querySelector("[data-filter-toolbar-sentinel]")!;
-  vi.spyOn(sentinel, "getBoundingClientRect").mockReturnValue({ top } as DOMRect);
+/** jsdom's `scrollY` is a read-only getter, so a scroll position has to be defined in. */
+const setScrollY = (y: number) => {
+  Object.defineProperty(window, "scrollY", { value: y, writable: true, configurable: true });
 };
 
 const openFilters = () => {
@@ -70,6 +65,7 @@ const openFilters = () => {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  setScrollY(0);
   currentFilters = baseFilters;
   filterOptionState.value.categories = [];
   filterOptionState.value.categoriesPending = false;
@@ -102,9 +98,9 @@ describe("TransactionFiltersBar", () => {
   });
 
   it("hides while scrolling and returns after the scroll settles", () => {
-    const { container } = renderFilters();
+    renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
-    stubSentinelTop(container, -10);
+    setScrollY(400);
 
     expect(toolbar.className).toContain("opacity-100");
     fireEvent.scroll(window);
@@ -121,11 +117,12 @@ describe("TransactionFiltersBar", () => {
     expect(toolbar.className).toContain("pointer-events-auto");
   });
 
-  it("stays put while the page is still above the toolbar's own position", () => {
-    const { container } = renderFilters();
+  it("stays put while the page is resting at the very top", () => {
+    renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
-    stubSentinelTop(container, 200);
 
+    // iOS rubber-band and momentum settling fire scroll events at the top.
+    setScrollY(0);
     fireEvent.scroll(window);
     fireEvent.scroll(window);
 
@@ -134,15 +131,29 @@ describe("TransactionFiltersBar", () => {
     expect(toolbar.className).not.toContain("-translate-y-full");
   });
 
-  it("starts ducking once the page has scrolled the toolbar into its sticky spot", () => {
-    const { container } = renderFilters();
+  it("hides as soon as the page has scrolled away from the top", () => {
+    renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
 
-    stubSentinelTop(container, 200);
+    setScrollY(0);
     fireEvent.scroll(window);
     expect(toolbar.className).toContain("opacity-100");
 
-    stubSentinelTop(container, 0);
+    setScrollY(1);
+    fireEvent.scroll(window);
+    expect(toolbar.className).toContain("-translate-y-full");
+  });
+
+  it("hides while scrolling back up, not just on the way down", () => {
+    renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+
+    setScrollY(400);
+    fireEvent.scroll(window);
+    act(() => vi.advanceTimersByTime(180));
+    expect(toolbar.className).toContain("opacity-100");
+
+    setScrollY(300);
     fireEvent.scroll(window);
     expect(toolbar.className).toContain("-translate-y-full");
   });
