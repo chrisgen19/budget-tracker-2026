@@ -94,7 +94,8 @@ export function TransactionFiltersBar({
   const [monthPickerYear, setMonthPickerYear] = useState(() =>
     Number(filters.month === "ALL" ? accountMonthKey(new Date(), user.timezoneOffset).slice(0, 4) : filters.month.slice(0, 4)),
   );
-  const { toolbarRef, isScrolling, handleToolbarFocus } = useFilterToolbarScroll();
+  const { toolbarRef, markerRef, isScrolling, isInPlace, handleToolbarFocus } =
+    useFilterToolbarScroll();
 
   const update = useCallback(
     (partial: Partial<TransactionFilters>) => {
@@ -163,15 +164,31 @@ export function TransactionFiltersBar({
 
   return (
     <>
+      {/* Marks the toolbar's own place in the page. While this is still on screen the
+          toolbar has not scrolled under the header yet, so it does not move at all. */}
+      <div ref={markerRef} data-filter-toolbar-marker aria-hidden="true" className="h-px -mb-px" />
+
       <section
         ref={toolbarRef}
         aria-label="Transaction filters"
         onFocusCapture={handleToolbarFocus}
         className={cn(
-          "card sticky top-[61px] lg:top-0 z-20 mb-4 overflow-hidden border-cream-300/70 bg-white shadow-soft motion-reduce:transition-none",
-          isScrolling
-            ? "pointer-events-none -translate-y-full opacity-0 transition-all duration-100"
-            : "pointer-events-auto translate-y-0 opacity-100 transition-all duration-300",
+          "card z-20 mb-4 overflow-hidden border-cream-300/70 bg-white shadow-soft motion-reduce:transition-none",
+          isInPlace
+            // Its own space is still on screen, so it is an ordinary container: it
+            // scrolls away with the list, does not pin itself under the header, and
+            // never hides. No transition either — nothing changes up here.
+            ? "relative translate-y-0 opacity-100 pointer-events-auto"
+            // Its space has gone off the top, so it becomes a pinned overlay. It can
+            // appear and disappear freely now: there is nothing on screen behind it
+            // for the change to flash against.
+            // Hidden carries no transition. Becoming an overlay pins it at the top of
+            // the viewport, so animating *into* the hidden state means one frame with
+            // the whole toolbar back in view at full opacity before it fades — a
+            // flash of the entire bar every time the page scrolls past it.
+            : isScrolling
+              ? "sticky top-[61px] lg:top-0 pointer-events-none -translate-y-full opacity-0"
+              : "sticky top-[61px] lg:top-0 pointer-events-auto translate-y-0 opacity-100 transition-all duration-300",
         )}
       >
         <div className="p-2.5 sm:p-3">

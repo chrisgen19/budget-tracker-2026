@@ -52,6 +52,59 @@ const renderFilters = (initial: TransactionFilters = baseFilters) => {
   return render(<Harness />);
 };
 
+/** Places the flow marker that tracks the toolbar's own space in the page. */
+const setMarkerTop = (container: HTMLElement, top: number) => {
+  const marker = container.querySelector("[data-filter-toolbar-marker]")!;
+  vi.spyOn(marker, "getBoundingClientRect").mockReturnValue({ top } as DOMRect);
+};
+
+/** jsdom reports every layout box as zero, so the toolbar's height is defined in. */
+const setToolbarHeight = (height: number) => {
+  const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+  Object.defineProperty(toolbar, "offsetHeight", { value: height, configurable: true });
+};
+
+/**
+ * The toolbar's space is past the top once `markerTop + toolbarHeight` clears where
+ * the toolbar rests. With no header in the test DOM that resting point is the 61px
+ * fallback, and jsdom reports the height as 0 unless `setToolbarHeight` is used, so
+ * these two marker positions sit either side of the threshold.
+ */
+const setToolbarPastTop = (container: HTMLElement, pastTop: boolean) => {
+  setMarkerTop(container, pastTop ? -10 : 200);
+};
+
+/** The hook coalesces scrolls to one layout read per frame, so flush that frame. */
+const scrollWindow = () => {
+  fireEvent.scroll(window);
+  act(() => {
+    vi.advanceTimersByTime(16);
+  });
+};
+
+/**
+ * jsdom has no ResizeObserver, so the toolbar's own height changing — a chip row
+ * collapsing, say — cannot be observed without one. This records what was observed
+ * and hands back the callback, so a test can raise the notification itself.
+ */
+const stubResizeObserver = () => {
+  const state: { observed: Element[]; notify?: () => void } = { observed: [] };
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(callback: () => void) {
+        state.notify = callback;
+      }
+      observe(target: Element) {
+        state.observed.push(target);
+      }
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  return state;
+};
+
 const openFilters = () => {
   const trigger = screen.getByRole("button", { name: /^Filters/ });
   fireEvent.click(trigger);
@@ -77,12 +130,25 @@ afterEach(() => {
 });
 
 describe("TransactionFiltersBar", () => {
-  it("keeps the compact toolbar sticky and opens advanced filters in a dialog", () => {
-    renderFilters();
-
+  it("pins itself only once its own space has left the screen", () => {
+    const { container } = renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+
+    // In its own place it is an ordinary container that scrolls away with the list.
+    setToolbarPastTop(container, false);
+    scrollWindow();
+    expect(toolbar.className).toContain("relative");
+    expect(toolbar.className).not.toContain("sticky");
+
+    // Once that space is off the top it becomes an overlay pinned under the header.
+    setToolbarPastTop(container, true);
+    scrollWindow();
     expect(toolbar.className).toContain("sticky");
     expect(toolbar.className).toContain("top-[61px]");
+  });
+
+  it("opens advanced filters in a dialog", () => {
+    renderFilters();
 
     const { trigger } = openFilters();
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
@@ -92,11 +158,12 @@ describe("TransactionFiltersBar", () => {
   });
 
   it("hides while scrolling and returns after the scroll settles", () => {
-    renderFilters();
+    const { container } = renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    setToolbarPastTop(container, true);
 
     expect(toolbar.className).toContain("opacity-100");
-    fireEvent.scroll(window);
+    scrollWindow();
     expect(toolbar.className).toContain("-translate-y-full");
     expect(toolbar.className).toContain("opacity-0");
     expect(toolbar.className).toContain("pointer-events-none");
@@ -110,13 +177,110 @@ describe("TransactionFiltersBar", () => {
     expect(toolbar.className).toContain("pointer-events-auto");
   });
 
+  it("does not move at all while it is still in its own place at the top", () => {
+    const { container } = renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    setToolbarPastTop(container, false);
+
+    // Rubber-band and momentum settling fire scroll events up here too.
+    scrollWindow();
+    scrollWindow();
+    scrollWindow();
+
+    expect(toolbar.className).toContain("opacity-100");
+    expect(toolbar.className).toContain("pointer-events-auto");
+    expect(toolbar.className).not.toContain("-translate-y-full");
+  });
+
+  it("comes back with no transition once its own space is back on screen", () => {
+    const { container } = renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+
+    setToolbarPastTop(container, true);
+    scrollWindow();
+    expect(toolbar.className).toContain("-translate-y-full");
+
+    // Scrolling back up to the top. The toolbar's space and the toolbar itself have
+    // to arrive together: a transition here shows the empty space filling in.
+    setToolbarPastTop(container, false);
+    scrollWindow();
+    expect(toolbar.className).toContain("opacity-100");
+    expect(toolbar.className).not.toContain("transition-all");
+  });
+
+  it("starts hiding once it has scrolled under the header", () => {
+    const { container } = renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+
+    setToolbarPastTop(container, false);
+    scrollWindow();
+    expect(toolbar.className).not.toContain("-translate-y-full");
+
+    setToolbarPastTop(container, true);
+    scrollWindow();
+    expect(toolbar.className).toContain("-translate-y-full");
+  });
+
+  it("counts its own height when deciding whether its space has left the screen", () => {
+    const { container } = renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    setToolbarHeight(165);
+
+    // Bottom edge at -100 + 165 = 65, still below the 61px resting point: on screen.
+    setMarkerTop(container, -100);
+    scrollWindow();
+    expect(toolbar.className).toContain("relative");
+
+    // Bottom edge at -110 + 165 = 55, now above it: the space has left the screen.
+    setMarkerTop(container, -110);
+    scrollWindow();
+    expect(toolbar.className).toContain("sticky");
+  });
+
+  it("recomputes its position when its own height changes, with no scroll", () => {
+    const observer = stubResizeObserver();
+    const { container } = renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+
+    expect(observer.observed).toContain(toolbar);
+
+    setToolbarHeight(165);
+    setMarkerTop(container, -100);
+    scrollWindow();
+    expect(toolbar.className).toContain("relative");
+
+    // The chip row collapses. The toolbar gets shorter, its space moves behind the
+    // header, and nothing scrolls — so only the size notification can catch it.
+    setToolbarHeight(105);
+    act(() => observer.notify!());
+
+    expect(toolbar.className).toContain("sticky");
+  });
+
+  it("recomputes its position when the viewport is resized", () => {
+    const { container } = renderFilters();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+
+    setToolbarHeight(165);
+    setMarkerTop(container, -100);
+    scrollWindow();
+    expect(toolbar.className).toContain("relative");
+
+    setToolbarHeight(105);
+    act(() => {
+      fireEvent(window, new Event("resize"));
+    });
+
+    expect(toolbar.className).toContain("sticky");
+  });
+
   it("does not hide or blur while a toolbar control has focus", () => {
     renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
     const search = screen.getByRole("searchbox", { name: "Search transactions" });
 
     search.focus();
-    fireEvent.scroll(window);
+    scrollWindow();
 
     expect(document.activeElement).toBe(search);
     expect(toolbar.className).toContain("opacity-100");
@@ -124,8 +288,9 @@ describe("TransactionFiltersBar", () => {
   });
 
   it("still hides after a toolbar button was tapped", () => {
-    renderFilters();
+    const { container } = renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    setToolbarPastTop(container, true);
     // Index 1 is the mobile navigator. Index 0 is the `hidden sm:flex` copy, which
     // jsdom still returns because it applies no Tailwind, and which is display:none
     // at the only widths this behaviour applies to.
@@ -140,26 +305,27 @@ describe("TransactionFiltersBar", () => {
     // Past the window in which a scroll is taken to be the browser bringing a newly
     // focused control into view — this is the reader scrolling the list afterwards.
     act(() => vi.advanceTimersByTime(150));
-    fireEvent.scroll(window);
+    scrollWindow();
 
     expect(toolbar.className).toContain("-translate-y-full");
   });
 
-  it("does not duck on the scroll that brings a newly focused control into view", () => {
-    renderFilters();
+  it("does not hide on the scroll that brings a newly focused control into view", () => {
+    const { container } = renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    setToolbarPastTop(container, true);
     const previousMonth = screen.getAllByRole("button", { name: "Previous month" })[1];
 
     // Tabbing into the toolbar makes the browser scroll the control into view.
     // Ducking on that scroll would hide the control the reader was just handed.
     fireEvent.focus(previousMonth);
     previousMonth.focus();
-    fireEvent.scroll(window);
+    scrollWindow();
     expect(toolbar.className).toContain("opacity-100");
 
     // A scroll later, with that button still focused, is the reader moving the page.
     act(() => vi.advanceTimersByTime(150));
-    fireEvent.scroll(window);
+    scrollWindow();
     expect(toolbar.className).toContain("-translate-y-full");
   });
 
@@ -182,7 +348,7 @@ describe("TransactionFiltersBar", () => {
     renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
 
-    fireEvent.scroll(window);
+    scrollWindow();
 
     expect(toolbar.className).toContain("opacity-100");
     expect(toolbar.className).not.toContain("pointer-events-none");
