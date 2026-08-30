@@ -18,6 +18,24 @@ export const registerSchema = z.object({
 });
 
 /**
+ * An optional reference to an account, where blank counts as "no account".
+ *
+ * An unselected `<select>` yields `""`, not `null`. Without the preprocess a bare
+ * `z.string().min(1).nullish()` rejects that as "String must contain at least 1 character(s)" —
+ * on a field the user was told is optional, against a picker they never touched. React Hook Form
+ * reports a failed parse by simply not submitting, so the effect was an "Add Transaction" button
+ * that did nothing at all and explained nothing.
+ *
+ * Same convention as the `TELEGRAM_` variables, where blank is treated as absent rather than as an
+ * empty string, and for the same reason: the empty value a real input produces has to mean the
+ * thing the user meant by it.
+ */
+const optionalAccountId = z.preprocess(
+  (v) => (v === "" ? null : v),
+  z.string().min(1).nullish()
+);
+
+/**
  * The fields of a transaction, before the transfer rules are applied.
  *
  * Kept as a bare `ZodObject` so `batchTransactionSchema` can `.extend()` it. Applying `.refine()`
@@ -32,9 +50,9 @@ const transactionBaseSchema = z.object({
   categoryId: z.string().min(1, "Category is required"),
   labelIds: z.array(z.string()).optional(),
   /** Where the money moved through. For a TRANSFER, the side it leaves. */
-  accountId: z.string().min(1).nullish(),
+  accountId: optionalAccountId,
   /** Where a TRANSFER lands. Set if and only if `type` is TRANSFER. */
-  transferAccountId: z.string().min(1).nullish(),
+  transferAccountId: optionalAccountId,
 });
 
 /** The shape every write path checks, whatever else it adds on top. */

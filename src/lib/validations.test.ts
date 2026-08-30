@@ -516,6 +516,21 @@ describe("transactionSchema transfer rules", () => {
     expect(parsed.success).toBe(false);
   });
 
+  it("treats a blank account id as no account rather than an invalid string", () => {
+    // An unselected <select> yields "", and a bare `z.string().min(1).nullish()` rejects it with
+    // "String must contain at least 1 character(s)" — on a field that is optional. Same convention
+    // as the TELEGRAM_ variables: blank means absent.
+    const parsed = transactionSchema.safeParse({
+      ...base,
+      type: "EXPENSE",
+      categoryId: "transportation",
+      accountId: "",
+      transferAccountId: "",
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.accountId).toBeNull();
+  });
+
   it("still accepts an expense with no account at all", () => {
     // Every row written before accounts existed has none, and a user with no accounts must still
     // be able to log spending.

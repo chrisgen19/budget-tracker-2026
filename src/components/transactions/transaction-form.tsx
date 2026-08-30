@@ -212,7 +212,12 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     // A transfer has exactly one usable category and no picker, so select it as soon as the list
     // arrives. Without this the form would fail validation on a field the user was never shown.
     if (isTransfer) {
-      if (categories[0] && watchedCategoryId !== categories[0].id) {
+      // Read through `getValues`, never `watch`. The watched value must not become a dependency
+      // of this effect: the effect's last branch clears the category, so re-running it whenever
+      // the category changes wipes the user's choice the instant they make it, and the form can
+      // never be submitted.
+      const current = getValues("categoryId");
+      if (categories[0] && current !== categories[0].id) {
         setValue("categoryId", categories[0].id, { shouldValidate: true });
       }
       return;
@@ -222,7 +227,8 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     if (!transaction && !initialData?.categoryId) {
       setValue("categoryId", "");
     }
-  }, [categories, selectedType, setValue, transaction, initialData, isTransfer, watchedCategoryId]);
+    // `watchedCategoryId` is deliberately NOT a dependency here — see above.
+  }, [categories, selectedType, setValue, getValues, transaction, initialData, isTransfer]);
 
   // Leaving transfer mode has to clear the destination, or the schema refuses the submit with an
   // error pointing at a field the form no longer renders — an unfixable form from the user's side.
@@ -495,12 +501,10 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                     )}
                   </p>
                   <select
-                    {...register("accountId", {
-                      // "" is what an unselected <select> yields; the schema wants an absent value
-                      // rather than an empty string, and null is what the API writes back as
-                      // "no account".
-                      setValueAs: (v) => (v === "" ? null : v),
-                    })}
+                    // Purely controlled, like the destination select beside it. Spreading
+                    // `register(...)` here too attached RHF's own ref and onChange underneath a
+                    // `value` prop, which is the controlled/uncontrolled conflict React warns
+                    // about and left the stored value out of step with the rendered one.
                     value={watchedAccountId}
                     onChange={(e) => setValue("accountId", e.target.value || null)}
                     className="w-full px-4 py-3 rounded-xl bg-cream-100 text-warm-700 border border-transparent focus:border-amber-300 focus:outline-none"
