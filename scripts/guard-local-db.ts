@@ -35,9 +35,21 @@ if (isLocalDatabase(databaseUrl)) {
   process.exit(0);
 }
 
-// Named where it can be, so the message says which database was refused. An unparseable URL is
-// still refused: the point of the guard is knowing where the write lands, and there we do not.
-const host = databaseHost(databaseUrl) ?? "an address that could not be parsed";
+const host = databaseHost(databaseUrl);
+
+// A URL that will not parse is refused rather than guessed at, and gets its own message: Prisma
+// answers the same string with `P1013: The provided database string is invalid`, so "this is not
+// your machine" would send the reader looking in the wrong place entirely.
+if (host === null) {
+  console.error(
+    "[guard-local-db] DATABASE_URL is not a valid connection URL, so there is no way to tell " +
+      "which database a schema command would write to.\n" +
+      "\n" +
+      "  Prisma rejects the same string with P1013. A `#`, `/` or `:` inside a password has to be\n" +
+      "  percent-encoded (%23, %2F, %3A); a raw `@` is fine."
+  );
+  process.exit(1);
+}
 
 if (process.env[OVERRIDE] === "1") {
   console.warn(`[guard-local-db] ${OVERRIDE}=1 — proceeding against ${host}`);

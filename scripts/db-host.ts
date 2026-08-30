@@ -6,6 +6,19 @@
  * stop. Refusing a local one is not merely an annoyance: the only documented way past the guard is
  * `ALLOW_REMOTE_DB=1`, so a guard that misfires on ordinary local setups teaches the developer to
  * type the override by reflex, which removes the guard more thoroughly than deleting it would.
+ *
+ * It parses with `new URL` and nothing else. An earlier version tried to *repair* a URL WHATWG
+ * rejected, by percent-encoding everything before the last `@` -- added because review reported the
+ * guard refusing `postgres://user:pa#ss@localhost:5432/db`. That premise turned out to be wrong:
+ * Prisma rejects a raw `#` or `/` in a password too, with `P1013: The provided database string is
+ * invalid`, and accepts those characters only percent-encoded, which `new URL` then parses without
+ * help. So the repair fixed nothing reachable, and it *introduced* a hole -- the greedy split took
+ * the last `@` anywhere in the string, so
+ * `postgres://user:pa/ss@prod.example/db?application_name=dev@localhost` reported `localhost` and
+ * cleared the guard. A raw `@` needs no repair either; both `new URL` and Prisma read it natively.
+ *
+ * The rule that replaced it: if `new URL` will not parse it, Prisma will not run it, and the guard
+ * refuses. Failing closed on a string nothing can use costs nobody anything.
  */
 
 /** Hostnames that are this machine, after lower-casing. IPv6 literals keep their brackets. */
@@ -13,32 +26,6 @@ const LOCAL_NAMES = new Set(["localhost", "::1", "[::1]", "0.0.0.0", "[::]"]);
 
 /** `127.0.0.1`, and the shorthands (`127.1`) that WHATWG leaves uncanonicalised. */
 const LOOPBACK_V4 = /^127(?:\.\d{1,3}){0,3}$/;
-
-const parse = (url: string): URL | null => {
-  try {
-    return new URL(url);
-  } catch {
-    return null;
-  }
-};
-
-/**
- * Parse a Postgres URL, repairing a password WHATWG will not accept.
- *
- * libpq allows a raw `#`, `/` or `:` in a password and WHATWG does not, so `new URL` throws
- * outright on `postgres://user:pa#ss@localhost:5432/db` -- a perfectly serviceable local database,
- * and the exact value `database-url.test.ts` pins as one the parser must preserve. Splitting on
- * the *last* `@` keeps a password containing one intact.
- */
-const parseConnectionUrl = (url: string): URL | null => {
-  const direct = parse(url);
-  if (direct) return direct;
-
-  const parts = url.match(/^([A-Za-z][\w+.-]*:\/\/)(.*)@(.*)$/);
-  if (!parts) return null;
-
-  return parse(`${parts[1]}${encodeURIComponent(parts[2])}@${parts[3]}`);
-};
 
 /** Is this name, socket path or address on this machine? */
 const isLocalName = (value: string): boolean => {
@@ -61,8 +48,12 @@ const isLocalName = (value: string): boolean => {
  * `hostaddr` and `HOST` were both measured to be ignored.
  */
 export const databaseHost = (url: string): string | null => {
-  const parsed = parseConnectionUrl(url);
-  if (!parsed) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
 
   const override = parsed.searchParams.get("host");
   if (override !== null) return override.toLowerCase();

@@ -16,11 +16,24 @@ describe("databaseHost", () => {
     expect(databaseHost("postgresql://user:pass@LOCALHOST:5432/db")).toBe("localhost");
   });
 
-  // libpq accepts these raw in a password; `new URL` throws outright on them.
-  it("survives a password containing # or / or @", () => {
-    expect(databaseHost("postgres://user:pa#ss@localhost:5432/db")).toBe("localhost");
-    expect(databaseHost("postgres://user:pa/ss@localhost:5432/db")).toBe("localhost");
+  // A raw `@` in a password needs no special handling: both `new URL` and Prisma read it.
+  it("reads a password containing a raw @", () => {
     expect(databaseHost("postgres://user:pa@ss@localhost:5432/db")).toBe("localhost");
+  });
+
+  // Percent-encoded is the only form Prisma accepts for these, and `new URL` handles it.
+  it("reads a password with percent-encoded specials", () => {
+    expect(databaseHost("postgres://user:pa%23ss@localhost:5432/db")).toBe("localhost");
+    expect(databaseHost("postgres://user:pa%2Fss@localhost:5432/db")).toBe("localhost");
+  });
+
+  // Measured: Prisma answers a raw `#` or `/` in a password with
+  // `P1013: The provided database string is invalid`. So there is no working database behind such
+  // a string, and reporting no host is right. An earlier attempt to repair these by encoding
+  // everything before the last `@` invented one instead -- see the regression below.
+  it("returns null for a string Prisma itself rejects", () => {
+    expect(databaseHost("postgres://user:pa#ss@localhost:5432/db")).toBeNull();
+    expect(databaseHost("postgres://user:pa/ss@localhost:5432/db")).toBeNull();
   });
 
   it("returns null when there is no host to be had", () => {
@@ -82,9 +95,21 @@ describe("isLocalDatabase", () => {
     expect(isLocalDatabase("")).toBe(false);
   });
 
-  // A local password with a # must not be the thing that sends someone reaching for
-  // ALLOW_REMOTE_DB=1, which would disable the guard far more thoroughly than deleting it.
-  it("accepts a local database whose password would break new URL()", () => {
-    expect(isLocalDatabase("postgres://user:pa#ss@localhost:5432/db")).toBe(true);
+  // The regression that the removed "repair" caused: its greedy split took the last `@` anywhere in
+  // the string, so a query value containing one became the authority. This URL points at
+  // prod.example and was reported as localhost.
+  it("never lets an @ in a query value pose as the authority", () => {
+    expect(
+      isLocalDatabase("postgres://user:pa/ss@prod.example/db?application_name=dev@localhost")
+    ).toBe(false);
+    expect(
+      isLocalDatabase("postgres://user:pa%2Fss@prod.example/db?application_name=dev@localhost")
+    ).toBe(false);
+  });
+
+  // Fails closed instead: nothing can connect with it, so the guard owes it no verdict but "no".
+  it("refuses a password with a raw # or /, which Prisma rejects as P1013", () => {
+    expect(isLocalDatabase("postgres://user:pa#ss@localhost:5432/db")).toBe(false);
+    expect(isLocalDatabase("postgres://user:pa/ss@localhost:5432/db")).toBe(false);
   });
 });

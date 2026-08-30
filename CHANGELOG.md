@@ -78,6 +78,18 @@ while saving from the picker writes it back. `DELETE /api/categories/[id]` strip
 transaction for that reason. Nothing should have been able to pin the Transfer category and
 production reports none, which is worth one statement not to depend on.
 
+One of those review fixes was itself a mistake, and removing it is the last change here. The guard
+was reported as refusing `postgres://user:pa#ss@localhost:5432/db`, a local database with an
+awkward password, so it grew a repair step that percent-encoded everything before the last `@` and
+retried. The premise was never checked: Prisma rejects that string too, with `P1013: The provided
+database string is invalid`, and accepts `#` or `/` in a password only percent-encoded -- which
+`new URL` parses unaided. So the repair reached no database that existed, and its greedy split took
+the last `@` anywhere in the string, which a query value can supply:
+`postgres://user:pa/ss@prod.example/db?application_name=dev@localhost` reported `localhost` and
+cleared the guard for a URL whose authority is production. The rule now is that if `new URL` will
+not parse it, Prisma will not run it, and the guard refuses -- with a message naming P1013 and the
+encoding, rather than claiming the database is not on this machine.
+
 Four deploys ran green over this. `prisma migrate deploy` compares the folder to the database in one
 direction only -- it reported "33 migrations found... No pending migrations to apply" against a
 database holding 35 -- and `prisma migrate status` calls the same database "up to date" and exits 0.
