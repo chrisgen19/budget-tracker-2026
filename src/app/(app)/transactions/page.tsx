@@ -1,20 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState, useRef, useCallback } from "react";
+import { useEffect, useMemo, useReducer, useState, useRef, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
-  Trash2,
-  Pencil,
   ArrowLeftRight,
-  Download,
-  Check,
-  X,
   Loader2,
   ScanLine,
 } from "lucide-react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
 import { formatCurrency, cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { Modal } from "@/components/ui/modal";
@@ -32,7 +26,15 @@ import { useScan } from "@/components/scan-provider";
 import { ActionFab } from "@/components/ui/action-fab";
 import { TransactionLabelPills } from "@/components/transactions/transaction-label-pills";
 import { TransactionRowBadges } from "@/components/transactions/transaction-row-badges";
+import { TransactionSelectionCheckbox } from "@/components/transactions/transaction-selection-checkbox";
+import { TransactionBulkActionBar } from "@/components/transactions/transaction-bulk-action-bar";
 import {
+  TransactionBulkCategoryDialog,
+  TransactionBulkLabelsDialog,
+} from "@/components/transactions/transaction-bulk-dialogs";
+import { useToast } from "@/components/ui/toast";
+import {
+  fetchTransactionById,
   fetchTransactionsPage,
   queryKeys,
   useTransactionsQuery,
@@ -41,12 +43,22 @@ import {
   useUpdateTransaction,
   useDeleteTransaction,
   useBulkDeleteTransactions,
+  useBulkUpdateTransactions,
+  useExportTransactions,
+  useTransactionSelectionSnapshot,
   useRemoveTransactionLabel,
 } from "@/hooks/use-transactions";
 import type { TransactionInput } from "@/lib/validations";
 import { groupByDate, formatTime } from "@/lib/transaction-helpers";
 import { accountMonthKey } from "@/lib/account-time";
-import { generateTransactionsCsv } from "@/lib/transaction-csv";
+import {
+  emptyTransactionSelection,
+  selectionItems,
+  transactionSelectionReducer,
+  visibleSelectionState,
+} from "@/lib/transaction-selection";
+import type { TransactionSelectionAction } from "@/lib/transaction-selection";
+import type { TransactionSelectionItem } from "@/lib/transaction-bulk";
 import type { TransactionWithCategory } from "@/types";
 
 /* ------------------------------------------------------------------ */
@@ -81,6 +93,7 @@ export default function TransactionsPage() {
 
   const { hideAmounts } = usePrivacy();
   const { user } = useUser();
+  const { showToast } = useToast();
   const { canScan, openScan, scanLimitReached, scansRemaining, hasLimit } = useScan();
   const currency = user.currency;
   const isInfinite = user.transactionLayout === "infinite";
@@ -93,9 +106,34 @@ export default function TransactionsPage() {
   });
   const [page, setPage] = useState(1);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const pageHeadingRef = useRef<HTMLHeadingElement>(null);
 
   // Selection
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selection, dispatchSelection] = useReducer(
+    transactionSelectionReducer,
+    undefined,
+    emptyTransactionSelection,
+  );
+  const selectionRevisionRef = useRef(0);
+  const selectionContextKey = JSON.stringify([filters, user.timezoneOffset]);
+  const selectionContextKeyRef = useRef(selectionContextKey);
+  selectionContextKeyRef.current = selectionContextKey;
+  const dispatchSelectionChange = useCallback((action: TransactionSelectionAction) => {
+    selectionRevisionRef.current += 1;
+    dispatchSelection(action);
+  }, []);
+  const selectedItems = useMemo(() => selectionItems(selection), [selection]);
+  const selectedIds = useMemo(
+    () => new Set(selectedItems.map((item) => item.id)),
+    [selectedItems],
+  );
+  const selectedTypes = useMemo(
+    () => new Set(selectedItems.map((item) => item.type)),
+    [selectedItems],
+  );
+  const selectedCountRef = useRef(0);
+  selectedCountRef.current = selectedItems.length;
+  const [selectionAnnouncement, setSelectionAnnouncement] = useState("");
 
   // Modal states
   const [showForm, setShowForm] = useState(false);
@@ -104,6 +142,8 @@ export default function TransactionsPage() {
   const [deletingTransaction, setDeletingTransaction] =
     useState<TransactionWithCategory | null>(null);
   const [showBulkDelete, setShowBulkDelete] = useState(false);
+  const [showBulkCategory, setShowBulkCategory] = useState(false);
+  const [showBulkLabels, setShowBulkLabels] = useState(false);
   const scrollTargetRef = useRef<string | null>(null);
   const highlightTimeoutRef = useRef<number | undefined>(undefined);
   const [highlightedRowId, setHighlightedRowId] = useState<string | null>(null);
@@ -117,13 +157,44 @@ export default function TransactionsPage() {
   const updateMutation = useUpdateTransaction();
   const deleteMutation = useDeleteTransaction();
   const bulkDeleteMutation = useBulkDeleteTransactions();
+  const bulkUpdateMutation = useBulkUpdateTransactions();
+  const exportMutation = useExportTransactions();
+  const selectionSnapshotMutation = useTransactionSelectionSnapshot();
   const removeLabelMutation = useRemoveTransactionLabel();
 
   // Reset page & selection when filters change
   useEffect(() => {
     setPage(1);
-    setSelectedIds(new Set());
-  }, [filters]);
+    if (selectedCountRef.current > 0) {
+      setSelectionAnnouncement("Transaction selection cleared because the filters changed");
+    }
+    dispatchSelectionChange({ type: "clear" });
+  }, [dispatchSelectionChange, filters]);
+
+  useEffect(() => {
+    if (selectedItems.length > 0) {
+      setSelectionAnnouncement(
+        `${selectedItems.length} transaction${selectedItems.length === 1 ? "" : "s"} selected`,
+      );
+    }
+  }, [selectedItems.length]);
+
+  useEffect(() => {
+    if (selectedItems.length === 0) return;
+    const clearOnEscape = (event: KeyboardEvent) => {
+      if (
+        event.key === "Escape" &&
+        !document.querySelector('[role="dialog"]') &&
+        !document.querySelector('[role="menu"]')
+      ) {
+        dispatchSelectionChange({ type: "clear" });
+        setSelectionAnnouncement("Transaction selection cleared");
+        requestAnimationFrame(() => pageHeadingRef.current?.focus());
+      }
+    };
+    document.addEventListener("keydown", clearOnEscape);
+    return () => document.removeEventListener("keydown", clearOnEscape);
+  }, [dispatchSelectionChange, selectedItems.length]);
 
   // Destructure for stable references in useEffect deps
   const {
@@ -276,31 +347,65 @@ export default function TransactionsPage() {
   const totalCount = paginationData?.total ?? null;
   const totalPages = paginationData?.totalPages ?? 1;
 
+  useEffect(() => {
+    if (!isInfinite && page > Math.max(1, totalPages)) {
+      setPage(Math.max(1, totalPages));
+    }
+  }, [isInfinite, page, totalPages]);
+
   const dateGroups = groupByDate(sourceTransactions, user.timezoneOffset);
+  const visibleSelectionItems = useMemo<TransactionSelectionItem[]>(
+    () =>
+      sourceTransactions.map(({ id, description, type, amount }) => ({
+        id,
+        description,
+        type,
+        amount,
+      })),
+    [sourceTransactions],
+  );
+  const visibleIds = useMemo(
+    () => visibleSelectionItems.map((item) => item.id),
+    [visibleSelectionItems],
+  );
+  const masterSelectionState = visibleSelectionState(selection, visibleIds);
 
   /* ---- Selection handlers ---- */
 
-  const toggleSelection = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  const toggleSelection = (transaction: TransactionSelectionItem) =>
+    dispatchSelectionChange({ type: "toggle", item: transaction });
 
   const toggleSelectAll = () => {
-    if (sourceTransactions.length === 0) return;
-    const allIds = sourceTransactions.map((tx) => tx.id);
-    const allSelected = allIds.every((id) => selectedIds.has(id));
-    setSelectedIds(allSelected ? new Set() : new Set(allIds));
+    if (visibleSelectionItems.length === 0) return;
+    dispatchSelectionChange({ type: "toggle-visible", items: visibleSelectionItems });
   };
 
-  const clearSelection = () => setSelectedIds(new Set());
+  const clearSelection = (restoreFocus = false) => {
+    dispatchSelectionChange({ type: "clear" });
+    setSelectionAnnouncement("Transaction selection cleared");
+    if (restoreFocus) requestAnimationFrame(() => pageHeadingRef.current?.focus());
+  };
 
-  const allSelected =
-    sourceTransactions.length > 0 &&
-    sourceTransactions.every((tx) => selectedIds.has(tx.id));
+  const handleSelectAllMatching = async () => {
+    const requestedRevision = selectionRevisionRef.current;
+    const requestedFilters = selectionContextKey;
+    try {
+      const result = await selectionSnapshotMutation.mutateAsync({
+        filters,
+        timezoneOffset: user.timezoneOffset,
+      });
+      if (
+        selectionRevisionRef.current !== requestedRevision ||
+        selectionContextKeyRef.current !== requestedFilters
+      ) {
+        return;
+      }
+      dispatchSelectionChange({ type: "select-snapshot", items: result.transactions });
+      setSelectionAnnouncement(`All ${result.count} matching transactions selected`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Could not select all transactions", "error");
+    }
+  };
 
   /* ---- CRUD handlers ---- */
 
@@ -344,35 +449,90 @@ export default function TransactionsPage() {
 
   const handleDelete = async () => {
     if (!deletingTransaction) return;
-    await deleteMutation.mutateAsync(deletingTransaction.id);
-    setDeletingTransaction(null);
+    try {
+      await deleteMutation.mutateAsync(deletingTransaction.id);
+      setDeletingTransaction(null);
+      showToast("Transaction deleted");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Failed to delete transaction", "error");
+    }
   };
 
   const handleBulkDelete = async () => {
-    await bulkDeleteMutation.mutateAsync(Array.from(selectedIds));
-    setShowBulkDelete(false);
-    setSelectedIds(new Set());
+    try {
+      const result = await bulkDeleteMutation.mutateAsync(Array.from(selectedIds));
+      setShowBulkDelete(false);
+      dispatchSelectionChange({ type: "clear" });
+      const label = `${result.deleted} transaction${result.deleted === 1 ? "" : "s"} deleted`;
+      setSelectionAnnouncement(label);
+      showToast(label);
+      requestAnimationFrame(() => pageHeadingRef.current?.focus());
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Failed to delete transactions", "error");
+    }
   };
 
-  const handleExport = () => {
-    if (sourceTransactions.length === 0 || selectedIds.size === 0) return;
-    const selected = sourceTransactions.filter((tx) => selectedIds.has(tx.id));
-    const csv = generateTransactionsCsv(selected, user.timezoneOffset);
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `transactions-${filters.month}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const handleExport = async () => {
+    if (selectedIds.size === 0) return;
+    try {
+      const result = await exportMutation.mutateAsync({
+        ids: Array.from(selectedIds),
+        timezoneOffset: user.timezoneOffset,
+      });
+      const url = URL.createObjectURL(result.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `transactions-${filters.month}.csv`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      showToast(`${result.count} transaction${result.count === 1 ? "" : "s"} exported`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Failed to export transactions", "error");
+    }
   };
 
-  const handleBulkEdit = () => {
-    if (selectedIds.size !== 1 || sourceTransactions.length === 0) return;
-    const tx = sourceTransactions.find((t) => selectedIds.has(t.id));
-    if (tx) {
-      setEditingTransaction(tx);
+  const handleBulkEdit = async () => {
+    if (selectedIds.size !== 1) return;
+    const id = selectedItems[0]?.id;
+    if (!id) return;
+    try {
+      const transaction = await fetchTransactionById(id);
+      setEditingTransaction(transaction);
       clearSelection();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Failed to load transaction", "error");
+    }
+  };
+
+  const handleBulkCategory = async (categoryId: string) => {
+    try {
+      const result = await bulkUpdateMutation.mutateAsync({
+        ids: Array.from(selectedIds),
+        action: "category",
+        categoryId,
+      });
+      setShowBulkCategory(false);
+      clearSelection(true);
+      showToast(`${result.updated} transaction${result.updated === 1 ? "" : "s"} updated`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Failed to change category", "error");
+    }
+  };
+
+  const handleBulkLabels = async (operation: "add" | "remove", labelIds: string[]) => {
+    try {
+      const result = await bulkUpdateMutation.mutateAsync({
+        ids: Array.from(selectedIds),
+        action: "labels",
+        operation,
+        labelIds,
+      });
+      setShowBulkLabels(false);
+      clearSelection(true);
+      const verb = operation === "add" ? "added to" : "removed from";
+      showToast(`Labels ${verb} ${result.updated} transaction${result.updated === 1 ? "" : "s"}`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Failed to update labels", "error");
     }
   };
 
@@ -405,11 +565,20 @@ export default function TransactionsPage() {
   ];
 
   return (
-    <div className="pb-16 sm:pb-0">
+    <div className={cn(selectedItems.length > 0 ? "pb-48" : "pb-16", "sm:pb-0")}>
+      <p className="sr-only" aria-live="polite" aria-atomic="true">
+        {selectionAnnouncement}
+      </p>
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">Transactions</h1>
+          <h1
+            ref={pageHeadingRef}
+            tabIndex={-1}
+            className="font-serif text-2xl text-warm-700 outline-none lg:text-3xl"
+          >
+            Transactions
+          </h1>
           <p className="text-warm-400 text-sm mt-1">
             {totalCount !== null
               ? isInfinite
@@ -443,77 +612,28 @@ export default function TransactionsPage() {
         totalCount={totalCount}
       />
 
-      {/* Bulk Actions Bar */}
-      <AnimatePresence>
-        {selectedIds.size > 0 && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            className="overflow-hidden mb-4"
-          >
-            <div className="card p-3 border-amber/30 bg-amber-light/20">
-              <div className="flex items-center gap-3 flex-wrap">
-                {/* Select all checkbox */}
-                <button
-                  onClick={toggleSelectAll}
-                  className={cn(
-                    "w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors",
-                    allSelected
-                      ? "bg-amber border-amber text-white"
-                      : "border-warm-300 hover:border-amber/50"
-                  )}
-                >
-                  {allSelected && <Check className="w-3 h-3" />}
-                </button>
-
-                <span className="text-sm font-medium text-warm-600">
-                  {selectedIds.size} selected
-                </span>
-
-                <div className="flex-1" />
-
-                {/* Bulk action buttons */}
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleBulkEdit}
-                    disabled={selectedIds.size !== 1}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-warm-500 hover:bg-cream-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                  >
-                    <Pencil className="w-3.5 h-3.5" />
-                    Edit
-                  </button>
-                  <button
-                    onClick={handleExport}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-warm-500 hover:bg-cream-100 transition-colors"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    Export
-                  </button>
-                  <button
-                    onClick={() => setShowBulkDelete(true)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-expense hover:bg-expense-light transition-colors"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Delete
-                  </button>
-                </div>
-
-                {/* Clear selection */}
-                <button
-                  onClick={clearSelection}
-                  className="p-1.5 rounded-lg text-warm-400 hover:text-warm-600 hover:bg-cream-200/60 transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* Transaction List — date-grouped */}
       <div className="card overflow-clip">
+        {selectedItems.length > 0 && (
+          <TransactionBulkActionBar
+            selectedCount={selectedItems.length}
+            visibleCount={sourceTransactions.length}
+            matchingCount={totalCount}
+            visibleState={masterSelectionState}
+            layout={isInfinite ? "infinite" : "pagination"}
+            allMatchingPending={selectionSnapshotMutation.isPending}
+            exportPending={exportMutation.isPending}
+            updatePending={bulkUpdateMutation.isPending}
+            onToggleVisible={toggleSelectAll}
+            onSelectAllMatching={handleSelectAllMatching}
+            onEdit={handleBulkEdit}
+            onCategory={() => setShowBulkCategory(true)}
+            onLabels={() => setShowBulkLabels(true)}
+            onExport={handleExport}
+            onDelete={() => setShowBulkDelete(true)}
+            onClear={() => clearSelection(true)}
+          />
+        )}
         {loading ? (
           <div className="divide-y divide-cream-200">
             {Array.from({ length: 5 }).map((_, i) => (
@@ -571,23 +691,17 @@ export default function TransactionsPage() {
                           highlightedRowId === tx.id && "bg-amber-light/40 ring-1 ring-amber/40",
                           isSelected ? "bg-amber-light/20" : "hover:bg-cream-50/80"
                         )}
-                        onClick={() => setEditingTransaction(tx)}
+                        onClick={() =>
+                          selectedItems.length > 0 ? toggleSelection(tx) : setEditingTransaction(tx)
+                        }
                       >
                         {/* Checkbox */}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleSelection(tx.id);
-                          }}
-                          className={cn(
-                            "w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors",
-                            isSelected
-                              ? "bg-amber border-amber text-white"
-                              : "border-cream-300 hover:border-amber/50"
-                          )}
-                        >
-                          {isSelected && <Check className="w-3 h-3" />}
-                        </button>
+                        <TransactionSelectionCheckbox
+                          label={`Select ${tx.description || tx.category.name} transaction`}
+                          state={isSelected ? "all" : "none"}
+                          onChange={() => toggleSelection(tx)}
+                          className="-my-2 -ml-3"
+                        />
 
                         {/* Category icon */}
                         <div
@@ -630,7 +744,9 @@ export default function TransactionsPage() {
                                     ? removeLabelMutation.variables.labelId
                                     : null
                                 }
-                                removeDisabled={removeLabelMutation.isPending}
+                                removeDisabled={
+                                  removeLabelMutation.isPending || selectedItems.length > 0
+                                }
                               />
                             )}
                           </div>
@@ -777,18 +893,42 @@ export default function TransactionsPage() {
         open={showBulkDelete}
         onClose={() => setShowBulkDelete(false)}
         onConfirm={handleBulkDelete}
-        title="Delete Transactions"
+        title={`Delete ${selectedItems.length} transaction${selectedItems.length === 1 ? "" : "s"}`}
         message={
-          <p>
-            Are you sure you want to delete{" "}
-            <span className="font-medium text-warm-700">
-              {selectedIds.size} transaction{selectedIds.size > 1 ? "s" : ""}
-            </span>
-            ? This action cannot be undone.
-          </p>
+          <div className="space-y-3">
+            <p>
+              This permanently deletes the selected transaction{selectedItems.length === 1 ? "" : "s"}
+              {" "}and updates dashboard and analytics totals. This action cannot be undone.
+            </p>
+            {selectedItems.length <= 5 && (
+              <ul className="list-disc space-y-1 pl-5 text-warm-600">
+                {selectedItems.map((item) => (
+                  <li key={item.id} className="truncate">{item.description || "Untitled transaction"}</li>
+                ))}
+              </ul>
+            )}
+          </div>
         }
-        confirmLabel={`Delete ${selectedIds.size}`}
+        confirmLabel={`Delete ${selectedItems.length}`}
         loading={deleteLoading}
+      />
+
+      <TransactionBulkCategoryDialog
+        open={showBulkCategory}
+        onClose={() => setShowBulkCategory(false)}
+        selectedCount={selectedItems.length}
+        selectedTypes={selectedTypes}
+        pending={bulkUpdateMutation.isPending}
+        onApply={handleBulkCategory}
+      />
+
+      <TransactionBulkLabelsDialog
+        open={showBulkLabels}
+        onClose={() => setShowBulkLabels(false)}
+        selectedCount={selectedItems.length}
+        selectedTypes={selectedTypes}
+        pending={bulkUpdateMutation.isPending}
+        onApply={handleBulkLabels}
       />
 
       {/* Floating create button. Above `sm` it carries the same menu as the
@@ -798,6 +938,7 @@ export default function TransactionsPage() {
         icon={Plus}
         onClick={() => setShowForm(true)}
         items={canScan ? addTransactionItems : undefined}
+        suppressed={selectedItems.length > 0}
       />
     </div>
   );

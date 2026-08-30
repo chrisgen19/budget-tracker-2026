@@ -7,6 +7,22 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
+export async function GET(_request: Request, { params }: RouteParams) {
+  const userId = await getAuthUserId();
+  if (userId instanceof NextResponse) return userId;
+
+  const { id } = await params;
+  const transaction = await prisma.transaction.findFirst({
+    where: { id, userId },
+    include: { category: true, bill: true, labels: { include: { label: true } } },
+  });
+
+  if (!transaction) {
+    return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
+  }
+  return NextResponse.json(transaction);
+}
+
 export async function PUT(request: Request, { params }: RouteParams) {
   const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;

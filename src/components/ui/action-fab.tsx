@@ -38,6 +38,8 @@ interface ActionFabProps {
   compact?: boolean;
   /** Opt out of hiding the overlay during page scroll. Mobile only. */
   hideWhileScrolling?: boolean;
+  /** Hide the create action while another page-level interaction owns the context. */
+  suppressed?: boolean;
 }
 
 /**
@@ -62,6 +64,7 @@ export function ActionFab({
   items,
   compact = true,
   hideWhileScrolling = true,
+  suppressed = false,
 }: ActionFabProps) {
   const { bannerVisible, bannerHeight: installBannerHeight } = useInstallBanner();
   const { bannerHeight: billBannerHeight } = useBillReminders();
@@ -114,7 +117,8 @@ export function ActionFab({
   }, [hideWhileScrolling]);
 
   const hidden =
-    isDesktop === null ? true : isDesktop ? !scrolledPast : hideWhileScrolling && isScrolling;
+    suppressed ||
+    (isDesktop === null ? true : isDesktop ? !scrolledPast : hideWhileScrolling && isScrolling);
 
   const hasMenu = isDesktop === true && !!items?.length;
 

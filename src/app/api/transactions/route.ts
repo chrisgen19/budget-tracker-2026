@@ -1,98 +1,53 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
-import { transactionSchema, transactionSourceSchema } from "@/lib/validations";
+import { transactionSchema } from "@/lib/validations";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
+import {
+  buildTransactionOrderBy,
+  buildTransactionWhere,
+  parseTransactionSearchParams,
+} from "@/lib/transaction-filter-query";
+import { z } from "zod";
 
 export async function GET(request: Request) {
   const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
 
-  const { searchParams } = new URL(request.url);
-  const type = searchParams.get("type");
-  const month = searchParams.get("month"); // format: YYYY-MM
-  const tz = parseInt(searchParams.get("tz") || "0");
-  const tzMs = tz * 60 * 1000;
-  const page = parseInt(searchParams.get("page") || "1");
-  const limit = parseInt(searchParams.get("limit") || "20");
-  const categoryId = searchParams.get("categoryId");
-  const amountMin = searchParams.get("amountMin");
-  const amountMax = searchParams.get("amountMax");
-  const sortBy = searchParams.get("sortBy") || "date"; // "date" | "amount"
-  const sortDir = searchParams.get("sortDir") || "desc"; // "asc" | "desc"
-  const search = searchParams.get("search");
-  const createdVia = searchParams.get("createdVia");
+  try {
+    const { searchParams } = new URL(request.url);
+    const filters = parseTransactionSearchParams(searchParams);
+    const page = z.coerce.number().int().min(1).catch(1).parse(searchParams.get("page"));
+    const limit = z.coerce.number().int().min(1).max(100).catch(20).parse(searchParams.get("limit"));
+    const where = buildTransactionWhere(userId, filters);
+    const orderBy = buildTransactionOrderBy(filters);
 
-  const where: Record<string, unknown> = { userId };
+    const [transactions, total] = await Promise.all([
+      prisma.transaction.findMany({
+        where,
+        include: { category: true, bill: true, labels: { include: { label: true } } },
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.transaction.count({ where }),
+    ]);
 
-  if (type === "INCOME" || type === "EXPENSE") {
-    where.type = type;
+    return NextResponse.json({
+      transactions,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ error: "Invalid transaction filters" }, { status: 400 });
+    }
+    return NextResponse.json({ error: "Failed to load transactions" }, { status: 500 });
   }
-
-  if (month && month !== "ALL") {
-    const [year, m] = month.split("-").map(Number);
-    where.date = {
-      gte: new Date(Date.UTC(year, m - 1, 1) + tzMs),
-      lt: new Date(Date.UTC(year, m, 1) + tzMs),
-    };
-  }
-
-  if (categoryId) {
-    where.categoryId = categoryId;
-  }
-
-  const source = transactionSourceSchema.safeParse(createdVia);
-  if (source.success) {
-    where.createdVia = source.data;
-  }
-
-  const labelId = searchParams.get("labelId");
-  if (labelId) {
-    where.labels = { some: { labelId } };
-  }
-
-  // Amount range filter
-  if (amountMin || amountMax) {
-    const amountFilter: Record<string, number> = {};
-    if (amountMin) amountFilter.gte = parseFloat(amountMin);
-    if (amountMax) amountFilter.lte = parseFloat(amountMax);
-    where.amount = amountFilter;
-  }
-
-  // Server-side search (case-insensitive on description)
-  if (search) {
-    where.description = { contains: search, mode: "insensitive" };
-  }
-
-  // Dynamic sort — always include `id` as a final tiebreaker so offset-based
-  // pagination is deterministic (batch-created transactions share identical
-  // date + createdAt, which causes duplicates across pages without this)
-  const direction = sortDir === "asc" ? "asc" : "desc";
-  const orderBy =
-    sortBy === "amount"
-      ? [{ amount: direction as "asc" | "desc" }, { date: "desc" as const }, { id: "asc" as const }]
-      : [{ date: direction as "asc" | "desc" }, { createdAt: "desc" as const }, { id: "asc" as const }];
-
-  const [transactions, total] = await Promise.all([
-    prisma.transaction.findMany({
-      where,
-      include: { category: true, bill: true, labels: { include: { label: true } } },
-      orderBy,
-      skip: (page - 1) * limit,
-      take: limit,
-    }),
-    prisma.transaction.count({ where }),
-  ]);
-
-  return NextResponse.json({
-    transactions,
-    pagination: {
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
-    },
-  });
 }
 
 export async function POST(request: Request) {

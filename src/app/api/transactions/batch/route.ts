@@ -12,6 +12,10 @@ import {
   findSavedBatch,
   findSavedBatchUnderLock,
 } from "@/lib/transaction-writes";
+import {
+  boundedTransactionIdsSchema,
+  bulkTransactionMutationSchema,
+} from "@/lib/transaction-bulk";
 
 const batchSchema = z.object({
   transactions: z.array(batchTransactionSchema).min(1).max(MAX_BATCH_TRANSACTIONS),
@@ -19,7 +23,7 @@ const batchSchema = z.object({
 });
 
 const batchDeleteSchema = z.object({
-  ids: z.array(z.string()).min(1),
+  ids: boundedTransactionIdsSchema,
 });
 
 /**
@@ -148,18 +152,17 @@ export async function DELETE(request: NextRequest) {
     const body = await request.json();
     const { ids } = batchDeleteSchema.parse(body);
 
-    // Find which IDs actually belong to the user before deleting
-    const owned = await prisma.transaction.findMany({
-      where: { id: { in: ids }, userId },
-      select: { id: true },
-    });
-    const ownedIds = owned.map((t) => t.id);
-
-    if (ownedIds.length > 0) {
-      await prisma.transaction.deleteMany({
-        where: { id: { in: ownedIds } },
+    const ownedIds = await prisma.$transaction(async (tx) => {
+      const owned = await tx.transaction.findMany({
+        where: { id: { in: ids }, userId },
+        select: { id: true },
       });
-    }
+      const matchedIds = owned.map((transaction) => transaction.id);
+      if (matchedIds.length > 0) {
+        await tx.transaction.deleteMany({ where: { id: { in: matchedIds }, userId } });
+      }
+      return matchedIds;
+    });
 
     return NextResponse.json({ deleted: ownedIds.length, ids: ownedIds });
   } catch (error) {
@@ -170,5 +173,107 @@ export async function DELETE(request: NextRequest) {
       { error: "Failed to delete transactions" },
       { status: 500 }
     );
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  const userId = await getAuthUserId();
+  if (userId instanceof NextResponse) return userId;
+
+  try {
+    const input = bulkTransactionMutationSchema.parse(await request.json());
+
+    const result = await prisma.$transaction(async (tx) => {
+      const transactions = await tx.transaction.findMany({
+        where: { id: { in: input.ids }, userId },
+        select: { id: true, type: true },
+      });
+      const matchedIds = transactions.map((transaction) => transaction.id);
+      if (matchedIds.length === 0) {
+        return { matched: 0, updated: 0, ids: [] as string[] };
+      }
+
+      if (input.action === "category") {
+        const category = await tx.category.findFirst({
+          where: {
+            id: input.categoryId,
+            OR: [{ isDefault: true }, { userId }],
+          },
+          select: { id: true, type: true },
+        });
+        if (!category) return { error: "Category not found", status: 400 as const };
+        if (transactions.some((transaction) => transaction.type !== category.type)) {
+          return {
+            error: "The category must match every selected transaction's type",
+            status: 409 as const,
+          };
+        }
+
+        const updated = await tx.transaction.updateMany({
+          where: { id: { in: matchedIds }, userId },
+          data: { categoryId: category.id },
+        });
+        return { matched: matchedIds.length, updated: updated.count, ids: matchedIds };
+      }
+
+      const labels = await tx.label.findMany({
+        where: { id: { in: input.labelIds }, userId },
+        select: { id: true, applicableTo: true },
+      });
+      if (labels.length !== input.labelIds.length) {
+        return { error: "One or more labels were not found", status: 400 as const };
+      }
+
+      if (
+        input.operation === "add" &&
+        labels.some((label) =>
+          transactions.some(
+            (transaction) =>
+              label.applicableTo !== "BOTH" && label.applicableTo !== transaction.type,
+          ),
+        )
+      ) {
+        return {
+          error: "One or more labels do not apply to every selected transaction",
+          status: 409 as const,
+        };
+      }
+
+      const labelIds = labels.map((label) => label.id);
+      if (input.operation === "add") {
+        const added = await tx.transactionLabel.createMany({
+          data: matchedIds.flatMap((transactionId) =>
+            labelIds.map((labelId) => ({ transactionId, labelId })),
+          ),
+          skipDuplicates: true,
+        });
+        return {
+          matched: matchedIds.length,
+          updated: matchedIds.length,
+          changedLinks: added.count,
+          ids: matchedIds,
+        };
+      }
+
+      const removed = await tx.transactionLabel.deleteMany({
+        where: { transactionId: { in: matchedIds }, labelId: { in: labelIds } },
+      });
+      return {
+        matched: matchedIds.length,
+        updated: matchedIds.length,
+        changedLinks: removed.count,
+        ids: matchedIds,
+      };
+    });
+
+    if ("error" in result) {
+      return NextResponse.json({ error: result.error }, { status: result.status });
+    }
+    return NextResponse.json(result);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ error: "Invalid bulk action" }, { status: 400 });
+    }
+    return NextResponse.json({ error: "Failed to update transactions" }, { status: 500 });
   }
 }

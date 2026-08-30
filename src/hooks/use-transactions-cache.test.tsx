@@ -2,7 +2,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { queryKeys, useBatchCreateTransactions } from "@/hooks/use-transactions";
+import {
+  queryKeys,
+  useBatchCreateTransactions,
+  useBulkDeleteTransactions,
+  useDeleteTransaction,
+} from "@/hooks/use-transactions";
 import type { TransactionFilters } from "@/components/transactions/transaction-filters";
 
 /**
@@ -106,5 +111,69 @@ describe("useBatchCreateTransactions cache insertion", () => {
     expect(idsIn(client.getQueryData(queryKeys.transactions.infinite(mcpFilters, -480)))).toEqual([
       "tx_existing",
     ]);
+  });
+});
+
+describe("transaction delete cache reconciliation", () => {
+  const wrapperFor = (client: QueryClient) =>
+    function Wrapper({ children }: { children: ReactNode }) {
+      return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    };
+
+  const paginated = () => ({
+    transactions: [
+      { ...APP_ROW, id: "delete-me" },
+      { ...APP_ROW, id: "keep-me" },
+    ],
+    pagination: { page: 2, limit: 2, total: 4, totalPages: 2 },
+  });
+
+  it("removes a single deleted row from paginated and infinite cache shapes", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const listKey = queryKeys.transactions.list(baseFilters, 2, -480);
+    const infiniteKey = queryKeys.transactions.infinite(baseFilters, -480);
+    client.setQueryData(listKey, paginated());
+    client.setQueryData(infiniteKey, {
+      pages: [paginated()],
+      pageParams: [2],
+    });
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: true } as Response)));
+
+    const { result } = renderHook(() => useDeleteTransaction(), {
+      wrapper: wrapperFor(client),
+    });
+    await act(async () => result.current.mutateAsync("delete-me"));
+
+    const list = client.getQueryData<ReturnType<typeof paginated>>(listKey)!;
+    expect(list.transactions.map(({ id }) => id)).toEqual(["keep-me"]);
+    expect(list.pagination).toMatchObject({ total: 3, totalPages: 2 });
+    expect(idsIn(client.getQueryData(infiniteKey))).toEqual(["keep-me"]);
+  });
+
+  it("uses the authoritative bulk response and keeps unrelated rows", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const listKey = queryKeys.transactions.list(baseFilters, 2, -480);
+    client.setQueryData(listKey, paginated());
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ deleted: 1, ids: ["delete-me"] }),
+        } as Response),
+      ),
+    );
+
+    const { result } = renderHook(() => useBulkDeleteTransactions(), {
+      wrapper: wrapperFor(client),
+    });
+    const response = await act(async () =>
+      result.current.mutateAsync(["delete-me", "already-stale"]),
+    );
+
+    expect(response).toEqual({ deleted: 1, ids: ["delete-me"] });
+    expect(
+      client.getQueryData<ReturnType<typeof paginated>>(listKey)!.transactions.map(({ id }) => id),
+    ).toEqual(["keep-me"]);
   });
 });
