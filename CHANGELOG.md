@@ -64,6 +64,21 @@ real question is whether the directive was cut out of the text, and "court fee, 
 badminton" leaves a perfectly good "court fee" that was being thrown away. The parser now answers
 that question directly.
 
+Then the real label list settled an assumption the whole design had rested on. There is no label
+called "Pickleball" — it is "Pickleball Budget", and four of the eight end in that same suffix.
+Exact matching answered "label it in pickleball" with "you don't have a label called pickleball",
+which is true to the letter and useless: it fixed the silence and left the workflow broken. So an
+exact miss now falls back to a whole-word prefix, and only when exactly one label qualifies. Still
+nothing fuzzy — "work" reaches "Work Budget" and never "Workshop" — and two candidates are
+reported as ambiguous rather than guessed between, since picking one writes a label nobody chose.
+
+Two of its own assumptions broke on the same list. "With Mom and Dad Budget" contains both a
+conjunction and a filler word, so the parser ate "with" as filler and split the remainder into
+"mom" and "dad"; the whole clause is now tried before the list is split, and the filler scan stops
+where a name begins. And the hashtag path applied a shape test meant for prose, which dropped
+"#with-mom-and-dad" in silence for being four words long — the exact failure this module exists to
+end, reintroduced one branch over.
+
 The same hole was in the typed paths, so both were closed: the shorthand logger reads the
 directive with no model call, and the classifier may now name labels on a transaction, resolved
 against the real list by the same `findByName` the search path uses. A hallucinated label on a

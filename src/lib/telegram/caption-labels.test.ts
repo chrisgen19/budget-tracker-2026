@@ -189,6 +189,7 @@ describe("readLabelDirective", () => {
       names: [],
       unresolved: [],
       incompatible: [],
+      ambiguous: [],
       removedDirective: false,
       rest: "",
     });
@@ -272,6 +273,77 @@ describe("removedDirective", () => {
 
   it("is false when there is no directive at all", () => {
     expect(readLabelDirective("Groceries at SM", LABELS).removedDirective).toBe(false);
+  });
+});
+
+describe("prefix matching", () => {
+  // Named the way real labels are: a shared suffix the user never says out loud.
+  const BUDGETS: BotLabel[] = [
+    { id: "l_pickle", name: "Pickleball Budget", applicableTo: "EXPENSE" },
+    { id: "l_work", name: "Work Budget", applicableTo: "EXPENSE" },
+    { id: "l_family", name: "Family Budget", applicableTo: "EXPENSE" },
+    { id: "l_mom", name: "With Mom and Dad Budget", applicableTo: "EXPENSE" },
+    { id: "l_personal", name: "Personal", applicableTo: "EXPENSE" },
+  ];
+
+  it("resolves the shorthand a user actually types", () => {
+    // Exact-only answered "you don't have a label called pickleball" for someone who plainly
+    // does — true to the letter and useless.
+    expect(readLabelDirective("label it pickleball", BUDGETS).names).toEqual([
+      "Pickleball Budget",
+    ]);
+    expect(readLabelDirective("label it work", BUDGETS).names).toEqual(["Work Budget"]);
+  });
+
+  it("matches only on a whole word, so a prefix cannot run into the middle of a name", () => {
+    const labels: BotLabel[] = [{ id: "l1", name: "Workshop", applicableTo: "EXPENSE" }];
+    expect(readLabelDirective("label it work", labels).names).toEqual([]);
+    expect(readLabelDirective("label it work", labels).unresolved).toEqual(["work"]);
+  });
+
+  it("reports an ambiguous prefix rather than picking one", () => {
+    // Guessing here writes a label the user did not choose, and a wrong label moves money in
+    // getLabelBreakdown.
+    const labels: BotLabel[] = [
+      { id: "l1", name: "Work Budget", applicableTo: "EXPENSE" },
+      { id: "l2", name: "Work Lunch", applicableTo: "EXPENSE" },
+    ];
+    const result = readLabelDirective("label it work", labels);
+
+    expect(result.ids).toEqual([]);
+    expect(result.ambiguous).toEqual([
+      { name: "work", candidates: ["Work Budget", "Work Lunch"] },
+    ]);
+  });
+
+  it("prefers an exact match over a longer label it also prefixes", () => {
+    const labels: BotLabel[] = [
+      { id: "l1", name: "Work", applicableTo: "EXPENSE" },
+      { id: "l2", name: "Work Budget", applicableTo: "EXPENSE" },
+    ];
+    expect(readLabelDirective("label it work", labels).names).toEqual(["Work"]);
+  });
+
+  it("resolves a name containing a conjunction", () => {
+    // "and" is a list separator everywhere else, and "with" is a filler word — both appear
+    // inside this label's own name. Splitting on them produced "mom" and "dad".
+    expect(readLabelDirective("label it with mom and dad", BUDGETS).names).toEqual([
+      "With Mom and Dad Budget",
+    ]);
+    expect(readLabelDirective("#with-mom-and-dad", BUDGETS).names).toEqual([
+      "With Mom and Dad Budget",
+    ]);
+  });
+
+  it("still splits a real list", () => {
+    const result = readLabelDirective("label it work and pickleball", BUDGETS);
+    expect(result.names).toEqual(["Work Budget", "Pickleball Budget"]);
+  });
+
+  it("does not let a prefix swallow the next clause", () => {
+    const result = readLabelDirective("label it pickleball, category fun", BUDGETS);
+    expect(result.names).toEqual(["Pickleball Budget"]);
+    expect(result.rest).toBe("category fun");
   });
 });
 
