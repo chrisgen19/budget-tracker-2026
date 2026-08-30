@@ -37,6 +37,22 @@ was confidently wrong for a token minted without `labels:read`, and sent the use
 place to fix it. The lookup now carries whether it succeeded, and every path that can drop a
 named label says which of the two happened.
 
+Automated review then found three more of the same shape, and chasing the first turned up a
+fourth. The directive parser stopped at the first name it could not resolve, which made *order*
+decide the outcome: `label it pickleball and badminton` applied Pickleball, said nothing about
+badminton and left "and badminton" behind as the description, while `label it badminton and
+pickleball` applied nothing at all and reported the whole tail back as one invented label. It now
+parses the list segment by segment. A comma is not treated as a list separator for an unresolved
+name, since captions use it to separate clauses — `label it pickleball, category fun` must not
+report "category fun" as a missing label.
+
+The classifier path derived labels solely from `transaction.labels`, which Gemini is asked to fill
+and is not obliged to, so an omission lost the instruction with nothing saying so; it now parses
+the directive locally too and merges the two. And a label whose `applicable_to` excludes the
+transaction's type is now its own outcome rather than a silent one: `createTransactionBatch`
+type-filters explicit ids without comment, so a receipt caption naming an income-only label showed
+it in the review and then did not write it.
+
 The same hole was in the typed paths, so both were closed: the shorthand logger reads the
 directive with no model call, and the classifier may now name labels on a transaction, resolved
 against the real list by the same `findByName` the search path uses. A hallucinated label on a

@@ -19,6 +19,15 @@
 export interface BotLabel {
   id: string;
   name: string;
+  /**
+   * "EXPENSE" | "INCOME" | "BOTH", when the caller fetched it.
+   *
+   * Optional because `findByName` and the search path only ever need id and name. Where it is
+   * present, a label that cannot apply to the transaction being written is reported rather than
+   * applied: `createTransactionBatch` type-filters explicit ids *silently*, so a review promising
+   * an income-only label on a receipt would show it and then quietly not write it.
+   */
+  applicableTo?: string;
 }
 
 export interface LabelDirective {
@@ -34,6 +43,15 @@ export interface LabelDirective {
    * write tool, which is what stops a leaked token from rewriting anything.
    */
   unresolved: string[];
+  /**
+   * Real labels the user named that cannot apply to this transaction's type.
+   *
+   * Kept apart from `unresolved` because the two need opposite advice: one says create it, the
+   * other says it exists but not for this kind of transaction. Telling someone to create a label
+   * they are looking at in the app is the same wrong-reason error as reporting an unreadable list
+   * as a missing one.
+   */
+  incompatible: string[];
   /** The text with the recognised directive removed, for use as a description. */
   rest: string;
 }
@@ -54,8 +72,15 @@ const FILLER = /^\s*(?:it|this|that|them|these|those|as|in|to|under|with|the)\b\
 /** What separates two names in a list: "label it pickleball and sports". */
 const CONNECTOR = /^\s*(?:,|;|&|and\b|plus\b)\s*/iu;
 
-/** Ends the directive's reach. A name never spans one of these. */
-const CLAUSE_END = /[,;.\n]/u;
+/** Where one name in a list ends: a separator, or the end of the directive's clause. */
+const SEGMENT_END = /[,;.\n]|\s+(?:and|plus)\b|\s*&/iu;
+
+/** The raw text of the next name-shaped segment at `at`, up to its boundary. */
+const segmentAt = (text: string, at: number): string => {
+  const tail = text.slice(at);
+  const end = SEGMENT_END.exec(tail);
+  return end ? tail.slice(0, end.index) : tail;
+};
 
 /** `#pickleball`. Two characters minimum and a leading letter, so "#1" is not a label. */
 const HASHTAG = /#(\p{L}[\p{L}\p{N}_-]+)/giu;
@@ -107,27 +132,44 @@ export const mentionsLabel = (text: string): boolean => /\b(?:labels?|tags?)\b|#
  * found" reads like an answer. Here a near miss *writes* the wrong label, which is worse and
  * outlives the conversation.
  */
-export const readLabelDirective = (text: string, labels: BotLabel[]): LabelDirective => {
+export const readLabelDirective = (
+  text: string,
+  labels: BotLabel[],
+  /** The transaction type these labels are for, when known. Enables the compatibility check. */
+  appliesTo?: "EXPENSE" | "INCOME"
+): LabelDirective => {
   const ids: string[] = [];
   const names: string[] = [];
   const unresolved: string[] = [];
+  const incompatible: string[] = [];
   const spans: Span[] = [];
 
   const byLength = [...labels].sort((a, b) => b.name.length - a.name.length);
 
   const take = (label: BotLabel) => {
+    const type = label.applicableTo;
+    if (appliesTo && type && type !== "BOTH" && type !== appliesTo) {
+      if (!incompatible.includes(label.name)) incompatible.push(label.name);
+      return;
+    }
     if (ids.includes(label.id)) return;
     ids.push(label.id);
     names.push(label.name);
   };
 
+  /** A name starts with a letter and is a few words. "150" is a price, "for the shoes" is prose. */
+  const looksLikeName = (raw: string): boolean => {
+    const name = raw.trim();
+    return (
+      !!name &&
+      name.length <= MAX_NAME_CHARS &&
+      /^\p{L}/u.test(name) &&
+      name.split(/\s+/u).length <= MAX_NAME_WORDS
+    );
+  };
+
   const takeUnresolved = (raw: string) => {
     const name = raw.trim().replace(/^["']|["']$/gu, "");
-    if (!name || name.length > MAX_NAME_CHARS) return;
-    // A name starts with a letter and is a few words at most. "150" is the amount on a price
-    // tag, not a label the user was denied.
-    if (!/^\p{L}/u.test(name)) return;
-    if (name.split(/\s+/u).length > MAX_NAME_WORDS) return;
     if (unresolved.length >= MAX_UNRESOLVED) return;
     if (unresolved.some((u) => u.toLowerCase() === name.toLowerCase())) return;
     unresolved.push(name);
@@ -142,7 +184,7 @@ export const readLabelDirective = (text: string, labels: BotLabel[]): LabelDirec
       (l) => l.name.toLowerCase() === raw.toLowerCase() || l.name.toLowerCase() === spaced.toLowerCase()
     );
     if (found) take(found);
-    else takeUnresolved(spaced);
+    else if (looksLikeName(spaced)) takeUnresolved(spaced);
     spans.push({ start: match.index, end: match.index + match[0].length });
   }
 
@@ -151,47 +193,60 @@ export const readLabelDirective = (text: string, labels: BotLabel[]): LabelDirec
     let cursor = start + match[0].length;
 
     // "label it in pickleball" — consume each filler word in turn. A colon or a filler word is
-    // also what makes this a directive rather than the noun: see the unresolved branch below.
-    let marked = match[0].includes(":");
+    // also what makes this an instruction rather than the noun, which both gates below use.
+    let explicit = match[0].includes(":");
     for (;;) {
       const filler = FILLER.exec(text.slice(cursor));
       if (!filler) break;
       cursor += filler[0].length;
-      marked = true;
+      explicit = true;
     }
 
+    // A single-word tail is name-shaped, so "label badminton" earns a note while "price tag for
+    // the shoes" does not. Naming a real label proves it too, and is checked as we go.
+    let reportable = explicit || !/\s/u.test(segmentAt(text, cursor));
+    // The first segment always belongs to the directive. After that, only an explicit
+    // conjunction carries it into a name that does not resolve: a comma separates clauses as
+    // often as it separates names — "label it pickleball, category fun" — so an unknown word
+    // after one is the next clause, not a missing label.
+    let carriesNames = true;
+    let resolvedAny = false;
+
     // Two cursors, because a connector is only part of the directive if a name follows it.
-    // "label it pickleball, category fun" reaches the comma and finds no label after it, and
-    // swallowing the separator anyway would run the two clauses of the caption together.
+    // "label it pickleball and Yosh will pay me back" must not lose its "and".
     let settled = -1;
     let probe = cursor;
+
     for (;;) {
       const label = labelAt(text, probe, byLength);
-      if (!label) break;
-      take(label);
-      probe += label.name.length;
+      if (label) {
+        take(label);
+        resolvedAny = true;
+        reportable = true;
+        probe += label.name.length;
+      } else {
+        // A name in the list this user does not have. Recorded rather than skipped: the loop
+        // used to break here, so "label it pickleball and badminton" applied Pickleball, said
+        // nothing about badminton, and left "and badminton" behind as the description. Order
+        // made it worse — with the unknown name first, nothing resolved at all and the whole
+        // tail was reported back as one invented label.
+        const segment = segmentAt(text, probe);
+        if (!reportable || !carriesNames || !looksLikeName(segment)) break;
+        takeUnresolved(segment);
+        probe += segment.length;
+      }
       settled = probe;
 
       const connector = CONNECTOR.exec(text.slice(probe));
       if (!connector) break;
+      carriesNames = /and|plus|&/iu.test(connector[0]);
       probe += connector[0].length;
     }
 
-    if (settled >= 0) {
-      spans.push({ start, end: settled });
-      continue;
-    }
-
-    // The keyword named something this user does not have. Say so rather than dropping it —
-    // but do not touch the text, since deleting words nobody understood is how a description
-    // loses the half that was fine. Bounded to one clause, and only where a colon or a filler
-    // word marked this as an instruction: "price tag for the shoes" is a noun, and reporting
-    // "for the shoes" back as a missing label is noise on a message that asked for nothing.
-    // Resolving needs no such marker, because an exact hit on a real label cannot be noise.
-    if (!marked) continue;
-    const tail = text.slice(cursor);
-    const stop = CLAUSE_END.exec(tail);
-    takeUnresolved(stop ? tail.slice(0, stop.index) : tail);
+    // Removed only where the text is unambiguously an instruction: the keyword carried a colon
+    // or a filler word, or a real label was named. "price tag Nike" may be worth a note, but
+    // cutting "tag Nike" out of the description on that evidence is not.
+    if (settled >= 0 && (explicit || resolvedAny)) spans.push({ start, end: settled });
   }
 
   // Cut from the end so earlier offsets stay valid.
@@ -200,7 +255,7 @@ export const readLabelDirective = (text: string, labels: BotLabel[]): LabelDirec
     rest = rest.slice(0, span.start) + rest.slice(span.end);
   }
 
-  return { ids, names, unresolved, rest: tidy(rest) };
+  return { ids, names, unresolved, incompatible, rest: tidy(rest) };
 };
 
 /**
@@ -219,12 +274,24 @@ export const readLabelDirective = (text: string, labels: BotLabel[]): LabelDirec
  * token minted without `labels:read`, not a missing label.
  */
 export const renderLabelNotice = (
-  directive: Pick<LabelDirective, "names" | "unresolved">,
+  directive: Pick<LabelDirective, "names" | "unresolved"> &
+    Partial<Pick<LabelDirective, "incompatible">>,
   labelsReadable = true
 ): string => {
   let notice = "";
   if (directive.names.length > 0) {
     notice += `\n\u{1F3F7}\uFE0F *Labels:* ${directive.names.join(", ")}\n`;
+  }
+  if (directive.incompatible?.length) {
+    // Its own message, not "you don't have it": they do have it, and it is sitting in the app
+    // where the advice to create it would send them. `Label.applicable_to` is the setting that
+    // decides, so that is what the reply names.
+    const one = directive.incompatible.length === 1;
+    const named = directive.incompatible.map((n) => `*${n}*`).join(", ");
+    notice +=
+      `\n\u26a0\ufe0f ${named} ${one ? "doesn't" : "don't"} apply to this kind of transaction, ` +
+      `so I left ${one ? "it" : "them"} off. Set ${one ? "it" : "them"} to "Both" in the app ` +
+      `to use ${one ? "it" : "them"} here.\n`;
   }
   if (directive.unresolved.length > 0) {
     const one = directive.unresolved.length === 1;

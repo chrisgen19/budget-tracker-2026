@@ -88,9 +88,51 @@ describe("readLabelDirective", () => {
     const result = readLabelDirective("court fee, label it badminton", LABELS);
     expect(result.ids).toEqual([]);
     expect(result.unresolved).toEqual(["badminton"]);
-    // Nothing was understood, so nothing is removed: deleting words we could not resolve is how
-    // a description loses the half that was fine.
-    expect(result.rest).toBe("court fee, label it badminton");
+    // The keyword carried a filler word, so this is unambiguously an instruction and comes out
+    // of the description even though the name resolved to nothing. Leaving it in put "label it
+    // badminton" on the transaction as its description.
+    expect(result.rest).toBe("court fee");
+  });
+
+  it("keeps parsing after a resolved name, so the rest of the list is not lost", () => {
+    // The loop used to break on the first miss and skip the unresolved branch entirely, so this
+    // applied Pickleball, said nothing about badminton, and left "and badminton" behind as the
+    // description of the purchase.
+    const result = readLabelDirective("court fee, label it pickleball and badminton", LABELS);
+
+    expect(result.names).toEqual(["Pickleball"]);
+    expect(result.unresolved).toEqual(["badminton"]);
+    expect(result.rest).toBe("court fee");
+  });
+
+  it("resolves a real label named after an unknown one", () => {
+    // Order used to decide whether anything resolved at all: with the unknown name first,
+    // nothing was applied and "badminton and pickleball" came back as one invented label.
+    const result = readLabelDirective("label it badminton and pickleball", LABELS);
+
+    expect(result.names).toEqual(["Pickleball"]);
+    expect(result.unresolved).toEqual(["badminton"]);
+  });
+
+  it("reports a bare directive that names nothing", () => {
+    // "label pickleball" applies the label, so "label badminton" saying nothing was an
+    // asymmetry the user could not explain. A single-word tail is name-shaped enough to report.
+    const result = readLabelDirective("label badminton", LABELS);
+
+    expect(result.unresolved).toEqual(["badminton"]);
+    // But not removed: with no colon, no filler word and nothing resolved, the evidence that
+    // this is an instruction rather than prose is too thin to cut it out of the description.
+    expect(result.rest).toBe("label badminton");
+  });
+
+  it("does not carry an unknown name across a comma", () => {
+    // A comma separates clauses as often as it separates names. Treating this one as a list
+    // would report "category fun" as a missing label and delete it from the description.
+    const result = readLabelDirective("label it pickleball, category fun", LABELS);
+
+    expect(result.names).toEqual(["Pickleball"]);
+    expect(result.unresolved).toEqual([]);
+    expect(result.rest).toBe("category fun");
   });
 
   it("resolves what it can and reports what it cannot", () => {
@@ -130,6 +172,7 @@ describe("readLabelDirective", () => {
     const result = readLabelDirective("court fee, label it pickleball", []);
     expect(result.ids).toEqual([]);
     expect(result.unresolved).toEqual(["pickleball"]);
+    expect(result.rest).toBe("court fee");
   });
 
   it("returns the text unchanged when there is no directive at all", () => {
@@ -145,8 +188,55 @@ describe("readLabelDirective", () => {
       ids: [],
       names: [],
       unresolved: [],
+      incompatible: [],
       rest: "",
     });
+  });
+});
+
+describe("label type compatibility", () => {
+  const TYPED: BotLabel[] = [
+    { id: "lbl_pickleball", name: "Pickleball", applicableTo: "EXPENSE" },
+    { id: "lbl_work", name: "Work", applicableTo: "BOTH" },
+    { id: "lbl_salary", name: "Salary", applicableTo: "INCOME" },
+  ];
+
+  it("refuses a label that cannot apply to this transaction type", () => {
+    // createTransactionBatch type-filters explicit ids *silently*, so a review that promised an
+    // income-only label on a receipt showed it and then quietly did not write it.
+    const result = readLabelDirective("court fee, label it salary", TYPED, "EXPENSE");
+
+    expect(result.ids).toEqual([]);
+    expect(result.incompatible).toEqual(["Salary"]);
+    // Not "unresolved": the label exists, and telling them to create it sends them to a screen
+    // where it is already sitting.
+    expect(result.unresolved).toEqual([]);
+  });
+
+  it("applies the same label to the type it does fit", () => {
+    const result = readLabelDirective("bonus, label it salary", TYPED, "INCOME");
+    expect(result.names).toEqual(["Salary"]);
+    expect(result.incompatible).toEqual([]);
+  });
+
+  it("always applies a BOTH label", () => {
+    expect(readLabelDirective("label it work", TYPED, "EXPENSE").names).toEqual(["Work"]);
+    expect(readLabelDirective("label it work", TYPED, "INCOME").names).toEqual(["Work"]);
+  });
+
+  it("checks a hashtag too", () => {
+    expect(readLabelDirective("#salary", TYPED, "EXPENSE").incompatible).toEqual(["Salary"]);
+  });
+
+  it("keeps the compatible half of a list", () => {
+    const result = readLabelDirective("label it pickleball and salary", TYPED, "EXPENSE");
+    expect(result.names).toEqual(["Pickleball"]);
+    expect(result.incompatible).toEqual(["Salary"]);
+  });
+
+  it("skips the check when no type is given", () => {
+    // The search path has no transaction to be compatible with.
+    expect(readLabelDirective("label it salary", TYPED).names).toEqual(["Salary"]);
   });
 });
 
@@ -196,6 +286,16 @@ describe("renderLabelNotice", () => {
     expect(renderLabelNotice({ names: ["Pickleball"], unresolved: [] }, false)).not.toContain(
       "couldn't read"
     );
+  });
+
+  it("says a mismatched label exists rather than telling them to create it", () => {
+    const notice = renderLabelNotice({ names: [], unresolved: [], incompatible: ["Salary"] });
+
+    expect(notice).toContain("Salary");
+    expect(notice).toContain("doesn't apply to this kind of transaction");
+    expect(notice).toContain('"Both"');
+    // They have it. "Create it in the app" would send them somewhere it already is.
+    expect(notice).not.toContain("Create");
   });
 
   it("says nothing when no label was mentioned at all", () => {

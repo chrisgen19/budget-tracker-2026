@@ -1198,6 +1198,9 @@ interface LabelLookup {
  * reaches.
  */
 async function loadLabels(): Promise<LabelLookup> {
+  // Fetched unfiltered, with `applicableTo` on each row: filtering to one type here would make
+  // an income-only label look *missing* to a receipt, and "create it in the app" is the wrong
+  // advice for a label the user is looking at. The mismatch is reported as itself instead.
   return callTool<{ labels: BotLabel[] }>("get_label_list")
     .then((r) => ({ labels: r.labels, readable: true }))
     .catch(() => {
@@ -1264,7 +1267,7 @@ async function handleReceiptPhoto(
   //
   // The *category* half of a caption ("category fun") is deliberately left in. Gemini sees the
   // whole category list and picks from it, which the bot has no better answer than.
-  const directive = readLabelDirective(rawCaption ?? "", labelLookup.labels);
+  const directive = readLabelDirective(rawCaption ?? "", labelLookup.labels, "EXPENSE");
   const caption = directive.rest || undefined;
 
   let scan: ScannedReceipt;
@@ -1321,6 +1324,7 @@ async function handleReceiptPhoto(
   // an inference the user cannot see is one they cannot undo.
   if (caption) reply += `\n\u2139\ufe0f I used your caption as a hint.\n`;
   reply += renderLabelNotice(directive, labelLookup.readable);
+
   reply += `\nNothing is saved yet. Tap a button below, or send a short description to correct it.`;
 
   // Stored only once the review has actually reached the user, which is the entire point of the
@@ -1499,7 +1503,7 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     // scan is actually waiting, so an ordinary message never pays for the call.
     const lookup =
       hasPendingScan(chatId) && mentionsLabel(text) ? await loadLabels() : null;
-    const directive = lookup ? readLabelDirective(text, lookup.labels) : null;
+    const directive = lookup ? readLabelDirective(text, lookup.labels, "EXPENSE") : null;
     // Only a directive that resolved to something, or named something the user does not have,
     // counts as a label edit. Anything else is a description, exactly as before.
     const isLabelEdit = !!directive && (directive.ids.length > 0 || directive.unresolved.length > 0);
@@ -1547,7 +1551,11 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       msg += `\ud83d\udcc1 *Category:* ${revised.categoryName}\n`;
       msg += `\ud83d\udcc5 *Date:* ${revised.date}\n`;
       msg += renderLabelNotice(
-        { names: revised.labelNames, unresolved: directive?.unresolved ?? [] },
+        {
+          names: revised.labelNames,
+          unresolved: directive?.unresolved ?? [],
+          incompatible: directive?.incompatible ?? [],
+        },
         lookup?.readable ?? true
       );
       msg += `\nStill not saved. Reply *yes* to save it, or *no* to discard.`;
@@ -1653,15 +1661,15 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     // "150 pickleball fee, label it pickleball" used to log the directive as part of its own
     // description and apply nothing. Read out here, it costs no model call, so it keeps working
     // with no GEMINI_API_KEY — which is the whole reason this path exists.
+    const type = isIncome ? "INCOME" : "EXPENSE";
     const lookup = mentionsLabel(written) ? await labels() : null;
-    const directive = lookup ? readLabelDirective(written, lookup.labels) : null;
+    const directive = lookup ? readLabelDirective(written, lookup.labels, type) : null;
     // A message that is *only* a directive leaves nothing to describe the purchase. Falling
     // through is better than logging "label it pickleball" as the description: Gemini can write
     // one, and without Gemini the user gets the same "I did not understand" they always did.
     const description = directive ? directive.rest : written;
 
     if (amount > 0 && description) {
-      const type = isIncome ? "INCOME" : "EXPENSE";
       // No confident match returns null rather than a guess. It used to fall back to the first
       // category of that type, and the list is ordered defaults-first then alphabetically, so
       // with the seeded data every unrecognised expense was filed under Education.
@@ -1693,7 +1701,11 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
             chatId,
             result,
             renderLabelNotice(
-              { names: [], unresolved: directive?.unresolved ?? [] },
+              {
+                names: [],
+                unresolved: directive?.unresolved ?? [],
+                incompatible: directive?.incompatible ?? [],
+              },
               lookup?.readable ?? true
             )
           );
@@ -1716,12 +1728,25 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       // *search* costs a wrong answer; on a write it lands on the row, and `getLabelBreakdown`
       // splits an amount across whatever labels it carries, so it quietly moves money.
       const namedLabels: string[] = Array.isArray(txData.labels) ? txData.labels : [];
+
+      // And read the directive locally as well, merging the two. The model is asked to fill
+      // `labels` and is not obliged to: "spent 350 yesterday, tag it work" can come back as a
+      // perfectly good CREATE_TRANSACTION with `labels: null`, and the instruction would vanish
+      // with nothing saying so. The parser is deterministic where the model is not, which is the
+      // same argument `commands.ts` makes for resolving obvious phrasings before asking Gemini.
+      // It also carries the reporting: when the list could not be read, `knownLabels` is empty
+      // and every name the user asked for lands in `unresolved`.
+      const asked = mentionsLabel(text)
+        ? readLabelDirective(text, knownLabels, txData.type === "INCOME" ? "INCOME" : "EXPENSE")
+        : null;
+
       const labelIds = [
-        ...new Set(
-          namedLabels
+        ...new Set([
+          ...namedLabels
             .map((name) => findByName(knownLabels, name)?.id)
-            .filter((id): id is string => !!id)
-        ),
+            .filter((id): id is string => !!id),
+          ...(asked?.ids ?? []),
+        ]),
       ];
 
       const result = await createTransactions(clientBatchId, [
@@ -1735,17 +1760,20 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
         },
       ]);
 
-      // A label the model was never in a position to pick, because the list it was handed was
-      // empty for the wrong reason. Read locally only to name what the user actually asked for:
-      // a name the model invented is dropped in silence on purpose, since nobody asked for it.
-      const unhonoured =
-        !labelsReadable && mentionsLabel(text) ? readLabelDirective(text, []).unresolved : [];
-
       if (result.transactions.length > 0) {
+        // Only what the *user* asked for and did not get. A name the model invented is dropped
+        // in silence on purpose: nobody asked for it, so there is nothing to report.
         await confirmCreated(
           chatId,
           result,
-          renderLabelNotice({ names: [], unresolved: unhonoured }, labelsReadable)
+          renderLabelNotice(
+            {
+              names: [],
+              unresolved: asked?.unresolved ?? [],
+              incompatible: asked?.incompatible ?? [],
+            },
+            labelsReadable
+          )
         );
         return;
       }
