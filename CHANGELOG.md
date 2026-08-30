@@ -60,6 +60,16 @@ entirely. Accepting the ignored forms was a bypass rather than a leniency -- a `
 remote URL above a typo'd `DATABASE_URL:postgresql://localhost/db` had Prisma use the remote line,
 the parser take the localhost one, and the guard clear the migration.
 
+After four rounds of review found four separate divergences from dotenv -- first-vs-last
+assignment, the `#` rule, quoting-versus-comment order, and a separator that accepted `KEY:value`,
+which dotenv ignores -- the hand-rolled parser was replaced by dotenv itself. Three of the four had
+let the guard clear a URL Prisma was not about to use. The lesson was not that any one regex was
+wrong but that a component whose only job is to agree with another parser should not be a second
+implementation of it. It is pinned to `^16.6.1`, the version Prisma's own chain resolves; the `LINE`
+regex in that release and the one bundled into `prisma/build/index.js` are byte-for-byte identical,
+and pnpm dedupes to the copy already in the tree rather than installing a second. All twelve
+observed cases passed unchanged through the swap, and they stay as a pin against version drift.
+
 Four deploys ran green over this. `prisma migrate deploy` compares the folder to the database in one
 direction only -- it reported "33 migrations found... No pending migrations to apply" against a
 database holding 35 -- and `prisma migrate status` calls the same database "up to date" and exits 0.

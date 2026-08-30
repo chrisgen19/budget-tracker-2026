@@ -12,6 +12,13 @@ const URL_ = "postgres://user:pass@localhost:5432/db";
  * Every expectation here was checked against the real thing: the `.env` was fed to
  * `prisma migrate status` and the datasource it printed is what these assert. This parser exists
  * only to agree with Prisma, so a rule invented here rather than observed is worse than no test.
+ *
+ * `parseEnvValue` now delegates to dotenv, so these no longer police a hand-rolled regex -- they
+ * pin the *contract*, and the thing they now catch is version drift. dotenv is held at `^16.6.1`
+ * because that is what Prisma bundles; if a bump changed the grammar the guard depends on, these
+ * fail here rather than silently letting the guard clear a database Prisma is not about to write
+ * to. All twelve passed unchanged when the regex was swapped for the library, which is the
+ * evidence that the observations were right in the first place.
  */
 describe("parseEnvValue", () => {
   it("reads a bare value", () => {
