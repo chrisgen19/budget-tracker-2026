@@ -122,6 +122,21 @@ describe("classifyMessage", () => {
     expect(prompt).toContain("Food & Dining");
   });
 
+  it("lets a logged transaction carry a label the user explicitly asked for", async () => {
+    // The typed half of the same hole: labels were handed to the model for *search* only, so
+    // "150 pickleball fee, tag it pickleball" wrote the row and dropped the tag.
+    generateContentWithRetry.mockResolvedValue(reply({ action: "UNSUPPORTED" }));
+    const { classifyMessage } = await loadClassify("key");
+
+    await classifyMessage("150 court fee, tag it work", CATEGORIES, LABELS, -480);
+
+    const prompt = generateContentWithRetry.mock.calls[0][0].contents;
+    expect(prompt).toContain('"labels": string[] | null');
+    expect(prompt).toContain("ONLY when the user");
+    // And the restraint that keeps it from labelling everything it recognises.
+    expect(prompt).toContain("is NOT a request to apply");
+  });
+
   it("returns null without an API key, and never constructs a client", async () => {
     // The bot branches on GEMINI_ENABLED to fall back to shorthand-only logging. Importing the
     // client eagerly would throw at boot instead, since it is built at module scope.

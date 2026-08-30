@@ -1,6 +1,29 @@
 import type { PendingScan } from "@/lib/telegram/pending-scan";
 import { UnconfirmedWriteError } from "@/lib/telegram/errors";
 
+/**
+ * The row a confirmed scan writes.
+ *
+ * Extracted from the call site so the one rule worth pinning is testable: `labelIds` is sent
+ * *only* when the user named a label, and omitted otherwise.
+ *
+ * Both halves matter and they pull in opposite directions. Omitting it lets the server's
+ * auto-apply schedules run, which is what should happen when nobody asked for anything. Sending
+ * an explicit array overrides the server's `hasTrustworthyTime` coercion, which turns an omitted
+ * `labelIds` into an opt-out for any date that is not today — right for a *schedule*, whose whole
+ * premise is a real clock a backdated receipt does not have, and wrong for a label the user named
+ * themselves. A receipt scanned the morning after the purchase hits that path every time, which
+ * is how "label it in pickleball" reached the server and was dropped.
+ */
+export const scanToTransaction = (scan: PendingScan): Record<string, unknown> => ({
+  amount: scan.amount,
+  description: scan.description,
+  type: "EXPENSE",
+  categoryId: scan.categoryId,
+  date: scan.date,
+  ...(scan.labelIds.length > 0 && { labelIds: scan.labelIds }),
+});
+
 /** A batch as `create_transactions` returns it, narrowed to what this step reads. */
 export interface SavedBatch {
   transactions: unknown[];

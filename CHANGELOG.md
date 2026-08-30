@@ -2,6 +2,123 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-30 - A label that went nowhere
+
+A GCash receipt sent to the Telegram bot with the caption
+`Tiendesitas Yosh's Pickleball fee, category fun, label it in pickleball` came back as
+"Yosh's Pickleball fee", category Fun, and no label. Two unrelated defects wearing one costume.
+
+The label was never applied because nothing on the receipt path knew what a label was.
+`scan_receipt` neither takes nor returns them, `PendingScan` had no field for them, and
+`saveConfirmedScan` wrote five fields, none of which was `labelIds`. The directive reached Gemini
+inside the caption and had nowhere to go. Underneath that sat a second, quieter reason: omitting
+`labelIds` is supposed to mean "let the user's schedules run", but the MCP tool turns an omitted
+value into an explicit `[]` for any date `hasTrustworthyTime` rejects — which is every date but
+today. So a receipt scanned the morning after the purchase was opted out of labelling entirely,
+and would have been even if the caption had been understood. Sending an explicit array is what
+gets past that, and it is the right thing to send: the guard exists to stop an *invented* clock
+triggering a time-of-day schedule, which has nothing to say about a label the user named
+themselves.
+
+The directive is read locally, in `caption-labels.ts`, not by a model. It has to work with no
+`GEMINI_API_KEY`, and paying a request to recognise the word "label" is the same trade
+`commands.ts` already refuses. Matching is explicit only — `label it X`, `tag as X`, `#X` — and
+resolves by exact case-insensitive name against the user's real list, longest name first so
+`Work Lunch` is not cut down to `Work`. A bare mention applies nothing: "Pickleball court fee" is
+a description, and labelling on it would tag "lunch with the pickleball crew" as a game. A name
+that matches nothing the user owns is reported back rather than dropped, because a silently
+dropped label is the whole bug, and the bot cannot create one — `create_transactions` is its only
+write, which is what stops a leaked token rewriting anything.
+
+Reporting it back needed one more distinction than it first looked. An empty label list means
+either "you have no such label" or "I could not read your labels", and `loadLabels` swallows a
+failed `get_label_list` into the same `[]` — so the honest-looking reply "create it in the app"
+was confidently wrong for a token minted without `labels:read`, and sent the user to the wrong
+place to fix it. The lookup now carries whether it succeeded, and every path that can drop a
+named label says which of the two happened.
+
+Automated review then found three more of the same shape, and chasing the first turned up a
+fourth. The directive parser stopped at the first name it could not resolve, which made *order*
+decide the outcome: `label it pickleball and badminton` applied Pickleball, said nothing about
+badminton and left "and badminton" behind as the description, while `label it badminton and
+pickleball` applied nothing at all and reported the whole tail back as one invented label. It now
+parses the list segment by segment. A comma is not treated as a list separator for an unresolved
+name, since captions use it to separate clauses — `label it pickleball, category fun` must not
+report "category fun" as a missing label.
+
+The classifier path derived labels solely from `transaction.labels`, which Gemini is asked to fill
+and is not obliged to, so an omission lost the instruction with nothing saying so; it now parses
+the directive locally too and merges the two. And a label whose `applicable_to` excludes the
+transaction's type is now its own outcome rather than a silent one: `createTransactionBatch`
+type-filters explicit ids without comment, so a receipt caption naming an income-only label showed
+it in the review and then did not write it.
+
+That last one then had a tail of its own, caught on the next review pass. The correction branch
+decides whether a reply is a label edit or a new description, and it tested only for resolved and
+unresolved names — so a type mismatch, which produces neither, fell through to the description
+branch and renamed the draft "Label it salary". The warning still rendered, which made it worse
+rather than better: the user was told the label was skipped while the description was quietly
+replaced underneath. Fixing it exposed a neighbour. Whether `rest` is usable as a description was
+being inferred from whether a label resolved, which is merely cautious rather than correct: the
+real question is whether the directive was cut out of the text, and "court fee, label it
+badminton" leaves a perfectly good "court fee" that was being thrown away. The parser now answers
+that question directly.
+
+Then the real label list settled an assumption the whole design had rested on. There is no label
+called "Pickleball" — it is "Pickleball Budget", and four of the eight end in that same suffix.
+Exact matching answered "label it in pickleball" with "you don't have a label called pickleball",
+which is true to the letter and useless: it fixed the silence and left the workflow broken. So an
+exact miss now falls back to a whole-word prefix, and only when exactly one label qualifies. Still
+nothing fuzzy — "work" reaches "Work Budget" and never "Workshop" — and two candidates are
+reported as ambiguous rather than guessed between, since picking one writes a label nobody chose.
+
+Two of its own assumptions broke on the same list. "With Mom and Dad Budget" contains both a
+conjunction and a filler word, so the parser ate "with" as filler and split the remainder into
+"mom" and "dad"; the whole clause is now tried before the list is split, and the filler scan stops
+where a name begins. And the hashtag path applied a shape test meant for prose, which dropped
+"#with-mom-and-dad" in silence for being four words long — the exact failure this module exists to
+end, reintroduced one branch over.
+
+The last assumption to go was that a label is always introduced by a keyword. It is not: both
+"category fun, label it pickleball budget" and "category fun, pickleball budget" get written, and
+demanding the keyword meant half of them applied nothing. Bare names were left out originally
+because tagging "lunch with the pickleball crew" as a game is worse than tagging nothing, and that
+reasoning still holds — but only for a name found *inside* a sentence. A name that is an entire
+clause is unambiguous, and cutting such a clause takes no description with it, since it holds a
+label name and nothing else. So "Yosh's Pickleball fee" still resolves to nothing while
+", pickleball budget" resolves to the label. A bare clause matching nothing stays silent: "category
+fun" is not a label anybody was denied, and that is the one place a name goes unreported.
+
+The keyword gate in front of `get_label_list` went with it — there is no keyword to gate on — so
+labels are now fetched in parallel with the categories every text message already loads, which
+costs the same wall clock as the single round trip the gate was protecting.
+
+Review then caught the same predicate wrong for the third time. Deciding whether a reply is a
+label edit or a new description was written as a list of the parser's output buckets, and each new
+bucket had to be remembered: `incompatible` was missed, fixed, and then `ambiguous` was added one
+commit later and missed in exactly the same way, renaming a receipt draft to "Label it work". The
+list is now a `namesLabels` predicate beside the parser, with a test per bucket, so the next one
+cannot repeat it. A near-identical split had opened up inside the resolver too — the keyword and
+hashtag paths each tested for an exact name before falling back to prefixes, while the bare-clause
+path went straight to prefixes, so someone owning both "Work" and "Work Budget" got an exact match
+from two forms and an ambiguity report from the third. Exact preference moved into the resolver,
+where all three inherit it.
+
+The same hole was in the typed paths, so both were closed: the shorthand logger reads the
+directive with no model call, and the classifier may now name labels on a transaction, resolved
+against the real list by the same `findByName` the search path uses. A hallucinated label on a
+search costs a wrong answer; on a write it lands on the row, and `getLabelBreakdown` splits an
+amount across whatever labels it carries, so it quietly moves money.
+
+The dropped "Tiendesitas" was the prompt's own doing. The caption section told the model "the
+receipt always wins where the two disagree", which is sound advice about a merchant it can read
+and useless about a wallet transfer that prints an account holder and a reference number and
+nothing else. Faced with a venue it could not corroborate, the model kept the half it could. The
+rule is now scoped to what the receipt actually prints, and says plainly that where there is no
+merchant the caption is the only description there is — keep the user's words, place name
+included. It also says an instruction in a caption is not description text, and that removing one
+must not take the purchase with it.
+
 ## 2026-08-29 - Midnight, but whose?
 
 Review of #183 asked what guaranteed a bill due date is stored at midnight UTC, given every

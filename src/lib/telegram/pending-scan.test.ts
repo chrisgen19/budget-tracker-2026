@@ -17,6 +17,8 @@ const scan = (over: Partial<PendingScan> = {}): PendingScan => ({
   categoryId: "cat_food",
   categoryName: "Food & Dining",
   date: "2026-08-26",
+  labelIds: [],
+  labelNames: [],
   updateId: 42,
   createdAt: Date.now(),
   ...over,
@@ -123,7 +125,7 @@ describe("revisePendingScan", () => {
     // write a second row instead of replaying the photo's.
     putPendingScan(7, scan({ description: "SM Supermarket", updateId: 42 }));
 
-    const result = revisePendingScan(7, "Groceries at SM");
+    const result = revisePendingScan(7, { description: "Groceries at SM" });
 
     expect(result).toMatchObject({
       status: "revised",
@@ -138,7 +140,7 @@ describe("revisePendingScan", () => {
     putPendingScan(7, scan({ createdAt: start }));
 
     const later = start + PENDING_TTL_MS - 1_000;
-    const result = revisePendingScan(7, "Groceries", later);
+    const result = revisePendingScan(7, { description: "Groceries" }, later);
 
     expect(result).toMatchObject({ status: "revised", scan: { createdAt: later } });
     // Would have expired on the original stamp; does not on the refreshed one.
@@ -146,13 +148,13 @@ describe("revisePendingScan", () => {
   });
 
   it("returns null when nothing is waiting", () => {
-    expect(revisePendingScan(999, "Groceries")).toEqual({ status: "none" });
+    expect(revisePendingScan(999, { description: "Groceries" })).toEqual({ status: "none" });
   });
 
   it("returns null for an expired scan rather than reviving it", () => {
     const start = Date.now();
     putPendingScan(7, scan({ createdAt: start }));
-    expect(revisePendingScan(7, "Groceries", start + PENDING_TTL_MS + 1)).toEqual({
+    expect(revisePendingScan(7, { description: "Groceries" }, start + PENDING_TTL_MS + 1)).toEqual({
       status: "none",
     });
   });
@@ -165,7 +167,7 @@ describe("a frozen scan", () => {
     // between vanishes. Accepting the edit would show the user one thing and save another.
     putPendingScan(7, scan({ frozen: true }));
 
-    expect(revisePendingScan(7, "Groceries at SM")).toEqual({ status: "frozen" });
+    expect(revisePendingScan(7, { description: "Groceries at SM" })).toEqual({ status: "frozen" });
     // Still confirmable — answering yes is what actually settles the ambiguity.
     expect(hasPendingScan(7)).toBe(true);
     expect(takePendingScan(7)?.description).toBe("SM Supermarket");
@@ -174,7 +176,7 @@ describe("a frozen scan", () => {
   it("stays editable when the refusal was deterministic", () => {
     // A lapsed write lease is raised before anything is written, so there is nothing to replay.
     putPendingScan(7, scan({ frozen: false }));
-    expect(revisePendingScan(7, "Groceries at SM")).toMatchObject({ status: "revised" });
+    expect(revisePendingScan(7, { description: "Groceries at SM" })).toMatchObject({ status: "revised" });
   });
 });
 
@@ -184,7 +186,7 @@ describe("the review message id", () => {
     // one in place, and answering by typing still has to take its keyboard off.
     putPendingScan(7, scan({ reviewMessageId: 555 }));
 
-    const result = revisePendingScan(7, "Groceries at SM");
+    const result = revisePendingScan(7, { description: "Groceries at SM" });
 
     expect(result).toMatchObject({ status: "revised", scan: { reviewMessageId: 555 } });
     expect(takePendingScan(7)?.reviewMessageId).toBe(555);
@@ -197,5 +199,45 @@ describe("the review message id", () => {
     putPendingScan(7, { ...original, createdAt: Date.now(), frozen: true });
 
     expect(takePendingScan(7)?.reviewMessageId).toBe(555);
+  });
+});
+
+describe("revisePendingScan label edits", () => {
+  beforeEach(() => clearPendingScan(7));
+
+  it("replaces the labels and leaves the description alone", () => {
+    putPendingScan(7, scan({ labelIds: ["lbl_old"], labelNames: ["Old"] }));
+
+    const result = revisePendingScan(7, {
+      labelIds: ["lbl_pickleball"],
+      labelNames: ["Pickleball"],
+    });
+
+    expect(result).toMatchObject({ status: "revised" });
+    const revised = (result as { scan: PendingScan }).scan;
+    expect(revised.labelIds).toEqual(["lbl_pickleball"]);
+    expect(revised.labelNames).toEqual(["Pickleball"]);
+    // "label it pickleball" is not a description, and pasting it over one was all this could do.
+    expect(revised.description).toBe("SM Supermarket");
+  });
+
+  it("leaves the labels alone when only the description is corrected", () => {
+    putPendingScan(7, scan({ labelIds: ["lbl_pickleball"], labelNames: ["Pickleball"] }));
+
+    const result = revisePendingScan(7, { description: "Groceries at SM" });
+
+    const revised = (result as { scan: PendingScan }).scan;
+    expect(revised.description).toBe("Groceries at SM");
+    expect(revised.labelNames).toEqual(["Pickleball"]);
+  });
+
+  it("refuses a label edit on a frozen draft", () => {
+    // Same reason a description edit is refused: the retry replays the same key, so if the first
+    // write did commit the server returns the original and the edit vanishes.
+    putPendingScan(7, scan({ frozen: true }));
+
+    expect(revisePendingScan(7, { labelIds: ["lbl_pickleball"], labelNames: ["Pickleball"] })).toEqual({
+      status: "frozen",
+    });
   });
 });

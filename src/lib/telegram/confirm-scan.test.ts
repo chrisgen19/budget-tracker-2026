@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { confirmPendingScan } from "@/lib/telegram/confirm-scan";
+import { confirmPendingScan, scanToTransaction } from "@/lib/telegram/confirm-scan";
 import { McpToolError, UnconfirmedWriteError } from "@/lib/telegram/errors";
 import type { PendingScan } from "@/lib/telegram/pending-scan";
 
@@ -9,6 +9,8 @@ const SCAN: PendingScan = {
   categoryId: "cat_food",
   categoryName: "Food & Dining",
   date: "2026-08-26",
+  labelIds: [],
+  labelNames: [],
   updateId: 42,
   createdAt: Date.now(),
 };
@@ -88,5 +90,40 @@ describe("confirmPendingScan", () => {
 
     expect(outcome.status).toBe("retryable");
     expect(restore).toHaveBeenCalledWith(SCAN, { frozen: false });
+  });
+});
+
+describe("scanToTransaction", () => {
+  it("sends the labels the user named", () => {
+    // The bug this fixes: "label it in pickleball" was read off the caption and then never
+    // reached the write, so the row saved unlabelled with nothing saying so.
+    const row = scanToTransaction({
+      ...SCAN,
+      labelIds: ["lbl_pickleball"],
+      labelNames: ["Pickleball"],
+    });
+
+    expect(row.labelIds).toEqual(["lbl_pickleball"]);
+  });
+
+  it("omits labelIds entirely when none was named", () => {
+    // Not `[]`. An empty array is an explicit opt-out that stops the user's own auto-apply
+    // schedules running; omitting the field is what lets them.
+    expect(scanToTransaction(SCAN)).not.toHaveProperty("labelIds");
+  });
+
+  it("sends labels for a receipt dated before today", () => {
+    // The case that made this necessary. The server turns an omitted `labelIds` into `[]` for
+    // any date it cannot trust a clock for, so a receipt scanned the morning after the purchase
+    // could never carry a label. An explicit array is how a named one gets past that.
+    const row = scanToTransaction({
+      ...SCAN,
+      date: "2026-08-29",
+      labelIds: ["lbl_pickleball"],
+      labelNames: ["Pickleball"],
+    });
+
+    expect(row.date).toBe("2026-08-29");
+    expect(row.labelIds).toEqual(["lbl_pickleball"]);
   });
 });

@@ -22,12 +22,12 @@ import { readPhotoTakenAt } from "@/lib/exif-date";
 import { receiptDateLooksOff } from "@/lib/telegram/date-sanity";
 import { menuRegistrations, resolveCommand, type BotCommand } from "@/lib/telegram/commands";
 import { EXAMPLES_MESSAGE } from "@/lib/telegram/examples";
-import { parseSearchIntent } from "@/lib/telegram/search-intent";
+import { findByName, parseSearchIntent } from "@/lib/telegram/search-intent";
 import { parseReportIntent } from "@/lib/telegram/report-intent";
 import { RECEIPT_ITEM_SHOW, renderReceiptItems } from "@/lib/telegram/receipt-reply";
 import { renderLabelBreakdown } from "@/lib/telegram/label-reply";
 import { monthsSince, previousMonthOf } from "@/lib/telegram/month-window";
-import { confirmPendingScan } from "@/lib/telegram/confirm-scan";
+import { confirmPendingScan, scanToTransaction } from "@/lib/telegram/confirm-scan";
 import {
   hasPendingScan,
   isConfirmation,
@@ -39,6 +39,12 @@ import {
   type PendingScan,
 } from "@/lib/telegram/pending-scan";
 import { correctedDescription, isScanCorrection } from "@/lib/telegram/scan-correction";
+import {
+  namesLabels,
+  readLabelDirective,
+  renderLabelNotice,
+  type BotLabel,
+} from "@/lib/telegram/caption-labels";
 import {
   McpToolError,
   UnconfirmedWriteError,
@@ -467,7 +473,19 @@ async function createTransactions(
  * first. Retrying the send is what closes most of that window; the log line covers the rest by
  * naming the rows that exist, so a duplicate can be found instead of guessed at.
  */
-async function confirmCreated(chatId: number, result: CreatedBatch): Promise<void> {
+async function confirmCreated(
+  chatId: number,
+  result: CreatedBatch,
+  /**
+   * Appended to the confirmation, for a label the write could not honour.
+   *
+   * `formatCreated` already lists the labels that *were* applied, from the server's own reply,
+   * so this carries only what went nowhere. Without it a directive the bot could not resolve was
+   * dropped in silence on a message that plainly asked for it — the same bug as the caption,
+   * one path over.
+   */
+  notice = ""
+): Promise<void> {
   // The bot cannot edit or delete: `create_transactions` is its only write, and that is
   // deliberate, so a mistyped amount is fixed in the app rather than by giving a chat token
   // destructive powers. One row per batch today, and the link is only meaningful for one.
@@ -476,7 +494,7 @@ async function confirmCreated(chatId: number, result: CreatedBatch): Promise<voi
       ? openInAppKeyboard(APP_URL, result.transactions[0].id)
       : undefined;
 
-  if (await sendMessage(chatId, formatCreated(result), "Markdown", keyboard)) return;
+  if (await sendMessage(chatId, formatCreated(result) + notice, "Markdown", keyboard)) return;
 
   console.error(
     "[telegram] wrote transactions but could not confirm them to the user. " +
@@ -1154,6 +1172,46 @@ async function handleCategories(chatId: number) {
   await sendMessage(chatId, msg);
 }
 
+/** The label list, and whether it was actually read. */
+interface LabelLookup {
+  labels: BotLabel[];
+  /**
+   * False when the lookup failed, which an empty list cannot say on its own.
+   *
+   * The difference is user-visible: "you don't have a label called pickleball, create it in the
+   * app" is confidently wrong when the truth is that nothing could be read, and it points at the
+   * wrong fix — the cause is a token minted without `labels:read`, not a missing label.
+   */
+  readable: boolean;
+}
+
+/**
+ * The user's labels, or none, never an error.
+ *
+ * A failure here is absorbed rather than propagated. `get_label_list` needs `labels:read`, which
+ * older tokens were minted without, and losing labels costs precision on one kind of question and
+ * the ability to honour an explicit "label it X". Letting it throw would fail *every* message,
+ * including plain logging, over a scope the setup notes did not always ask for.
+ *
+ * Shared by the receipt path and the free-text path. The receipt path needs it because a caption
+ * can name a label, and it used to be fetched only inside the Gemini branch, which a photo never
+ * reaches.
+ */
+async function loadLabels(): Promise<LabelLookup> {
+  // Fetched unfiltered, with `applicableTo` on each row: filtering to one type here would make
+  // an income-only label look *missing* to a receipt, and "create it in the app" is the wrong
+  // advice for a label the user is looking at. The mismatch is reported as itself instead.
+  return callTool<{ labels: BotLabel[] }>("get_label_list")
+    .then((r) => ({ labels: r.labels, readable: true }))
+    .catch(() => {
+      console.warn(
+        "[telegram] could not read labels, so labels are unavailable. " +
+          "Mint a token with labels:read to enable them."
+      );
+      return { labels: [] as BotLabel[], readable: false };
+    });
+}
+
 /** What `scan_receipt` returns. Mirrors `scanReceiptOutput` in the MCP server. */
 interface ScannedReceipt {
   amount: number;
@@ -1174,7 +1232,8 @@ interface ScannedReceipt {
 async function handleReceiptPhoto(
   message: TelegramMessage,
   updateId: number,
-  categories: { id: string; name: string; type: string }[]
+  categories: { id: string; name: string; type: string }[],
+  labelLookup: LabelLookup
 ): Promise<void> {
   const chatId = message.chat.id;
   const pick = pickReceiptImage(message);
@@ -1199,7 +1258,17 @@ async function handleReceiptPhoto(
   // recovering the first receipt meant scanning it again and spending a second credit. A
   // successful scan replaces it below, so a stale draft cannot linger either.
   const superseding = hasPendingScan(chatId);
-  const caption = message.caption?.trim();
+  const rawCaption = message.caption?.trim();
+
+  // "label it in pickleball" used to reach Gemini inside the caption and go nowhere: nothing on
+  // this path knew what a label was, so the request was dropped and the row saved unlabelled.
+  // It is read out here and applied on save; what is left goes to the scanner as the hint it
+  // always was, so the directive no longer competes with the description it sits beside.
+  //
+  // The *category* half of a caption ("category fun") is deliberately left in. Gemini sees the
+  // whole category list and picks from it, which the bot has no better answer than.
+  const directive = readLabelDirective(rawCaption ?? "", labelLookup.labels, "EXPENSE");
+  const caption = directive.rest || undefined;
 
   let scan: ScannedReceipt;
   let photoTakenAt: string | null = null;
@@ -1254,6 +1323,8 @@ async function handleReceiptPhoto(
   // ignored, and this is the moment they can still correct it. Same principle as the date repair:
   // an inference the user cannot see is one they cannot undo.
   if (caption) reply += `\n\u2139\ufe0f I used your caption as a hint.\n`;
+  reply += renderLabelNotice(directive, labelLookup.readable);
+
   reply += `\nNothing is saved yet. Tap a button below, or send a short description to correct it.`;
 
   // Stored only once the review has actually reached the user, which is the entire point of the
@@ -1292,6 +1363,8 @@ async function handleReceiptPhoto(
     updateId,
     reviewMessageId,
     createdAt: Date.now(),
+    labelIds: directive.ids,
+    labelNames: directive.names,
   });
 }
 
@@ -1307,16 +1380,7 @@ async function saveConfirmedScan(chatId: number, scan: PendingScan): Promise<voi
   if (scan.reviewMessageId) await clearButtons(chatId, scan.reviewMessageId);
 
   const outcome = await confirmPendingScan(scan, {
-    save: (key, s) =>
-      createTransactions(key, [
-        {
-          amount: s.amount,
-          description: s.description,
-          type: "EXPENSE",
-          categoryId: s.categoryId,
-          date: s.date,
-        },
-      ]),
+    save: (key, s) => createTransactions(key, [scanToTransaction(s)]),
     // Restored with a fresh timestamp so a save that failed near the TTL does not leave the
     // user a scan they can no longer confirm.
     restore: (s, { frozen }) => putPendingScan(chatId, { ...s, createdAt: Date.now(), frozen }),
@@ -1407,7 +1471,10 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     const { categories } = await callTool<{
       categories: { id: string; name: string; type: string }[];
     }>("get_category_list");
-    await handleReceiptPhoto(message, updateId, categories);
+    // Labels are needed here now, because a caption can name one. Fetched unconditionally rather
+    // than only when a caption exists: the call is cheap next to a scan, and branching on it
+    // would make the failure mode depend on whether the user happened to type something.
+    await handleReceiptPhoto(message, updateId, categories, await loadLabels());
     return;
   }
 
@@ -1431,7 +1498,37 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
   // while the scan sat waiting. Nothing is re-scanned: the correction is the user's own words, and
   // a second scan would spend another credit for a field they have already supplied.
   if (isScanCorrection(text)) {
-    const result = revisePendingScan(chatId, correctedDescription(text));
+    // A reply can correct either half of the draft. "label it pickleball" is not a description,
+    // and pasting it over one was all this could do before. Labels are only looked up when a
+    // scan is actually waiting, so an ordinary message never pays for the call.
+    // Gated on a scan actually waiting, and nothing else. A bare name carries no keyword to
+    // detect, so there is nothing cheaper to test first; a review being open is itself the
+    // signal that a reply might be naming a label.
+    const lookup = hasPendingScan(chatId) ? await loadLabels() : null;
+    const directive = lookup ? readLabelDirective(text, lookup.labels, "EXPENSE") : null;
+    // Any directive the parser understood is a label edit, including one naming a label that
+    // cannot apply to an expense, or one that could mean two. Spelling those cases out here got
+    // it wrong once per bucket added, each time renaming the draft to the text of the
+    // instruction, so the question is asked of the parser instead.
+    const isLabelEdit = !!directive && namesLabels(directive);
+    // `rest` is only a description when the directive was actually cut out of it. A bare unmarked
+    // one is reported but deliberately left in place, so `rest` is then the whole untouched reply
+    // and "label badminton" would become the description of the purchase. Asking the parser is
+    // exact where testing `ids.length` was merely cautious: it also dropped the perfectly good
+    // "court fee" from "court fee, label it badminton".
+    const alsoDescribes = isLabelEdit && directive.removedDirective && !!directive.rest;
+
+    const patch = isLabelEdit
+      ? {
+          ...(alsoDescribes && { description: correctedDescription(directive.rest) }),
+          ...(directive.ids.length > 0 && {
+            labelIds: directive.ids,
+            labelNames: directive.names,
+          }),
+        }
+      : { description: correctedDescription(text) };
+
+    const result = revisePendingScan(chatId, patch);
 
     if (result.status === "frozen") {
       // The save never settled, so the row may already exist. A retry replays the same key and
@@ -1446,11 +1543,29 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
 
     if (result.status === "revised") {
       const { scan: revised } = result;
-      let msg = `\u270f\ufe0f *Description updated*\n\n`;
+      // Named for what actually changed. "Description updated" on a reply that only moved a
+      // label reads like the wrong thing was edited.
+      const heading = !isLabelEdit
+        ? "Description updated"
+        : alsoDescribes
+          ? "Draft updated"
+          : directive.ids.length > 0
+            ? "Labels updated"
+            : "Nothing changed";
+      let msg = `\u270f\ufe0f *${heading}*\n\n`;
       msg += `\ud83d\udcdd *Description:* ${revised.description}\n`;
       msg += `\ud83d\udcb0 *Amount:* ${SYMBOL}${revised.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
       msg += `\ud83d\udcc1 *Category:* ${revised.categoryName}\n`;
       msg += `\ud83d\udcc5 *Date:* ${revised.date}\n`;
+      msg += renderLabelNotice(
+        {
+          names: revised.labelNames,
+          unresolved: directive?.unresolved ?? [],
+          incompatible: directive?.incompatible ?? [],
+          ambiguous: directive?.ambiguous ?? [],
+        },
+        lookup?.readable ?? true
+      );
       msg += `\nStill not saved. Reply *yes* to save it, or *no* to discard.`;
       await sendMessage(chatId, msg);
       return;
@@ -1535,18 +1650,32 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
   const quickExpenseMatch = quick ? /^(\d+(?:\.\d+)?)\s+(.+)$/i.exec(text) : null;
   const quickIncomeMatch = quick ? /^\+(\d+(?:\.\d+)?)\s+(.+)$/i.exec(text) : null;
 
-  const { categories } = await callTool<{ categories: { id: string; name: string; type: string }[] }>(
-    "get_category_list"
-  );
+  // Both, in parallel. Labels used to be fetched only behind a keyword test, to keep the
+  // shorthand logger's "100 breakfast" free of a second round trip. A bare label name has no
+  // keyword to test for, so that gate could not survive; issuing the two together costs the same
+  // wall clock as the category fetch alone, which is the round trip the gate was protecting.
+  const [{ categories }, labelLookup] = await Promise.all([
+    callTool<{ categories: { id: string; name: string; type: string }[] }>("get_category_list"),
+    loadLabels(),
+  ]);
 
   if (quickIncomeMatch || quickExpenseMatch) {
     const isIncome = !!quickIncomeMatch;
     const match = isIncome ? quickIncomeMatch! : quickExpenseMatch!;
     const amount = parseFloat(match[1]);
-    const description = match[2].trim();
+    const written = match[2].trim();
+
+    // "150 pickleball fee, label it pickleball" used to log the directive as part of its own
+    // description and apply nothing. Read out here, it costs no model call, so it keeps working
+    // with no GEMINI_API_KEY — which is the whole reason this path exists.
+    const type = isIncome ? "INCOME" : "EXPENSE";
+    const directive = readLabelDirective(written, labelLookup.labels, type);
+    // A message that is *only* a directive leaves nothing to describe the purchase. Falling
+    // through is better than logging "label it pickleball" as the description: Gemini can write
+    // one, and without Gemini the user gets the same "I did not understand" they always did.
+    const description = directive ? directive.rest : written;
 
     if (amount > 0 && description) {
-      const type = isIncome ? "INCOME" : "EXPENSE";
       // No confident match returns null rather than a guess. It used to fall back to the first
       // category of that type, and the list is ordered defaults-first then alphabetically, so
       // with the seeded data every unrecognised expense was filed under Education.
@@ -1567,11 +1696,26 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
             type,
             categoryId: matchedCat.id,
             date: new Date().toISOString(),
+            // Omitted when none was named, so the user's auto-apply schedules still run. This
+            // path always stamps the current instant, so that time is real and they should.
+            ...(directive.ids.length > 0 && { labelIds: directive.ids }),
           },
         ]);
 
         if (result.transactions.length > 0) {
-          await confirmCreated(chatId, result);
+          await confirmCreated(
+            chatId,
+            result,
+            renderLabelNotice(
+              {
+                names: [],
+                unresolved: directive.unresolved,
+                incompatible: directive.incompatible,
+                ambiguous: directive.ambiguous,
+              },
+              labelLookup.readable
+            )
+          );
           return;
         }
       }
@@ -1580,27 +1724,40 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
 
   // Fallback to Gemini AI natural language processing
   if (GEMINI_ENABLED) {
-    // Fetched here rather than above, since only this path needs them: the shorthand logger never
-    // looks at labels. Names are given to the model, ids are resolved from this list afterwards.
-    //
-    // A failure here is absorbed rather than propagated. `get_label_list` needs `labels:read`,
-    // which older tokens were minted without, and losing labels costs precision on one kind of
-    // question. Letting it throw would have failed *every* message on this path, including
-    // logging, for a scope the setup notes did not ask for.
-    const labels = await callTool<{ labels: { id: string; name: string }[] }>("get_label_list")
-      .then((r) => r.labels)
-      .catch(() => {
-        console.warn(
-          "[telegram] could not read labels, so label filters are unavailable. " +
-            "Mint a token with labels:read to enable them."
-        );
-        return [] as { id: string; name: string }[];
-      });
+    const { labels: knownLabels, readable: labelsReadable } = labelLookup;
 
-    const aiResult = await classifyMessage(text, categories, labels, TZ_OFFSET);
+    const aiResult = await classifyMessage(text, categories, knownLabels, TZ_OFFSET);
     if (aiResult?.action === "CREATE_TRANSACTION" && aiResult.transaction) {
       const txData = aiResult.transaction;
       const clientBatchId = updateBatchId(BOT_ID, updateId);
+      // Resolved against the real list rather than trusted, the same boundary `parseSearchIntent`
+      // draws: the model is given names and can return one nobody has. A hallucinated label on a
+      // *search* costs a wrong answer; on a write it lands on the row, and `getLabelBreakdown`
+      // splits an amount across whatever labels it carries, so it quietly moves money.
+      const namedLabels: string[] = Array.isArray(txData.labels) ? txData.labels : [];
+
+      // And read the directive locally as well, merging the two. The model is asked to fill
+      // `labels` and is not obliged to: "spent 350 yesterday, tag it work" can come back as a
+      // perfectly good CREATE_TRANSACTION with `labels: null`, and the instruction would vanish
+      // with nothing saying so. The parser is deterministic where the model is not, which is the
+      // same argument `commands.ts` makes for resolving obvious phrasings before asking Gemini.
+      // It also carries the reporting: when the list could not be read, `knownLabels` is empty
+      // and every name the user asked for lands in `unresolved`.
+      const asked = readLabelDirective(
+        text,
+        knownLabels,
+        txData.type === "INCOME" ? "INCOME" : "EXPENSE"
+      );
+
+      const labelIds = [
+        ...new Set([
+          ...namedLabels
+            .map((name) => findByName(knownLabels, name)?.id)
+            .filter((id): id is string => !!id),
+          ...asked.ids,
+        ]),
+      ];
+
       const result = await createTransactions(clientBatchId, [
         {
           amount: txData.amount,
@@ -1608,11 +1765,26 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
           type: txData.type,
           categoryId: txData.categoryId,
           date: txData.date || new Date().toISOString(),
+          ...(labelIds.length > 0 && { labelIds }),
         },
       ]);
 
       if (result.transactions.length > 0) {
-        await confirmCreated(chatId, result);
+        // Only what the *user* asked for and did not get. A name the model invented is dropped
+        // in silence on purpose: nobody asked for it, so there is nothing to report.
+        await confirmCreated(
+          chatId,
+          result,
+          renderLabelNotice(
+            {
+              names: [],
+              unresolved: asked.unresolved,
+              incompatible: asked.incompatible,
+              ambiguous: asked.ambiguous,
+            },
+            labelsReadable
+          )
+        );
         return;
       }
     }
@@ -1662,7 +1834,7 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       }
     }
 
-    const intent = parseSearchIntent(aiResult, { labels, categories });
+    const intent = parseSearchIntent(aiResult, { labels: knownLabels, categories });
     if (intent) {
       if (intent.kind === "BILL") await handleBillCheck(chatId, intent.search, intent.month);
       else await handleSearch(chatId, intent);

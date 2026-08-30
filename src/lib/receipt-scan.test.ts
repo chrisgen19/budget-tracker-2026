@@ -771,8 +771,31 @@ describe("caption hint", () => {
     const prompt = await scanWith({ caption: "groceries at SM" });
 
     expect(prompt).toContain("groceries at SM");
-    expect(prompt).toContain("The receipt always wins where the two disagree");
+    expect(prompt).toContain("The receipt wins on what it actually prints");
     expect(prompt).toContain('Read\n"amount" and "date" from the image alone');
+  });
+
+  it("keeps the caption's own words when the receipt names no merchant", async () => {
+    // A GCash send prints an account holder and a reference number and nothing about what was
+    // bought, so "the receipt wins" had nothing to win with: the model kept only the half it
+    // could corroborate and dropped the venue. "Tiendesitas Yosh's Pickleball fee" came back as
+    // "Yosh's Pickleball fee", which is a row the user cannot place later.
+    const prompt = await scanWith({ caption: "Tiendesitas Yosh's Pickleball fee" });
+
+    expect(prompt).toContain("Some receipts name no merchant at all");
+    expect(prompt).toContain("the caption is the ONLY description that exists");
+    expect(prompt).toContain("including a place, venue or event the receipt does not mention");
+    // And the precedence it must NOT lose: a merchant the receipt does print still wins.
+    expect(prompt).toContain("a merchant it names");
+  });
+
+  it("tells the model an instruction in the caption is not description text", async () => {
+    // A caption mixes the two freely — "…fee, category fun, label it in pickleball" — and
+    // stripping the instruction took the description with it.
+    const prompt = await scanWith({ caption: "court fee, category fun" });
+
+    expect(prompt).toContain("A caption may also carry instructions to the app");
+    expect(prompt).toContain("removing an instruction must not take the purchase with it");
   });
 
   it("places the caption below every rule it must not override", async () => {
