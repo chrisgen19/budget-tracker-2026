@@ -2,13 +2,80 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-31 - The builder nobody was using migrated production
+
+Issue #192. `pnpm build` was `prisma generate && prisma migrate deploy && … && next build`. That
+is the script every CI provider runs by convention, and a Vercel project still connected to this
+repo built **every branch push** with a production `DATABASE_URL`. So every migration was applied
+to production the moment it was pushed to a branch: before review, before approval, before merge,
+and whether or not the PR was ever merged.
+
+Seven migrations, checked against production's own `_prisma_migrations`, all UTC:
+
+| Migration | Branch commit | Applied to prod | Merged to main |
+|---|---|---|---|
+| `…_add_transaction_client_batch_id` | 08-20 07:05:24 | 07:06:04 (+40s) | 07:46:22 (#99) |
+| `…_add_mcp_tokens` | 08-25 00:55:26 | 00:56:37 (+71s) | 02:06:24 (#124) |
+| `…_mcp_write_lease` | 08-25 04:18:45 | 04:19:14 (+29s) | 07:12:34 (#127) |
+| `…_add_telegram_transaction_source` | 08-26 01:26:55 | 01:27:23 (+28s) | 05:06:29 (#131) |
+| `…_add_mcp_token_source` | 08-26 02:35:42 | 02:36:32 (+50s) | 05:06:29 (#131) |
+| `…_unique_default_categories` | 08-28 01:11:20 | 01:11:52 (+32s) | 01:24:21 (#146) |
+| `…_revert_accounts_and_transfers` | 08-30 14:05:17 | 14:05:45 (+28s) | 15:27:35 (#191) |
+
+Every one lands strictly inside the Vercel build window -- after the branch commit, before the
+Vercel deployment record for that SHA -- and before its merge. `add_mcp_tokens` migrated production
+seventy minutes before its PR was merged. This was not two incidents; it was how every migration
+had reached production for eleven days. #187 was visible only because its migration happened to
+break the running code.
+
+**The fix is a name.** `pnpm build` is now `prisma generate && next build` and touches no database.
+The migrating chain moved to `pnpm build:deploy`, which `nixpacks.toml` calls and nothing else
+does. That fixes it for every builder, present and future, rather than for the one that was found:
+a CI provider wired up next year runs `build` by convention and has no reason to guess
+`build:deploy`. `scripts/build-scripts.test.ts` pins the property, because a name is exactly what a
+later tidy-up removes without noticing what it was for -- it asserts `build` contains no
+schema-writing command, that `build:deploy` is `build` plus migrations so the two cannot drift, that
+the drift check still runs after the migration and never before, and that `nixpacks.toml` calls the
+migrating one.
+
+Left deliberately: `prisma migrate deploy` still runs at *image build* time, so a failing
+`next build` can still leave a migrated database behind an undeployed image. That is a property of
+building and migrating in one step and is worth its own change, not a rider on this one.
+
+**#191's diagnosis was wrong, and the correction matters more than the fix.** Its migration
+comments, `CHANGELOG.md`, `AGENTS.md` and several commit messages say #187's migrations were
+"applied from a dev machine ~30 seconds after the commit", and explicitly rule Vercel out because
+the deployment record for `e57a094` was stamped *after* the migration. The record is written near
+build **completion**, not start, so the migration falling before it is evidence *for* Vercel, not
+against. Nobody applies seven migrations by hand at a mean of +40s after commit. The prose is
+corrected in `scripts/check-migration-drift.ts`, `scripts/guard-local-db.ts`, `AGENTS.md` and here.
+
+`20260830150000_revert_accounts_and_transfers/migration.sql` keeps its wrong prose on purpose: it
+is already applied to production, `_prisma_migrations` stores a checksum of it, and editing an
+applied migration is how you turn a documentation fix into a failed deploy. Its comments now
+disagree with this entry, and this entry is the correct one.
+
+`scripts/guard-local-db.ts` is kept even though it guarded the wrong thing. Running
+`pnpm db:migrate` against production is one keystroke away and still worth refusing; it simply is
+not what happened.
+
+Two things this leaves open, both for the Vercel side rather than the repo:
+
+- The Vercel project should be disconnected from the repo. It serves no traffic -- every deployment
+  sits behind Vercel Authentication -- and production is Coolify only, so it is a builder with
+  production credentials and no purpose.
+- Production Postgres answers on a public host:port. That is the precondition for all of this: had
+  the database been reachable only on Coolify's internal network, no external builder could have
+  migrated it whatever `pnpm build` contained.
+
 ## 2026-08-30 - A closed PR that reached production anyway
 
 The Telegram bot answered every message with `Invalid prisma.category.findMany() invocation: Value
 'TRANSFER' not found in enum 'TransactionType'`. Nothing in the codebase mentions TRANSFER. The two
-migrations from PR #187 (accounts and transfers) had been applied to the production database from a
-dev machine about thirty seconds after the commit that generated them, and the PR was then closed
-without merging. The schema gained a feature the deployed code had never heard of.
+migrations from PR #187 (accounts and transfers) had been applied to the production database about
+thirty seconds after the commit that generated them, and the PR was then closed without merging.
+(This entry originally said "from a dev machine". It was a Vercel preview build -- see the
+2026-08-31 entry above.) The schema gained a feature the deployed code had never heard of.
 
 The error is a *read*, not a write. Migration `20260830100001` inserted a category row with
 `type = 'TRANSFER'`, and Prisma validates enum values while deserialising a result. So every

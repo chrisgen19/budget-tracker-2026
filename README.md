@@ -156,7 +156,8 @@ Open [http://localhost:3111](http://localhost:3111), register an account, and st
 | Command | Description |
 |---|---|
 | `pnpm dev` | Start development server (Turbopack) |
-| `pnpm build` | Create production build |
+| `pnpm build` | Create production build (no database access) |
+| `pnpm build:deploy` | What the deploy runs: apply migrations, check for drift, then build |
 | `pnpm start` | Start production server |
 | `pnpm lint` | Run ESLint |
 | `pnpm type-check` | Run TypeScript type checker |
@@ -281,8 +282,8 @@ them and the answers come from **production** data rather than your local databa
 
 #### 1. Deploy
 
-Nothing to configure. `pnpm build` runs `prisma migrate deploy`, so the deploy creates the
-`mcp_tokens` table on its own, and the endpoint reads the same `DATABASE_URL` the app already
+Nothing to configure. The deploy runs `pnpm build:deploy`, which runs `prisma migrate deploy`, so
+it creates the `mcp_tokens` table on its own, and the endpoint reads the same `DATABASE_URL` the app already
 uses. No new environment variables.
 
 Your endpoint is `https://<your-domain>/api/mcp`.

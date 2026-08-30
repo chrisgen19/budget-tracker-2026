@@ -5,8 +5,17 @@ nixPkgs = ["nodejs_20", "openssl"]
 cmds = ["corepack enable && pnpm install --frozen-lockfile"]
 cacheDirectories = ["/root/.local/share/pnpm/store", "node_modules/.cache"]
 
+# `build:deploy`, not `build`. This is the ONE builder that may touch the production database, and
+# it says so by name.
+#
+# `prisma migrate deploy` used to live in `pnpm build`, which is the script every CI provider runs
+# by convention. A Vercel project connected to this repo held a production `DATABASE_URL` and built
+# every branch push, so every migration was applied to production ~40 seconds after being pushed to
+# a branch -- before review, before merge, and whether or not the PR was ever merged (issue #192).
+# Moving the migration behind a name nothing calls by default fixes that for every builder, present
+# and future, rather than for the one that was found.
 [phases.build]
-cmds = ["pnpm build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public"]
+cmds = ["pnpm build:deploy && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public"]
 cacheDirectories = [".next/cache"]
 
 [start]
