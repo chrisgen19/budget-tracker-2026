@@ -125,13 +125,13 @@ export function TransactionBulkActionBar(props: TransactionBulkActionBarProps) {
             icon={<FolderInput className="h-3.5 w-3.5" />}
             label="Category"
             onClick={props.onCategory}
-            disabled={props.updatePending}
+            disabled={props.updatePending || props.editPending}
           />
           <ActionButton
             icon={<Tags className="h-3.5 w-3.5" />}
             label="Labels"
             onClick={props.onLabels}
-            disabled={props.updatePending}
+            disabled={props.updatePending || props.editPending}
           />
           <ActionButton
             icon={<Download className="h-3.5 w-3.5" />}
@@ -143,6 +143,7 @@ export function TransactionBulkActionBar(props: TransactionBulkActionBarProps) {
             icon={<Trash2 className="h-3.5 w-3.5" />}
             label="Delete"
             onClick={props.onDelete}
+            disabled={props.editPending}
             danger
           />
           <button
@@ -200,14 +201,14 @@ export function TransactionBulkActionBar(props: TransactionBulkActionBarProps) {
             icon={<FolderInput className="h-4 w-4" />}
             label="Category"
             onClick={props.onCategory}
-            disabled={props.updatePending}
+            disabled={props.updatePending || props.editPending}
             mobile
           />
           <ActionButton
             icon={<Tags className="h-4 w-4" />}
             label="Labels"
             onClick={props.onLabels}
-            disabled={props.updatePending}
+            disabled={props.updatePending || props.editPending}
             mobile
           />
           <ActionButton
@@ -221,6 +222,7 @@ export function TransactionBulkActionBar(props: TransactionBulkActionBarProps) {
             icon={<Trash2 className="h-4 w-4" />}
             label="Delete"
             onClick={props.onDelete}
+            disabled={props.editPending}
             danger
             mobile
           />

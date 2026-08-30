@@ -5,6 +5,7 @@ import {
   TransactionFiltersBar,
   type TransactionFilters,
 } from "@/components/transactions/transaction-filters";
+import { MAX_TRANSACTION_SEARCH_LENGTH } from "@/lib/transaction-filter-limits";
 
 vi.mock("@/components/user-provider", () => ({
   useUser: () => ({ user: { currency: "PHP", timezoneOffset: -480 } }),
@@ -389,6 +390,20 @@ describe("TransactionFiltersBar", () => {
     act(() => vi.advanceTimersByTime(300));
 
     expect(currentFilters).toMatchObject({ search: "Amazon", type: "EXPENSE" });
+  });
+
+  it("never commits a search longer than the server accepts", () => {
+    renderFilters();
+    const search = screen.getByRole<HTMLInputElement>("searchbox", {
+      name: "Search transactions",
+    });
+
+    fireEvent.change(search, { target: { value: "x".repeat(300) } });
+    act(() => vi.advanceTimersByTime(300));
+
+    expect(search.maxLength).toBe(MAX_TRANSACTION_SEARCH_LENGTH);
+    expect(search.value).toHaveLength(MAX_TRANSACTION_SEARCH_LENGTH);
+    expect(currentFilters.search).toHaveLength(MAX_TRANSACTION_SEARCH_LENGTH);
   });
 
   it("applies both amount bounds together", () => {

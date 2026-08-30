@@ -1,8 +1,9 @@
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
+import { MAX_TRANSACTION_SEARCH_LENGTH } from "@/lib/transaction-filter-limits";
 
 export const transactionFilterSchema = z.object({
-  search: z.string().max(255).default(""),
+  search: z.string().max(MAX_TRANSACTION_SEARCH_LENGTH).default(""),
   type: z.enum(["ALL", "INCOME", "EXPENSE"]).default("ALL"),
   month: z.union([z.literal("ALL"), z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)]).default("ALL"),
   categoryId: z.string().min(1).max(100).nullable().default(null),

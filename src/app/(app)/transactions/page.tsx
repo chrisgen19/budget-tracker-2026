@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
   ArrowLeftRight,
+  AlertTriangle,
   Loader2,
   ScanLine,
 } from "lucide-react";
@@ -291,6 +292,8 @@ export default function TransactionsPage() {
   /* ---- Derived data ---- */
 
   const loading = isInfinite ? infiniteIsLoading : paginatedQuery.isLoading;
+  const transactionsError = isInfinite ? infiniteQuery.isError : paginatedQuery.isError;
+  const retryTransactions = isInfinite ? infiniteQuery.refetch : paginatedQuery.refetch;
   const loadingMore = isFetchingNextPage;
   const hasMore = hasNextPage ?? false;
 
@@ -657,6 +660,21 @@ export default function TransactionsPage() {
               </div>
             ))}
           </div>
+        ) : transactionsError ? (
+          <EmptyState
+            icon={AlertTriangle}
+            title="Couldn’t load transactions"
+            description="Check your connection and try loading the transaction list again."
+            action={
+              <button
+                type="button"
+                onClick={() => void retryTransactions()}
+                className="inline-flex min-h-11 items-center rounded-xl bg-amber px-4 py-2.5 text-sm font-medium text-white shadow-soft transition-colors hover:bg-amber-dark"
+              >
+                Try again
+              </button>
+            }
+          />
         ) : dateGroups.length > 0 ? (
           <>
             {dateGroups.map((group) => (
