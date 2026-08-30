@@ -77,13 +77,13 @@ src/
 
 ## Commands
 - `pnpm dev` — Start dev server (Turbopack)
-- `pnpm build` — Production build (generates Prisma client + runs migrations + Next.js build)
+- `pnpm build` — Production build (generates Prisma client + runs migrations + checks for migration drift + Next.js build). The drift check (`scripts/check-migration-drift.ts`) runs **after** `prisma migrate deploy`, never before, so a deploy carrying a revert can still apply it; it fails the build naming any migration applied to the database that this checkout does not contain. `prisma migrate deploy` and `prisma migrate status` both report that state as "up to date" and exit 0, which is how two migrations from an unmerged PR sat on production across four green deploys
 - `pnpm lint` — Run ESLint
 - `pnpm type-check` — Run TypeScript type checker
 - `pnpm test` — Run the test suite once (CI mode)
 - `pnpm test:watch` — Run tests in watch mode
-- `pnpm db:migrate` — Run Prisma migrations (dev)
-- `pnpm db:push` — Push schema changes without migration file
+- `pnpm db:migrate` — Run Prisma migrations (dev). Refuses a `DATABASE_URL` that is not on this machine unless `ALLOW_REMOTE_DB=1`
+- `pnpm db:push` — Push schema changes without migration file. Same non-localhost guard as `db:migrate`
 - `pnpm db:seed` — Seed default categories
 - `pnpm db:studio` — Open Prisma Studio
 
@@ -99,6 +99,7 @@ src/
 - `RESEND_API_KEY` — Email sending (verification + password reset)
 - `EMAIL_FROM` — Sender address (optional; defaults to `Budget Tracker <noreply@resend.dev>` if unset). Use a verified Resend domain in production, e.g. `Budget Tracker <noreply@yourdomain.com>`.
 - `AUTH_URL` — Optional; used in preview/staging deployments
+- `ALLOW_REMOTE_DB` — Local only, and never set it in `.env`: `1` lets `pnpm db:migrate` / `pnpm db:push` run against a database that is not on this machine. The guard exists because two migrations from the closed PR #187 were applied straight to production from a dev machine, so this is the deliberate way past it, one command at a time (`ALLOW_REMOTE_DB=1 pnpm db:push`). Migrations otherwise reach production only by merging to main and letting Coolify deploy them
 - `CRON_SECRET` — Shared secret required by `/api/cron/bill-reminders`. Set in the production (Coolify) environment; a Coolify Scheduled Task reuses the same env var to call the endpoint daily (see **Cron Jobs** below).
 - `TELEGRAM_BOT_ENABLED`: starts the bot from `src/instrumentation.ts` on server boot. Set it **only** in the deployed environment: Telegram answers a second concurrent `getUpdates` for one bot token with 409 Conflict, so enabling it locally while production runs the bot makes the two fight. Use `pnpm telegram:bot` to run it locally instead, and not at the same time
 - `TELEGRAM_BOT_TOKEN`: from @BotFather
@@ -228,7 +229,7 @@ Active tasks:
 ## Testing
 - **Vitest + React Testing Library**, jsdom environment. Config in `vitest.config.mts`, global setup in `vitest.setup.ts` (RTL cleanup, and the `matchMedia`/`scrollTo` stubs jsdom lacks)
 - **Node floor**: CI and production both run Node 20 (`nixpacks.toml`), so test dependencies have to admit it. `jsdom` stays on 29.x and `@testing-library/jest-dom` is not installed at all — both 30.x and 7.x floor at Node 22. CI installs with `--engine-strict` so a dependency that excludes the Node version fails at install with a named cause, rather than crashing later inside a test worker
-- Tests are colocated: `src/**/*.test.ts(x)`. Nothing imports them, so they stay out of the Next.js bundle
+- Tests are colocated: `src/**/*.test.ts(x)`, plus `scripts/**/*.test.ts` for the pure helpers there (the `.env` parser, the connection-string host check, the Prisma error classifier). Nothing imports them, so they stay out of the Next.js bundle. The `scripts/` tests declare `@vitest-environment node`, since they run under `tsx` in Node; `vitest.setup.ts` is DOM-only and guards on `typeof window` so it is a no-op for them
 - Import test globals explicitly (`import { describe, it, expect } from "vitest"`) rather than enabling `globals`
 - A test should fail if you revert the fix it covers. When adding one for a bug, confirm that before committing
 - `scripts/verify-scan-quota.ts` and `scripts/verify-mcp-token-auth.ts` remain separate: they need a real PostgreSQL database (advisory locks, row locks, transaction isolation, timestamp marshalling) that jsdom cannot provide. Run them directly with `pnpm exec tsx`. `verify-mcp-token-auth.ts` needs a **non-UTC** database timezone and fails loudly on a UTC one: the regression its rate-limit checks cover only appears when the session zone is not UTC, so a green run against UTC would prove nothing

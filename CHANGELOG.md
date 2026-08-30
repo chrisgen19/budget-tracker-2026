@@ -2,6 +2,104 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-30 - A closed PR that reached production anyway
+
+The Telegram bot answered every message with `Invalid prisma.category.findMany() invocation: Value
+'TRANSFER' not found in enum 'TransactionType'`. Nothing in the codebase mentions TRANSFER. The two
+migrations from PR #187 (accounts and transfers) had been applied to the production database from a
+dev machine about thirty seconds after the commit that generated them, and the PR was then closed
+without merging. The schema gained a feature the deployed code had never heard of.
+
+The error is a *read*, not a write. Migration `20260830100001` inserted a category row with
+`type = 'TRANSFER'`, and Prisma validates enum values while deserialising a result. So every
+`category.findMany()` without a `type` filter threw on a row it had just fetched: `GET
+/api/categories`, and through it the transactions-page filter, the categories "All" tab, the
+multi-scan review and mixed-type bulk edits; and `getCategoryList`, and through it the MCP
+`get_category_list` tool, every Telegram message and every Claude Desktop session. Filtered reads
+(`type=EXPENSE`, `type=INCOME`) never saw the row, so receipt scanning and both forms kept working
+and the app looked only partly broken.
+
+`20260830150000_revert_accounts_and_transfers` puts the database back: the Transfer category, the
+check constraint, the `accounts` table, the two transaction columns, the TRANSFER enum value, and
+the two history rows themselves. Every statement is conditional, because the file also runs on
+databases built from zero. PostgreSQL has no `ALTER TYPE ... DROP VALUE`, so the enum is recreated
+and all three columns sharing it re-pointed; the constraint has to go first, since it names the
+literal, and Prisma cannot express CHECK constraints so `migrate diff` does not know it exists. The
+`_prisma_migrations` cleanup is guarded on the table existing, because Prisma replays migrations
+into a shadow database that has no such table and an unguarded delete breaks every future
+`migrate dev`.
+
+The guard's own first draft had the bug it was written to stop. `parseEnvValue` returned the
+*first* `DATABASE_URL` in `.env`; dotenv assigns in a loop, so Prisma takes the *last*. A file
+keeping a dev URL above a production one -- an ordinary way to keep both to hand -- would have
+cleared the guard on localhost while `prisma migrate dev` wrote to production. Two more divergences
+sat beside it: an unquoted value ends at the first `#` for dotenv but not for this parser, and
+`new URL()` throws on a password containing `#` or `/`, so the guard refused a perfectly good local
+database and taught the developer to type `ALLOW_REMOTE_DB=1` by reflex -- which removes the guard
+more thoroughly than deleting it would. Each rule is now checked against `prisma migrate status`
+reading the same file, rather than against the documentation.
+
+The guard had one more way to be told the wrong host. A Postgres URL can carry a `host` query
+parameter, and it beats the authority: measured against Prisma 6.19.2,
+`postgres://...@localhost:5432/db?host=nonexistent.invalid` prints `Datasource "db": ... at
+"localhost:5432"` and then fails to reach `nonexistent.invalid`. Prisma's own output names the host
+it is not using, so `postgresql://localhost/db?host=prod` would have cleared the guard with every
+message on screen reading localhost. `hostaddr` and a capitalised `HOST` were measured to be
+ignored, so neither moves the verdict.
+
+The revert's refusal check covered transfers and missed accounts, which is the other half of what
+PR #187 shipped: an accounts page and an account picker on the ordinary expense form. A database
+holding accounts and a year of INCOME/EXPENSE rows assigned to them reports zero transfers, and the
+migration would have dropped the table and the column under it. It now counts accounts and account
+references too, and names all three figures when it refuses.
+
+The separator grammar was the last of these. dotenv accepts `\s*=\s*` or `:\s+`, and the halves are
+not symmetrical: a colon takes no whitespace before it and requires whitespace after. Probed line by
+line against `prisma migrate status`, `KEY: v` is read while `KEY:v` and `KEY\t:\tv` are ignored
+entirely. Accepting the ignored forms was a bypass rather than a leniency -- a `.env` holding a
+remote URL above a typo'd `DATABASE_URL:postgresql://localhost/db` had Prisma use the remote line,
+the parser take the localhost one, and the guard clear the migration.
+
+After four rounds of review found four separate divergences from dotenv -- first-vs-last
+assignment, the `#` rule, quoting-versus-comment order, and a separator that accepted `KEY:value`,
+which dotenv ignores -- the hand-rolled parser was replaced by dotenv itself. Three of the four had
+let the guard clear a URL Prisma was not about to use. The lesson was not that any one regex was
+wrong but that a component whose only job is to agree with another parser should not be a second
+implementation of it. It is pinned to `^16.6.1`, the version Prisma's own chain resolves; the `LINE`
+regex in that release and the one bundled into `prisma/build/index.js` are byte-for-byte identical,
+and pnpm dedupes to the copy already in the tree rather than installing a second. All twelve
+observed cases passed unchanged through the swap, and they stay as a pin against version drift.
+
+The revert also unpins the category from `users.quick_expense_categories` /
+`quick_income_categories` before deleting it. Those are plain text arrays with no foreign key, so
+the delete would neither fail nor cascade -- it would strand the id, and a stranded id still counts
+against QuickCategoryPicker's four-slot limit, putting the fourth slot permanently out of reach
+while saving from the picker writes it back. `DELETE /api/categories/[id]` strips it in the same
+transaction for that reason. Nothing should have been able to pin the Transfer category and
+production reports none, which is worth one statement not to depend on.
+
+One of those review fixes was itself a mistake, and removing it is the last change here. The guard
+was reported as refusing `postgres://user:pa#ss@localhost:5432/db`, a local database with an
+awkward password, so it grew a repair step that percent-encoded everything before the last `@` and
+retried. The premise was never checked: Prisma rejects that string too, with `P1013: The provided
+database string is invalid`, and accepts `#` or `/` in a password only percent-encoded -- which
+`new URL` parses unaided. So the repair reached no database that existed, and its greedy split took
+the last `@` anywhere in the string, which a query value can supply:
+`postgres://user:pa/ss@prod.example/db?application_name=dev@localhost` reported `localhost` and
+cleared the guard for a URL whose authority is production. The rule now is that if `new URL` will
+not parse it, Prisma will not run it, and the guard refuses -- with a message naming P1013 and the
+encoding, rather than claiming the database is not on this machine.
+
+Four deploys ran green over this. `prisma migrate deploy` compares the folder to the database in one
+direction only -- it reported "33 migrations found... No pending migrations to apply" against a
+database holding 35 -- and `prisma migrate status` calls the same database "up to date" and exits 0.
+`scripts/check-migration-drift.ts` now runs in `pnpm build`, after `migrate deploy` rather than
+before so a revert can still land, and fails the build naming any applied migration this repo does
+not contain. `scripts/guard-local-db.ts` fronts `db:migrate` and `db:push` and refuses a
+non-localhost `DATABASE_URL` unless `ALLOW_REMOTE_DB=1`; it resolves the URL with `process.env`
+winning over `.env`, matching Prisma, because Node's own `--env-file` inverts that precedence and
+would have read localhost out of the file while Prisma used the production URL beside it.
+
 ## 2026-08-30 - Bulk actions that keep their scope
 
 Transaction selection now survives pagination and infinite-scroll loading, with an explicit
