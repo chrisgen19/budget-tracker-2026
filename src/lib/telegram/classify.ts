@@ -115,6 +115,10 @@ If logging a transaction:
 - type: "EXPENSE" or "INCOME"
 - categoryId: best matching category ID from the provided list
 - date: ISO timestamp string (e.g. "2026-08-26T08:30:00") matching when it occurred, or the current timestamp above. Write it in the user's local time with NO "Z" and no offset suffix: the server resolves it against their timezone, and a "Z" would be read as UTC and shift the transaction by hours
+- labels: array of label names from the list above, EXACTLY as written there, ONLY when the user
+  explicitly asks to label or tag it ("label it pickleball", "tag as work", "#groceries"). Leave
+  it null otherwise. A label name merely appearing in the description is NOT a request to apply
+  it: "pickleball court fee" gets no label. Never invent a name that is not in the list.
 
 Return ONLY a JSON object in this format:
 {
@@ -132,7 +136,8 @@ Return ONLY a JSON object in this format:
     "description": string,
     "type": "EXPENSE" | "INCOME",
     "categoryId": string,
-    "date": string
+    "date": string,
+    "labels": string[] | null
   } | null,
   "replyText": string | null
 }`;

@@ -22,6 +22,8 @@ const draft = (over: Partial<PendingScan> = {}): PendingScan => ({
   categoryId: "cat_food",
   categoryName: "Food & Dining",
   date: "2026-08-01",
+  labelIds: [],
+  labelNames: [],
   updateId: 7,
   createdAt: Date.now(),
   ...over,

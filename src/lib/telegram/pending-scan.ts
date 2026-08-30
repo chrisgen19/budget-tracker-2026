@@ -5,6 +5,19 @@ export interface PendingScan {
   categoryId: string;
   categoryName: string;
   date: string;
+  /**
+   * Labels the caption explicitly asked for, already resolved against the user's own list.
+   *
+   * Held on the draft rather than applied at scan time because nothing is written until the
+   * review is answered, and the review has to show them: a label the user cannot see before
+   * saving is one they cannot correct.
+   *
+   * Empty means "none named", which is not the same as opting out. The save omits `labelIds`
+   * entirely in that case, so the user's auto-apply schedules still run where the date allows.
+   */
+  labelIds: string[];
+  /** Their canonical names, for the review and correction replies. */
+  labelNames: string[];
   /** The update the photo arrived on. The idempotency key derives from this rather than from the
    *  confirming message, so a redelivered "yes" replays instead of writing a second row. */
   updateId: number;
@@ -72,7 +85,20 @@ export const hasPendingScan = (chatId: number, now = Date.now()): boolean => {
 };
 
 /**
- * Replace a waiting scan's description, without consuming it.
+ * Amend a waiting scan, without consuming it.
+ *
+ * A patch rather than a bare description because a reply can correct either half — "groceries at
+ * SM" is a description, "label it pickleball" is not, and pasting the latter over the former was
+ * the only thing this could do before.
+ */
+export interface ScanPatch {
+  description?: string;
+  labelIds?: string[];
+  labelNames?: string[];
+}
+
+/**
+ * Apply a patch to a waiting scan, without consuming it.
  *
  * The timestamp is refreshed because a correction is the user actively engaged with the review,
  * and the TTL exists to stop a *forgotten* scan being saved by a stale "yes" — the same reasoning
@@ -89,14 +115,14 @@ export type ReviseResult =
 
 export const revisePendingScan = (
   chatId: number,
-  description: string,
+  patch: ScanPatch,
   now = Date.now()
 ): ReviseResult => {
   const scan = pending.get(chatId);
   if (!scan || now - scan.createdAt > PENDING_TTL_MS) return { status: "none" };
   if (scan.frozen) return { status: "frozen" };
 
-  const revised = { ...scan, description, createdAt: now };
+  const revised = { ...scan, ...patch, createdAt: now };
   pending.set(chatId, revised);
   return { status: "revised", scan: revised };
 };

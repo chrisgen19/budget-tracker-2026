@@ -57,9 +57,16 @@ const validDay = (value: unknown): string | null => {
   return real ? value.trim() : null;
 };
 
-/** Case-insensitive exact match. Deliberately not fuzzy: a near miss silently filters on the
- *  wrong label, and "no transactions found" would read like a real answer. */
-const findByName = (refs: NamedRef[], name: unknown): NamedRef | null => {
+/**
+ * Case-insensitive exact match. Deliberately not fuzzy: a near miss silently filters on the
+ * wrong label, and "no transactions found" would read like a real answer.
+ *
+ * Exported because the write path needs the same discipline for a stronger reason. A model that
+ * names a label for a *search* costs a wrong answer; one that names it for a `create_transactions`
+ * writes the wrong label onto a row, and `getLabelBreakdown` splits an amount across whatever
+ * labels it carries, so that quietly moves money in the breakdown.
+ */
+export const findByName = (refs: NamedRef[], name: unknown): NamedRef | null => {
   if (typeof name !== "string" || !name.trim()) return null;
   const needle = name.trim().toLowerCase();
   return refs.find((r) => r.name.toLowerCase() === needle) ?? null;

@@ -2,6 +2,56 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-30 - A label that went nowhere
+
+A GCash receipt sent to the Telegram bot with the caption
+`Tiendesitas Yosh's Pickleball fee, category fun, label it in pickleball` came back as
+"Yosh's Pickleball fee", category Fun, and no label. Two unrelated defects wearing one costume.
+
+The label was never applied because nothing on the receipt path knew what a label was.
+`scan_receipt` neither takes nor returns them, `PendingScan` had no field for them, and
+`saveConfirmedScan` wrote five fields, none of which was `labelIds`. The directive reached Gemini
+inside the caption and had nowhere to go. Underneath that sat a second, quieter reason: omitting
+`labelIds` is supposed to mean "let the user's schedules run", but the MCP tool turns an omitted
+value into an explicit `[]` for any date `hasTrustworthyTime` rejects — which is every date but
+today. So a receipt scanned the morning after the purchase was opted out of labelling entirely,
+and would have been even if the caption had been understood. Sending an explicit array is what
+gets past that, and it is the right thing to send: the guard exists to stop an *invented* clock
+triggering a time-of-day schedule, which has nothing to say about a label the user named
+themselves.
+
+The directive is read locally, in `caption-labels.ts`, not by a model. It has to work with no
+`GEMINI_API_KEY`, and paying a request to recognise the word "label" is the same trade
+`commands.ts` already refuses. Matching is explicit only — `label it X`, `tag as X`, `#X` — and
+resolves by exact case-insensitive name against the user's real list, longest name first so
+`Work Lunch` is not cut down to `Work`. A bare mention applies nothing: "Pickleball court fee" is
+a description, and labelling on it would tag "lunch with the pickleball crew" as a game. A name
+that matches nothing the user owns is reported back rather than dropped, because a silently
+dropped label is the whole bug, and the bot cannot create one — `create_transactions` is its only
+write, which is what stops a leaked token rewriting anything.
+
+Reporting it back needed one more distinction than it first looked. An empty label list means
+either "you have no such label" or "I could not read your labels", and `loadLabels` swallows a
+failed `get_label_list` into the same `[]` — so the honest-looking reply "create it in the app"
+was confidently wrong for a token minted without `labels:read`, and sent the user to the wrong
+place to fix it. The lookup now carries whether it succeeded, and every path that can drop a
+named label says which of the two happened.
+
+The same hole was in the typed paths, so both were closed: the shorthand logger reads the
+directive with no model call, and the classifier may now name labels on a transaction, resolved
+against the real list by the same `findByName` the search path uses. A hallucinated label on a
+search costs a wrong answer; on a write it lands on the row, and `getLabelBreakdown` splits an
+amount across whatever labels it carries, so it quietly moves money.
+
+The dropped "Tiendesitas" was the prompt's own doing. The caption section told the model "the
+receipt always wins where the two disagree", which is sound advice about a merchant it can read
+and useless about a wallet transfer that prints an account holder and a reference number and
+nothing else. Faced with a venue it could not corroborate, the model kept the half it could. The
+rule is now scoped to what the receipt actually prints, and says plainly that where there is no
+merchant the caption is the only description there is — keep the user's words, place name
+included. It also says an instruction in a caption is not description text, and that removing one
+must not take the purchase with it.
+
 ## 2026-08-29 - Midnight, but whose?
 
 Review of #183 asked what guaranteed a bill due date is stored at midnight UTC, given every
