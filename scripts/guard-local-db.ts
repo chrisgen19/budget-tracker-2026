@@ -21,9 +21,7 @@
  *   ALLOW_REMOTE_DB=1 pnpm db:push
  */
 import { resolveDatabaseUrl } from "./database-url";
-
-/** Hosts that are this machine. `new URL` keeps IPv6 literals in brackets, so both spellings. */
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+import { databaseHost, isLocalDatabase } from "./db-host";
 
 const OVERRIDE = "ALLOW_REMOTE_DB";
 
@@ -33,22 +31,16 @@ if (!databaseUrl) {
   process.exit(1);
 }
 
-let host: string;
-try {
-  host = new URL(databaseUrl).hostname;
-} catch {
-  // An unparseable URL is not a licence to proceed: the point of the guard is knowing where the
-  // write lands, and here we do not.
-  console.error("[guard-local-db] DATABASE_URL is not a URL — refusing to run a schema command.");
-  process.exit(1);
-}
-
-if (LOCAL_HOSTS.has(host)) {
+if (isLocalDatabase(databaseUrl)) {
   process.exit(0);
 }
 
+// Named where it can be, so the message says which database was refused. An unparseable URL is
+// still refused: the point of the guard is knowing where the write lands, and there we do not.
+const host = databaseHost(databaseUrl) ?? "an address that could not be parsed";
+
 if (process.env[OVERRIDE] === "1") {
-  console.warn(`[guard-local-db] ${OVERRIDE}=1 — proceeding against remote host ${host}`);
+  console.warn(`[guard-local-db] ${OVERRIDE}=1 — proceeding against ${host}`);
   process.exit(0);
 }
 

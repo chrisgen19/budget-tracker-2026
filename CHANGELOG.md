@@ -29,6 +29,16 @@ literal, and Prisma cannot express CHECK constraints so `migrate diff` does not 
 into a shadow database that has no such table and an unguarded delete breaks every future
 `migrate dev`.
 
+The guard's own first draft had the bug it was written to stop. `parseEnvValue` returned the
+*first* `DATABASE_URL` in `.env`; dotenv assigns in a loop, so Prisma takes the *last*. A file
+keeping a dev URL above a production one -- an ordinary way to keep both to hand -- would have
+cleared the guard on localhost while `prisma migrate dev` wrote to production. Two more divergences
+sat beside it: an unquoted value ends at the first `#` for dotenv but not for this parser, and
+`new URL()` throws on a password containing `#` or `/`, so the guard refused a perfectly good local
+database and taught the developer to type `ALLOW_REMOTE_DB=1` by reflex -- which removes the guard
+more thoroughly than deleting it would. Each rule is now checked against `prisma migrate status`
+reading the same file, rather than against the documentation.
+
 Four deploys ran green over this. `prisma migrate deploy` compares the folder to the database in one
 direction only -- it reported "33 migrations found... No pending migrations to apply" against a
 database holding 35 -- and `prisma migrate status` calls the same database "up to date" and exits 0.

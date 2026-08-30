@@ -69,11 +69,12 @@ const appliedMigrationNames = async (): Promise<string[] | null> => {
   }
 };
 
-async function main() {
+/** Returns the process exit code rather than setting it, so the caller owns the one exit path. */
+async function main(): Promise<number> {
   const applied = await appliedMigrationNames();
   if (applied === null) {
     console.log("[check-migration-drift] no _prisma_migrations table yet — nothing to compare");
-    return;
+    return 0;
   }
 
   const local = localMigrationNames();
@@ -83,7 +84,7 @@ async function main() {
     console.log(
       `[check-migration-drift] OK — ${applied.length} applied migration(s), all present in prisma/migrations`
     );
-    return;
+    return 0;
   }
 
   console.error(
@@ -91,16 +92,36 @@ async function main() {
   );
   for (const name of unknown) console.error(`  - ${name}`);
   console.error(
-    "\nSomething applied migrations to this database from outside this repository. Either restore " +
-      "the missing migration files, or add a migration that reverts their effects and deletes their " +
-      "_prisma_migrations rows."
+    "\nThe database has migrations this checkout does not. On a deployment that means something " +
+      "applied them from outside the repository, and the schema no longer matches the code: restore " +
+      "the migration files, or add one that reverts their effects and deletes their " +
+      "_prisma_migrations rows.\n" +
+      "\nLocally it usually means something duller -- the branch you migrated on is not the branch " +
+      "you are building. Switch back to it, or reset the development database."
   );
-  process.exitCode = 1;
+  return 1;
 }
 
-main()
-  .catch((error) => {
+/**
+ * One exit path, and the disconnect is awaited inside it.
+ *
+ * `main().catch(...).finally(() => prisma.$disconnect())` leaves the promise `.finally` returns
+ * unhandled, so a rejected disconnect -- a pooler that already dropped the socket at the end of a
+ * long build -- crashes the build with an unhandled rejection and a Prisma stack, burying whatever
+ * verdict this actually reached. `process.exitCode` had the mirror-image problem: it only applies
+ * once the event loop drains, so a lingering client handle would hang the build instead of failing
+ * it.
+ */
+const run = async () => {
+  let code = 1;
+  try {
+    code = await main();
+  } catch (error) {
     console.error("[check-migration-drift] failed:", error);
-    process.exitCode = 1;
-  })
-  .finally(() => prisma.$disconnect());
+  } finally {
+    await prisma.$disconnect().catch(() => {});
+  }
+  process.exit(code);
+};
+
+run();

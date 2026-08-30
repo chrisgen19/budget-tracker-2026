@@ -14,10 +14,11 @@ export default defineConfig({
     // Colocated with the code they cover. mcp-server has its own package and is excluded
     // from the root tsconfig, so it stays out of here too.
     //
-    // scripts/ is included for its *pure* helpers only -- the .env parser and the Prisma error
-    // classifier, both of which have subtle rules and no other way to be checked. The operational
-    // scripts there are named verify-*.ts and need a real database, so this glob never picks them
-    // up.
+    // scripts/ is included for its *pure* helpers only -- the .env parser, the connection-string
+    // host check and the Prisma error classifier, which have subtle rules and no other way to be
+    // checked. The operational scripts there are named verify-*.ts and need a real database, so
+    // this glob never picks them up. Those tests each declare `@vitest-environment node`: they run
+    // under tsx in Node, and jsdom would be both the wrong global scope and ~1s of setup apiece.
     include: ["src/**/*.test.{ts,tsx}", "scripts/**/*.test.ts"],
     restoreMocks: true,
     clearMocks: true,
