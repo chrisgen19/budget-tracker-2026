@@ -53,6 +53,17 @@ transaction's type is now its own outcome rather than a silent one: `createTrans
 type-filters explicit ids without comment, so a receipt caption naming an income-only label showed
 it in the review and then did not write it.
 
+That last one then had a tail of its own, caught on the next review pass. The correction branch
+decides whether a reply is a label edit or a new description, and it tested only for resolved and
+unresolved names — so a type mismatch, which produces neither, fell through to the description
+branch and renamed the draft "Label it salary". The warning still rendered, which made it worse
+rather than better: the user was told the label was skipped while the description was quietly
+replaced underneath. Fixing it exposed a neighbour. Whether `rest` is usable as a description was
+being inferred from whether a label resolved, which is merely cautious rather than correct: the
+real question is whether the directive was cut out of the text, and "court fee, label it
+badminton" leaves a perfectly good "court fee" that was being thrown away. The parser now answers
+that question directly.
+
 The same hole was in the typed paths, so both were closed: the shorthand logger reads the
 directive with no model call, and the classifier may now name labels on a transaction, resolved
 against the real list by the same `findByName` the search path uses. A hallucinated label on a

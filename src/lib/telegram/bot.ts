@@ -1504,12 +1504,20 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     const lookup =
       hasPendingScan(chatId) && mentionsLabel(text) ? await loadLabels() : null;
     const directive = lookup ? readLabelDirective(text, lookup.labels, "EXPENSE") : null;
-    // Only a directive that resolved to something, or named something the user does not have,
-    // counts as a label edit. Anything else is a description, exactly as before.
-    const isLabelEdit = !!directive && (directive.ids.length > 0 || directive.unresolved.length > 0);
-    // When nothing resolved, `rest` is the untouched reply, so it must not be written back as a
-    // description: "label it badminton" would become the description of the purchase.
-    const alsoDescribes = isLabelEdit && directive.ids.length > 0 && !!directive.rest;
+    // Any directive the parser understood is a label edit, including one naming a label that
+    // cannot apply to an expense. Leaving `incompatible` out of this test sent "label it salary"
+    // down the description branch, so the draft was renamed "Label it salary".
+    const isLabelEdit =
+      !!directive &&
+      (directive.ids.length > 0 ||
+        directive.unresolved.length > 0 ||
+        directive.incompatible.length > 0);
+    // `rest` is only a description when the directive was actually cut out of it. A bare unmarked
+    // one is reported but deliberately left in place, so `rest` is then the whole untouched reply
+    // and "label badminton" would become the description of the purchase. Asking the parser is
+    // exact where testing `ids.length` was merely cautious: it also dropped the perfectly good
+    // "court fee" from "court fee, label it badminton".
+    const alsoDescribes = isLabelEdit && directive.removedDirective && !!directive.rest;
 
     const patch = isLabelEdit
       ? {

@@ -189,6 +189,7 @@ describe("readLabelDirective", () => {
       names: [],
       unresolved: [],
       incompatible: [],
+      removedDirective: false,
       rest: "",
     });
   });
@@ -237,6 +238,40 @@ describe("label type compatibility", () => {
   it("skips the check when no type is given", () => {
     // The search path has no transaction to be compatible with.
     expect(readLabelDirective("label it salary", TYPED).names).toEqual(["Salary"]);
+  });
+
+  it("counts a type mismatch as a directive the parser understood", () => {
+    // The caller decides whether a reply is a label edit or a description. A mismatch that
+    // reported nothing back looked like plain text, so "label it salary" was written over the
+    // receipt description as "Label it salary".
+    const result = readLabelDirective("label it salary", TYPED, "EXPENSE");
+
+    expect(result.removedDirective).toBe(true);
+    expect(result.rest).toBe("");
+  });
+});
+
+describe("removedDirective", () => {
+  it("is false for a bare directive that resolved nothing, so rest is not a description", () => {
+    // Nothing was cut, so `rest` is the whole untouched reply. Writing it back would make
+    // "label badminton" the description of the purchase.
+    const result = readLabelDirective("label badminton", LABELS);
+
+    expect(result.removedDirective).toBe(false);
+    expect(result.rest).toBe("label badminton");
+  });
+
+  it("is true when an unresolved directive was still cut out", () => {
+    // "court fee" is a perfectly good description and was being dropped, because the old test
+    // for it required a label to have resolved.
+    const result = readLabelDirective("court fee, label it badminton", LABELS);
+
+    expect(result.removedDirective).toBe(true);
+    expect(result.rest).toBe("court fee");
+  });
+
+  it("is false when there is no directive at all", () => {
+    expect(readLabelDirective("Groceries at SM", LABELS).removedDirective).toBe(false);
   });
 });
 

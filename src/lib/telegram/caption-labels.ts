@@ -52,6 +52,15 @@ export interface LabelDirective {
    * as a missing one.
    */
   incompatible: string[];
+  /**
+   * Whether a directive was actually recognised and cut out of `rest`.
+   *
+   * The question a caller really has is "is `rest` something the user left me, or just their
+   * untouched reply?", and length alone cannot answer it. A bare unmarked directive is reported
+   * but deliberately not removed, so `rest` is then the whole input and writing it back would
+   * make "label badminton" the description of the purchase.
+   */
+  removedDirective: boolean;
   /** The text with the recognised directive removed, for use as a description. */
   rest: string;
 }
@@ -255,7 +264,14 @@ export const readLabelDirective = (
     rest = rest.slice(0, span.start) + rest.slice(span.end);
   }
 
-  return { ids, names, unresolved, incompatible, rest: tidy(rest) };
+  return {
+    ids,
+    names,
+    unresolved,
+    incompatible,
+    removedDirective: spans.length > 0,
+    rest: tidy(rest),
+  };
 };
 
 /**
