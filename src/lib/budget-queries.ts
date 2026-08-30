@@ -12,6 +12,9 @@ import { formatLocalDate } from "@/lib/validations";
 // One definition of "the calendar day of a date-only bill value", shared with the write paths
 // so a due date cannot be truncated one way going in and another coming out.
 import { utcDayStart } from "@/lib/bill-dates";
+// A transfer is money moving between the user's own accounts, never spending. Aggregates that do
+// not filter `type` themselves narrow through this.
+import { SPENDING_ONLY } from "@/lib/transfer-filters";
 import type {
   PrismaClient,
   SpendingByCategoryParams,
@@ -238,6 +241,10 @@ export const getSpendingByCategory = async (
       userId,
       type: "EXPENSE",
       date: dateFilter(range),
+      // Additive and optional: omitted means every account plus the rows that carry none, which
+      // is exactly the behaviour that existed before accounts. Supplying it answers "how much of
+      // this card's balance is transportation" without a second query shape.
+      ...(params.accountId ? { accountId: params.accountId } : {}),
     },
     include: { category: true },
   });
@@ -494,9 +501,14 @@ export const searchTransactions = async (
     }),
     prisma.transaction.count({ where }),
     prisma.transaction.groupBy({ by: ["type"], where, _sum: { amount: true } }),
+    // Spending only. A transfer is filed under the Transfer system category, and without this
+    // narrowing every credit-card bill payment would appear here as a "Transfer" category
+    // subtotal sitting beside Groceries — money counted as spending twice, once as the purchases
+    // and once as the payment that settles them. `count` above is deliberately left wide: it
+    // answers "how many rows matched", and a transfer really did match.
     prisma.transaction.groupBy({
       by: ["categoryId"],
-      where,
+      where: { ...where, ...SPENDING_ONLY },
       _sum: { amount: true },
       _count: { _all: true },
     }),

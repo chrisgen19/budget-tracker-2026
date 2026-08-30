@@ -10,6 +10,7 @@ import {
   quickPickIdsSchema,
   receiptBreakdownMetaSchema,
   resolveTransactionDate,
+  transactionSchema,
 } from "./validations";
 import { MAX_BREAKDOWN_LINE_ITEMS } from "./receipt-limits";
 
@@ -452,5 +453,92 @@ describe("quickPickIdsSchema", () => {
     const six = ["a", "b", "c", "d", "e", "f"];
     expect(quickPickIdsSchema(6).safeParse(six).success).toBe(true);
     expect(quickPickIdsSchema(4).safeParse(six).success).toBe(false);
+  });
+});
+
+describe("transactionSchema transfer rules", () => {
+  const base = {
+    amount: 255,
+    description: "BPI card payment",
+    date: "2026-08-05T10:00",
+    categoryId: "cat_system_transfer",
+  };
+
+  it("accepts a transfer that names both sides", () => {
+    const parsed = transactionSchema.safeParse({
+      ...base,
+      type: "TRANSFER",
+      accountId: "checking",
+      transferAccountId: "bpi-card",
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("refuses a transfer with no destination", () => {
+    // Money leaving one account and arriving nowhere: the destination balance never rises, so the
+    // ledger silently stops adding up.
+    const parsed = transactionSchema.safeParse({
+      ...base,
+      type: "TRANSFER",
+      accountId: "checking",
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("refuses a transfer with no source", () => {
+    const parsed = transactionSchema.safeParse({
+      ...base,
+      type: "TRANSFER",
+      transferAccountId: "bpi-card",
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("refuses a transfer to the account it came from", () => {
+    const parsed = transactionSchema.safeParse({
+      ...base,
+      type: "TRANSFER",
+      accountId: "checking",
+      transferAccountId: "checking",
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("refuses a destination account on an ordinary expense", () => {
+    // An expense carrying a destination would be counted as spending *and* raise a balance.
+    const parsed = transactionSchema.safeParse({
+      ...base,
+      type: "EXPENSE",
+      categoryId: "transportation",
+      accountId: "bpi-card",
+      transferAccountId: "checking",
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("still accepts an expense with no account at all", () => {
+    // Every row written before accounts existed has none, and a user with no accounts must still
+    // be able to log spending.
+    const parsed = transactionSchema.safeParse({
+      ...base,
+      type: "EXPENSE",
+      categoryId: "transportation",
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("keeps the full field shape rather than collapsing to the transfer fields", () => {
+    // `withTransferRules` is generic over the schema it wraps. Constraining it as
+    // `T extends z.ZodType<TransferShape>` erased every other field from the inferred output,
+    // which broke every consumer of the parsed value.
+    const parsed = transactionSchema.parse({
+      ...base,
+      type: "EXPENSE",
+      categoryId: "transportation",
+      labelIds: ["l1"],
+    });
+    expect(parsed.amount).toBe(255);
+    expect(parsed.labelIds).toEqual(["l1"]);
+    expect(parsed.categoryId).toBe("transportation");
   });
 });

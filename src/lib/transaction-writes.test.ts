@@ -24,7 +24,9 @@ interface StubOptions {
   usableCategoryIds?: string[];
   ownedLabels?: { id: string; applicableTo: string }[];
   /** Type every stub category reports, so type-mismatch rejection is testable. */
-  categoryType?: "INCOME" | "EXPENSE";
+  categoryType?: "INCOME" | "EXPENSE" | "TRANSFER";
+  /** Account ids that are the caller's and still active. */
+  usableAccountIds?: string[];
 }
 
 /** Minimal Prisma stub. Records what was written so the assertions can inspect it. */
@@ -32,6 +34,7 @@ const makePrisma = ({
   usableCategoryIds = ["cat_own"],
   ownedLabels = [],
   categoryType = "EXPENSE",
+  usableAccountIds = ["acct_own", "acct_other_own"],
 }: StubOptions = {}) => {
   const created: Record<string, unknown>[] = [];
 
@@ -46,6 +49,11 @@ const makePrisma = ({
     label: {
       findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
         ownedLabels.filter((l) => where.id.in.includes(l.id))
+      ),
+    },
+    account: {
+      count: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
+        where.id.in.filter((id) => usableAccountIds.includes(id)).length
       ),
     },
     transaction: {
@@ -434,5 +442,110 @@ describe("permission re-checked at the moment of the write", () => {
 
     expect(result.ok).toBe(true);
     expect(created).toHaveLength(1);
+  });
+});
+
+describe("createTransactionBatch accounts and transfers", () => {
+  const transfer: BatchTransactionInput = {
+    amount: 255,
+    description: "BPI card payment",
+    type: "TRANSFER",
+    date: "2026-08-05",
+    categoryId: "cat_own",
+    labelIds: [],
+    accountId: "acct_own",
+    transferAccountId: "acct_other_own",
+  };
+
+  it("writes both sides of a transfer", async () => {
+    const { client, created } = makePrisma({ categoryType: "TRANSFER" });
+
+    const result = await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [transfer],
+      createdVia: "APP",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(created[0].accountId).toBe("acct_own");
+    expect(created[0].transferAccountId).toBe("acct_other_own");
+  });
+
+  it("refuses an account that is not the caller's", async () => {
+    // The foreign key proves the account exists, not whose it is. Without the ownership check a
+    // caller supplying someone else's id would move a stranger's balance.
+    const { client, created } = makePrisma({ usableAccountIds: ["acct_own"] });
+
+    const result = await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [{ ...ITEM, accountId: "acct_someone_else" }],
+      createdVia: "MCP",
+    });
+
+    expect(result).toEqual({ ok: false, reason: "ACCOUNTS_NOT_OWNED" });
+    expect(created).toHaveLength(0);
+  });
+
+  it("refuses an archived account", async () => {
+    // Archiving is how an account is retired, so writing to one would quietly bring it back into
+    // every balance. The stub reports only active accounts, matching the `isActive` filter.
+    const { client } = makePrisma({ usableAccountIds: [] });
+
+    const result = await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [{ ...ITEM, accountId: "acct_archived" }],
+      createdVia: "APP",
+    });
+
+    expect(result).toEqual({ ok: false, reason: "ACCOUNTS_NOT_OWNED" });
+  });
+
+  it("never auto-labels a transfer", async () => {
+    // Label schedules classify spending by when it happened. A card bill settled on a Tuesday
+    // afternoon would land inside a weekday work window and divert half its amount into a
+    // spending label via getLabelBreakdown.
+    scheduleMock.getScheduleContext.mockResolvedValueOnce({ rules: [] });
+    scheduleMock.matchScheduledLabel.mockReturnValue("label_work");
+
+    const { client, created } = makePrisma({ categoryType: "TRANSFER" });
+    await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [{ ...transfer, labelIds: undefined }],
+      createdVia: "APP",
+    });
+
+    expect(created[0].labels).toBeUndefined();
+    scheduleMock.matchScheduledLabel.mockReturnValue(null);
+  });
+
+  it("still auto-labels an ordinary expense", async () => {
+    scheduleMock.getScheduleContext.mockResolvedValueOnce({ rules: [] });
+    scheduleMock.matchScheduledLabel.mockReturnValue("label_work");
+
+    const { client, created } = makePrisma();
+    await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [{ ...ITEM, labelIds: undefined }],
+      createdVia: "APP",
+    });
+
+    expect(created[0].labels).toBeDefined();
+    scheduleMock.matchScheduledLabel.mockReturnValue(null);
+  });
+
+  it("does not query accounts when no item names one", async () => {
+    const { client, raw } = makePrisma();
+    await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [ITEM],
+      createdVia: "APP",
+    });
+    expect(raw.account.count).not.toHaveBeenCalled();
   });
 });

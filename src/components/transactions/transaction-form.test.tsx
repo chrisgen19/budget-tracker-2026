@@ -47,6 +47,10 @@ vi.mock("@/hooks/use-labels", () => ({
   useLabelsQuery: () => ({ data: [] }),
 }));
 
+vi.mock("@/hooks/use-accounts", () => ({
+  useAccountsQuery: () => ({ data: [] }),
+}));
+
 vi.mock("@/hooks/use-scheduled-label", () => ({
   useScheduledLabel: scheduledLabelMocks.useScheduledLabel,
 }));

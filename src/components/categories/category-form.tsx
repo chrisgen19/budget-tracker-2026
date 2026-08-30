@@ -3,6 +3,7 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Check, Plus, X } from "lucide-react";
+import { asSpendingType } from "@/lib/transfer-filters";
 import { categorySchema, type CategoryInput } from "@/lib/validations";
 import { cn } from "@/lib/utils";
 import { CategoryIcon, AVAILABLE_ICONS } from "@/components/ui/icon-map";
@@ -31,7 +32,7 @@ export function CategoryForm({ category, onSubmit, onCancel }: CategoryFormProps
     resolver: zodResolver(categorySchema),
     defaultValues: {
       name: category?.name ?? "",
-      type: category?.type ?? "EXPENSE",
+      type: category ? asSpendingType(category.type) : "EXPENSE",
       icon: category?.icon ?? "MoreHorizontal",
       color: category?.color ?? PRESET_COLORS[0],
     },

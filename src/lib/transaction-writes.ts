@@ -1,5 +1,6 @@
 import { Prisma, type TransactionSource } from "@prisma/client";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
+import { accountIdsAreUsable } from "@/lib/account-guard";
 import type { BatchTransactionInput } from "@/lib/validations";
 import type { PrismaClient } from "@/lib/budget-query-types";
 
@@ -19,6 +20,8 @@ export type BatchFailureReason =
   | "LABELS_NOT_OWNED"
   /** A category id was neither a default nor the caller's, or its type did not match the item's. */
   | "CATEGORIES_NOT_OWNED"
+  /** An `accountId` or `transferAccountId` was not the caller's, or is archived. */
+  | "ACCOUNTS_NOT_OWNED"
   /** Permission was withdrawn between the request arriving and the write starting. */
   | "NO_LONGER_PERMITTED"
   /** The advisory lock could not be taken, so whether the batch exists is genuinely unknown. */
@@ -180,8 +183,22 @@ export const createTransactionBatch = async ({
     return rejectUnlessSaved("CATEGORIES_NOT_OWNED");
   }
 
-  // Fetch schedule context only when at least one item needs auto-tagging
-  const needsAutoLabel = items.some((t) => t.labelIds === undefined);
+  if (
+    !(await accountIdsAreUsable(
+      prisma,
+      userId,
+      items.flatMap((t) => [t.accountId, t.transferAccountId])
+    ))
+  ) {
+    return rejectUnlessSaved("ACCOUNTS_NOT_OWNED");
+  }
+
+  // Fetch schedule context only when at least one item needs auto-tagging. A transfer is never
+  // auto-tagged: label schedules exist to classify *spending* by when it happened ("weekday
+  // 05:00-17:00 is work"), and a card bill paid on a Tuesday afternoon is not work spending. It
+  // is not spending at all, and `getLabelBreakdown` would split its amount across whatever label
+  // matched.
+  const needsAutoLabel = items.some((t) => t.labelIds === undefined && t.type !== "TRANSFER");
   const ctx = needsAutoLabel ? await getScheduleContext(userId) : null;
 
   const buildCreates = (tx: Prisma.TransactionClient) =>
@@ -194,7 +211,12 @@ export const createTransactionBatch = async ({
       // - labelIds === ['id1', ...] → use explicit labels (type-filtered)
       let resolvedLabelIds: string[] = [];
       if (t.labelIds === undefined) {
-        const scheduledLabelId = ctx ? matchScheduledLabel(txDate, ctx, t.type) : null;
+        // A transfer is never auto-tagged, even though it took the auto-apply branch: schedules
+        // classify spending by when it happened, and a card bill settled on a Tuesday afternoon
+        // is not work spending. Tested inside the branch rather than in its condition so the
+        // `else` below still narrows `labelIds` to a defined array.
+        const scheduledLabelId =
+          ctx && t.type !== "TRANSFER" ? matchScheduledLabel(txDate, ctx, t.type) : null;
         if (scheduledLabelId) resolvedLabelIds = [scheduledLabelId];
       } else if (t.labelIds.length > 0) {
         const seen = new Set<string>();
@@ -215,6 +237,8 @@ export const createTransactionBatch = async ({
           categoryId: t.categoryId,
           userId,
           createdVia,
+          ...(t.accountId && { accountId: t.accountId }),
+          ...(t.transferAccountId && { transferAccountId: t.transferAccountId }),
           ...(mcpTokenId && { mcpTokenId }),
           ...(clientBatchId && { clientBatchId }),
           ...(t.receiptGroupId && { receiptGroupId: t.receiptGroupId }),

@@ -19,6 +19,8 @@ export const WRITE_ERROR_MESSAGES: Record<BatchFailureReason, string> = {
   LABELS_NOT_OWNED: "One or more label IDs are not this user's. Call get_label_list for valid IDs.",
   CATEGORIES_NOT_OWNED:
     "One or more category IDs are not this user's. Call get_category_list for valid IDs.",
+  ACCOUNTS_NOT_OWNED:
+    "One or more account IDs are not this user's, or name an archived account. Call get_account_balances for valid IDs.",
   // Writes were switched off between the request arriving and the rows being written. The check
   // runs inside the transaction before anything is created, so nothing was saved. Saying so
   // matters: it used to share the "could not confirm" wording below, which sent the caller

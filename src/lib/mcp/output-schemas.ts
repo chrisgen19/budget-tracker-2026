@@ -20,6 +20,7 @@ import type {
   BudgetOverview,
   UpcomingBillsResult,
   CategoryItem,
+  AccountBalance,
   LabelBreakdown,
   LabelItem,
   BillHistory,
@@ -54,7 +55,10 @@ type Exact<A, B> = [Exclude<keyof A, keyof B>] extends [never]
   : never;
 const assertExact = <A, B>(_proof: Exact<A, B>) => {};
 
-const transactionType = z.enum(["INCOME", "EXPENSE"]);
+// Widened when accounts were added. TRANSFER rows are money moving between the user's own
+// accounts and never appear in a spending total; they can still surface in `search_transactions`,
+// which is a row listing rather than an aggregate, so the declared type has to admit them.
+const transactionType = z.enum(["INCOME", "EXPENSE", "TRANSFER"]);
 
 /** The window a query actually ran over, in the user's own calendar days. */
 const resolvedPeriod = z.object({
@@ -246,6 +250,35 @@ const upcomingBills = z.object({
 assertExact<z.infer<typeof upcomingBills>, UpcomingBillsResult>(true);
 
 export const upcomingBillsOutput = upcomingBills.shape;
+
+// --- get_account_balances ---
+
+const accountBalance = z.object({
+  id: z.string(),
+  name: z.string(),
+  type: z.enum(["CASH", "BANK", "CREDIT_CARD", "EWALLET"]),
+  icon: z.string(),
+  color: z.string(),
+  isActive: z.boolean(),
+  openingBalance: z.number().describe("Balance before the first transaction the app knows about."),
+  balance: z
+    .number()
+    .describe(
+      "Signed: positive is money held, negative is money owed. A credit card is normally negative."
+    ),
+  outstanding: z
+    .number()
+    .nullable()
+    .describe("What is owed on a credit card, i.e. -balance. Null for every other account type."),
+  availableCredit: z.number().nullable(),
+  creditLimit: z.number().nullable(),
+  inflow: z.number().describe("Money that arrived: income plus transfers in."),
+  outflow: z.number().describe("Money that left: expenses plus transfers out."),
+  transactionCount: z.number(),
+});
+assertExact<z.infer<typeof accountBalance>, AccountBalance>(true);
+
+export const accountBalancesOutput = { accounts: z.array(accountBalance) };
 
 // --- get_category_list ---
 

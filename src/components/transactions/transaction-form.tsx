@@ -20,6 +20,7 @@ import { CategoryIcon } from "@/components/ui/icon-map";
 import { ReceiptBreakdown, toReceiptBreakdownMeta } from "@/components/transactions/receipt-breakdown";
 import { useUser } from "@/components/user-provider";
 import { useCategoriesQuery, useQuickPreferencesQuery } from "@/hooks/use-categories";
+import { useAccountsQuery } from "@/hooks/use-accounts";
 import { LabelPicker } from "@/components/transactions/label-picker";
 import { useScheduledLabel } from "@/hooks/use-scheduled-label";
 import { useLabelsQuery } from "@/hooks/use-labels";
@@ -28,10 +29,12 @@ import type { TransactionWithCategory } from "@/types";
 export interface InitialTransactionData {
   amount?: number;
   description?: string;
-  type?: "INCOME" | "EXPENSE";
+  type?: "INCOME" | "EXPENSE" | "TRANSFER";
   date?: string;
   categoryId?: string;
   labelIds?: string[];
+  accountId?: string | null;
+  transferAccountId?: string | null;
 }
 
 interface TransactionFormProps {
@@ -51,6 +54,14 @@ const formatAmountDisplay = (value: number) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value);
+
+/** The three directions a transaction can take. TRANSFER is not spending: it moves money between
+ *  two of the user's own accounts and never reaches a category total. */
+const TYPE_TABS = [
+  { value: "EXPENSE", label: "Expense", activeClass: "text-expense" },
+  { value: "INCOME", label: "Income", activeClass: "text-income" },
+  { value: "TRANSFER", label: "Transfer", activeClass: "text-warm-700" },
+] as const;
 
 type DateMode = "today" | "yesterday" | "custom";
 
@@ -126,10 +137,17 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
           : formatAccountDateInput(new Date(), user.timezoneOffset),
       categoryId: transaction?.categoryId ?? initialData?.categoryId ?? "",
       labelIds: transaction?.labels?.map((tl) => tl.labelId) ?? initialData?.labelIds ?? [],
+      accountId: transaction?.accountId ?? initialData?.accountId ?? null,
+      transferAccountId:
+        transaction?.transferAccountId ?? initialData?.transferAccountId ?? null,
     },
   });
 
   const selectedType = watch("type");
+  // A transfer is money moving between the user's own accounts. It has no category to choose (the
+  // one system category is selected for it below), no labels (they are a spending dimension), and
+  // no receipt breakdown.
+  const isTransfer = selectedType === "TRANSFER";
 
   // Narrowed once rather than cast at the render site: the column only gained a write-side
   // schema in #119, so older rows may not match ReceiptBreakdownMeta.
@@ -144,8 +162,10 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   // Auto-label scheduling — only for new transactions; edits preserve user's label choices
   const isEditing = !!transaction;
   const { scheduledLabelId } = useScheduledLabel(
-    isEditing ? undefined : resolveTransactionDate(watchedDate, user.timezoneOffset),
-    selectedType,
+    isEditing || isTransfer
+      ? undefined
+      : resolveTransactionDate(watchedDate, user.timezoneOffset),
+    isTransfer ? "EXPENSE" : selectedType,
   );
   const userRemovedAutoLabels = useRef<Set<string>>(new Set());
   const autoAppliedLabels = useRef<Set<string>>(new Set());
@@ -160,6 +180,9 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   const { data: allLabels = [] } = useLabelsQuery();
   const { data: categories = [], isLoading: loadingCategories } = useCategoriesQuery(selectedType);
   const { data: quickPrefs } = useQuickPreferencesQuery();
+  const { data: accounts = [] } = useAccountsQuery();
+  const watchedAccountId = watch("accountId") ?? "";
+  const watchedTransferAccountId = watch("transferAccountId") ?? "";
 
   const selectedCategory = categories.find((c) => c.id === watchedCategoryId);
 
@@ -186,11 +209,28 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
       }
     }
 
+    // A transfer has exactly one usable category and no picker, so select it as soon as the list
+    // arrives. Without this the form would fail validation on a field the user was never shown.
+    if (isTransfer) {
+      if (categories[0] && watchedCategoryId !== categories[0].id) {
+        setValue("categoryId", categories[0].id, { shouldValidate: true });
+      }
+      return;
+    }
+
     // Reset category when type changes (unless editing an existing transaction or applying initialData)
     if (!transaction && !initialData?.categoryId) {
       setValue("categoryId", "");
     }
-  }, [categories, selectedType, setValue, transaction, initialData]);
+  }, [categories, selectedType, setValue, transaction, initialData, isTransfer, watchedCategoryId]);
+
+  // Leaving transfer mode has to clear the destination, or the schema refuses the submit with an
+  // error pointing at a field the form no longer renders — an unfixable form from the user's side.
+  useEffect(() => {
+    if (!isTransfer && watchedTransferAccountId) {
+      setValue("transferAccountId", null);
+    }
+  }, [isTransfer, watchedTransferAccountId, setValue]);
 
   // Auto-apply or remove scheduled label when date changes
   useEffect(() => {
@@ -360,30 +400,21 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
           >
             {/* Type Toggle */}
             <div className="flex gap-1 p-1 bg-cream-100 rounded-xl">
-              <button
-                type="button"
-                onClick={() => setValue("type", "EXPENSE")}
-                className={cn(
-                  "flex-1 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
-                  selectedType === "EXPENSE"
-                    ? "bg-white text-expense shadow-warm"
-                    : "text-warm-400 hover:text-warm-600"
-                )}
-              >
-                Expense
-              </button>
-              <button
-                type="button"
-                onClick={() => setValue("type", "INCOME")}
-                className={cn(
-                  "flex-1 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
-                  selectedType === "INCOME"
-                    ? "bg-white text-income shadow-warm"
-                    : "text-warm-400 hover:text-warm-600"
-                )}
-              >
-                Income
-              </button>
+              {TYPE_TABS.map((tab) => (
+                <button
+                  key={tab.value}
+                  type="button"
+                  onClick={() => setValue("type", tab.value)}
+                  className={cn(
+                    "flex-1 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
+                    selectedType === tab.value
+                      ? `bg-white ${tab.activeClass} shadow-warm`
+                      : "text-warm-400 hover:text-warm-600"
+                  )}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
 
             {/* Receipt Breakdown — only for itemized expenses. Narrowed rather than cast:
@@ -451,8 +482,77 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               )}
             </div>
 
-            {/* Category — quick picks */}
-            <div>
+            {/* Accounts. The source is optional for ordinary spending — most users start with no
+                accounts at all, and a required field would break the form for them — but required
+                on both sides of a transfer, where a missing side is money arriving from nowhere. */}
+            {accounts.length > 0 && (
+              <div className="space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-warm-600 mb-2">
+                    {isTransfer ? "From account" : "Account"}
+                    {!isTransfer && (
+                      <span className="ml-1.5 font-normal text-warm-400">(optional)</span>
+                    )}
+                  </p>
+                  <select
+                    {...register("accountId", {
+                      // "" is what an unselected <select> yields; the schema wants an absent value
+                      // rather than an empty string, and null is what the API writes back as
+                      // "no account".
+                      setValueAs: (v) => (v === "" ? null : v),
+                    })}
+                    value={watchedAccountId}
+                    onChange={(e) => setValue("accountId", e.target.value || null)}
+                    className="w-full px-4 py-3 rounded-xl bg-cream-100 text-warm-700 border border-transparent focus:border-amber-300 focus:outline-none"
+                  >
+                    <option value="">
+                      {isTransfer ? "Choose an account" : "No account"}
+                    </option>
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                  {errors.accountId && (
+                    <p className="text-expense text-sm mt-1.5">{errors.accountId.message}</p>
+                  )}
+                </div>
+
+                {isTransfer && (
+                  <div>
+                    <p className="text-sm font-semibold text-warm-600 mb-2">To account</p>
+                    <select
+                      value={watchedTransferAccountId}
+                      onChange={(e) => setValue("transferAccountId", e.target.value || null)}
+                      className="w-full px-4 py-3 rounded-xl bg-cream-100 text-warm-700 border border-transparent focus:border-amber-300 focus:outline-none"
+                    >
+                      <option value="">Choose an account</option>
+                      {accounts
+                        // The source is filtered out rather than merely rejected on submit: a
+                        // transfer to the account it came from nets to zero, and the database
+                        // check constraint refuses it anyway.
+                        .filter((a) => a.id !== watchedAccountId)
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name}
+                          </option>
+                        ))}
+                    </select>
+                    {errors.transferAccountId && (
+                      <p className="text-expense text-sm mt-1.5">
+                        {errors.transferAccountId.message}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Category — quick picks. A transfer uses the one system category, selected for it
+                above, so the picker is not rendered: offering "Groceries" for money moved onto a
+                credit card is the category error the whole feature exists to prevent. */}
+            <div className={cn(isTransfer && "hidden")}>
               <p className="text-sm font-semibold text-warm-600 mb-3">Category</p>
 
               {loadingCategories ? (
@@ -531,8 +631,10 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               )}
             </div>
 
-            {/* Labels */}
-            {!hideLabelPicker && (
+            {/* Labels. Never on a transfer: `getLabelBreakdown` splits a transaction's amount
+                across its labels, so a labelled card payment would divert half of it into a
+                spending label. */}
+            {!hideLabelPicker && !isTransfer && (
               <LabelPicker
                 selectedIds={watchedLabelIds}
                 onChange={(ids) => {
@@ -553,7 +655,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                   setValue("labelIds", ids);
                 }}
                 autoAppliedIds={autoAppliedSnapshot}
-                transactionType={selectedType}
+                transactionType={isTransfer ? "EXPENSE" : selectedType}
               />
             )}
 

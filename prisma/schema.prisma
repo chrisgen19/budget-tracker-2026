@@ -7,9 +7,36 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// INCOME and EXPENSE are the two spending directions and are what every category total,
+/// breakdown and trend is built from.
+///
+/// TRANSFER is deliberately a third member of *this* enum rather than a separate table or a
+/// boolean, because `Category.type` shares it and `createTransactionBatch` already enforces
+/// `category.type === transaction.type`. That invariant, which predates transfers, is what makes
+/// the Transfer system category unusable by an EXPENSE and every spending category unusable by a
+/// TRANSFER — a structural guarantee rather than a rule somebody has to remember.
+///
+/// A TRANSFER moves money between two of the user's own accounts and is therefore *not*
+/// spending: it must never reach a category total. Aggregates that filter `type` explicitly get
+/// that for free. Aggregates written as a binary `type === "INCOME" ? … : …` do not, and
+/// TypeScript cannot catch one, so anything summing transactions must either filter the type or
+/// route through `SPENDING_TYPES` in `src/lib/transfer-filters.ts`.
 enum TransactionType {
   INCOME
   EXPENSE
+  TRANSFER
+}
+
+/// What kind of real-world account money sits in or is owed on.
+///
+/// CREDIT_CARD is the reason this exists: it is a liability, so its balance is negative under the
+/// one signed convention the data uses (positive is money you have), and only the presentation
+/// layer flips it into an "outstanding" figure. See `src/lib/account-balances.ts`.
+enum AccountType {
+  CASH
+  BANK
+  CREDIT_CARD
+  EWALLET
 }
 
 enum UserRole {
@@ -93,6 +120,7 @@ model User {
   /// writes on for days, which fails silently. Null means writes are off.
   mcpWritesEnabledUntil   DateTime?     @map("mcp_writes_enabled_until")
   transactions            Transaction[]
+  accounts                Account[]
   categories              Category[]
   scanLogs                ScanLog[]
   scheduledTransactions   ScheduledTransaction[]
@@ -172,6 +200,43 @@ model Category {
   @@map("categories")
 }
 
+/// A real-world place money sits: a wallet, a bank account, an e-wallet, or a credit card.
+///
+/// The balance is **derived**, never stored. Transactions here are edited, deleted, backdated and
+/// created days late by receipt scanning, so a stored running total drifts and nothing in the app
+/// would notice. `getAccountBalances` recomputes it from the rows themselves.
+///
+/// One signed convention throughout: positive is money you have, negative is money you owe. A
+/// credit card is simply an account whose balance is normally negative, so `openingBalance` for a
+/// card carrying a starting debt is entered as a negative number. Nothing special-cases card
+/// arithmetic; only the UI flips the sign to show "outstanding".
+model Account {
+  id             String      @id @default(cuid())
+  userId         String      @map("user_id")
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  type           AccountType
+  /// Balance before the first transaction the app knows about. Existing rows carry no account,
+  /// so a balance computed purely from transactions would start every account at zero and be
+  /// wrong from day one. This is where the true starting figure goes.
+  openingBalance Float       @default(0) @map("opening_balance")
+  /// Credit cards only; used to show headroom. Null everywhere else.
+  creditLimit    Float?      @map("credit_limit")
+  /// Archive rather than delete. `Transaction.accountId` is `SetNull`, so deleting an account
+  /// would silently detach every row that referenced it and change historical balances.
+  isActive       Boolean     @default(true) @map("is_active")
+  color          String      @default("#8B6FC0")
+  icon           String      @default("Wallet")
+  transactions      Transaction[] @relation("TransactionAccount")
+  transfersReceived Transaction[] @relation("TransactionTransferAccount")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  @@unique([userId, name])
+  @@index([userId, isActive])
+  @@map("accounts")
+}
+
 model Transaction {
   id               String          @id @default(cuid())
   amount           Float
@@ -197,6 +262,17 @@ model Transaction {
   mcpTokenId       String?                @map("mcp_token_id")
   billId           String?                @map("bill_id")
   bill             ScheduledTransaction?  @relation(fields: [billId], references: [id], onDelete: SetNull)
+  /// Which account the money moved through. For a TRANSFER this is the *source* — the side money
+  /// leaves. Nullable because every row that existed before accounts did has no answer, and
+  /// inventing one would be worse than admitting it: an unassigned row is simply outside every
+  /// account balance.
+  accountId        String?                @map("account_id")
+  account          Account?               @relation("TransactionAccount", fields: [accountId], references: [id], onDelete: SetNull)
+  /// The destination of a TRANSFER. Set if and only if `type` is TRANSFER — enforced by the
+  /// `transfer_shape` check constraint, because this is the invariant every balance depends on
+  /// and application-level validation does not survive a hand-written UPDATE.
+  transferAccountId String?               @map("transfer_account_id")
+  transferAccount   Account?              @relation("TransactionTransferAccount", fields: [transferAccountId], references: [id], onDelete: SetNull)
   labels           TransactionLabel[]
   createdAt        DateTime               @default(now()) @map("created_at")
   updatedAt        DateTime               @updatedAt @map("updated_at")
@@ -207,6 +283,8 @@ model Transaction {
   @@index([billId])
   @@index([userId, clientBatchId])
   @@index([userId, createdVia])
+  @@index([accountId])
+  @@index([transferAccountId])
   @@map("transactions")
 }
 

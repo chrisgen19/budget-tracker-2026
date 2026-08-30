@@ -11,6 +11,9 @@ import { TransactionType } from "@prisma/client";
  * category the prompt names is either seeded here or listed as deliberately deployment-specific,
  * which is only possible if both sides can import this list.
  */
+/** Name of the one system category every transfer is filed under. */
+export const TRANSFER_CATEGORY_NAME = "Transfer";
+
 export const DEFAULT_CATEGORIES = [
   // Expense categories
   { name: "Food & Dining", type: TransactionType.EXPENSE, icon: "UtensilsCrossed", color: "#E07C4F" },
@@ -33,6 +36,15 @@ export const DEFAULT_CATEGORIES = [
   { name: "Investments", type: TransactionType.INCOME, icon: "TrendingUp", color: "#8B6FC0" },
   { name: "Side Business", type: TransactionType.INCOME, icon: "Store", color: "#E07C4F" },
   { name: "Other Income", type: TransactionType.INCOME, icon: "MoreHorizontal", color: "#5B8DEF" },
+
+  // The single category a TRANSFER may use. A transfer moves money between two of the user's own
+  // accounts and is not spending, so this must never appear beside real categories in a picker or
+  // a breakdown — `GET /api/categories` hides it unless `type=TRANSFER` is asked for explicitly.
+  //
+  // Listed here even though migration 20260830100001 is what actually creates it (the seed does
+  // not run on deploy, and a transfer is unwritable without this row). Leaving it out would make
+  // `findOrphanedDefaults` report it as an abandoned default on every seed run.
+  { name: TRANSFER_CATEGORY_NAME, type: TransactionType.TRANSFER, icon: "ArrowLeftRight", color: "#8B7E6A" },
 ];
 
 /** The minimum shape needed to compare a stored category against the seeded list. */

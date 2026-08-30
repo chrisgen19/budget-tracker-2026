@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
+import { netDelta } from "@/lib/transfer-filters";
 
 export async function GET(request: Request) {
   const userId = await getAuthUserId();
@@ -172,17 +173,17 @@ export async function GET(request: Request) {
 
   // Balance trend: daily running balance over the 30-day window
   // Derive prior balance from all-time totals minus window transactions
-  const windowNet = trendWindowTx.reduce(
-    (sum, t) => sum + (t.type === "INCOME" ? t.amount : -t.amount),
-    0
-  );
+  // `netDelta` rather than a `type === "INCOME" ? … : -…` ternary: that shape files a TRANSFER
+  // as an expense, so paying a credit-card bill would drop the running balance by the payment on
+  // top of the purchases it settles — the exact double-count accounts were added to remove.
+  const windowNet = trendWindowTx.reduce((sum, t) => sum + netDelta(t), 0);
   const priorBalance = runningBalance - windowNet;
 
   // Group window transactions by day (in user's timezone)
   const txByDay = new Map<string, number>();
   for (const t of trendWindowTx) {
     const key = toLocalDateKey(new Date(t.date));
-    const delta = t.type === "INCOME" ? t.amount : -t.amount;
+    const delta = netDelta(t);
     txByDay.set(key, (txByDay.get(key) ?? 0) + delta);
   }
 

@@ -2,6 +2,67 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-30 - Accounts, and the credit-card bill that was counted twice
+
+Every transaction was purely categorical: an amount, a date, a category. Nothing recorded *which*
+card or account the money moved through, which left two questions unanswerable and one of them
+actively harmful.
+
+The harmless one first: "how much of my BPI balance is transportation" had no answer, because the
+app had never heard of BPI. The harmful one is that there was no correct way to log a credit-card
+bill payment. Log the individual purchases *and* the monthly bill, and the same money is counted
+twice — once as a ride, again as a payment. Log only the bill, and category-level accuracy is gone:
+a single "BPI ₱12,400" row says nothing about where it went.
+
+`Account` fixes both by adding the missing dimension rather than changing the existing one.
+Transactions gain a nullable `accountId`, so every one of the 760 rows that predates this is still
+valid and simply sits outside every balance — there is no correct backfill, and `openingBalance` is
+where the true starting figure goes instead. Balances are **derived**, never stored: rows here are
+edited, deleted, backdated, and created days late by receipt scanning, so an incrementally
+maintained running total drifts and nothing in the app would notice.
+
+The double-count is fixed at the level of the arithmetic. `TRANSFER` is a third `TransactionType`,
+and a transfer carries both sides — `accountId` is where money leaves, `transferAccountId` where it
+lands. The July ride stays an EXPENSE on the card under Transportation. The August bill payment is a
+TRANSFER from checking into the card. Transportation is charged once, checking falls once, the card
+returns to zero, and no category total moves when the bill is paid.
+
+Putting TRANSFER in the shared enum rather than in a table of its own buys a structural guarantee
+from code that already existed: `Category.type` is the same enum, and `createTransactionBatch` has
+always enforced `category.type === transaction.type`, so the one Transfer system category cannot be
+used by an expense and no spending category can be used by a transfer. That category is created by
+the **migration**, not the seed — `pnpm db:seed` is deliberately not part of a deploy, so seeding it
+would have shipped the feature while the only category it may use did not yet exist.
+
+The cost of that choice is that TypeScript cannot protect the code that gets it wrong. Nothing
+switches exhaustively on `TransactionType`; the dangerous shape is a binary ternary —
+`t.type === "INCOME" ? t.amount : -t.amount` — which compiles perfectly and files every transfer as
+an expense. Adding one enum member made six sites wrong at once: the dashboard's running balance and
+its balance-trend series, the analytics cash-flow buckets and its "ALL" category breakdown,
+`search_transactions`' per-category subtotals, the CSV export, and the analytics "top transactions"
+list, where a card payment is the largest row of most months and none of the spending. All six now
+route through `transfer-filters.ts` (`netDelta`, `isSpending`, `SPENDING_ONLY`), so the safe
+behaviour is the one that is easy to reach for. Everything else — `getSpendingByCategory`,
+`getTopExpenses`, `getLabelBreakdown`, `getBudgetOverview`, `getMonthlySummary`,
+`getSpendingTrends` — already filtered `type` explicitly and excluded transfers for free.
+
+Two smaller decisions worth recording. The database carries the invariant, not just the Zod schema:
+a check constraint requires `transfer_account_id` to be set exactly when the type is TRANSFER and
+never to equal `account_id`, because a hand-written UPDATE or a future write path that forgets the
+rule would otherwise produce money that leaves one account and arrives nowhere. And a transfer is
+never auto-labelled — label schedules classify spending by *when* it happened, and a card bill
+settled on a Tuesday afternoon would land inside a weekday work window, where `getLabelBreakdown`
+would split half its amount into a spending label.
+
+One sign convention throughout: positive is money you have, negative is money you owe. A credit card
+is not a special case in the arithmetic, only in how it is presented — `outstanding` is `-balance`,
+flipped at the edge, and normalised so a fully paid card reads `0` rather than `-0`.
+
+Migration is split in two on purpose. PostgreSQL permits `ALTER TYPE ... ADD VALUE` inside a
+transaction but forbids *using* the new value until it commits, and `prisma migrate deploy` runs each
+file in one transaction, so the check constraint and the Transfer category live in a second file.
+Merging them back together fails at deploy with `unsafe use of new value "TRANSFER"`.
+
 ## 2026-08-30 - A label that went nowhere
 
 A GCash receipt sent to the Telegram bot with the caption

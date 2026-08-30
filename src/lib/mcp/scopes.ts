@@ -82,6 +82,10 @@ export const MCP_TOOL_SCOPES = {
   get_spending_trends: "budget:read",
   get_budget_overview: "budget:read",
   get_category_list: "budget:read",
+  // Under budget:read rather than a scope of its own: a balance is an aggregate of the same
+  // spending this scope already returns, so a separate one would narrow nothing a caller could
+  // not already compute from get_budget_overview.
+  get_account_balances: "budget:read",
   get_top_expenses: "transactions:read",
   search_transactions: "transactions:read",
   get_label_breakdown: "labels:read",

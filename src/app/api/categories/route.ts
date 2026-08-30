@@ -14,8 +14,16 @@ export async function GET(request: Request) {
     OR: [{ isDefault: true }, { userId }],
   };
 
-  if (type === "INCOME" || type === "EXPENSE") {
+  if (type === "INCOME" || type === "EXPENSE" || type === "TRANSFER") {
     where.type = type;
+  } else {
+    // Hide the Transfer system category unless it was asked for by name.
+    //
+    // Filtering here rather than in each consumer keeps it out of the categories page, both
+    // quick-category pickers and the transaction form in one move. Those all render a category as
+    // `type === "INCOME" ? "Income" : "Expense"`, so an unfiltered Transfer row would show up
+    // labelled "Expense" — a category that cannot hold an expense, offered for expenses.
+    where.type = { in: ["INCOME", "EXPENSE"] };
   }
 
   const categories = await prisma.category.findMany({

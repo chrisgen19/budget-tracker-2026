@@ -1,3 +1,5 @@
+import type { TransactionType } from "@/lib/budget-query-types";
+import { isSpending } from "@/lib/transfer-filters";
 import type {
   AnalyticsCategoryTrendPoint,
   AnalyticsCategoryTrendSeries,
@@ -104,7 +106,10 @@ export const computeCategoryTrends = (
 interface TopTransactionInput {
   id: string;
   amount: number;
-  type: "INCOME" | "EXPENSE";
+  /** Widened when transfers arrived. `selectTopTransactions` drops them: "your biggest
+   *  transactions" means spending, and a card bill payment is the largest row of most months
+   *  while being none of it. */
+  type: TransactionType;
   description: string;
   date: Date;
   category: { name: string; color: string; icon: string };
@@ -118,7 +123,8 @@ export const selectTopTransactions = (
   multiYear: boolean,
   limit = 5,
 ): AnalyticsTopTransaction[] =>
-  [...transactions]
+  transactions
+    .filter(isSpending)
     .sort((a, b) => b.amount - a.amount)
     .slice(0, limit)
     .map((t) => {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { transactionSchema } from "@/lib/validations";
+import { accountIdsAreUsable } from "@/lib/account-guard";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -25,6 +26,18 @@ export async function PUT(request: Request, { params }: RouteParams) {
 
     const body = await request.json();
     const validated = transactionSchema.parse(body);
+
+    if (
+      !(await accountIdsAreUsable(prisma, userId, [
+        validated.accountId,
+        validated.transferAccountId,
+      ]))
+    ) {
+      return NextResponse.json(
+        { error: "One or more accounts are invalid, archived, or do not belong to you" },
+        { status: 400 }
+      );
+    }
 
     // Validate label ownership before writing (only when labelIds is explicitly provided)
     const hasLabelIds = validated.labelIds !== undefined;
@@ -76,6 +89,10 @@ export async function PUT(request: Request, { params }: RouteParams) {
           type: validated.type,
           date: new Date(validated.date),
           categoryId: validated.categoryId,
+          // Written unconditionally, including back to null. Clearing the account on an edit is a
+          // real intent, and a `...(x && {})` spread would silently ignore it.
+          accountId: validated.accountId ?? null,
+          transferAccountId: validated.transferAccountId ?? null,
         },
       });
 

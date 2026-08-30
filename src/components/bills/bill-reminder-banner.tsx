@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import type { CSSProperties } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, ChevronRight, Check, Clock, FastForward, Pencil, ChevronUp, CheckCheck, X } from "lucide-react";
+import { asSpendingType } from "@/lib/transfer-filters";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { cn, formatCurrency } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
@@ -127,7 +128,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
     onPayAndEdit({
       amount: bill.amount,
       description: bill.description,
-      type: bill.type,
+      type: asSpendingType(bill.type),
       date: combineAccountDateWithTime(datePart, new Date(), user.timezoneOffset),
       categoryId: bill.categoryId,
       billId: bill.id,

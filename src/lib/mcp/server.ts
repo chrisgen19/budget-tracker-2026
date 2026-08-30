@@ -28,6 +28,7 @@ import {
   getBillHistory,
   getReceiptItems,
 } from "../budget-queries";
+import { getAccountBalances } from "../account-balances";
 import type { PrismaClient } from "../budget-query-types";
 import { READ_ONLY_SCOPES, MCP_TOOL_SCOPES, type McpScope, type McpToolName } from "./scopes";
 import { resolveWritePermission } from "./tokens";
@@ -54,6 +55,7 @@ import {
   budgetOverviewOutput,
   upcomingBillsOutput,
   categoryListOutput,
+  accountBalancesOutput,
   labelBreakdownOutput,
   labelListOutput,
   billHistoryOutput,
@@ -522,6 +524,42 @@ export const createBudgetMcpServer = ({
     async ({ type }) => {
       const result = await getCategoryList(prisma, userId, { type });
       const payload = { categories: result };
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+        structuredContent: structured(payload),
+      };
+    }
+  );
+
+  registered.get_account_balances = server.registerTool(
+    "get_account_balances",
+    {
+      title: "Account balances",
+      description:
+        "List the user's accounts (cash, bank, credit card, e-wallet) with the balance derived " +
+        "from their transactions. Balances are signed: positive is money held, negative is money " +
+        "owed, so a credit card normally reads negative and its `outstanding` field is what is " +
+        "owed on it. Use this to find account IDs for create_transactions, and note that a " +
+        "transfer between two accounts is not spending and never appears in any category total.",
+      inputSchema: {
+        includeInactive: z
+          .boolean()
+          .optional()
+          .describe("Include archived accounts. Archived accounts cannot receive new transactions."),
+        asOf: z
+          .string()
+          .regex(LOCAL_DAY_REGEX, "asOf must be a local day, YYYY-MM-DD")
+          .optional()
+          .describe(
+            "Balances as at the end of this local day, inclusive. Omit for balances right now."
+          ),
+      },
+      outputSchema: accountBalancesOutput,
+      annotations: { readOnlyHint: true },
+    },
+    async (params) => {
+      const result = await getAccountBalances(prisma, userId, { ...params, timezoneOffset });
+      const payload = { accounts: result };
       return {
         content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
         structuredContent: structured(payload),

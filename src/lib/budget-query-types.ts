@@ -4,7 +4,22 @@ import type { PrismaClient } from "@prisma/client";
 export type { PrismaClient };
 
 // Common filter types
-export type TransactionType = "INCOME" | "EXPENSE";
+
+/**
+ * Includes TRANSFER, which is money moving between two of the user's own accounts.
+ *
+ * This union is pinned to the MCP output schemas by `assertExact` in `src/lib/mcp/output-schemas.ts`,
+ * so widening it is a deliberate change to the wire contract every MCP client reads: a row from
+ * `search_transactions` can now carry `type: "TRANSFER"`. The aggregates clients actually rely on
+ * are unaffected — `totals.income`, `totals.expenses`, `getSpendingByCategory` and every other
+ * spending figure filter the type explicitly and exclude transfers by construction.
+ */
+export type TransactionType = "INCOME" | "EXPENSE" | "TRANSFER";
+
+/** The two directions that represent real spending. See `src/lib/transfer-filters.ts`. */
+export type SpendingType = "INCOME" | "EXPENSE";
+
+export type AccountType = "CASH" | "BANK" | "CREDIT_CARD" | "EWALLET";
 
 export interface DateRange {
   startDate: Date;
@@ -65,6 +80,8 @@ export interface ResolvedPeriod {
 
 /** Defaults to the current month when no period is given. */
 export interface SpendingByCategoryParams extends PeriodParams {
+  /** Restrict to spending that moved through one account. Omit for every account. */
+  accountId?: string;
   /** User's timezone offset in minutes (`getTimezoneOffset()` convention, so UTC+8 is
    *  -480), matching `users.timezone_offset`. Period boundaries are resolved in this
    *  timezone. Omit to fall back to UTC. */
@@ -553,4 +570,47 @@ export interface ReceiptItems {
    *  by comparing lengths, and a caller that forgets reports a partial receipt as a whole one. */
   truncated: boolean;
   items: ReceiptItem[];
+}
+
+// --- accounts ---
+
+export interface AccountBalancesParams {
+  /** Include archived accounts. Defaults to false. */
+  includeInactive?: boolean;
+  /** Only balances as of the end of this local day, YYYY-MM-DD. Omit for "right now". */
+  asOf?: string;
+  /** User's timezone offset in minutes (`getTimezoneOffset()` convention, UTC+8 is -480). */
+  timezoneOffset?: number;
+}
+
+export interface AccountBalance {
+  id: string;
+  name: string;
+  type: AccountType;
+  icon: string;
+  color: string;
+  isActive: boolean;
+  /** Balance before the first transaction the app knows about. */
+  openingBalance: number;
+  /**
+   * Signed, one convention throughout: positive is money you have, negative is money you owe.
+   *
+   * A credit card therefore normally sits negative. Nothing downstream special-cases card
+   * arithmetic; `outstanding` below is the only place the sign is flipped, so there is exactly one
+   * definition of the balance and one place that presents it differently.
+   */
+  balance: number;
+  /**
+   * What you currently owe on a liability account, i.e. `-balance` for a CREDIT_CARD, and null
+   * for every other type. Never negative-zero: a fully paid card reads 0.
+   */
+  outstanding: number | null;
+  /** Credit cards only: `creditLimit - outstanding`, null when no limit is recorded. */
+  availableCredit: number | null;
+  creditLimit: number | null;
+  /** Money that arrived on this account within the window (income + transfers in). */
+  inflow: number;
+  /** Money that left it (expenses + transfers out). */
+  outflow: number;
+  transactionCount: number;
 }

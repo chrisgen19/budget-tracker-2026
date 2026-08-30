@@ -14,6 +14,7 @@ import {
   Shield,
   AlertTriangle,
 } from "lucide-react";
+import { asSpendingType } from "@/lib/transfer-filters";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { useUser } from "@/components/user-provider";
@@ -50,6 +51,7 @@ const NAV_ITEMS = [
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/bills", label: "Bills", icon: CalendarClock },
+  { href: "/accounts", label: "Accounts", icon: Wallet },
   { href: "/categories", label: "Categories", icon: Tags },
   { href: "/labels", label: "Labels", icon: Tag },
 ];
@@ -136,7 +138,8 @@ export function AppShell({ children }: AppShellProps) {
     scan.updateItem(editingItemId, {
       amount: input.amount,
       description: input.description,
-      type: input.type,
+      // A scanned receipt is always spending; the multi-scan review does not offer transfers.
+      type: asSpendingType(input.type),
       date: input.date,
       categoryId: input.categoryId,
       labelIds: input.labelIds,

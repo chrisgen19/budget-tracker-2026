@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
+import { isSpending } from "@/lib/transfer-filters";
 import { analyticsQuerySchema } from "@/lib/validations";
 import type {
   AnalyticsCategoryItem,
@@ -58,8 +59,13 @@ const computePeriodData = (
     transactionCount: transactions.length,
   };
 
-  // Category breakdown (filtered by type)
-  const filtered = type === "ALL" ? transactions : transactions.filter((t) => t.type === type);
+  // Category breakdown (filtered by type). "ALL" means both spending directions, never transfers:
+  // a transfer is filed under the Transfer system category, and letting it through would list
+  // "Transfer" beside Groceries as though moving money between your own accounts were spending.
+  const filtered =
+    type === "ALL"
+      ? transactions.filter(isSpending)
+      : transactions.filter((t) => t.type === type);
   const categoryMap = new Map<string, AnalyticsCategoryItem>();
   const total = filtered.reduce((sum, t) => sum + t.amount, 0);
 
@@ -542,8 +548,10 @@ export async function GET(request: Request) {
     const key = toBucketKey(new Date(t.date), granularity, tzMs);
     const bucket = periodMap.get(key);
     if (bucket) {
+      // Explicit on both directions rather than `if INCOME … else …`, which would add every
+      // transfer to the expense bucket and distort the cash-flow chart.
       if (t.type === "INCOME") bucket.income += t.amount;
-      else bucket.expenses += t.amount;
+      else if (t.type === "EXPENSE") bucket.expenses += t.amount;
     }
   }
 

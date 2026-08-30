@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { transactionSchema, transactionSourceSchema } from "@/lib/validations";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
+import { accountIdsAreUsable } from "@/lib/account-guard";
 
 export async function GET(request: Request) {
   const userId = await getAuthUserId();
@@ -103,6 +104,18 @@ export async function POST(request: Request) {
     const body = await request.json();
     const validated = transactionSchema.parse(body);
 
+    if (
+      !(await accountIdsAreUsable(prisma, userId, [
+        validated.accountId,
+        validated.transferAccountId,
+      ]))
+    ) {
+      return NextResponse.json(
+        { error: "One or more accounts are invalid, archived, or do not belong to you" },
+        { status: 400 }
+      );
+    }
+
     // Validate label ownership and type compatibility before writing
     const verifiedLabelIds: string[] = [];
     if (validated.labelIds && validated.labelIds.length > 0) {
@@ -126,7 +139,9 @@ export async function POST(request: Request) {
 
     // Server-side auto-label when labelIds not provided (hidden-label flows, external callers).
     // When labelIds is explicitly [] the user opted out — respect that.
-    if (validated.labelIds === undefined) {
+    // A transfer is never auto-labelled: schedules classify *spending* by when it happened, and
+    // a card bill settled on a Tuesday afternoon is not work spending — it is not spending at all.
+    if (validated.labelIds === undefined && validated.type !== "TRANSFER") {
       const ctx = await getScheduleContext(userId);
       if (ctx) {
         const scheduledId = matchScheduledLabel(new Date(validated.date), ctx, validated.type);
@@ -142,6 +157,8 @@ export async function POST(request: Request) {
           type: validated.type,
           date: new Date(validated.date),
           categoryId: validated.categoryId,
+          accountId: validated.accountId ?? null,
+          transferAccountId: validated.transferAccountId ?? null,
           userId,
         },
       });

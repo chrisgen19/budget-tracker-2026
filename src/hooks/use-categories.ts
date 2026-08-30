@@ -20,16 +20,21 @@ export interface QuickPreferences {
 /*  Query key factory                                                  */
 /* ------------------------------------------------------------------ */
 
+/** Includes TRANSFER so the transaction form can resolve the one system category a transfer uses.
+ *  `GET /api/categories` hides that category unless it is asked for by name, so no other caller
+ *  sees it. */
+export type CategoryQueryType = "INCOME" | "EXPENSE" | "TRANSFER";
+
 export const categoryKeys = {
   all: ["categories"] as const,
-  byType: (type?: "INCOME" | "EXPENSE") => ["categories", type] as const,
+  byType: (type?: CategoryQueryType) => ["categories", type] as const,
 };
 
 /* ------------------------------------------------------------------ */
 /*  Fetch helpers                                                      */
 /* ------------------------------------------------------------------ */
 
-const fetchCategories = async (type?: "INCOME" | "EXPENSE"): Promise<Category[]> => {
+const fetchCategories = async (type?: CategoryQueryType): Promise<Category[]> => {
   const params = type ? `?type=${type}` : "";
   const res = await fetch(`/api/categories${params}`);
   if (!res.ok) throw new Error("Failed to fetch categories");
@@ -41,7 +46,7 @@ const fetchCategories = async (type?: "INCOME" | "EXPENSE"): Promise<Category[]>
 /* ------------------------------------------------------------------ */
 
 /** Cached categories query — pass type to filter, omit for all */
-export function useCategoriesQuery(type?: "INCOME" | "EXPENSE") {
+export function useCategoriesQuery(type?: CategoryQueryType) {
   return useQuery({
     queryKey: categoryKeys.byType(type),
     queryFn: () => fetchCategories(type),

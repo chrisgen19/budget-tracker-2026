@@ -17,14 +17,90 @@ export const registerSchema = z.object({
   path: ["confirmPassword"],
 });
 
-export const transactionSchema = z.object({
+/**
+ * The fields of a transaction, before the transfer rules are applied.
+ *
+ * Kept as a bare `ZodObject` so `batchTransactionSchema` can `.extend()` it. Applying `.refine()`
+ * first would produce a `ZodEffects`, which has no `.extend`, and unwrapping it with
+ * `.innerType()` only strips one refinement of the four.
+ */
+const transactionBaseSchema = z.object({
   amount: z.number().positive("Amount must be greater than 0"),
   description: z.string().max(255).default(""),
-  type: z.enum(["INCOME", "EXPENSE"]),
+  type: z.enum(["INCOME", "EXPENSE", "TRANSFER"]),
   date: z.string().min(1, "Date is required"),
   categoryId: z.string().min(1, "Category is required"),
   labelIds: z.array(z.string()).optional(),
+  /** Where the money moved through. For a TRANSFER, the side it leaves. */
+  accountId: z.string().min(1).nullish(),
+  /** Where a TRANSFER lands. Set if and only if `type` is TRANSFER. */
+  transferAccountId: z.string().min(1).nullish(),
 });
+
+/** The shape every write path checks, whatever else it adds on top. */
+type TransferShape = {
+  type: "INCOME" | "EXPENSE" | "TRANSFER";
+  accountId?: string | null;
+  transferAccountId?: string | null;
+};
+
+/**
+ * Tie `type`, `accountId` and `transferAccountId` together.
+ *
+ * Applied to the single-transaction schema and the batch schema alike, so the MCP and receipt
+ * write paths cannot produce a shape the form would refuse. It mirrors the
+ * `transactions_transfer_shape_check` constraint added in migration 20260830100001: the database
+ * is what actually guarantees the invariant, and this is what turns a violation into a readable
+ * field error instead of a raw Postgres exception surfacing as a 500.
+ */
+const withTransferRules = <Output extends TransferShape, Def extends z.ZodTypeDef, Input>(
+  // Spelled out as the three-parameter `ZodType` rather than `T extends z.ZodType<TransferShape>`:
+  // the shorter constraint erases the schema's real output type down to `TransferShape`, so every
+  // consumer of the result loses `amount`, `date`, `labelIds` and the rest.
+  schema: z.ZodType<Output, Def, Input>
+) =>
+  schema
+    .refine((d) => d.type !== "TRANSFER" || !!d.transferAccountId, {
+      message: "Choose the account the money goes to",
+      path: ["transferAccountId"],
+    })
+    .refine((d) => d.type !== "TRANSFER" || !!d.accountId, {
+      // A transfer with no source is money arriving from nowhere: it raises the destination
+      // balance while lowering nothing, the same silent imbalance this feature exists to remove.
+      // An ordinary income or expense may legitimately have no account.
+      message: "Choose the account the money comes from",
+      path: ["accountId"],
+    })
+    .refine((d) => d.type === "TRANSFER" || !d.transferAccountId, {
+      message: "Only a transfer can have a destination account",
+      path: ["transferAccountId"],
+    })
+    .refine((d) => !d.transferAccountId || d.transferAccountId !== d.accountId, {
+      message: "Choose two different accounts",
+      path: ["transferAccountId"],
+    });
+
+export const transactionSchema = withTransferRules(transactionBaseSchema);
+
+export const accountSchema = z.object({
+  name: z.string().min(1, "Name is required").max(50),
+  type: z.enum(["CASH", "BANK", "CREDIT_CARD", "EWALLET"]),
+  /**
+   * Signed the same way balances are: positive is money you have, negative is money you owe. A
+   * credit card already carrying debt is entered as a negative number, which is why this is not
+   * constrained to be positive.
+   */
+  openingBalance: z.number().default(0),
+  creditLimit: z.number().positive().nullish(),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Invalid color format").default("#8B6FC0"),
+  icon: z.string().min(1).default("Wallet"),
+  isActive: z.boolean().default(true),
+}).refine((d) => d.type === "CREDIT_CARD" || d.creditLimit == null, {
+  message: "Only a credit card can have a credit limit",
+  path: ["creditLimit"],
+});
+
+export type AccountInput = z.infer<typeof accountSchema>;
 
 export const receiptBreakdownLineItemSchema = z.object({
   name: z.string().max(255),
@@ -55,10 +131,12 @@ export const receiptBreakdownMetaSchema = z
   })
   .strict();
 
-export const batchTransactionSchema = transactionSchema.extend({
+const batchTransactionBaseSchema = transactionBaseSchema.extend({
   receiptGroupId: z.string().optional(),
   receiptBreakdown: receiptBreakdownMetaSchema.optional(),
 });
+
+export const batchTransactionSchema = withTransferRules(batchTransactionBaseSchema);
 
 /** One item accepted by `createTransactionBatch`. Exported so the shared write service and the
  *  MCP tool type against the schema rather than restating its shape. */
@@ -107,6 +185,7 @@ export const changePasswordSchema = z.object({
 export type LoginInput = z.infer<typeof loginSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type TransactionInput = z.infer<typeof transactionSchema>;
+export type SpendingType = "INCOME" | "EXPENSE";
 export type LabelInput = z.infer<typeof labelSchema>;
 export type LabelScheduleInput = z.infer<typeof labelScheduleSchema>;
 export type CategoryInput = z.infer<typeof categorySchema>;
@@ -513,11 +592,13 @@ export const resolveTransactionDate = (
   return new Date(utcMs + timezoneOffset * 60_000).toISOString();
 };
 
-export const mcpTransactionSchema = batchTransactionSchema.extend({
-  date: z.string().refine(isRealDate, {
-    message: "date must be a real calendar date, e.g. 2026-08-25",
-  }),
-});
+export const mcpTransactionSchema = withTransferRules(
+  batchTransactionBaseSchema.extend({
+    date: z.string().refine(isRealDate, {
+      message: "date must be a real calendar date, e.g. 2026-08-25",
+    }),
+  })
+);
 
 /**
  * Write-lease duration, in minutes from now.

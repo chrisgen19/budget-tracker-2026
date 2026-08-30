@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, CalendarDays, ChevronRight, Plus } from "lucide-react";
+import { asSpendingType } from "@/lib/transfer-filters";
 import { scheduledTransactionSchema, type ScheduledTransactionInput } from "@/lib/validations";
 import { formatDateInput, getCurrencySymbol, cn } from "@/lib/utils";
 import { MAX_QUICK_CATEGORIES, resolveQuickCategories } from "@/lib/quick-categories";
@@ -72,7 +73,7 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
   } = useForm<ScheduledTransactionInput>({
     resolver: zodResolver(scheduledTransactionSchema),
     defaultValues: {
-      type: bill?.type ?? "EXPENSE",
+      type: bill ? asSpendingType(bill.type) : "EXPENSE",
       amount: bill?.amount ?? undefined,
       description: bill?.description ?? "",
       categoryId: bill?.categoryId ?? "",
