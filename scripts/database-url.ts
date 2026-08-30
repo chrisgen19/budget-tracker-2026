@@ -35,7 +35,14 @@ export const parseEnvValue = (contents: string, key: string): string | undefined
   let found: string | undefined;
 
   for (const line of contents.split("\n")) {
-    const match = line.match(/^\s*(?:export\s+)?([\w.-]+)\s*(?:=|:)\s*(.*)$/);
+    // The separator is dotenv's, character for character: `\s*=\s*` or `:\s+`. The two halves
+    // differ, and the difference is load-bearing -- a colon takes no whitespace before it and
+    // *requires* whitespace after. Probed against `prisma migrate status`: `KEY: v` is read,
+    // `KEY:v` and `KEY \t: v` are both ignored, `KEY =v` is read. A looser separator here is a
+    // silent bypass rather than a leniency: a `.env` holding a remote URL above a typo'd
+    // `DATABASE_URL:postgresql://localhost/db` had Prisma use the remote line, this parser take
+    // the localhost one, and the guard wave the migration through.
+    const match = line.match(/^\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*|:\s+)(.*)$/);
     if (!match || match[1] !== key) continue;
 
     const raw = match[2].trim();

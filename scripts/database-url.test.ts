@@ -25,6 +25,28 @@ describe("parseEnvValue", () => {
 
   it("accepts `export` and surrounding whitespace", () => {
     expect(parseEnvValue(`  export DATABASE_URL = "${URL_}"  `, "DATABASE_URL")).toBe(URL_);
+    expect(parseEnvValue(`DATABASE_URL =${URL_}`, "DATABASE_URL")).toBe(URL_);
+  });
+
+  // dotenv's separator is `\s*=\s*` or `:\s+`, and the halves differ: a colon takes no whitespace
+  // before it and requires whitespace after. Each line below was probed against
+  // `prisma migrate status` and the verdict is what it resolved.
+  it("accepts a colon separator only when whitespace follows it", () => {
+    expect(parseEnvValue(`DATABASE_URL: ${URL_}`, "DATABASE_URL")).toBe(URL_);
+    expect(parseEnvValue(`DATABASE_URL:\t${URL_}`, "DATABASE_URL")).toBe(URL_);
+  });
+
+  // The bypass this closes: a `.env` holding a remote URL above a typo'd colon line had Prisma use
+  // the remote one, this parser take the local one, and the guard clear the migration.
+  it("ignores a colon line dotenv would ignore, and keeps the value dotenv keeps", () => {
+    expect(parseEnvValue("DATABASE_URL:postgres://u:p@localhost/nospace", "DATABASE_URL")).toBeUndefined();
+    expect(parseEnvValue("DATABASE_URL\t:\tpostgres://u:p@localhost/tabbed", "DATABASE_URL")).toBeUndefined();
+
+    const mixed = [
+      'DATABASE_URL="postgres://u:p@remote-host.example:5432/prod"',
+      "DATABASE_URL:postgres://u:p@localhost:5432/local-one",
+    ].join("\n");
+    expect(parseEnvValue(mixed, "DATABASE_URL")).toBe("postgres://u:p@remote-host.example:5432/prod");
   });
 
   // The dangerous divergence. dotenv assigns in a loop, so a later line overwrites an earlier one;

@@ -53,6 +53,13 @@ holding accounts and a year of INCOME/EXPENSE rows assigned to them reports zero
 migration would have dropped the table and the column under it. It now counts accounts and account
 references too, and names all three figures when it refuses.
 
+The separator grammar was the last of these. dotenv accepts `\s*=\s*` or `:\s+`, and the halves are
+not symmetrical: a colon takes no whitespace before it and requires whitespace after. Probed line by
+line against `prisma migrate status`, `KEY: v` is read while `KEY:v` and `KEY\t:\tv` are ignored
+entirely. Accepting the ignored forms was a bypass rather than a leniency -- a `.env` holding a
+remote URL above a typo'd `DATABASE_URL:postgresql://localhost/db` had Prisma use the remote line,
+the parser take the localhost one, and the guard clear the migration.
+
 Four deploys ran green over this. `prisma migrate deploy` compares the folder to the database in one
 direction only -- it reported "33 migrations found... No pending migrations to apply" against a
 database holding 35 -- and `prisma migrate status` calls the same database "up to date" and exits 0.
