@@ -2,6 +2,43 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-30 - A closed PR that reached production anyway
+
+The Telegram bot answered every message with `Invalid prisma.category.findMany() invocation: Value
+'TRANSFER' not found in enum 'TransactionType'`. Nothing in the codebase mentions TRANSFER. The two
+migrations from PR #187 (accounts and transfers) had been applied to the production database from a
+dev machine about thirty seconds after the commit that generated them, and the PR was then closed
+without merging. The schema gained a feature the deployed code had never heard of.
+
+The error is a *read*, not a write. Migration `20260830100001` inserted a category row with
+`type = 'TRANSFER'`, and Prisma validates enum values while deserialising a result. So every
+`category.findMany()` without a `type` filter threw on a row it had just fetched: `GET
+/api/categories`, and through it the transactions-page filter, the categories "All" tab, the
+multi-scan review and mixed-type bulk edits; and `getCategoryList`, and through it the MCP
+`get_category_list` tool, every Telegram message and every Claude Desktop session. Filtered reads
+(`type=EXPENSE`, `type=INCOME`) never saw the row, so receipt scanning and both forms kept working
+and the app looked only partly broken.
+
+`20260830150000_revert_accounts_and_transfers` puts the database back: the Transfer category, the
+check constraint, the `accounts` table, the two transaction columns, the TRANSFER enum value, and
+the two history rows themselves. Every statement is conditional, because the file also runs on
+databases built from zero. PostgreSQL has no `ALTER TYPE ... DROP VALUE`, so the enum is recreated
+and all three columns sharing it re-pointed; the constraint has to go first, since it names the
+literal, and Prisma cannot express CHECK constraints so `migrate diff` does not know it exists. The
+`_prisma_migrations` cleanup is guarded on the table existing, because Prisma replays migrations
+into a shadow database that has no such table and an unguarded delete breaks every future
+`migrate dev`.
+
+Four deploys ran green over this. `prisma migrate deploy` compares the folder to the database in one
+direction only -- it reported "33 migrations found... No pending migrations to apply" against a
+database holding 35 -- and `prisma migrate status` calls the same database "up to date" and exits 0.
+`scripts/check-migration-drift.ts` now runs in `pnpm build`, after `migrate deploy` rather than
+before so a revert can still land, and fails the build naming any applied migration this repo does
+not contain. `scripts/guard-local-db.ts` fronts `db:migrate` and `db:push` and refuses a
+non-localhost `DATABASE_URL` unless `ALLOW_REMOTE_DB=1`; it resolves the URL with `process.env`
+winning over `.env`, matching Prisma, because Node's own `--env-file` inverts that precedence and
+would have read localhost out of the file while Prisma used the production URL beside it.
+
 ## 2026-08-30 - Bulk actions that keep their scope
 
 Transaction selection now survives pagination and infinite-scroll loading, with an explicit
