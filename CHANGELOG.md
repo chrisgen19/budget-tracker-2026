@@ -2,6 +2,22 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-30 - Bulk actions that keep their scope
+
+Transaction selection now survives pagination and infinite-scroll loading, with an explicit
+"select all matching" step before an action expands beyond the rows on screen. The contextual
+desktop and mobile bars support editing one transaction, changing category, adding or removing
+labels, exporting CSV, and confirmed deletion. Selection feedback names the affected count, and
+stale asynchronous responses are ignored when the user changes filters or selection while a
+request is running.
+
+The server owns the expanded selection and every mutation rechecks ownership. New bounded routes
+provide a matching selection snapshot (`POST /api/transactions/selection`) and CSV export
+(`POST /api/transactions/export`); `PATCH /api/transactions/batch` applies atomic category or label
+changes, while `DELETE` performs bulk deletion. `GET /api/transactions/[id]` loads an off-page
+selection for the existing edit form. Spreadsheet-formula prefixes are escaped in exports, and
+transaction, dashboard, analytics, and label caches are reconciled after mutations.
+
 ## 2026-08-30 - A label that went nowhere
 
 A GCash receipt sent to the Telegram bot with the caption

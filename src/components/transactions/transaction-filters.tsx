@@ -23,6 +23,7 @@ import { useDebouncedSearch } from "@/hooks/use-debounced-search";
 import { useFilterToolbarScroll } from "@/hooks/use-filter-toolbar-scroll";
 import { useTransactionFilterOptions } from "@/hooks/use-transaction-filter-options";
 import { accountMonthKey } from "@/lib/account-time";
+import { MAX_TRANSACTION_SEARCH_LENGTH } from "@/lib/transaction-filter-limits";
 import { cn, getCurrencySymbol } from "@/lib/utils";
 
 export interface TransactionFilters {
@@ -231,7 +232,8 @@ function SearchField({ value, onChange }: { value: string; onChange: (value: str
       <input
         type="search"
         value={value}
-        onChange={(event) => onChange(event.target.value)}
+        maxLength={MAX_TRANSACTION_SEARCH_LENGTH}
+        onChange={(event) => onChange(event.target.value.slice(0, MAX_TRANSACTION_SEARCH_LENGTH))}
         placeholder="Search transactions"
         aria-label="Search transactions"
         className="min-h-11 w-full rounded-xl border border-cream-200 bg-cream-50/60 py-2.5 pl-10 pr-12 text-sm text-warm-700 outline-none transition placeholder:text-warm-300 focus:border-amber focus:bg-white focus:ring-2 focus:ring-amber/20"

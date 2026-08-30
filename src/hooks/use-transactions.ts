@@ -10,6 +10,7 @@ import type { TransactionWithCategory, DashboardStats } from "@/types";
 import type { TransactionFilters } from "@/components/transactions/transaction-filters";
 import { labelKeys } from "@/hooks/use-labels";
 import { analyticsKeys } from "@/hooks/use-analytics";
+import type { TransactionSelectionItem } from "@/lib/transaction-bulk";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -49,7 +50,7 @@ export const queryKeys = {
 /*  Fetch helpers                                                      */
 /* ------------------------------------------------------------------ */
 
-const buildTransactionParams = (filters: TransactionFilters, page: number, tz: number) => {
+export const buildTransactionParams = (filters: TransactionFilters, page: number, tz: number) => {
   const params = new URLSearchParams({
     page: String(page),
     limit: "15",
@@ -66,6 +67,17 @@ const buildTransactionParams = (filters: TransactionFilters, page: number, tz: n
   if (filters.sortBy !== "date") params.set("sortBy", filters.sortBy);
   if (filters.sortDir !== "desc") params.set("sortDir", filters.sortDir);
   return params;
+};
+
+const responseError = async (response: Response, fallback: string) => {
+  const body = await response.json().catch(() => null) as { error?: string } | null;
+  return new Error(body?.error || fallback);
+};
+
+export const fetchTransactionById = async (id: string): Promise<TransactionWithCategory> => {
+  const response = await fetch(`/api/transactions/${id}`);
+  if (!response.ok) throw await responseError(response, "Failed to load transaction");
+  return response.json();
 };
 
 export const fetchTransactionsPage = async (
@@ -192,33 +204,49 @@ const replaceTransactionInInfiniteData = (
 const removeTransactionFromInfiniteData = (
   data: InfiniteTransactionsData,
   id: string
-): InfiniteTransactionsData => ({
-  ...data,
-  pages: data.pages.map((page) => ({
-    ...page,
-    transactions: page.transactions.filter((t) => t.id !== id),
-    pagination: {
-      ...page.pagination,
-      total: Math.max(0, page.pagination.total - 1),
-    },
-  })),
-});
+): InfiniteTransactionsData => removeMultipleFromInfiniteData(data, new Set([id]));
 
 /** Remove multiple transactions by IDs from infinite data */
 const removeMultipleFromInfiniteData = (
   data: InfiniteTransactionsData,
   ids: Set<string>
-): InfiniteTransactionsData => ({
-  ...data,
-  pages: data.pages.map((page) => ({
-    ...page,
-    transactions: page.transactions.filter((t) => !ids.has(t.id)),
+): InfiniteTransactionsData => {
+  const removedIds = new Set(
+    data.pages.flatMap((page) => page.transactions.filter((tx) => ids.has(tx.id)).map((tx) => tx.id)),
+  );
+  return {
+    ...data,
+    pages: data.pages.map((page) => {
+      const total = Math.max(0, page.pagination.total - removedIds.size);
+      return {
+        ...page,
+        transactions: page.transactions.filter((transaction) => !ids.has(transaction.id)),
+        pagination: {
+          ...page.pagination,
+          total,
+          totalPages: Math.ceil(total / page.pagination.limit),
+        },
+      };
+    }),
+  };
+};
+
+const removeMultipleFromPaginatedData = (
+  data: TransactionsResponse,
+  ids: Set<string>,
+): TransactionsResponse => {
+  const removed = data.transactions.filter((transaction) => ids.has(transaction.id)).length;
+  const total = Math.max(0, data.pagination.total - removed);
+  return {
+    ...data,
+    transactions: data.transactions.filter((transaction) => !ids.has(transaction.id)),
     pagination: {
-      ...page.pagination,
-      total: Math.max(0, page.pagination.total - ids.size),
+      ...data.pagination,
+      total,
+      totalPages: Math.ceil(total / data.pagination.limit),
     },
-  })),
-});
+  };
+};
 
 /* ------------------------------------------------------------------ */
 /*  Mutation hooks                                                     */
@@ -313,10 +341,11 @@ export function useDeleteTransaction() {
   return useMutation({
     mutationFn: async (id: string) => {
       const res = await fetch(`/api/transactions/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete transaction");
+      if (!res.ok) throw await responseError(res, "Failed to delete transaction");
       return id;
     },
-    onSuccess: (deletedId) => {
+    onSuccess: async (deletedId) => {
+      const deletedIds = new Set([deletedId]);
       // Directly remove from infinite query caches
       queryClient.setQueriesData<InfiniteTransactionsData>(
         { queryKey: queryKeys.transactions.all },
@@ -326,22 +355,24 @@ export function useDeleteTransaction() {
         }
       );
 
-      // Invalidate paginated caches
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.transactions.lists,
-        refetchType: "none",
-      });
+      queryClient.setQueriesData<TransactionsResponse>(
+        { queryKey: queryKeys.transactions.lists },
+        (old) => old ? removeMultipleFromPaginatedData(old, deletedIds) : old,
+      );
 
-      // Invalidate dashboard + analytics
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.dashboard.all,
-      });
-      queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
-
-      // Invalidate label counts
-      queryClient.invalidateQueries({ queryKey: labelKeys.all });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
+        queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
+        queryClient.invalidateQueries({ queryKey: labelKeys.all }),
+      ]);
     },
   });
+}
+
+export interface BulkDeleteResult {
+  deleted: number;
+  ids: string[];
 }
 
 export function useBulkDeleteTransactions() {
@@ -354,12 +385,11 @@ export function useBulkDeleteTransactions() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids }),
       });
-      if (!res.ok) throw new Error("Failed to delete transactions");
-      const data = await res.json() as { deleted: number; ids: string[] };
-      return data.ids;
+      if (!res.ok) throw await responseError(res, "Failed to delete transactions");
+      return res.json() as Promise<BulkDeleteResult>;
     },
-    onSuccess: (deletedIds) => {
-      const idSet = new Set(deletedIds);
+    onSuccess: async (result) => {
+      const idSet = new Set(result.ids);
 
       // Directly remove from infinite query caches
       queryClient.setQueriesData<InfiniteTransactionsData>(
@@ -370,20 +400,91 @@ export function useBulkDeleteTransactions() {
         }
       );
 
-      // Invalidate paginated caches
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.transactions.lists,
-        refetchType: "none",
-      });
+      queryClient.setQueriesData<TransactionsResponse>(
+        { queryKey: queryKeys.transactions.lists },
+        (old) => old ? removeMultipleFromPaginatedData(old, idSet) : old,
+      );
 
-      // Invalidate dashboard + analytics
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.dashboard.all,
-      });
-      queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
+        queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
+        queryClient.invalidateQueries({ queryKey: labelKeys.all }),
+      ]);
+    },
+  });
+}
 
-      // Invalidate label counts
-      queryClient.invalidateQueries({ queryKey: labelKeys.all });
+export function useTransactionSelectionSnapshot() {
+  return useMutation({
+    mutationFn: async ({
+      filters,
+      timezoneOffset,
+    }: {
+      filters: TransactionFilters;
+      timezoneOffset: number;
+    }) => {
+      const response = await fetch("/api/transactions/selection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filters, timezoneOffset }),
+      });
+      if (!response.ok) throw await responseError(response, "Failed to select transactions");
+      return response.json() as Promise<{
+        transactions: TransactionSelectionItem[];
+        count: number;
+      }>;
+    },
+  });
+}
+
+export function useExportTransactions() {
+  return useMutation({
+    mutationFn: async ({ ids, timezoneOffset }: { ids: string[]; timezoneOffset: number }) => {
+      const response = await fetch("/api/transactions/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, timezoneOffset }),
+      });
+      if (!response.ok) throw await responseError(response, "Failed to export transactions");
+      return {
+        blob: await response.blob(),
+        count: Number(response.headers.get("X-Exported-Count") ?? ids.length),
+      };
+    },
+  });
+}
+
+export type BulkUpdateInput =
+  | { ids: string[]; action: "category"; categoryId: string }
+  | { ids: string[]; action: "labels"; operation: "add" | "remove"; labelIds: string[] };
+
+export interface BulkUpdateResult {
+  matched: number;
+  updated: number;
+  changedLinks?: number;
+  ids: string[];
+}
+
+export function useBulkUpdateTransactions() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: BulkUpdateInput) => {
+      const response = await fetch("/api/transactions/batch", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      if (!response.ok) throw await responseError(response, "Failed to update transactions");
+      return response.json() as Promise<BulkUpdateResult>;
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
+        queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
+        queryClient.invalidateQueries({ queryKey: labelKeys.all }),
+      ]);
     },
   });
 }

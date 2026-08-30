@@ -1,10 +1,37 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { transactionSchema } from "@/lib/validations";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
+}
+
+const transactionIdSchema = z.string().trim().min(1).max(100);
+
+export async function GET(_request: Request, { params }: RouteParams) {
+  const userId = await getAuthUserId();
+  if (userId instanceof NextResponse) return userId;
+
+  try {
+    const { id: rawId } = await params;
+    const id = transactionIdSchema.parse(rawId);
+    const transaction = await prisma.transaction.findFirst({
+      where: { id, userId },
+      include: { category: true, bill: true, labels: { include: { label: true } } },
+    });
+
+    if (!transaction) {
+      return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
+    }
+    return NextResponse.json(transaction);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ error: "Invalid transaction ID" }, { status: 400 });
+    }
+    return NextResponse.json({ error: "Failed to load transaction" }, { status: 500 });
+  }
 }
 
 export async function PUT(request: Request, { params }: RouteParams) {

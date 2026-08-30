@@ -27,17 +27,20 @@ export function ConfirmModal({
   loading = false,
 }: ConfirmModalProps) {
   return (
-    <Modal open={open} onClose={onClose} title={title}>
+    <Modal open={open} onClose={loading ? () => {} : onClose} title={title}>
       <div className="text-warm-500 text-sm mb-6">{message}</div>
       <div className="flex gap-3">
         <button
+          type="button"
           onClick={onClose}
+          disabled={loading}
           className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl border border-cream-300 text-warm-500 font-medium text-sm hover:bg-cream-100 transition-colors"
         >
           <X className="w-4 h-4" />
           Cancel
         </button>
         <button
+          type="button"
           onClick={onConfirm}
           disabled={loading}
           className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl bg-expense hover:bg-expense-dark text-white font-medium text-sm transition-colors disabled:opacity-50"

@@ -288,7 +288,7 @@ Active tasks:
 ## API Routes Reference
 - `POST /api/register` — registration with bcrypt + sends verification email
 - `GET/POST /api/transactions` — list (filters/pagination/timezone) + create
-- `PUT/DELETE /api/transactions/[id]` — update/delete (ownership check)
+- `GET/PUT/DELETE /api/transactions/[id]` — load one transaction for editing, update, or delete (ownership check)
 - `GET /api/analytics` — analytics data (income/expenses, category/label breakdowns, cash flow) with granularity, date range, timezone, and type filter params
 - `GET /api/assessment` — cached AI Assessment report for a period (`granularity`/`from`/`to`); returns `{ report | null, generatedAt, model }`
 - `POST /api/assessment/generate` — generate/refresh the AI report for a period (Gemini structured analysis + grounded web tips); caches it and enforces a per-day cap
@@ -303,7 +303,9 @@ Active tasks:
 - `GET/POST /api/labels` — list (with schedules) + create labels
 - `PUT/DELETE /api/labels/[id]` — update/delete labels (ownership check)
 - `POST /api/labels/[id]/apply` — retroactively apply schedule to existing transactions
-- `POST /api/transactions/batch` — batch create/delete transactions (with auto-labeling); accepts an optional `clientBatchId` UUID that makes the create idempotent, returning 200 with the original rows on a replay instead of 201
+- `POST/PATCH/DELETE /api/transactions/batch` — create transactions (with auto-labeling), bulk-change categories/labels, or bulk-delete; create accepts an optional `clientBatchId` UUID that makes it idempotent, returning 200 with the original rows on a replay instead of 201
+- `POST /api/transactions/selection` — return a bounded, server-owned snapshot of transaction ids and display metadata matching the submitted filters
+- `POST /api/transactions/export` — export a bounded set of owned transaction ids as CSV in the user's local timezone
 - `POST /api/receipts/scan` — Gemini OCR for single receipt (thin wrapper over `scanReceipt` in `src/lib/receipt-scan.ts`, shared with MCP); reserves a scan credit before the AI call and refunds it if the scan fails (403 over quota, 429 rate limited, 413 body too large)
 - `POST /api/receipts/breakdown` — Gemini itemization by category for multi-scan; same credit reservation and refund rules as `/scan`
 - `GET/PATCH /api/preferences` — read/toggle user preferences (hide_amounts, etc.)
