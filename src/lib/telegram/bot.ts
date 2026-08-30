@@ -40,7 +40,6 @@ import {
 } from "@/lib/telegram/pending-scan";
 import { correctedDescription, isScanCorrection } from "@/lib/telegram/scan-correction";
 import {
-  mentionsLabel,
   readLabelDirective,
   renderLabelNotice,
   type BotLabel,
@@ -1501,8 +1500,10 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     // A reply can correct either half of the draft. "label it pickleball" is not a description,
     // and pasting it over one was all this could do before. Labels are only looked up when a
     // scan is actually waiting, so an ordinary message never pays for the call.
-    const lookup =
-      hasPendingScan(chatId) && mentionsLabel(text) ? await loadLabels() : null;
+    // Gated on a scan actually waiting, and nothing else. A bare name carries no keyword to
+    // detect, so there is nothing cheaper to test first; a review being open is itself the
+    // signal that a reply might be naming a label.
+    const lookup = hasPendingScan(chatId) ? await loadLabels() : null;
     const directive = lookup ? readLabelDirective(text, lookup.labels, "EXPENSE") : null;
     // Any directive the parser understood is a label edit, including one naming a label that
     // cannot apply to an expense. Leaving `incompatible` out of this test sent "label it salary"
@@ -1563,6 +1564,7 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
           names: revised.labelNames,
           unresolved: directive?.unresolved ?? [],
           incompatible: directive?.incompatible ?? [],
+          ambiguous: directive?.ambiguous ?? [],
         },
         lookup?.readable ?? true
       );
@@ -1650,15 +1652,14 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
   const quickExpenseMatch = quick ? /^(\d+(?:\.\d+)?)\s+(.+)$/i.exec(text) : null;
   const quickIncomeMatch = quick ? /^\+(\d+(?:\.\d+)?)\s+(.+)$/i.exec(text) : null;
 
-  const { categories } = await callTool<{ categories: { id: string; name: string; type: string }[] }>(
-    "get_category_list"
-  );
-
-  // Fetched at most once per message, and only by a path that needs it. The shorthand logger
-  // exists to answer "100 breakfast" without extra round trips, so it asks only when the text
-  // plausibly names a label; the Gemini path always needs them, for filters as well as writes.
-  let labelsPromise: Promise<LabelLookup> | null = null;
-  const labels = () => (labelsPromise ??= loadLabels());
+  // Both, in parallel. Labels used to be fetched only behind a keyword test, to keep the
+  // shorthand logger's "100 breakfast" free of a second round trip. A bare label name has no
+  // keyword to test for, so that gate could not survive; issuing the two together costs the same
+  // wall clock as the category fetch alone, which is the round trip the gate was protecting.
+  const [{ categories }, labelLookup] = await Promise.all([
+    callTool<{ categories: { id: string; name: string; type: string }[] }>("get_category_list"),
+    loadLabels(),
+  ]);
 
   if (quickIncomeMatch || quickExpenseMatch) {
     const isIncome = !!quickIncomeMatch;
@@ -1670,8 +1671,7 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     // description and apply nothing. Read out here, it costs no model call, so it keeps working
     // with no GEMINI_API_KEY — which is the whole reason this path exists.
     const type = isIncome ? "INCOME" : "EXPENSE";
-    const lookup = mentionsLabel(written) ? await labels() : null;
-    const directive = lookup ? readLabelDirective(written, lookup.labels, type) : null;
+    const directive = readLabelDirective(written, labelLookup.labels, type);
     // A message that is *only* a directive leaves nothing to describe the purchase. Falling
     // through is better than logging "label it pickleball" as the description: Gemini can write
     // one, and without Gemini the user gets the same "I did not understand" they always did.
@@ -1700,7 +1700,7 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
             date: new Date().toISOString(),
             // Omitted when none was named, so the user's auto-apply schedules still run. This
             // path always stamps the current instant, so that time is real and they should.
-            ...(directive && directive.ids.length > 0 && { labelIds: directive.ids }),
+            ...(directive.ids.length > 0 && { labelIds: directive.ids }),
           },
         ]);
 
@@ -1711,10 +1711,11 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
             renderLabelNotice(
               {
                 names: [],
-                unresolved: directive?.unresolved ?? [],
-                incompatible: directive?.incompatible ?? [],
+                unresolved: directive.unresolved,
+                incompatible: directive.incompatible,
+                ambiguous: directive.ambiguous,
               },
-              lookup?.readable ?? true
+              labelLookup.readable
             )
           );
           return;
@@ -1725,7 +1726,7 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
 
   // Fallback to Gemini AI natural language processing
   if (GEMINI_ENABLED) {
-    const { labels: knownLabels, readable: labelsReadable } = await labels();
+    const { labels: knownLabels, readable: labelsReadable } = labelLookup;
 
     const aiResult = await classifyMessage(text, categories, knownLabels, TZ_OFFSET);
     if (aiResult?.action === "CREATE_TRANSACTION" && aiResult.transaction) {
@@ -1744,16 +1745,18 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       // same argument `commands.ts` makes for resolving obvious phrasings before asking Gemini.
       // It also carries the reporting: when the list could not be read, `knownLabels` is empty
       // and every name the user asked for lands in `unresolved`.
-      const asked = mentionsLabel(text)
-        ? readLabelDirective(text, knownLabels, txData.type === "INCOME" ? "INCOME" : "EXPENSE")
-        : null;
+      const asked = readLabelDirective(
+        text,
+        knownLabels,
+        txData.type === "INCOME" ? "INCOME" : "EXPENSE"
+      );
 
       const labelIds = [
         ...new Set([
           ...namedLabels
             .map((name) => findByName(knownLabels, name)?.id)
             .filter((id): id is string => !!id),
-          ...(asked?.ids ?? []),
+          ...asked.ids,
         ]),
       ];
 
@@ -1777,8 +1780,9 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
           renderLabelNotice(
             {
               names: [],
-              unresolved: asked?.unresolved ?? [],
-              incompatible: asked?.incompatible ?? [],
+              unresolved: asked.unresolved,
+              incompatible: asked.incompatible,
+              ambiguous: asked.ambiguous,
             },
             labelsReadable
           )

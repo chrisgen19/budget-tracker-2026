@@ -79,6 +79,20 @@ where a name begins. And the hashtag path applied a shape test meant for prose, 
 "#with-mom-and-dad" in silence for being four words long — the exact failure this module exists to
 end, reintroduced one branch over.
 
+The last assumption to go was that a label is always introduced by a keyword. It is not: both
+"category fun, label it pickleball budget" and "category fun, pickleball budget" get written, and
+demanding the keyword meant half of them applied nothing. Bare names were left out originally
+because tagging "lunch with the pickleball crew" as a game is worse than tagging nothing, and that
+reasoning still holds — but only for a name found *inside* a sentence. A name that is an entire
+clause is unambiguous, and cutting such a clause takes no description with it, since it holds a
+label name and nothing else. So "Yosh's Pickleball fee" still resolves to nothing while
+", pickleball budget" resolves to the label. A bare clause matching nothing stays silent: "category
+fun" is not a label anybody was denied, and that is the one place a name goes unreported.
+
+The keyword gate in front of `get_label_list` went with it — there is no keyword to gate on — so
+labels are now fetched in parallel with the categories every text message already loads, which
+costs the same wall clock as the single round trip the gate was protecting.
+
 The same hole was in the typed paths, so both were closed: the shorthand logger reads the
 directive with no model call, and the classifier may now name labels on a transaction, resolved
 against the real list by the same `findByName` the search path uses. A hallucinated label on a

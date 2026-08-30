@@ -184,15 +184,6 @@ const tidy = (text: string): string =>
     .trim();
 
 /**
- * Whether a message is worth parsing for a label at all.
- *
- * A cheap pre-check, so the shorthand logger — the fast path that exists precisely to answer
- * "100 breakfast" without a network round trip — only pays for `get_label_list` on a message
- * that plausibly names one.
- */
-export const mentionsLabel = (text: string): boolean => /\b(?:labels?|tags?)\b|#\p{L}/iu.test(text);
-
-/**
  * Read the labels a message explicitly asks for.
  *
  * Resolution is exact and case-insensitive, never fuzzy, for the same reason `findByName` in
@@ -377,6 +368,44 @@ export const readLabelDirective = (
     // or a filler word, or a real label was named. "price tag Nike" may be worth a note, but
     // cutting "tag Nike" out of the description on that evidence is not.
     if (settled >= 0 && (explicit || resolvedAny)) spans.push({ start, end: settled });
+  }
+
+  // Bare names: a clause that is nothing but a label name. "category fun, pickleball budget"
+  // names a label as plainly as "label it pickleball budget" does, and demanding the keyword
+  // meant half of how this actually gets written went nowhere.
+  //
+  // Only a WHOLE clause is considered, never a word inside one, and that is the entire safety
+  // argument. "Yosh's Pickleball fee" and "lunch with the pickleball crew" are clauses that do
+  // not resolve, so a passing mention still applies nothing — which was the reason bare names
+  // were left out to begin with. Removing such a clause is safe for the same reason: it holds a
+  // label name and nothing else, so no description text goes with it.
+  //
+  // A clause that resolves to nothing is silently prose, never reported: "category fun" is not a
+  // label the user was denied. That is the one place a name goes unremarked, and it has to be.
+  let clauseStart = 0;
+  for (const part of text.split(/[,;\n]/)) {
+    const start = clauseStart;
+    clauseStart += part.length + 1;
+
+    const lead = part.length - part.trimStart().length;
+    const from = start + lead;
+    const to = from + part.trim().length;
+    if (to === from || part.trim().length > MAX_NAME_CHARS) continue;
+    // Anything a directive or hashtag already claimed is not a bare name.
+    if (spans.some((sp) => sp.start < to && from < sp.end)) continue;
+
+    const resolved = resolveByPrefix(part.trim(), labels);
+    if (resolved.kind === "many") {
+      takeAmbiguous(part.trim(), resolved.candidates);
+      continue;
+    }
+    if (resolved.kind !== "one") continue;
+
+    // Removed only when it was actually applied. A type-mismatched label is reported and left in
+    // place, since cutting it would lose the words and apply nothing.
+    const before = ids.length;
+    take(resolved.label);
+    if (ids.length > before) spans.push({ start: from, end: to });
   }
 
   // Cut from the end so earlier offsets stay valid.

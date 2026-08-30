@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  mentionsLabel,
   readLabelDirective,
   renderLabelNotice,
   type BotLabel,
@@ -347,15 +346,74 @@ describe("prefix matching", () => {
   });
 });
 
-describe("mentionsLabel", () => {
-  it.each(["label it pickleball", "tag as work", "#pickleball", "Labels: work"])(
-    "is true for %j",
-    (text) => expect(mentionsLabel(text)).toBe(true)
-  );
+describe("bare label names", () => {
+  const BUDGETS: BotLabel[] = [
+    { id: "l_pickle", name: "Pickleball Budget", applicableTo: "EXPENSE" },
+    { id: "l_family", name: "Family Budget", applicableTo: "EXPENSE" },
+    { id: "l_mom", name: "With Mom and Dad Budget", applicableTo: "EXPENSE" },
+    { id: "l_shopee", name: "Shopee", applicableTo: "EXPENSE" },
+  ];
 
-  it.each(["100 breakfast", "350 groceries at SM", "table #1"])("is false for %j", (text) =>
-    expect(mentionsLabel(text)).toBe(false)
-  );
+  it("applies a label named as a clause of its own, with no keyword", () => {
+    // Both forms are written in practice, and requiring the keyword meant half of them applied
+    // nothing.
+    const result = readLabelDirective(
+      "Tiendesitas Yosh's Pickleball fee, category fun, pickleball budget",
+      BUDGETS,
+      "EXPENSE"
+    );
+
+    expect(result.names).toEqual(["Pickleball Budget"]);
+    // The clause holds a label name and nothing else, so removing it takes no description with it.
+    expect(result.rest).toBe("Tiendesitas Yosh's Pickleball fee, category fun");
+  });
+
+  it("agrees with the keyword form on the same caption", () => {
+    const bare = readLabelDirective("court fee, category fun, pickleball budget", BUDGETS, "EXPENSE");
+    const keyed = readLabelDirective(
+      "court fee, category fun, label it pickleball budget",
+      BUDGETS,
+      "EXPENSE"
+    );
+
+    expect(bare.names).toEqual(keyed.names);
+    expect(bare.rest).toBe(keyed.rest);
+  });
+
+  it("ignores a label name mentioned inside a sentence", () => {
+    // The whole safety argument. Only an entire clause counts, so a passing mention applies
+    // nothing — tagging "lunch with the pickleball crew" as a game is the mistake this avoids.
+    for (const text of [
+      "lunch with the pickleball crew",
+      "Yosh's Pickleball fee",
+      "paid the family budget guy",
+    ]) {
+      const result = readLabelDirective(text, BUDGETS, "EXPENSE");
+      expect(result.ids).toEqual([]);
+      expect(result.rest).toBe(text);
+    }
+  });
+
+  it("says nothing about a clause that is not a label", () => {
+    // "category fun" is not a label the user was denied, and reporting it would be noise on
+    // every caption. This is the one place a name goes unremarked, and it has to be.
+    const result = readLabelDirective("court fee, category fun", BUDGETS, "EXPENSE");
+
+    expect(result.unresolved).toEqual([]);
+    expect(result.ambiguous).toEqual([]);
+    expect(result.rest).toBe("court fee, category fun");
+  });
+
+  it("resolves a bare shorthand by prefix", () => {
+    expect(readLabelDirective("dinner, with mom and dad", BUDGETS).names).toEqual([
+      "With Mom and Dad Budget",
+    ]);
+  });
+
+  it("takes a whole reply that is only a label name", () => {
+    // How a review correction sets the label: the reply is the name and nothing else.
+    expect(readLabelDirective("pickleball budget", BUDGETS).names).toEqual(["Pickleball Budget"]);
+  });
 });
 
 describe("renderLabelNotice", () => {
