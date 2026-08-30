@@ -23,45 +23,63 @@ const parse = (url: string): URL | null => {
 };
 
 /**
- * The host a Postgres URL refers to, lower-cased, or `null` if it cannot be determined.
+ * Parse a Postgres URL, repairing a password WHATWG will not accept.
  *
- * `new URL` is tried first and then retried with the userinfo percent-encoded. libpq accepts a raw
- * `#`, `/` or `:` in a password and WHATWG does not, so `new URL` throws outright on
- * `postgres://user:pa#ss@localhost:5432/db` -- a perfectly serviceable local database, and the
- * exact value `database-url.test.ts` pins as one the parser must preserve. Splitting on the *last*
- * `@` keeps a password containing one intact.
+ * libpq allows a raw `#`, `/` or `:` in a password and WHATWG does not, so `new URL` throws
+ * outright on `postgres://user:pa#ss@localhost:5432/db` -- a perfectly serviceable local database,
+ * and the exact value `database-url.test.ts` pins as one the parser must preserve. Splitting on
+ * the *last* `@` keeps a password containing one intact.
  */
-export const databaseHost = (url: string): string | null => {
+const parseConnectionUrl = (url: string): URL | null => {
   const direct = parse(url);
-  if (direct) return direct.hostname.toLowerCase();
+  if (direct) return direct;
 
   const parts = url.match(/^([A-Za-z][\w+.-]*:\/\/)(.*)@(.*)$/);
   if (!parts) return null;
 
-  const repaired = parse(`${parts[1]}${encodeURIComponent(parts[2])}@${parts[3]}`);
-  return repaired ? repaired.hostname.toLowerCase() : null;
+  return parse(`${parts[1]}${encodeURIComponent(parts[2])}@${parts[3]}`);
+};
+
+/** Is this name, socket path or address on this machine? */
+const isLocalName = (value: string): boolean => {
+  const host = value.toLowerCase();
+  // A socket directory is a path on this machine.
+  if (host.startsWith("/")) return true;
+  // `foo.localhost` resolves to loopback by convention and is common in container setups.
+  return LOCAL_NAMES.has(host) || host.endsWith(".localhost") || LOOPBACK_V4.test(host);
+};
+
+/**
+ * The host a Postgres URL actually connects to, lower-cased, or `null` if it cannot be determined.
+ *
+ * **The `host` query parameter wins over the authority.** This is not a curiosity: measured against
+ * Prisma 6.19.2, `postgres://…@localhost:5432/db?host=nonexistent.invalid` prints
+ * `Datasource "db": … at "localhost:5432"` and then fails with
+ * `Can't reach database server at nonexistent.invalid:5432`. Prisma's own output names the host it
+ * is not using, so trusting the authority here would let `postgresql://localhost/db?host=prod`
+ * through the guard and straight into production. Only the lower-case `host` has this effect --
+ * `hostaddr` and `HOST` were both measured to be ignored.
+ */
+export const databaseHost = (url: string): string | null => {
+  const parsed = parseConnectionUrl(url);
+  if (!parsed) return null;
+
+  const override = parsed.searchParams.get("host");
+  if (override !== null) return override.toLowerCase();
+
+  return parsed.hostname.toLowerCase();
 };
 
 /**
  * True when the URL addresses a database on this machine.
  *
- * An empty host is a unix-domain socket (`postgresql:///db`), which is local by construction --
- * unless a `host=` parameter redirects it, which is the one way a socket URL can leave the
- * machine, so that is read rather than assumed. A host it cannot parse is never local: the guard's
- * premise is knowing where the write lands, and there it does not.
+ * An empty host is a unix-domain socket (`postgresql:///db`), which is local by construction. A
+ * host it cannot parse is never local: the guard's premise is knowing where the write lands, and
+ * there it does not.
  */
 export const isLocalDatabase = (url: string): boolean => {
   const host = databaseHost(url);
   if (host === null) return false;
-
-  if (host === "") {
-    const override = url.match(/[?&]host=([^&]*)/);
-    if (!override) return true;
-    const target = decodeURIComponent(override[1]).toLowerCase();
-    // A socket directory is a path on this machine; anything else is a real hostname.
-    return target.startsWith("/") || LOCAL_NAMES.has(target) || LOOPBACK_V4.test(target);
-  }
-
-  // `foo.localhost` resolves to loopback by convention and is common in container setups.
-  return LOCAL_NAMES.has(host) || host.endsWith(".localhost") || LOOPBACK_V4.test(host);
+  if (host === "") return true;
+  return isLocalName(host);
 };

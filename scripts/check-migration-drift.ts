@@ -17,6 +17,16 @@
  * revert has to be allowed to apply it first, and by the time this runs the history should already
  * agree with the folder.
  *
+ * That ordering has a known cost, and it was weighed rather than missed. If a database is drifted
+ * *and* the revision being deployed carries its own pending migration, `migrate deploy` applies
+ * that migration before this check aborts the build -- so the schema moves forward while the old
+ * container keeps serving. The narrower fix, checking first with the known-bad migrations
+ * allow-listed by name, trades a temporary hardcoded list for it and has to be remembered and
+ * removed later. It is also not the whole exposure: `pnpm build` runs `migrate deploy` at *image
+ * build* time, so a type error or a failing lint already leaves a migrated database behind an
+ * un-deployed image. That is a property of building and migrating in one step, which is worth
+ * revisiting on its own terms rather than under a hotfix.
+ *
  * Usage:
  *   pnpm exec tsx scripts/check-migration-drift.ts
  */

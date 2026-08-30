@@ -40,7 +40,30 @@ describe("isLocalDatabase", () => {
     expect(isLocalDatabase("postgresql:///db?host=/var/run/postgresql")).toBe(true);
   });
 
-  // The one way a socket-shaped URL does leave the machine, so it is read rather than assumed.
+  // Measured against Prisma 6.19.2: `postgres://…@localhost:5432/db?host=nonexistent.invalid`
+  // prints `Datasource "db": … at "localhost:5432"` and then fails with
+  // `Can't reach database server at nonexistent.invalid:5432`. The parameter wins, and Prisma's
+  // own output names the host it is not using -- so a guard that trusted the authority would wave
+  // a production write through while every message on screen said localhost.
+  it("lets a host parameter override an authority that says localhost", () => {
+    expect(isLocalDatabase("postgresql://localhost/db?host=prod.example")).toBe(false);
+    expect(isLocalDatabase("postgres://u:p@localhost:5432/db?sslmode=require&host=prod.example")).toBe(
+      false
+    );
+    expect(databaseHost("postgresql://localhost/db?host=prod.example")).toBe("prod.example");
+  });
+
+  // The mirror case: a remote-looking authority pointed back at a local socket.
+  it("lets a host parameter override in the local direction too", () => {
+    expect(isLocalDatabase("postgresql://prod.example/db?host=/var/run/postgresql")).toBe(true);
+  });
+
+  // Both were measured to be ignored by Prisma, so neither may move the verdict.
+  it("ignores hostaddr and a capitalised HOST, as Prisma does", () => {
+    expect(isLocalDatabase("postgres://u:p@localhost:5432/db?hostaddr=prod.example")).toBe(true);
+    expect(isLocalDatabase("postgres://u:p@localhost:5432/db?HOST=prod.example")).toBe(true);
+  });
+
   it("refuses a socket URL redirected at a real host", () => {
     expect(isLocalDatabase("postgresql:///db?host=prod.example")).toBe(false);
   });

@@ -27,7 +27,7 @@
 --    and omits it from the revert it generates -- running that output alone fails here.
 ALTER TABLE "transactions" DROP CONSTRAINT IF EXISTS "transactions_transfer_shape_check";
 
--- 2. Refuse, with a readable reason, if this database actually holds transfer data.
+-- 2. Refuse, with a readable reason, if this database actually holds data from PR #187.
 --
 --    Everything below assumes the Transfer category is the only thing carrying the value. On the
 --    databases this ships to that is verified -- production and dev both report zero transfer
@@ -43,26 +43,42 @@ ALTER TABLE "transactions" DROP CONSTRAINT IF EXISTS "transactions_transfer_shap
 --    it does not own.
 DO $$
 DECLARE
-  transfer_rows bigint;
+  transfer_rows bigint := 0;
+  account_rows  bigint := 0;
+  assigned_rows bigint := 0;
 BEGIN
-  IF to_regtype('"TransactionType"') IS NULL THEN RETURN; END IF;
+  IF to_regtype('"TransactionType"') IS NOT NULL THEN
+    -- LEFT JOIN and an OR rather than three added subqueries: a transfer transaction matches on
+    -- both its own type and its category's, and reporting one row as "2 rows" sends the reader
+    -- looking for a second one that does not exist.
+    SELECT (SELECT count(*) FROM "transactions" t
+              LEFT JOIN "categories" c ON c.id = t.category_id
+            WHERE t."type"::text = 'TRANSFER' OR c."type"::text = 'TRANSFER')
+         + (SELECT count(*) FROM "scheduled_transactions" s
+              LEFT JOIN "categories" c ON c.id = s.category_id
+            WHERE s."type"::text = 'TRANSFER' OR c."type"::text = 'TRANSFER')
+      INTO transfer_rows;
+  END IF;
 
-  -- LEFT JOIN and an OR rather than three added subqueries: a transfer transaction matches on
-  -- both its own type and its category's, and reporting one row as "2 rows" sends the reader
-  -- looking for a second one that does not exist.
-  SELECT (SELECT count(*) FROM "transactions" t
-            LEFT JOIN "categories" c ON c.id = t.category_id
-          WHERE t."type"::text = 'TRANSFER' OR c."type"::text = 'TRANSFER')
-       + (SELECT count(*) FROM "scheduled_transactions" s
-            LEFT JOIN "categories" c ON c.id = s.category_id
-          WHERE s."type"::text = 'TRANSFER' OR c."type"::text = 'TRANSFER')
-    INTO transfer_rows;
+  -- Accounts are the other half, and checking only transfers missed them entirely. PR #187 shipped
+  -- an accounts page and an account picker on the ordinary expense form, so a database can hold
+  -- accounts and a year of INCOME/EXPENSE rows assigned to them without a single transfer existing.
+  -- Step 5 below drops the column and the table outright, which for that database is silent data
+  -- loss the transfer count would have reported as zero. Executed dynamically because neither the
+  -- table nor the columns exist on a database built from zero.
+  IF to_regclass('accounts') IS NOT NULL THEN
+    EXECUTE 'SELECT count(*) FROM "accounts"' INTO account_rows;
+    EXECUTE 'SELECT count(*) FROM "transactions" WHERE "account_id" IS NOT NULL OR "transfer_account_id" IS NOT NULL'
+      INTO assigned_rows;
+  END IF;
 
-  IF transfer_rows > 0 THEN
+  IF transfer_rows > 0 OR account_rows > 0 OR assigned_rows > 0 THEN
     RAISE EXCEPTION
-      'Refusing to revert: % row(s) still use the TRANSFER transaction type or the Transfer category. '
-      'This database has real transfer data from PR #187, which was never merged. Decide what should '
-      'happen to those rows (reassign or delete them) before applying this migration.', transfer_rows;
+      'Refusing to revert: this database holds real data from PR #187 '
+      '(% transfer row(s), % account(s), % transaction(s) assigned to an account). '
+      'That PR was never merged, and this migration drops the accounts table, both transaction '
+      'columns and the TRANSFER enum value, so applying it here would destroy those rows. Decide '
+      'what should happen to them first.', transfer_rows, account_rows, assigned_rows;
   END IF;
 END $$;
 

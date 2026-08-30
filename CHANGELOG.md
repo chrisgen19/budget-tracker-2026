@@ -39,6 +39,20 @@ database and taught the developer to type `ALLOW_REMOTE_DB=1` by reflex -- which
 more thoroughly than deleting it would. Each rule is now checked against `prisma migrate status`
 reading the same file, rather than against the documentation.
 
+The guard had one more way to be told the wrong host. A Postgres URL can carry a `host` query
+parameter, and it beats the authority: measured against Prisma 6.19.2,
+`postgres://...@localhost:5432/db?host=nonexistent.invalid` prints `Datasource "db": ... at
+"localhost:5432"` and then fails to reach `nonexistent.invalid`. Prisma's own output names the host
+it is not using, so `postgresql://localhost/db?host=prod` would have cleared the guard with every
+message on screen reading localhost. `hostaddr` and a capitalised `HOST` were measured to be
+ignored, so neither moves the verdict.
+
+The revert's refusal check covered transfers and missed accounts, which is the other half of what
+PR #187 shipped: an accounts page and an account picker on the ordinary expense form. A database
+holding accounts and a year of INCOME/EXPENSE rows assigned to them reports zero transfers, and the
+migration would have dropped the table and the column under it. It now counts accounts and account
+references too, and names all three figures when it refuses.
+
 Four deploys ran green over this. `prisma migrate deploy` compares the folder to the database in one
 direction only -- it reported "33 migrations found... No pending migrations to apply" against a
 database holding 35 -- and `prisma migrate status` calls the same database "up to date" and exits 0.
