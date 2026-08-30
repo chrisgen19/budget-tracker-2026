@@ -33,8 +33,8 @@ ALTER TABLE "transactions" DROP CONSTRAINT IF EXISTS "transactions_transfer_shap
 --    databases this ships to that is verified -- production and dev both report zero transfer
 --    transactions, zero transfer bills and zero accounts -- but the file also runs on a fork or a
 --    machine where PR #187's UI was exercised, and there it is not true. Without this check such a
---    database gets `invalid input value for enum TransactionType_new: "TRANSFER"` from step 4, or a
---    foreign-key violation from step 3 (transactions.category_id is ON DELETE RESTRICT), midway
+--    database gets `invalid input value for enum TransactionType_new: "TRANSFER"` from step 5, or a
+--    foreign-key violation from step 4 (transactions.category_id is ON DELETE RESTRICT), midway
 --    through. A migration that fails midway leaves a _prisma_migrations row with finished_at NULL,
 --    which blocks every later deploy until someone resolves it by hand.
 --
@@ -82,15 +82,41 @@ BEGIN
   END IF;
 END $$;
 
--- 3. The one row that actually broke production. It has to precede the enum rewrite, or the USING
---    cast in step 4 hits a value the new type does not accept and the whole migration fails.
+-- 3. Unpin the category from every quick-pick list before deleting it.
+--
+--    `users.quick_expense_categories` / `quick_income_categories` are plain text arrays with no
+--    foreign key, so the delete below neither fails nor cascades -- it just strands the id. That is
+--    a known failure mode here, not a hypothetical: a dead id still counts against
+--    QuickCategoryPicker's four-slot limit, so the fourth slot becomes permanently unreachable and
+--    saving from the picker writes the dead id straight back. `DELETE /api/categories/[id]` strips
+--    it in the same transaction as the delete for exactly this reason, and
+--    scripts/prune-quick-category-ids.ts exists to repair ids stranded before it did.
+--
+--    Nothing should have been able to pin this one (both quick pickers query by type, and #187's
+--    own route hid the Transfer category unless it was asked for by name), and production reports
+--    zero. It costs one statement to not depend on that.
+DO $$
+DECLARE
+  dead_id text;
+BEGIN
+  FOR dead_id IN SELECT "id" FROM "categories" WHERE "type"::text = 'TRANSFER' LOOP
+    UPDATE "users"
+    SET "quick_expense_categories" = array_remove("quick_expense_categories", dead_id),
+        "quick_income_categories"  = array_remove("quick_income_categories", dead_id)
+    WHERE dead_id = ANY("quick_expense_categories")
+       OR dead_id = ANY("quick_income_categories");
+  END LOOP;
+END $$;
+
+-- 4. The one row that actually broke production. It has to precede the enum rewrite, or the USING
+--    cast in step 5 hits a value the new type does not accept and the whole migration fails.
 --
 --    Compared as ::text on purpose: on a database that never received 20260830100000, 'TRANSFER'
 --    is not a valid TransactionType literal and the comparison itself would error before matching
 --    zero rows.
 DELETE FROM "categories" WHERE "type"::text = 'TRANSFER';
 
--- 4. Rebuild TransactionType without TRANSFER.
+-- 5. Rebuild TransactionType without TRANSFER.
 --
 --    PostgreSQL has no ALTER TYPE ... DROP VALUE, so the type is recreated and every column
 --    sharing it is re-pointed. Those columns are categories.type, scheduled_transactions.type and
@@ -123,7 +149,7 @@ BEGIN
   END IF;
 END $$;
 
--- 5. The accounts table and the two transaction columns. Dropping a column takes its foreign key
+-- 6. The accounts table and the two transaction columns. Dropping a column takes its foreign key
 --    and its index with it, so transactions_account_id_fkey, transactions_transfer_account_id_fkey,
 --    transactions_account_id_idx and transactions_transfer_account_id_idx need no separate drops.
 ALTER TABLE "transactions" DROP COLUMN IF EXISTS "account_id";
@@ -132,7 +158,7 @@ ALTER TABLE "transactions" DROP COLUMN IF EXISTS "transfer_account_id";
 DROP TABLE IF EXISTS "accounts";
 DROP TYPE IF EXISTS "AccountType";
 
--- 6. Finally the two history rows, so _prisma_migrations matches this repository again.
+-- 7. Finally the two history rows, so _prisma_migrations matches this repository again.
 --
 --    Without this they stay forever: `prisma migrate deploy` ignores applied migrations it cannot
 --    find locally (it reported "No pending migrations to apply" across four deploys while this

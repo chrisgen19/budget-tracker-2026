@@ -70,6 +70,14 @@ regex in that release and the one bundled into `prisma/build/index.js` are byte-
 and pnpm dedupes to the copy already in the tree rather than installing a second. All twelve
 observed cases passed unchanged through the swap, and they stay as a pin against version drift.
 
+The revert also unpins the category from `users.quick_expense_categories` /
+`quick_income_categories` before deleting it. Those are plain text arrays with no foreign key, so
+the delete would neither fail nor cascade -- it would strand the id, and a stranded id still counts
+against QuickCategoryPicker's four-slot limit, putting the fourth slot permanently out of reach
+while saving from the picker writes it back. `DELETE /api/categories/[id]` strips it in the same
+transaction for that reason. Nothing should have been able to pin the Transfer category and
+production reports none, which is worth one statement not to depend on.
+
 Four deploys ran green over this. `prisma migrate deploy` compares the folder to the database in one
 direction only -- it reported "33 migrations found... No pending migrations to apply" against a
 database holding 35 -- and `prisma migrate status` calls the same database "up to date" and exits 0.
