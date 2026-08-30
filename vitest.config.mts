@@ -13,7 +13,12 @@ export default defineConfig({
     setupFiles: ["./vitest.setup.ts"],
     // Colocated with the code they cover. mcp-server has its own package and is excluded
     // from the root tsconfig, so it stays out of here too.
-    include: ["src/**/*.test.{ts,tsx}"],
+    //
+    // scripts/ is included for its *pure* helpers only -- the .env parser and the Prisma error
+    // classifier, both of which have subtle rules and no other way to be checked. The operational
+    // scripts there are named verify-*.ts and need a real database, so this glob never picks them
+    // up.
+    include: ["src/**/*.test.{ts,tsx}", "scripts/**/*.test.ts"],
     restoreMocks: true,
     clearMocks: true,
   },

@@ -15,26 +15,40 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** Pull one key out of a `.env` file, handling `export`, quotes and trailing comments. */
-const readFromEnvFile = (key: string): string | undefined => {
-  let contents: string;
-  try {
-    contents = readFileSync(join(process.cwd(), ".env"), "utf8");
-  } catch {
-    return undefined;
-  }
-
+/**
+ * Pull one key out of `.env` contents, handling `export`, quotes and trailing comments.
+ *
+ * The two comment rules differ, and both matter. A quoted value ends at its closing quote, so a
+ * `#` *inside* the quotes is part of the value -- a generated database password contains one often
+ * enough -- while anything after the closing quote is a comment. An unquoted value has no closing
+ * mark, so only ` #` preceded by whitespace ends it, leaving a bare `#` mid-value alone.
+ *
+ * Exported for its own test: the closing quote and the trailing comment have to be handled in that
+ * order. Stripping the comment first leaves the quotes attached to the value, and `new URL()` then
+ * rejects a perfectly good connection string.
+ */
+export const parseEnvValue = (contents: string, key: string): string | undefined => {
   for (const line of contents.split("\n")) {
     const match = line.match(/^\s*(?:export\s+)?([\w.-]+)\s*=\s*(.*)$/);
     if (!match || match[1] !== key) continue;
 
     const raw = match[2].trim();
-    const quoted = raw.match(/^(['"])([\s\S]*)\1$/);
-    // Only strip a trailing comment from an unquoted value: a `#` inside quotes is part of the
-    // value, and a password is exactly the kind of value that contains one.
+    // Lazy, so the *first* closing quote ends the value. Greedy reaches for the last quote on the
+    // line, which a comment like `# note about "quotes"` supplies -- swallowing the comment into
+    // the value it was written beside.
+    const quoted = raw.match(/^(['"])([\s\S]*?)\1\s*(?:#.*)?$/);
     return quoted ? quoted[2] : raw.replace(/\s+#.*$/, "");
   }
   return undefined;
+};
+
+/** Read one key out of the `.env` beside the working directory, if there is one. */
+const readFromEnvFile = (key: string): string | undefined => {
+  try {
+    return parseEnvValue(readFileSync(join(process.cwd(), ".env"), "utf8"), key);
+  } catch {
+    return undefined;
+  }
 };
 
 /** The connection string Prisma would use, or `undefined` if neither source has one. */

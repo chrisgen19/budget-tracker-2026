@@ -24,6 +24,7 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { PrismaClient } from "@prisma/client";
 import { resolveDatabaseUrl } from "./database-url";
+import { isMissingTableError } from "./prisma-errors";
 
 const MIGRATIONS_DIR = join(process.cwd(), "prisma", "migrations");
 
@@ -48,6 +49,10 @@ const localMigrationNames = (): Set<string> =>
  *
  * A first-ever build against an empty database reaches this before anything creates the table, and
  * a missing history is the one state that is genuinely not drift.
+ *
+ * Every other failure is rethrown. A `catch` that returned `null` for anything at all would report
+ * an unreachable host or a refused login as "nothing to compare" and let the build through -- this
+ * check would then be silent in exactly the conditions it exists to be loud in.
  */
 const appliedMigrationNames = async (): Promise<string[] | null> => {
   try {
@@ -58,8 +63,9 @@ const appliedMigrationNames = async (): Promise<string[] | null> => {
       ORDER BY started_at
     `;
     return rows.map((row) => row.migration_name);
-  } catch {
-    return null;
+  } catch (error) {
+    if (isMissingTableError(error)) return null;
+    throw error;
   }
 };
 
