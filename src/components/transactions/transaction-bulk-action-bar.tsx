@@ -85,7 +85,7 @@ export function TransactionBulkActionBar(props: TransactionBulkActionBarProps) {
         type="button"
         onClick={props.onSelectAllMatching}
         disabled={props.allMatchingPending}
-        className="min-h-9 rounded-lg px-2.5 text-xs font-semibold text-amber-dark underline-offset-2 hover:bg-amber-light/60 hover:underline disabled:opacity-50"
+        className="min-h-11 rounded-lg px-2.5 text-xs font-semibold text-amber-dark underline-offset-2 hover:bg-amber-light/60 hover:underline disabled:opacity-50"
       >
         {props.allMatchingPending
           ? "Selecting…"

@@ -117,7 +117,6 @@ export default function TransactionsPage() {
   const selectionRevisionRef = useRef(0);
   const selectionContextKey = JSON.stringify([filters, user.timezoneOffset]);
   const selectionContextKeyRef = useRef(selectionContextKey);
-  selectionContextKeyRef.current = selectionContextKey;
   const dispatchSelectionChange = useCallback((action: TransactionSelectionAction) => {
     selectionRevisionRef.current += 1;
     dispatchSelection(action);
@@ -132,8 +131,15 @@ export default function TransactionsPage() {
     [selectedItems],
   );
   const selectedCountRef = useRef(0);
-  selectedCountRef.current = selectedItems.length;
   const [selectionAnnouncement, setSelectionAnnouncement] = useState("");
+
+  useEffect(() => {
+    selectionContextKeyRef.current = selectionContextKey;
+  }, [selectionContextKey]);
+
+  useEffect(() => {
+    selectedCountRef.current = selectedItems.length;
+  }, [selectedItems.length]);
 
   // Modal states
   const [showForm, setShowForm] = useState(false);
@@ -529,8 +535,14 @@ export default function TransactionsPage() {
       });
       setShowBulkLabels(false);
       clearSelection(true);
-      const verb = operation === "add" ? "added to" : "removed from";
-      showToast(`Labels ${verb} ${result.updated} transaction${result.updated === 1 ? "" : "s"}`);
+      if (result.updated === 0) {
+        showToast("No label assignments changed");
+      } else {
+        const verb = operation === "add" ? "added to" : "removed from";
+        showToast(
+          `Labels ${verb} ${result.updated} transaction${result.updated === 1 ? "" : "s"}`,
+        );
+      }
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Failed to update labels", "error");
     }

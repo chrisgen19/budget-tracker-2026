@@ -240,29 +240,47 @@ export async function PATCH(request: NextRequest) {
       }
 
       const labelIds = labels.map((label) => label.id);
+      const existingLinks = await tx.transactionLabel.findMany({
+        where: { transactionId: { in: matchedIds }, labelId: { in: labelIds } },
+        select: { transactionId: true, labelId: true },
+      });
+
       if (input.operation === "add") {
-        const added = await tx.transactionLabel.createMany({
-          data: matchedIds.flatMap((transactionId) =>
-            labelIds.map((labelId) => ({ transactionId, labelId })),
+        const existingKeys = new Set(
+          existingLinks.map(({ transactionId, labelId }) => `${transactionId}:${labelId}`),
+        );
+        const linksToAdd = matchedIds.flatMap((transactionId) =>
+          labelIds.flatMap((labelId) =>
+            existingKeys.has(`${transactionId}:${labelId}`) ? [] : [{ transactionId, labelId }],
           ),
-          skipDuplicates: true,
-        });
+        );
+        const affectedIds = [...new Set(linksToAdd.map(({ transactionId }) => transactionId))];
+        const added =
+          linksToAdd.length > 0
+            ? await tx.transactionLabel.createMany({ data: linksToAdd, skipDuplicates: true })
+            : { count: 0 };
         return {
           matched: matchedIds.length,
-          updated: matchedIds.length,
+          updated: affectedIds.length,
           changedLinks: added.count,
-          ids: matchedIds,
+          ids: affectedIds,
         };
       }
 
-      const removed = await tx.transactionLabel.deleteMany({
-        where: { transactionId: { in: matchedIds }, labelId: { in: labelIds } },
-      });
+      const affectedIds = [
+        ...new Set(existingLinks.map(({ transactionId }) => transactionId)),
+      ];
+      const removed =
+        existingLinks.length > 0
+          ? await tx.transactionLabel.deleteMany({
+              where: { transactionId: { in: matchedIds }, labelId: { in: labelIds } },
+            })
+          : { count: 0 };
       return {
         matched: matchedIds.length,
-        updated: matchedIds.length,
+        updated: affectedIds.length,
         changedLinks: removed.count,
-        ids: matchedIds,
+        ids: affectedIds,
       };
     });
 

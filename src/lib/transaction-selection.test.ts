@@ -60,6 +60,7 @@ describe("transactionSelectionReducer", () => {
 
   it("reports the master checkbox state", () => {
     let state = emptyTransactionSelection();
+    expect(visibleSelectionState(state, [])).toBe("none");
     expect(visibleSelectionState(state, ["a", "b"])).toBe("none");
     state = transactionSelectionReducer(state, { type: "toggle", item: item("a") });
     expect(visibleSelectionState(state, ["a", "b"])).toBe("some");

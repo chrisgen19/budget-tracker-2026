@@ -11,6 +11,30 @@ import type { LabelWithCountAndSchedules } from "@/types";
 
 const EMPTY_LABELS: LabelWithCountAndSchedules[] = [];
 
+function QueryErrorState({
+  resource,
+  retrying,
+  onRetry,
+}: {
+  resource: string;
+  retrying: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <div role="alert" className="rounded-xl border border-expense/20 bg-expense-light/40 p-4">
+      <p className="text-sm text-warm-600">Could not load {resource}.</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        disabled={retrying}
+        className="mt-2 min-h-11 rounded-lg px-3 text-sm font-semibold text-expense disabled:opacity-50"
+      >
+        {retrying ? "Retrying…" : "Try again"}
+      </button>
+    </div>
+  );
+}
+
 interface CategoryDialogProps {
   open: boolean;
   onClose: () => void;
@@ -29,15 +53,24 @@ export function TransactionBulkCategoryDialog({
   onApply,
 }: CategoryDialogProps) {
   const onlyType = selectedTypes.size === 1 ? Array.from(selectedTypes)[0] : undefined;
-  const { data: categories = [], isLoading } = useCategoriesQuery(onlyType);
+  const {
+    data: categories = [],
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+  } = useCategoriesQuery(onlyType);
   const [categoryId, setCategoryId] = useState("");
+  const closeIfIdle = () => {
+    if (!pending) onClose();
+  };
 
   useEffect(() => {
     if (open) setCategoryId("");
   }, [open]);
 
   return (
-    <Modal open={open} onClose={onClose} title="Change category">
+    <Modal open={open} onClose={closeIfIdle} title="Change category">
       <p className="mb-4 text-sm text-warm-500">
         Apply one category to {selectedCount} selected transaction{selectedCount === 1 ? "" : "s"}.
       </p>
@@ -48,6 +81,16 @@ export function TransactionBulkCategoryDialog({
         </div>
       ) : isLoading ? (
         <p className="py-6 text-center text-sm text-warm-400">Loading categories…</p>
+      ) : isError ? (
+        <QueryErrorState
+          resource="categories"
+          retrying={isFetching}
+          onRetry={() => void refetch()}
+        />
+      ) : categories.length === 0 ? (
+        <p className="rounded-xl bg-cream-50 p-4 text-sm text-warm-500">
+          No {onlyType.toLowerCase()} categories are available.
+        </p>
       ) : (
         <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
           {categories.map((category) => {
@@ -58,6 +101,7 @@ export function TransactionBulkCategoryDialog({
                 type="button"
                 aria-pressed={selected}
                 onClick={() => setCategoryId(category.id)}
+                disabled={pending}
                 className={cn(
                   "flex min-h-12 w-full items-center gap-3 rounded-xl border px-3 text-left transition-colors",
                   selected
@@ -81,7 +125,7 @@ export function TransactionBulkCategoryDialog({
       <div className="mt-6 flex gap-3">
         <button
           type="button"
-          onClick={onClose}
+          onClick={closeIfIdle}
           disabled={pending}
           className="min-h-11 flex-1 rounded-xl border border-cream-300 text-sm font-medium text-warm-500"
         >
@@ -120,9 +164,18 @@ export function TransactionBulkLabelsDialog({
 }: LabelsDialogProps) {
   // Keep the loading fallback referentially stable. A literal `[]` here changes
   // `compatibleLabels` on every render, which retriggers the pruning effect below.
-  const { data: labels = EMPTY_LABELS, isLoading } = useLabelsQuery();
+  const {
+    data: labels = EMPTY_LABELS,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+  } = useLabelsQuery();
   const [operation, setOperation] = useState<"add" | "remove">("add");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const closeIfIdle = () => {
+    if (!pending) onClose();
+  };
   const compatibleLabels = useMemo(
     () =>
       labels.filter(
@@ -162,7 +215,7 @@ export function TransactionBulkLabelsDialog({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Manage labels">
+    <Modal open={open} onClose={closeIfIdle} title="Manage labels">
       <p className="mb-4 text-sm text-warm-500">
         Add or remove labels on {selectedCount} selected transaction{selectedCount === 1 ? "" : "s"}.
       </p>
@@ -173,6 +226,7 @@ export function TransactionBulkLabelsDialog({
             type="button"
             aria-pressed={operation === value}
             onClick={() => setOperation(value)}
+            disabled={pending}
             className={cn(
               "inline-flex min-h-10 items-center justify-center gap-2 rounded-lg text-sm font-medium capitalize",
               operation === value ? "bg-white text-warm-700 shadow-sm" : "text-warm-400",
@@ -185,6 +239,16 @@ export function TransactionBulkLabelsDialog({
       </div>
       {isLoading ? (
         <p className="py-6 text-center text-sm text-warm-400">Loading labels…</p>
+      ) : isError ? (
+        <QueryErrorState
+          resource="labels"
+          retrying={isFetching}
+          onRetry={() => void refetch()}
+        />
+      ) : labels.length === 0 ? (
+        <p className="rounded-xl bg-cream-50 p-4 text-sm text-warm-500">
+          No labels are available.
+        </p>
       ) : compatibleLabels.length === 0 ? (
         <p className="rounded-xl bg-cream-50 p-4 text-sm text-warm-500">
           No labels are compatible with every selected transaction.
@@ -200,6 +264,7 @@ export function TransactionBulkLabelsDialog({
                 type="checkbox"
                 checked={selectedIds.has(label.id)}
                 onChange={() => toggle(label.id)}
+                disabled={pending}
                 className="h-5 w-5 accent-amber"
               />
               <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: label.color }} />
@@ -212,7 +277,7 @@ export function TransactionBulkLabelsDialog({
       <div className="mt-6 flex gap-3">
         <button
           type="button"
-          onClick={onClose}
+          onClick={closeIfIdle}
           disabled={pending}
           className="min-h-11 flex-1 rounded-xl border border-cream-300 text-sm font-medium text-warm-500"
         >

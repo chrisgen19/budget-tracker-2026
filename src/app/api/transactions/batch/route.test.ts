@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => {
   const transactionDeleteMany = vi.fn();
   const categoryFindFirst = vi.fn();
   const labelFindMany = vi.fn();
+  const transactionLabelFindMany = vi.fn();
   const transactionLabelCreateMany = vi.fn();
   const transactionLabelDeleteMany = vi.fn();
   return {
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => {
     transactionDeleteMany,
     categoryFindFirst,
     labelFindMany,
+    transactionLabelFindMany,
     transactionLabelCreateMany,
     transactionLabelDeleteMany,
     getAuthUserId: vi.fn(),
@@ -29,6 +31,7 @@ const mocks = vi.hoisted(() => {
       category: { findFirst: categoryFindFirst },
       label: { findMany: labelFindMany },
       transactionLabel: {
+        findMany: transactionLabelFindMany,
         createMany: transactionLabelCreateMany,
         deleteMany: transactionLabelDeleteMany,
       },
@@ -98,6 +101,7 @@ describe("PATCH /api/transactions/batch", () => {
     mocks.transactionUpdateMany.mockResolvedValue({ count: 2 });
     mocks.categoryFindFirst.mockResolvedValue({ id: "cat-1", type: "EXPENSE" });
     mocks.labelFindMany.mockResolvedValue([{ id: "label-1", applicableTo: "BOTH" }]);
+    mocks.transactionLabelFindMany.mockResolvedValue([]);
     mocks.transactionLabelCreateMany.mockResolvedValue({ count: 2 });
     mocks.transactionLabelDeleteMany.mockResolvedValue({ count: 2 });
   });
@@ -155,6 +159,56 @@ describe("PATCH /api/transactions/batch", () => {
     expect(mocks.transactionFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ id: { in: ["tx-1"] } }) }),
     );
+  });
+
+  it("reports only transactions that receive a new label link", async () => {
+    mocks.transactionLabelFindMany.mockResolvedValue([
+      { transactionId: "tx-1", labelId: "label-1" },
+    ]);
+    mocks.transactionLabelCreateMany.mockResolvedValue({ count: 1 });
+
+    const response = await PATCH(
+      patchRequest({
+        action: "labels",
+        operation: "add",
+        ids: ["tx-1", "tx-2"],
+        labelIds: ["label-1"],
+      }),
+    );
+
+    expect(await response.json()).toMatchObject({
+      matched: 2,
+      updated: 1,
+      changedLinks: 1,
+      ids: ["tx-2"],
+    });
+    expect(mocks.transactionLabelCreateMany).toHaveBeenCalledWith({
+      data: [{ transactionId: "tx-2", labelId: "label-1" }],
+      skipDuplicates: true,
+    });
+  });
+
+  it("reports only transactions from which a label link is removed", async () => {
+    mocks.transactionLabelFindMany.mockResolvedValue([
+      { transactionId: "tx-2", labelId: "label-1" },
+    ]);
+    mocks.transactionLabelDeleteMany.mockResolvedValue({ count: 1 });
+
+    const response = await PATCH(
+      patchRequest({
+        action: "labels",
+        operation: "remove",
+        ids: ["tx-1", "tx-2"],
+        labelIds: ["label-1"],
+      }),
+    );
+
+    expect(await response.json()).toMatchObject({
+      matched: 2,
+      updated: 1,
+      changedLinks: 1,
+      ids: ["tx-2"],
+    });
   });
 
   it("rejects unbounded ID arrays before opening a database transaction", async () => {
