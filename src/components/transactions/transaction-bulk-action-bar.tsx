@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import { Download, FolderInput, Pencil, Tags, Trash2, X } from "lucide-react";
+import { Download, FolderInput, Loader2, Pencil, Tags, Trash2, X } from "lucide-react";
 import { useBillReminders } from "@/components/bills/bill-reminder-provider";
 import { useInstallBanner } from "@/components/pwa/install-banner-context";
 import { TransactionSelectionCheckbox } from "@/components/transactions/transaction-selection-checkbox";
@@ -15,6 +15,7 @@ interface TransactionBulkActionBarProps {
   visibleState: "none" | "some" | "all";
   layout: "infinite" | "pagination";
   allMatchingPending: boolean;
+  editPending: boolean;
   exportPending: boolean;
   updatePending: boolean;
   onToggleVisible: () => void;
@@ -112,9 +113,12 @@ export function TransactionBulkActionBar(props: TransactionBulkActionBarProps) {
           <div className="flex-1" />
           {props.selectedCount === 1 && (
             <ActionButton
-              icon={<Pencil className="h-3.5 w-3.5" />}
-              label="Edit transaction"
+              icon={props.editPending
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <Pencil className="h-3.5 w-3.5" />}
+              label={props.editPending ? "Loading transaction" : "Edit transaction"}
               onClick={props.onEdit}
+              disabled={props.editPending}
             />
           )}
           <ActionButton
@@ -183,9 +187,12 @@ export function TransactionBulkActionBar(props: TransactionBulkActionBarProps) {
         <div className={cn("grid", props.selectedCount === 1 ? "grid-cols-5" : "grid-cols-4")}>
           {props.selectedCount === 1 && (
             <ActionButton
-              icon={<Pencil className="h-4 w-4" />}
-              label="Edit"
+              icon={props.editPending
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : <Pencil className="h-4 w-4" />}
+              label={props.editPending ? "Loading" : "Edit"}
               onClick={props.onEdit}
+              disabled={props.editPending}
               mobile
             />
           )}

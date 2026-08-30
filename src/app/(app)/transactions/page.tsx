@@ -34,7 +34,6 @@ import {
 } from "@/components/transactions/transaction-bulk-dialogs";
 import { useToast } from "@/components/ui/toast";
 import {
-  fetchTransactionById,
   fetchTransactionsPage,
   queryKeys,
   useTransactionsQuery,
@@ -48,6 +47,7 @@ import {
   useTransactionSelectionSnapshot,
   useRemoveTransactionLabel,
 } from "@/hooks/use-transactions";
+import { useBulkTransactionEdit } from "@/hooks/use-bulk-transaction-edit";
 import type { TransactionInput } from "@/lib/validations";
 import { groupByDate, formatTime } from "@/lib/transaction-helpers";
 import { accountMonthKey } from "@/lib/account-time";
@@ -392,6 +392,15 @@ export default function TransactionsPage() {
     if (restoreFocus) requestAnimationFrame(() => pageHeadingRef.current?.focus());
   };
 
+  const { edit: handleBulkEdit, pending: bulkEditPending } = useBulkTransactionEdit({
+    selectedItems,
+    selectionRevisionRef,
+    onLoaded: setEditingTransaction,
+    onClearSelection: clearSelection,
+    onError: (error) =>
+      showToast(error instanceof Error ? error.message : "Failed to load transaction", "error"),
+  });
+
   const handleSelectAllMatching = async () => {
     const requestedRevision = selectionRevisionRef.current;
     const requestedFilters = selectionContextKey;
@@ -494,19 +503,6 @@ export default function TransactionsPage() {
       showToast(`${result.count} transaction${result.count === 1 ? "" : "s"} exported`);
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Failed to export transactions", "error");
-    }
-  };
-
-  const handleBulkEdit = async () => {
-    if (selectedIds.size !== 1) return;
-    const id = selectedItems[0]?.id;
-    if (!id) return;
-    try {
-      const transaction = await fetchTransactionById(id);
-      setEditingTransaction(transaction);
-      clearSelection();
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "Failed to load transaction", "error");
     }
   };
 
@@ -634,6 +630,7 @@ export default function TransactionsPage() {
             visibleState={masterSelectionState}
             layout={isInfinite ? "infinite" : "pagination"}
             allMatchingPending={selectionSnapshotMutation.isPending}
+            editPending={bulkEditPending}
             exportPending={exportMutation.isPending}
             updatePending={bulkUpdateMutation.isPending}
             onToggleVisible={toggleSelectAll}
