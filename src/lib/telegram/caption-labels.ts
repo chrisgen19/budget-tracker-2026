@@ -152,9 +152,17 @@ type PrefixMatch =
   | { kind: "many"; candidates: string[] }
   | { kind: "none" };
 
-const resolveByPrefix = (needle: string, labels: BotLabel[]): PrefixMatch => {
+const resolveLabelName = (needle: string, labels: BotLabel[]): PrefixMatch => {
   const n = needle.trim().toLowerCase();
   if (!n) return { kind: "none" };
+
+  // An exact name always wins, and is checked here rather than only at the call sites. Someone
+  // owning both "Work" and "Work Budget" prefixes both with "work", so a resolver that only knew
+  // about prefixes called it ambiguous and applied neither — while the keyword and hashtag forms,
+  // which happened to test for an exact name first, resolved it fine. Same question, three
+  // answers.
+  const exact = labels.find((l) => l.name.toLowerCase() === n);
+  if (exact) return { kind: "one", label: exact };
 
   const hits = labels.filter((l) => {
     const name = l.name.toLowerCase();
@@ -182,6 +190,21 @@ const tidy = (text: string): string =>
     .replace(/^[\s,;&-]+/u, "")
     .replace(/[\s,;&-]+$/u, "")
     .trim();
+
+/**
+ * Whether the parser read this text as naming labels at all.
+ *
+ * Applied, missing, type-mismatched or ambiguous — every one of those means the user was talking
+ * about labels, and a caller deciding "is this a label edit or a new description" has to treat
+ * them alike. Enumerating the buckets at the call site got this wrong once per bucket added:
+ * first `incompatible`, then `ambiguous`, each time renaming a receipt draft to the text of the
+ * instruction. It lives here so the next bucket cannot repeat it.
+ */
+export const namesLabels = (directive: LabelDirective): boolean =>
+  directive.ids.length > 0 ||
+  directive.unresolved.length > 0 ||
+  directive.incompatible.length > 0 ||
+  directive.ambiguous.length > 0;
 
 /**
  * Read the labels a message explicitly asks for.
@@ -255,7 +278,7 @@ export const readLabelDirective = (
       // being read as a name, and a hashtag is explicit by construction — the regex already
       // demands a leading letter. Applying it anyway dropped "#with-mom-and-dad" in silence for
       // being four words long, which is the exact failure this module was written to end.
-      const prefix = resolveByPrefix(spaced, labels);
+      const prefix = resolveLabelName(spaced, labels);
       if (prefix.kind === "one") take(prefix.label);
       else if (prefix.kind === "many") takeAmbiguous(spaced, prefix.candidates);
       else if (spaced.length <= MAX_NAME_CHARS) takeUnresolved(spaced);
@@ -278,7 +301,7 @@ export const readLabelDirective = (
       const ahead = clauseAt(text, cursor);
       if (
         ahead.trim().length <= MAX_NAME_CHARS &&
-        resolveByPrefix(ahead, labels).kind === "one"
+        resolveLabelName(ahead, labels).kind === "one"
       ) {
         break;
       }
@@ -321,7 +344,7 @@ export const readLabelDirective = (
         const clause = clauseAt(text, probe);
         const viaClause =
           clause.length > segment.length && clause.trim().length <= MAX_NAME_CHARS
-            ? resolveByPrefix(clause, labels)
+            ? resolveLabelName(clause, labels)
             : ({ kind: "none" } as PrefixMatch);
 
         if (viaClause.kind === "one") {
@@ -338,7 +361,7 @@ export const readLabelDirective = (
         // No label is named exactly here, so try the name as the start of one. Allowed wherever
         // an exact match would be, since naming a real label is itself the evidence that this is
         // a directive.
-        const prefix = resolveByPrefix(segment, labels);
+        const prefix = resolveLabelName(segment, labels);
         if (prefix.kind === "one") {
           take(prefix.label);
           resolvedAny = true;
@@ -394,7 +417,7 @@ export const readLabelDirective = (
     // Anything a directive or hashtag already claimed is not a bare name.
     if (spans.some((sp) => sp.start < to && from < sp.end)) continue;
 
-    const resolved = resolveByPrefix(part.trim(), labels);
+    const resolved = resolveLabelName(part.trim(), labels);
     if (resolved.kind === "many") {
       takeAmbiguous(part.trim(), resolved.candidates);
       continue;

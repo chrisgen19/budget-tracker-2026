@@ -93,6 +93,17 @@ The keyword gate in front of `get_label_list` went with it — there is no keywo
 labels are now fetched in parallel with the categories every text message already loads, which
 costs the same wall clock as the single round trip the gate was protecting.
 
+Review then caught the same predicate wrong for the third time. Deciding whether a reply is a
+label edit or a new description was written as a list of the parser's output buckets, and each new
+bucket had to be remembered: `incompatible` was missed, fixed, and then `ambiguous` was added one
+commit later and missed in exactly the same way, renaming a receipt draft to "Label it work". The
+list is now a `namesLabels` predicate beside the parser, with a test per bucket, so the next one
+cannot repeat it. A near-identical split had opened up inside the resolver too — the keyword and
+hashtag paths each tested for an exact name before falling back to prefixes, while the bare-clause
+path went straight to prefixes, so someone owning both "Work" and "Work Budget" got an exact match
+from two forms and an ambiguity report from the third. Exact preference moved into the resolver,
+where all three inherit it.
+
 The same hole was in the typed paths, so both were closed: the shorthand logger reads the
 directive with no model call, and the classifier may now name labels on a transaction, resolved
 against the real list by the same `findByName` the search path uses. A hallucinated label on a

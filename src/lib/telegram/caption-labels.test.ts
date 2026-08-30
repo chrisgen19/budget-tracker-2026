@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  namesLabels,
   readLabelDirective,
   renderLabelNotice,
   type BotLabel,
@@ -315,13 +316,22 @@ describe("prefix matching", () => {
     ]);
   });
 
-  it("prefers an exact match over a longer label it also prefixes", () => {
-    const labels: BotLabel[] = [
-      { id: "l1", name: "Work", applicableTo: "EXPENSE" },
-      { id: "l2", name: "Work Budget", applicableTo: "EXPENSE" },
-    ];
-    expect(readLabelDirective("label it work", labels).names).toEqual(["Work"]);
-  });
+  it.each(["label it work", "#work", "lunch, work", "work"])(
+    "prefers an exact match over a longer label it also prefixes, in %j",
+    (text) => {
+      // "work" prefixes both, so a prefix-only resolver called it ambiguous and applied neither.
+      // The keyword and hashtag forms happened to test for an exact name first and the bare
+      // clause did not: one question with three answers, now settled inside the resolver.
+      const labels: BotLabel[] = [
+        { id: "l1", name: "Work", applicableTo: "EXPENSE" },
+        { id: "l2", name: "Work Budget", applicableTo: "EXPENSE" },
+      ];
+      const result = readLabelDirective(text, labels);
+
+      expect(result.names).toEqual(["Work"]);
+      expect(result.ambiguous).toEqual([]);
+    }
+  );
 
   it("resolves a name containing a conjunction", () => {
     // "and" is a list separator everywhere else, and "with" is a filler word — both appear
@@ -465,5 +475,36 @@ describe("renderLabelNotice", () => {
 
   it("says nothing when no label was mentioned at all", () => {
     expect(renderLabelNotice({ names: [], unresolved: [] })).toBe("");
+  });
+});
+
+describe("namesLabels", () => {
+  const LABEL: BotLabel = { id: "l1", name: "Salary", applicableTo: "INCOME" };
+  const TWO: BotLabel[] = [
+    { id: "a", name: "Work Budget", applicableTo: "EXPENSE" },
+    { id: "b", name: "Work Lunch", applicableTo: "EXPENSE" },
+  ];
+
+  // The predicate a caller uses to tell "this reply is about labels" from "this reply is a new
+  // description". Spelling the buckets out at the call site got it wrong once per bucket added,
+  // each time renaming a receipt draft to the text of the instruction, so every one is pinned.
+  it("is true for a label that applied", () => {
+    expect(namesLabels(readLabelDirective("label it salary", [LABEL], "INCOME"))).toBe(true);
+  });
+
+  it("is true for a label the user does not have", () => {
+    expect(namesLabels(readLabelDirective("label it badminton", [LABEL]))).toBe(true);
+  });
+
+  it("is true for a label of the wrong type", () => {
+    expect(namesLabels(readLabelDirective("label it salary", [LABEL], "EXPENSE"))).toBe(true);
+  });
+
+  it("is true for an ambiguous name", () => {
+    expect(namesLabels(readLabelDirective("label it work", TWO))).toBe(true);
+  });
+
+  it("is false for text that says nothing about labels", () => {
+    expect(namesLabels(readLabelDirective("Groceries at SM", TWO))).toBe(false);
   });
 });

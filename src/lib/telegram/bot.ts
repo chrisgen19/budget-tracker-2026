@@ -40,6 +40,7 @@ import {
 } from "@/lib/telegram/pending-scan";
 import { correctedDescription, isScanCorrection } from "@/lib/telegram/scan-correction";
 import {
+  namesLabels,
   readLabelDirective,
   renderLabelNotice,
   type BotLabel,
@@ -1506,13 +1507,10 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     const lookup = hasPendingScan(chatId) ? await loadLabels() : null;
     const directive = lookup ? readLabelDirective(text, lookup.labels, "EXPENSE") : null;
     // Any directive the parser understood is a label edit, including one naming a label that
-    // cannot apply to an expense. Leaving `incompatible` out of this test sent "label it salary"
-    // down the description branch, so the draft was renamed "Label it salary".
-    const isLabelEdit =
-      !!directive &&
-      (directive.ids.length > 0 ||
-        directive.unresolved.length > 0 ||
-        directive.incompatible.length > 0);
+    // cannot apply to an expense, or one that could mean two. Spelling those cases out here got
+    // it wrong once per bucket added, each time renaming the draft to the text of the
+    // instruction, so the question is asked of the parser instead.
+    const isLabelEdit = !!directive && namesLabels(directive);
     // `rest` is only a description when the directive was actually cut out of it. A bare unmarked
     // one is reported but deliberately left in place, so `rest` is then the whole untouched reply
     // and "label badminton" would become the description of the purchase. Asking the parser is
