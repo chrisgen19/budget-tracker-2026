@@ -38,6 +38,13 @@ export function QuickLabelPicker({
         Pin up to {MAX_QUICK_LABELS} labels for quick access. Pinned labels appear first when adding transactions.
       </p>
 
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="text-xs font-medium text-warm-400">Select labels in display order</p>
+        <p className="text-xs font-semibold text-warm-500" aria-live="polite">
+          {selectedIds.length} of {MAX_QUICK_LABELS} selected
+        </p>
+      </div>
+
       <div className="flex flex-wrap gap-2 mb-6">
         {allLabels.map((lbl) => {
           const order = selectedIds.indexOf(lbl.id);
@@ -48,28 +55,49 @@ export function QuickLabelPicker({
             <button
               key={lbl.id}
               type="button"
+              aria-pressed={isSelected}
+              // The order badge below is decorative, so without this the accessible
+              // name is just the label name and a screen-reader user cannot tell
+              // which position they picked, despite being asked to pick in order.
+              aria-label={
+                isSelected
+                  ? `${lbl.name}, position ${order + 1} of ${selectedIds.length}`
+                  : lbl.name
+              }
               onClick={() => toggleLabel(lbl.id)}
               disabled={isDisabled}
               className={cn(
-                "relative inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-full border-2 transition-colors",
+                "relative inline-flex min-h-11 items-center gap-2 rounded-full border px-3.5 py-2 text-sm font-medium text-warm-600 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/50 focus-visible:ring-offset-2",
                 !isSelected &&
                   (isDisabled
-                    ? "border-cream-200 text-warm-300 opacity-40 cursor-not-allowed"
-                    : "border-dashed border-cream-300 text-warm-400 hover:border-warm-400 hover:text-warm-500")
+                    ? "cursor-not-allowed border-cream-200 opacity-40"
+                    : "border-cream-300 bg-white hover:border-warm-300 hover:bg-cream-50"),
+                isSelected && "border-amber/60 bg-amber-light/50 shadow-sm",
               )}
-              style={
-                isSelected
-                  ? { backgroundColor: lbl.color + "18", color: lbl.color, borderColor: lbl.color + "55" }
-                  : undefined
-              }
             >
               {isSelected && (
-                <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-amber text-white text-[9px] font-bold flex items-center justify-center shadow-sm">
+                <span
+                  aria-hidden="true"
+                  className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-amber text-white text-[9px] font-bold flex items-center justify-center shadow-sm"
+                >
                   {order + 1}
                 </span>
               )}
-              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: lbl.color }} />
+              <span
+                aria-hidden="true"
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{ backgroundColor: lbl.color }}
+              />
               {lbl.name}
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "flex h-4 w-4 shrink-0 items-center justify-center rounded-full",
+                  isSelected ? "bg-amber text-white" : "border border-cream-300 text-transparent",
+                )}
+              >
+                <Check className="h-3 w-3" />
+              </span>
             </button>
           );
         })}

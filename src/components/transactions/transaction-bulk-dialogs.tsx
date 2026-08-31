@@ -254,25 +254,37 @@ export function TransactionBulkLabelsDialog({
           No labels are compatible with every selected transaction.
         </p>
       ) : (
-        <div className="max-h-72 space-y-1 overflow-y-auto">
+        <fieldset className="max-h-72 space-y-1 overflow-y-auto">
+          <legend className="sr-only">
+            Select labels to {operation} on the chosen transactions
+          </legend>
           {compatibleLabels.map((label) => (
             <label
               key={label.id}
-              className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl px-3 hover:bg-cream-50"
+              className={cn(
+                "flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border px-3 py-2 transition-colors",
+                selectedIds.has(label.id)
+                  ? "border-amber/30 bg-amber-light/30"
+                  : "border-transparent hover:bg-cream-50",
+              )}
             >
               <input
                 type="checkbox"
                 checked={selectedIds.has(label.id)}
                 onChange={() => toggle(label.id)}
                 disabled={pending}
-                className="h-5 w-5 accent-amber"
+                className="h-5 w-5 accent-amber focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/50 focus-visible:ring-offset-2"
               />
-              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: label.color }} />
+              <span
+                aria-hidden="true"
+                className="h-2.5 w-2.5 rounded-full"
+                style={{ backgroundColor: label.color }}
+              />
               <span className="flex-1 text-sm font-medium text-warm-600">{label.name}</span>
               <span className="text-[11px] text-warm-300">{label.applicableTo.toLowerCase()}</span>
             </label>
           ))}
-        </div>
+        </fieldset>
       )}
       <div className="mt-6 flex gap-3">
         <button
