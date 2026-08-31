@@ -215,13 +215,19 @@ export function LabelForm({ label, onSubmit, onCancel }: LabelFormProps) {
                 </div>
 
                 {/* Time range */}
+                {/*
+                  `appearance-none` and `min-w-0` both matter here: iOS Safari sizes a native
+                  time control to its intrinsic content, and a flex item defaults to
+                  `min-width: auto`, so without the pair these two cannot shrink and the row
+                  overflows. Tightest date/time layout in the app -- two controls plus a button.
+                */}
                 <div className="flex items-center gap-2">
                   <div className="flex-1">
                     <p className="text-xs text-warm-400 mb-1">From</p>
                     <input
                       type="time"
                       {...register(`schedules.${index}.startTime`)}
-                      className="w-full px-3 py-2 rounded-lg border border-cream-300 bg-white text-warm-700 text-sm focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all"
+                      className="w-full min-w-0 appearance-none px-3 py-2 rounded-lg border border-cream-300 bg-white text-warm-700 text-sm focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all [&::-webkit-calendar-picker-indicator]:opacity-60"
                     />
                   </div>
                   <span className="text-warm-300 text-sm mt-5">to</span>
@@ -230,7 +236,7 @@ export function LabelForm({ label, onSubmit, onCancel }: LabelFormProps) {
                     <input
                       type="time"
                       {...register(`schedules.${index}.endTime`)}
-                      className="w-full px-3 py-2 rounded-lg border border-cream-300 bg-white text-warm-700 text-sm focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all"
+                      className="w-full min-w-0 appearance-none px-3 py-2 rounded-lg border border-cream-300 bg-white text-warm-700 text-sm focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all [&::-webkit-calendar-picker-indicator]:opacity-60"
                     />
                   </div>
                   <button

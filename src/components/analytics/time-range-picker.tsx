@@ -316,7 +316,7 @@ export function TimeRangePicker({
                     type="date"
                     value={customFrom}
                     onChange={(e) => setCustomFrom(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-cream-200 bg-white text-sm text-warm-600 focus:outline-none focus:ring-2 focus:ring-amber-200"
+                    className="w-full min-w-0 appearance-none px-3 py-2 rounded-lg border border-cream-200 bg-white text-sm text-warm-600 focus:outline-none focus:ring-2 focus:ring-amber-200 [&::-webkit-calendar-picker-indicator]:opacity-60"
                   />
                 </div>
                 <div className="space-y-2">
@@ -325,7 +325,7 @@ export function TimeRangePicker({
                     type="date"
                     value={customTo}
                     onChange={(e) => setCustomTo(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-cream-200 bg-white text-sm text-warm-600 focus:outline-none focus:ring-2 focus:ring-amber-200"
+                    className="w-full min-w-0 appearance-none px-3 py-2 rounded-lg border border-cream-200 bg-white text-sm text-warm-600 focus:outline-none focus:ring-2 focus:ring-amber-200 [&::-webkit-calendar-picker-indicator]:opacity-60"
                   />
                 </div>
                 <button
