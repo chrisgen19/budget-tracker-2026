@@ -56,7 +56,14 @@ export function QuickLabelPicker({
               key={lbl.id}
               type="button"
               aria-pressed={isSelected}
-              aria-label={lbl.name}
+              // The order badge below is decorative, so without this the accessible
+              // name is just the label name and a screen-reader user cannot tell
+              // which position they picked, despite being asked to pick in order.
+              aria-label={
+                isSelected
+                  ? `${lbl.name}, position ${order + 1} of ${selectedIds.length}`
+                  : lbl.name
+              }
               onClick={() => toggleLabel(lbl.id)}
               disabled={isDisabled}
               className={cn(
