@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import type { TransactionInput } from "@/lib/validations";
@@ -57,6 +57,10 @@ vi.mock("@/components/transactions/label-picker", () => ({
 
 afterEach(() => vi.useRealTimers());
 
+const openDateTimeEditor = () => {
+  fireEvent.click(screen.getByRole("button", { name: /^Date and time,/ }));
+};
+
 describe("TransactionForm account-local dates", () => {
   it("passes an absolute instant to schedule matching instead of account wall time", () => {
     render(
@@ -79,7 +83,7 @@ describe("TransactionForm account-local dates", () => {
     );
   });
 
-  it("resolves a datetime-local value with the saved account offset on submit", async () => {
+  it("resolves the account wall-clock date and time with the saved offset on submit", async () => {
     const onSubmit = vi.fn((_data: TransactionInput) => Promise.resolve());
 
     render(
@@ -108,20 +112,108 @@ describe("TransactionForm account-local dates", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-31T17:00:00.000Z"));
 
-    const { container } = render(
+    render(
       <TransactionForm
         onSubmit={() => Promise.resolve()}
         onCancel={() => {}}
       />,
     );
 
-    const calendarButton = container
-      .querySelector("svg.lucide-calendar-days")
-      ?.closest("button");
-    expect(calendarButton).not.toBeNull();
-    act(() => fireEvent.click(calendarButton!));
+    const trigger = screen.getByRole("button", { name: /^Date and time,/ });
+    const editor = document.getElementById(trigger.getAttribute("aria-controls")!);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(editor?.classList.contains("hidden")).toBe(true);
 
-    const input = container.querySelector<HTMLInputElement>('input[type="datetime-local"]');
-    expect(input?.value).toBe("2026-08-31T10:00");
+    openDateTimeEditor();
+    expect((screen.getByLabelText("Date") as HTMLInputElement).value).toBe("2026-08-31");
+    expect((screen.getByLabelText("Time") as HTMLInputElement).value).toBe("10:00");
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(editor?.classList.contains("hidden")).toBe(false);
+  });
+
+  it("adds the account-local current time when initial data contains only a date", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date("2026-08-31T17:00:00.000Z"));
+    const onSubmit = vi.fn((_data: TransactionInput) => Promise.resolve());
+
+    render(
+      <TransactionForm
+        initialData={{ amount: 12, date: "2026-08-15", categoryId: "food" }}
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+
+    openDateTimeEditor();
+    expect((screen.getByLabelText("Date") as HTMLInputElement).value).toBe("2026-08-15");
+    expect((screen.getByLabelText("Time") as HTMLInputElement).value).toBe("10:00");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Transaction" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].date).toBe("2026-08-15T17:00:00.000Z");
+  });
+
+  it("lets the user expand and edit separate date and time fields", async () => {
+    render(
+      <TransactionForm
+        initialData={{
+          amount: 12,
+          description: "Dinner",
+          type: "EXPENSE",
+          date: "2026-08-27T17:30",
+          categoryId: "food",
+        }}
+        onSubmit={() => Promise.resolve()}
+        onCancel={() => {}}
+      />,
+    );
+
+    openDateTimeEditor();
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-09-05" } });
+    fireEvent.change(screen.getByLabelText("Time"), { target: { value: "21:15" } });
+
+    await waitFor(() =>
+      expect(scheduledLabelMocks.useScheduledLabel).toHaveBeenLastCalledWith(
+        "2026-09-06T04:15:00.000Z",
+        "EXPENSE",
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: /September 5, 2026 at 9:15 PM/ }),
+    ).toBeTruthy();
+  });
+
+  it("reports which half of the date and time is missing", async () => {
+    const onSubmit = vi.fn((_data: TransactionInput) => Promise.resolve());
+    render(
+      <TransactionForm
+        initialData={{ amount: 12, categoryId: "food" }}
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+
+    openDateTimeEditor();
+    fireEvent.change(screen.getByLabelText("Time"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Transaction" }));
+
+    expect(await screen.findByText("Choose a time.")).toBeTruthy();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("opens the editor automatically for a suspicious receipt date", () => {
+    render(
+      <TransactionForm
+        initialData={{ amount: 12, date: "2023-08-15T08:45", categoryId: "food" }}
+        dateWarning
+        onSubmit={() => Promise.resolve()}
+        onCancel={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /^Date and time,/ }).getAttribute("aria-expanded"))
+      .toBe("true");
+    expect(screen.getByLabelText("Date")).toBeTruthy();
+    expect(screen.getByText(/receipt date year looks incorrect/i)).toBeTruthy();
   });
 });
