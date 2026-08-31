@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle, ArrowLeft, CalendarDays, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronRight, Plus, Trash2 } from "lucide-react";
 import {
   resolveTransactionDate,
   transactionSchema,
@@ -12,8 +12,8 @@ import {
 } from "@/lib/validations";
 import { getCurrencySymbol, cn } from "@/lib/utils";
 import {
+  combineAccountDateWithTime,
   formatAccountDateInput,
-  relativeAccountDateInput,
 } from "@/lib/account-time";
 import { MAX_QUICK_CATEGORIES, resolveQuickCategories } from "@/lib/quick-categories";
 import { CategoryIcon } from "@/components/ui/icon-map";
@@ -21,6 +21,7 @@ import { ReceiptBreakdown, toReceiptBreakdownMeta } from "@/components/transacti
 import { useUser } from "@/components/user-provider";
 import { useCategoriesQuery, useQuickPreferencesQuery } from "@/hooks/use-categories";
 import { LabelPicker } from "@/components/transactions/label-picker";
+import { TransactionDateTimeField } from "@/components/transactions/transaction-date-time-field";
 import { useScheduledLabel } from "@/hooks/use-scheduled-label";
 import { useLabelsQuery } from "@/hooks/use-labels";
 import type { TransactionWithCategory } from "@/types";
@@ -52,24 +53,16 @@ const formatAmountDisplay = (value: number) =>
     maximumFractionDigits: 2,
   }).format(value);
 
-type DateMode = "today" | "yesterday" | "custom";
-
-/** Determine if an account-local date string matches today or yesterday. */
-const getDateMode = (dateStr: string, timezoneOffset: number): DateMode => {
-  const day = dateStr.slice(0, 10);
-  const now = new Date();
-  if (day === formatAccountDateInput(now, timezoneOffset).slice(0, 10)) return "today";
-  if (day === relativeAccountDateInput(now, timezoneOffset, -1).slice(0, 10)) {
-    return "yesterday";
-  }
-  return "custom";
-};
-
 /** Draft inputs carry account wall time. Only explicitly zoned instants need conversion. */
-const initialDateInput = (date: string, timezoneOffset: number): string =>
-  /(?:Z|[+-]\d{2}:?\d{2})$/i.test(date)
-    ? formatAccountDateInput(date, timezoneOffset)
-    : date;
+const initialDateInput = (date: string, timezoneOffset: number): string => {
+  if (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(date)) {
+    return formatAccountDateInput(date, timezoneOffset);
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return combineAccountDateWithTime(date, new Date(), timezoneOffset);
+  }
+  return date;
+};
 
 const slideVariants = {
   enterFromRight: { x: 80, opacity: 0 },
@@ -88,22 +81,6 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     if (initialData?.amount != null) return formatAmountDisplay(initialData.amount);
     return "";
   });
-  const [dateMode, setDateMode] = useState<DateMode>(() => {
-    if (transaction) {
-      return getDateMode(
-        formatAccountDateInput(transaction.date, user.timezoneOffset),
-        user.timezoneOffset,
-      );
-    }
-    if (initialData?.date) {
-      return getDateMode(
-        initialDateInput(initialData.date, user.timezoneOffset),
-        user.timezoneOffset,
-      );
-    }
-    return "today";
-  });
-  const dateInputRef = useRef<HTMLInputElement>(null);
   const initialCategoryApplied = useRef(false);
 
   const {
@@ -112,7 +89,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     watch,
     setValue,
     getValues,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, submitCount },
   } = useForm<TransactionInput>({
     resolver: zodResolver(transactionSchema),
     defaultValues: {
@@ -248,22 +225,6 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedType]);
-
-  const setDateToToday = () => {
-    setDateMode("today");
-    setValue("date", formatAccountDateInput(new Date(), user.timezoneOffset));
-  };
-
-  const setDateToYesterday = () => {
-    setDateMode("yesterday");
-    setValue("date", relativeAccountDateInput(new Date(), user.timezoneOffset, -1));
-  };
-
-  const handleCustomDate = () => {
-    setDateMode("custom");
-    // Try to open native date picker after render
-    setTimeout(() => dateInputRef.current?.showPicker?.(), 50);
-  };
 
   return (
     <AnimatePresence mode="wait" initial={false}>
@@ -557,72 +518,20 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               />
             )}
 
-            {/* Date — quick picks */}
-            <div>
-              <p className="text-sm font-semibold text-warm-600 mb-3">Date</p>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={setDateToToday}
-                  className={cn(
-                    "flex-1 py-2.5 rounded-xl text-sm font-medium transition-all duration-150",
-                    dateMode === "today"
-                      ? "bg-warm-800 text-white shadow-warm"
-                      : "bg-cream-100 text-warm-500 hover:bg-cream-200/60"
-                  )}
-                >
-                  Today
-                </button>
-                <button
-                  type="button"
-                  onClick={setDateToYesterday}
-                  className={cn(
-                    "flex-1 py-2.5 rounded-xl text-sm font-medium transition-all duration-150",
-                    dateMode === "yesterday"
-                      ? "bg-warm-800 text-white shadow-warm"
-                      : "bg-cream-100 text-warm-500 hover:bg-cream-200/60"
-                  )}
-                >
-                  Yesterday
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCustomDate}
-                  className={cn(
-                    "w-11 shrink-0 flex items-center justify-center rounded-xl transition-all duration-150",
-                    dateMode === "custom"
-                      ? "bg-warm-800 text-white shadow-warm"
-                      : "bg-cream-100 text-warm-400 hover:bg-cream-200/60"
-                  )}
-                >
-                  <CalendarDays className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Custom date input — visible only in "custom" mode */}
-              {dateMode === "custom" && (
-                <input
-                  ref={dateInputRef}
-                  type="datetime-local"
-                  value={watchedDate}
-                  onChange={(e) => setValue("date", e.target.value)}
-                  className="w-full mt-2.5 px-4 py-2.5 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 text-sm focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all appearance-none [&::-webkit-calendar-picker-indicator]:opacity-60"
-                />
-              )}
-
-              {dateWarning && dateMode !== "today" && dateMode !== "yesterday" && (
-                <div className="flex items-start gap-2 mt-2.5 p-3 rounded-xl bg-amber-50 border border-amber-200">
-                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                  <p className="text-xs text-amber-700">
-                    The receipt date year looks incorrect (possible POS error). Please verify the date is correct or tap <strong>Today</strong> to use today&apos;s date.
-                  </p>
-                </div>
-              )}
-
-              {errors.date && (
-                <p className="text-expense text-sm mt-1.5">{errors.date.message}</p>
-              )}
-            </div>
+            <TransactionDateTimeField
+              value={watchedDate}
+              timezoneOffset={user.timezoneOffset}
+              dateWarning={dateWarning}
+              error={errors.date?.message}
+              submitCount={submitCount}
+              onChange={(date) =>
+                // A native date control reports `""` while its segments are being retyped, and
+                // the field collapses either half being empty to the same `""`. Validating that
+                // paints "Choose a date." under an input the user is still filling in, so an
+                // incomplete value is stored but left for submit to report.
+                setValue("date", date, { shouldDirty: true, shouldValidate: !!date })
+              }
+            />
 
             {/* Note (Optional) */}
             <div>

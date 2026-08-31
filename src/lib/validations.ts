@@ -432,10 +432,10 @@ export const formatLocalDate = (instant: Date, timezoneOffset: number): string =
  * A bare `YYYY-MM-DD` parses as **midnight UTC**, which is the previous day for anyone west of
  * Greenwich: a 1 March transaction from a UTC-5 user lands inside February's range and shows up
  * in the wrong month. Every other write path already avoids this by attaching a local wall-clock
- * time before sending (`datetime-local` in the transaction form, `withLocalTime` in the scan
- * flow); the MCP tool is the only caller that receives a bare date, so it normalises here using
- * the same `Date.UTC(y, m, d) + tzOffset * 60000` formula the rest of the app uses for day and
- * month boundaries.
+ * time before sending (the paired date/time controls in the transaction form, `withLocalTime` in
+ * the scan flow); the MCP tool is the only caller that receives a bare date, so it normalises here
+ * using the same `Date.UTC(y, m, d) + tzOffset * 60000` formula the rest of the app uses for day
+ * and month boundaries.
  *
  * A zone-less time is the user's saved wall clock and is resolved with `timezoneOffset`.
  * A value carrying `Z` or an explicit offset already identifies an instant and is preserved.
@@ -485,8 +485,8 @@ export const resolveTransactionDate = (
 
   // A bare date carries no time, so one has to be chosen. Midnight was the obvious anchor while
   // this only had to land in the right month, but it turned out to be a tell: every MCP row sat
-  // at 12:00 AM while not one of the app's did. The form uses a `datetime-local` prefilled with
-  // the current clock, and the scanner's `withLocalTime` attaches the current clock to date-only
+  // at 12:00 AM while not one of the app's did. The form prefills its time control with the
+  // current clock, and the scanner's `withLocalTime` attaches the current clock to date-only
   // OCR output, so "the user's current wall clock" is the convention this app already has.
   //
   // This only applies when no time was supplied. A model that heard "last night" should send one.
