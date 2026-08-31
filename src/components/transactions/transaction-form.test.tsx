@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import type { TransactionInput } from "@/lib/validations";
+import type { TransactionWithCategory } from "@/types";
 
 const scheduledLabelMocks = vi.hoisted(() => ({
   useScheduledLabel: vi.fn(() => ({ scheduledLabelId: null })),
@@ -52,7 +53,16 @@ vi.mock("@/hooks/use-scheduled-label", () => ({
 }));
 
 vi.mock("@/components/transactions/label-picker", () => ({
-  LabelPicker: () => null,
+  LabelPicker: ({ onChange }: { onChange: (ids: string[]) => void }) => (
+    <div>
+      <button type="button" onClick={() => onChange(["label-1"])}>
+        Select test label
+      </button>
+      <button type="button" onClick={() => onChange([])}>
+        Clear test labels
+      </button>
+    </div>
+  ),
 }));
 
 afterEach(() => vi.useRealTimers());
@@ -285,5 +295,76 @@ describe("TransactionForm account-local dates", () => {
     const trigger = screen.getByRole("button", { name: /^Date and time,/ });
     expect(trigger.getAttribute("aria-label")).toContain("September 5, 2026, time not set");
     expect(screen.getByText("Sep 5 · Not set")).toBeTruthy();
+  });
+});
+
+describe("TransactionForm label intent", () => {
+  const draft = {
+    amount: 12,
+    description: "Dinner",
+    type: "EXPENSE" as const,
+    date: "2026-08-27T17:30",
+    categoryId: "food",
+  };
+
+  it("omits labelIds when a new transaction's picker is untouched", async () => {
+    const onSubmit = vi.fn((_data: TransactionInput) => Promise.resolve());
+    render(
+      <TransactionForm initialData={draft} onSubmit={onSubmit} onCancel={() => {}} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Transaction" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    expect(onSubmit.mock.calls[0][0]).not.toHaveProperty("labelIds");
+  });
+
+  it("submits explicit label choices after the user changes them", async () => {
+    const onSubmit = vi.fn((_data: TransactionInput) => Promise.resolve());
+    render(
+      <TransactionForm initialData={draft} onSubmit={onSubmit} onCancel={() => {}} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Select test label" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Transaction" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    expect(onSubmit.mock.calls[0][0].labelIds).toEqual(["label-1"]);
+  });
+
+  it("submits an explicit empty array when the user clears labels", async () => {
+    const onSubmit = vi.fn((_data: TransactionInput) => Promise.resolve());
+    render(
+      <TransactionForm
+        initialData={{ ...draft, labelIds: ["label-1"] }}
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear test labels" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Transaction" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    expect(onSubmit.mock.calls[0][0].labelIds).toEqual([]);
+  });
+
+  it("omits labelIds on an untouched edit so the server preserves existing labels", async () => {
+    const onSubmit = vi.fn((_data: TransactionInput) => Promise.resolve());
+    const transaction = {
+      ...draft,
+      id: "transaction-1",
+      date: new Date("2026-08-27T17:30:00.000Z"),
+      labels: [{ labelId: "label-1" }],
+    } as unknown as TransactionWithCategory;
+
+    render(
+      <TransactionForm transaction={transaction} onSubmit={onSubmit} onCancel={() => {}} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    expect(onSubmit.mock.calls[0][0]).not.toHaveProperty("labelIds");
   });
 });
