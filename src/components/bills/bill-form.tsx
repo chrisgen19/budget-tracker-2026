@@ -6,7 +6,9 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, CalendarDays, ChevronRight, Plus } from "lucide-react";
 import { scheduledTransactionSchema, type ScheduledTransactionInput } from "@/lib/validations";
-import { formatDateInput, getCurrencySymbol, cn } from "@/lib/utils";
+import { getCurrencySymbol, cn } from "@/lib/utils";
+import { accountDateKey } from "@/lib/account-time";
+import { utcDayKey } from "@/lib/bill-dates";
 import { MAX_QUICK_CATEGORIES, resolveQuickCategories } from "@/lib/quick-categories";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { LabelPicker } from "@/components/transactions/label-picker";
@@ -68,6 +70,7 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
     watch,
     setValue,
     getValues,
+    clearErrors,
     formState: { errors, isSubmitting },
   } = useForm<ScheduledTransactionInput>({
     resolver: zodResolver(scheduledTransactionSchema),
@@ -79,12 +82,16 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
       frequency: bill?.frequency ?? "MONTHLY",
       customIntervalDays: bill?.customIntervalDays ?? undefined,
       reminderDaysBefore: bill?.reminderDaysBefore ?? 0,
+      // Bill start/end dates are date-only calendar values stored at UTC midnight ("the 5th"),
+      // not instants, so they are read back with UTC accessors. Routing one through the browser's
+      // zone moves the 5th to the 4th west of UTC, and saving an untouched form writes that day
+      // back and recalculates the whole schedule from it. "Today" for a *new* bill is the
+      // opposite case -- a real instant -- so it resolves against the account's saved offset,
+      // which is neither the browser's day nor UTC's.
       startDate: bill
-        ? formatDateInput(bill.startDate).slice(0, 10)
-        : new Date().toISOString().slice(0, 10),
-      endDate: bill?.endDate
-        ? formatDateInput(bill.endDate).slice(0, 10)
-        : undefined,
+        ? utcDayKey(bill.startDate)
+        : accountDateKey(new Date(), user.timezoneOffset),
+      endDate: bill?.endDate ? utcDayKey(bill.endDate) : undefined,
       labelIds: bill?.labels?.map((bl) => bl.labelId) ?? [],
     },
   });
@@ -472,7 +479,13 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
                   type="button"
                   onClick={() => {
                     setShowEndDate(!showEndDate);
-                    if (showEndDate) setValue("endDate", undefined);
+                    // Switching off clears the value, so any standing complaint about it is
+                    // now about nothing. Clearing rather than hiding: a hidden error comes
+                    // back with the toggle, pointing at an empty field.
+                    if (showEndDate) {
+                      setValue("endDate", undefined);
+                      clearErrors("endDate");
+                    }
                   }}
                   className={cn(
                     "relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200",
@@ -489,14 +502,20 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
               </div>
 
               {showEndDate && (
-                <div className="relative">
-                  <input
-                    type="date"
-                    {...register("endDate")}
-                    className="w-full px-4 py-3 rounded-xl border border-cream-200 bg-cream-50/50 text-warm-700 text-sm focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all appearance-none [&::-webkit-calendar-picker-indicator]:opacity-60"
-                  />
-                  <CalendarDays className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-warm-300 pointer-events-none" />
-                </div>
+                <>
+                  <div className="relative">
+                    <input
+                      type="date"
+                      {...register("endDate")}
+                      className="w-full px-4 py-3 rounded-xl border border-cream-200 bg-cream-50/50 text-warm-700 text-sm focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all appearance-none [&::-webkit-calendar-picker-indicator]:opacity-60"
+                    />
+                    <CalendarDays className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-warm-300 pointer-events-none" />
+                  </div>
+
+                  {errors.endDate && (
+                    <p className="text-expense text-sm mt-1.5">{errors.endDate.message}</p>
+                  )}
+                </>
               )}
             </div>
 
