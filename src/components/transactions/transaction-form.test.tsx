@@ -300,7 +300,7 @@ describe("TransactionForm account-local dates", () => {
   // A class assertion rather than a behavioural one on purpose: the failure is that iOS Safari
   // sizes a native date/time control to its intrinsic content and ignores `w-full`, which no
   // jsdom or Chromium test can observe. What is pinned is that the rewrite in #197, which
-  // dropped these classes while every other date input in the app kept them, cannot recur.
+  // dropped these classes, cannot recur here.
   it("keeps the native control appearance off both inputs so iOS honours their width", () => {
     render(
       <TransactionForm

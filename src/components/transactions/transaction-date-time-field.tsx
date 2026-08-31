@@ -197,7 +197,9 @@ export function TransactionDateTimeField({
             two fields render wider than the rest of the form and spill out of the grid cell.
             `min-w-0` does not cover this: it governs shrinking below min-content, not the
             width the UA control imposes. Chromium sizes them normally, so this is invisible
-            outside a real iOS device. Same pair of classes as `bill-form.tsx`.
+            outside a real iOS device, which is how the rewrite that dropped it shipped.
+            Every `type="date"` / `type="time"` input in the app needs the pair -- see also
+            `bill-form.tsx`, `label-form.tsx` and `time-range-picker.tsx`.
           */}
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
             <div className="min-w-0">
