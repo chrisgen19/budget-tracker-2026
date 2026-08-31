@@ -4,8 +4,12 @@
  * `prisma migrate dev` and `prisma db push` write schema. Both are fronted by a one-word pnpm
  * script, and neither says which database it is about to change -- so whichever `DATABASE_URL` is
  * in scope at that moment is the one that gets altered, and the two look identical from the
- * terminal. That is how two migrations from a closed PR reached production: they were applied to
- * the live database seconds after being generated, and nothing downstream noticed for four deploys.
+ * terminal.
+ *
+ * This is *not* how the migrations from closed PR #187 reached production -- that was a Vercel
+ * preview build running `pnpm build`, which used to contain `prisma migrate deploy` (issue #192).
+ * The guard was written under the wrong diagnosis and is kept anyway: the accident it prevents is
+ * real and one keystroke away, it is simply not the one that happened.
  *
  * Gates `db:migrate` and `db:push` only. `db:seed` is deliberately left open -- AGENTS.md documents
  * running it against production from a Coolify terminal after promoting a default category -- as is

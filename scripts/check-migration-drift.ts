@@ -8,24 +8,28 @@
  * database from somewhere other than this repo.
  *
  * That is not a hypothetical gap. Two migrations from the closed PR #187 were applied to production
- * from a dev machine, and the one category row they inserted carried an enum value the deployed
- * Prisma client did not know. Every `category.findMany()` without a `type` filter then failed while
- * *deserialising its own result* -- GET /api/categories, the MCP `get_category_list` tool, and so
- * every Telegram bot message -- across four green deploys that each reported nothing wrong.
+ * by a Vercel preview build (see issue #192; the migration file's own comments still say "a dev
+ * machine", which was the wrong conclusion), and the one category row they inserted carried an enum
+ * value the deployed Prisma client did not know. Every `category.findMany()` without a `type`
+ * filter then failed while *deserialising its own result* -- GET /api/categories, the MCP
+ * `get_category_list` tool, and so every Telegram bot message -- across four green deploys that
+ * each reported nothing wrong.
  *
- * Runs in `pnpm build` *after* `prisma migrate deploy`, never before: the deploy that carries a
- * revert has to be allowed to apply it first, and by the time this runs the history should already
- * agree with the folder.
+ * Runs in `pnpm build:deploy` *after* `prisma migrate deploy`, never before: the deploy that
+ * carries a revert has to be allowed to apply it first, and by the time this runs the history
+ * should already agree with the folder.
  *
  * That ordering has a known cost, and it was weighed rather than missed. If a database is drifted
  * *and* the revision being deployed carries its own pending migration, `migrate deploy` applies
  * that migration before this check aborts the build -- so the schema moves forward while the old
  * container keeps serving. The narrower fix, checking first with the known-bad migrations
  * allow-listed by name, trades a temporary hardcoded list for it and has to be remembered and
- * removed later. It is also not the whole exposure: `pnpm build` runs `migrate deploy` at *image
- * build* time, so a type error or a failing lint already leaves a migrated database behind an
- * un-deployed image. That is a property of building and migrating in one step, which is worth
- * revisiting on its own terms rather than under a hotfix.
+ * removed later. It is also not the whole exposure: `pnpm build:deploy` runs `migrate deploy` at
+ * *image build* time, so a type error or a failing lint already leaves a migrated database behind
+ * an un-deployed image. That is a property of building and migrating in one step, and it is still
+ * true after #192 -- what #192 changed is *who* can do it. The command now lives behind a script
+ * name only `nixpacks.toml` calls, so a builder that runs `pnpm build` by convention no longer
+ * migrates anything.
  *
  * Usage:
  *   pnpm exec tsx scripts/check-migration-drift.ts

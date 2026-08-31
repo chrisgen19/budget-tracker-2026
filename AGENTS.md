@@ -77,7 +77,8 @@ src/
 
 ## Commands
 - `pnpm dev` — Start dev server (Turbopack)
-- `pnpm build` — Production build (generates Prisma client + runs migrations + checks for migration drift + Next.js build). The drift check (`scripts/check-migration-drift.ts`) runs **after** `prisma migrate deploy`, never before, so a deploy carrying a revert can still apply it; it fails the build naming any migration applied to the database that this checkout does not contain. `prisma migrate deploy` and `prisma migrate status` both report that state as "up to date" and exit 0, which is how two migrations from an unmerged PR sat on production across four green deploys
+- `pnpm build` — Production build (`prisma generate && next build`). **Touches no database.** It used to run `prisma migrate deploy`, and that is the whole of issue #192: `build` is the script every CI provider runs by convention, and a Vercel project connected to this repo built every branch push with a production `DATABASE_URL`, so seven migrations reached production between 28 and 71 seconds after their *branch* commit — before review, before merge, and whether or not the PR was ever merged. Nothing that migrates may live under this name again; `scripts/build-scripts.test.ts` asserts it
+- `pnpm build:deploy` — What a deploy runs, and the only script that may migrate: `prisma generate && prisma migrate deploy && tsx scripts/check-migration-drift.ts && next build`. `nixpacks.toml` calls it by name, and nothing else does — that is the fix, since a builder wired up later has no reason to guess this name. The drift check runs **after** `prisma migrate deploy`, never before, so a deploy carrying a revert can still apply it; it fails the build naming any migration applied to the database that this checkout does not contain. `prisma migrate deploy` and `prisma migrate status` both report that state as "up to date" and exit 0, which is how two migrations from an unmerged PR sat on production across four green deploys
 - `pnpm lint` — Run ESLint
 - `pnpm type-check` — Run TypeScript type checker
 - `pnpm test` — Run the test suite once (CI mode)
@@ -99,7 +100,7 @@ src/
 - `RESEND_API_KEY` — Email sending (verification + password reset)
 - `EMAIL_FROM` — Sender address (optional; defaults to `Budget Tracker <noreply@resend.dev>` if unset). Use a verified Resend domain in production, e.g. `Budget Tracker <noreply@yourdomain.com>`.
 - `AUTH_URL` — Optional; used in preview/staging deployments
-- `ALLOW_REMOTE_DB` — Local only, and never set it in `.env`: `1` lets `pnpm db:migrate` / `pnpm db:push` run against a database that is not on this machine. The guard exists because two migrations from the closed PR #187 were applied straight to production from a dev machine, so this is the deliberate way past it, one command at a time (`ALLOW_REMOTE_DB=1 pnpm db:push`). Migrations otherwise reach production only by merging to main and letting Coolify deploy them
+- `ALLOW_REMOTE_DB` — Local only, and never set it in `.env`: `1` lets `pnpm db:migrate` / `pnpm db:push` run against a database that is not on this machine. The guard was written believing two migrations from the closed PR #187 had been applied straight to production from a dev machine; #192 established that a Vercel preview build did it. It is kept regardless — the accident it prevents is one keystroke away, it is simply not the one that happened — and this is the deliberate way past it, one command at a time (`ALLOW_REMOTE_DB=1 pnpm db:push`). Migrations otherwise reach production only by merging to main and letting Coolify deploy them
 - `CRON_SECRET` — Shared secret required by `/api/cron/bill-reminders`. Set in the production (Coolify) environment; a Coolify Scheduled Task reuses the same env var to call the endpoint daily (see **Cron Jobs** below).
 - `TELEGRAM_BOT_ENABLED`: starts the bot from `src/instrumentation.ts` on server boot. Set it **only** in the deployed environment: Telegram answers a second concurrent `getUpdates` for one bot token with 409 Conflict, so enabling it locally while production runs the bot makes the two fight. Use `pnpm telegram:bot` to run it locally instead, and not at the same time
 - `TELEGRAM_BOT_TOKEN`: from @BotFather
@@ -208,9 +209,10 @@ Active tasks:
   `GET /api/categories` returns `OR: [{ isDefault: true }, { userId }]`, so both appear with the same
   name. `scripts/merge-custom-category-into-default.ts` repoints transactions, recurring bills and the
   `quick_*_categories` arrays onto the default and deletes the custom row. Dry run by default
-- `pnpm db:seed` is **not** part of a deploy. `pnpm build` is `prisma generate && prisma migrate deploy
-  && next build`, and `nixpacks.toml` runs only that, so merging a change to the seed list ships the
-  new prompts while the categories they route to do not exist yet. Run the seed by hand from a
+- `pnpm db:seed` is **not** part of a deploy. `nixpacks.toml` runs `pnpm build:deploy`, which is
+  `prisma generate && prisma migrate deploy && tsx scripts/check-migration-drift.ts && next build`
+  and nothing else, so merging a change to the seed list ships the new prompts while the categories
+  they route to do not exist yet. Run the seed by hand from a
   Coolify terminal after deploying one. Do not add it to the build command: it would run on every
   deploy, and the merge script below must never run unattended. `tsx` is a devDependency and may be
   absent from the standalone image, so run `merge-custom-category-into-default.ts` locally against
