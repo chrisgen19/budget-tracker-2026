@@ -296,6 +296,25 @@ describe("TransactionForm account-local dates", () => {
     expect(trigger.getAttribute("aria-label")).toContain("September 5, 2026, time not set");
     expect(screen.getByText("Sep 5 · Not set")).toBeTruthy();
   });
+
+  // A class assertion rather than a behavioural one on purpose: the failure is that iOS Safari
+  // sizes a native date/time control to its intrinsic content and ignores `w-full`, which no
+  // jsdom or Chromium test can observe. What is pinned is that the rewrite in #197, which
+  // dropped these classes while every other date input in the app kept them, cannot recur.
+  it("keeps the native control appearance off both inputs so iOS honours their width", () => {
+    render(
+      <TransactionForm
+        initialData={{ amount: 12, date: "2026-08-27T17:30", categoryId: "food" }}
+        onSubmit={() => Promise.resolve()}
+        onCancel={() => {}}
+      />,
+    );
+
+    openDateTimeEditor();
+    for (const label of ["Date", "Time"]) {
+      expect(screen.getByLabelText(label).className, label).toContain("appearance-none");
+    }
+  });
 });
 
 describe("TransactionForm label intent", () => {

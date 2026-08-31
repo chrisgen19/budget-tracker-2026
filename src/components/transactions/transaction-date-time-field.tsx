@@ -191,6 +191,14 @@ export function TransactionDateTimeField({
           <legend className="sr-only sm:not-sr-only sm:mb-3 sm:block sm:text-sm sm:font-semibold sm:text-warm-600">
             Date &amp; time
           </legend>
+          {/*
+            Both inputs need `appearance-none`. iOS Safari renders a native date/time control
+            that sizes to its intrinsic content and does not honour `w-full`, so without it the
+            two fields render wider than the rest of the form and spill out of the grid cell.
+            `min-w-0` does not cover this: it governs shrinking below min-content, not the
+            width the UA control imposes. Chromium sizes them normally, so this is invisible
+            outside a real iOS device. Same pair of classes as `bill-form.tsx`.
+          */}
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
             <div className="min-w-0">
               <label
@@ -212,7 +220,7 @@ export function TransactionDateTimeField({
                   aria-invalid={!!displayedError}
                   aria-describedby={describedBy}
                   onChange={(event) => update(event.target.value, time)}
-                  className="min-h-11 w-full min-w-0 rounded-xl border border-cream-300 bg-cream-50/50 py-2.5 pl-10 pr-3 text-sm text-warm-700 transition-all focus:border-amber focus:outline-none focus:ring-2 focus:ring-amber/30"
+                  className="min-h-11 w-full min-w-0 appearance-none rounded-xl border border-cream-300 bg-cream-50/50 py-2.5 pl-10 pr-3 text-sm text-warm-700 transition-all focus:border-amber focus:outline-none focus:ring-2 focus:ring-amber/30 [&::-webkit-calendar-picker-indicator]:opacity-60"
                 />
               </div>
             </div>
@@ -238,7 +246,7 @@ export function TransactionDateTimeField({
                   aria-invalid={!!displayedError}
                   aria-describedby={describedBy}
                   onChange={(event) => update(date, event.target.value)}
-                  className="min-h-11 w-full min-w-0 rounded-xl border border-cream-300 bg-cream-50/50 py-2.5 pl-10 pr-3 text-sm text-warm-700 transition-all focus:border-amber focus:outline-none focus:ring-2 focus:ring-amber/30"
+                  className="min-h-11 w-full min-w-0 appearance-none rounded-xl border border-cream-300 bg-cream-50/50 py-2.5 pl-10 pr-3 text-sm text-warm-700 transition-all focus:border-amber focus:outline-none focus:ring-2 focus:ring-amber/30 [&::-webkit-calendar-picker-indicator]:opacity-60"
                 />
               </div>
             </div>
