@@ -216,4 +216,74 @@ describe("TransactionForm account-local dates", () => {
     expect(screen.getByLabelText("Date")).toBeTruthy();
     expect(screen.getByText(/receipt date year looks incorrect/i)).toBeTruthy();
   });
+
+  it("reopens a collapsed editor on submit so the error is never reported into a hidden panel", async () => {
+    const onSubmit = vi.fn((_data: TransactionInput) => Promise.resolve());
+    render(
+      <TransactionForm
+        initialData={{ amount: 12, categoryId: "food" }}
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: /^Date and time,/ });
+    const editor = document.getElementById(trigger.getAttribute("aria-controls")!);
+
+    openDateTimeEditor();
+    fireEvent.change(screen.getByLabelText("Time"), { target: { value: "" } });
+
+    // First submit surfaces the error, then the user collapses the editor on top of it. The
+    // error string does not change on the next submit, so only the submit count can reopen it.
+    fireEvent.click(screen.getByRole("button", { name: "Add Transaction" }));
+    await screen.findByText("Choose a time.");
+    fireEvent.click(trigger);
+    expect(editor?.classList.contains("hidden")).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Transaction" }));
+
+    await waitFor(() => expect(editor?.classList.contains("hidden")).toBe(false));
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(trigger.getAttribute("aria-label")).toContain("Choose a time.");
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("leaves an incomplete native date control unvalidated until submit", async () => {
+    render(
+      <TransactionForm
+        initialData={{ amount: 12, date: "2026-08-27T17:30", categoryId: "food" }}
+        onSubmit={() => Promise.resolve()}
+        onCancel={() => {}}
+      />,
+    );
+
+    openDateTimeEditor();
+    // Chrome reports "" between segments while a date is retyped.
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "" } });
+
+    await waitFor(() =>
+      expect(scheduledLabelMocks.useScheduledLabel).toHaveBeenLastCalledWith("", "EXPENSE"),
+    );
+    expect(screen.queryByText("Choose a date.")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Transaction" }));
+    expect(await screen.findByText("Choose a date.")).toBeTruthy();
+  });
+
+  it("keeps the chosen date in the summary when the time is cleared", () => {
+    render(
+      <TransactionForm
+        initialData={{ amount: 12, date: "2026-09-05T21:15", categoryId: "food" }}
+        onSubmit={() => Promise.resolve()}
+        onCancel={() => {}}
+      />,
+    );
+
+    openDateTimeEditor();
+    fireEvent.change(screen.getByLabelText("Time"), { target: { value: "" } });
+
+    const trigger = screen.getByRole("button", { name: /^Date and time,/ });
+    expect(trigger.getAttribute("aria-label")).toContain("September 5, 2026, time not set");
+    expect(screen.getByText("Sep 5 · Not set")).toBeTruthy();
+  });
 });

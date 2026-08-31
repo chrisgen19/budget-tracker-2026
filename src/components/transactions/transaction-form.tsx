@@ -89,7 +89,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     watch,
     setValue,
     getValues,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, submitCount },
   } = useForm<TransactionInput>({
     resolver: zodResolver(transactionSchema),
     defaultValues: {
@@ -523,8 +523,13 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               timezoneOffset={user.timezoneOffset}
               dateWarning={dateWarning}
               error={errors.date?.message}
+              submitCount={submitCount}
               onChange={(date) =>
-                setValue("date", date, { shouldDirty: true, shouldValidate: true })
+                // A native date control reports `""` while its segments are being retyped, and
+                // the field collapses either half being empty to the same `""`. Validating that
+                // paints "Choose a date." under an input the user is still filling in, so an
+                // incomplete value is stored but left for submit to report.
+                setValue("date", date, { shouldDirty: true, shouldValidate: !!date })
               }
             />
 
