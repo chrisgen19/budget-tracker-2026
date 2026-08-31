@@ -1,5 +1,10 @@
-import { describe, it, expect } from "vitest";
-import { computeNextDueDate, advanceToNextUnpaidOccurrence } from "./bill-utils";
+import { afterAll, describe, it, expect } from "vitest";
+import {
+  computeNextDueDate,
+  advanceToNextUnpaidOccurrence,
+  describeDueDate,
+  formatBillDate,
+} from "./bill-utils";
 import { addUtcDays, userToday, utcDayStart } from "./bill-dates";
 
 /** Bill dates are date-only values stored at midnight UTC. */
@@ -143,5 +148,76 @@ describe("userToday", () => {
     const now = new Date("2026-08-29T18:00:00.000Z");
     expect(key(addUtcDays(userToday(-480, now), 1))).toBe("2026-08-31");
     expect(key(addUtcDays(utcDayStart(now), 1))).toBe("2026-08-30");
+  });
+});
+
+/*
+ * Both helpers render values a browser reads, so the browser zone is forced to one west of UTC
+ * for the whole block: east of Greenwich (where this repo is developed) a browser-local reading
+ * of a UTC-midnight anchor lands on the right day by luck and proves nothing.
+ */
+const ORIGINAL_TZ = process.env.TZ;
+process.env.TZ = "America/Los_Angeles";
+afterAll(() => {
+  process.env.TZ = ORIGINAL_TZ;
+});
+
+describe("formatBillDate", () => {
+  it("renders the stored calendar day, not the browser's reading of it", () => {
+    expect(formatBillDate("2026-09-05T00:00:00.000Z")).toBe("Sep 5, 2026");
+  });
+
+  it("does not roll a first-of-month back into the previous month", () => {
+    expect(formatBillDate("2026-09-01T00:00:00.000Z")).toBe("Sep 1, 2026");
+  });
+});
+
+describe("describeDueDate", () => {
+  const due = day("2026-09-05");
+
+  /*
+   * Every `now` below is chosen so the browser's calendar day and the account's disagree.
+   * Truncating both sides in the browser shifts them together and lands on the right answer by
+   * cancellation, so a case where they agree passes on the broken code and pins nothing. Here
+   * the due date shifts (it is a UTC anchor) while "now" does not, which is the real failure.
+   */
+
+  it("calls a bill due today 'Due today' from the account's day, not the browser's", () => {
+    // 08:00Z on the 5th is 16:00 on the 5th at UTC+8 and 01:00 on the 5th in the browser.
+    // Browser-local truncation drags the due date back to the 4th and reports it overdue.
+    expect(describeDueDate(due, -480, new Date("2026-09-05T08:00:00.000Z"))).toEqual({
+      text: "Due today",
+      isOverdue: false,
+    });
+  });
+
+  it("holds at the other end of the day, where UTC has already moved on", () => {
+    // 23:00Z on the 5th is 16:00 on the 5th for a UTC-7 account: still due today, not overdue.
+    expect(describeDueDate(due, 420, new Date("2026-09-05T23:00:00.000Z")).text).toBe("Due today");
+  });
+
+  it("counts whole days overdue", () => {
+    expect(describeDueDate(due, -480, new Date("2026-09-06T08:00:00.000Z"))).toEqual({
+      text: "1 day overdue",
+      isOverdue: true,
+    });
+    expect(describeDueDate(due, -480, new Date("2026-09-08T08:00:00.000Z")).text).toBe(
+      "3 days overdue",
+    );
+  });
+
+  it("names tomorrow and then falls through to the date", () => {
+    expect(describeDueDate(due, -480, new Date("2026-09-04T08:00:00.000Z")).text).toBe(
+      "Due tomorrow",
+    );
+    expect(describeDueDate(due, -480, new Date("2026-09-01T08:00:00.000Z")).text).toBe(
+      "Due Sep 5, 2026",
+    );
+  });
+
+  it("accepts the ISO string the API actually sends", () => {
+    expect(
+      describeDueDate("2026-09-05T00:00:00.000Z", -480, new Date("2026-09-05T08:00:00.000Z")).text,
+    ).toBe("Due today");
   });
 });

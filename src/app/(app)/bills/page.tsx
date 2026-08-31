@@ -5,7 +5,7 @@ import { Plus, Pencil, PowerOff, CalendarClock, X, ChevronDown, ChevronUp, Rotat
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn, formatCurrency } from "@/lib/utils";
-import { formatFrequency } from "@/lib/bill-utils";
+import { describeDueDate, formatBillDate, formatFrequency } from "@/lib/bill-utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
@@ -24,13 +24,6 @@ import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import type { ScheduledTransactionInput } from "@/lib/validations";
 import type { ScheduledTransactionWithCategory } from "@/types";
-
-const formatShortDate = (date: Date | string) =>
-  new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(new Date(date));
 
 const STATUS_COLORS = {
   PAID: "bg-income-light text-income",
@@ -74,21 +67,12 @@ export default function BillsPage() {
     });
   };
 
-  const getDueDateLabel = (bill: ScheduledTransactionWithCategory) => {
-    // Prefer the server-computed displayNextDueDate, which walks past
-    // PAID/SKIPPED logs. Fall back to nextDueDate for safety if the field
-    // is missing (older API responses / cached data).
-    const due = new Date(bill.displayNextDueDate ?? bill.nextDueDate);
-    due.setHours(0, 0, 0, 0);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const diffDays = Math.floor((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-
-    if (diffDays < 0) return { text: `${Math.abs(diffDays)} day${Math.abs(diffDays) === 1 ? "" : "s"} overdue`, isOverdue: true };
-    if (diffDays === 0) return { text: "Due today", isOverdue: false };
-    if (diffDays === 1) return { text: "Due tomorrow", isOverdue: false };
-    return { text: `Due ${formatShortDate(due)}`, isOverdue: false };
-  };
+  // Prefer the server-computed displayNextDueDate, which walks past PAID/SKIPPED logs. Fall back
+  // to nextDueDate for safety if the field is missing (older API responses / cached data). The
+  // comparison itself lives in bill-utils: a due date is a date-only UTC anchor and "today" is
+  // the account's day, neither of which the browser's zone can be asked for.
+  const getDueDateLabel = (bill: ScheduledTransactionWithCategory) =>
+    describeDueDate(bill.displayNextDueDate ?? bill.nextDueDate, user.timezoneOffset);
 
   return (
     <div>
@@ -396,7 +380,7 @@ function BillHistory({ billId, currency, hideAmounts }: { billId: string; curren
       {allLogs.map((log) => (
         <div key={log.id} className="flex items-center gap-3 text-xs">
           <span className="text-warm-400 tabular-nums w-24 shrink-0">
-            {formatShortDate(log.dueDate)}
+            {formatBillDate(log.dueDate)}
           </span>
           <span className={cn(
             "px-2 py-0.5 rounded-full text-[10px] font-medium",

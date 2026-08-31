@@ -2,6 +2,45 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-08-31 - Bill dates read the calendar day they were stored as
+
+Issue #158. Bill `startDate`, `endDate` and `nextDueDate` are date-only calendar values stored at
+UTC midnight: `2026-09-05T00:00:00.000Z` means "the 5th" for everyone. `bill-dates.ts` has encoded
+that for server code since #184, but four places in the browser still read those values as
+instants, and each one moves the day backwards west of Greenwich.
+
+One of them wrote. `BillForm` filled its date inputs with `formatDateInput(bill.startDate)`, so a
+bill starting the 5th opened showing the 4th in a UTC-7 browser. Pressing Update with nothing else
+changed posted that day back; `PUT /api/bills/[id]` saw `startDateChanged`, re-ran
+`advanceToNextUnpaidOccurrence`, and moved the whole recurring schedule a day early. A shifted
+`endDate` stopped it a day early. Correcting a display bug by hand is one thing; this one was
+corrected *by opening the form*.
+
+The other three were display: `getDueDateLabel` truncated the due date with `setHours(0,0,0,0)`
+and `formatShortDate` formatted it with no `timeZone`, so a bill due today read "1 day overdue"
+and payment-history rows were dated a day early.
+
+The distinction the fix draws is between two things that both look like dates:
+
+- a **stored bill date** is a UTC anchor, read with `utcDayKey` and never converted -- not into
+  the browser's zone and not into the account's either, since shifting the anchor is wrong in
+  both directions;
+- **"today"** is a real instant, and resolves against `users.timezone_offset`. A new bill's
+  default start date now comes from `accountDateKey(new Date(), user.timezoneOffset)` rather than
+  `toISOString().slice(0, 10)`, which was UTC's day. Due-date labels compare against
+  `userToday(tzOffset)`, the same definition reactivation already used.
+
+`getDueDateLabel` and `formatShortDate` moved out of the page into `bill-utils.ts` as
+`describeDueDate` and `formatBillDate`, so the comparison is unit-testable without rendering a
+page. `BillForm` also renders `errors.endDate`, which nothing did: an end date before the start
+date failed validation and then sat there, the button doing nothing and no message explaining why.
+
+Every new test forces `process.env.TZ` west of UTC. This repo is developed in Asia/Manila, where a
+browser-local reading of a UTC-midnight anchor lands on the right day anyway, so an unforced test
+passes whether or not the bug is there. The `describeDueDate` cases go further and pick clocks
+where the browser's calendar day and the account's disagree: truncating both sides in the browser
+shifts them together and cancels out, so a case where they agree pins nothing.
+
 ## 2026-08-31 - The builder nobody was using migrated production
 
 Issue #192. `pnpm build` was `prisma generate && prisma migrate deploy && … && next build`. That

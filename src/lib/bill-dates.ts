@@ -51,3 +51,19 @@ export const clampToMonth = (year: number, month: number, day: number): Date => 
  */
 export const userToday = (timezoneOffset: number, now: Date = new Date()): Date =>
   utcDayStart(new Date(now.getTime() - timezoneOffset * 60_000));
+
+/**
+ * The `YYYY-MM-DD` calendar day a date-only bill value stands for.
+ *
+ * The counterpart to `utcDayStart` for anything that renders. A bill date is stored at midnight
+ * UTC and means "the 5th" for everyone, so it is read back with UTC accessors and never
+ * converted: `getDate()` in a browser west of Greenwich reports the 4th, and `accountDateKey`
+ * would shift the anchor just as wrongly in the other direction. "Today" is the opposite case --
+ * a real instant -- and belongs to `userToday`.
+ */
+export const utcDayKey = (date: Date | string): string => {
+  const value = date instanceof Date ? date : new Date(date);
+  const month = String(value.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(value.getUTCDate()).padStart(2, "0");
+  return `${value.getUTCFullYear()}-${month}-${day}`;
+};
