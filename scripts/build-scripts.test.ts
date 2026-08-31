@@ -19,20 +19,54 @@ const scripts: Record<string, string> = JSON.parse(
   readFileSync(join(__dirname, "..", "package.json"), "utf8")
 ).scripts;
 
-/** Commands that write schema to whatever `DATABASE_URL` is in scope. */
-const SCHEMA_WRITING = ["migrate deploy", "migrate dev", "db push"];
+/**
+ * Anything that opens a connection to whatever `DATABASE_URL` is in scope -- not only the commands
+ * that write.
+ *
+ * AGENTS.md states that `pnpm build` touches no database, and a test that pinned only the writing
+ * half would let the documentation claim more than it guarantees. `migrate status` cannot cause
+ * #192 (it reads), but a build step that dials production from an arbitrary CI provider is the
+ * reachability half of that incident, which issue #194 covers separately. `check-migration-drift`
+ * is on the list for the same reason: it constructs a PrismaClient, and it belongs to the deploy.
+ */
+const DATABASE_TOUCHING = [
+  "migrate deploy",
+  "migrate dev",
+  "migrate status",
+  "migrate resolve",
+  "db push",
+  "db execute",
+  "db seed",
+  "check-migration-drift",
+];
 
 describe("build scripts", () => {
-  it("keeps every schema-writing command out of `pnpm build`", () => {
-    for (const command of SCHEMA_WRITING) {
+  it("keeps every database-touching command out of `pnpm build`", () => {
+    for (const command of DATABASE_TOUCHING) {
       expect(scripts.build).not.toContain(command);
     }
   });
 
   // The whole point of the split: the migrating build has to exist, or `nixpacks.toml` calls a
   // script that is not there and Coolify ships code ahead of its schema.
-  it("migrates only in `build:deploy`", () => {
+  it("migrates in `build:deploy`", () => {
     expect(scripts["build:deploy"]).toContain("prisma migrate deploy");
+  });
+
+  /**
+   * ...and in nothing else. Checking `build` alone leaves the hole one rung up: npm and pnpm run
+   * `prebuild` automatically before `build`, so a `"prebuild": "prisma migrate deploy"` added later
+   * reinstates #192 in full -- every branch push migrating production -- while every assertion
+   * above still passes. `postinstall` and `prepare` run by convention too.
+   *
+   * Named scripts are listed rather than lifecycle hooks specifically, because the property is
+   * "one script migrates", and enumerating the hooks means reopening this the day a new one exists.
+   */
+  it("migrates in nothing else", () => {
+    const migrating = Object.entries(scripts)
+      .filter(([, command]) => command.includes("prisma migrate deploy"))
+      .map(([name]) => name);
+    expect(migrating).toEqual(["build:deploy"]);
   });
 
   // Drift is detected by comparing the database to `prisma/migrations`, so it can only run once
