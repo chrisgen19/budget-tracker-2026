@@ -5,21 +5,47 @@ import { utcDayKey, utcDayStart, userToday } from "@/lib/bill-dates";
 // process zone. Forcing it matters: this repo is developed in Asia/Manila, east of UTC, where a
 // browser-local reading of a UTC-midnight anchor happens to land on the right day anyway.
 const ORIGINAL_TZ = process.env.TZ;
-afterAll(() => {
-  process.env.TZ = ORIGINAL_TZ;
-});
+// Read before anything touches TZ, so a broken restore cannot launder this into agreeing with
+// itself. On a UTC machine it is 0 and the check below rests on ORIGINAL_TZ instead.
+const MACHINE_HOUR = new Date("2026-01-01T00:00:00.000Z").getHours();
+
+/**
+ * Restore the ambient zone.
+ *
+ * `process.env.TZ = undefined` writes the *string* "undefined", which is not a zone: Node falls
+ * back to UTC and the machine's real offset is gone for everything that runs afterwards. TZ is
+ * usually unset here (the zone comes from /etc/localtime), so that is the common case, not the
+ * corner one.
+ */
+const restoreTimeZone = () => {
+  if (ORIGINAL_TZ === undefined) delete process.env.TZ;
+  else process.env.TZ = ORIGINAL_TZ;
+};
+
+afterAll(restoreTimeZone);
 
 const inTimeZone = <T>(timeZone: string, fn: () => T): T => {
   process.env.TZ = timeZone;
   try {
     return fn();
   } finally {
-    process.env.TZ = ORIGINAL_TZ;
+    restoreTimeZone();
   }
 };
 
 // West of UTC, east of UTC, and UTC itself. Only the first can expose the shift.
 const ZONES = ["America/Los_Angeles", "Asia/Manila", "UTC"];
+
+describe("the timezone harness itself", () => {
+  it("hands the ambient zone back, rather than the string \"undefined\"", () => {
+    inTimeZone("America/Los_Angeles", () => utcDayKey("2026-09-05T00:00:00.000Z"));
+
+    // `process.env.TZ = undefined` stores "undefined", which is not a zone: Node drops to UTC
+    // and every later test in the worker silently reads a different clock.
+    expect(process.env.TZ).toBe(ORIGINAL_TZ);
+    expect(new Date("2026-01-01T00:00:00.000Z").getHours()).toBe(MACHINE_HOUR);
+  });
+});
 
 describe("utcDayKey", () => {
   it("is exercised against a browser zone that really does shift the day", () => {

@@ -70,6 +70,7 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
     watch,
     setValue,
     getValues,
+    clearErrors,
     formState: { errors, isSubmitting },
   } = useForm<ScheduledTransactionInput>({
     resolver: zodResolver(scheduledTransactionSchema),
@@ -478,7 +479,13 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
                   type="button"
                   onClick={() => {
                     setShowEndDate(!showEndDate);
-                    if (showEndDate) setValue("endDate", undefined);
+                    // Switching off clears the value, so any standing complaint about it is
+                    // now about nothing. Clearing rather than hiding: a hidden error comes
+                    // back with the toggle, pointing at an empty field.
+                    if (showEndDate) {
+                      setValue("endDate", undefined);
+                      clearErrors("endDate");
+                    }
                   }}
                   className={cn(
                     "relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200",
@@ -495,18 +502,20 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
               </div>
 
               {showEndDate && (
-                <div className="relative">
-                  <input
-                    type="date"
-                    {...register("endDate")}
-                    className="w-full px-4 py-3 rounded-xl border border-cream-200 bg-cream-50/50 text-warm-700 text-sm focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all appearance-none [&::-webkit-calendar-picker-indicator]:opacity-60"
-                  />
-                  <CalendarDays className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-warm-300 pointer-events-none" />
-                </div>
-              )}
+                <>
+                  <div className="relative">
+                    <input
+                      type="date"
+                      {...register("endDate")}
+                      className="w-full px-4 py-3 rounded-xl border border-cream-200 bg-cream-50/50 text-warm-700 text-sm focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all appearance-none [&::-webkit-calendar-picker-indicator]:opacity-60"
+                    />
+                    <CalendarDays className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-warm-300 pointer-events-none" />
+                  </div>
 
-              {errors.endDate && (
-                <p className="text-expense text-sm mt-1.5">{errors.endDate.message}</p>
+                  {errors.endDate && (
+                    <p className="text-expense text-sm mt-1.5">{errors.endDate.message}</p>
+                  )}
+                </>
               )}
             </div>
 

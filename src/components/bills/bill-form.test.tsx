@@ -12,9 +12,21 @@ import type { ScheduledTransactionWithCategory } from "@/types";
  */
 const ORIGINAL_TZ = process.env.TZ;
 process.env.TZ = "America/Los_Angeles";
-afterAll(() => {
-  process.env.TZ = ORIGINAL_TZ;
-});
+
+/**
+ * Restore the ambient zone.
+ *
+ * `process.env.TZ = undefined` writes the *string* "undefined", which is not a zone: Node falls
+ * back to UTC and the machine's real offset is gone for everything that runs afterwards. TZ is
+ * usually unset here (the zone comes from /etc/localtime), so that is the common case, not the
+ * corner one.
+ */
+const restoreTimeZone = () => {
+  if (ORIGINAL_TZ === undefined) delete process.env.TZ;
+  else process.env.TZ = ORIGINAL_TZ;
+};
+
+afterAll(restoreTimeZone);
 
 const userMocks = vi.hoisted(() => ({ timezoneOffset: -480 }));
 
@@ -68,6 +80,13 @@ const bill = (overrides: Partial<ScheduledTransactionWithCategory> = {}) =>
 
 const dateInput = (container: HTMLElement, name: "startDate" | "endDate") =>
   container.querySelector<HTMLInputElement>(`input[name="${name}"]`);
+
+/** The optional end-date switch: the only bare toggle button in the form. */
+const endDateToggle = (container: HTMLElement) => {
+  const toggle = container.querySelector<HTMLButtonElement>("button.rounded-full");
+  if (!toggle) throw new Error("end-date toggle not found");
+  return toggle;
+};
 
 beforeEach(() => {
   userMocks.timezoneOffset = -480;
@@ -165,5 +184,32 @@ describe("BillForm end-date validation", () => {
       await screen.findByText("End date must be on or after start date"),
     ).toBeDefined();
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("drops the complaint when the end date is switched off", async () => {
+    // Switching the toggle off clears the value, so there is nothing left to complain about.
+    // The message must not outlive the field it describes -- nor come back with the toggle,
+    // which is what happens if the stale error is merely hidden rather than cleared.
+    const { container } = render(
+      <BillForm
+        bill={bill({ endDate: "2026-12-31T00:00:00.000Z" as unknown as Date })}
+        onSubmit={() => Promise.resolve()}
+        onCancel={() => {}}
+      />,
+    );
+
+    fireEvent.change(dateInput(container, "endDate")!, { target: { value: "2026-09-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+    await screen.findByText("End date must be on or after start date");
+
+    fireEvent.click(endDateToggle(container));
+    await waitFor(() =>
+      expect(screen.queryByText("End date must be on or after start date")).toBeNull(),
+    );
+
+    // And it stays gone when the field comes back: a merely hidden error would return with it.
+    fireEvent.click(endDateToggle(container));
+    expect(dateInput(container, "endDate")).not.toBeNull();
+    expect(screen.queryByText("End date must be on or after start date")).toBeNull();
   });
 });

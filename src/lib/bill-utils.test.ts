@@ -158,9 +158,21 @@ describe("userToday", () => {
  */
 const ORIGINAL_TZ = process.env.TZ;
 process.env.TZ = "America/Los_Angeles";
-afterAll(() => {
-  process.env.TZ = ORIGINAL_TZ;
-});
+
+/**
+ * Restore the ambient zone.
+ *
+ * `process.env.TZ = undefined` writes the *string* "undefined", which is not a zone: Node falls
+ * back to UTC and the machine's real offset is gone for everything that runs afterwards. TZ is
+ * usually unset here (the zone comes from /etc/localtime), so that is the common case, not the
+ * corner one.
+ */
+const restoreTimeZone = () => {
+  if (ORIGINAL_TZ === undefined) delete process.env.TZ;
+  else process.env.TZ = ORIGINAL_TZ;
+};
+
+afterAll(restoreTimeZone);
 
 describe("formatBillDate", () => {
   it("renders the stored calendar day, not the browser's reading of it", () => {
