@@ -28,6 +28,18 @@ export type ReceiptScanOutcome =
 export interface ScanResultPayload {
   amount: number;
   categoryId: string;
+  /**
+   * The user's own calendar day, and the clock time whenever one could be established.
+   *
+   * `YYYY-MM-DD` when nothing knows the time, `YYYY-MM-DDTHH:mm` when the receipt printed one or
+   * the photo's EXIF supplied it. Deliberately one field rather than a date plus an optional time:
+   * every consumer feeds it to `resolveTransactionDate`, which already distinguishes the two
+   * shapes, and a second field would need the same rule restated at each call site.
+   *
+   * Callers that need to know which they got should test the length rather than assume the bare
+   * form: pairing this with the current clock, which is what the app does for a date-only scan,
+   * would overwrite a real reading with a fabricated one.
+   */
   date: string;
   description: string;
   type: "EXPENSE";
@@ -165,6 +177,7 @@ Return a JSON object with these fields:
 - "categoryId": pick the best category ID using the rules below.
 - "date": the TRANSACTION date (the date of purchase, usually near the top of the receipt next to the time). Use "YYYY-MM-DD" format (date only, no time). IMPORTANT: Ignore any "Date of Issuance", PTU accreditation dates, permit dates, or BIR registration dates — these are regulatory dates, NOT the purchase date. If the transaction date is unreadable, use "${photoDateStr}".
   This photo was taken on ${photoDateStr}. A receipt is normally photographed within days of the purchase, so the year is almost always ${photoDateStr.slice(0, 4)}. Before answering, re-read the year digits and check them against that. Only report a different year if the receipt plainly prints one — an old receipt is possible, a misread digit is far more likely.
+- "time": the TIME OF PURCHASE printed on the receipt, as "HH:mm" on a 24-hour clock. It normally sits beside the transaction date at the top, or near the terminal and cashier line at the bottom. Convert a 12-hour reading ("7:04 PM" -> "19:04"). Use null, not a guess, when the receipt prints no time or it cannot be read. Ignore times that belong to something other than the purchase: store opening hours, a printing timestamp on a reprint, or a validity window on a voucher.
 - "dateSource": "OCR" if you read the date from the receipt itself, or "PHOTO_FALLBACK" if you used the fallback "${photoDateStr}" because the date was unreadable. Always include this field.
 - "description": merchant name + short summary of purchase (max 100 chars).
 - "multiCategory": true if the receipt contains items that span 2 or more DIFFERENT categories from the list below, false if all items belong to a single category. For example, a supermarket receipt with groceries AND toiletries = true, a restaurant bill with only food = false, a supermarket run that is entirely groceries = false, a single ride receipt = false.
@@ -179,9 +192,9 @@ CATEGORY RULES (pick categoryId by matching the merchant/items to these rules):
 ${renderCategoryRules(SCAN_CATEGORY_RULES, SCAN_GUIDANCE_RULES)}
 ${captionSection(caption)}
 Respond with ONLY valid JSON, no markdown or explanation:
-{"amount": <number>, "categoryId": "<id>", "date": "<YYYY-MM-DD>", "dateSource": "OCR" | "PHOTO_FALLBACK", "description": "<text>", "multiCategory": <boolean>}
+{"amount": <number>, "categoryId": "<id>", "date": "<YYYY-MM-DD>", "time": "<HH:mm>" | null, "dateSource": "OCR" | "PHOTO_FALLBACK", "description": "<text>", "multiCategory": <boolean>}
 or when multiCategory is true:
-{"amount": <number>, "categoryId": "<id>", "date": "<YYYY-MM-DD>", "dateSource": "OCR" | "PHOTO_FALLBACK", "description": "<text>", "multiCategory": true, "breakdown": [{"amount": <number>, "categoryId": "<id>", "description": "<text>", "lineItems": [{"name": "<text>", "amount": <number>}]}]}`;
+{"amount": <number>, "categoryId": "<id>", "date": "<YYYY-MM-DD>", "time": "<HH:mm>" | null, "dateSource": "OCR" | "PHOTO_FALLBACK", "description": "<text>", "multiCategory": true, "breakdown": [{"amount": <number>, "categoryId": "<id>", "description": "<text>", "lineItems": [{"name": "<text>", "amount": <number>}]}]}`;
 
 /**
  * Scan one receipt image: authorize, call Gemini, validate what comes back, settle the credit.
@@ -372,10 +385,20 @@ export async function scanReceipt(params: {
     const usedPhotoFallback = result.data.dateSource === "PHOTO_FALLBACK" || parseFailed;
 
     // A bare date has its time filled in downstream from the current clock, which is fabricated
-    // for anything not happening now. When the receipt's own date was unreadable and the photo
-    // told us exactly when it was taken, that timestamp is real, so it is used whole.
-    result.data.date =
-      usedPhotoFallback && params.capturedAt && params.capturedAt.slice(0, 10) === normalizedDate
+    // for anything not happening now. Three sources of a real time, in descending order of
+    // authority, and every one of them beats that fabrication:
+    //
+    // 1. The time printed on the receipt, which is when the purchase actually happened. Only
+    //    honoured when the *date* was read off the receipt too: under PHOTO_FALLBACK the day comes
+    //    from the photo, so pinning a printed clock time to it would assemble a timestamp from two
+    //    unrelated sources and present it as one reading.
+    // 2. The photo's EXIF capture time, when the receipt's own date was unreadable and the photo
+    //    lands on the same day we settled on.
+    // 3. Nothing, leaving a bare date for `resolveTransactionDate` to fill in as it always has.
+    const printedTime = !usedPhotoFallback && result.data.time ? result.data.time : null;
+    result.data.date = printedTime
+      ? `${normalizedDate}T${printedTime}`
+      : usedPhotoFallback && params.capturedAt && params.capturedAt.slice(0, 10) === normalizedDate
         ? params.capturedAt
         : normalizedDate;
 

@@ -45,6 +45,27 @@ interface ScanInput {
 type ScanOutcome = { ok: true } | { ok: false; error: string };
 
 /**
+ * The account-local timestamp a scanned row should carry.
+ *
+ * Three sources, and the order matters. A scan that read the time off the receipt returns
+ * `YYYY-MM-DDTHH:mm` and is used exactly as given: that is when the purchase happened, and pairing
+ * its date with the current clock — which is what this used to do unconditionally — replaced a real
+ * reading with a fabricated one. A photo fallback carries the capture time, also real. Only a
+ * date-only scan, from a receipt that printed no time, still borrows the current clock, matching
+ * what the transaction form prefills.
+ */
+const scannedDateTime = (
+  scannedDate: string,
+  usedPhotoFallback: boolean,
+  photoDateTime: string,
+  timezoneOffset: number,
+): string => {
+  if (usedPhotoFallback) return photoDateTime;
+  if (scannedDate.length > 10) return scannedDate;
+  return combineAccountDateWithTime(scannedDate, new Date(), timezoneOffset);
+};
+
+/**
  * Orchestrates receipt scanning: capture, the review queue, itemisation, retrying a failed
  * row, and the atomic save. Extracted from AppShell, which had grown past 750 lines with
  * all of this inline.
@@ -144,13 +165,12 @@ export function useMultiScan() {
             amount: data.amount,
             description: typeof data.description === "string" ? data.description : "",
             type: "EXPENSE",
-            date: data.usedPhotoFallback
-              ? photoDateTime
-              : combineAccountDateWithTime(
-                  data.date as string,
-                  new Date(),
-                  user.timezoneOffset,
-                ),
+            date: scannedDateTime(
+              data.date as string,
+              data.usedPhotoFallback as boolean,
+              photoDateTime,
+              user.timezoneOffset,
+            ),
             categoryId: data.categoryId,
             multiCategory: data.multiCategory as boolean,
             breakdownDropped: data.breakdownDropped as boolean | undefined,
@@ -400,13 +420,12 @@ export function useMultiScan() {
           return;
         }
 
-        const finalDate = data.usedPhotoFallback
-          ? photoDateTime
-          : combineAccountDateWithTime(
-              data.date as string,
-              new Date(),
-              user.timezoneOffset,
-            );
+        const finalDate = scannedDateTime(
+          data.date as string,
+          data.usedPhotoFallback as boolean,
+          photoDateTime,
+          user.timezoneOffset,
+        );
 
         expandBreakdown(
           id,

@@ -15,3 +15,16 @@
  */
 export const localTimestamp = (timezoneOffset: number, now = new Date()): string =>
   new Date(now.getTime() - timezoneOffset * 60_000).toISOString().slice(0, 19);
+
+/**
+ * Render a scan's date for the review, whether or not it carries a time.
+ *
+ * `scanReceipt` now returns `YYYY-MM-DDTHH:mm` whenever the receipt printed a time, and the raw
+ * `T` reads as a glitch in a chat message. The review is the one moment the user can correct a
+ * misread clock before it is written, so the time has to be shown rather than sliced off.
+ *
+ * A bare date is passed through untouched, because a receipt that printed no time has none to
+ * show and inventing "00:00" here would claim a precision the scan never had.
+ */
+export const formatScanDate = (value: string): string =>
+  value.length > 10 ? `${value.slice(0, 10)} ${value.slice(11, 16)}` : value;

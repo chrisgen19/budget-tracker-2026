@@ -65,6 +65,7 @@ ${renderCategoryRules(BREAKDOWN_CATEGORY_RULES, BREAKDOWN_GUIDANCE_RULES)}
 RESPONSE FORMAT — return ONLY valid JSON, no markdown or explanation:
 {
   "date": "<YYYY-MM-DD — the TRANSACTION/purchase date, usually near the top of the receipt next to the time. IGNORE any 'Date of Issuance', PTU accreditation, permit, or BIR registration dates. Use ${photoDateStr} if unreadable>",
+  "time": "<HH:mm on a 24-hour clock — the TIME OF PURCHASE printed on the receipt, beside the transaction date or near the terminal/cashier line. Convert a 12-hour reading (\"7:04 PM\" -> \"19:04\"). Use null, not a guess, when none is printed or it cannot be read. Ignore store opening hours, reprint timestamps, and voucher validity windows.>",
   "dateSource": "<\"OCR\" if you read the date from the receipt, or \"PHOTO_FALLBACK\" if you used the fallback ${photoDateStr} because the date was unreadable. Always include this field.>",
   "items": [
     {

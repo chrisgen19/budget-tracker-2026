@@ -106,7 +106,12 @@ export async function POST(request: Request) {
     const { date: normalizedDate, dateWarning, usedPhotoFallback: parseFailed } = checkReceiptDate(result.data.date, todayStr, photoDateStr);
     // Trust Gemini's explicit signal first; fall back to parse-failure detection.
     const usedPhotoFallback = result.data.dateSource === "PHOTO_FALLBACK" || parseFailed;
-    result.data.date = normalizedDate;
+    // Same rule as `scanReceipt`: a printed time is only attached to a date that was itself read
+    // off the receipt, so a PHOTO_FALLBACK day never gets a clock reading from an unrelated source.
+    result.data.date =
+      !usedPhotoFallback && result.data.time
+        ? `${normalizedDate}T${result.data.time}`
+        : normalizedDate;
 
     // Verify each categoryId exists, fall back to "Other Expense" if not
     const categoryIds = new Set(categories.map((c) => c.id));

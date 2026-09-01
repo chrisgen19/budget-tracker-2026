@@ -146,8 +146,28 @@ export const receiptBreakdownItemSchema = z.object({
  *  so we'd rather reject the response (422) than silently drop it. */
 const dateSourceSchema = z.enum(["OCR", "PHOTO_FALLBACK"]);
 
+/**
+ * The clock time printed on the receipt, when it prints one.
+ *
+ * A separate field rather than a time appended to `date`, so `checkReceiptDate` keeps operating on
+ * a bare calendar day: its year-slip repair compares `slice(5)` against the photo date and its
+ * validity check reparses the components, both of which a trailing `T19:04` would have to be
+ * stripped back out of at every step.
+ *
+ * Nullable rather than optional because a receipt that prints no time is the ordinary case, not a
+ * malformed response, and the model needs somewhere to say so explicitly. `.catch(null)` absorbs
+ * anything unparseable — a 12-hour reading, "N/A", a half-read `19:` — as "no time printed", which
+ * is the honest interpretation and is never worth failing an otherwise good scan over.
+ */
+const receiptTimeSchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+  .nullish()
+  .catch(null);
+
 export const receiptBreakdownResultSchema = z.object({
   date: z.string().min(1),
+  time: receiptTimeSchema,
   dateSource: dateSourceSchema,
   items: z.array(receiptBreakdownItemSchema).min(1).max(MAX_BREAKDOWN_GROUPS),
 });
@@ -156,6 +176,7 @@ export const receiptScanResultSchema = z.object({
   amount: z.number().positive(),
   categoryId: z.string().min(1),
   date: z.string().min(1),
+  time: receiptTimeSchema,
   dateSource: dateSourceSchema,
   description: z.string().max(255),
   type: z.literal("EXPENSE"),

@@ -830,3 +830,101 @@ describe("caption hint", () => {
     expect(prompt).toContain("CATEGORY RULES");
   });
 });
+
+describe("printed purchase time", () => {
+  /** Gemini's response with whatever `time` we want to test, everything else valid. */
+  const readReceipt = (time: unknown, dateSource = "OCR", date = "2026-08-01") =>
+    generate.mockResolvedValue({
+      text: JSON.stringify({
+        amount: 470,
+        categoryId: "cat_1",
+        date,
+        time,
+        dateSource,
+        description: "The Coffee Bean",
+        multiCategory: false,
+      }),
+    });
+
+  const scanWithPhoto = (photoDateStr: string, capturedAt?: string) =>
+    scanReceipt({
+      userId: "u1",
+      mimeType: "image/jpeg",
+      byteLength: 1_000,
+      readBase64: () => "aW1hZ2U=",
+      todayStr: "2026-08-26",
+      photoDateStr,
+      ...(capturedAt && { capturedAt }),
+    });
+
+  beforeEach(() => authorize.mockResolvedValue(AUTHORIZED));
+
+  // The bug: the prompt forbade reading a time, so every scanned receipt was paired with the
+  // current clock downstream. A receipt bought Saturday evening and scanned Monday morning was
+  // stored as Saturday 09:00, which then drove label schedule matching.
+  it("attaches a time the receipt printed to the date it read", async () => {
+    readReceipt("19:04");
+
+    const outcome = await scanWithPhoto("2026-08-01");
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok || !("result" in outcome)) return;
+    expect(outcome.result.date).toBe("2026-08-01T19:04");
+    expect(outcome.result.usedPhotoFallback).toBe(false);
+  });
+
+  it("leaves a bare date when the receipt printed no time", async () => {
+    readReceipt(null);
+
+    const outcome = await scanWithPhoto("2026-08-01");
+
+    if (!outcome.ok || !("result" in outcome)) return;
+    expect(outcome.result.date).toBe("2026-08-01");
+  });
+
+  // A PHOTO_FALLBACK day comes from the photo, not the receipt. Pinning a printed clock reading
+  // to it would assemble one timestamp out of two unrelated sources and present it as a reading.
+  it("ignores a printed time when the date came from the photo, preferring the capture time", async () => {
+    readReceipt("19:04", "PHOTO_FALLBACK");
+
+    const outcome = await scanWithPhoto("2026-08-01", "2026-08-01T20:05:04");
+
+    if (!outcome.ok || !("result" in outcome)) return;
+    expect(outcome.result.date).toBe("2026-08-01T20:05:04");
+  });
+
+  // `.catch(null)` on the field: a half-read clock is not worth failing an otherwise good scan
+  // over, and "no time printed" is the honest reading of it.
+  it.each([["7:04 PM"], ["25:99"], ["N/A"], [""], [42]])(
+    "treats an unusable time (%s) as no time rather than failing the scan",
+    async (time) => {
+      readReceipt(time);
+
+      const outcome = await scanWithPhoto("2026-08-01");
+
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok || !("result" in outcome)) return;
+      expect(outcome.result.date).toBe("2026-08-01");
+    },
+  );
+
+  // The year repair rewrites the date and must not drop the clock reading with it.
+  it("keeps the printed time through a year-slip repair", async () => {
+    readReceipt("19:04", "OCR", "2023-08-01");
+
+    const outcome = await scanWithPhoto("2026-08-01");
+
+    if (!outcome.ok || !("result" in outcome)) return;
+    expect(outcome.result.date).toBe("2026-08-01T19:04");
+    expect(outcome.result.repairedFromYear).toBe("2023");
+  });
+
+  it("asks for the time in the prompt", async () => {
+    readReceipt("19:04");
+    await scanWithPhoto("2026-08-01");
+
+    const prompt = generate.mock.calls.at(-1)?.[0].contents[0].parts[1].text as string;
+    expect(prompt).toContain('"time"');
+    expect(prompt).toMatch(/24-hour/i);
+  });
+});

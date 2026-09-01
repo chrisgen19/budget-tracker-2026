@@ -757,3 +757,59 @@ describe("discard accounting", () => {
     expect(result.current.retryableCount).toBe(2);
   });
 });
+
+describe("a time printed on the receipt", () => {
+  afterEach(() => vi.useRealTimers());
+
+  /**
+   * The bug behind #201: the scan prompt forbade reading a time, so this hook paired the receipt's
+   * date with the current clock unconditionally. A receipt bought Saturday evening and scanned
+   * Monday morning was stored as Saturday 09:00, and that fabricated clock then decided which
+   * label schedules matched.
+   */
+  it("keeps the scanned time instead of stamping the current clock", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-28T00:30:00.000Z")); // 17:30 on the 27th at UTC-7
+    fetchMock.mockResolvedValue(scanOk({ date: "2026-08-26T19:04" }));
+    const { result } = setup();
+
+    await act(async () => {
+      await result.current.scanSingle(receipt());
+    });
+
+    expect(result.current.items[0].data?.date).toBe("2026-08-26T19:04");
+  });
+
+  it("still borrows the account clock when the receipt printed no time", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-28T00:30:00.000Z"));
+    fetchMock.mockResolvedValue(scanOk({ date: "2026-08-26" }));
+    const { result } = setup();
+
+    await act(async () => {
+      await result.current.scanSingle(receipt());
+    });
+
+    // The harness account is UTC-7, so "now" is 17:30 the previous day: the scan's calendar
+    // day with a clock reading borrowed from a completely different moment.
+    expect(result.current.items[0].data?.date).toBe("2026-08-26T17:30");
+  });
+
+  // The photo fallback carries its own real timestamp and must keep winning: under that flag the
+  // day came from the photo, so there is no receipt reading to prefer over it.
+  it("prefers the photo capture time when the receipt's date was unreadable", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-28T00:30:00.000Z"));
+    fetchMock.mockResolvedValue(
+      scanOk({ date: "2026-08-01T19:04", usedPhotoFallback: true }),
+    );
+    const { result } = setup();
+
+    await act(async () => {
+      await result.current.scanSingle(receipt());
+    });
+
+    // receipt() carries lastModified 2026-08-01T10:00:00Z, which is 03:00 at UTC-7.
+    expect(result.current.items[0].data?.date).toBe("2026-08-01T03:00");
+  });
+});

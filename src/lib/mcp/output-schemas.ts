@@ -446,8 +446,16 @@ export const createTransactionsOutput = {
 export const scanReceiptOutput = {
   amount: z.number(),
   categoryId: z.string(),
-  /** YYYY-MM-DD in the user's own calendar. */
-  date: z.string(),
+  /** The user's own calendar day, plus the clock time when one was established. */
+  date: z
+    .string()
+    .describe(
+      "When the purchase happened, in the user's own timezone. `YYYY-MM-DDTHH:mm` when the " +
+        "receipt printed a time or the photo's capture time supplied one, and a bare " +
+        "`YYYY-MM-DD` when neither did. Pass it to create_transactions exactly as given: a bare " +
+        "date there is filled in with the current clock, which is correct for a purchase " +
+        "happening now and fabricated for anything else, so do not invent a time to attach."
+    ),
   description: z.string(),
   type: z.literal("EXPENSE"),
   /**

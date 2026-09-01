@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { localTimestamp } from "@/lib/telegram/local-time";
+import { formatScanDate, localTimestamp } from "@/lib/telegram/local-time";
 import { isRealDate, resolveTransactionDate } from "@/lib/validations";
 
 /** 2026-08-26T10:30:00Z, which is 18:30 on the same day in Manila (UTC+8). */
@@ -34,3 +34,20 @@ describe("localTimestamp", () => {
   });
 });
 
+
+describe("formatScanDate", () => {
+  // scanReceipt now returns YYYY-MM-DDTHH:mm when the receipt printed a time. The raw `T` reads
+  // as a glitch in a chat message, and the review is the last moment a misread clock can be
+  // corrected, so it is shown rather than sliced off.
+  it("renders a scanned timestamp without the ISO separator", () => {
+    expect(formatScanDate("2026-08-01T19:04")).toBe("2026-08-01 19:04");
+  });
+
+  it("passes a bare date through, inventing no clock", () => {
+    expect(formatScanDate("2026-08-01")).toBe("2026-08-01");
+  });
+
+  it("drops seconds, which a photo-fallback timestamp carries", () => {
+    expect(formatScanDate("2026-08-01T20:05:04")).toBe("2026-08-01 20:05");
+  });
+});
