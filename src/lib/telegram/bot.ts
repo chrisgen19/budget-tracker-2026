@@ -22,7 +22,11 @@ import {
   type TelegramCallbackQuery,
   type TelegramMessage,
 } from "@/lib/telegram/allowlist";
-import { encodeScanCallback, parseScanCallback } from "@/lib/telegram/callback-data";
+import {
+  encodeScanCallback,
+  parsePromptCallback,
+  parseScanCallback,
+} from "@/lib/telegram/callback-data";
 import { appBaseUrl, openInAppKeyboard } from "@/lib/telegram/app-link";
 import { MAX_IMAGE_BYTES, pickReceiptImage } from "@/lib/telegram/photo";
 import { readPhotoTakenAt } from "@/lib/exif-date";
@@ -58,6 +62,7 @@ import {
   replyForError,
   shouldRetryWrite,
 } from "@/lib/telegram/errors";
+import { userToday, utcDayKey } from "@/lib/bill-dates";
 import { isPlainShorthand } from "@/lib/telegram/shorthand";
 import {
   quickKeyboard,
@@ -1254,6 +1259,24 @@ async function handleCallback(query: TelegramCallbackQuery): Promise<void> {
   const chatId = query.message?.chat?.id;
   const messageId = query.message?.message_id;
   if (chatId === undefined || messageId === undefined) return;
+
+  // The evening prompt's "Nothing today". It writes nothing - the prompt only ever asked - so
+  // this is an acknowledgement, and its whole job is to stop the message looking unanswered.
+  const promptPress = parsePromptCallback(query.data);
+  if (promptPress) {
+    const today = utcDayKey(userToday(TZ_OFFSET));
+    if (promptPress.day !== today) {
+      // Buttons never expire from chat history, so an old prompt stays tappable. Saying which
+      // day it was for beats acknowledging it as though it were tonight's.
+      await answerCallback(query.id, `That prompt was for ${promptPress.day}.`);
+      await clearButtons(chatId, messageId);
+      return;
+    }
+
+    await clearButtons(chatId, messageId);
+    await answerCallback(query.id, "Nothing logged.");
+    return;
+  }
 
   const parsed = parseScanCallback(query.data);
   if (!parsed) {

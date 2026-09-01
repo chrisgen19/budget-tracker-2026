@@ -1,0 +1,157 @@
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { userToday, utcDayKey } from "@/lib/bill-dates";
+import { composePrompt, isPromptDue } from "@/lib/telegram/daily-prompt";
+import { encodePromptCallback } from "@/lib/telegram/callback-data";
+import { sendMessage } from "@/lib/telegram/send";
+import { env } from "@/lib/telegram/env";
+
+/** The categories the prompt asks about, by their seeded names. */
+const FARE_CATEGORY = "Transportation";
+const LUNCH_CATEGORY = "Food & Dining";
+
+/**
+ * The chats this bot may message, from the same allowlist that gates incoming messages.
+ *
+ * Numeric ids only. In a private chat the chat id is the user's own id, and a username cannot
+ * address a chat, so a username-only allowlist gets no prompt - the same limitation the command
+ * menu already has, and for the same reason.
+ */
+const allowedChatIds = (): number[] =>
+  (env("TELEGRAM_ALLOWED_IDS") ?? "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter((v) => /^[1-9]\d*$/.test(v))
+    .map(Number)
+    .filter(Number.isSafeInteger);
+
+/**
+ * Sends the evening prompt to anyone who has it switched on and has not had it today.
+ *
+ * Driven by a Coolify Scheduled Task every 15 minutes. The schedule itself lives in
+ * `users.telegram_daily_prompt_time`, resolved against `users.timezone_offset`, so this endpoint
+ * is called far more often than it does anything and the cron entry never has to change.
+ */
+export async function GET(request: Request) {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) {
+    return NextResponse.json({ error: "CRON_SECRET not configured" }, { status: 500 });
+  }
+
+  const authHeader = request.headers.get("authorization");
+  if (authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const users = await prisma.user.findMany({
+    where: { telegramDailyPrompt: true },
+    select: { id: true, timezoneOffset: true, telegramDailyPromptTime: true },
+  });
+
+  const chatIds = allowedChatIds();
+  if (users.length === 0 || chatIds.length === 0) {
+    return NextResponse.json({ usersProcessed: users.length, promptsSent: 0, errors: 0 });
+  }
+
+  // Nothing maps a Telegram account to an app user: `TELEGRAM_ALLOWED_IDS` says who may talk to
+  // the bot, never which budget they own. With one enabled user that is unambiguous. With two it
+  // is a guess, and the wrong guess reads one person's day and messages another about it, so this
+  // refuses instead. Adding `users.telegram_user_id` is what would lift it.
+  if (users.length > 1) {
+    console.error(
+      "[telegram-prompts] refusing to send: %d users have the prompt enabled and there is no " +
+        "Telegram-to-user mapping to route by.",
+      users.length
+    );
+    return NextResponse.json(
+      { error: "Ambiguous recipient: more than one user has the daily prompt enabled" },
+      { status: 409 }
+    );
+  }
+
+  const now = new Date();
+  let promptsSent = 0;
+  let errors = 0;
+
+  for (const user of users) {
+    try {
+      const tzOffset = user.timezoneOffset ?? 0;
+      if (!isPromptDue({ now, timezoneOffset: tzOffset, promptTime: user.telegramDailyPromptTime })) {
+        continue;
+      }
+
+      // The user's calendar day, encoded at UTC midnight. Date-only, like a bill due date.
+      const promptedOn = userToday(tzOffset, now);
+
+      // The same day as a real span of instants, for reading what was logged in it. This is the
+      // one formula used app-wide: `Date.UTC(y, m, d) + tzOffset * 60000`.
+      const dayStart = new Date(promptedOn.getTime() + tzOffset * 60_000);
+      const dayEnd = new Date(dayStart.getTime() + 86_400_000);
+
+      const logged = await prisma.transaction.findMany({
+        where: {
+          userId: user.id,
+          type: "EXPENSE",
+          date: { gte: dayStart, lt: dayEnd },
+          category: { name: { in: [FARE_CATEGORY, LUNCH_CATEGORY] } },
+        },
+        select: { category: { select: { name: true } } },
+      });
+
+      const names = new Set(logged.map((t) => t.category.name));
+      const text = composePrompt({
+        hasFare: names.has(FARE_CATEGORY),
+        hasLunch: names.has(LUNCH_CATEGORY),
+      });
+
+      // Nothing missing, so nothing to ask. The log row is still written, so a later tick the
+      // same day does not reconsider it once something has been deleted.
+      if (!text) {
+        await prisma.telegramPromptLog.createMany({
+          data: [{ userId: user.id, promptedOn }],
+          skipDuplicates: true,
+        });
+        continue;
+      }
+
+      // Written *before* sending, and removed again if the send throws, so a failure retries on
+      // the next tick while a success can never be repeated. `BillEmailLog` does the same.
+      const claimed = await prisma.telegramPromptLog.createMany({
+        data: [{ userId: user.id, promptedOn }],
+        skipDuplicates: true,
+      });
+
+      // Already sent today, by an earlier tick or a concurrent one. The unique index decided it,
+      // not a read, so two overlapping runs cannot both pass here.
+      if (claimed.count === 0) continue;
+
+      try {
+        const keyboard = {
+          inline_keyboard: [
+            [
+              {
+                text: "Nothing today",
+                callback_data: encodePromptCallback({ day: utcDayKey(promptedOn) }),
+              },
+            ],
+          ],
+        };
+
+        for (const chatId of chatIds) {
+          await sendMessage(chatId, text, "Markdown", keyboard);
+        }
+        promptsSent += 1;
+      } catch (sendError) {
+        await prisma.telegramPromptLog.deleteMany({
+          where: { userId: user.id, promptedOn },
+        });
+        throw sendError;
+      }
+    } catch (error) {
+      errors += 1;
+      console.error(`[telegram-prompts] Failed for user ${user.id}:`, error);
+    }
+  }
+
+  return NextResponse.json({ usersProcessed: users.length, promptsSent, errors });
+}
