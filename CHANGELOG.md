@@ -2,6 +2,42 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-01 - Logging the daily commute stops depending on remembering to type it
+
+Working on site every weekday means a fare and a lunch every weekday, and neither was getting
+logged. Two separate causes, so two separate fixes rather than one bigger one.
+
+**Typing was the friction.** A `ReplyKeyboardMarkup` button sends its own label as an ordinary
+message, so a button reading `38 fare to office` sends exactly that, which the shorthand path has
+always parsed and logged. `/keyboard` pins the three routine fares; there is no new write path and
+no state, because the button *is* the message. The tests enforce what that costs: every label must
+parse as `<amount> <description>` and must resolve through the real matcher to Transportation, with
+`fare home (UV)` pinned separately since `matchCategory` checks category names first and both
+Housing and Home Supplies would otherwise be in play.
+
+Only fixed fares get buttons. Grab, TNVS and taxi vary per trip, and a button that then has to ask
+"how much?" is no faster than typing `250 grab`.
+
+**Forgetting was the other.** One weekday prompt, off by default, at a time set per user. It stays
+silent when both a fare and a lunch already exist in that user's local day, and narrows to whichever
+is missing: a prompt that arrives when nothing is missing teaches you to ignore it, and an ignored
+prompt is worth less than none.
+
+Three things were deliberately not built. There is no Mini App and no `initData` identity work
+(#208, #209), and no configurable reminder model with its own page (#207) - all three were a lot of
+surface for two numbers a day, and they guessed at which of the two causes above actually dominates.
+Living with the cheap version answers that first.
+
+Two smaller findings came out of it. `jeep` never reached `jeepney`, and `uv express` matched
+nothing at all, so the two most ordinary fares in the country were filed under Other Expense or cost
+a Gemini call; both are now keywords. And every time-of-day comparison in this codebase is a string
+compare, where `"8:00"` sorts *after* `"20:00"` - an unpadded time does not look wrong, it makes the
+prompt never fire - so the stored value is validated as zero-padded and the regex is now shared with
+`labelScheduleSchema` instead of written a third time.
+
+Still open: nothing maps a Telegram account to an app user, so the prompt returns 409 rather than
+guessing when more than one user enables it.
+
 ## 2026-08-31 - Bill dates read the calendar day they were stored as
 
 Issue #158. Bill `startDate`, `endDate` and `nextDueDate` are date-only calendar values stored at
