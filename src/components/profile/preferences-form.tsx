@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Calendar, Type } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
+import { useSavePreference } from "@/hooks/use-save-preference";
 
 const DAY_FORMAT_OPTIONS = [
   { value: "SHORT" as const, label: "Short", example: "Mon" },
@@ -11,7 +12,10 @@ const DAY_FORMAT_OPTIONS = [
 ];
 
 export function PreferencesForm() {
-  const { user, setUser } = useUser();
+  const { user } = useUser();
+  // The same saver the Features tab uses. These two were the copies missed on the first pass,
+  // which is the argument for there being one path rather than a convention to follow.
+  const savePreference = useSavePreference();
   const [savingDayName, setSavingDayName] = useState(false);
   const [savingDayFormat, setSavingDayFormat] = useState(false);
 
@@ -24,51 +28,17 @@ export function PreferencesForm() {
   }, []);
 
   const handleDayNameToggle = async () => {
-    const newValue = !user.showDayName;
-    const oldValue = user.showDayName;
-
-    setUser({ showDayName: newValue });
     setSavingDayName(true);
-
-    try {
-      const res = await fetch("/api/preferences", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ showDayName: newValue }),
-      });
-
-      if (!res.ok) {
-        setUser({ showDayName: oldValue });
-      }
-    } catch {
-      setUser({ showDayName: oldValue });
-    } finally {
-      setSavingDayName(false);
-    }
+    await savePreference("showDayName", !user.showDayName, user.showDayName, "the day name setting");
+    setSavingDayName(false);
   };
 
   const handleDayFormatChange = async (newValue: "FULL" | "SHORT") => {
-    const oldValue = user.dayNameFormat;
-    if (newValue === oldValue) return;
+    if (newValue === user.dayNameFormat) return;
 
-    setUser({ dayNameFormat: newValue });
     setSavingDayFormat(true);
-
-    try {
-      const res = await fetch("/api/preferences", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dayNameFormat: newValue }),
-      });
-
-      if (!res.ok) {
-        setUser({ dayNameFormat: oldValue });
-      }
-    } catch {
-      setUser({ dayNameFormat: oldValue });
-    } finally {
-      setSavingDayFormat(false);
-    }
+    await savePreference("dayNameFormat", newValue, user.dayNameFormat, "the day name format");
+    setSavingDayFormat(false);
   };
 
   return (
@@ -105,6 +75,8 @@ export function PreferencesForm() {
             onClick={handleDayNameToggle}
             className={cn(
               "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/30 disabled:opacity-50 disabled:cursor-not-allowed",
+              // Extends the tap target to 44px without moving the 24px track. See AGENTS.md.
+              "before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']",
               user.showDayName ? "bg-amber" : "bg-cream-300"
             )}
           >
@@ -141,7 +113,7 @@ export function PreferencesForm() {
                   onClick={() => handleDayFormatChange(option.value)}
                   disabled={savingDayFormat}
                   className={cn(
-                    "px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 disabled:opacity-50",
+                    "min-h-[44px] px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 disabled:opacity-50",
                     user.dayNameFormat === option.value
                       ? "bg-amber text-white shadow-soft"
                       : "bg-cream-200 text-warm-500 hover:bg-cream-300"

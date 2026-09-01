@@ -98,15 +98,20 @@ export default async function AppLayout({
           scansUsedThisMonth,
         }}
       >
-        <PrivacyProvider>
-          <ToastProvider>
+        {/* ToastProvider sits outside PrivacyProvider so the latter can report a failed save.
+            Nested the other way, `useToast` inside PrivacyProvider resolved to the context
+            default - a no-op `showToast` - and the toast would have been dropped in silence,
+            which is the precise failure this whole change is about. ToastProvider depends on
+            nothing below it, so the order is free to be this way round. */}
+        <ToastProvider>
+          <PrivacyProvider>
             <AssessmentProvider>
               <BillReminderProvider>
                 <AppShell>{children}</AppShell>
               </BillReminderProvider>
             </AssessmentProvider>
-          </ToastProvider>
-        </PrivacyProvider>
+          </PrivacyProvider>
+        </ToastProvider>
       </UserProvider>
     </Providers>
   );
