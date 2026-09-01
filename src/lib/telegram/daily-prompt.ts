@@ -51,10 +51,10 @@ export interface PromptContentInput {
  * the reader to ignore it, and an ignored prompt is worth less than none: the whole mechanism
  * depends on the message meaning "something is missing".
  *
- * One thing per message is spelled out because the bot genuinely cannot do better yet - the
- * shorthand path takes the first amount and swallows the rest of the line into its description,
- * so "250 grab, 180 lunch" logs one wrong row and reports success. Until that is fixed, telling
- * the user the working shape is the honest option.
+ * The example answers the question with both halves in one message, which is what the question
+ * invites. That only became honest advice once the shorthand path could actually split it: it
+ * used to take the first amount and swallow the rest of the line, logging one wrong row and
+ * reporting success (#204).
  */
 export const composePrompt = ({ hasFare, hasLunch }: PromptContentInput): string | null => {
   if (hasFare && hasLunch) return null;
@@ -67,6 +67,6 @@ export const composePrompt = ({ hasFare, hasLunch }: PromptContentInput): string
 
   return (
     `\u{1F319} *Evening.* ${asking}\n\n` +
-    `Tap a fare below, or type them one per message: \`250 grab\`, then \`180 lunch\`.`
+    `Tap a fare below, or just type it: \`250 grab, 180 lunch\`.`
   );
 };

@@ -13,6 +13,7 @@ import {
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { updateBatchId } from "@/lib/telegram/batch-id";
+import { renderCreated, type CreatedBatch } from "@/lib/telegram/created-reply";
 import { localTimestamp } from "@/lib/telegram/local-time";
 import { describeWindow, type ReportedPeriod } from "@/lib/telegram/period-label";
 import {
@@ -64,6 +65,7 @@ import {
 } from "@/lib/telegram/errors";
 import { userToday, utcDayKey } from "@/lib/bill-dates";
 import { isPlainShorthand } from "@/lib/telegram/shorthand";
+import { parseShorthandEntries } from "@/lib/telegram/multi-shorthand";
 import {
   quickKeyboard,
   removeQuickKeyboard,
@@ -226,39 +228,6 @@ async function downloadTelegramFile(fileId: string): Promise<Buffer> {
 }
 
 
-/** What `create_transactions` returns; see `renderCreated` in the MCP server. */
-interface CreatedBatch {
-  created: number;
-  replayed: boolean;
-  transactions: {
-    id: string;
-    amount: number;
-    description: string;
-    type: string;
-    /** The user's own calendar day, already resolved server-side. */
-    date: string;
-    categoryName: string;
-    /** Label names, including any the user's auto-apply schedules added. */
-    labels: string[];
-  }[];
-}
-
-const formatCreated = (result: CreatedBatch): string => {
-  const tx = result.transactions[0];
-  const labels = tx.labels.join(", ");
-  // A replay wrote nothing: the same update was redelivered after a crash, so saying "logged"
-  // would imply a second row that does not exist.
-  let reply = result.replayed
-    ? `\u2705 *Already logged* (no duplicate created)\n\n`
-    : `\u2705 *Transaction Logged!*\n\n`;
-  reply += `\ud83d\udcdd *Description:* ${tx.description}\n`;
-  reply += `\ud83d\udcb0 *Amount:* ${SYMBOL}${tx.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
-  reply += `\ud83d\udcc1 *Category:* ${tx.categoryName}\n`;
-  reply += `\ud83d\udcc5 *Date:* ${tx.date}\n`;
-  if (labels) reply += `\ud83c\udff7\ufe0f *Labels:* ${labels}\n`;
-  return reply;
-};
-
 /**
  * Create transactions, retrying a transport failure under the *same* idempotency key.
  *
@@ -314,7 +283,7 @@ async function confirmCreated(
   /**
    * Appended to the confirmation, for a label the write could not honour.
    *
-   * `formatCreated` already lists the labels that *were* applied, from the server's own reply,
+   * `renderCreated` already lists the labels that *were* applied, from the server's own reply,
    * so this carries only what went nowhere. Without it a directive the bot could not resolve was
    * dropped in silence on a message that plainly asked for it — the same bug as the caption,
    * one path over.
@@ -329,7 +298,9 @@ async function confirmCreated(
       ? openInAppKeyboard(APP_URL, result.transactions[0].id)
       : undefined;
 
-  if (await sendMessage(chatId, formatCreated(result) + notice, "Markdown", keyboard)) return;
+  const money = (n: number) => `${SYMBOL}${n.toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+
+  if (await sendMessage(chatId, renderCreated(result, money) + notice, "Markdown", keyboard)) return;
 
   console.error(
     "[telegram] wrote transactions but could not confirm them to the user. " +
@@ -1515,12 +1486,13 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     return;
   }
 
-  // Fast Regex Shorthand Matching: e.g. "100 breakfast" or "+5000 salary" or "250.50 lunch".
+  // Shorthand logging: "100 breakfast", "+5000 salary", and now "250 grab, 180 lunch".
   // Skipped entirely when the text says *when* something happened: this path stamps the current
   // instant and has no way to express a date, so "350 groceries yesterday" was filed under today.
+  // Held as its own binding because the closing fallback reads it too: a message that named a
+  // date and could not be understood needs a different explanation from one that made no sense.
   const quick = isPlainShorthand(text);
-  const quickExpenseMatch = quick ? /^(\d+(?:\.\d+)?)\s+(.+)$/i.exec(text) : null;
-  const quickIncomeMatch = quick ? /^\+(\d+(?:\.\d+)?)\s+(.+)$/i.exec(text) : null;
+  const entries = quick ? parseShorthandEntries(text) : [];
 
   // Both, in parallel. Labels used to be fetched only behind a keyword test, to keep the
   // shorthand logger's "100 breakfast" free of a second round trip. A bare label name has no
@@ -1531,65 +1503,82 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     loadLabels(),
   ]);
 
-  if (quickIncomeMatch || quickExpenseMatch) {
-    const isIncome = !!quickIncomeMatch;
-    const match = isIncome ? quickIncomeMatch! : quickExpenseMatch!;
-    const amount = parseFloat(match[1]);
-    const written = match[2].trim();
+  if (entries.length > 0) {
+    const prepared = entries.map((entry) => {
+      const type = entry.isIncome ? "INCOME" : "EXPENSE";
 
-    // "150 pickleball fee, label it pickleball" used to log the directive as part of its own
-    // description and apply nothing. Read out here, it costs no model call, so it keeps working
-    // with no GEMINI_API_KEY — which is the whole reason this path exists.
-    const type = isIncome ? "INCOME" : "EXPENSE";
-    const directive = readLabelDirective(written, labelLookup.labels, type);
-    // A message that is *only* a directive leaves nothing to describe the purchase. Falling
-    // through is better than logging "label it pickleball" as the description: Gemini can write
-    // one, and without Gemini the user gets the same "I did not understand" they always did.
-    const description = directive ? directive.rest : written;
+      // "150 pickleball fee, label it pickleball" used to log the directive as part of its own
+      // description and apply nothing. Read out here, it costs no model call, so it keeps working
+      // with no GEMINI_API_KEY — which is the whole reason this path exists. Parsed per entry, so
+      // a directive applies to the transaction it was written beside rather than to all of them:
+      // a wrong label moves money in `getLabelBreakdown`, so it is the guess not worth making.
+      const directive = readLabelDirective(entry.description, labelLookup.labels, type);
+      // A clause that is *only* a directive leaves nothing to describe the purchase.
+      const description = directive.rest;
 
-    if (amount > 0 && description) {
       // No confident match returns null rather than a guess. It used to fall back to the first
       // category of that type, and the list is ordered defaults-first then alphabetically, so
       // with the seeded data every unrecognised expense was filed under Education.
-      let matchedCat = matchCategory(description, type, categories);
+      let category = description ? matchCategory(description, type, categories) : null;
 
-      // Gemini sees the whole list and can choose properly, so the fast path steps aside for it.
-      // Only when there is no Gemini does an explicit "Other" bucket become the least-bad
-      // answer: it is at least somewhere the user would recognise as unsorted.
-      if (!matchedCat && !GEMINI_ENABLED) matchedCat = findOtherCategory(type, categories);
+      // Gemini sees the whole list and can choose properly, so the fast path steps aside for it —
+      // but only when there is a single transaction, because the classifier returns one and
+      // stepping aside with two would silently discard the second. That is the #204 bug wearing a
+      // different hat, so for a multi-entry message an explicit "Other" bucket wins: it is at
+      // least somewhere the user recognises as unsorted, and the amount is recorded rather than
+      // lost. Confirmations name the category per row, so it is visible and correctable.
+      if (!category && (!GEMINI_ENABLED || entries.length > 1)) {
+        category = findOtherCategory(type, categories);
+      }
 
-      if (matchedCat) {
-        const clientBatchId = updateBatchId(BOT_ID, updateId);
+      return { entry, type, directive, description, category };
+    });
 
-        const result = await createTransactions(clientBatchId, [
-          {
-            amount,
-            description: description.charAt(0).toUpperCase() + description.slice(1),
-            type,
-            categoryId: matchedCat.id,
-            date: new Date().toISOString(),
-            // Omitted when none was named, so the user's auto-apply schedules still run. This
-            // path always stamps the current instant, so that time is real and they should.
-            ...(directive.ids.length > 0 && { labelIds: directive.ids }),
-          },
-        ]);
+    // All or nothing. Logging the half that parsed and dropping the rest would recreate the very
+    // failure this replaces: a message that reports success while some of the money vanishes.
+    const usable = prepared.every((p) => p.description && p.category);
 
-        if (result.transactions.length > 0) {
-          await confirmCreated(
-            chatId,
-            result,
-            renderLabelNotice(
-              {
-                names: [],
-                unresolved: directive.unresolved,
-                incompatible: directive.incompatible,
-                ambiguous: directive.ambiguous,
-              },
-              labelLookup.readable
-            )
-          );
-          return;
-        }
+    if (usable) {
+      const clientBatchId = updateBatchId(BOT_ID, updateId);
+
+      const result = await createTransactions(
+        clientBatchId,
+        prepared.map((p) => ({
+          amount: p.entry.amount,
+          description: p.description.charAt(0).toUpperCase() + p.description.slice(1),
+          type: p.type,
+          categoryId: p.category!.id,
+          date: new Date().toISOString(),
+          // Omitted when none was named, so the user's auto-apply schedules still run. This
+          // path always stamps the current instant, so that time is real and they should.
+          ...(p.directive.ids.length > 0 && { labelIds: p.directive.ids }),
+        }))
+      );
+
+      if (result.transactions.length > 0) {
+        // Merged across entries and deduped: the same unresolvable name written twice is one
+        // thing the user needs told, not two.
+        const unique = <T>(values: T[], key: (v: T) => string) => [
+          ...new Map(values.map((v) => [key(v), v])).values(),
+        ];
+
+        await confirmCreated(
+          chatId,
+          result,
+          renderLabelNotice(
+            {
+              names: [],
+              unresolved: [...new Set(prepared.flatMap((p) => p.directive.unresolved))],
+              incompatible: [...new Set(prepared.flatMap((p) => p.directive.incompatible))],
+              ambiguous: unique(
+                prepared.flatMap((p) => p.directive.ambiguous),
+                (a) => a.name
+              ),
+            },
+            labelLookup.readable
+          )
+        );
+        return;
       }
     }
   }

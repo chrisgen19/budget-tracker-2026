@@ -6,6 +6,7 @@ import {
   wantsKeyboardOff,
 } from "@/lib/telegram/quick-keyboard";
 import { isPlainShorthand } from "@/lib/telegram/shorthand";
+import { parseShorthandEntries } from "@/lib/telegram/multi-shorthand";
 import { matchCategory, type BotCategory } from "@/lib/telegram/category-match";
 
 /** The seeded defaults, in the order `get_category_list` returns them. */
@@ -24,9 +25,14 @@ const CATEGORIES: BotCategory[] = [
   "Utilities",
 ].map((name) => ({ id: name.toLowerCase(), name, type: "EXPENSE" }));
 
-/** The shorthand path's own regex, from `bot.ts`. Copied deliberately: if it changes there and
- *  not here, these tests should stop describing reality and say so. */
-const SHORTHAND = /^(\d+(?:\.\d+)?)\s+(.+)$/i;
+/**
+ * The production parser, not a copy of its grammar.
+ *
+ * These tests exist to prove a button's label survives the real logging path. A second regex here
+ * could keep extracting an amount and a description under the old grammar long after the bot had
+ * moved on, which is exactly the failure they are supposed to catch.
+ */
+const parse = (label: string) => parseShorthandEntries(label);
 
 describe("quick keyboard labels", () => {
   // The whole design rests on a button's label being sent verbatim as a message. A label that
@@ -34,10 +40,13 @@ describe("quick keyboard labels", () => {
   it("every fare label is valid shorthand", () => {
     for (const label of QUICK_FARES) {
       expect(isPlainShorthand(label), `${label} must not look like a dated entry`).toBe(true);
-      const match = SHORTHAND.exec(label);
-      expect(match, `${label} must parse as <amount> <description>`).not.toBeNull();
-      expect(Number(match![1])).toBeGreaterThan(0);
-      expect(match![2].trim().length).toBeGreaterThan(0);
+
+      const entries = parse(label);
+      // Exactly one: a label that split into two would log a button press as two transactions.
+      expect(entries, `${label} must parse as a single transaction`).toHaveLength(1);
+      expect(entries[0].amount).toBeGreaterThan(0);
+      expect(entries[0].description.length).toBeGreaterThan(0);
+      expect(entries[0].isIncome, `${label} is a fare, not income`).toBe(false);
     }
   });
 
@@ -45,7 +54,7 @@ describe("quick keyboard labels", () => {
   // category, and the spending only looks wrong months later in the breakdown.
   it("every fare label resolves to Transportation", () => {
     for (const label of QUICK_FARES) {
-      const description = SHORTHAND.exec(label)![2];
+      const { description } = parse(label)[0];
       expect(matchCategory(description, "EXPENSE", CATEGORIES)?.name, label).toBe("Transportation");
     }
   });
@@ -54,7 +63,7 @@ describe("quick keyboard labels", () => {
   // `matchCategory` checks category names before keyword hints, so this is worth pinning.
   it("does not let 'home' in a fare label pull it into Housing or Home Supplies", () => {
     for (const label of QUICK_FARES) {
-      const name = matchCategory(SHORTHAND.exec(label)![2], "EXPENSE", CATEGORIES)?.name;
+      const name = matchCategory(parse(label)[0].description, "EXPENSE", CATEGORIES)?.name;
       expect(name).not.toBe("Housing");
       expect(name).not.toBe("Home Supplies");
     }
