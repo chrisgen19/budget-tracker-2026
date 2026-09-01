@@ -32,6 +32,33 @@ describe("matchCategory", () => {
     expect(matchCategory("meralco bill", "EXPENSE", CATEGORIES)?.name).toBe("Utilities");
   });
 
+  // The modes people actually use here. Before these were listed, "250 jeepney" and
+  // "80 uv express" matched nothing: they were filed under Other Expense with no Gemini key,
+  // or cost a model call with one, for the two most ordinary fares in the country.
+  it("matches Philippine transport modes", () => {
+    for (const desc of [
+      "jeepney fare",
+      "jeepneys to work",
+      "uv express to office",
+      "fare home (uv + jeep)",
+      "tnvs to the office",
+      "grabcar home",
+      "tricycle to the terminal",
+      "mrt ticket",
+      "lrt load",
+      "commute home",
+    ]) {
+      expect(matchCategory(desc, "EXPENSE", CATEGORIES)?.name, desc).toBe("Transportation");
+    }
+  });
+
+  // `uv` is only two letters, so the word boundary is the whole safety margin. Without it every
+  // description containing those letters would be filed as a fare.
+  it("does not match short transport keywords inside other words", () => {
+    expect(matchCategory("louvre tickets", "EXPENSE", CATEGORIES)).toBeNull();
+    expect(matchCategory("souvenir for mum", "EXPENSE", CATEGORIES)).toBeNull();
+  });
+
   // The bug this covers: with no match the caller took `matchingCats[0]`, which is Education
   // with the seeded data, so "100 medicine" was recorded as an education expense. Silent
   // corruption of the category breakdown is worse than declining to guess.
