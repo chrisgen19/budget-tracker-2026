@@ -272,6 +272,7 @@ export function FeaturesForm() {
           )}
         </div>
 
+        {user.telegramPromptAvailable && (
         <div className="p-4 rounded-xl border border-cream-300 bg-cream-50/50">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
@@ -325,6 +326,7 @@ export function FeaturesForm() {
             </div>
           )}
         </div>
+        )}
 
         <div className="flex items-center justify-between gap-4 p-4 rounded-xl border border-cream-300 bg-cream-50/50">
           <div className="flex items-center gap-3">

@@ -11,6 +11,7 @@ import { ToastProvider } from "@/components/ui/toast";
 import { AssessmentProvider } from "@/components/assessment-provider";
 import { countScansUsed, monthStartForUser } from "@/lib/scan-quota";
 
+import { telegramPromptOwnerId } from "@/lib/telegram/prompt-owner";
 export default async function AppLayout({
   children,
 }: {
@@ -43,6 +44,11 @@ export default async function AppLayout({
   });
 
   const userRole = dbUser?.role ?? "FREE";
+
+  // The Telegram evening prompt belongs to whoever owns the bot's MCP token, and to nobody else:
+  // the bot writes into exactly one budget. Everyone else never sees the toggle, so they cannot
+  // switch on a message that would be sent to somebody else's chat.
+  const telegramPromptAvailable = (await telegramPromptOwnerId(prisma)) === session.user.id;
 
   // ADMIN users are always unrestricted; others follow their role's AppSettings
   let roleScanEnabled = true;
@@ -81,6 +87,7 @@ export default async function AppLayout({
           showDayName: dbUser?.showDayName ?? true,
           dayNameFormat: (dbUser?.dayNameFormat as "FULL" | "SHORT") ?? "SHORT",
           emailBillReminders: dbUser?.emailBillReminders ?? false,
+          telegramPromptAvailable,
           telegramDailyPrompt: dbUser?.telegramDailyPrompt ?? false,
           telegramDailyPromptTime: dbUser?.telegramDailyPromptTime ?? "20:00",
           emailVerified: dbUser?.emailVerified ?? false,

@@ -5,6 +5,7 @@ import { composePrompt, isPromptDue } from "@/lib/telegram/daily-prompt";
 import { encodePromptCallback } from "@/lib/telegram/callback-data";
 import { sendMessage } from "@/lib/telegram/send";
 import { env } from "@/lib/telegram/env";
+import { telegramPromptOwnerId } from "@/lib/telegram/prompt-owner";
 
 /** The categories the prompt asks about, by their seeded names. */
 const FARE_CATEGORY = "Transportation";
@@ -43,30 +44,22 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // The bot serves exactly one budget - the one its MCP token was minted for - so the prompt is
+  // scoped to that account and cannot be switched on by anybody else. Without this, a second user
+  // enabling it would have their day read and this chat messaged about it.
+  const ownerId = await telegramPromptOwnerId(prisma);
+  if (!ownerId) {
+    return NextResponse.json({ usersProcessed: 0, promptsSent: 0, errors: 0, owner: null });
+  }
+
   const users = await prisma.user.findMany({
-    where: { telegramDailyPrompt: true },
+    where: { id: ownerId, telegramDailyPrompt: true },
     select: { id: true, timezoneOffset: true, telegramDailyPromptTime: true },
   });
 
   const chatIds = allowedChatIds();
   if (users.length === 0 || chatIds.length === 0) {
     return NextResponse.json({ usersProcessed: users.length, promptsSent: 0, errors: 0 });
-  }
-
-  // Nothing maps a Telegram account to an app user: `TELEGRAM_ALLOWED_IDS` says who may talk to
-  // the bot, never which budget they own. With one enabled user that is unambiguous. With two it
-  // is a guess, and the wrong guess reads one person's day and messages another about it, so this
-  // refuses instead. Adding `users.telegram_user_id` is what would lift it.
-  if (users.length > 1) {
-    console.error(
-      "[telegram-prompts] refusing to send: %d users have the prompt enabled and there is no " +
-        "Telegram-to-user mapping to route by.",
-      users.length
-    );
-    return NextResponse.json(
-      { error: "Ambiguous recipient: more than one user has the daily prompt enabled" },
-      { status: 409 }
-    );
   }
 
   const now = new Date();

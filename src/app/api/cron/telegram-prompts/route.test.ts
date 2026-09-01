@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   userFindMany: vi.fn(),
+  mcpTokenFindFirst: vi.fn(),
   transactionFindMany: vi.fn(),
   promptLogCreateMany: vi.fn(),
   promptLogDeleteMany: vi.fn(),
@@ -11,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     user: { findMany: mocks.userFindMany },
+    mcpToken: { findFirst: mocks.mcpTokenFindFirst },
     transaction: { findMany: mocks.transactionFindMany },
     telegramPromptLog: {
       createMany: mocks.promptLogCreateMany,
@@ -36,9 +38,11 @@ const call = (auth = "Bearer test-secret") =>
 beforeEach(() => {
   process.env.CRON_SECRET = "test-secret";
   process.env.TELEGRAM_ALLOWED_IDS = "123456";
+  process.env.TELEGRAM_MCP_TOKEN = "bot-token";
   vi.useFakeTimers();
   vi.setSystemTime(DUE);
 
+  mocks.mcpTokenFindFirst.mockResolvedValue({ userId: "u1" });
   mocks.userFindMany.mockResolvedValue([USER]);
   mocks.transactionFindMany.mockResolvedValue([]);
   mocks.promptLogCreateMany.mockResolvedValue({ count: 1 });
@@ -163,13 +167,36 @@ describe("sending at most once a day", () => {
   });
 });
 
-// `TELEGRAM_ALLOWED_IDS` says who may talk to the bot, never whose budget it is. With two enabled
-// users that is a guess, and the wrong guess reads one person's day and messages another about it.
-describe("ambiguous recipients", () => {
-  it("refuses rather than guessing which user a chat belongs to", async () => {
-    mocks.userFindMany.mockResolvedValue([USER, { ...USER, id: "u2" }]);
+// The bot writes into exactly one budget, so the prompt belongs to that account and to nobody
+// else. Without this scoping the toggle is a foot-gun: a second user switching it on would have
+// their own day read and this chat messaged about it.
+describe("scoping to the bot's owner", () => {
+  it("only ever considers the user who owns the bot's MCP token", async () => {
+    await call();
+    expect(mocks.userFindMany.mock.calls[0][0].where).toMatchObject({
+      id: "u1",
+      telegramDailyPrompt: true,
+    });
+  });
+
+  it("sends nothing when the token belongs to nobody", async () => {
+    mocks.mcpTokenFindFirst.mockResolvedValue(null);
     const res = await call();
-    expect(res.status).toBe(409);
     expect(mocks.sendMessage).not.toHaveBeenCalled();
+    expect(await res.json()).toMatchObject({ promptsSent: 0, owner: null });
+  });
+
+  it("sends nothing on a deployment with no bot token at all", async () => {
+    delete process.env.TELEGRAM_MCP_TOKEN;
+    const res = await call();
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
+    expect(await res.json()).toMatchObject({ owner: null });
+  });
+
+  // A revoked token cannot write, so prompting its owner asks for a message the bot then fails
+  // to record.
+  it("treats a revoked token as no owner", async () => {
+    await call();
+    expect(mocks.mcpTokenFindFirst.mock.calls[0][0].where).toMatchObject({ revokedAt: null });
   });
 });
