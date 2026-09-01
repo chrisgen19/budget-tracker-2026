@@ -159,8 +159,19 @@ describe("sending at most once a day", () => {
     expect(claimOrder).toBeLessThan(sendOrder);
   });
 
-  it("releases the claim when the send fails, so the next tick retries", async () => {
+  it("releases the claim when the send throws, so the next tick retries", async () => {
     mocks.sendMessage.mockRejectedValue(new Error("telegram down"));
+    const res = await call();
+    expect(mocks.promptLogDeleteMany).toHaveBeenCalled();
+    expect(await res.json()).toMatchObject({ promptsSent: 0, errors: 1 });
+  });
+
+  // `sendMessage` reports failure by *returning null*, not by throwing: it swallows a Markdown
+  // parse error, retries in plain text, and gives up quietly. Ignoring that meant a failed send
+  // still counted and still held the claimed day, so it was never retried - the prompt just
+  // vanished for the day with nothing to show why.
+  it("releases the claim when Telegram silently refuses the message", async () => {
+    mocks.sendMessage.mockResolvedValue(null);
     const res = await call();
     expect(mocks.promptLogDeleteMany).toHaveBeenCalled();
     expect(await res.json()).toMatchObject({ promptsSent: 0, errors: 1 });

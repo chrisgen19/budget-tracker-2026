@@ -130,8 +130,15 @@ export async function GET(request: Request) {
           ],
         };
 
-        for (const chatId of chatIds) {
-          await sendMessage(chatId, text, "Markdown", keyboard);
+        // `sendMessage` reports failure by returning null rather than throwing - it swallows a
+        // Markdown parse error and retries in plain text, and only gives up silently. Ignoring
+        // the return value meant a failed send still counted, still kept the claimed day, and so
+        // was never retried: the prompt would vanish for that day with nothing in the logs.
+        const results = await Promise.all(
+          chatIds.map((chatId) => sendMessage(chatId, text, "Markdown", keyboard))
+        );
+        if (results.every((id) => id === null)) {
+          throw new Error(`Telegram accepted none of ${chatIds.length} prompt message(s)`);
         }
         promptsSent += 1;
       } catch (sendError) {
