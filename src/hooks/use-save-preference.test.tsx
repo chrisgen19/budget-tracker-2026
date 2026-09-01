@@ -90,6 +90,23 @@ describe("a rejected save", () => {
   });
 });
 
+// The Preferences tab was missed on the first pass, and only a reviewer caught it. These pin the
+// two keys it owns so a future narrowing of the union breaks a test rather than a settings page.
+describe("covers both profile tabs", () => {
+  it("saves the Preferences tab's own fields", async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: true } as Response);
+    const savePreference = save();
+
+    await act(async () => {
+      await savePreference("showDayName", false, true, "the day name setting");
+      await savePreference("dayNameFormat", "FULL", "SHORT", "the day name format");
+    });
+
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]!.body))).toEqual({ showDayName: false });
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]!.body))).toEqual({ dayNameFormat: "FULL" });
+  });
+});
+
 describe("a request that never arrives", () => {
   // Different advice on purpose: telling someone to check their connection when the server
   // rejected the value sends them to look at the wrong thing.

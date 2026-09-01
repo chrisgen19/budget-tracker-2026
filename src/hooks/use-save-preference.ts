@@ -13,6 +13,8 @@ import { useToast } from "@/components/ui/toast";
  * compile error instead.
  */
 export type SavablePreference =
+  | "showDayName"
+  | "dayNameFormat"
   | "receiptScanEnabled"
   | "transactionLayout"
   | "transactionAmountAutofocus"
@@ -33,8 +35,9 @@ export type SavablePreference =
  * The optimistic update is worth keeping: a toggle that waits for a round trip feels broken in
  * the other direction. What was missing was the failure half of it.
  *
- * Written once because there were seven copies of this dance and they had already drifted in
- * small ways. An eighth copy is how the next one goes silent again.
+ * Written once because there were nine copies of this dance, spread across two sibling tabs of
+ * the same page, and they had already drifted in small ways. A tenth copy is how the next one
+ * goes silent again - which is exactly how the Preferences tab was missed on the first pass.
  */
 export function useSavePreference() {
   const { setUser } = useUser();

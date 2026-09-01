@@ -5,6 +5,7 @@ import { ScanLine, Mail, Rows3, Target, Tag, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
 import { useSavePreference } from "@/hooks/use-save-preference";
+import { HH_MM } from "@/lib/validations";
 import { InstallAppCard } from "@/components/pwa/install-app-card";
 
 export function FeaturesForm() {
@@ -43,6 +44,12 @@ export function FeaturesForm() {
   };
 
   const handlePromptTimeChange = async (value: string) => {
+    // A time input reports "" while the field is cleared, and partial values like "20:" while it
+    // is being retyped. The server rejects every one of those, so sending them meant an error
+    // toast for an edit still in progress. Silent before this branch existed; visible after, which
+    // is the toast doing its job and the reason to stop sending them.
+    if (!HH_MM.test(value)) return;
+
     setSavingPromptTime(true);
     await savePreference(
       "telegramDailyPromptTime",

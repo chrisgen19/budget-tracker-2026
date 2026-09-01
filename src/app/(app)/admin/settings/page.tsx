@@ -165,6 +165,9 @@ export default function AdminSettingsPage() {
                     }
                     className={cn(
                       "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/30",
+                    // Extends the tap target to 44px without moving the 24px track.
+                    // See AGENTS.md.
+                    "before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']",
                       roleSettings.receiptScanEnabled
                         ? "bg-amber"
                         : "bg-cream-300"
