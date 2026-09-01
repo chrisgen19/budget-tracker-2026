@@ -103,6 +103,21 @@ describe("when it sends", () => {
     await call();
     expect(mocks.sendMessage).not.toHaveBeenCalled();
   });
+
+  // The allowlist answers "who may talk to the bot", never "whose budget is this". A second id is
+  // somebody else, and sending there would tell them whether the owner logged a fare and a lunch
+  // today. Same refusal the owner-scoping makes, for the same missing mapping.
+  it("refuses to broadcast when the allowlist holds more than one chat id", async () => {
+    process.env.TELEGRAM_ALLOWED_IDS = "123456,987654";
+    const res = await call();
+    expect(res.status).toBe(409);
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("sends exactly once, never once per allowlisted id", async () => {
+    await call();
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("what it asks about", () => {

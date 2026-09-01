@@ -77,4 +77,8 @@ export const removeQuickKeyboard = (): RemoveKeyboard => ({ remove_keyboard: tru
  * the user typing.
  */
 export const wantsKeyboardOff = (text: string): boolean =>
-  /^\/keyboard(@\S+)?\s+(off|hide|remove|stop)\b/i.test(text.trim());
+  // `\b` was wrong here: it matches before punctuation as well as at the end, so
+  // "/keyboard off-topic" and "/keyboard off." both hid the keyboard. Whitespace-or-end is what
+  // "the word ended" actually means. "/keyboard offer" was always fine, since `\b` does not match
+  // between two word characters.
+  /^\/keyboard(@\S+)?\s+(off|hide|remove|stop)(?:\s|$)/i.test(text.trim());

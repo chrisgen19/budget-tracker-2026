@@ -97,6 +97,14 @@ describe("wantsKeyboardOff", () => {
     expect(wantsKeyboardOff("/keyboard@mybot off")).toBe(true);
   });
 
+  // `\b` matches before punctuation as well as at a word end, so these all removed the keyboard.
+  // Near misses rather than realistic input, but the predicate should mean what it says.
+  it("does not treat a longer word starting with an off-token as the command", () => {
+    for (const text of ["/keyboard off-topic", "/keyboard off.", "/keyboard off!", "/keyboard stopwatch"]) {
+      expect(wantsKeyboardOff(text), text).toBe(false);
+    }
+  });
+
   // Showing an unwanted keyboard costs one command to undo. Failing to show a wanted one leaves
   // the user typing, which is the thing this exists to stop.
   it("shows the keyboard for anything else", () => {

@@ -21,24 +21,42 @@ import { env } from "@/lib/telegram/env";
 export interface PromptOwnerDb {
   mcpToken: {
     findFirst: (args: {
-      where: { tokenHash: string; revokedAt: null };
+      where: {
+        tokenHash: string;
+        revokedAt: null;
+        OR: ({ expiresAt: null } | { expiresAt: { gt: Date } })[];
+      };
       select: { userId: true };
     }) => Promise<{ userId: string } | null>;
   };
 }
 
 /**
- * The user who owns the bot's MCP token, or null when there is no usable one.
+ * The user who owns the bot's MCP token, or null when there is no *usable* one.
  *
- * A revoked token counts as none: the bot cannot write with it, so prompting its owner to log
- * something would be asking for a message the bot then fails to record.
+ * Usable is the operative word, and it is why this matches `authenticateMcpRequest`'s own
+ * conditions rather than merely finding the row. A revoked or expired token cannot write, so
+ * prompting its owner asks them for a message the bot then fails to record - the prompt keeps
+ * arriving, every reply fails, and nothing in the chat explains why.
+ *
+ * Expiry is not a remote possibility here. The bot's token needs `transactions:write`, and such a
+ * token may not choose "Never" and is capped at `MAX_WRITE_TOKEN_EXPIRY_DAYS`, so it is certain to
+ * lapse. Silence is the right behaviour then: it is also the signal that the token needs re-minting.
  */
-export const telegramPromptOwnerId = async (db: PromptOwnerDb): Promise<string | null> => {
+export const telegramPromptOwnerId = async (
+  db: PromptOwnerDb,
+  now: Date = new Date()
+): Promise<string | null> => {
   const token = env("TELEGRAM_MCP_TOKEN");
   if (!token) return null;
 
   const row = await db.mcpToken.findFirst({
-    where: { tokenHash: hashMcpToken(token), revokedAt: null },
+    where: {
+      tokenHash: hashMcpToken(token),
+      revokedAt: null,
+      // Null means it never expires, which is legal for a read-only token.
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    },
     select: { userId: true },
   });
 

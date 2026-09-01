@@ -62,6 +62,26 @@ export async function GET(request: Request) {
     return NextResponse.json({ usersProcessed: users.length, promptsSent: 0, errors: 0 });
   }
 
+  // One recipient, deliberately. The allowlist answers "who may talk to the bot", never "whose
+  // budget is this", so a second id is somebody else - and sending there would tell them whether
+  // the owner has logged their fare and lunch today. Refusing is the same rule the owner-scoping
+  // above already applies: with nothing mapping a Telegram account to an app user, a guess is not
+  // available, so silence is. It also keeps delivery a single all-or-nothing act, which is what
+  // lets one claimed day in `telegram_prompt_logs` mean what it says.
+  if (chatIds.length > 1) {
+    console.error(
+      "[telegram-prompts] refusing to send: TELEGRAM_ALLOWED_IDS holds %d chat ids and nothing " +
+        "says which belongs to the prompt's owner.",
+      chatIds.length
+    );
+    return NextResponse.json(
+      { error: "Ambiguous recipient: more than one numeric id in TELEGRAM_ALLOWED_IDS" },
+      { status: 409 }
+    );
+  }
+
+  const chatId = chatIds[0];
+
   const now = new Date();
   let promptsSent = 0;
   let errors = 0;
@@ -134,11 +154,9 @@ export async function GET(request: Request) {
         // Markdown parse error and retries in plain text, and only gives up silently. Ignoring
         // the return value meant a failed send still counted, still kept the claimed day, and so
         // was never retried: the prompt would vanish for that day with nothing in the logs.
-        const results = await Promise.all(
-          chatIds.map((chatId) => sendMessage(chatId, text, "Markdown", keyboard))
-        );
-        if (results.every((id) => id === null)) {
-          throw new Error(`Telegram accepted none of ${chatIds.length} prompt message(s)`);
+        const sent = await sendMessage(chatId, text, "Markdown", keyboard);
+        if (sent === null) {
+          throw new Error("Telegram would not accept the prompt message");
         }
         promptsSent += 1;
       } catch (sendError) {
