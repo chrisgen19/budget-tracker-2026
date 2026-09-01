@@ -70,13 +70,41 @@ describe("several transactions", () => {
     expect(renderCreated(batch(two), peso)).toContain("*Total spent:* ₱430.00");
   });
 
-  it("nets income out of the total rather than adding it", () => {
+  // This test used to assert the opposite, and locked in a bug: income was netted into the total,
+  // so 1,000 spent alongside 500 received reported "Total spent: 500", and the line disappeared
+  // altogether whenever income was the larger. A confident wrong number about your own money is
+  // worse than printing none.
+  it("reports spending and income separately, never netted", () => {
     const out = renderCreated(
-      batch([row({ amount: 100, type: "EXPENSE" }), row({ id: "t2", amount: 5000, type: "INCOME", description: "Salary" })]),
+      batch([
+        row({ amount: 1000, type: "EXPENSE" }),
+        row({ id: "t2", amount: 500, type: "INCOME", description: "Refund" }),
+      ]),
       peso
     );
-    // 100 spent, 5000 received: there is no positive spend to report.
-    expect(out).not.toContain("Total spent:");
+    expect(out).toContain("*Total spent:* ₱1,000.00");
+    expect(out).toContain("*Total received:* ₱500.00");
+  });
+
+  it("still reports what was spent when income is the larger figure", () => {
+    const out = renderCreated(
+      batch([
+        row({ amount: 100, type: "EXPENSE" }),
+        row({ id: "t2", amount: 5000, type: "INCOME", description: "Salary" }),
+      ]),
+      peso
+    );
+    expect(out).toContain("*Total spent:* ₱100.00");
+    expect(out).toContain("*Total received:* ₱5,000.00");
+  });
+
+  it("omits a total nobody needs", () => {
+    const allIncome = renderCreated(
+      batch([row({ amount: 5000, type: "INCOME", description: "Salary" }), row({ id: "t2", amount: 100, type: "INCOME", description: "Refund" })]),
+      peso
+    );
+    expect(allIncome).not.toContain("Total spent:");
+    expect(allIncome).toContain("*Total received:* ₱5,100.00");
   });
 
   it("marks income and expense differently", () => {

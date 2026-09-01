@@ -28,8 +28,16 @@ export interface ShorthandEntry {
  *
  * `and` only counts when an amount follows it, so `250 lunch and coffee` stays one row while
  * `250 grab and 180 lunch` becomes two.
+ *
+ * The description is deliberately **not** part of this pattern, and the amount may be followed by
+ * a separator as well as by space. Requiring a description meant the `180` in `250 grab, 180` was
+ * never recognised as a clause at all, so it fell back into the previous description and produced
+ * one row called "grab, 180" - the exact swallow this module exists to stop, one clause further
+ * along. Requiring *whitespace* after the amount left the same hole for `250 grab, 180, 100
+ * lunch`, where the 180 is followed by a comma. Matching the bare amount lets the
+ * empty-description check below see the clause and refuse the whole message.
  */
-const ENTRY_START = /(?:^|[,;\n]|\s+and\s+)\s*(\+?)(\d+(?:\.\d+)?)\s+(?=\S)/g;
+const ENTRY_START = /(?:^|[,;\n]|\s+and\s+)\s*(\+?)(\d+(?:\.\d+)?)(?=[\s,;]|$)/g;
 
 /** Separators left dangling on the end of a description once the next entry is split off. */
 const TRAILING_SEPARATOR = /[\s,;]+$/;
@@ -75,8 +83,11 @@ export const parseShorthandEntries = (text: string): ShorthandEntry[] => {
     const description = trimmed.slice(start.descStart, end).replace(TRAILING_SEPARATOR, "").trim();
     const amount = parseFloat(start.amount);
 
-    // A clause with no description left is not a transaction anybody can read back later. Rather
-    // than logging a bare amount, the whole message falls through so the classifier can try.
+    // A clause with no description left is not a transaction anybody can read back later, and an
+    // amount written with nothing beside it ("250 grab, 180") is far more likely to be an
+    // unfinished thought than a request to log 180 of something unnamed. Refusing the whole
+    // message sends it to the classifier, which can ask; logging part of it would lose the rest
+    // in silence, which is the failure this module was written to end.
     if (!description || !(amount > 0)) return [];
 
     entries.push({ amount, description, isIncome: start.sign === "+" });

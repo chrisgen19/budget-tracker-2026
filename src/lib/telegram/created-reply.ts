@@ -73,11 +73,22 @@ export const renderCreated = (
 
   // Stated because the rows are individually small and the number is what gets checked against a
   // receipt or a bank app.
-  const total = result.transactions.reduce(
-    (sum, tx) => sum + (tx.type === "INCOME" ? -tx.amount : tx.amount),
-    0
-  );
-  if (total > 0) reply += `\n\ud83d\udcb8 *Total spent:* ${money(total)}\n`;
+  //
+  // Reported separately rather than netted. "Total spent" has to mean what it says: netting an
+  // income row into it reported 1,000 spent and 500 received as "Total spent: 500", and made the
+  // line vanish entirely whenever income was the larger of the two - a confident wrong number
+  // about your own money, which is worse than printing none.
+  const sum = (income: boolean) =>
+    result.transactions
+      .filter((tx) => (tx.type === "INCOME") === income)
+      .reduce((running, tx) => running + tx.amount, 0);
+
+  const totals: string[] = [];
+  const spent = sum(false);
+  const received = sum(true);
+  if (spent > 0) totals.push(`\ud83d\udcb8 *Total spent:* ${money(spent)}`);
+  if (received > 0) totals.push(`\ud83d\udcb0 *Total received:* ${money(received)}`);
+  if (totals.length > 0) reply += `\n${totals.join("\n")}\n`;
 
   return reply;
 };

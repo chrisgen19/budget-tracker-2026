@@ -101,6 +101,30 @@ describe("falling through to the classifier", () => {
   it("returns nothing when any clause is unusable", () => {
     expect(parseShorthandEntries("250 grab, 0 lunch")).toEqual([]);
   });
+
+  // An amount written with nothing beside it. The clause has to be *recognised* before the
+  // all-or-nothing rule can reject it: while the pattern demanded a description, "180" was never
+  // seen as a clause at all and fell back into the previous one, producing a single row called
+  // "grab, 180" - the same swallow this module exists to end, one clause further along.
+  it("refuses a separator-led amount that names nothing", () => {
+    expect(parseShorthandEntries("250 grab, 180")).toEqual([]);
+    expect(parseShorthandEntries("250, 100 lunch")).toEqual([]);
+    expect(parseShorthandEntries("250 grab and 180")).toEqual([]);
+  });
+
+  // The amount is followed by a comma rather than a space here, which a whitespace-only lookahead
+  // missed - so this logged two rows and buried the 180 in the first one's description.
+  it("refuses a bare amount sitting between two good clauses", () => {
+    expect(parseShorthandEntries("250 grab, 180, 100 lunch")).toEqual([]);
+  });
+
+  it("never leaves a stray amount inside a description", () => {
+    for (const text of ["250 grab, 180", "250 grab, 180, 100 lunch", "250, 100 lunch"]) {
+      for (const { description } of parseShorthandEntries(text)) {
+        expect(description, text).not.toMatch(/\d/);
+      }
+    }
+  });
 });
 
 describe("single entries behave exactly as before", () => {
