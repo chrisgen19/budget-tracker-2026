@@ -2,6 +2,36 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-01 - One message can describe more than one transaction
+
+Issue #204. The shorthand logger used a single greedy regex - an amount, then "everything after it
+is the description" - so `250 grab, 180 lunch` wrote one row of 250 described as
+`"grab, 180 lunch"`, and replied with a clean success. The second amount was not rejected, it was
+*swallowed*: nothing to notice, nothing to correct, and no sign anything was wrong until the
+category breakdown looked off weeks later.
+
+It mattered more the moment the evening prompt shipped, because the prompt asks "fare today?
+lunch?" and the natural reply to a question with two halves is a message with two halves.
+
+`parseShorthandEntries` splits on a deliberate separator only - a comma, semicolon, newline, or the
+word "and" *followed by an amount* - never bare whitespace before a number. A wrongly split row
+invents a transaction, which is worse than an unsplit one merely mis-describing one, so
+`1500 internet bill 2026` and `250 grab 2 way` stay whole. A clause carrying no amount of its own is
+not a new entry, which keeps `1500 groceries, milk and eggs` together and keeps a trailing
+`label it work` attached to the entry it follows.
+
+Three judgement calls worth recording. Label directives are read per entry rather than applied to
+all of them, because a wrong label moves money in `getLabelBreakdown` and that is not a guess worth
+making. Parsing is all-or-nothing, since logging half a message would recreate the exact failure
+being fixed. And for a multi-entry message an uncategorised row falls back to `Other Expense`
+instead of stepping aside for Gemini - the classifier returns a *single* transaction, so stepping
+aside would silently discard the rest, which is #204 wearing a different hat.
+
+The confirmation had the same bug in miniature: it rendered `transactions[0]` and nothing else,
+which was harmless only while one message could never write two rows. It now lists every row with
+its own category, and totals them. Extracted to `created-reply.ts` alongside the other render
+modules, since it had grown real branching and none of it was testable inside `bot.ts`.
+
 ## 2026-09-01 - Logging the daily commute stops depending on remembering to type it
 
 Working on site every weekday means a fare and a lunch every weekday, and neither was getting

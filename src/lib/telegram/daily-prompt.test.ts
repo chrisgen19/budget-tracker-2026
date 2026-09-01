@@ -154,11 +154,11 @@ describe("composePrompt", () => {
     expect(composePrompt({ hasFare: false, hasLunch: true })).not.toContain("Lunch?");
   });
 
-  // The bot takes the first amount and swallows the rest of the line into the description, so
-  // "250 grab, 180 lunch" logs one wrong row and reports success. Until that is fixed the prompt
-  // has to teach the shape that works.
-  it("tells the user to send one thing per message", () => {
+  // The question has two halves, so the example answers both in one message. That only became
+  // honest once the shorthand path could split it (#204); before, this exact text would have
+  // logged a single wrong row.
+  it("shows an example that answers both halves at once", () => {
     const msg = composePrompt({ hasFare: false, hasLunch: false });
-    expect(msg).toMatch(/one per message/i);
+    expect(msg).toContain("250 grab, 180 lunch");
   });
 });
