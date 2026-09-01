@@ -1,4 +1,5 @@
 import { localTimestamp } from "@/lib/telegram/local-time";
+import { DAYPART_GUIDANCE } from "@/lib/daypart";
 import { GEMINI_MAX_ATTEMPTS } from "@/lib/gemini-limits";
 
 /**
@@ -114,7 +115,8 @@ If logging a transaction:
 - description: concise title (e.g. "Breakfast", "Jollibee lunch", "Salary")
 - type: "EXPENSE" or "INCOME"
 - categoryId: best matching category ID from the provided list
-- date: ISO timestamp string (e.g. "2026-08-26T08:30:00") matching when it occurred, or the current timestamp above. Write it in the user's local time with NO "Z" and no offset suffix: the server resolves it against their timezone, and a "Z" would be read as UTC and shift the transaction by hours
+- date: ISO timestamp string (e.g. "2026-08-26T08:30:00") matching when it occurred. Write it in the user's local time with NO "Z" and no offset suffix: the server resolves it against their timezone, and a "Z" would be read as UTC and shift the transaction by hours.
+${DAYPART_GUIDANCE}
 - labels: array of label names from the list above, EXACTLY as written there, ONLY when the user
   explicitly asks to label or tag it ("label it pickleball", "tag as work", "#groceries"). Leave
   it null otherwise. A label name merely appearing in the description is NOT a request to apply

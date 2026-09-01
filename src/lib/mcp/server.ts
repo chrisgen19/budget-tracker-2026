@@ -29,6 +29,7 @@ import {
   getReceiptItems,
 } from "../budget-queries";
 import type { PrismaClient } from "../budget-query-types";
+import { DAYPART_TABLE } from "@/lib/daypart";
 import { READ_ONLY_SCOPES, MCP_TOOL_SCOPES, type McpScope, type McpToolName } from "./scopes";
 import { resolveWritePermission } from "./tokens";
 import {
@@ -898,10 +899,17 @@ export const createBudgetMcpServer = ({
                 .string()
                 .describe(
                   "When it happened, in the user's own timezone. INCLUDE THE TIME whenever the user " +
-                    "indicates one, even loosely: 'last night' -> 2026-08-25T21:00, 'this morning' -> " +
-                    "2026-08-26T08:30, 'at lunch' -> 2026-08-26T12:30. A bare date such as 2026-08-25 " +
-                    "records no time and is filled in with the current clock, so any time the user " +
-                    "mentioned is lost. Send a bare date only when they gave no indication at all."
+                    "indicates one, even loosely. A bare date such as 2026-08-25 records no time and " +
+                    "is filled in with the current clock, so any time the user mentioned is lost. " +
+                    "Send a bare date only when they gave no indication at all.\n" +
+                    "Default readings for a meal or daypart:\n" +
+                    DAYPART_TABLE +
+                    "\nAn explicit time beats the table ('dinner at 8' is 20:00), and so does a named " +
+                    "day ('yesterday dinner' is yesterday at 19:00). A daypart named with no day " +
+                    "resolves to the MOST RECENT time it has already passed: asked at 10:00, " +
+                    "'dinner' was yesterday at 19:00, because tonight's has not happened yet. Never " +
+                    "send a future timestamp. Call get_budget_overview for the user's current date " +
+                    "if you do not know it."
                 ),
               categoryId: z.string().describe("From get_category_list. Must be the user's own."),
               labelIds: z

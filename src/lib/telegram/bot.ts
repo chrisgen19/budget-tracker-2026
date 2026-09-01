@@ -5,7 +5,7 @@ import dns from "node:dns";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { updateBatchId } from "@/lib/telegram/batch-id";
-import { localTimestamp } from "@/lib/telegram/local-time";
+import { formatScanDate, localTimestamp } from "@/lib/telegram/local-time";
 import { describeWindow, type ReportedPeriod } from "@/lib/telegram/period-label";
 import {
   callbackIsAllowed,
@@ -51,7 +51,7 @@ import {
   replyForError,
   shouldRetryWrite,
 } from "@/lib/telegram/errors";
-import { isPlainShorthand } from "@/lib/telegram/shorthand";
+import { isPlainShorthand, namesDaypart } from "@/lib/telegram/shorthand";
 import {
   newShutdownState,
   requestShutdown,
@@ -1308,7 +1308,7 @@ async function handleReceiptPhoto(
   reply += `\ud83d\udcdd *Description:* ${scan.description}\n`;
   reply += `\ud83d\udcb0 *Amount:* ${SYMBOL}${scan.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
   reply += `\ud83d\udcc1 *Category:* ${categoryName}\n`;
-  reply += `\ud83d\udcc5 *Date:* ${scan.date}\n`;
+  reply += `\ud83d\udcc5 *Date:* ${formatScanDate(scan.date)}\n`;
   if (scan.dateWarning) reply += `\n\u26a0\ufe0f The year on the receipt looks wrong. Check the date.\n`;
   if (scan.usedPhotoFallback) {
     reply += photoTakenAt
@@ -1556,7 +1556,7 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       msg += `\ud83d\udcdd *Description:* ${revised.description}\n`;
       msg += `\ud83d\udcb0 *Amount:* ${SYMBOL}${revised.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
       msg += `\ud83d\udcc1 *Category:* ${revised.categoryName}\n`;
-      msg += `\ud83d\udcc5 *Date:* ${revised.date}\n`;
+      msg += `\ud83d\udcc5 *Date:* ${formatScanDate(revised.date)}\n`;
       msg += renderLabelNotice(
         {
           names: revised.labelNames,
@@ -1646,7 +1646,12 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
   // Fast Regex Shorthand Matching: e.g. "100 breakfast" or "+5000 salary" or "250.50 lunch".
   // Skipped entirely when the text says *when* something happened: this path stamps the current
   // instant and has no way to express a date, so "350 groceries yesterday" was filed under today.
-  const quick = isPlainShorthand(text);
+  //
+  // A meal word is the softer half of that and is gated on Gemini actually being there. "350
+  // dinner" sent at 10:00 is last night's meal, which only a model holding the user's clock can
+  // work out; with no key the current instant is still the best answer available, and refusing a
+  // message this ordinary would break the one logging path that survives without a model.
+  const quick = isPlainShorthand(text) && !(GEMINI_ENABLED && namesDaypart(text));
   const quickExpenseMatch = quick ? /^(\d+(?:\.\d+)?)\s+(.+)$/i.exec(text) : null;
   const quickIncomeMatch = quick ? /^\+(\d+(?:\.\d+)?)\s+(.+)$/i.exec(text) : null;
 

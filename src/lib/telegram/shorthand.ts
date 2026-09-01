@@ -7,6 +7,37 @@ const DAY_ANY = "mon|tues?|wed(nes)?|thur?s?|fri|sat(ur)?|sun";
 const MONTH = "jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec";
 
 /**
+ * Meal and daypart words, which say *when* something happened without naming a clock time.
+ *
+ * Kept apart from `TEMPORAL_HINT` below, because the two are not equally certain and must not be
+ * treated the same when there is no model to resolve them. "yesterday" makes the current instant
+ * unconditionally wrong. A bare meal word does not: people log breakfast over breakfast, so `now`
+ * is frequently right and is never absurd. That difference is what lets a daypart fall back to the
+ * fast path when Gemini is unavailable, where "yesterday" is better refused.
+ *
+ * Both comments in this file already cited meal examples ("350 lunch at noon", "350 dinner 18:00"),
+ * but those diverted on `noon` and `18:00` — the meal word itself never counted, so plain
+ * "350 dinner" was stamped with whatever time it was sent.
+ *
+ * `merienda` and the Filipino forms are here because this bot has one user and they are what he
+ * would type.
+ */
+const DAYPART_HINT = new RegExp(
+  `\\b(breakfast|almusal|brunch|lunch|tanghalian|merienda|dinner|hapunan|supper|snack)\\b`,
+  "i"
+);
+
+/**
+ * Whether the message names a meal or part of the day.
+ *
+ * Separate from `isPlainShorthand` so the caller decides what to do about it. Resolving one needs
+ * the user's current clock and the surrounding words, which is Gemini's job; with no
+ * `GEMINI_API_KEY` there is nothing better than the current instant, and refusing a message this
+ * ordinary would break the one path that is supposed to survive without a model.
+ */
+export const namesDaypart = (text: string): boolean => DAYPART_HINT.test(text);
+
+/**
  * Text that places a transaction somewhere other than right now.
  *
  * The shorthand path is a regex that takes an amount and treats everything after it as the

@@ -239,3 +239,37 @@ describe("createBudgetMcpServer", () => {
     expect(tools.find((t) => t.name === "scan_receipt")?.annotations?.idempotentHint).toBe(false);
   });
 });
+
+describe("create_transactions daypart guidance", () => {
+  /**
+   * The other half of the anti-drift pair with `classify.test.ts`.
+   *
+   * These two prompts had already drifted on exactly this point: `create_transactions` taught
+   * 'at lunch' -> 12:30 while the Telegram classifier said only "or the current timestamp above",
+   * so the same sentence typed into Claude and into the bot produced different stored times.
+   * Both now render one shared table, and this fails if either stops.
+   */
+  it("teaches the shared daypart table on the date field", async () => {
+    const { DAYPART_TABLE } = await import("@/lib/daypart");
+    const server = createBudgetMcpServer({
+      prisma,
+      userId: "user_1",
+      timezoneOffset: -480,
+      scopes: Object.values(MCP_TOOL_SCOPES),
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const { tools } = await client.listTools();
+    await client.close();
+
+    const create = tools.find((tool) => tool.name === "create_transactions");
+    const items = (create?.inputSchema.properties as Record<string, { items?: unknown }>)
+      ?.transactions.items as { properties: Record<string, { description?: string }> };
+    const dateDescription = items.properties.date.description ?? "";
+
+    expect(dateDescription).toContain(DAYPART_TABLE);
+    expect(dateDescription).toMatch(/most recent/i);
+    expect(dateDescription).toMatch(/never send a future timestamp/i);
+  });
+});

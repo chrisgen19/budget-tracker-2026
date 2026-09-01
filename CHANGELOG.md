@@ -2,6 +2,56 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-01 - Scanned receipts carry the time they were bought
+
+Issue #201. The receipt scan prompt forbade reading a clock time, in the same sentence that
+located the purchase date "usually near the top of the receipt next to the time". Nothing
+downstream could recover what was never read, so `use-multi-scan` paired the receipt's real date
+with `new Date()` and stored a Saturday evening purchase, scanned on Monday morning, as Saturday
+09:00.
+
+The inversion gave it away. When OCR *failed* to read a date, `usedPhotoFallback` fired and the
+row got a genuine EXIF capture timestamp: the failure path produced a truer time than the success
+path.
+
+It was never only cosmetic. `createTransactionBatch` matches label schedules against that
+timestamp, so the day-of-week was right and the time-of-day was invented, and a "weekends
+18:00-23:00" label silently missed any weekend receipt scanned in the morning. On Telegram it was
+worse: `scan_receipt` returned a bare `YYYY-MM-DD`, so `hasTrustworthyTime` was false for anything
+not dated today and `create_transactions` turned an omitted `labelIds` into an explicit opt-out.
+Auto-apply schedules never ran on a receipt scanned the morning after the purchase, which is most
+of them.
+
+Gemini now returns `time` as a separate `HH:mm` field, kept apart from `date` so
+`checkReceiptDate`'s year-slip repair and calendar validation keep operating on a bare day.
+`scanReceipt` folds it in, honouring it only when the date was read off the receipt too: under
+`PHOTO_FALLBACK` the day comes from the photo, and attaching a printed clock reading to it would
+assemble one timestamp out of two unrelated sources. A receipt printing no time is the ordinary
+case rather than a malformed response, so the field is nullable and absorbs an unusable reading
+instead of failing the scan.
+
+## 2026-09-01 - "350 dinner" means last night's dinner
+
+Asked alongside #201. Loose time-of-day language now resolves to a real clock time on both
+surfaces, from one shared table in `src/lib/daypart.ts`.
+
+The two prompts had drifted. `create_transactions` already taught `'at lunch' -> 12:30`, while the
+Telegram classifier said only "ISO timestamp ... or the current timestamp above", so the same
+sentence typed into Claude and into the bot stored different times. Worse, meal words never
+reached Gemini at all: `TEMPORAL_HINT` had no `lunch|dinner|breakfast`, so `350 dinner` took the
+fast regex path and was stamped with whatever time it was sent.
+
+The rule worth naming is **most recent occurrence**. A purchase being logged has already happened,
+so "350 dinner" at 10:00 is yesterday at 19:00, not tonight at 19:00 -- resolving it forward
+stores a transaction in the future, and falling back to the current clock files a dinner at
+breakfast time. Both are wrong in a way only a chart reveals, weeks later.
+
+`namesDaypart` is deliberately separate from `TEMPORAL_HINT` and gated on `GEMINI_ENABLED` at the
+call site. "yesterday" makes the current instant unconditionally wrong; a bare meal word does not,
+since people log breakfast at breakfast. With no API key a daypart therefore keeps the fast path
+rather than refusing the most ordinary message this bot receives, which is the one property the
+shorthand logger exists to have.
+
 ## 2026-08-31 - Bill dates read the calendar day they were stored as
 
 Issue #158. Bill `startDate`, `endDate` and `nextDueDate` are date-only calendar values stored at

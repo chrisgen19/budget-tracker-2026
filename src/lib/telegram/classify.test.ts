@@ -154,3 +154,32 @@ describe("classifyMessage", () => {
     await expect(classifyMessage("summary", CATEGORIES, LABELS, -480)).resolves.toBeNull();
   });
 });
+
+describe("daypart guidance", () => {
+  // classify.ts used to say only "or the current timestamp above", while the MCP write tool
+  // already taught 'at lunch' -> 12:30. Two prompts for the same job, disagreeing. Both now embed
+  // one shared constant; this asserts the Telegram half of that.
+  it("carries the shared table into the prompt", async () => {
+    const { DAYPART_GUIDANCE } = await import("@/lib/daypart");
+    generateContentWithRetry.mockResolvedValue(reply({ action: "SHOW_SUMMARY" }));
+    const { classifyMessage } = await loadClassify("key");
+
+    await classifyMessage("350 dinner", CATEGORIES, LABELS, -480);
+
+    const prompt = generateContentWithRetry.mock.calls[0][0].contents as string;
+    expect(prompt).toContain(DAYPART_GUIDANCE);
+  });
+
+  // The prompt hands Gemini the user's wall clock as "now". The most-recent-occurrence rule is
+  // meaningless without it, so a refactor that drops it must fail here rather than silently
+  // leaving the model to guess what time it is.
+  it("still anchors the prompt to the user's current wall clock", async () => {
+    generateContentWithRetry.mockResolvedValue(reply({ action: "SHOW_SUMMARY" }));
+    const { classifyMessage } = await loadClassify("key");
+
+    await classifyMessage("350 dinner", CATEGORIES, LABELS, -480);
+
+    const prompt = generateContentWithRetry.mock.calls[0][0].contents as string;
+    expect(prompt).toMatch(/Current timestamp in user timezone: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+  });
+});

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isPlainShorthand } from "@/lib/telegram/shorthand";
+import { isPlainShorthand, namesDaypart } from "@/lib/telegram/shorthand";
 
 describe("isPlainShorthand", () => {
   it("keeps the fast path for a message with no time in it", () => {
+    // Meal words moved to `namesDaypart`: still fast-path as far as THIS function is
+    // concerned, but the bot now diverts them when Gemini can resolve them. See below.
     for (const text of ["100 breakfast", "+5000 salary", "250.50 jollibee lunch", "1500 internet bill"]) {
       expect(isPlainShorthand(text)).toBe(true);
     }
@@ -78,5 +80,47 @@ describe("isPlainShorthand", () => {
     expect(isPlainShorthand("500 gas on fri")).toBe(false);
     expect(isPlainShorthand("500 gas friday")).toBe(false);
     expect(isPlainShorthand("200 lunch next tuesday")).toBe(false);
+  });
+});
+
+describe("namesDaypart", () => {
+  // The bug this covers: TEMPORAL_HINT had no meal words, so "350 dinner" took the fast path and
+  // was stamped with the current instant. Logging last night's dinner over breakfast filed it at
+  // 08:00, and that invented clock then drove label schedule matching.
+  it("spots a meal or part of the day", () => {
+    for (const text of [
+      "350 dinner",
+      "100 breakfast",
+      "250.50 jollibee lunch",
+      "80 merienda",
+      "120 almusal",
+      "200 hapunan sa labas",
+      "90 afternoon snack",
+      "300 BRUNCH",
+    ]) {
+      expect(namesDaypart(text)).toBe(true);
+    }
+  });
+
+  it("does not fire on an ordinary description", () => {
+    for (const text of [
+      "1500 internet bill",
+      "+5000 salary",
+      "450 grab to office",
+      "200 luncheon meat",
+      "300 dinnerware set",
+    ]) {
+      expect(namesDaypart(text)).toBe(false);
+    }
+  });
+
+  // The two hints are deliberately separate. A daypart is only *softly* temporal: people log
+  // breakfast at breakfast, so the current instant is often right and never absurd, which is what
+  // lets the caller keep the fast path when there is no model to resolve it. "yesterday" has no
+  // such defence and stays an unconditional divert.
+  it("leaves the hard temporal divert alone, so a daypart alone keeps the fast path", () => {
+    expect(isPlainShorthand("350 dinner")).toBe(true);
+    expect(isPlainShorthand("350 dinner yesterday")).toBe(false);
+    expect(isPlainShorthand("350 dinner 18:00")).toBe(false);
   });
 });
