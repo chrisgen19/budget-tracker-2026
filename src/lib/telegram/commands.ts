@@ -10,7 +10,8 @@ export type BotCommand =
   | "TOP"
   | "LABELS"
   | "ITEMS"
-  | "EXAMPLES";
+  | "EXAMPLES"
+  | "KEYBOARD";
 
 /**
  * Wraps a subject in the optional politeness around it: an asking verb, an article, a trailing
@@ -61,6 +62,7 @@ const SLASH: Record<string, BotCommand> = {
   "/labels": "LABELS",
   "/items": "ITEMS",
   "/examples": "EXAMPLES",
+  "/keyboard": "KEYBOARD",
 };
 
 /**
@@ -83,6 +85,7 @@ export const COMMAND_MENU: { command: string; description: string }[] = [
   { command: "labels", description: "Spending split across your labels" },
   { command: "items", description: "Line items from your last receipt" },
   { command: "categories", description: "List your categories" },
+  { command: "keyboard", description: "Pin the fare buttons above the message box" },
   { command: "examples", description: "Things you can type, ready to copy" },
   { command: "help", description: "Everything you can ask, including plain English" },
 ];

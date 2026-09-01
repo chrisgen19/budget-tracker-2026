@@ -60,6 +60,11 @@ import {
 } from "@/lib/telegram/errors";
 import { isPlainShorthand } from "@/lib/telegram/shorthand";
 import {
+  quickKeyboard,
+  removeQuickKeyboard,
+  wantsKeyboardOff,
+} from "@/lib/telegram/quick-keyboard";
+import {
   newShutdownState,
   requestShutdown,
   shouldStop,
@@ -1439,9 +1444,28 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       `\u2022 \`did I pay meralco this month\`\n` +
       `\u2022 \`how much on transportation in work budget\`\n` +
       `\u2022 \`did I pay the water bill\`\n\n` +
+      `\u2328\ufe0f *Fare buttons:*\n` +
+      `/keyboard pins your usual fares above the message box, one tap each. ` +
+      `/keyboard off takes them away.\n\n` +
       `The slash is optional, and you can ask in your own words. Type / for the full menu, ` +
       `or /examples for a list you can copy from.`;
-    await sendMessage(chatId, msg);
+    // The keyboard rides along with the welcome, so it is there before it has to be asked for.
+    await sendMessage(chatId, msg, "Markdown", quickKeyboard());
+    return;
+  }
+
+  if (command === "KEYBOARD") {
+    // `resolveCommand` reads only the first token, so the on/off argument is read from the raw
+    // text here rather than being encoded as two separate commands.
+    const off = wantsKeyboardOff(text);
+    await sendMessage(
+      chatId,
+      off
+        ? "Keyboard hidden. /keyboard brings it back."
+        : "Tap a fare to log it. Anything else is typed the usual way, like `250 grab`.",
+      "Markdown",
+      off ? removeQuickKeyboard() : quickKeyboard()
+    );
     return;
   }
 
@@ -1451,7 +1475,7 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
   }
 
   if (command) {
-    const handlers: Record<Exclude<BotCommand, "HELP" | "EXAMPLES">, (chatId: number) => Promise<void>> = {
+    const handlers: Record<Exclude<BotCommand, "HELP" | "EXAMPLES" | "KEYBOARD">, (chatId: number) => Promise<void>> = {
       SUMMARY: handleSummary,
       RECENT: handleRecent,
       BILLS: handleBills,
