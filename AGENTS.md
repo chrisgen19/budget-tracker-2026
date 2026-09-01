@@ -344,6 +344,8 @@ Active tasks:
 - "Light & Warm" aesthetic with cream/paper-like backgrounds
 - Fonts: Young Serif (headings) + Outfit (body)
 - Color palette: warm browns, amber accents, green for income, red for expenses
+- **Touch targets are at least 44x44px.** The iOS HIG figure, and WCAG 2.5.5. Adopted as a rule in #212 rather than left to taste, because it had been silently missed on every switch in the profile page at once. Where a control is deliberately smaller than its target — the 24px-tall preference switches are — extend the *hit area* with a pseudo-element (`before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']`) rather than growing the control. Making five settings rows taller to fix a finger-sized problem is the wrong trade
+- **A failed save has to say so.** Optimistic updates are the house style and worth keeping: a toggle that waits for a round trip feels broken in the other direction. But the failure half has to exist too, or a control that flips back reads as broken rather than as a save that failed. `useSavePreference` (`src/hooks/use-save-preference.ts`) is the single path for every profile preference — optimistic apply, PATCH, roll back *and* toast on failure — and it distinguishes a server refusal ("please try again") from a request that never left ("check your connection"), since those send you to look at different things. There were seven hand-written copies of this before #212 and every one rolled back in silence
 
 ## Code Style
 - TypeScript over JS

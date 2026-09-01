@@ -4,10 +4,14 @@ import { useState } from "react";
 import { ScanLine, Mail, Rows3, Target, Tag, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
+import { useSavePreference } from "@/hooks/use-save-preference";
 import { InstallAppCard } from "@/components/pwa/install-app-card";
 
 export function FeaturesForm() {
-  const { user, setUser } = useUser();
+  const { user } = useUser();
+  // One helper for all seven, because there were seven copies of the same optimistic-update
+  // dance and every one of them rolled back in silence.
+  const savePreference = useSavePreference();
   const [saving, setSaving] = useState(false);
   const [savingLayout, setSavingLayout] = useState(false);
   const [savingAutofocus, setSavingAutofocus] = useState(false);
@@ -17,167 +21,77 @@ export function FeaturesForm() {
   const [savingPromptTime, setSavingPromptTime] = useState(false);
 
   const handleToggle = async () => {
-    const newValue = !user.receiptScanEnabled;
-
-    setUser({ receiptScanEnabled: newValue });
     setSaving(true);
-
-    try {
-      const res = await fetch("/api/preferences", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ receiptScanEnabled: newValue }),
-      });
-
-      if (!res.ok) {
-        setUser({ receiptScanEnabled: !newValue });
-      }
-    } catch {
-      setUser({ receiptScanEnabled: !newValue });
-    } finally {
-      setSaving(false);
-    }
+    await savePreference(
+      "receiptScanEnabled",
+      !user.receiptScanEnabled,
+      user.receiptScanEnabled,
+      "receipt scanning"
+    );
+    setSaving(false);
   };
 
   const handleTelegramPromptToggle = async () => {
-    const newValue = !user.telegramDailyPrompt;
-
-    setUser({ telegramDailyPrompt: newValue });
     setSavingTelegramPrompt(true);
-
-    try {
-      const res = await fetch("/api/preferences", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ telegramDailyPrompt: newValue }),
-      });
-
-      if (!res.ok) {
-        setUser({ telegramDailyPrompt: !newValue });
-      }
-    } catch {
-      setUser({ telegramDailyPrompt: !newValue });
-    } finally {
-      setSavingTelegramPrompt(false);
-    }
+    await savePreference(
+      "telegramDailyPrompt",
+      !user.telegramDailyPrompt,
+      user.telegramDailyPrompt,
+      "the Telegram evening prompt"
+    );
+    setSavingTelegramPrompt(false);
   };
 
   const handlePromptTimeChange = async (value: string) => {
-    const previous = user.telegramDailyPromptTime;
-
-    setUser({ telegramDailyPromptTime: value });
     setSavingPromptTime(true);
-
-    try {
-      const res = await fetch("/api/preferences", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ telegramDailyPromptTime: value }),
-      });
-
-      if (!res.ok) {
-        setUser({ telegramDailyPromptTime: previous });
-      }
-    } catch {
-      setUser({ telegramDailyPromptTime: previous });
-    } finally {
-      setSavingPromptTime(false);
-    }
+    await savePreference(
+      "telegramDailyPromptTime",
+      value,
+      user.telegramDailyPromptTime,
+      "the prompt time"
+    );
+    setSavingPromptTime(false);
   };
 
   const handleEmailRemindersToggle = async () => {
-    const newValue = !user.emailBillReminders;
-
-    setUser({ emailBillReminders: newValue });
     setSavingEmailReminders(true);
-
-    try {
-      const res = await fetch("/api/preferences", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ emailBillReminders: newValue }),
-      });
-
-      if (!res.ok) {
-        setUser({ emailBillReminders: !newValue });
-      }
-    } catch {
-      setUser({ emailBillReminders: !newValue });
-    } finally {
-      setSavingEmailReminders(false);
-    }
+    await savePreference(
+      "emailBillReminders",
+      !user.emailBillReminders,
+      user.emailBillReminders,
+      "email bill reminders"
+    );
+    setSavingEmailReminders(false);
   };
 
   const handleLayoutToggle = async () => {
-    const newValue = user.transactionLayout === "infinite" ? "pagination" : "infinite";
-    const oldValue = user.transactionLayout;
-
-    setUser({ transactionLayout: newValue });
     setSavingLayout(true);
-
-    try {
-      const res = await fetch("/api/preferences", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transactionLayout: newValue }),
-      });
-
-      if (!res.ok) {
-        setUser({ transactionLayout: oldValue });
-      }
-    } catch {
-      setUser({ transactionLayout: oldValue });
-    } finally {
-      setSavingLayout(false);
-    }
+    await savePreference(
+      "transactionLayout",
+      user.transactionLayout === "infinite" ? "pagination" : "infinite",
+      user.transactionLayout,
+      "the transaction layout"
+    );
+    setSavingLayout(false);
   };
 
   const handleAutofocusToggle = async () => {
-    const newValue = !user.transactionAmountAutofocus;
-    const oldValue = user.transactionAmountAutofocus;
-
-    setUser({ transactionAmountAutofocus: newValue });
     setSavingAutofocus(true);
-
-    try {
-      const res = await fetch("/api/preferences", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transactionAmountAutofocus: newValue }),
-      });
-
-      if (!res.ok) {
-        setUser({ transactionAmountAutofocus: oldValue });
-      }
-    } catch {
-      setUser({ transactionAmountAutofocus: oldValue });
-    } finally {
-      setSavingAutofocus(false);
-    }
+    await savePreference(
+      "transactionAmountAutofocus",
+      !user.transactionAmountAutofocus,
+      user.transactionAmountAutofocus,
+      "amount autofocus"
+    );
+    setSavingAutofocus(false);
   };
 
   const handleLabelTypeChange = async (newValue: "EXPENSE" | "INCOME" | "BOTH") => {
-    const oldValue = user.defaultLabelType;
-    if (newValue === oldValue) return;
+    if (newValue === user.defaultLabelType) return;
 
-    setUser({ defaultLabelType: newValue });
     setSavingLabelType(true);
-
-    try {
-      const res = await fetch("/api/preferences", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ defaultLabelType: newValue }),
-      });
-
-      if (!res.ok) {
-        setUser({ defaultLabelType: oldValue });
-      }
-    } catch {
-      setUser({ defaultLabelType: oldValue });
-    } finally {
-      setSavingLabelType(false);
-    }
+    await savePreference("defaultLabelType", newValue, user.defaultLabelType, "the default label type");
+    setSavingLabelType(false);
   };
 
   return (
@@ -214,6 +128,10 @@ export function FeaturesForm() {
               onClick={handleToggle}
               className={cn(
                 "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/30 disabled:opacity-50 disabled:cursor-not-allowed",
+                // The visible track is 24px tall; this extends the *tap* target to 44px without
+                // moving anything. Growing the track itself would have changed five rows of a
+                // settings page to fix a finger-sized problem.
+                "before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']",
                 user.receiptScanEnabled ? "bg-amber" : "bg-cream-300"
               )}
             >
@@ -255,6 +173,10 @@ export function FeaturesForm() {
               onClick={handleEmailRemindersToggle}
               className={cn(
                 "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/30 disabled:opacity-50 disabled:cursor-not-allowed",
+                // The visible track is 24px tall; this extends the *tap* target to 44px without
+                // moving anything. Growing the track itself would have changed five rows of a
+                // settings page to fix a finger-sized problem.
+                "before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']",
                 user.emailBillReminders ? "bg-amber" : "bg-cream-300"
               )}
             >
@@ -298,6 +220,10 @@ export function FeaturesForm() {
               onClick={handleTelegramPromptToggle}
               className={cn(
                 "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/30 disabled:opacity-50 disabled:cursor-not-allowed",
+                // The visible track is 24px tall; this extends the *tap* target to 44px without
+                // moving anything. Growing the track itself would have changed five rows of a
+                // settings page to fix a finger-sized problem.
+                "before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']",
                 user.telegramDailyPrompt ? "bg-amber" : "bg-cream-300"
               )}
             >
@@ -321,7 +247,7 @@ export function FeaturesForm() {
                 value={user.telegramDailyPromptTime}
                 disabled={savingPromptTime}
                 onChange={(e) => handlePromptTimeChange(e.target.value)}
-                className="appearance-none rounded-lg border border-cream-300 bg-white px-3 py-1.5 text-sm text-warm-600 focus:outline-none focus:ring-2 focus:ring-amber/30 disabled:opacity-50"
+                className="min-h-[44px] appearance-none rounded-lg border border-cream-300 bg-white px-3 py-1.5 text-sm text-warm-600 focus:outline-none focus:ring-2 focus:ring-amber/30 disabled:opacity-50"
               />
             </div>
           )}
@@ -351,6 +277,10 @@ export function FeaturesForm() {
             onClick={handleLayoutToggle}
             className={cn(
               "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/30 disabled:opacity-50 disabled:cursor-not-allowed",
+                // The visible track is 24px tall; this extends the *tap* target to 44px without
+                // moving anything. Growing the track itself would have changed five rows of a
+                // settings page to fix a finger-sized problem.
+                "before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']",
               user.transactionLayout === "infinite" ? "bg-amber" : "bg-cream-300"
             )}
           >
@@ -386,6 +316,10 @@ export function FeaturesForm() {
             onClick={handleAutofocusToggle}
             className={cn(
               "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/30 disabled:opacity-50 disabled:cursor-not-allowed",
+                // The visible track is 24px tall; this extends the *tap* target to 44px without
+                // moving anything. Growing the track itself would have changed five rows of a
+                // settings page to fix a finger-sized problem.
+                "before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']",
               user.transactionAmountAutofocus ? "bg-amber" : "bg-cream-300"
             )}
           >
@@ -423,7 +357,7 @@ export function FeaturesForm() {
                 disabled={savingLabelType}
                 onClick={() => handleLabelTypeChange(type)}
                 className={cn(
-                  "flex-1 py-2 rounded-lg text-xs font-medium transition-all duration-200 disabled:opacity-50",
+                  "min-h-[44px] flex-1 py-2 rounded-lg text-xs font-medium transition-all duration-200 disabled:opacity-50",
                   user.defaultLabelType === type
                     ? "bg-white text-warm-700 shadow-warm"
                     : "text-warm-400 hover:text-warm-600"

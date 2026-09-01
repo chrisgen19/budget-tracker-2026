@@ -3,7 +3,7 @@
 import { createContext, useContext, useState, useCallback } from "react";
 import type { UserRole } from "@prisma/client";
 
-interface UserInfo {
+export interface UserInfo {
   name: string;
   email: string;
   currency: string;
