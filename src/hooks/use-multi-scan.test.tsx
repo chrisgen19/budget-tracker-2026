@@ -68,6 +68,8 @@ const createWrapper = () => {
             transactionLayout: "infinite",
             transactionAmountAutofocus: true,
             defaultLabelType: "EXPENSE",
+            telegramDailyPrompt: false,
+            telegramDailyPromptTime: "20:00",
             showDayName: true,
             dayNameFormat: "SHORT",
             emailBillReminders: false,

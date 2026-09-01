@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ScanLine, Mail, Rows3, Target, Tag } from "lucide-react";
+import { ScanLine, Mail, Rows3, Target, Tag, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
 import { InstallAppCard } from "@/components/pwa/install-app-card";
@@ -13,6 +13,8 @@ export function FeaturesForm() {
   const [savingAutofocus, setSavingAutofocus] = useState(false);
   const [savingLabelType, setSavingLabelType] = useState(false);
   const [savingEmailReminders, setSavingEmailReminders] = useState(false);
+  const [savingTelegramPrompt, setSavingTelegramPrompt] = useState(false);
+  const [savingPromptTime, setSavingPromptTime] = useState(false);
 
   const handleToggle = async () => {
     const newValue = !user.receiptScanEnabled;
@@ -34,6 +36,52 @@ export function FeaturesForm() {
       setUser({ receiptScanEnabled: !newValue });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTelegramPromptToggle = async () => {
+    const newValue = !user.telegramDailyPrompt;
+
+    setUser({ telegramDailyPrompt: newValue });
+    setSavingTelegramPrompt(true);
+
+    try {
+      const res = await fetch("/api/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ telegramDailyPrompt: newValue }),
+      });
+
+      if (!res.ok) {
+        setUser({ telegramDailyPrompt: !newValue });
+      }
+    } catch {
+      setUser({ telegramDailyPrompt: !newValue });
+    } finally {
+      setSavingTelegramPrompt(false);
+    }
+  };
+
+  const handlePromptTimeChange = async (value: string) => {
+    const previous = user.telegramDailyPromptTime;
+
+    setUser({ telegramDailyPromptTime: value });
+    setSavingPromptTime(true);
+
+    try {
+      const res = await fetch("/api/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ telegramDailyPromptTime: value }),
+      });
+
+      if (!res.ok) {
+        setUser({ telegramDailyPromptTime: previous });
+      }
+    } catch {
+      setUser({ telegramDailyPromptTime: previous });
+    } finally {
+      setSavingPromptTime(false);
     }
   };
 
@@ -221,6 +269,60 @@ export function FeaturesForm() {
             <span className="text-xs text-warm-400 bg-cream-200 px-3 py-1 rounded-full">
               Verify email
             </span>
+          )}
+        </div>
+
+        <div className="p-4 rounded-xl border border-cream-300 bg-cream-50/50">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center">
+                <Send className="w-5 h-5 text-amber-dark" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-warm-600">
+                  Telegram Evening Prompt
+                </p>
+                <p className="text-xs text-warm-400">
+                  One weekday message asking about your commute and lunch. Stays quiet when
+                  both are already logged.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              role="switch"
+              aria-checked={user.telegramDailyPrompt}
+              disabled={savingTelegramPrompt}
+              onClick={handleTelegramPromptToggle}
+              className={cn(
+                "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/30 disabled:opacity-50 disabled:cursor-not-allowed",
+                user.telegramDailyPrompt ? "bg-amber" : "bg-cream-300"
+              )}
+            >
+              <span
+                className={cn(
+                  "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200",
+                  user.telegramDailyPrompt ? "translate-x-5" : "translate-x-0"
+                )}
+              />
+            </button>
+          </div>
+
+          {user.telegramDailyPrompt && (
+            <div className="mt-4 pt-4 border-t border-cream-300 flex items-center justify-between gap-4">
+              <label htmlFor="telegram-prompt-time" className="text-xs text-warm-400">
+                Send at, in your own timezone
+              </label>
+              <input
+                id="telegram-prompt-time"
+                type="time"
+                value={user.telegramDailyPromptTime}
+                disabled={savingPromptTime}
+                onChange={(e) => handlePromptTimeChange(e.target.value)}
+                className="appearance-none rounded-lg border border-cream-300 bg-white px-3 py-1.5 text-sm text-warm-600 focus:outline-none focus:ring-2 focus:ring-amber/30 disabled:opacity-50"
+              />
+            </div>
           )}
         </div>
 

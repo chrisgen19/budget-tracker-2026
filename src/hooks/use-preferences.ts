@@ -18,6 +18,8 @@ export interface Preferences {
   showDayName: boolean;
   dayNameFormat: string;
   emailBillReminders: boolean;
+  telegramDailyPrompt: boolean;
+  telegramDailyPromptTime: string;
 }
 
 export const preferencesKeys = {
