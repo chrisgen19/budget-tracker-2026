@@ -14,10 +14,15 @@ export interface ScheduleRule {
 
 /**
  * Convert a UTC date to user-local time components using their timezone offset.
+ *
+ * Exported because the daily Telegram prompt asks the same question label schedules do - what
+ * day and time is it where this user lives - and a second copy of the arithmetic is how the two
+ * would come to disagree.
+ *
  * @param dateUTC  The UTC date
  * @param timezoneOffset  Offset in minutes (e.g. -480 for UTC+8)
  */
-const toLocalComponents = (dateUTC: Date, timezoneOffset: number) => {
+export const toLocalComponents = (dateUTC: Date, timezoneOffset: number) => {
   const localMs = dateUTC.getTime() - timezoneOffset * 60 * 1000;
   const local = new Date(localMs);
   const day = local.getUTCDay();

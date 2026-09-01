@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { encodeScanCallback, parseScanCallback } from "@/lib/telegram/callback-data";
+import {
+  encodePromptCallback,
+  encodeScanCallback,
+  parsePromptCallback,
+  parseScanCallback,
+} from "@/lib/telegram/callback-data";
 
 /**
  * The update id in the payload is the point, not a detail. Buttons never expire from Telegram's
@@ -34,5 +39,40 @@ describe("scan callback payload", () => {
       expect(parseScanCallback(bad)).toBeNull();
     }
     expect(parseScanCallback(`rs:y:${Number.MAX_SAFE_INTEGER + 2}`)).toBeNull();
+  });
+});
+
+describe("prompt callbacks", () => {
+  it("round-trips a day", () => {
+    expect(parsePromptCallback(encodePromptCallback({ day: "2026-09-01" }))).toEqual({
+      day: "2026-09-01",
+    });
+  });
+
+  // The reason the day is in the payload at all: an old prompt stays tappable forever, and
+  // answering "nothing today" for a Tuesday three weeks ago must not read as answering for now.
+  it("carries the day it was sent for", () => {
+    expect(encodePromptCallback({ day: "2026-09-01" })).toContain("2026-09-01");
+    expect(parsePromptCallback("dp:x:2026-08-11")?.day).toBe("2026-08-11");
+  });
+
+  it("rejects anything it did not author", () => {
+    for (const bad of [
+      "rs:y:12",          // the receipt review's code
+      "dp:y:2026-09-01",  // right prefix, wrong action letter
+      "dp:x:2026-9-1",    // not zero-padded
+      "dp:x:",
+      "dp:x",
+      "",
+      null,
+      undefined,
+      42,
+    ]) {
+      expect(parsePromptCallback(bad), String(bad)).toBeNull();
+    }
+  });
+
+  it("stays inside Telegram's 64-byte callback_data limit", () => {
+    expect(Buffer.byteLength(encodePromptCallback({ day: "2026-12-31" }))).toBeLessThanOrEqual(64);
   });
 });

@@ -41,3 +41,34 @@ export const parseScanCallback = (data: unknown): ScanCallback | null => {
   const updateId = Number(rawId);
   return Number.isSafeInteger(updateId) ? { action, updateId } : null;
 };
+
+/**
+ * The payload behind the evening prompt's "Nothing today" button.
+ *
+ * It carries the local calendar day the prompt was sent for, for the same reason the scan
+ * callback carries an update id: buttons never expire from chat history, so last Tuesday's
+ * prompt is still tappable and must not be able to answer for today. Nothing is written either
+ * way - the button only acknowledges - but reporting "nothing logged for today" when the tap
+ * meant a week ago is a lie the user has no way to catch.
+ */
+const PROMPT_PREFIX = "dp";
+
+export interface PromptCallback {
+  /** The user's local day, "YYYY-MM-DD". */
+  day: string;
+}
+
+export const encodePromptCallback = ({ day }: PromptCallback): string =>
+  `${PROMPT_PREFIX}:x:${day}`;
+
+/** Parses a payload, or null for anything this bot did not author. */
+export const parsePromptCallback = (data: unknown): PromptCallback | null => {
+  if (typeof data !== "string") return null;
+
+  const [prefix, letter, day] = data.split(":");
+  if (prefix !== PROMPT_PREFIX || letter !== "x") return null;
+
+  // Shape only. A day that does not exist is still refused downstream by not matching the
+  // prompt that was actually sent, and validating the calendar here would duplicate that.
+  return /^\d{4}-\d{2}-\d{2}$/.test(day ?? "") ? { day } : null;
+};

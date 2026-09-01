@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
-import { mcpWriteLeaseSchema, quickPickIdsSchema } from "@/lib/validations";
+import { HH_MM, mcpWriteLeaseSchema, quickPickIdsSchema } from "@/lib/validations";
 import { MAX_QUICK_CATEGORIES } from "@/lib/quick-categories";
 import { MAX_QUICK_LABELS } from "@/lib/quick-labels";
 
@@ -23,6 +23,8 @@ export async function GET() {
       showDayName: true,
       dayNameFormat: true,
       emailBillReminders: true,
+      telegramDailyPrompt: true,
+      telegramDailyPromptTime: true,
       mcpWritesEnabledUntil: true,
     },
   });
@@ -39,6 +41,8 @@ export async function GET() {
     showDayName: user?.showDayName ?? true,
     dayNameFormat: user?.dayNameFormat ?? "SHORT",
     emailBillReminders: user?.emailBillReminders ?? false,
+    telegramDailyPrompt: user?.telegramDailyPrompt ?? false,
+    telegramDailyPromptTime: user?.telegramDailyPromptTime ?? "20:00",
     mcpWritesEnabledUntil: user?.mcpWritesEnabledUntil?.toISOString() ?? null,
   });
 }
@@ -127,6 +131,24 @@ export async function PATCH(request: Request) {
     data.emailBillReminders = Boolean(body.emailBillReminders);
   }
 
+  if ("telegramDailyPrompt" in body) {
+    data.telegramDailyPrompt = Boolean(body.telegramDailyPrompt);
+  }
+
+  if ("telegramDailyPromptTime" in body) {
+    const val = body.telegramDailyPromptTime;
+    // Rejected rather than coerced. The cron compares this against the user's local clock as a
+    // string, and lexicographically "8:00" is greater than "20:00", so an unpadded value would
+    // not look wrong - it would fire at the wrong end of the day and keep doing so.
+    if (typeof val !== "string" || !HH_MM.test(val)) {
+      return NextResponse.json(
+        { error: "telegramDailyPromptTime must be a zero-padded 24-hour time, e.g. '20:00'" },
+        { status: 400 }
+      );
+    }
+    data.telegramDailyPromptTime = val;
+  }
+
   if ("dayNameFormat" in body) {
     const val = body.dayNameFormat;
     if (val !== "FULL" && val !== "SHORT") {
@@ -153,6 +175,8 @@ export async function PATCH(request: Request) {
       showDayName: true,
       dayNameFormat: true,
       emailBillReminders: true,
+      telegramDailyPrompt: true,
+      telegramDailyPromptTime: true,
       mcpWritesEnabledUntil: true,
     },
   });
@@ -169,6 +193,8 @@ export async function PATCH(request: Request) {
     showDayName: user.showDayName,
     dayNameFormat: user.dayNameFormat,
     emailBillReminders: user.emailBillReminders,
+    telegramDailyPrompt: user.telegramDailyPrompt,
+    telegramDailyPromptTime: user.telegramDailyPromptTime,
     mcpWritesEnabledUntil: user.mcpWritesEnabledUntil?.toISOString() ?? null,
   });
 }

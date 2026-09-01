@@ -27,7 +27,19 @@ const HINTS: { pattern: RegExp; name: string }[] = [
     name: "food",
   },
   {
-    pattern: words("grab", "angkas", "taxi", "bus", "buses", "jeep", "gas", "fare", "fuel", "transport", "transportation"),
+    // Philippine modes are listed outright. `jeep` does not reach `jeepney`, because the
+    // optional trailing `s` is the only inflection `words` allows and `\b` stops the
+    // alternation running past "jeep" into "ney". Before these, "250 jeepney" and "80 uv
+    // express" matched nothing and were filed under Other Expense or handed to Gemini, which
+    // is a model call to recognise the two most common fares here.
+    //
+    // `uv` is two letters and matches only as a whole word, so "uv express" resolves while
+    // nothing containing those letters does.
+    pattern: words(
+      "grab", "grabcar", "angkas", "taxi", "tnvs", "bus", "buses", "jeep", "jeepney",
+      "uv", "tricycle", "mrt", "lrt", "gas", "fare", "fuel", "commute", "transport",
+      "transportation"
+    ),
     name: "transport",
   },
   { pattern: words("shopee", "lazada", "mall", "clothes", "shopping"), name: "shopping" },

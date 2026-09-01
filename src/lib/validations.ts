@@ -64,11 +64,21 @@ export const batchTransactionSchema = transactionSchema.extend({
  *  MCP tool type against the schema rather than restating its shape. */
 export type BatchTransactionInput = z.infer<typeof batchTransactionSchema>;
 
+/**
+ * A 24-hour time of day, zero-padded: "08:00", never "8:00".
+ *
+ * The padding is not cosmetic. Every time-of-day window in this codebase is compared as a string
+ * (`schedule-matching.ts`, and the daily Telegram prompt), and lexicographically "8:00" is greater
+ * than "20:00". An unpadded value therefore does not merely look wrong, it inverts the comparison
+ * and silently fires at the wrong end of the day.
+ */
+export const HH_MM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
 export const labelScheduleSchema = z.object({
   id: z.string().optional(),
   days: z.array(z.number().int().min(0).max(6)).min(1, "Select at least one day"),
-  startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Invalid time format"),
-  endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Invalid time format"),
+  startTime: z.string().regex(HH_MM, "Invalid time format"),
+  endTime: z.string().regex(HH_MM, "Invalid time format"),
 }).refine(
   (s) => s.startTime < s.endTime,
   { message: "End time must be after start time (overnight ranges not supported)", path: ["endTime"] }

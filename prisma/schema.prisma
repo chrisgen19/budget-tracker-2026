@@ -87,6 +87,18 @@ model User {
   showDayName                Boolean    @default(true) @map("show_day_name")
   dayNameFormat              DayNameFormat @default(SHORT) @map("day_name_format")
   emailBillReminders         Boolean    @default(false) @map("email_bill_reminders")
+  /// Whether the Telegram bot sends one evening prompt on weekdays asking what was spent on the
+  /// commute and lunch. Separate from `emailBillReminders` in every way: different channel,
+  /// different cron route, different log table. A bill is a known amount on a known date; this is
+  /// a nudge about spending that has already happened and was not written down.
+  telegramDailyPrompt        Boolean    @default(false) @map("telegram_daily_prompt")
+  /// When to send it, "HH:mm" in the user's own timezone, compared lexicographically the same way
+  /// `LabelSchedule.startTime` is.
+  ///
+  /// Data rather than a cron expression on purpose. Coolify tasks run in the container, which is
+  /// UTC, so 20:00 Asia/Manila is 12:00 UTC and a weekday there is not reliably a weekday here.
+  /// Encoding that in a dashboard field puts the schedule somewhere no test can reach.
+  telegramDailyPromptTime    String     @default("20:00") @map("telegram_daily_prompt_time")
   timezoneOffset          Int           @default(-480) @map("timezone_offset")
   /// Lease, not a flag: MCP writes are permitted only while this is in the future. A boolean
   /// would depend on remembering to switch it back off, and the failure that matters is leaving
@@ -101,6 +113,7 @@ model User {
   aiAssessments           AiAssessment[]
   aiUsageLogs             AiUsageLog[]
   mcpTokens               McpToken[]
+  telegramPromptLogs      TelegramPromptLog[]
   createdAt    DateTime      @default(now()) @map("created_at")
   updatedAt    DateTime      @updatedAt @map("updated_at")
 
@@ -390,4 +403,22 @@ model BillLabel {
   @@index([scheduledTransactionId])
   @@index([labelId])
   @@map("bill_labels")
+}
+
+/// One row per day the evening Telegram prompt was sent, so a re-run cannot send it twice.
+///
+/// The cron fires every 15 minutes and the prompt is due once a day, so something has to make the
+/// send idempotent. A read-then-filter would race two overlapping ticks; the unique constraint
+/// cannot. Same shape and same reasoning as `BillEmailLog`.
+model TelegramPromptLog {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The user's local calendar day, encoded at UTC midnight. Date-only, meaning "the 5th" for
+  /// everyone, exactly like a bill due date - never converted back through a timezone on read.
+  promptedOn DateTime @map("prompted_on")
+  sentAt     DateTime @default(now()) @map("sent_at")
+
+  @@unique([userId, promptedOn])
+  @@map("telegram_prompt_logs")
 }
