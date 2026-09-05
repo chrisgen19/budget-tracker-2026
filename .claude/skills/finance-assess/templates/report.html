@@ -1,0 +1,827 @@
+<!-- Title is the artifact's name in the gallery and must not change between
+     runs. It deliberately carries no count: how many months survive the
+     coverage gate is a figure, and the scope row below reports it. -->
+<title>The Trustworthy Months</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Young+Serif&family=Outfit:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    --ground:   #FBF7F0;
+    --panel:    #FFFDF9;
+    --sunk:     #F4EEE3;
+    --ink:      #241D14;
+    --ink-2:    #4A3F32;
+    --muted:    #7C6E5D;
+    --rule:     #E6DCCB;
+    --rule-2:   #D6C9B2;
+    --income:   #1B6B5A;
+    --expense:  #D2601A;
+    --accent:   #B8791F;
+    --flag:     #A63D2B;
+    --shadow:   0 1px 2px rgba(60,44,24,.05), 0 6px 20px -12px rgba(60,44,24,.18);
+
+    --display: "Young Serif", "Iowan Old Style", Georgia, serif;
+    --body:    "Outfit", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --mono:    "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:  #161310;
+      --panel:   #1E1A15;
+      --sunk:    #221D17;
+      --ink:     #F2EBE0;
+      --ink-2:   #D6CBBA;
+      --muted:   #9C8E7C;
+      --rule:    #2E2820;
+      --rule-2:  #43392C;
+      --income:  #35A088;
+      --expense: #D9772B;
+      --accent:  #D9A441;
+      --flag:    #E0705A;
+      --shadow:  0 1px 2px rgba(0,0,0,.4), 0 6px 20px -12px rgba(0,0,0,.6);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:  #161310;
+    --panel:   #1E1A15;
+    --sunk:    #221D17;
+    --ink:     #F2EBE0;
+    --ink-2:   #D6CBBA;
+    --muted:   #9C8E7C;
+    --rule:    #2E2820;
+    --rule-2:  #43392C;
+    --income:  #35A088;
+    --expense: #D9772B;
+    --accent:  #D9A441;
+    --flag:    #E0705A;
+    --shadow:  0 1px 2px rgba(0,0,0,.4), 0 6px 20px -12px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-weight: 300;
+    font-size: 16.5px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .sheet {
+    max-width: 872px;
+    margin: 0 auto;
+    padding: 56px 28px 96px;
+  }
+
+  /* ---------- masthead: the scope note comes before any figure ---------- */
+
+  .masthead { border-bottom: 2px solid var(--ink); padding-bottom: 22px; }
+
+  .kicker {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: clamp(38px, 6.4vw, 62px);
+    line-height: 1.02;
+    letter-spacing: -.015em;
+    margin: 14px 0 0;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    margin: 16px 0 0;
+    max-width: 60ch;
+    font-size: 17.5px;
+    color: var(--ink-2);
+  }
+
+  .scope {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 34px;
+    margin-top: 26px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .scope b {
+    display: block;
+    font-weight: 500;
+    font-size: 10.5px;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--muted);
+    opacity: .8;
+  }
+  .scope span { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+  /* ---------- findings ---------- */
+
+  section { margin-top: 58px; }
+
+  .flag {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--flag);
+  }
+  .flag::before {
+    content: "";
+    width: 22px;
+    height: 3px;
+    background: var(--flag);
+    border-radius: 2px;
+  }
+  .flag.calm { color: var(--income); }
+  .flag.calm::before { background: var(--income); }
+  .flag.note { color: var(--muted); }
+  .flag.note::before { background: var(--rule-2); }
+
+  h2 {
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: clamp(25px, 3.5vw, 33px);
+    line-height: 1.16;
+    letter-spacing: -.01em;
+    margin: 13px 0 0;
+    text-wrap: balance;
+  }
+
+  p { margin: 15px 0 0; max-width: 65ch; }
+  .lede { font-size: 17.5px; color: var(--ink-2); }
+  strong { font-weight: 600; color: var(--ink); }
+
+  .fig {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+    color: var(--ink);
+  }
+
+  /* ---------- charts ---------- */
+
+  figure {
+    margin: 30px 0 0;
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    box-shadow: var(--shadow);
+    padding: 24px 22px 18px;
+  }
+
+  figcaption {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 16px;
+  }
+
+  .chart-wrap { overflow-x: auto; }
+  svg.chart { width: 100%; min-width: 560px; height: auto; display: block; }
+
+  .ax-line   { stroke: var(--rule-2); stroke-width: 1; fill: none; }
+  .grid      { stroke: var(--rule); stroke-width: 1; fill: none; }
+  .ax-text   { fill: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+  .ax-month  { fill: var(--ink-2); font-family: var(--mono); font-size: 12px; font-weight: 500; }
+  .bar-inc   { fill: var(--income); }
+  .bar-exp   { fill: var(--expense); }
+  .bar-hit   { fill: transparent; cursor: default; }
+  .callout   { fill: var(--ink); font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+  .rule-lbl  { fill: var(--accent); font-family: var(--mono); font-size: 11px; font-weight: 600; }
+  .rule-line { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }
+  .ghost-lbl { fill: var(--muted); font-family: var(--mono); font-size: 10px; font-weight: 500; }
+
+  g.grp:hover .bar-inc, g.grp:hover .bar-exp { filter: brightness(1.1); }
+
+  .legend {
+    display: flex;
+    gap: 22px;
+    margin-top: 14px;
+    padding-top: 13px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-2);
+  }
+  .legend i {
+    width: 11px; height: 11px;
+    border-radius: 2px;
+    display: inline-block;
+    margin-right: 7px;
+    vertical-align: -1px;
+  }
+  .legend .sw-inc { background: var(--income); }
+  .legend .sw-exp { background: var(--expense); }
+  .legend .sw-gap {
+    background: var(--sunk);
+    border: 1px solid var(--rule-2);
+  }
+
+  /* table view &mdash; identity never rests on color alone */
+  .readout {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 16px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+  }
+  .readout th, .readout td {
+    text-align: right;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--rule);
+    color: var(--ink-2);
+  }
+  .readout th {
+    font-weight: 500;
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .readout th:first-child, .readout td:first-child { text-align: left; }
+  .readout tr:last-child td { border-bottom: none; }
+  .readout td.over { color: var(--expense); font-weight: 600; }
+  .readout td.mark { color: var(--muted); }
+
+  /* ---------- headline figures ---------- */
+
+  .ledger {
+    margin-top: 28px;
+    border-top: 2px solid var(--ink);
+    border-bottom: 1px solid var(--rule-2);
+  }
+  .ledger dl {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+    gap: 0;
+    margin: 0;
+  }
+  .ledger div {
+    padding: 18px 16px 16px 0;
+    border-right: 1px solid var(--rule);
+  }
+  .ledger div:last-child { border-right: none; }
+  .ledger dt {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .ledger dd {
+    margin: 7px 0 0;
+    font-family: var(--mono);
+    font-size: clamp(20px, 2.9vw, 26px);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em;
+    color: var(--ink);
+  }
+  .ledger dd small {
+    display: block;
+    font-family: var(--body);
+    font-size: 12px;
+    font-weight: 300;
+    letter-spacing: 0;
+    color: var(--muted);
+    margin-top: 3px;
+  }
+  .ledger dd.good { color: var(--income); }
+
+  /* ---------- supporting blocks ---------- */
+
+  .stack { margin-top: 26px; display: grid; gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 3px; overflow: hidden; }
+  .row {
+    background: var(--panel);
+    padding: 15px 18px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 6px 18px;
+    align-items: baseline;
+  }
+  .row .what { font-size: 15.5px; color: var(--ink); }
+  .row .what em { font-style: normal; color: var(--muted); font-size: 13.5px; display: block; margin-top: 2px; }
+  .row .val {
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+  .row .val.up { color: var(--expense); }
+
+  .spellings {
+    margin-top: 22px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+  }
+  .spellings code {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--sunk);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    padding: 4px 9px;
+    color: var(--ink-2);
+  }
+
+  .action {
+    margin-top: 62px;
+    background: var(--panel);
+    border: 1px solid var(--rule-2);
+    border-left: 4px solid var(--accent);
+    border-radius: 3px;
+    padding: 26px 28px;
+    box-shadow: var(--shadow);
+  }
+  .action h2 { margin-top: 10px; font-size: clamp(22px, 3vw, 27px); }
+  .action .swap {
+    margin-top: 18px;
+    font-family: var(--mono);
+    font-size: 16px;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+  }
+  .action .swap s { color: var(--muted); text-decoration-thickness: 1.5px; }
+  .action .swap b { color: var(--expense); font-weight: 600; }
+
+  footer {
+    margin-top: 56px;
+    padding-top: 20px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    line-height: 1.75;
+  }
+
+  /* tooltip */
+  #tip {
+    position: fixed;
+    z-index: 20;
+    pointer-events: none;
+    background: var(--ink);
+    color: var(--ground);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.55;
+    padding: 8px 11px;
+    border-radius: 3px;
+    white-space: pre;
+    opacity: 0;
+    transition: opacity .12s ease;
+    font-variant-numeric: tabular-nums;
+  }
+  #tip.on { opacity: 1; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+
+  @media (max-width: 620px) {
+    .sheet { padding: 40px 18px 72px; }
+    .ledger div { border-right: none; border-bottom: 1px solid var(--rule); }
+    .ledger div:last-child { border-bottom: none; }
+  }
+</style>
+
+<div class="sheet">
+
+  <header class="masthead">
+    <div class="kicker">Budget Tracker &middot; Assessment</div>
+    <h1>The Trustworthy Months</h1>
+    <p class="standfirst">
+      Six months of records, two of them too thin to average. What the remaining four
+      say about a household running a 30% surplus on one badly-estimated bill.
+    </p>
+    <div class="scope">
+      <div><b>Account</b><span>chrisgen19@gmail.com</span></div>
+      <div><b>Window</b><span>Apr&ndash;Sep 2026</span></div>
+      <div><b>Currency</b><span>PHP &middot; UTC+8</span></div>
+      <div><b>Usable</b><span>4 of 6 months</span></div>
+      <div><b>Data as of</b><span>2026-09-05</span></div>
+    </div>
+  </header>
+
+  <!-- ============ LEAD FINDING ============ -->
+  <section>
+    <div class="flag">Forecast error</div>
+    <h2>Meralco is budgeted at &#8369;5,500 and averages &#8369;8,919</h2>
+    <p class="lede">
+      Every other bill is accurate to the peso. Rent lands at <span class="fig">&#8369;22,002</span>
+      against <span class="fig">&#8369;22,000</span>; PLDT at <span class="fig">&#8369;1,699</span>
+      against <span class="fig">&#8369;1,700</span>; the BRV contribution at exactly
+      <span class="fig">&#8369;5,400</span>. Electricity is the lone outlier, and it has run over
+      budget in six of the seven months on record &mdash; March, the one exception, is
+      also the one payment entered outside the bill system.
+    </p>
+
+    <figure>
+      <figcaption>Meralco payments against the budgeted amount &middot; Mar&ndash;Sep 2026</figcaption>
+      <div class="chart-wrap"><svg class="chart" id="billChart" role="img"></svg></div>
+      <table class="readout" id="billTable"></table>
+    </figure>
+
+    <p>
+      Because the figure feeds a forecast, the error compounds forward. The upcoming-bills view
+      shows <span class="fig">&#8369;35,400</span> due in the next 30 days; at the rate actually
+      paid it is nearer <span class="fig">&#8369;38,900</span>. This is a
+      <strong>forecasting problem, not a spending problem</strong> &mdash; consumption is in line
+      with its own history, and only the prediction is wrong.
+    </p>
+    <p>
+      Two payments also bypassed the bill system entirely: one Meralco at
+      <span class="fig">&#8369;5,300</span> and one Mirea Rent at <span class="fig">&#8369;22,000</span>
+      were entered as ordinary transactions carrying no bill link, so neither advanced its schedule.
+    </p>
+  </section>
+
+  <!-- ============ POSITION ============ -->
+  <section>
+    <div class="flag calm">Position</div>
+    <h2>The fundamentals are strong</h2>
+
+    <div class="ledger">
+      <dl>
+        <div><dt>Income</dt><dd>&#8369;434,063</dd></div>
+        <div><dt>Expenses</dt><dd>&#8369;303,944</dd></div>
+        <div><dt>Savings rate</dt><dd class="good">30%</dd></div>
+        <div><dt>Monthly burn</dt><dd>&#8369;75,986</dd></div>
+        <div><dt>Runway</dt><dd class="good">5.0<small>months of expenses</small></dd></div>
+      </dl>
+    </div>
+
+    <p>
+      Every trustworthy month closed net-positive, with a balance of
+      <span class="fig">&#8369;380,455</span> banked. That is a good position and nothing below
+      changes it &mdash; the findings here are about figures being <em>wrong</em>, not about
+      spending too much.
+    </p>
+
+    <figure>
+      <figcaption>Income and expenses by month &middot; excluded months shown, not hidden</figcaption>
+      <div class="chart-wrap"><svg class="chart" id="cashChart" role="img"></svg></div>
+      <div class="legend">
+        <span><i class="sw-inc"></i>Income</span>
+        <span><i class="sw-exp"></i>Expenses</span>
+        <span><i class="sw-gap"></i>Incomplete month &mdash; excluded from averages</span>
+      </div>
+    </figure>
+  </section>
+
+  <!-- ============ JULY ============ -->
+  <section>
+    <div class="flag">Data gap</div>
+    <h2>July is a hole in the record, not a frugal month</h2>
+    <p class="lede">
+      Nothing was logged between <span class="fig">Jul 7&ndash;14</span> or
+      <span class="fig">Jul 25&ndash;30</span>. Sixteen of thirty-one days carry any record at all.
+      The <span class="fig">&#8369;21,434</span> July total the app displays is roughly a third of
+      a real month, and it is excluded from every rate above.
+    </p>
+    <p>
+      This also explains why eight of eleven categories appear to be falling. Those declines are
+      the shape of a four-month sample with one month missing &mdash; not thrift. Only two
+      categories are genuinely rising.
+    </p>
+
+    <div class="stack">
+      <div class="row">
+        <div class="what">Subscriptions<em>Netflix &#8369;449 &middot; Spotify &#8369;279 &middot; Crunchyroll &#8369;119</em></div>
+        <div class="val up">&#8369;2,040 &nbsp;&uarr;60%</div>
+      </div>
+      <div class="row">
+        <div class="what">Groceries<em>Against a &#8369;1,427 baseline across four months</em></div>
+        <div class="val up">&#8369;1,854 &nbsp;&uarr;30%</div>
+      </div>
+      <div class="row">
+        <div class="what">Housing<em>Rent, steady to the peso</em></div>
+        <div class="val">&#8369;23,343 &nbsp;+5%</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ NEW HABITS ============ -->
+  <section>
+    <div class="flag note">Forming</div>
+    <h2>A new baseline is assembling in Transportation</h2>
+    <p class="lede">
+      Charges first seen in the last 120 days, each individually trivial, each now recurring.
+    </p>
+    <div class="stack">
+      <div class="row"><div class="what">inDrive &middot; inDrive car ride<em>First seen 13 May</em></div><div class="val">&#8369;417 &middot; &#8369;218</div></div>
+      <div class="row"><div class="what">Grab Pet<em>Six times since 9 May</em></div><div class="val">&#8369;183</div></div>
+      <div class="row"><div class="what">Mirea &rarr; Astra, Astra &rarr; Mirea<em>A commute pattern that began 21 July</em></div><div class="val">&#8369;316 &middot; &#8369;227</div></div>
+      <div class="row"><div class="what">Pickleball entrance fee<em>First seen 21 August</em></div><div class="val">&#8369;92</div></div>
+    </div>
+    <p>
+      Against a fixed monthly base of <span class="fig">&#8369;33,518</span> &mdash; rent,
+      electricity, internet, water &mdash; which is
+      <strong>44% of the burn before a single discretionary peso</strong>.
+    </p>
+  </section>
+
+  <!-- ============ DATA QUALITY ============ -->
+  <section>
+    <div class="flag note">Bookkeeping</div>
+    <h2>Two problems that belong to the app, not the accounting</h2>
+    <p class="lede">
+      <strong>Unlabelled spending is the app's doing.</strong>
+      <span class="fig">&#8369;31,913</span> sits unlabelled across just <span class="fig">four</span>
+      transactions &mdash; all of them bill payments &mdash; against
+      <span class="fig">&#8369;27,557</span> across forty-six manual entries. Payments created
+      through the bill route skip label auto-apply, so the largest and most predictable expenses
+      are the ones missing from every label breakdown.
+    </p>
+    <p>
+      <strong>Descriptions are fragmenting.</strong> One purchase is stored four different ways.
+      A trailing space splits the main income source in two, and both a straight and a curly
+      apostrophe appear in the same salary line. This matters more than it used to: the Telegram
+      bot searches by description text, so one spelling silently misses the others.
+    </p>
+    <div class="spellings">
+      <code>7:11 Hot Choco</code><code>711 - Hot Choco</code><code>711 Hot choco</code><code>711: Hot Choco</code>
+      <code>Emapta</code><code>Emapta&nbsp;</code>
+      <code>Yosh's Salary</code><code>Yosh&rsquo;s Salary</code>
+    </div>
+    <p>
+      Income concentration follows from the same fragmentation: once its three spellings are
+      combined, Emapta is <strong>73% of all income</strong>, with Yosh's salary at 21%. The
+      five-month runway is the right cushion against exactly that.
+    </p>
+  </section>
+
+  <!-- ============ ACTION ============ -->
+  <div class="action">
+    <div class="flag">Do this week</div>
+    <h2>Change the Meralco bill amount</h2>
+    <p class="swap"><s>&#8369;5,500</s> &nbsp;&rarr;&nbsp; <b>&#8369;8,900</b></p>
+    <p>
+      Thirty seconds in the app. It is the single number distorting the forward view, and it turns
+      the upcoming-bills forecast from optimistic fiction into something worth planning against.
+    </p>
+  </div>
+
+  <footer>
+    Generated by <span style="color:var(--ink)">/finance-assess</span> against the local mirror,
+    with live balances and due dates read over MCP.<br>
+    Rates and averages cover the four months at or above 60% logging coverage. Bill variance reads
+    each bill's whole payment history; duplicate, recurrence and spelling checks read the whole
+    window, since a missing month withholds rows rather than falsifying them.
+  </footer>
+
+</div>
+
+<div id="tip" role="status" aria-live="polite"></div>
+
+<script>
+/* ============================================================================
+   DATA  --  the only block a new run edits. Every figure below comes straight
+   from assess.sql; nothing here is derived by hand, and no chart geometry is
+   written by hand either: the renderer under it computes every coordinate.
+   ========================================================================= */
+const REPORT = {
+  currency: "\u20B1",   // U+20B1 peso. Escaped, not literal: a raw glyph here
+                       // renders as mojibake wherever the file is decoded as
+                       // anything but UTF-8. Use \uXXXX for any symbol added.
+
+  // Section 3. `budget` is the bill's stored amount. Mark any payment that
+  // carries no bill_id with note:"unlinked" -- it is a finding, not a stray.
+  bill: {
+    name: "Meralco",
+    budget: 5500,
+    caption: "Meralco payments against the budgeted amount \u00B7 Mar\u2013Sep 2026",
+    footnote: "The six bill-linked payments average \u20B18,919 \u2014 62% above the budgeted figure",
+    peakLabel: true,
+    months: [
+      { label: "Mar", value: 5300,  note: "unlinked" },
+      { label: "Apr", value: 6513  },
+      { label: "May", value: 8564  },
+      { label: "Jun", value: 14126 },
+      { label: "Jul", value: 9970  },
+      { label: "Aug", value: 8350  },
+      { label: "Sep", value: 5990  }
+    ]
+  },
+
+  // Section 1 + 2. status: "ok" | "excluded" | "partial".
+  // An excluded month is drawn, never dropped -- the gate is the report's point.
+  cashflow: {
+    caption: "Income and expenses by month \u00B7 excluded months shown, not hidden",
+    footnote: "Days carrying at least one record. A month below 60% is dropped from every rate and average.",
+    months: [
+      { label: "Apr", income: 116463, expenses: 69536, days: 28, dim: 30, status: "ok" },
+      { label: "May", income: 128867, expenses: 98254, days: 27, dim: 31, status: "ok" },
+      { label: "Jun", income: 106932, expenses: 71680, days: 26, dim: 30, status: "ok" },
+      { label: "Jul", income: 80053,  expenses: 21435, days: 16, dim: 31, status: "excluded" },
+      { label: "Aug", income: 81801,  expenses: 64474, days: 28, dim: 31, status: "ok" },
+      { label: "Sep", income: 39441,  expenses: 17245, days: 5,  dim: 30, status: "partial" }
+    ]
+  }
+};
+
+/* ============================================================================
+   RENDERER  --  leave this alone between runs.
+   ========================================================================= */
+(function () {
+  const NS = "http://www.w3.org/2000/svg";
+  const cur = REPORT.currency;
+  const money = n => cur + n.toLocaleString("en-US");
+
+  const el = (name, attrs, text) => {
+    const n = document.createElementNS(NS, name);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (text != null) n.textContent = text;
+    return n;
+  };
+
+  // A tick ceiling on a 1/2/5 x 10^n step, so labels land on round numbers and
+  // the tallest bar always sits inside the plot rather than against its lid.
+  function niceScale(max, ticks) {
+    const raw = max / ticks;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw) || 10 * mag;
+    return { step, top: step * ticks };
+  }
+
+  const PLOT = { x0: 72, x1: 756, yTop: 24 };
+
+  function frame(svg, baseline, top, step, ticks) {
+    for (let i = 0; i <= ticks; i++) {
+      const v = step * i;
+      const y = baseline - (v / top) * (baseline - PLOT.yTop);
+      svg.appendChild(el("line", { class: "grid", x1: PLOT.x0, y1: y, x2: PLOT.x1, y2: y }));
+      svg.appendChild(el("text", {
+        class: "ax-text", x: PLOT.x0 - 10, y: y + 4, "text-anchor": "end"
+      }, v.toLocaleString("en-US")));
+    }
+    svg.appendChild(el("line", { class: "ax-line", x1: PLOT.x0, y1: baseline, x2: PLOT.x1, y2: baseline }));
+  }
+
+  /* ---- bill variance: one series, so no legend; the title names it ---- */
+  function renderBill() {
+    const svg = document.getElementById("billChart");
+    if (!svg) return;
+    const d = REPORT.bill, ms = d.months;
+    const baseline = 232, H = baseline - PLOT.yTop;
+    const { step, top } = niceScale(Math.max(d.budget, ...ms.map(m => m.value)), 3);
+    svg.setAttribute("viewBox", "0 0 780 300");
+    svg.setAttribute("aria-label",
+      `Column chart of ${ms.length} ${d.name} payments against a budgeted ${money(d.budget)}.`);
+    frame(svg, baseline, top, step, 3);
+
+    const band = (PLOT.x1 - PLOT.x0) / ms.length;
+    const bw = Math.min(46, band * 0.47);
+    const peak = Math.max(...ms.map(m => m.value));
+
+    ms.forEach((m, i) => {
+      const cx = PLOT.x0 + band * i + band / 2;
+      const h = (m.value / top) * H;
+      const y = baseline - h;
+      const g = el("g", { class: "grp" });
+      const over = m.value - d.budget;
+      g.setAttribute("data-tip",
+        `${m.label} \u00B7 ${money(m.value)}\n` +
+        (over > 0 ? `Over budget by ${money(over)}` : `Under budget by ${money(-over)}`) +
+        (m.note ? `\nPaid outside the bill system` : ""));
+      g.appendChild(el("rect", { class: "bar-exp", x: cx - bw / 2, y, width: bw, height: h, rx: 3 }));
+      g.appendChild(el("rect", { class: "bar-hit", x: cx - band / 2, y: PLOT.yTop, width: band, height: H }));
+      svg.appendChild(g);
+
+      svg.appendChild(el("text", { class: "ax-month", x: cx, y: baseline + 20, "text-anchor": "middle" }, m.label));
+      if (m.note) svg.appendChild(el("text", { class: "ghost-lbl", x: cx, y: baseline + 33, "text-anchor": "middle" }, m.note));
+      if (d.peakLabel && m.value === peak) {
+        svg.appendChild(el("text", { class: "callout", x: cx, y: y - 8, "text-anchor": "middle" }, money(m.value)));
+      }
+    });
+
+    const by = baseline - (d.budget / top) * H;
+    svg.appendChild(el("line", { class: "rule-line", x1: PLOT.x0, y1: by, x2: PLOT.x1, y2: by }));
+    svg.appendChild(el("text", { class: "rule-lbl", x: PLOT.x0, y: by - 7 }, `BUDGETED ${money(d.budget)}`));
+    if (d.footnote) svg.appendChild(el("text", { class: "ax-text", x: PLOT.x0, y: 278 }, d.footnote));
+
+    // table view, so identity never rests on colour alone
+    const t = document.getElementById("billTable");
+    if (!t) return;
+    const head = ms.map(m => `<th>${m.label}${m.note ? `<span style="display:block;font-size:9px;opacity:.75">${m.note}</span>` : ""}</th>`).join("");
+    const row = ms.map(m => `<td class="${m.value > d.budget ? "over" : "mark"}">${m.value.toLocaleString("en-US")}</td>`).join("");
+    t.innerHTML = `<thead><tr><th>Month</th>${head}</tr></thead><tbody><tr><td>Paid</td>${row}</tr></tbody>`;
+  }
+
+  /* ---- cash flow: two series, so the legend is in the markup already ---- */
+  function renderCash() {
+    const svg = document.getElementById("cashChart");
+    if (!svg) return;
+    const d = REPORT.cashflow, ms = d.months;
+    const baseline = 272, H = baseline - PLOT.yTop;
+    const { step, top } = niceScale(Math.max(...ms.map(m => Math.max(m.income, m.expenses))), 3);
+    svg.setAttribute("viewBox", "0 0 780 348");
+    svg.setAttribute("aria-label",
+      "Grouped column chart of income and expenses by month. Months logged on fewer than 60% of days are marked and excluded from every average.");
+
+    const defs = el("defs");
+    const pat = el("pattern", {
+      id: "hatch", width: 7, height: 7, patternTransform: "rotate(45)", patternUnits: "userSpaceOnUse"
+    });
+    pat.appendChild(el("rect", { width: 7, height: 7, fill: "var(--sunk)" }));
+    pat.appendChild(el("line", { x1: 0, y1: 0, x2: 0, y2: 7, stroke: "var(--rule-2)", "stroke-width": 2.5 }));
+    defs.appendChild(pat);
+    svg.appendChild(defs);
+
+    const band = (PLOT.x1 - PLOT.x0) / ms.length;
+
+    // shade incomplete months first, so bars and labels sit above the hatch
+    ms.forEach((m, i) => {
+      if (m.status === "ok") return;
+      svg.appendChild(el("rect", {
+        x: PLOT.x0 + band * i + 1, y: PLOT.yTop, width: band - 2, height: H,
+        fill: "url(#hatch)", opacity: .55
+      }));
+    });
+
+    frame(svg, baseline, top, step, 3);
+
+    const bw = Math.min(40, band * 0.35);
+    ms.forEach((m, i) => {
+      const cx = PLOT.x0 + band * i + band / 2;
+      const faded = m.status !== "ok";
+      const pct = Math.round(100 * m.days / m.dim);
+      const g = el("g", { class: "grp" });
+      g.setAttribute("data-tip",
+        `${m.label} \u00B7 ${pct}% logged` +
+        (m.status === "excluded" ? " \u2014 EXCLUDED" : m.status === "partial" ? " \u2014 IN PROGRESS" : "") +
+        `\nIncome   ${money(m.income)}` +
+        `\nExpenses ${money(m.expenses)}` +
+        (faded ? `\n${m.days} of ${m.dim} days carry a record` : `\nNet      ${money(m.income - m.expenses)}`));
+
+      [["bar-inc", m.income, -bw - 1], ["bar-exp", m.expenses, 1]].forEach(([cls, v, dx]) => {
+        const h = (v / top) * H;
+        const r = el("rect", { class: cls, x: cx + dx, y: baseline - h, width: bw, height: h, rx: 3 });
+        if (faded) r.setAttribute("opacity", .42);
+        g.appendChild(r);
+      });
+      g.appendChild(el("rect", { class: "bar-hit", x: cx - band / 2, y: PLOT.yTop, width: band, height: H }));
+      svg.appendChild(g);
+
+      if (faded) {
+        const tag = m.status === "excluded" ? "EXCLUDED" : "IN PROGRESS";
+        svg.appendChild(el("text", { class: "ghost-lbl", x: cx, y: PLOT.yTop + 16, "text-anchor": "middle" }, pct + "% LOGGED"));
+        svg.appendChild(el("text", { class: "ghost-lbl", x: cx, y: PLOT.yTop + 29, "text-anchor": "middle" }, tag));
+      }
+      svg.appendChild(el("text", { class: "ax-month", x: cx, y: baseline + 20, "text-anchor": "middle" }, m.label));
+      svg.appendChild(el("text", { class: "ax-text", x: cx, y: baseline + 37, "text-anchor": "middle" }, `${m.days}/${m.dim} d`));
+    });
+
+    if (d.footnote) svg.appendChild(el("text", { class: "ax-text", x: PLOT.x0, y: 332 }, d.footnote));
+  }
+
+  renderBill();
+  renderCash();
+
+  /* ---- hover layer ---- */
+  const tip = document.getElementById("tip");
+  const place = e => {
+    const pad = 14, r = tip.getBoundingClientRect();
+    let x = e.clientX + pad, y = e.clientY + pad;
+    if (x + r.width > window.innerWidth - 8) x = e.clientX - r.width - pad;
+    if (y + r.height > window.innerHeight - 8) y = e.clientY - r.height - pad;
+    tip.style.left = x + "px";
+    tip.style.top = y + "px";
+  };
+  document.querySelectorAll("g.grp").forEach(g => {
+    g.addEventListener("mouseenter", e => {
+      tip.textContent = e.currentTarget.getAttribute("data-tip") || "";
+      tip.classList.add("on");
+      place(e);
+    });
+    g.addEventListener("mousemove", place);
+    g.addEventListener("mouseleave", () => tip.classList.remove("on"));
+  });
+})();
+</script>

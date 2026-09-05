@@ -54,7 +54,42 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
 3. **Pull live figures from MCP** for the current month and upcoming bills. Cross-check the
    bill amounts against section 3's `avg_paid`.
 
-4. **Write the assessment** following the rules below.
+4. **Write the assessment** in the terminal, following the rules below.
+
+5. **Publish the report page.** Every run ends with the artifact updated — it is part of
+   the deliverable, not an optional extra. Copy `templates/report.html` into the scratchpad
+   and edit two things:
+
+   - **The `REPORT` block** at the top of the `<script>` — the bill series with its
+     budgeted amount, and the cash-flow months with their coverage. That is the *only*
+     numeric edit: the renderer below it computes every bar, gridline, tick and label
+     from those figures. Never hand-write chart geometry, and never edit the renderer.
+   - **The prose** — headline, ledger figures, the row stacks, the spellings, the action
+     block, the scope row in the masthead. This is the judgement half and gets rewritten
+     each run.
+
+   Then publish it to the **same URL**, so there is one link that always holds the current
+   assessment rather than a new artifact each month:
+
+   ```
+   https://claude.ai/code/artifact/b0780155-aeab-44e9-8d84-88b5ac03f854
+   ```
+
+   Pass that as `url` (with `action: "read"` first, per the Artifact tool's update flow).
+   Publish a *separate* artifact only if the user asks to keep a run for comparison.
+
+   Three things about the template that are settled and should not be relitigated:
+
+   - **Non-ASCII inside the `<script>` must be `\uXXXX`-escaped**, never a literal glyph.
+     A raw `₱` renders as `â‚±` wherever the file is decoded as anything but UTF-8. The
+     markup uses HTML entities for the same reason.
+   - **The series colours are validated, not chosen by eye.** `#1B6B5A`/`#D2601A` in light
+     and `#35A088`/`#D9772B` in dark pass all six checks of the `dataviz` validator against
+     their own surfaces. The app's own green/red pair fails colourblind separation at
+     ΔE 5.0 (deutan), which is why these are not the app's colours. Re-run the validator
+     before changing either.
+   - **The `<title>` stays "The Trustworthy Months".** It names the artifact in the gallery,
+     so it holds across runs and carries no figure that could go stale.
 
 ## What each section is for
 
@@ -86,8 +121,9 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
   separators. Round to whole units; centavo precision is noise at this altitude.
 - **End with one action worth doing this week** — the highest-leverage, smallest-effort
   item. One, not a list.
-- Offer to publish the assessment as an artifact with the trends charted, in one line.
-  Do not build it unless asked.
+- The terminal answer and the published page carry the **same** findings and the same
+  figures. The page is not a summary of the assessment, it is the assessment — hand over
+  its link at the end rather than describing what is on it.
 
 ## Extending
 
