@@ -31,12 +31,20 @@ create temp view me as
 -- returns zero rows, and an empty report reads exactly like a clean one.
 -- The address goes through a table because psql does not interpolate variables
 -- inside a dollar-quoted block.
-create temp table _param as select :'email'::text email;
+-- `:'months'::integer` quotes the value before casting, so a non-numeric one
+-- fails here with a named cause rather than being pasted into SQL as raw text.
+create temp table _param as
+  select :'email'::text email, :'months'::integer months;
+
 do $$
 begin
   if not exists (select 1 from me) then
     raise exception 'finance-assess: no user matched "%" -- check the address, or omit -v email to use the busiest user',
       (select email from _param);
+  end if;
+  if (select months from _param) < 1 then
+    raise exception 'finance-assess: months must be at least 1, got %',
+      (select months from _param);
   end if;
 end $$;
 
@@ -47,24 +55,43 @@ create temp view l as
   from transactions t
   where t.user_id = (select id from me);
 
+-- `now()` is a timestamptz, so to_char/date_trunc would resolve it through the
+-- *session* timezone -- applying an offset a second time on top of the user's
+-- own. Under an Asia/Manila session that put "today" 8 hours ahead, and on the
+-- last evening of a month it rolls into the next one, which admits the current
+-- partial month into `good` as though it were complete. `at time zone 'UTC'`
+-- yields the UTC wall clock as a plain timestamp, matching how `t.date` is
+-- stored, so the offset below is the only one ever applied.
 create temp view nowl as
-  select (now() - (select tz from me) * interval '1 minute') n;
+  select ((now() at time zone 'UTC') - (select tz from me) * interval '1 minute') n;
 
 create temp view win as
-  select date_trunc('month', (select n from nowl)) - (:months - 1) * interval '1 month' s;
+  select date_trunc('month', (select n from nowl))
+         - ((select months from _param) - 1) * interval '1 month' s;
 
 -- Per-month coverage. A month logged on 16 of 31 days is not a cheap month,
 -- it is a month with the data missing, and averaging it in drags every
 -- downstream figure toward a number nothing actually spent.
+--
+-- The calendar is generated first and transactions joined onto it, so a month
+-- with *no* rows at all still appears at 0% coverage. Grouping the rows alone
+-- would drop it silently, which is the most extreme case of the very thing
+-- this section exists to report.
+create temp view cal as
+  select to_char(g, 'YYYY-MM') m,
+         extract(day from g + interval '1 month - 1 day')::int dim
+  from generate_series((select s from win),
+                       date_trunc('month', (select n from nowl)),
+                       interval '1 month') g;
+
 create temp view mon as
-  select to_char(ld, 'YYYY-MM') m,
-         count(*) n,
-         count(distinct ld::date) days,
-         extract(day from date_trunc('month', ld) + interval '1 month - 1 day')::int dim,
-         sum(amount) filter (where type = 'INCOME')::numeric inc,
-         sum(amount) filter (where type = 'EXPENSE')::numeric exp
-  from l where ld >= (select s from win)
-  group by 1, 4;
+  select cal.m, cal.dim,
+         count(l.id) n,
+         count(distinct l.ld::date) days,
+         coalesce(sum(l.amount) filter (where l.type = 'INCOME'), 0)::numeric inc,
+         coalesce(sum(l.amount) filter (where l.type = 'EXPENSE'), 0)::numeric exp
+  from cal left join l on to_char(l.ld, 'YYYY-MM') = cal.m
+  group by cal.m, cal.dim;
 
 create temp view good as
   select m from mon
@@ -78,7 +105,7 @@ create temp view good as
 -- with a confident number that is simply out of date.
 select email, currency, tz offset_min,
        to_char((select n from nowl), 'YYYY-MM-DD') today,
-       :months || ' months' window_months,
+       :'months'::integer || ' months' window_months,
        (select max(created_at)::date from l) newest_row
 from me;
 
@@ -131,17 +158,31 @@ order by abs(coalesce(avg(t.amount), s.amount) - s.amount) desc;
 \qecho '--- payments matching a bill name but NOT linked to it (paid outside the bill) ---'
 select s.description bill, count(*) unlinked, round(sum(t.amount)::numeric) total
 from scheduled_transactions s
-  join l t on lower(btrim(t.description)) = lower(btrim(s.description)) and t.bill_id is null
+  join l t on lower(btrim(t.description)) = lower(btrim(s.description))
+           and t.bill_id is null and t.type = 'EXPENSE'
 where s.user_id = (select id from me) and s.is_active
 group by 1 order by 2 desc;
 
 \qecho ''
 \qecho '=== 4. CATEGORY TREND (last full month vs earlier trustworthy months) ==='
-with c as (
-  select to_char(l.ld, 'YYYY-MM') m, cat.name, sum(l.amount)::numeric amt
-  from l join categories cat on cat.id = l.category_id
+-- Every category is crossed with every trustworthy month and missing
+-- combinations filled with zero. Averaging only the months a category *did*
+-- appear in measures it against itself: a category seen once at 100 across
+-- four months reads as a baseline of 100 rather than 25, so a rise to 200 is
+-- reported as +100% instead of +700%, and a category new to the last month
+-- has no prior rows at all and yields a null change rather than a debut.
+with spend as (
+  select to_char(l.ld, 'YYYY-MM') m, l.category_id, sum(l.amount)::numeric amt
+  from l
   where l.type = 'EXPENSE' and to_char(l.ld, 'YYYY-MM') in (select m from good)
   group by 1, 2),
+c as (
+  select g.m, cat.name, coalesce(spend.amt, 0) amt
+  from (select m from good) g
+    cross join (select distinct cat.id, cat.name
+                from categories cat
+                where cat.id in (select category_id from spend)) cat
+    left join spend on spend.m = g.m and spend.category_id = cat.id),
 last_m as (select max(m) m from good)
 select c.name category,
        round(max(amt) filter (where c.m = (select m from last_m))) last_month,
@@ -151,9 +192,12 @@ select c.name category,
              / nullif(avg(amt) filter (where c.m <> (select m from last_m)), 0)) change_pct
 from c group by c.name
 having max(amt) filter (where c.m = (select m from last_m)) is not null
-order by abs(coalesce(100.0 * (max(amt) filter (where c.m = (select m from last_m))
-            - avg(amt) filter (where c.m <> (select m from last_m)))
-            / nullif(avg(amt) filter (where c.m <> (select m from last_m)), 0), 0)) desc
+-- Ranked by peso movement, not percentage. Zero-filling makes an intermittent
+-- category read -100% in any month it is skipped, and on a small base that
+-- crowds out the movements that actually matter: a 167 church donation would
+-- otherwise outrank a 2,040 subscriptions rise.
+order by abs(coalesce(max(amt) filter (where c.m = (select m from last_m)), 0)
+           - coalesce(avg(amt) filter (where c.m <> (select m from last_m)), 0)) desc
 limit 12;
 
 \qecho ''
@@ -172,14 +216,15 @@ order by total desc limit 15;
 select lower(btrim(description)) item, count(*) times,
        min(ld)::date first_seen, round(avg(amount)::numeric) avg_amt
 from l where type = 'EXPENSE'
-group by 1 having count(*) >= 2 and min(ld) > (select n from nowl) - interval '120 days'
+group by 1 having count(distinct ld::date) >= 2
+              and min(ld) > (select n from nowl) - interval '120 days'
 order by avg(amount) desc limit 10;
 
 \qecho ''
 \qecho '=== 6. POSSIBLE DUPLICATES (same day, description and amount) ==='
 select ld::date as dayk, description, round(amount::numeric) amt, count(*) copies
 from l where ld >= (select s from win)
-group by 1, 2, 3 having count(*) > 1
+group by ld::date, description, amount having count(*) > 1
 order by amt desc limit 10;
 
 \qecho ''

@@ -39,9 +39,17 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
    most transactions), `-v months=12` to widen the window (defaults to 6).
 
 2. **Read section 1 before anything else.** Months marked `EXCLUDED - low coverage` are
-   months where logging stopped, not cheap months. The script already excludes them from
-   every later figure. Say which months were dropped and why — a user who sees a low
-   month in their app deserves to know it is a gap, not a win.
+   months where logging stopped, not cheap months. Say which months were dropped and why —
+   a user who sees a low month in their app deserves to know it is a gap, not a win.
+
+   The gate applies to every **rate, average and trend**: sections 2, 4, 7 and 8 read only
+   trustworthy months. It deliberately does **not** apply to the sections that detect
+   whether something *exists* — recurring spend (5), duplicates (6) and fragmentation (9)
+   read the whole window. An excluded month is missing rows, not wrong ones: a duplicate
+   submitted in it is still a duplicate, a misspelling is still a misspelling, and hiding
+   them would suppress real findings while filtering recurrence would only understate it.
+   Section 3 reads a bill's whole payment history, since a bill is judged against every
+   payment it ever took.
 
 3. **Pull live figures from MCP** for the current month and upcoming bills. Cross-check the
    bill amounts against section 3's `avg_paid`.
