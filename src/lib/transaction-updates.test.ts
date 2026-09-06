@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, type Mock } from "vitest";
 import { Prisma } from "@prisma/client";
 import { updateTransactions, type TransactionPatch } from "./transaction-writes";
 import type { PrismaClient } from "./budget-query-types";
@@ -112,6 +112,11 @@ const makePrisma = ({
     permitted,
   };
 };
+
+/** The `transaction.update` spy behind the cast, for the tests that care whether a write happened
+ *  at all rather than what it wrote. */
+const updateSpy = (stub: { prisma: PrismaClient }) =>
+  (stub.prisma as unknown as { transaction: { update: Mock } }).transaction.update;
 
 const run = (patches: TransactionPatch[], opts: StubOptions = {}) => {
   const stub = makePrisma(opts);
@@ -561,6 +566,11 @@ describe("updateTransactions", () => {
     const after = stub.store.get("tx_1")! as unknown as Record<string, unknown>;
     expect(after.updatedVia).toBe("MCP");
     expect(after.updatedByMcpTokenId).toBe("tok_old");
+
+    // No write at all, not merely no stamp. `updatedAt` carries `@updatedAt`, so any `update()`
+    // bumps it whatever the data says, and a no-op patch would go on looking freshly edited in
+    // the one column left that records when.
+    expect(updateSpy(stub)).not.toHaveBeenCalled();
   });
 
   it("stamps as soon as one field does move", async () => {

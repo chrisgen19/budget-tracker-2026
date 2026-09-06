@@ -370,8 +370,10 @@ export interface UpdateTransactionsParams {
   /** Stamped onto `updated_via`. Set by the caller from its own surface, never from input. */
   updatedVia: TransactionSource;
   /**
-   * Stamped onto `updated_by_mcp_token_id`. Pass `null` explicitly from the app, so a row edited
-   * over MCP and then corrected in the browser stops naming the token as its last editor.
+   * Stamped onto `updated_by_mcp_token_id`. This names the row's *last* editor, so a surface that
+   * is not a token passes `null` explicitly rather than leaving the field alone: a row edited over
+   * MCP and later corrected elsewhere must stop naming the token, or the trail is not merely
+   * missing but confidently wrong.
    */
   updatedByMcpTokenId: string | null;
   /** Re-checked inside the write transaction, for the same reason and in the same shape as on
@@ -444,12 +446,14 @@ const resolvePatchDate = (value: string, stored: Date, timezoneOffset: number): 
 /**
  * Apply partial edits to existing transactions, atomically.
  *
- * The single update path, shared by `PUT /api/transactions/[id]` and the MCP `update_transactions`
- * tool, for the same reason `createTransactionBatch` is shared: a second copy would drift the
- * moment the label rules or the category checks changed, and nothing would catch it. The route
- * gained the category ownership and type-match checks by moving here -- it had never had them,
- * which was latent while the only caller was the user's own browser and is not latent once a
- * model supplies `categoryId` over an internet-facing endpoint.
+ * The edit path behind the MCP `update_transactions` tool, and currently its only caller.
+ *
+ * Deliberately *not* wired into `PUT /api/transactions/[id]`, which keeps its own implementation.
+ * Sharing it is the obvious next step and was tried: it hands the browser a stricter server than
+ * the form was written against -- the form posts a stale `categoryId` across a type change, which
+ * the effective-row check below rejects -- so the form work that has to come with it belongs in
+ * its own change. Shaped for two callers regardless (`updatedVia` and `updatedByMcpTokenId` are
+ * parameters, not constants), so wiring the route up later is a call site rather than a rewrite.
  *
  * All-or-nothing across the batch. Unlike a create there is no idempotency key to replay with, so
  * a half-applied batch would leave the caller unable to say which rows moved and unable to safely
@@ -579,8 +583,10 @@ export const updateTransactions = async ({
         };
 
         // Whether any scalar genuinely differs from what is stored. The keys the patch carried are
-        // not the question: the app's form posts every field on every save, so pressing Update
-        // with nothing edited names all five and moves none of them.
+        // not the question: read tools hand back every field, so a model correcting one of them
+        // routinely echoes the other four straight back, naming five and moving one. A caller that
+        // posts the whole object on every save -- the app's edit form, were it ever wired up here
+        // -- names all five and can move none.
         const scalarsMoved = Object.entries(scalars).some(([key, value]) => {
           const current = row[key as keyof typeof row];
           return value instanceof Date && current instanceof Date
@@ -595,10 +601,14 @@ export const updateTransactions = async ({
         // to write, and the reason this column exists at all.
         const moved = scalarsMoved || labelsMoved;
 
-        if (moved || Object.keys(scalars).length > 0) {
+        // Nothing moved means nothing to write. Writing the scalars anyway would store the values
+        // already there -- but `updatedAt` carries `@updatedAt`, so Prisma bumps it on any update
+        // at all, and a no-op patch would go on looking freshly edited in the one column left that
+        // still says when. Skipping also spares a round trip per row of a batch that changes none.
+        if (moved) {
           await tx.transaction.update({
             where: { id: patch.id },
-            data: { ...scalars, ...(moved && { updatedVia, updatedByMcpTokenId }) },
+            data: { ...scalars, updatedVia, updatedByMcpTokenId },
           });
         }
 
