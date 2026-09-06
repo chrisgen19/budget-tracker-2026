@@ -188,6 +188,8 @@ export const scheduledTransactionSchema = z.object({
   frequency: z.enum(["DAILY", "WEEKLY", "MONTHLY", "ANNUALLY", "CUSTOM"]),
   customIntervalDays: z.number().int().min(1).optional(),
   reminderDaysBefore: z.number().int().min(0).max(30).default(0),
+  /** A metered bill whose cost varies. `amount` stays required as a fallback. */
+  isVariable: z.boolean().default(false),
   startDate: z.string().min(1, "Start date is required"),
   endDate: z.string().optional(),
   labelIds: z.array(z.string()).optional(),

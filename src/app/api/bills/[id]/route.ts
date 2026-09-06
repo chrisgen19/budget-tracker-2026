@@ -78,6 +78,7 @@ export async function PUT(
         where: { id },
         data: {
           amount: billData.amount,
+          isVariable: billData.isVariable,
           description: billData.description,
           type: billData.type,
           frequency: billData.frequency,

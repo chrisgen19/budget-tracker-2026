@@ -86,7 +86,9 @@ export const sendBillReminderEmail = async (email: string, bills: BillReminderIt
               <p style="margin: 2px 0 0; font-size: 13px; color: #a8a29e;">${escapeHtml(bill.category)} · ${escapeHtml(bill.dueDate)}</p>
             </td>
             <td style="vertical-align: top; text-align: right; white-space: nowrap;">
-              <p style="margin: 0; font-size: 15px; font-weight: 600; color: #44403c;">${escapeHtml(bill.amount)}</p>
+              ${bill.amount
+                ? `<p style="margin: 0; font-size: 15px; font-weight: 600; color: #44403c;">${escapeHtml(bill.amount)}</p>`
+                : `<p style="margin: 0; font-size: 13px; color: #a8a29e;">amount varies</p>`}
             </td>
           </tr>
         </table>

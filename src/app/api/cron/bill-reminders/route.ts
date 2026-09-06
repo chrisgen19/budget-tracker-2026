@@ -66,7 +66,13 @@ export async function GET(request: Request) {
 
       const billItems = newReminders.map((r) => ({
         name: r.scheduledTransaction.description || r.scheduledTransaction.category.name,
-        amount: formatter.format(r.scheduledTransaction.amount),
+        // A variable bill's stored amount is a fallback, not what it will cost.
+        // The reminder's job is "Meralco is due on the 5th"; printing a figure
+        // beside it states something the app cannot know, which is the whole
+        // reason #217 exists. An empty string omits the column entirely.
+        amount: r.scheduledTransaction.isVariable
+          ? ""
+          : formatter.format(r.scheduledTransaction.amount),
         category: r.scheduledTransaction.category.name,
         dueDate: new Date(r.dueDate).toLocaleDateString("en", {
           month: "short",
