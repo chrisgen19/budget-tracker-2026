@@ -217,24 +217,44 @@ const editWarnings = (
 };
 
 /**
- * Render a changed date so the change is actually visible.
+ * Render a date change at whatever precision actually shows it.
  *
  * `formatLocalDate` is day-only, which is right for every other date this server reports and wrong
- * for exactly one case here: an edit that moves the time within a day. The tool invites a time
- * ("include one ONLY when the user gives one"), so patching a 17:00 row to 21:00 is a normal call,
- * and rendering both ends as the calendar day made the reply read "the date changed from
- * 2026-09-06 to 2026-09-06" -- a claim its own fields contradict.
+ * for an edit that moves the time within a day -- and the tool invites exactly that ("include a
+ * time ONLY when the user gives one"), so patching a 17:00 row to 21:00 is a normal call. Rendering
+ * both ends as the calendar day made the reply read "the date changed from 2026-09-06 to
+ * 2026-09-06", a claim its own fields contradict.
  *
- * The time is appended only when the day did not move, so the ordinary re-date keeps the plain
- * `YYYY-MM-DD` shape the rest of the payload uses.
+ * Widening to `HH:mm` fixed that one case and left the same defect one level down, since a change
+ * of seconds alone still renders identically. So the precision is chosen by *comparison* rather
+ * than fixed: the coarsest rendering that tells the two apart wins, and an ordinary re-date keeps
+ * the plain `YYYY-MM-DD` shape the rest of the payload uses.
  */
-const renderChangedDate = (instant: Date, sameDay: boolean, timezoneOffset: number): string => {
-  const day = formatLocalDate(instant, timezoneOffset);
-  if (!sameDay) return day;
-  const local = new Date(instant.getTime() - timezoneOffset * 60_000);
-  const hh = String(local.getUTCHours()).padStart(2, "0");
-  const mm = String(local.getUTCMinutes()).padStart(2, "0");
-  return `${day} ${hh}:${mm}`;
+const renderDatePair = (
+  previous: Date,
+  next: Date,
+  timezoneOffset: number
+): [previous: string, next: string] => {
+  const day = (d: Date) => formatLocalDate(d, timezoneOffset);
+  const local = (d: Date) => new Date(d.getTime() - timezoneOffset * 60_000);
+  const pad = (n: number, width = 2) => String(n).padStart(width, "0");
+
+  const hm = (d: Date) => `${pad(local(d).getUTCHours())}:${pad(local(d).getUTCMinutes())}`;
+  const hms = (d: Date) => `${hm(d)}:${pad(local(d).getUTCSeconds())}`;
+  const hmsMs = (d: Date) => `${hms(d)}.${pad(local(d).getUTCMilliseconds(), 3)}`;
+
+  if (day(previous) !== day(next)) return [day(previous), day(next)];
+
+  for (const format of [hm, hms, hmsMs]) {
+    if (format(previous) !== format(next)) {
+      return [`${day(previous)} ${format(previous)}`, `${day(next)} ${format(next)}`];
+    }
+  }
+
+  // Equal to the millisecond, so nothing moved. Unreachable while `changed` is decided by
+  // comparing `getTime()`, and rendered honestly rather than thrown, since a formatter is the
+  // wrong place to discover that.
+  return [`${day(previous)} ${hmsMs(previous)}`, `${day(next)} ${hmsMs(next)}`];
 };
 
 export interface BudgetMcpServerOptions {
@@ -1248,12 +1268,11 @@ export const createBudgetMcpServer = ({
         // would have the caller report an edit the user will not find.
         updated: result.updated.filter((u) => u.changed.length > 0).length,
         transactions: result.updated.map(({ transaction: t, changed, previous, droppedLabels }) => {
-          // A date change that stayed inside one local day is the only case the day-only rendering
-          // cannot express, so both ends carry a time for it and only for it.
-          const sameLocalDay =
-            previous.date !== undefined &&
-            formatLocalDate(previous.date, timezoneOffset) ===
-              formatLocalDate(t.date, timezoneOffset);
+          // Rendered as a pair, since the precision each end needs depends on the other.
+          const dates =
+            previous.date === undefined
+              ? null
+              : renderDatePair(previous.date, t.date, timezoneOffset);
 
           return {
           id: t.id,
@@ -1262,16 +1281,14 @@ export const createBudgetMcpServer = ({
             ...(previous.amount !== undefined && { amount: previous.amount }),
             ...(previous.description !== undefined && { description: previous.description }),
             ...(previous.type !== undefined && { type: previous.type }),
-            ...(previous.date !== undefined && {
-              date: renderChangedDate(previous.date, sameLocalDay, timezoneOffset),
-            }),
+            ...(dates && { date: dates[0] }),
             ...(previous.categoryName !== undefined && { categoryName: previous.categoryName }),
             ...(previous.labels !== undefined && { labels: previous.labels }),
           },
           amount: t.amount,
           description: t.description,
           type: t.type,
-          date: renderChangedDate(t.date, sameLocalDay, timezoneOffset),
+          date: dates ? dates[1] : formatLocalDate(t.date, timezoneOffset),
           categoryName: t.category.name,
           labels: t.labels.map((l) => l.label.name),
           warnings: editWarnings(t, changed, droppedLabels),

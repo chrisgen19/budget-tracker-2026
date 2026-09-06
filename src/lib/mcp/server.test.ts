@@ -398,6 +398,21 @@ describe("update_transactions date rendering", () => {
     expect(row.date).toBe("2026-09-06 21:00");
   });
 
+  it("shows seconds when only the seconds moved", async () => {
+    // The same defect one level down from the `HH:mm` fix: a change of seconds alone rendered
+    // identically at minute precision, so the reply claimed a date change and printed the same
+    // value twice. The precision is chosen by comparison now, not fixed.
+    const payload = await callWithStoredDate(
+      new Date("2026-09-06T09:00:00.000Z"),
+      "2026-09-06T17:00:30"
+    );
+    const row = payload.transactions[0];
+
+    expect(row.changed).toEqual(["date"]);
+    expect(row.previous.date).toBe("2026-09-06 17:00:00");
+    expect(row.date).toBe("2026-09-06 17:00:30");
+  });
+
   it("stays a plain calendar day when the day itself moved", async () => {
     // The ordinary re-date keeps the shape every other date in the payload uses.
     const payload = await callWithStoredDate(new Date("2026-09-06T09:00:00.000Z"), "2026-09-07");

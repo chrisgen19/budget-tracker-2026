@@ -26,6 +26,23 @@ import { mintMcpToken } from "../src/lib/mcp/tokens";
 const prisma = new PrismaClient();
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:3111";
 const EMAIL = "update-probe@scratch.invalid";
+const STRANGER_EMAIL = "update-stranger@scratch.invalid";
+
+/**
+ * Refuse to send a write-capable token over cleartext to anything but this machine.
+ *
+ * The token this script mints carries `transactions:edit`, and `BASE_URL` is an environment
+ * variable, so pointing it at a staging host over plain `http:` is one paste away. Same shape as
+ * `scripts/guard-local-db.ts`: the accident is cheap to prevent and expensive to notice.
+ */
+const requireSafeBaseUrl = (raw: string): void => {
+  const url = new URL(raw);
+  const loopback = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
+  if (url.protocol === "https:" || (url.protocol === "http:" && loopback)) return;
+  throw new Error(
+    `BASE_URL must use https outside this machine; got ${url.protocol}//${url.hostname}`
+  );
+};
 let failures = 0;
 
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -50,8 +67,15 @@ const connect = async (token: string) => {
 const callUpdate = async (client: Client, transactions: unknown[]) =>
   client.callTool({ name: "update_transactions", arguments: { transactions } });
 
+/** Both fixture users. A run that throws leaves them behind, and the stranger's address is
+ *  unique, so a leftover would make every later run fail at `create` rather than at the check
+ *  that actually broke. */
+const removeFixtures = () =>
+  prisma.user.deleteMany({ where: { email: { in: [EMAIL, STRANGER_EMAIL] } } });
+
 async function main() {
-  await prisma.user.deleteMany({ where: { email: EMAIL } });
+  requireSafeBaseUrl(BASE_URL);
+  await removeFixtures();
   const user = await prisma.user.create({
     data: {
       name: "Update Probe",
@@ -160,10 +184,16 @@ async function main() {
   check("it is the new label", labelsAfter[0]?.labelId, swapLabel.id);
 
   await callUpdate(client, [{ id: tx.id, amount: 340 }]);
-  const labelsPreserved = await prisma.transactionLabel.findMany({ where: { transactionId: tx.id } });
+  const labelsPreserved = await prisma.transactionLabel.findMany({
+    where: { transactionId: tx.id },
+    select: { labelId: true },
+  });
   // Omitting labelIds must not churn them: every amount correction would otherwise rewrite the
   // row's labels for no reason, and a schedule-applied label would look user-chosen afterwards.
+  // The id is checked, not just the count -- a replacement that deleted one and added another
+  // would keep the count at one and look identical to leaving them alone.
   check("omitting labelIds leaves them alone", labelsPreserved.length, 1);
+  check("and leaves the same label", labelsPreserved[0]?.labelId, swapLabel.id);
 
   await callUpdate(client, [{ id: tx.id, labelIds: [] }]);
   const labelsCleared = await prisma.transactionLabel.findMany({ where: { transactionId: tx.id } });
@@ -329,7 +359,7 @@ async function main() {
   // --- Another user's row is invisible ---
 
   const stranger = await prisma.user.create({
-    data: { name: "Stranger", email: "update-stranger@scratch.invalid", password: "x" },
+    data: { name: "Stranger", email: STRANGER_EMAIL, password: "x" },
   });
   const strangerTx = await prisma.transaction.create({
     data: {
@@ -359,14 +389,6 @@ async function main() {
 
   await client.close();
 
-  // The stranger goes first, and separately. Their transaction points at a category owned by the
-  // probe user, and `transactions.category_id` is ON DELETE RESTRICT: deleting the probe user
-  // cascades that category away, and the FK is checked immediately, so a combined delete that
-  // happened to process the probe user first would raise a violation *after* every check passed
-  // and turn a green run into exit 1 with the probe user left behind.
-  await prisma.user.delete({ where: { id: stranger.id } });
-  await prisma.user.delete({ where: { id: user.id } });
-
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
   process.exitCode = failures === 0 ? 0 : 1;
 }
@@ -376,4 +398,23 @@ main()
     console.error(err);
     process.exitCode = 1;
   })
-  .finally(() => prisma.$disconnect());
+  // Cleanup runs whatever happened, not only on the success path. A throw halfway through used to
+  // leave both fixture users behind, and since the stranger's email is unique that poisoned every
+  // later run: it failed at `create` rather than at the check that actually broke.
+  //
+  // The stranger has to go first, and separately. Their transaction points at a category owned by
+  // the probe user, and `transactions.category_id` is ON DELETE RESTRICT, so deleting the probe
+  // user cascades that category away while the stranger's row still references it. The FK is
+  // checked immediately, so one combined delete that happened to process the probe user first
+  // would raise a violation during cleanup.
+  .finally(async () => {
+    try {
+      await prisma.user.deleteMany({ where: { email: STRANGER_EMAIL } });
+      await prisma.user.deleteMany({ where: { email: EMAIL } });
+    } catch (err) {
+      console.error("cleanup failed; remove the scratch.invalid users by hand:", err);
+      process.exitCode = 1;
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
