@@ -142,7 +142,10 @@ export function useBillHistoryQuery(id: string) {
 
 export type BillPaymentCandidate = {
   id: string;
+  /** The instant, kept for ordering. */
   date: string;
+  /** The payment's day in the account's own calendar. Render this, never `date`. */
+  localDate: string;
   amount: number;
   description: string;
   category: { name: string; icon: string; color: string };

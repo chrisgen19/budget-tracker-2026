@@ -39,9 +39,12 @@ const daysBetween = (a: Date, b: Date) =>
   Math.abs(a.getTime() - b.getTime()) / 86_400_000;
 
 type Plan = {
-  /** Identity for the "did this pass already plan a repair here?" test. Two
-   *  bills can share a description, and comparing display text let one bill's
-   *  plan suppress another's gap report. */
+  /** Identity for the "did this pass already plan a repair here?" test. The
+   *  log id, not the bill and date: nothing constrains (bill, dueDate) to one
+   *  log, so two SKIPPED rows for one occurrence would see the first planned
+   *  and the second silently treated as covered -- applying would fix one and
+   *  leave a SKIPPED beside the new PAID. */
+  logId: string;
   billId: string;
   bill: string;
   dueDate: string;
@@ -120,6 +123,7 @@ async function main() {
         claimed.add(p.id);
         claimedBy.set(p.id, `${bill.description} ${dayKey(due)}`);
         plans.push({
+          logId: log.id,
           billId: bill.id,
           bill: bill.description,
           dueDate: dayKey(due),
@@ -182,6 +186,7 @@ async function main() {
             claimedBy.delete(current.id);
           }
           plans.push({
+            logId: log.id,
             billId: bill.id,
             bill: bill.description,
             dueDate: dayKey(due),
@@ -224,7 +229,7 @@ async function main() {
     // trying to solve it, which is the honest limit of an automatic pass.
     for (const log of bill.occurrences) {
       if (log.status !== "PAID" || !log.transactionId) continue;
-      if (plans.some((pl) => pl.billId === bill.id && pl.dueDate === dayKey(log.dueDate))) continue;
+      if (plans.some((pl) => pl.logId === log.id)) continue;
       const linked = payments.find((p) => p.id === log.transactionId);
       if (!linked) continue;
       const gap = daysBetween(linked.date, log.dueDate);
@@ -241,7 +246,7 @@ async function main() {
     // right next to the skip, already claimed by a neighbouring occurrence.
     for (const log of bill.occurrences) {
       if (log.status !== "SKIPPED") continue;
-      if (plans.some((pl) => pl.billId === bill.id && pl.dueDate === dayKey(log.dueDate))) {
+      if (plans.some((pl) => pl.logId === log.id)) {
         continue;
       }
       const near = payments

@@ -422,7 +422,7 @@ function LinkPaymentPanel({
           className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-[11px] hover:bg-cream-200 disabled:opacity-50 transition-colors relative before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']"
         >
           <span className="text-warm-400 tabular-nums shrink-0">
-            {formatBillDate(c.date)}
+            {formatBillDate(c.localDate)}
           </span>
           <span className="text-warm-600 truncate">{c.description || c.category.name}</span>
           <span className="ml-auto text-warm-500 font-medium tabular-nums shrink-0">
@@ -452,7 +452,7 @@ function LinkPaymentPanel({
                 {formatBillDate(dueDate)} will be recorded as paid by{" "}
                 <strong>{pending.description || pending.category.name}</strong> of{" "}
                 {hideAmounts ? "***" : formatCurrency(pending.amount, currency)} on{" "}
-                {formatBillDate(pending.date)}.
+                {formatBillDate(pending.localDate)}.
               </span>
               {data && Math.abs(pending.amount - data.expectedAmount) >
                 data.expectedAmount * 0.5 && (

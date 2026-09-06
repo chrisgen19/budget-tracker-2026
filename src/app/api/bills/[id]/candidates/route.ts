@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
-import { addUtcDays, utcDayStart } from "@/lib/bill-dates";
+import { utcDayStart } from "@/lib/bill-dates";
+import { formatLocalDate } from "@/lib/validations";
 
 /** How far from the due date a payment may sit and still be offered. */
 const WINDOW_DAYS = 14;
@@ -44,6 +45,11 @@ export async function GET(
     return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
   }
 
+  const { timezoneOffset } = (await prisma.user.findUnique({
+    where: { id: userId },
+    select: { timezoneOffset: true },
+  })) ?? { timezoneOffset: 0 };
+
   const bill = await prisma.scheduledTransaction.findUnique({
     where: { id },
     select: {
@@ -55,9 +61,23 @@ export async function GET(
     return NextResponse.json({ error: "Bill not found" }, { status: 404 });
   }
 
-  // A due date is a date-only value stored at midnight UTC, so the window is
-  // built in UTC too rather than resolved through anybody's timezone.
+  // The due date is a date-only value stored at midnight UTC and means "the
+  // 8th" -- but a transaction's `date` is an *instant*, so the window has to be
+  // the user's calendar days, not UTC's. Under UTC+8 a payment made at 00:30 on
+  // the boundary day is stored on the previous UTC date and was being dropped,
+  // while the empty state claimed no payment existed. One formula app-wide:
+  // Date.UTC(y, m, d) + tzOffset * 60000 (AGENTS.md).
   const due = utcDayStart(new Date(`${parsed.data}T00:00:00.000Z`));
+  const y = due.getUTCFullYear();
+  const mo = due.getUTCMonth();
+  const d = due.getUTCDate();
+  // Date.UTC normalises day over- and underflow, so ±14 needs no clamping.
+  const localDayStart = (offsetDays: number) =>
+    new Date(Date.UTC(y, mo, d + offsetDays) + timezoneOffset * 60000);
+  const windowStart = localDayStart(-WINDOW_DAYS);
+  const dueDayStart = localDayStart(0);
+  // Inclusive of the whole last day, or the window silently loses it.
+  const windowEnd = new Date(localDayStart(WINDOW_DAYS + 1).getTime() - 1);
 
   const select = {
     id: true,
@@ -75,13 +95,13 @@ export async function GET(
   // fortnight-early one is listed.
   const [before, after] = await Promise.all([
     prisma.transaction.findMany({
-      where: { ...base, date: { gte: addUtcDays(due, -WINDOW_DAYS), lt: due } },
+      where: { ...base, date: { gte: windowStart, lt: dueDayStart } },
       select,
       orderBy: { date: "desc" },
       take: LIMIT,
     }),
     prisma.transaction.findMany({
-      where: { ...base, date: { gte: due, lte: addUtcDays(due, WINDOW_DAYS) } },
+      where: { ...base, date: { gte: dueDayStart, lte: windowEnd } },
       select,
       orderBy: { date: "asc" },
       take: LIMIT,
@@ -93,9 +113,16 @@ export async function GET(
   const candidates = [...before, ...after]
     .sort(
       (a, b) =>
-        Math.abs(a.date.getTime() - due.getTime()) - Math.abs(b.date.getTime() - due.getTime()),
+        Math.abs(a.date.getTime() - dueDayStart.getTime()) -
+        Math.abs(b.date.getTime() - dueDayStart.getTime()),
     )
-    .slice(0, LIMIT);
+    .slice(0, LIMIT)
+    // Every read row carries its own calendar day beside the instant, so no
+    // client has to derive one. formatBillDate forces UTC -- right for a
+    // date-only bill anchor, wrong for a payment instant -- so rendering
+    // `date` directly showed a 00:30 UTC+8 payment on the previous day, inside
+    // the very dialog meant to stop the wrong row being picked.
+    .map((c) => ({ ...c, localDate: formatLocalDate(c.date, timezoneOffset) }));
 
   return NextResponse.json({
     candidates,
