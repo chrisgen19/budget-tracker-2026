@@ -496,8 +496,15 @@ const updatedTransaction = z.object({
   amount: z.number(),
   description: z.string(),
   type: transactionType,
-  /** The user's own calendar day as `YYYY-MM-DD`, not a UTC slice -- or `YYYY-MM-DD HH:mm` when
-   *  this edit moved the time within a single day, which the day alone cannot show. */
+  /**
+   * The user's own calendar day as `YYYY-MM-DD`, not a UTC slice.
+   *
+   * When an edit moves the time *within* a single day, the day alone cannot show it, so a time is
+   * appended at whatever precision distinguishes the two ends: `YYYY-MM-DD HH:mm`, or
+   * `HH:mm:ss`, or `HH:mm:ss.mmm`. Treat this as display text, not as a value to send back --
+   * `date` on the way in resolves seconds and milliseconds it was not given to zero, so echoing a
+   * minute-precision rendering onto a row stored with seconds would quietly truncate them.
+   */
   date: z.string(),
   categoryName: z.string(),
   labels: z.array(z.string()),

@@ -2,7 +2,7 @@
 
 All notable development history for the Budget Tracker app.
 
-## 2026-09-06 - The MCP server can edit a transaction, and only with a scope nothing already holds
+## 2026-09-06 - The MCP server can edit a transaction
 
 Fifteen tools now. `update_transactions` changes an existing transaction's amount, description,
 type, date, category or labels. Until now the only way to fix a typo or recategorise a misfiled
