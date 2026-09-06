@@ -341,6 +341,10 @@ HOW TO READ THE FINDINGS:
 - \`dataConfidence\`: months listed in \`excludedForLowCoverage\` have missing rows, NOT low spending.
   Never describe a fall in an excluded or partial month as thrift or improvement. A period marked
   \`periodIsPartial\` is incomplete by definition -- it is never a trend.
+  **Name each excluded month explicitly** -- by name, in the summary or in dataQuality -- and say
+  its figures were withheld for want of coverage. Someone who sees a cheap-looking month in the app
+  deserves to be told it is a gap rather than a win, and silently dropping it from the averages
+  leaves them believing the wrong thing about a month they can still see on screen.
 - \`bills.missed\`: due dates that passed with no payment, skip or snooze recorded. Say plainly
   which bills and how far behind. It may be an unlogged payment rather than an unpaid bill; give
   both readings rather than accusing.
@@ -348,6 +352,9 @@ HOW TO READ THE FINDINGS:
   budgeted figure is genuinely right for part of the year. Do NOT tell the user to correct it, and
   do not report it as "X% over budget"; say which months run high instead. \`under-budgeted\` and
   \`over-budgeted\` are real misconfigurations and should be named as such.
+  This binds the summary too: never count a seasonal bill among the bills that need their
+  figure fixed, and never total it with one that does. Writing "two bills need adjusting"
+  when one of them is metered is the same error as saying it outright.
 - \`bills.paidOutsideTheBillEverSinceItWasCreated\`: paid without going through the bill, so the schedule
   never advanced. These counts span the bill's whole life, NOT the assessed period -- never write
   that they happened "this period" or "this month".
