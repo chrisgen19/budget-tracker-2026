@@ -408,9 +408,11 @@ anything.
 Rows are stamped server-side with `created_via = MCP` and the token that wrote them; edits stamp
 `updated_via` and the token that made the change, leaving the creation stamp intact. Filter on
 `/transactions` with the **Added by → Claude** control, or ask the model directly, since
-`search_transactions` takes the same filter.
+`search_transactions` takes the same filter. Only these tools write `updated_via`: the app's own
+edit paths do not, so a row edited in the browser after an MCP edit still names the token as its
+last editor.
 
-Nothing here can edit or delete an existing transaction.
+Nothing here can delete a transaction.
 
 #### Operational notes
 

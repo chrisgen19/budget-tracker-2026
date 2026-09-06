@@ -3,7 +3,6 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { transactionSchema } from "@/lib/validations";
-import { updateTransactions, type UpdateFailureReason } from "@/lib/transaction-writes";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -35,37 +34,6 @@ export async function GET(_request: Request, { params }: RouteParams) {
   }
 }
 
-/**
- * Map an update failure onto the status the app's form expects.
- *
- * `NOT_FOUND` is the only 404: everything else is a request the caller can correct. The
- * category cases are new to this route -- it never checked category ownership or type-match at
- * all, which the shared service now does for both callers -- and they surface as 400 alongside
- * the label check that was always here.
- */
-const UPDATE_FAILURE_STATUS: Record<UpdateFailureReason, number> = {
-  NOT_FOUND: 404,
-  NO_FIELDS: 400,
-  DUPLICATE_ID: 400,
-  LABELS_NOT_OWNED: 400,
-  CATEGORIES_NOT_OWNED: 400,
-  NO_LONGER_PERMITTED: 403,
-  // A vanished reference is the caller's problem to correct, not a server fault.
-  WRITE_REJECTED: 409,
-  WRITE_FAILED: 500,
-};
-
-const UPDATE_FAILURE_MESSAGE: Record<UpdateFailureReason, string> = {
-  NOT_FOUND: "Transaction not found",
-  NO_FIELDS: "Invalid input",
-  DUPLICATE_ID: "Invalid input",
-  LABELS_NOT_OWNED: "One or more labels are invalid or do not belong to you",
-  CATEGORIES_NOT_OWNED: "That category is invalid, or does not match the transaction's type",
-  NO_LONGER_PERMITTED: "Not permitted",
-  WRITE_REJECTED: "That category or label no longer exists. Reload and try again",
-  WRITE_FAILED: "Failed to update transaction",
-};
-
 export async function PUT(request: Request, { params }: RouteParams) {
   const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
@@ -73,62 +41,92 @@ export async function PUT(request: Request, { params }: RouteParams) {
   const { id } = await params;
 
   try {
+    // Verify ownership
+    const existing = await prisma.transaction.findFirst({
+      where: { id, userId },
+    });
+
+    if (!existing) {
+      return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
+    }
+
     const body = await request.json();
     const validated = transactionSchema.parse(body);
 
-    // The form already resolves its picker value to an absolute instant client-side, so this is
-    // only ever the fallback branch of `resolvePatchDate`. Read rather than assumed anyway: a
-    // hardcoded 0 would silently resolve any bare date that ever reached here against UTC.
-    const account = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { timezoneOffset: true },
-    });
-    if (!account) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    // Validate label ownership before writing (only when labelIds is explicitly provided)
+    const hasLabelIds = validated.labelIds !== undefined;
+    const verifiedLabelIds: string[] = [];
+    let shouldSyncLabels = hasLabelIds;
 
-    // The whole edit -- ownership, category usability, label reconciliation, the audit stamp --
-    // goes through the same service the MCP `update_transactions` tool uses. It used to be
-    // written out here, and the copy was missing the category ownership and type-match checks
-    // that the create path has had since a model could reach it.
-    const result = await updateTransactions({
-      prisma,
-      userId,
-      patches: [
-        {
-          id,
+    if (hasLabelIds && validated.labelIds!.length > 0) {
+      const ownedLabels = await prisma.label.findMany({
+        where: { id: { in: validated.labelIds! }, userId },
+        select: { id: true, applicableTo: true },
+      });
+      if (ownedLabels.length !== validated.labelIds!.length) {
+        return NextResponse.json(
+          { error: "One or more labels are invalid or do not belong to you" },
+          { status: 400 }
+        );
+      }
+      // Only keep labels compatible with the transaction type
+      const compatible = ownedLabels.filter(
+        (l) => l.applicableTo === "BOTH" || l.applicableTo === validated.type
+      );
+      verifiedLabelIds.push(...compatible.map((l) => l.id));
+    }
+
+    // Server-side label reconciliation when labelIds not provided (cold-cache edits, hidden-label flows).
+    // Always runs to enforce type compatibility, even for users without schedules.
+    if (!hasLabelIds) {
+      const existingLabels = await prisma.transactionLabel.findMany({
+        where: { transactionId: id },
+        include: { label: { select: { applicableTo: true } } },
+      });
+
+      // Preserve existing labels, only dropping those incompatible with the
+      // (possibly changed) transaction type. We never re-apply scheduled labels
+      // on edit — preserving as-is respects prior user overrides.
+      for (const el of existingLabels) {
+        if (el.label.applicableTo !== "BOTH" && el.label.applicableTo !== validated.type) continue;
+        verifiedLabelIds.push(el.labelId);
+      }
+      shouldSyncLabels = true;
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.transaction.update({
+        where: { id },
+        data: {
           amount: validated.amount,
           description: validated.description,
           type: validated.type,
-          date: validated.date,
-          // Preserved exactly as before: an explicit list replaces the labels, and omitting the
-          // field keeps what is there, dropping only what the (possibly changed) type excludes.
-          // Scheduled labels are never re-applied on an edit, which respects prior overrides.
-          labelIds: validated.labelIds,
+          date: new Date(validated.date),
+          categoryId: validated.categoryId,
         },
-      ],
-      timezoneOffset: account.timezoneOffset,
-      updatedVia: "APP",
-      // Cleared explicitly, not left alone. Without this a row edited over MCP and then corrected
-      // here would go on naming the token as its last editor, which is worse than no audit trail:
-      // it is a wrong one.
-      updatedByMcpTokenId: null,
+      });
+
+      // Sync labels when labelIds was explicitly provided or computed server-side
+      if (shouldSyncLabels) {
+        await tx.transactionLabel.deleteMany({ where: { transactionId: id } });
+
+        if (verifiedLabelIds.length > 0) {
+          await tx.transactionLabel.createMany({
+            data: verifiedLabelIds.map((labelId) => ({
+              transactionId: id,
+              labelId,
+            })),
+          });
+        }
+      }
+
+      return tx.transaction.findUniqueOrThrow({
+        where: { id },
+        include: { category: true, bill: true, labels: { include: { label: true } } },
+      });
     });
 
-    if (!result.ok) {
-      return NextResponse.json(
-        { error: UPDATE_FAILURE_MESSAGE[result.reason] },
-        { status: UPDATE_FAILURE_STATUS[result.reason] }
-      );
-    }
-
-    // Re-read with this route's own include. The service returns category and labels; the form's
-    // cache entry also carries `bill`, and dropping it here would quietly change the shape the
-    // transaction list re-inserts after an edit.
-    const transaction = await prisma.transaction.findUniqueOrThrow({
-      where: { id },
-      include: { category: true, bill: true, labels: { include: { label: true } } },
-    });
-
-    return NextResponse.json(transaction);
+    return NextResponse.json(result);
   } catch (error) {
     if (error instanceof Error && error.name === "ZodError") {
       return NextResponse.json({ error: "Invalid input" }, { status: 400 });

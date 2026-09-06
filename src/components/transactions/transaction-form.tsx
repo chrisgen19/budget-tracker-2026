@@ -163,41 +163,11 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
       }
     }
 
-    // One question, asked once for both paths: is the category in the field still valid for the
-    // selected type? `categories` is already filtered to that type, so absence from it is the
-    // whole test. The paths differ only in what replaces an invalid one.
-    //
-    // A create opened *with* a category (the receipt scanner, a quick-add prefill) is not managed
-    // here at all: `initialData` is applied above and then left alone, which is what the original
-    // `!initialData?.categoryId` condition said.
-    if (!transaction && initialData?.categoryId) return;
-
-    const usable = watchedCategoryId !== "" && categories.some((c) => c.id === watchedCategoryId);
-    if (usable) return;
-
-    // Editing, back on the transaction's own type: its stored category. That is the pair the
-    // server accepts unchanged, so a user who toggles the type away and back must not be left
-    // staring at "Category is required" after a round trip that changed nothing, and a row whose
-    // category was flipped underneath it (`PUT /api/categories/[id]` allows that) stays editable
-    // for a typo fix -- which `updateTransactions` deliberately permits and the form has no
-    // business overriding from this side.
-    //
-    // Otherwise there is nothing valid to fall back to, so it clears and the form asks for a
-    // category in its own words rather than posting a request bound to 400. Reaching that state
-    // is the reset's real job: a category picked as an expense cannot survive a switch to income,
-    // where it is not even in the list.
-    const fallback = transaction && selectedType === transaction.type ? transaction.categoryId : "";
-
-    // Compared against the value already in the field, which is not an optimisation. `setValue`
-    // notifies its watchers whether or not the value moved, and `watchedCategoryId` is a
-    // dependency of this effect, so an unconditional write re-runs it forever. It is also why the
-    // create path could not simply clear: once `watchedCategoryId` was a dependency, the old
-    // unconditional reset fired on every category the user tapped and blanked it again, which
-    // broke creating a transaction from the FAB and both page modals outright.
-    if (watchedCategoryId !== fallback) {
-      setValue("categoryId", fallback);
+    // Reset category when type changes (unless editing an existing transaction or applying initialData)
+    if (!transaction && !initialData?.categoryId) {
+      setValue("categoryId", "");
     }
-  }, [categories, selectedType, setValue, transaction, initialData, watchedCategoryId]);
+  }, [categories, selectedType, setValue, transaction, initialData]);
 
   // Auto-apply or remove scheduled label when date changes
   useEffect(() => {

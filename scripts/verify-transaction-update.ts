@@ -6,14 +6,14 @@
  *
  *   - `updated_via` and `updated_by_mcp_token_id` actually land on the row, and `created_via`
  *     survives untouched -- a `data` key spelled wrong writes nothing and throws nothing
- *   - the app's own PUT clears the token id again, so "last edited by" cannot go stale
  *   - `transaction_labels` rows are *replaced*, not appended, which a stub counting calls cannot
  *     distinguish from a delete that silently matched nothing
  *   - a refused batch leaves every row byte-identical, which needs a real transaction to roll back
  *   - a create-only token cannot see the tool at all
  *
  * It mints its own throwaway user, token and category, and deletes them afterwards, so it never
- * touches yours. Needs a dev server:
+ * touches yours. Everything it drives goes through `/api/mcp`: this PR deliberately leaves the
+ * app's own edit routes alone, so there is nothing of theirs to verify here. Needs a dev server:
  *
  *   pnpm dev -p 3111
  *   BASE_URL=http://localhost:3111 pnpm exec tsx --env-file=.env scripts/verify-transaction-update.ts
@@ -21,7 +21,6 @@
 import { PrismaClient } from "@prisma/client";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { encode } from "next-auth/jwt";
 import { mintMcpToken } from "../src/lib/mcp/tokens";
 
 const prisma = new PrismaClient();
@@ -52,9 +51,6 @@ const callUpdate = async (client: Client, transactions: unknown[]) =>
   client.callTool({ name: "update_transactions", arguments: { transactions } });
 
 async function main() {
-  const secret = process.env.NEXTAUTH_SECRET;
-  if (!secret) throw new Error("NEXTAUTH_SECRET is required to mint a session");
-
   await prisma.user.deleteMany({ where: { email: EMAIL } });
   const user = await prisma.user.create({
     data: {
@@ -145,30 +141,13 @@ async function main() {
   check("created_via is untouched by an edit", afterEdit.createdVia, "APP");
   check("mcp_token_id is untouched by an edit", afterEdit.mcpTokenId, null);
 
-  // --- The app's PUT clears the token id again ---
+  // --- A second MCP edit re-stamps rather than accumulating ---
 
-  const sessionToken = await encode({
-    token: { id: user.id, role: user.role, sub: user.id, email: EMAIL, name: "Update Probe" },
-    secret,
-  });
-  const putRes = await fetch(`${BASE_URL}/api/transactions/${tx.id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", cookie: `next-auth.session-token=${sessionToken}` },
-    body: JSON.stringify({
-      amount: 330,
-      description: "Grab to office",
-      type: "EXPENSE",
-      date: "2026-08-25T09:00:00.000Z",
-      categoryId: otherExpenseCat.id,
-    }),
-  });
-  check("the app's PUT still succeeds through the shared service", putRes.status, 200);
-
-  const afterApp = await prisma.transaction.findUniqueOrThrow({ where: { id: tx.id } });
-  check("updated_via flips back to APP", afterApp.updatedVia, "APP");
-  // Left alone, this would go on naming a token as the last editor of a row the user edited by
-  // hand -- worse than no audit trail, because it is a confident wrong one.
-  check("the token id is cleared, not left stale", afterApp.updatedByMcpTokenId, null);
+  await callUpdate(client, [{ id: tx.id, description: "Second edit" }]);
+  const afterSecond = await prisma.transaction.findUniqueOrThrow({ where: { id: tx.id } });
+  check("a later edit keeps the stamp current", afterSecond.updatedVia, "MCP");
+  // Creation provenance survives however many edits land on the row.
+  check("and still does not touch created_via", afterSecond.createdVia, "APP");
 
   // --- Labels are replaced, not appended ---
 
@@ -332,47 +311,20 @@ async function main() {
   const stamped = await prisma.transaction.findUniqueOrThrow({ where: { id: untouched.id } });
   check("the first edit stamped it", stamped.updatedVia, "MCP");
 
-  // The app's form posts every field on every save, so pressing Update with no edits names them
-  // all and moves none. Stamping on the request rather than on the change would rewrite this to
-  // APP and null the token id for something that never happened.
-  const noopRes = await fetch(`${BASE_URL}/api/transactions/${untouched.id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", cookie: `next-auth.session-token=${sessionToken}` },
-    body: JSON.stringify({
-      amount: 990,
-      description: "Untouched",
-      type: "EXPENSE",
-      date: stamped.date.toISOString(),
-      categoryId: stamped.categoryId,
-    }),
+  await prisma.transaction.update({
+    where: { id: untouched.id },
+    data: { updatedVia: "APP", updatedByMcpTokenId: null },
   });
-  check("a no-op save still succeeds", noopRes.status, 200);
+
+  // A patch restating what is already stored moves nothing, so it must not stamp. Otherwise a
+  // caller re-sending a row's own values would rewrite a genuine trail for something that never
+  // happened -- and a client echoing back what it just read is the ordinary case, not an exotic one.
+  const noop = await callUpdate(client, [{ id: untouched.id, amount: 990 }]);
+  const noopPayload = noop.structuredContent as { updated: number };
+  check("a no-op edit reports nothing updated", noopPayload.updated, 0);
   const afterNoop = await prisma.transaction.findUniqueOrThrow({ where: { id: untouched.id } });
-  check("a no-op save does not rewrite the trail", afterNoop.updatedVia, "MCP");
-  check("nor clears the token id", afterNoop.updatedByMcpTokenId, editToken.record.id);
-
-  // --- A bulk edit in the app clears a stale MCP trail too ---
-
-  const bulk = await seed({ description: "Bulk" });
-  await callUpdate(client, [{ id: bulk.id, amount: 777 }]);
-  const bulkAfterMcp = await prisma.transaction.findUniqueOrThrow({ where: { id: bulk.id } });
-  check("the MCP edit stamped it", bulkAfterMcp.updatedVia, "MCP");
-
-  const patchRes = await fetch(`${BASE_URL}/api/transactions/batch`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", cookie: `next-auth.session-token=${sessionToken}` },
-    body: JSON.stringify({
-      action: "category",
-      categoryId: otherExpenseCat.id,
-      ids: [bulk.id],
-    }),
-  });
-  check("the bulk recategorise succeeded", patchRes.status, 200);
-  const bulkAfterApp = await prisma.transaction.findUniqueOrThrow({ where: { id: bulk.id } });
-  // A bulk change is an edit. Without a stamp here the row would go on naming the MCP token as
-  // its last editor -- the stale, confidently-wrong trail PUT clears the token id to avoid.
-  check("a bulk recategorise stamps APP", bulkAfterApp.updatedVia, "APP");
-  check("and clears the token id", bulkAfterApp.updatedByMcpTokenId, null);
+  check("and leaves the existing trail alone", afterNoop.updatedVia, "APP");
+  check("including the token id", afterNoop.updatedByMcpTokenId, null);
 
   // --- Another user's row is invisible ---
 

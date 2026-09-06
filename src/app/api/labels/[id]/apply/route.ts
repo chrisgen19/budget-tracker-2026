@@ -82,44 +82,19 @@ export async function POST(_request: Request, { params }: RouteParams) {
       }
     }
 
-    // Every transaction this pass actually changes, collected before the writes so the removals
-    // can still be attributed once their link rows are gone.
-    const touchedIds = new Set<string>();
-
     if (toInsert.length > 0) {
       const result = await prisma.transactionLabel.createMany({
         data: toInsert,
         skipDuplicates: true,
       });
       applied += result.count;
-      for (const link of toInsert) touchedIds.add(link.transactionId);
     }
 
     if (toRemoveIds.length > 0) {
-      const removedLinks = transactions.filter((tx) =>
-        tx.labels.some((tl) => toRemoveIds.includes(tl.id))
-      );
       const result = await prisma.transactionLabel.deleteMany({
         where: { id: { in: toRemoveIds } },
       });
       removed += result.count;
-      for (const tx of removedLinks) touchedIds.add(tx.id);
-    }
-
-    // Retroactive apply is a user-initiated edit of these transactions' labels, so it stamps the
-    // audit columns exactly as `PUT /api/transactions/[id]` and the bulk PATCH do. Without it a
-    // row edited over MCP and then retro-labelled here would go on naming the MCP token as its
-    // last editor.
-    //
-    // Deliberately scoped to *this* route. Associations also disappear when a label's type is
-    // narrowed or the label is deleted, and those are edits to the **label**, not to the
-    // transactions that happen to reference it; stamping there would record an edit on every row
-    // a user touched by renaming one thing.
-    if (touchedIds.size > 0) {
-      await prisma.transaction.updateMany({
-        where: { id: { in: [...touchedIds] }, userId },
-        data: { updatedVia: "APP", updatedByMcpTokenId: null },
-      });
     }
 
     cursor = transactions[transactions.length - 1].id;
