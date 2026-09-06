@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useUser } from "@/components/user-provider";
+import { analyticsKeys } from "@/hooks/use-analytics";
 import type { AiAssessmentResponse, AiDailyTipResponse, AssessmentFactsResponse } from "@/types";
 
 /* ------------------------------------------------------------------ */
@@ -16,7 +17,21 @@ export interface AssessmentPeriod {
 export const assessmentKeys = {
   all: ["assessment"] as const,
   report: (userKey: string, p: AssessmentPeriod) => ["assessment", "report", userKey, p] as const,
-  facts: (userKey: string, p: AssessmentPeriod) => ["assessment", "facts", userKey, p] as const,
+  /**
+   * Deliberately nested under the **analytics** namespace, not this one.
+   *
+   * The facts are computed from the same rows the analytics page reads, so they
+   * go stale at exactly the same moments — and every financial mutation already
+   * invalidates `analyticsKeys.all`. Riding on that means a tenth mutation added
+   * later cannot forget this key, where a second list of call sites would drift
+   * the first time someone updated only one of them. Without it, paying a bill
+   * and returning to the tab still showed it as missed for five minutes.
+   *
+   * The cached *report* stays under "assessment" on purpose: it is a written
+   * narrative tied to a generation, stamped "updated 2h ago", and it cannot
+   * change without someone pressing Generate.
+   */
+  facts: (userKey: string, p: AssessmentPeriod) => [...analyticsKeys.all, "assessment-facts", userKey, p] as const,
   // localDate in the key so the tip naturally refetches once the user crosses local midnight.
   dailyTip: (userKey: string, localDate: string) => ["assessment", "daily-tip", userKey, localDate] as const,
 };

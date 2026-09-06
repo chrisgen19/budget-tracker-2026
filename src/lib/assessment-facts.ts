@@ -837,19 +837,41 @@ const detectCategorySpikes = (ctx: AnomalyContext): AssessmentAnomaly[] => {
   return out.sort((a, b) => moved(b) - moved(a)).slice(0, 4);
 };
 
-/** Single expenses far larger than that category's own typical size. */
+/**
+ * Single expenses far larger than anything the user normally pays for this.
+ *
+ * Two rules, both learned from the same failure — reporting the rent as a 50x
+ * one-off, every month.
+ *
+ * The comparison set excludes the row being judged **by id**, never by value. A
+ * value filter looks equivalent and is not: a category holding six identical
+ * 5,000 charges would drop all six while judging any one of them, leaving the
+ * odd small charge as the median.
+ *
+ * And a charge with a history of its own is judged against *that* rather than
+ * against its category. A category is often bimodal — Housing holds rent and
+ * water refills — and a median cannot describe both, so whichever mode has more
+ * rows decides, and the other is reported as an anomaly forever. A charge that
+ * has been paid at this figure before is by definition not a one-off, which is
+ * the question actually being asked.
+ */
+/** Prior sightings of the same description needed before they outrank the category. */
+const OWN_HISTORY_MIN = 2;
 const detectOutlierTransactions = (ctx: AnomalyContext): AssessmentAnomaly[] => {
-  const byCategory = new Map<string, number[]>();
+  const byCategory = new Map<string, FactTransaction[]>();
   for (const t of ctx.windowTx) {
     if (t.type !== "EXPENSE") continue;
-    byCategory.set(t.categoryName, [...(byCategory.get(t.categoryName) ?? []), t.amount]);
+    byCategory.set(t.categoryName, [...(byCategory.get(t.categoryName) ?? []), t]);
   }
   const material = ctx.periodExpenses * MATERIAL_SHARE;
 
   return ctx.periodTx
     .filter((t) => t.type === "EXPENSE" && t.amount >= material)
     .map((t) => {
-      const typical = median((byCategory.get(t.categoryName) ?? []).filter((a) => a !== t.amount));
+      const peers = (byCategory.get(t.categoryName) ?? []).filter((other) => other.id !== t.id);
+      const ownHistory = peers.filter((other) => foldDescription(other.description) === foldDescription(t.description));
+      const basis = ownHistory.length >= OWN_HISTORY_MIN ? ownHistory : peers;
+      const typical = median(basis.map((other) => other.amount));
       return { t, typical, ratio: typical === 0 ? 0 : t.amount / typical };
     })
     .filter((x) => x.ratio >= OUTLIER_RATIO)
@@ -872,9 +894,18 @@ const detectCashFlowAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
       { current: round(ctx.periodExpenses), baseline: round(ctx.periodIncome) }));
   }
 
-  if (ctx.periodIncome === 0 && ctx.baselineMonths.length > 0 && ctx.periodTx.length > 0) {
-    out.push(anomaly("missing-income", "medium", "No income logged this period",
-      "Every earlier month in the window has income recorded. This is usually an unlogged deposit rather than a month without earnings."));
+  // Only worth raising when the earlier months actually *had* income to compare
+  // against. Passing the coverage gate says a month was logged, not that it
+  // earned anything, and the wording asserted the second — a fact the layer had
+  // not checked, handed to the model as one it could repeat.
+  const earnedBefore = ctx.baselineMonths.filter((m) =>
+    (ctx.confidence.months.find((c) => c.month === m)?.income ?? 0) > 0);
+  if (ctx.periodIncome === 0 && ctx.periodTx.length > 0 && earnedBefore.length > 0) {
+    const all = earnedBefore.length === ctx.baselineMonths.length;
+    out.push(anomaly("missing-income", all ? "medium" : "low", "No income logged this period",
+      all
+        ? `All ${earnedBefore.length} earlier months in the window have income recorded. This is usually an unlogged deposit rather than a month without earnings.`
+        : `${earnedBefore.length} of the ${ctx.baselineMonths.length} earlier months in the window have income recorded, so this may be an unlogged deposit — or simply how the pay dates fall.`));
   }
 
   // Run rate, only for a month still in progress: three days into a month,

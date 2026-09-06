@@ -373,7 +373,104 @@ describe("buildAssessmentFacts", () => {
     expect(f.anomalies.find((a) => a.kind === "pace")).toBeUndefined();
   });
 
+  /**
+   * The comparison set excludes the row being judged by id, not by value.
+   * Filtering on the amount looked equivalent and was not: six identical rent
+   * charges all drop out while judging any one of them, leaving the odd small
+   * charge as the median and every routine payment reported as a 50x one-off.
+   */
+  it("does not drop a row's twins from the baseline while judging it", () => {
+    const months = ["2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09"];
+    const f = buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: "2026-09-01", to: "2026-09-30", label: "September 2026", granularity: "monthly" },
+      today: "2026-09-06",
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions: [
+        ...months.map((m) => tx({ localDate: `${m}-01`, amount: 5000, categoryName: "Housing", description: "Rent" })),
+        ...months.map((m) => tx({ localDate: `${m}-02`, amount: 100, categoryName: "Housing", description: "Water refill" })),
+      ],
+      bills: [],
+    });
+    expect(f.anomalies.filter((a) => a.kind === "outlier-transaction")).toEqual([]);
+  });
+
+  /**
+   * The other half of the same rule. Housing holds rent and water refills, so its
+   * median describes neither — whichever mode has more rows wins and the other is
+   * an anomaly forever. A charge paid at this figure before is not a one-off.
+   */
+  it("judges a repeating charge against its own history, not its category's median", () => {
+    const months = ["2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09"];
+    const f = buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: "2026-09-01", to: "2026-09-30", label: "September 2026", granularity: "monthly" },
+      today: "2026-09-06",
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions: [
+        // Six of each: the category median lands on the small mode, so only the
+        // charge's own history can tell the rent apart from an anomaly.
+        ...months.map((m) => tx({ localDate: `${m}-01`, amount: 5000, categoryName: "Housing", description: "Rent" })),
+        ...months.map((m) => tx({ localDate: `${m}-02`, amount: 100, categoryName: "Housing", description: "Water refill" })),
+      ],
+      bills: [],
+    });
+    expect(f.anomalies.filter((a) => a.kind === "outlier-transaction")).toEqual([]);
+  });
+
+  it("still catches a charge that really is unlike its category", () => {
+    const months = ["2026-04", "2026-05", "2026-06", "2026-07", "2026-08"];
+    const f = buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: "2026-09-01", to: "2026-09-30", label: "September 2026", granularity: "monthly" },
+      today: "2026-09-06",
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions: [
+        ...months.flatMap((m) => spread(m, 25, { amount: 200, categoryName: "Shopping" })),
+        tx({ localDate: "2026-09-03", amount: 9000, categoryName: "Shopping", description: "New laptop" }),
+      ],
+      bills: [],
+    });
+    expect(f.anomalies.find((a) => a.kind === "outlier-transaction")?.current).toBe(9000);
+  });
+
   it("echoes the window it actually read", () => {
     expect(facts().window).toMatchObject({ from: "2026-04-01", months: 6 });
+  });
+});
+
+describe("missing income", () => {
+  const build = (income: number) =>
+    buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: "2026-09-01", to: "2026-09-30", label: "September 2026", granularity: "monthly" },
+      today: "2026-09-06",
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions: [
+        ...["2026-04", "2026-05", "2026-06", "2026-07", "2026-08"].flatMap((m) => [
+          ...spread(m, 25, { amount: 400 }),
+          ...(income > 0 ? [tx({ localDate: `${m}-01`, amount: income, type: "INCOME", categoryName: "Salary" })] : []),
+        ]),
+        ...spread("2026-09", 5, { amount: 400 }),
+      ],
+      bills: [],
+    });
+
+  it("raises it only when the earlier months actually earned something", () => {
+    const a = build(40_000).anomalies.find((x) => x.kind === "missing-income");
+    expect(a?.detail).toContain("All 5 earlier months");
+  });
+
+  /**
+   * Passing the coverage gate says a month was *logged*, not that it earned
+   * anything. The claim "every earlier month has income recorded" was never
+   * checked against a figure, and it went to Gemini as a fact it could repeat.
+   */
+  it("says nothing when no earlier month recorded income either", () => {
+    expect(build(0).anomalies.find((x) => x.kind === "missing-income")).toBeUndefined();
   });
 });
