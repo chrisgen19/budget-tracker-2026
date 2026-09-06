@@ -1,14 +1,15 @@
 /**
  * A link back to the app, for the things chat cannot do.
  *
- * The bot can create a transaction and nothing else, and that is now a property of its *token*
- * rather than of the tool set. `update_transactions` exists among the fifteen MCP tools, but it is
- * gated by `transactions:edit`, which the bot's `transactions:write` token does not carry and
- * cannot acquire without being re-minted; an out-of-scope tool is removed from the server rather
- * than rejected on call, so the bot cannot even see it. Nothing deletes, for anyone. A leaked bot
- * token can therefore still add junk rows and can never destroy or rewrite financial history.
- * Fixing a typo belongs in the app, and a link is how you get there without granting the bot
- * powers it should not have.
+ * The bot itself creates transactions and does nothing else: `create_transactions` is the only
+ * write any of its handlers calls, so a typo is fixed in the app rather than by chatting at it.
+ *
+ * Its *token* is no longer that narrow, and the comment used to claim otherwise.
+ * `update_transactions` shares the `transactions:write` scope the bot already holds, so a leaked
+ * bot token could rewrite rows even though no code path here does. Editing was given its own
+ * scope for exactly that reason and then folded back, because the separation cost a re-mint of
+ * every existing token and this deployment has one user who holds all of them. Nothing deletes,
+ * for anyone, which is the half of the property that still holds unconditionally.
  *
  * `?highlight=<id>` is an existing route contract: the transactions page clears the month filter,
  * finds that row across all time and opens its edit modal, which is where both editing and

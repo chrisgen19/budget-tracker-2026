@@ -12,22 +12,28 @@ app" button on every row the bot logs.
 That absence was load-bearing, and this spends part of it deliberately. Two things keep the spend
 as small as possible.
 
-**Editing is its own scope.** `transactions:edit`, not `transactions:write`. Nothing already
-minted gains anything: the Telegram bot's token carries the create scope and cannot see the new
-tool at all -- not refused on call, absent from `tools/list`. The two are separate powers. A leaked
-create-only credential adds junk that is visible and deletable; an edit-capable one can quietly
-change history already recorded, and one checkbox should not hand over both.
-`resolveWritePermission` therefore takes the scope for the action being attempted, with no default
-value -- a default is what would silently re-collapse the two gates the next time a write scope is
-added.
+**Editing rides on the existing `transactions:write` scope,** so a token already minted for
+logging picks the tool up with no re-mint. It was built the other way first -- `transactions:edit`,
+its own grant -- and that is the safer shape on paper: a leaked create-only credential adds junk
+that is visible and deletable, while an edit-capable one can quietly rewrite history already
+recorded, and one checkbox arguably should not hand over both. It was reversed because the cost
+lands on the wrong person. Every existing token is powerless to edit until re-minted, and in this
+deployment that is one individual, paying a chore to narrow a credential only they hold. The trade
+is recorded rather than hidden: a leaked bot token can now rewrite rows as well as add them.
+Splitting the scope back out is tracked as its own issue, worth doing if this ever serves more than
+one person.
 
-**`isWriteScope` is an explicit list, not `endsWith(":write")`.** This is the bug the feature
-almost shipped with. The suffix test reads `transactions:edit` as read-only, which puts it in
-`READ_ONLY_SCOPES` -- the default grant, and what the local stdio server runs with -- so every
-caller naming no scopes would have received the power to rewrite rows, and an edit-capable token
-would have been the one writing credential allowed to never expire. `receipts:scan` hit the
-identical trap and `isPrivilegedScope` was written for it; a name is not a permission model.
-Three tests in `scopes.test.ts` fail if anyone restores the shortcut.
+`resolveWritePermission` still takes the scope for the action attempted, with no default, even
+though every caller passes the same value today. "May this token write?" stops being the right
+question the moment a second write scope exists, and a default is what would let that go unnoticed.
+
+**`isWriteScope` is an explicit list, not `endsWith(":write")`.** One entry makes the two behave
+identically today, but a suffix test decides authority by spelling. `receipts:scan` already slipped
+past it once and needed `isPrivilegedScope` to be filed correctly, and a scope named
+`transactions:edit` would land in `READ_ONLY_SCOPES` -- the default grant, and what the local stdio
+server runs with -- handing every caller that names no scopes the power to rewrite rows. That is
+precisely the mistake this feature nearly shipped while the split existed. Enumerating costs one
+line and cannot be wrong by accident.
 
 **Every check runs against the effective row, never the patch.** Fields are optional and only what
 you send changes, which makes a bare `type` flip the interesting case: `categoryId` is absent from

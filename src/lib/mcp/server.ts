@@ -1218,14 +1218,14 @@ export const createBudgetMcpServer = ({
       annotations: { destructiveHint: true, idempotentHint: true },
     },
     async ({ transactions }) => {
-      const permission = resolveWritePermission(scopes, writesEnabledUntil, "transactions:edit");
+      const permission = resolveWritePermission(scopes, writesEnabledUntil, "transactions:write");
       if (!permission.allowed) {
         // No replay branch, unlike create. An update carries no idempotency key because it needs
         // none: there is no committed-but-unreported batch to recover, so a lapsed lease during
         // an edit has nothing to resolve and is simply a refusal.
         const message =
           permission.reason === "SCOPE_NOT_GRANTED"
-            ? "This token cannot change transactions. Mint a new token with the transactions:edit scope in Profile > MCP Access."
+            ? "This token cannot change transactions. Mint a new token with the transactions:write scope in Profile > MCP Access."
             : "Writes are currently switched off for this account. Turn them on in Profile > MCP Access, then try again.";
         return { content: [{ type: "text" as const, text: message }], isError: true };
       }
@@ -1250,7 +1250,7 @@ export const createBudgetMcpServer = ({
           return resolveWritePermission(
             scopes,
             current?.mcpWritesEnabledUntil ?? null,
-            "transactions:edit"
+            "transactions:write"
           ).allowed;
         },
       });

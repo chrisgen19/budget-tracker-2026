@@ -194,11 +194,11 @@ Twelve of the fifteen tools are read-only. `scan_receipt` writes nothing either,
 spends one of your monthly receipt scans, so it is scoped separately and is never granted by
 default.
 
-The two remaining tools write, and they are **separate grants**: `create_transactions` needs
-`transactions:write`, and `update_transactions` — which changes an existing transaction's amount,
-description, type, date, category or labels — needs `transactions:edit`. A token holding one does
-not get the other, and the tool it lacks is not merely refused on call, it is not listed at all.
-Both additionally require a time-limited write lease to be open (Profile > MCP Access).
+The two remaining tools write, and both sit behind the same `transactions:write` scope:
+`create_transactions` adds a transaction, and `update_transactions` changes an existing one's
+amount, description, type, date, category or labels. A token minted before editing existed picks
+it up with no re-mint. Both additionally require a time-limited write lease to be open
+(Profile > MCP Access).
 
 Nothing in the server can **delete** a transaction. See [MCP writes](#mcp-writes) for how the
 controls fit together.
@@ -303,11 +303,9 @@ Your endpoint is `https://<your-domain>/api/mcp`.
 In the deployed app, go to **Profile → MCP Access**:
 
 1. Name it after where it will live, e.g. "Claude Code (laptop)".
-2. Tick only the scopes you need. Read scopes start ticked; neither write scope ever does, so
-   write authority is always a deliberate choice. `transactions:write` creates rows and
-   `transactions:edit` changes existing ones — they are separate grants, so a token for logging
-   spending need not also be able to rewrite it. The descriptions say what each one actually
-   returns:
+2. Tick only the scopes you need. Read scopes start ticked; the write scope never does, so write
+   authority is always a deliberate choice. `transactions:write` covers both adding transactions
+   and changing existing ones. The descriptions say what each one actually returns:
    `receipts:read` and `bills:read` both include the parent transaction's description and
    amount, so neither is as narrow as its name suggests.
 3. Pick an expiry. 90 days is the default; "Never" exists but should be a deliberate choice.
@@ -381,10 +379,9 @@ development, remote for real data.
 
 Two tools write, and the server refuses either unless **both** of these are true:
 
-1. The token carries that tool's own scope — `transactions:write` to create,
-   `transactions:edit` to change an existing transaction. They are independent: a create-only
-   token cannot edit, and vice versa. A token lacking a scope cannot see the corresponding tool
-   at all. Either scope caps the token at 90 days and forbids "Never" expires.
+1. The token carries the `transactions:write` scope, which covers both creating and changing.
+   A token without it cannot see either tool at all — they are removed from the server rather
+   than refused on call. The scope caps the token at 90 days and forbids "Never" expires.
 2. Writes are switched on under **Profile > MCP Access > Write access**. This is a lease, not a
    toggle: pick 1 hour, 8 hours, or 30 days, and it closes itself. Every token is refused while it
    is off, so it works as a kill switch when you are away from your machine.
@@ -452,14 +449,17 @@ three independent controls. None of them substitutes for another:
 
 | Control | What it is | Why |
 |---|---|---|
-| Write scope | `transactions:write` to create, `transactions:edit` to change. Chosen when the token is minted and fixed for its life. Either caps the token at 90 days and forbids "Never" expires | Least privilege. A read token can never be talked into writing, and a logging token can never be talked into rewriting |
+| Write scope | `transactions:write`, covering both creating and changing. Chosen when the token is minted and fixed for its life, and it caps the token at 90 days and forbids "Never" expires | Least privilege. A read token can never be talked into writing |
 | Write lease | `users.mcp_writes_enabled_until`, a timestamp rather than a boolean, set from Profile > MCP Access | Forgetting to switch writes off cannot leave them open for days |
 | Provenance | `created_via` + `mcp_token_id` for creation, `updated_via` + `updated_by_mcp_token_id` for the last edit, all set server-side | An audit trail. A compromised token cannot forge or omit it, and an edit cannot erase who created the row |
 
-The two write scopes are split by verb on purpose. Creating a row and rewriting one are different
-powers: a leaked create-only credential adds junk that is visible and deletable, while an
-edit-capable one can quietly change history already recorded. Keeping them separate is what lets
-the Telegram bot hold `transactions:write` and nothing more. There is **no delete tool** at all.
+Creating a row and rewriting one are arguably different powers — a leaked create-only credential
+adds junk that is visible and deletable, while an edit-capable one can quietly change history
+already recorded. Editing was built behind its own scope for that reason and then folded back into
+`transactions:write`, because separating them meant re-minting every existing token, and this
+deployment has one person holding all of them. The consequence is real and worth knowing: the
+Telegram bot's token can now rewrite rows, though none of its handlers do. There is **no delete
+tool** at all.
 
 Provenance follows the **credential**, not the endpoint. A token is minted as either an AI
 assistant or a Telegram bot, and every row it writes is stamped accordingly, because every remote

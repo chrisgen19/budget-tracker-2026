@@ -176,8 +176,12 @@ describe("createBudgetMcpServer", () => {
     expect(names).not.toContain("create_transactions");
   });
 
-  it("exposes the write tool only with transactions:write", async () => {
-    expect(await listToolNames(["transactions:write"])).toEqual(["create_transactions"]);
+  it("exposes the write tools only with transactions:write", async () => {
+    // Both of them: the scope covers adding a transaction and changing one.
+    expect(await listToolNames(["transactions:write"])).toEqual([
+      "create_transactions",
+      "update_transactions",
+    ]);
   });
 
   it("removes tools outside the granted scopes rather than leaving them listed", async () => {
@@ -256,18 +260,15 @@ describe("createBudgetMcpServer", () => {
     expect(tools.find((t) => t.name === "scan_receipt")?.annotations?.idempotentHint).toBe(false);
   });
 
-  // --- The edit tool is a separate grant from the create tool ---
+  // --- Both write tools ride on transactions:write ---
 
-  it("exposes the edit tool only with transactions:edit", async () => {
-    expect(await listToolNames(["transactions:edit"])).toEqual(["update_transactions"]);
-  });
-
-  it("gives a create-only token no way to edit", async () => {
-    // The property that lets the Telegram bot keep its existing token unchanged: it holds
-    // transactions:write, so `update_transactions` must not merely refuse it on call -- it must
-    // not be listed at all. Pointing both tools at one scope would silently arm every write
-    // token already in the wild.
-    expect(await listToolNames(["transactions:write"])).toEqual(["create_transactions"]);
+  it("exposes both write tools with transactions:write", async () => {
+    // One scope, so a token minted before editing existed gains it without being re-minted.
+    // The trade is deliberate: that token can now rewrite rows as well as add them.
+    expect(await listToolNames(["transactions:write"])).toEqual([
+      "create_transactions",
+      "update_transactions",
+    ]);
   });
 
   it("never exposes the edit tool to a read-only token", async () => {
@@ -304,7 +305,7 @@ describe("update_transactions permission", () => {
       prisma,
       userId: "user_1",
       timezoneOffset: -480,
-      scopes: ["transactions:edit"],
+      scopes: ["transactions:write"],
       writesEnabledUntil: null,
     });
 
@@ -317,7 +318,7 @@ describe("update_transactions permission", () => {
       prisma,
       userId: "user_1",
       timezoneOffset: -480,
-      scopes: ["transactions:edit"],
+      scopes: ["transactions:write"],
       writesEnabledUntil: new Date(Date.now() - 1_000),
     });
 
@@ -366,7 +367,7 @@ describe("update_transactions date rendering", () => {
       prisma: client as unknown as PrismaClient,
       userId: "user_1",
       timezoneOffset: -480,
-      scopes: ["transactions:edit"],
+      scopes: ["transactions:write"],
       writesEnabledUntil: new Date(Date.now() + 60_000),
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

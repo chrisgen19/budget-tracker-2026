@@ -54,11 +54,11 @@ export type McpWritePermission = { allowed: true } | { allowed: false; reason: M
  * withdrawn without re-minting, and a lease cannot distinguish one token from another.
  *
  * `required` is the scope for the *action being attempted*, and it has no default on purpose.
- * This used to ask the single question "may this token write?", which was the same question for
- * every caller while `create_transactions` was the only write. With creating and editing split
- * across two scopes it is two questions, and a create-only token would sail through the edit
- * gate. A default value is exactly what would silently re-collapse them the next time a write
- * scope is added, so every caller has to name what it is about to do.
+ * One write scope covers every write today, so every caller passes the same value and the
+ * parameter buys nothing yet. It is kept because "may this token write?" stops being the right
+ * question the moment a second write scope exists, and a default is exactly what would let that
+ * go unnoticed. Naming the action costs a literal per call site and makes splitting editing out
+ * a one-line change rather than an audit of every gate.
  *
  * @param writesEnabledUntil `users.mcp_writes_enabled_until`. Null or past means writes are off,
  *   which is the safe default rather than a state the user has to remember to return to.

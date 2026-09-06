@@ -9,7 +9,7 @@
  *   - `transaction_labels` rows are *replaced*, not appended, which a stub counting calls cannot
  *     distinguish from a delete that silently matched nothing
  *   - a refused batch leaves every row byte-identical, which needs a real transaction to roll back
- *   - a create-only token cannot see the tool at all
+ *   - a read-only token cannot see the tool at all
  *
  * It mints its own throwaway user, token and category, and deletes them afterwards, so it never
  * touches yours. Everything it drives goes through `/api/mcp`: this PR deliberately leaves the
@@ -31,7 +31,7 @@ const STRANGER_EMAIL = "update-stranger@scratch.invalid";
 /**
  * Refuse to send a write-capable token over cleartext to anything but this machine.
  *
- * The token this script mints carries `transactions:edit`, and `BASE_URL` is an environment
+ * The token this script mints carries `transactions:write`, and `BASE_URL` is an environment
  * variable, so pointing it at a staging host over plain `http:` is one paste away. Same shape as
  * `scripts/guard-local-db.ts`: the accident is cheap to prevent and expensive to notice.
  */
@@ -106,13 +106,13 @@ async function main() {
   const editToken = await mintMcpToken({
     userId: user.id,
     name: "probe-edit",
-    scopes: ["transactions:read", "transactions:edit"],
+    scopes: ["transactions:read", "transactions:write"],
     expiresInDays: 1,
   });
-  const createToken = await mintMcpToken({
+  const readToken = await mintMcpToken({
     userId: user.id,
-    name: "probe-create",
-    scopes: ["transactions:write"],
+    name: "probe-read",
+    scopes: ["transactions:read"],
     expiresInDays: 1,
   });
 
@@ -137,14 +137,17 @@ async function main() {
   // --- The tool is gated by its own scope ---
 
   const editTools = (await client.listTools()).tools.map((t) => t.name);
-  check("an edit token is offered update_transactions", editTools.includes("update_transactions"), true);
-  check("an edit token is not offered create_transactions", editTools.includes("create_transactions"), false);
+  // One scope carries both writes, so a token minted before editing existed picks it up with no
+  // re-mint. That is the point of sharing the scope, and the cost of it.
+  check("a write token is offered update_transactions", editTools.includes("update_transactions"), true);
+  check("and still offers create_transactions", editTools.includes("create_transactions"), true);
 
-  const creator = await connect(createToken.token);
-  const createTools = (await creator.listTools()).tools.map((t) => t.name);
-  // The property the whole scope split exists for: the Telegram bot's token is exactly this one.
-  check("a create-only token cannot see update_transactions", createTools.includes("update_transactions"), false);
-  await creator.close();
+  const reader = await connect(readToken.token);
+  const readTools = (await reader.listTools()).tools.map((t) => t.name);
+  // Removed from the server rather than refused on call, so a read token never advertises it.
+  check("a read-only token cannot see update_transactions", readTools.includes("update_transactions"), false);
+  check("nor create_transactions", readTools.includes("create_transactions"), false);
+  await reader.close();
 
   // --- The audit columns actually land ---
 

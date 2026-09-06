@@ -71,40 +71,43 @@ describe("DEFAULT_MINT_SCOPES", () => {
 });
 
 describe("isWriteScope", () => {
-  it("counts transactions:edit, whose name does not end in :write", () => {
-    // The load-bearing test for this whole scope model. `isWriteScope` was `endsWith(":write")`,
-    // which reads `transactions:edit` as harmless -- and the three assertions below are what that
-    // one wrong answer cascades into. Restoring the suffix test fails all four.
-    expect(isWriteScope("transactions:edit")).toBe(true);
+  it("counts transactions:write", () => {
+    expect(isWriteScope("transactions:write")).toBe(true);
   });
 
-  it("keeps transactions:edit out of the default grant", () => {
-    // READ_ONLY_SCOPES is what a caller naming no scopes receives, including the local stdio
-    // server. A misfiled edit scope would hand every one of them the power to rewrite history.
-    expect(READ_ONLY_SCOPES).not.toContain("transactions:edit");
-    expect(DEFAULT_MINT_SCOPES).not.toContain("transactions:edit");
+  it("does not count a scope that only spends money", () => {
+    // receipts:scan is privileged but writes nothing, so it must not inherit the write expiry cap.
+    expect(isWriteScope("receipts:scan")).toBe(false);
+    expect(isPrivilegedScope("receipts:scan")).toBe(true);
   });
 
-  it("forces a bounded lifetime on an edit-only token", () => {
-    // grantsWrite drives createMcpTokenSchema's two refinements: a write-capable token may not
-    // choose "Never" and is capped at MAX_WRITE_TOKEN_EXPIRY_DAYS. An edit-only token has to
-    // inherit both, or the tightest credential in the set would be the longest-lived.
-    expect(grantsWrite(["transactions:edit"])).toBe(true);
+  it("keeps every write scope out of the default grant", () => {
+    // READ_ONLY_SCOPES is what a caller naming no scopes receives, the local stdio server
+    // included. Written over the list so a scope added later is covered without editing this.
+    for (const scope of MCP_SCOPES.filter(isWriteScope)) {
+      expect(READ_ONLY_SCOPES).not.toContain(scope);
+      expect(DEFAULT_MINT_SCOPES).not.toContain(scope);
+    }
   });
 });
 
 describe("MCP_TOOL_SCOPES", () => {
-  it("gates editing behind its own scope, not the create scope", () => {
-    // The property AGENTS.md protects: the Telegram bot's token carries transactions:write, so
-    // it must gain nothing from this tool existing. Pointing both tools at one scope would hand
-    // every already-minted write token the ability to rewrite rows, with no re-mint and no sign.
-    expect(MCP_TOOL_SCOPES.update_transactions).toBe("transactions:edit");
+  it("gates both writes behind transactions:write", () => {
+    // Editing shares the create scope deliberately, so an already-minted token keeps working.
+    // The trade, taken knowingly: such a token can rewrite rows as well as add them.
     expect(MCP_TOOL_SCOPES.create_transactions).toBe("transactions:write");
+    expect(MCP_TOOL_SCOPES.update_transactions).toBe("transactions:write");
   });
 
   it("has no delete tool", () => {
-    // Editing was added deliberately; deleting was not. A leaked edit-capable token can garble
-    // rows, which is visible and correctable, but it still cannot make them disappear.
+    // Editing was added deliberately; deleting was not. A leaked write token can garble rows,
+    // which is visible and correctable, but still cannot make them disappear.
     expect(Object.keys(MCP_TOOL_SCOPES).filter((n) => n.includes("delete"))).toEqual([]);
+  });
+
+  it("names a known scope for every registered tool", () => {
+    for (const scope of Object.values(MCP_TOOL_SCOPES)) {
+      expect(MCP_SCOPES).toContain(scope);
+    }
   });
 });

@@ -104,10 +104,10 @@ export function McpWriteAccess({ enabledUntil, onChange, onReload }: McpWriteAcc
               : "Claude can read your budget but cannot add or change transactions."}
           </p>
           <p className="text-xs text-warm-400 mt-1">
-            Each option replaces the current expiry rather than adding to it. A token still needs a
-            write scope as well &mdash; <code className="font-mono">transactions:write</code> to
-            add, <code className="font-mono">transactions:edit</code> to change what exists. This
-            switch turns both off for every token at once.
+            Each option replaces the current expiry rather than adding to it. A token still needs
+            the <code className="font-mono">transactions:write</code> scope as well, which covers
+            both adding and changing transactions. This switch turns writing off for every token at
+            once.
           </p>
         </div>
       </div>
