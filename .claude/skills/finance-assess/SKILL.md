@@ -116,6 +116,13 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
   net-positive is a good result; say so plainly and move on to what needs attention.
 - **Attribute causes honestly.** Unlabeled bill payments are the app's behavior, not the
   user's. Do not turn a system gap into a lecture about discipline.
+- **A high-swing bill is not a misconfigured one.** For a bill whose payments swing 2x or
+  more, do not report "X% over budget" as though a better constant existed. The monthly
+  series will usually show a season, and the budgeted figure is often exactly right for part
+  of the year. Say which months run high, say what the *next* due date is likely to cost,
+  and point at issue #217 rather than recommending a number — an annual average makes the
+  near-term forecast worse, which is the opposite of the fix. Where the shape has an obvious
+  cause, ask rather than assert: one summer of data is one observation, not a pattern.
 - **Never present the current month as a trend** — it is partial by definition.
 - Format money in the user's own currency (the script reports it) with thousands
   separators. Round to whole units; centavo precision is noise at this altitude.
