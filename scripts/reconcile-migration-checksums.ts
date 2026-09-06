@@ -72,14 +72,22 @@ const describeTarget = (): string => {
  */
 const dirtyFiles = (): Set<string> => {
   try {
-    const out = execFileSync("git", ["status", "--porcelain", "--", "prisma/migrations"], {
-      encoding: "utf8",
-    });
+    // --untracked-files=all, because the default collapses an untracked
+    // *directory* to one entry with a trailing slash -- "?? prisma/migrations/
+    // <name>/" -- which never matches the .../migration.sql path looked up
+    // below. A migration copied from another branch or reconstructed locally is
+    // exactly that shape, and would have been blessed as clean.
+    const out = execFileSync(
+      "git",
+      ["status", "--porcelain", "--untracked-files=all", "--", "prisma/migrations"],
+      { encoding: "utf8" },
+    );
     return new Set(
       out
         .split("\n")
         .filter(Boolean)
-        .map((line) => line.slice(3).trim()),
+        // Renames read as "old -> new"; the new path is the one on disk.
+        .map((line) => line.slice(3).trim().split(" -> ").pop()!.replace(/^"|"$/g, "")),
     );
   } catch {
     // Not a git checkout, or git unavailable. Reported by the caller rather than
@@ -113,7 +121,11 @@ const scan = async (dirty: Set<string>): Promise<{ fixes: Fix[]; missing: string
         name: row.migration_name,
         from: row.checksum,
         to: actual,
-        dirty: dirty.has(rel) || dirty.has("<git-unavailable>"),
+        // Prefix match as well as exact, so any git version or configuration
+        // that still reports a directory rather than its files is caught.
+        dirty:
+          dirty.has("<git-unavailable>") ||
+          [...dirty].some((d) => d === rel || rel.startsWith(d.endsWith("/") ? d : `${d}/`)),
       });
     }
   }
