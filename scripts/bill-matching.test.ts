@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest";
-import { descriptionCanMatch } from "./repair-bill-occurrence-links";
+import { descriptionCanMatch } from "./bill-matching";
 
 describe("descriptionCanMatch", () => {
   it("matches a description unique among the user's bills", () => {
@@ -19,8 +19,16 @@ describe("descriptionCanMatch", () => {
   // plan is built before any write lands, so both could claim it and the second
   // write would overwrite the first's billId -- leaving a log pointing at a
   // payment owned by another bill.
-  it("refuses a description shared by two bills", () => {
+  it("refuses a description shared by two of the same user's bills", () => {
     expect(descriptionCanMatch("Internet", ["Internet", "Internet", "Meralco"])).toBe(false);
+  });
+
+  // The sibling list is scoped per user because the payment query is. Two
+  // unrelated accounts both having a "Rent" bill must not make either ambiguous,
+  // which would drop both users' description matching and report real repairs as
+  // gaps.
+  it("is unaffected by another user's identical bill name", () => {
+    expect(descriptionCanMatch("Rent", ["Rent", "Meralco"])).toBe(true);
   });
 
   it("compares case- and whitespace-insensitively, as the payment query does", () => {

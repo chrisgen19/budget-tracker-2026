@@ -63,11 +63,21 @@ async function main() {
 
     if (!Number.isFinite(amount) || amount <= 0) throw new Error(`Bad amount for ${name} ${dues[i]}`);
 
-    const bill = await prisma.scheduledTransaction.findFirst({
+    // findFirst would pick arbitrarily among same-named bills and link real
+    // money to the wrong schedule, with nothing in the dry run to show it.
+    // Descriptions are not unique, so require exactly one.
+    const matches = await prisma.scheduledTransaction.findMany({
       where: { userId: user.id, description: name },
       select: { id: true, description: true, type: true, categoryId: true },
     });
-    if (!bill) throw new Error(`No bill named "${name}" for ${email}`);
+    if (matches.length === 0) throw new Error(`No bill named "${name}" for ${email}`);
+    if (matches.length > 1) {
+      throw new Error(
+        `${matches.length} bills for ${email} are named "${name}" (${matches.map((m) => m.id).join(", ")}) -- ` +
+          `rename one, or this cannot tell which schedule the payment belongs to`,
+      );
+    }
+    const bill = matches[0];
 
     const log = await prisma.scheduledTransactionLog.findFirst({
       where: { scheduledTransactionId: bill.id, dueDate: due },

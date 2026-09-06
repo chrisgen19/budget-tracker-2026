@@ -26,6 +26,7 @@
  * container drop --env-file, since the variables are already set.
  */
 import { PrismaClient } from "@prisma/client";
+import { descriptionCanMatch } from "./bill-matching";
 
 const prisma = new PrismaClient();
 
@@ -36,30 +37,6 @@ const MATCH_WINDOW_DAYS = 10;
 const dayKey = (d: Date) => d.toISOString().slice(0, 10);
 const daysBetween = (a: Date, b: Date) =>
   Math.abs(a.getTime() - b.getTime()) / 86_400_000;
-
-/**
- * Whether a bill's description is specific enough to find its payments by.
- *
- * Matching unlinked payments on description is what catches the ones entered by
- * hand, but the description does not have to be unique: `description` defaults
- * to "" in the schema, and nothing stops two bills sharing a name. Either case
- * makes one transaction match several bills, and since every plan is built
- * before any write lands, the same payment could be handed to occurrences of
- * two different bills -- each write overwriting the previous `billId`, leaving
- * every log but the last pointing at a payment now owned by another bill.
- *
- * Ambiguous descriptions are therefore not matched at all. Such a bill is still
- * repaired through payments already carrying its `billId`, and anything else is
- * reported rather than guessed.
- */
-export const descriptionCanMatch = (
-  description: string,
-  allDescriptions: readonly string[],
-): boolean => {
-  const key = description.trim().toLowerCase();
-  if (key === "") return false;
-  return allDescriptions.filter((d) => d.trim().toLowerCase() === key).length === 1;
-};
 
 type Plan = {
   bill: string;
@@ -88,12 +65,20 @@ async function main() {
     }
   }
   const claimed = new Set(claimedBy.keys());
-  const allDescriptions = bills.map((b) => b.description);
+  const descriptionsByUser = new Map<string, string[]>();
+  for (const b of bills) {
+    const list = descriptionsByUser.get(b.userId) ?? [];
+    list.push(b.description);
+    descriptionsByUser.set(b.userId, list);
+  }
 
   for (const bill of bills) {
     // Every payment recorded for this bill, linked or not. Description matching
     // catches the ones entered by hand, which are exactly the unlinked cases.
-    const byDescription = descriptionCanMatch(bill.description, allDescriptions);
+    const byDescription = descriptionCanMatch(
+      bill.description,
+      descriptionsByUser.get(bill.userId) ?? [],
+    );
     const payments = await prisma.transaction.findMany({
       where: {
         userId: bill.userId,
