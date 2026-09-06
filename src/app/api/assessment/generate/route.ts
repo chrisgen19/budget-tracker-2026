@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { isGeminiUnavailable } from "@/lib/gemini";
 import { getUpcomingBills } from "@/lib/budget-queries";
+import { collectAssessmentFacts } from "@/lib/assessment-facts-query";
 import {
   assessmentPayloadSchema,
   generateAssessment,
@@ -66,7 +67,19 @@ export async function POST(request: Request) {
   const usageLog = await prisma.aiUsageLog.create({ data: { userId, kind: "REPORT" } });
 
   try {
-    const billsResult = await getUpcomingBills(prisma, userId, { days: 14, timezoneOffset: tzOffset });
+    // The facts are recomputed here rather than trusted from the request body.
+    // Everything in `payload` is client-supplied and bounded for prompt size; a
+    // finding that says "this bill has been unpaid for two months" has to come
+    // from the database, or it is only a claim the browser made.
+    const [billsResult, facts] = await Promise.all([
+      getUpcomingBills(prisma, userId, { days: 14, timezoneOffset: tzOffset }),
+      collectAssessmentFacts(prisma, userId, {
+        from,
+        to,
+        granularity: payload.granularity,
+        periodLabel: payload.periodLabel,
+      }),
+    ]);
     const bills: UpcomingBillsContext = {
       count: billsResult.count,
       totalAmount: billsResult.totalAmount,
@@ -74,7 +87,7 @@ export async function POST(request: Request) {
       bills: billsResult.bills,
     };
 
-    const { report, sources, model } = await generateAssessment(payload, bills);
+    const { report, sources, model } = await generateAssessment(payload, bills, facts);
 
     const content = report as unknown as Prisma.InputJsonValue;
     const sourcesJson = sources as unknown as Prisma.InputJsonValue;

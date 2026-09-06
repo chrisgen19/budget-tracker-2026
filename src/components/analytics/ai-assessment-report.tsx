@@ -2,23 +2,14 @@
 
 import { useMemo } from "react";
 import { motion } from "framer-motion";
-import {
-  Sparkles,
-  RefreshCw,
-  AlertTriangle,
-  Scissors,
-  PiggyBank,
-  Lightbulb,
-  CheckCircle2,
-  Globe,
-  ExternalLink,
-  Loader2,
-} from "lucide-react";
-import { cn, formatCurrency } from "@/lib/utils";
+import { Sparkles, RefreshCw, Loader2 } from "lucide-react";
+import { formatCurrency } from "@/lib/utils";
 import { stagger, fadeUp } from "@/components/analytics/motion-variants";
-import { useAssessmentQuery, useDailyTipQuery } from "@/hooks/use-assessment";
+import { useAssessmentQuery, useAssessmentFactsQuery, useDailyTipQuery } from "@/hooks/use-assessment";
 import { useAssessment, periodKeyOf } from "@/components/assessment-provider";
-import type { AnalyticsData, AiWatchSeverity } from "@/types";
+import { AssessmentNarrative } from "@/components/analytics/assessment/narrative";
+import { AssessmentFactsPanel } from "@/components/analytics/assessment/facts-panel";
+import type { AnalyticsData, AiAssessmentReport as Report } from "@/types";
 import type { AssessmentPayload } from "@/lib/ai-assessment";
 
 interface AiAssessmentReportProps {
@@ -27,12 +18,6 @@ interface AiAssessmentReportProps {
   currency: string;
   hideAmounts: boolean;
 }
-
-const SEVERITY_STYLES: Record<AiWatchSeverity, { dot: string; label: string; text: string }> = {
-  high: { dot: "bg-expense", label: "High", text: "text-expense" },
-  medium: { dot: "bg-amber", label: "Medium", text: "text-amber-dark" },
-  low: { dot: "bg-warm-400", label: "Low", text: "text-warm-400" },
-};
 
 const relativeTime = (iso: string): string => {
   const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
@@ -95,17 +80,25 @@ const buildPayload = (data: AnalyticsData, currency: string, granularity: string
   };
 };
 
-function Section({ icon: Icon, title, children }: { icon: typeof Sparkles; title: string; children: React.ReactNode }) {
-  return (
-    <motion.div variants={fadeUp} className="card p-4 sm:p-5">
-      <div className="flex items-center gap-2 mb-3">
-        <Icon className="w-4 h-4 text-amber" />
-        <h3 className="font-serif text-lg text-warm-700">{title}</h3>
-      </div>
-      {children}
-    </motion.div>
-  );
-}
+/** Apply the prose mask to every free-text field a model wrote. */
+const maskReport = (report: Report): Report => {
+  const m = (s: string) => maskProse(s, true);
+  return {
+    ...report,
+    summary: m(report.summary),
+    scoreCommentary: m(report.scoreCommentary),
+    outlook: m(report.outlook),
+    patterns: report.patterns.map((p) => ({ ...p, title: m(p.title), detail: m(p.detail) })),
+    trends: report.trends.map((t) => ({ ...t, title: m(t.title), detail: m(t.detail) })),
+    dataQuality: report.dataQuality.map((d) => ({ ...d, title: m(d.title), detail: m(d.detail), fix: m(d.fix) })),
+    watchList: report.watchList.map((w) => ({ ...w, title: m(w.title), detail: m(w.detail) })),
+    cutBack: report.cutBack.map((c) => ({ ...c, title: m(c.title), reason: m(c.reason), suggestion: m(c.suggestion) })),
+    boostSavings: report.boostSavings.map((t) => ({ ...t, title: m(t.title), detail: m(t.detail) })),
+    earnIdeas: report.earnIdeas.map((t) => ({ ...t, title: m(t.title), detail: m(t.detail) })),
+    quickActions: report.quickActions.map(m),
+    webTips: report.webTips.map((t) => ({ ...t, title: m(t.title), detail: m(t.detail) })),
+  };
+};
 
 function DailyTipCard({ hideAmounts }: { hideAmounts: boolean }) {
   const { data, isLoading } = useDailyTipQuery();
@@ -125,8 +118,17 @@ function DailyTipCard({ hideAmounts }: { hideAmounts: boolean }) {
   );
 }
 
+/**
+ * The AI Assessment tab: a written assessment over a measured one.
+ *
+ * The measured half (`AssessmentFactsPanel`) is computed server-side and shown
+ * whether or not a report has been generated — finding out that a bill has gone
+ * unpaid should not cost an AI generation. The written half interprets exactly
+ * those figures, so every claim in it can be checked against the row below.
+ */
 export function AiAssessmentReport({ data, period, currency, hideAmounts }: AiAssessmentReportProps) {
   const { data: reportData, isLoading, isError: reportError } = useAssessmentQuery(period);
+  const facts = useAssessmentFactsQuery(period);
   const { isGenerating, generate } = useAssessment();
 
   const payload = useMemo(() => buildPayload(data, currency, period.granularity), [data, currency, period.granularity]);
@@ -134,22 +136,19 @@ export function AiAssessmentReport({ data, period, currency, hideAmounts }: AiAs
 
   const rawReport = reportData?.report;
   // Mask any currency figures the model may have written into prose when Hide Amounts is on.
-  const report = useMemo(() => {
-    if (!rawReport || !hideAmounts) return rawReport;
-    const m = (s: string) => maskProse(s, true);
-    return {
-      ...rawReport,
-      summary: m(rawReport.summary),
-      scoreCommentary: m(rawReport.scoreCommentary),
-      watchList: rawReport.watchList.map((w) => ({ ...w, title: m(w.title), detail: m(w.detail) })),
-      cutBack: rawReport.cutBack.map((c) => ({ ...c, title: m(c.title), reason: m(c.reason), suggestion: m(c.suggestion) })),
-      boostSavings: rawReport.boostSavings.map((t) => ({ ...t, title: m(t.title), detail: m(t.detail) })),
-      earnIdeas: rawReport.earnIdeas.map((t) => ({ ...t, title: m(t.title), detail: m(t.detail) })),
-      quickActions: rawReport.quickActions.map(m),
-      webTips: rawReport.webTips.map((t) => ({ ...t, title: m(t.title), detail: m(t.detail) })),
-    };
-  }, [rawReport, hideAmounts]);
+  const report = useMemo(
+    () => (!rawReport || !hideAmounts ? rawReport : maskReport(rawReport)),
+    [rawReport, hideAmounts]
+  );
   const hasData = data.summary.transactionCount > 0;
+  // A period with nothing logged is exactly when an unpaid bill matters most, so
+  // the measured half is gated on the window having anything to say — not on this
+  // period having rows.
+  const factsData = facts.data?.facts;
+  const showFacts =
+    hasData ||
+    (factsData !== undefined &&
+      (factsData.bills.missed.length > 0 || factsData.confidence.months.some((m) => m.transactionCount > 0)));
   const pending = isGenerating(periodKeyOf(period.granularity, period.from, period.to));
 
   const handleGenerate = () =>
@@ -208,128 +207,37 @@ export function AiAssessmentReport({ data, period, currency, hideAmounts }: AiAs
 
         {hasData && !report && !pending && !isLoading && (
           <p className="text-sm text-warm-500 mt-3">
-            Tap <span className="font-medium">Generate</span> to have AI analyze your spending and suggest where to cut back, how to save more, and ways to earn.
+            The findings below are measured from your data and always up to date. Tap{" "}
+            <span className="font-medium">Generate</span> to have AI read them and suggest where to cut back, how to save
+            more, and ways to earn.
           </p>
         )}
       </motion.div>
 
-      {report && (
+      {report && <AssessmentNarrative report={report} fmt={fmt} />}
+
+      {(showFacts || facts.isLoading) && (
         <>
-          {/* Summary + score commentary */}
-          <Section icon={Sparkles} title="Summary">
-            <p className="text-sm text-warm-600 leading-relaxed">{report.summary}</p>
-            <p className="text-sm text-warm-500 leading-relaxed mt-3">{report.scoreCommentary}</p>
-          </Section>
-
-          {report.watchList.length > 0 && (
-            <Section icon={AlertTriangle} title="Watch list">
-              <ul className="space-y-3">
-                {report.watchList.map((item, i) => {
-                  const sev = SEVERITY_STYLES[item.severity];
-                  return (
-                    <li key={i} className="flex gap-3">
-                      <span className={cn("mt-1.5 w-2 h-2 rounded-full shrink-0", sev.dot)} />
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-warm-700">
-                          {item.title} <span className={cn("text-[10px] uppercase tracking-wider", sev.text)}>· {sev.label}</span>
-                        </p>
-                        <p className="text-sm text-warm-500">{item.detail}</p>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </Section>
-          )}
-
-          {report.cutBack.length > 0 && (
-            <Section icon={Scissors} title="Cut back">
-              <ul className="space-y-3">
-                {report.cutBack.map((item, i) => (
-                  <li key={i} className="p-3 rounded-xl bg-cream-50/60">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-medium text-warm-700 truncate">{item.title}</p>
-                      {item.estimatedMonthlySaving !== null && (
-                        <span className="text-xs font-medium text-income shrink-0">save ~{fmt(item.estimatedMonthlySaving)}/mo</span>
-                      )}
-                    </div>
-                    <p className="text-sm text-warm-500 mt-1">{item.reason}</p>
-                    <p className="text-sm text-warm-600 mt-1">💡 {item.suggestion}</p>
-                  </li>
-                ))}
-              </ul>
-            </Section>
-          )}
-
-          {report.boostSavings.length > 0 && (
-            <Section icon={PiggyBank} title="Boost savings">
-              <TipList items={report.boostSavings} />
-            </Section>
-          )}
-
-          {report.earnIdeas.length > 0 && (
-            <Section icon={Lightbulb} title="Ways to earn">
-              <TipList items={report.earnIdeas} />
-            </Section>
-          )}
-
-          {report.quickActions.length > 0 && (
-            <Section icon={CheckCircle2} title="Quick actions">
-              <ul className="space-y-2">
-                {report.quickActions.map((action, i) => (
-                  <li key={i} className="flex gap-2.5 text-sm text-warm-600">
-                    <CheckCircle2 className="w-4 h-4 text-income shrink-0 mt-0.5" />
-                    <span>{action}</span>
-                  </li>
-                ))}
-              </ul>
-            </Section>
-          )}
-
-          {(report.webTips.length > 0 || report.sources.length > 0) && (
-            <Section icon={Globe} title="Tips from the web">
-              {report.webTips.length > 0 && <TipList items={report.webTips} />}
-              {report.sources.length > 0 && (
-                <div className="mt-4 pt-3 border-t border-cream-200/70">
-                  <p className="text-[10px] font-medium tracking-wider text-warm-400 uppercase mb-2">Sources</p>
-                  <ul className="space-y-1.5">
-                    {report.sources.map((s, i) => (
-                      <li key={i}>
-                        <a
-                          href={s.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 text-xs text-amber-dark hover:underline"
-                        >
-                          <ExternalLink className="w-3 h-3 shrink-0" />
-                          <span className="truncate">{s.title}</span>
-                        </a>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </Section>
-          )}
-
-          <p className="text-[11px] text-warm-300 text-center px-4">
-            AI-generated guidance based on your data — not professional financial advice.
-          </p>
+          <motion.div variants={fadeUp} className="flex items-center gap-3 pt-2">
+            <span className="h-px flex-1 bg-cream-200" />
+            <span className="text-[10px] font-medium tracking-wider text-warm-300 uppercase">The numbers behind it</span>
+            <span className="h-px flex-1 bg-cream-200" />
+          </motion.div>
+          <AssessmentFactsPanel
+            facts={factsData}
+            isLoading={facts.isLoading}
+            isError={facts.isError}
+            currency={currency}
+            hideAmounts={hideAmounts}
+          />
         </>
       )}
-    </motion.div>
-  );
-}
 
-function TipList({ items }: { items: Array<{ title: string; detail: string }> }) {
-  return (
-    <ul className="space-y-3">
-      {items.map((item, i) => (
-        <li key={i}>
-          <p className="text-sm font-medium text-warm-700">{item.title}</p>
-          <p className="text-sm text-warm-500">{item.detail}</p>
-        </li>
-      ))}
-    </ul>
+      {report && (
+        <p className="text-[11px] text-warm-300 text-center px-4">
+          AI-generated guidance based on your data — not professional financial advice.
+        </p>
+      )}
+    </motion.div>
   );
 }
