@@ -347,7 +347,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
               <button
                 onClick={() => setConfirmSkip(reminder)}
                 disabled={isActioning || payAllProgress !== null}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cream-100 text-warm-400 hover:bg-cream-200 text-xs font-medium transition-colors disabled:opacity-50"
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cream-100 text-warm-400 hover:bg-cream-200 text-xs font-medium transition-colors disabled:opacity-50 relative before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']"
               >
                 <CalendarX className="w-3 h-3" />
                 Didn&apos;t pay

@@ -14,11 +14,10 @@
  * `revert_accounts_and_transfers` gained a DO block that raises on databases
  * holding PR #187 data and is inert on the ones it already ran against.
  *
- * What this script does NOT do is decide that for you. It prints the diff of
- * every mismatched file since the commit that introduced it and refuses to
- * write unless `--apply` is passed, because a mismatch caused by *schema* SQL
- * being added means the database is genuinely missing that change, and
- * rewriting the checksum would bury it. Read the diff first.
+ * What this script does NOT do is decide that for you. It prints what changed
+ * in every mismatched file and refuses to write unless `--apply` is passed,
+ * because a mismatch caused by *schema* SQL being added means the database is
+ * genuinely missing that change, and rewriting the checksum would bury it.
  *
  *   pnpm exec tsx --env-file=.env scripts/reconcile-migration-checksums.ts
  *   pnpm exec tsx --env-file=.env scripts/reconcile-migration-checksums.ts --apply
@@ -29,6 +28,7 @@
  */
 import { PrismaClient } from "@prisma/client";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -41,8 +41,54 @@ const checksumOf = (file: string): string =>
   createHash("sha256").update(readFileSync(file)).digest("hex");
 
 type Row = { id: string; migration_name: string; checksum: string };
+type Fix = { id: string; name: string; from: string; to: string; dirty: boolean };
 
-async function main() {
+/**
+ * Which database is about to be written to.
+ *
+ * `--env-file` does not override an already-exported DATABASE_URL, so the
+ * documented invocation can silently target production from a shell that
+ * happens to have it set. Names and checksum prefixes look identical across
+ * environments, so without this the dry run gives no clue which one it read.
+ */
+const describeTarget = (): string => {
+  const raw = process.env.DATABASE_URL;
+  if (!raw) return "DATABASE_URL is not set";
+  try {
+    const u = new URL(raw);
+    return `${u.hostname}:${u.port || "5432"}${u.pathname}`;
+  } catch {
+    return "unparseable DATABASE_URL";
+  }
+};
+
+/**
+ * Whether a migration file has uncommitted edits.
+ *
+ * This is the normal case when `migrate dev` has just complained: the edit that
+ * broke the checksum is in the working tree, not in history. Reviewing commits
+ * alone would then show only safe past changes and hide the very edit in
+ * question, so a dirty file is refused rather than reported.
+ */
+const dirtyFiles = (): Set<string> => {
+  try {
+    const out = execFileSync("git", ["status", "--porcelain", "--", "prisma/migrations"], {
+      encoding: "utf8",
+    });
+    return new Set(
+      out
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => line.slice(3).trim()),
+    );
+  } catch {
+    // Not a git checkout, or git unavailable. Reported by the caller rather than
+    // assumed clean, since "cannot tell" and "is clean" are different answers.
+    return new Set(["<git-unavailable>"]);
+  }
+};
+
+const scan = async (dirty: Set<string>): Promise<{ fixes: Fix[]; missing: string[] }> => {
   const rows = await prisma.$queryRaw<Row[]>`
     SELECT id, migration_name, checksum
     FROM _prisma_migrations
@@ -50,10 +96,11 @@ async function main() {
     ORDER BY finished_at
   `;
 
-  const fixes: Array<{ id: string; name: string; from: string; to: string }> = [];
+  const fixes: Fix[] = [];
   const missing: string[] = [];
 
   for (const row of rows) {
+    const rel = `prisma/migrations/${row.migration_name}/migration.sql`;
     const file = join(MIGRATIONS_DIR, row.migration_name, "migration.sql");
     if (!existsSync(file)) {
       missing.push(row.migration_name);
@@ -61,10 +108,19 @@ async function main() {
     }
     const actual = checksumOf(file);
     if (actual !== row.checksum) {
-      fixes.push({ id: row.id, name: row.migration_name, from: row.checksum, to: actual });
+      fixes.push({
+        id: row.id,
+        name: row.migration_name,
+        from: row.checksum,
+        to: actual,
+        dirty: dirty.has(rel) || dirty.has("<git-unavailable>"),
+      });
     }
   }
+  return { fixes, missing };
+};
 
+const report = (fixes: Fix[], missing: string[]): void => {
   if (missing.length > 0) {
     console.log(
       `${missing.length} migration(s) are applied but have no file. That is drift, not a\n` +
@@ -74,34 +130,67 @@ async function main() {
     console.log("");
   }
 
-  if (fixes.length === 0) {
-    console.log("Every applied migration's checksum matches its file.");
-    return;
-  }
-
   console.log(`${APPLY ? "Updating" : "Would update"} ${fixes.length} checksum(s):\n`);
   for (const f of fixes) {
-    console.log(`  ${f.name}`);
+    console.log(`  ${f.name}${f.dirty ? "   [UNCOMMITTED EDITS]" : ""}`);
     console.log(`    stored ${f.from.slice(0, 16)}...  file ${f.to.slice(0, 16)}...`);
   }
   console.log(
-    `\nBefore applying, read what changed in each file since it was applied:\n` +
+    `\nRead what changed in each file before applying:\n` +
       fixes.map((f) => `  git log -p -- prisma/migrations/${f.name}/migration.sql`).join("\n") +
       `\n\nComments and guards are safe to reconcile. Added DDL is not -- that means the\n` +
       `database never received it, and rewriting the checksum would hide that.`,
   );
+};
+
+const applyFixes = async (fixes: Fix[]): Promise<void> => {
+  // One transaction: a run interrupted midway would otherwise leave some
+  // checksums reconciled and others not, which is a state nobody chose and the
+  // next run cannot distinguish from a partial edit.
+  await prisma.$transaction(
+    fixes.map(
+      (f) => prisma.$executeRaw`UPDATE _prisma_migrations SET checksum = ${f.to} WHERE id = ${f.id}`,
+    ),
+  );
+  console.log(`\nUpdated ${fixes.length} checksum(s).`);
+};
+
+async function main() {
+  console.log(`Target: ${describeTarget()}\n`);
+
+  const dirty = dirtyFiles();
+  const { fixes, missing } = await scan(dirty);
+
+  if (fixes.length === 0) {
+    console.log(
+      missing.length > 0
+        ? "Every applied migration whose file exists matches it. See the drift note above."
+        : "Every applied migration's checksum matches its file.",
+    );
+    if (missing.length > 0) report(fixes, missing);
+    return;
+  }
+
+  report(fixes, missing);
+
+  const blocked = fixes.filter((f) => f.dirty);
+  if (APPLY && blocked.length > 0) {
+    console.log(
+      `\nRefusing to apply. ${blocked.length} of these file(s) have uncommitted edits, so the\n` +
+        `change that broke the checksum is in the working tree and \`git log\` would not show\n` +
+        `it -- exactly the case where blessing a checksum could bury real schema drift.\n` +
+        `Commit or stash them, re-read the diff, then run again.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
 
   if (!APPLY) {
     console.log("\nDry run. Re-run with --apply once you have read the diffs.");
     return;
   }
 
-  for (const f of fixes) {
-    await prisma.$executeRaw`
-      UPDATE _prisma_migrations SET checksum = ${f.to} WHERE id = ${f.id}
-    `;
-  }
-  console.log(`\nUpdated ${fixes.length} checksum(s).`);
+  await applyFixes(fixes);
 }
 
 main()
