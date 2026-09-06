@@ -248,7 +248,10 @@ describe("TransactionForm account-local dates", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add Transaction" }));
     await screen.findByText("Choose a time.");
     fireEvent.click(trigger);
-    expect(editor?.classList.contains("hidden")).toBe(true);
+    // Awaited, like the identical assertion below. fireEvent does not flush a
+    // React state update synchronously, so asserting the class immediately is a
+    // race: it held locally and failed once under CI's slower scheduling.
+    await waitFor(() => expect(editor?.classList.contains("hidden")).toBe(true));
 
     fireEvent.click(screen.getByRole("button", { name: "Add Transaction" }));
 
