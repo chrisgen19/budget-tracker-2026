@@ -64,12 +64,24 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
    overwrites its destination, and a reversed `--from` is the one mistake here a
    later backup cannot fix.
 
-1. **Run the script.** From the repo root:
+1. **Run the script.** Against the mirror, from the repo root:
 
    ```bash
    set -a; . ./.env; set +a
    psql "$DATABASE_URL" -q -f .claude/skills/finance-assess/scripts/assess.sql
    ```
+
+   Against the source instead — note the URL goes **on the command**, because
+   `set -a; . ./.env` reassigns `DATABASE_URL` unconditionally and would otherwise
+   silently send you back to the mirror, producing the stale report step 0 exists to
+   prevent:
+
+   ```bash
+   DATABASE_URL="<source url>" psql "$DATABASE_URL" -q -f .claude/skills/finance-assess/scripts/assess.sql
+   ```
+
+   Either way, check the `WHO / WINDOW` row the script prints: it reports `newest_row`,
+   and the assessment should say which database answered.
 
    Optional: `-v email=someone@example.com` to pick a user (defaults to whoever has the
    most transactions), `-v months=12` to widen the window (defaults to 6).
