@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   estimateBillAmount,
   describeEstimateBasis,
+  buildEstimateSamples,
   type EstimateSample,
 } from "./bill-estimate";
 
@@ -119,5 +120,42 @@ describe("describeEstimateBasis", () => {
     expect(describeEstimateBasis({ amount: 0, basis: "last-payment", sampleSize: 1 })).toContain(
       "too little history",
     );
+  });
+});
+
+describe("buildEstimateSamples", () => {
+  const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+
+  // The case that motivated it: one account has an April occurrence settled by a
+  // 27 March payment, so keying on the transaction date files April's bill under
+  // March and next April finds no same-month history.
+  it("files a payment under the occurrence it settled, not the day it was paid", () => {
+    const samples = buildEstimateSamples(
+      [{ id: "t1", date: new Date("2026-03-27T10:00:00.000Z"), amount: 5400 }],
+      [{ dueDate: day("2026-04-05"), transactionId: "t1" }],
+      -480,
+    );
+    expect(samples).toEqual([{ year: 2026, month: 4, amount: 5400, at: Date.parse("2026-03-27T10:00:00.000Z") }]);
+  });
+
+  it("keeps the payment instant for ordering, not the occurrence's", () => {
+    const [s] = buildEstimateSamples(
+      [{ id: "t1", date: new Date("2026-08-31T16:30:00.000Z"), amount: 900 }],
+      [{ dueDate: day("2026-09-01"), transactionId: "t1" }],
+      -480,
+    );
+    expect(s.month).toBe(9);
+    expect(s.at).toBe(Date.parse("2026-08-31T16:30:00.000Z"));
+  });
+
+  // A payment settling nothing still counts; it just uses its own calendar month,
+  // resolved through the account's offset rather than UTC's.
+  it("falls back to the payment's own local month when it settles no occurrence", () => {
+    const [s] = buildEstimateSamples(
+      [{ id: "t1", date: new Date("2026-06-30T16:30:00.000Z"), amount: 100 }],
+      [],
+      -480,
+    );
+    expect({ year: s.year, month: s.month }).toEqual({ year: 2026, month: 7 });
   });
 });

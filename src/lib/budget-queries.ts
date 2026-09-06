@@ -12,7 +12,7 @@ import { formatLocalDate } from "@/lib/validations";
 // One definition of "the calendar day of a date-only bill value", shared with the write paths
 // so a due date cannot be truncated one way going in and another coming out.
 import { utcDayStart } from "@/lib/bill-dates";
-import { estimateBillAmount, type EstimateSample } from "@/lib/bill-estimate";
+import { estimateBillAmount, buildEstimateSamples } from "@/lib/bill-estimate";
 import type {
   PrismaClient,
   SpendingByCategoryParams,
@@ -659,7 +659,10 @@ export const getUpcomingBills = async (
       category: true,
       // For estimating a variable bill. Only those use them, but one include
       // beats a query per bill, and this path feeds MCP, Telegram and the AI tip.
-      transactions: { select: { date: true, amount: true } },
+      transactions: { select: { id: true, date: true, amount: true } },
+      // Settled occurrences give each payment its billing *period*, which is what
+      // a seasonal estimate keys on -- not the day it happened to be paid.
+      occurrences: { where: { status: "PAID" }, select: { dueDate: true, transactionId: true } },
     },
     orderBy: { nextDueDate: "asc" },
   });
@@ -671,18 +674,9 @@ export const getUpcomingBills = async (
     // owed. Every consumer of this query -- get_upcoming_bills, the Telegram
     // /bills reply, the AI tip's context -- would otherwise state it as fact,
     // which is precisely what marking a bill variable is supposed to stop.
-    const tzMs = (params.timezoneOffset ?? 0) * 60 * 1000;
     const estimate = bill.isVariable
       ? estimateBillAmount(
-          bill.transactions.map((t): EstimateSample => {
-            const local = new Date(t.date.getTime() - tzMs);
-            return {
-              year: local.getUTCFullYear(),
-              month: local.getUTCMonth() + 1,
-              amount: t.amount,
-              at: t.date.getTime(),
-            };
-          }),
+          buildEstimateSamples(bill.transactions, bill.occurrences, params.timezoneOffset ?? 0),
           dueDate.getUTCMonth() + 1,
           dueDate.getUTCFullYear(),
           bill.amount,

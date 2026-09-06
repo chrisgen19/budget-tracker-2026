@@ -167,7 +167,12 @@ export async function POST(
 
         const transaction = await tx.transaction.create({
           data: {
-            amount: paidAmount ?? bill.amount,
+            // Only a variable bill takes the caller's figure. For a fixed one
+            // the stored amount *is* the asserted payment, and honouring an
+            // amount here would let a stale client write a transaction that
+            // silently disagrees with the bill. Pay & Edit remains the way to
+            // record a one-off different figure on any bill.
+            amount: bill.isVariable ? (paidAmount ?? bill.amount) : bill.amount,
             description: bill.description,
             type: bill.type,
             date: new Date(),

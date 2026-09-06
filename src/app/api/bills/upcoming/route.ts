@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { utcDayStart } from "@/lib/bill-utils";
-import { estimateBillAmount, type EstimateSample } from "@/lib/bill-estimate";
+import { estimateBillAmount, buildEstimateSamples } from "@/lib/bill-estimate";
 
 export async function GET(request: Request) {
   const userId = await getAuthUserId();
@@ -31,7 +31,10 @@ export async function GET(request: Request) {
       // Payments already linked to the bill, for estimating a variable one.
       // Only variable bills use these, but fetching them here keeps this a
       // single round trip rather than one per bill.
-      transactions: { select: { date: true, amount: true } },
+      transactions: { select: { id: true, date: true, amount: true } },
+      // Settled occurrences give each payment its billing *period*, which is
+      // what a seasonal estimate keys on -- not the day it was paid.
+      occurrences: { where: { status: "PAID" }, select: { dueDate: true, transactionId: true } },
     },
     orderBy: { nextDueDate: "asc" },
   });
@@ -47,15 +50,7 @@ export async function GET(request: Request) {
     // ago, since an annual mean is wrong in both directions every month.
     const estimate = bill.isVariable
       ? estimateBillAmount(
-          bill.transactions.map((t): EstimateSample => {
-            const local = new Date(t.date.getTime() - tzMs);
-            return {
-              year: local.getUTCFullYear(),
-              month: local.getUTCMonth() + 1,
-              amount: t.amount,
-              at: t.date.getTime(),
-            };
-          }),
+          buildEstimateSamples(bill.transactions, bill.occurrences, tz),
           dueDate.getUTCMonth() + 1,
           dueDate.getUTCFullYear(),
           bill.amount,

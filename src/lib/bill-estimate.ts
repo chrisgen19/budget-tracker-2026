@@ -97,3 +97,45 @@ export const describeEstimateBasis = (e: BillEstimate): string => {
       return "the amount set on the bill — no payments recorded yet";
   }
 };
+
+/**
+ * Build estimator samples from a bill's payments and its settled occurrences.
+ *
+ * The seasonal month is the **occurrence's** due date, not the day the payment
+ * happened. A bill due 1 September and paid on 31 August belongs to September's
+ * billing period; filing it under August means next September finds no same-month
+ * history and drops to the last-payment fallback. This is not hypothetical --
+ * one account has an April occurrence settled by a 27 March payment.
+ *
+ * The transaction's instant is still what `at` carries, since ordering "the last
+ * payment" is a question about when money moved, not about which period it was
+ * for. A payment settling no occurrence falls back to its own calendar month.
+ *
+ * Shared by every caller rather than repeated: the same estimate computed two
+ * ways in two files is the drift this feature has already been caught by.
+ */
+export const buildEstimateSamples = (
+  payments: readonly { id: string; date: Date; amount: number }[],
+  settledOccurrences: readonly { dueDate: Date; transactionId: string | null }[],
+  timezoneOffsetMinutes: number,
+): EstimateSample[] => {
+  const periodOf = new Map<string, Date>();
+  for (const o of settledOccurrences) {
+    if (o.transactionId) periodOf.set(o.transactionId, o.dueDate);
+  }
+  const tzMs = timezoneOffsetMinutes * 60 * 1000;
+
+  return payments.map((p): EstimateSample => {
+    const occurrence = periodOf.get(p.id);
+    // A due date is date-only at UTC midnight and means "the 5th" for everyone,
+    // so its month is read in UTC. A payment instant is resolved to the user's
+    // calendar month, which is the other half of the same rule.
+    const period = occurrence ?? new Date(p.date.getTime() - tzMs);
+    return {
+      year: period.getUTCFullYear(),
+      month: period.getUTCMonth() + 1,
+      amount: p.amount,
+      at: p.date.getTime(),
+    };
+  });
+};
