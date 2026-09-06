@@ -410,7 +410,8 @@ function LinkPaymentPanel({
       )}
       {data && data.candidates.length > 0 && (
         <p className="text-[10px] text-warm-400 px-1 pb-0.5">
-          {data.categoryName} payments near this date &middot; expected{" "}
+          {data.categoryName} payments near this date &middot;{" "}
+          {data.expectedIsEstimate ? "roughly " : "expected "}
           {hideAmounts ? "***" : formatCurrency(data.expectedAmount, currency)}
         </p>
       )}
@@ -454,8 +455,13 @@ function LinkPaymentPanel({
                 {hideAmounts ? "***" : formatCurrency(pending.amount, currency)} on{" "}
                 {formatBillDate(pending.localDate)}.
               </span>
-              {data && Math.abs(pending.amount - data.expectedAmount) >
-                data.expectedAmount * 0.5 && (
+              {/* Not shown for a variable bill: it has no single expected figure,
+                  so the warning would fire against a correct payment. Meralco
+                  ranges 5,300 to 14,126 -- half of those are "a long way from"
+                  any one number, and a warning that cries wolf is worse than
+                  none, because the next real one gets dismissed too. */}
+              {data && !data.expectedIsEstimate &&
+                Math.abs(pending.amount - data.expectedAmount) > data.expectedAmount * 0.5 && (
                 <span className="block mt-2 text-expense">
                   That is a long way from the{" "}
                   {hideAmounts ? "***" : formatCurrency(data.expectedAmount, currency)} this bill

@@ -27,7 +27,8 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { action, dueDate: dueDateStr, transactionId: existingTransactionId, snoozeDays } = billActionSchema.parse(body);
+    const { action, dueDate: dueDateStr, transactionId: existingTransactionId, snoozeDays, amount: paidAmount } =
+      billActionSchema.parse(body);
     const dueDate = new Date(dueDateStr);
 
     const originalStartDay = bill.startDate.getUTCDate();
@@ -128,6 +129,21 @@ export async function POST(
       );
 
     if (action === "pay") {
+      // A variable bill's stored amount is a fallback for *forecasting*, not a
+      // claim about what was paid. Writing it as a transaction would put a guess
+      // in the ledger, and the estimator reads the ledger back as history -- so
+      // one wrong click compounds into every future estimate. The caller must
+      // say what was actually paid.
+      if (bill.isVariable && paidAmount === undefined) {
+        return NextResponse.json(
+          {
+            error:
+              "This bill's amount varies, so the payment amount is required. " +
+              "Use Pay & Edit to enter what you actually paid.",
+          },
+          { status: 400 },
+        );
+      }
       // Resolve labels: bill labels take priority over scheduled auto-labels
       const billLabelIds = (bill.labels ?? [])
         .filter((bl) => bl.label.applicableTo === "BOTH" || bl.label.applicableTo === bill.type)
@@ -151,7 +167,12 @@ export async function POST(
 
         const transaction = await tx.transaction.create({
           data: {
-            amount: bill.amount,
+            // Only a variable bill takes the caller's figure. For a fixed one
+            // the stored amount *is* the asserted payment, and honouring an
+            // amount here would let a stale client write a transaction that
+            // silently disagrees with the bill. Pay & Edit remains the way to
+            // record a one-off different figure on any bill.
+            amount: bill.isVariable ? (paidAmount ?? bill.amount) : bill.amount,
             description: bill.description,
             type: bill.type,
             date: new Date(),

@@ -50,6 +50,7 @@ export async function GET() {
     const bills: UpcomingBillsContext = {
       count: billsResult.count,
       totalAmount: billsResult.totalAmount,
+      totalIsEstimate: billsResult.totalIsEstimate,
       bills: billsResult.bills,
     };
     const input: DailyTipInput = {

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { utcDayStart } from "@/lib/bill-dates";
 import { formatLocalDate } from "@/lib/validations";
+import { estimateBillAmount, buildEstimateSamples } from "@/lib/bill-estimate";
 
 /** How far from the due date a payment may sit and still be offered. */
 const WINDOW_DAYS = 14;
@@ -53,8 +54,10 @@ export async function GET(
   const bill = await prisma.scheduledTransaction.findUnique({
     where: { id },
     select: {
-      id: true, userId: true, type: true, categoryId: true, amount: true,
+      id: true, userId: true, type: true, categoryId: true, amount: true, isVariable: true,
       category: { select: { name: true } },
+      transactions: { select: { id: true, date: true, amount: true } },
+      occurrences: { where: { status: "PAID" }, select: { dueDate: true, transactionId: true } },
     },
   });
   if (!bill || bill.userId !== userId) {
@@ -128,9 +131,22 @@ export async function GET(
     candidates,
     windowDays: WINDOW_DAYS,
     categoryName: bill.category.name,
-    // The bill's own amount, so the panel can show what was expected beside
-    // what is offered. A mobile top-up sitting in the same category as a water
-    // bill is only obviously wrong once both numbers are on screen.
-    expectedAmount: bill.amount,
+    // What the bill is expected to cost, so the panel can show it beside what is
+    // offered -- a mobile top-up in the same category as a water bill is only
+    // obviously wrong once both numbers are on screen. For a variable bill the
+    // stored amount is a fallback, so the derived estimate is used instead:
+    // otherwise the panel would assert 5,500 for a bill that cost 14,126 and
+    // warn against the correct payment for being "a long way from" a guess.
+    expectedAmount: bill.isVariable
+      ? estimateBillAmount(
+          buildEstimateSamples(bill.transactions, bill.occurrences, timezoneOffset),
+          due.getUTCMonth() + 1,
+          due.getUTCFullYear(),
+          bill.amount,
+        ).amount
+      : bill.amount,
+    // A variable bill has no single expected figure, so the panel shows the
+    // estimate for orientation but does not warn when a candidate differs.
+    expectedIsEstimate: bill.isVariable,
   });
 }

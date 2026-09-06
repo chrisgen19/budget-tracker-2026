@@ -299,7 +299,7 @@ export default function DashboardPage() {
                       {upcomingData.count} bill{upcomingData.count > 1 ? "s" : ""} due this week
                       {!hideAmounts && (
                         <span className="text-warm-500 font-medium">
-                          {" "}&middot; {formatCurrency(upcomingData.totalAmount, currency)} total
+                          {" "}&middot; {upcomingData.totalIsEstimate ? "~" : ""}{formatCurrency(upcomingData.totalAmount, currency)} total
                         </span>
                       )}
                     </p>

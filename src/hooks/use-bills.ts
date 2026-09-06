@@ -58,7 +58,10 @@ export interface UpcomingBill {
   categoryName: string;
   categoryIcon: string;
   categoryColor: string;
+  /** Expected cost. Derived from history when `isEstimate`; never state it flatly then. */
   amount: number;
+  isEstimate: boolean;
+  estimateBasis: "same-month-last-year" | "last-payment" | "budgeted" | null;
   dueDate: string;
   isOverdue: boolean;
   daysUntilDue: number;
@@ -67,6 +70,8 @@ export interface UpcomingBill {
 export interface UpcomingBillsResponse {
   count: number;
   totalAmount: number;
+  /** True when any bill's amount was derived, so the total is an approximation. */
+  totalIsEstimate: boolean;
   bills: UpcomingBill[];
 }
 
@@ -165,6 +170,7 @@ export function useBillPaymentCandidatesQuery(id: string, dueDate: string | null
       windowDays: number;
       categoryName: string;
       expectedAmount: number;
+      expectedIsEstimate: boolean;
     }> => {
       const res = await fetch(
         `/api/bills/${id}/candidates?dueDate=${encodeURIComponent(dueDate!)}`,

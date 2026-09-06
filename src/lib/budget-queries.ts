@@ -12,6 +12,7 @@ import { formatLocalDate } from "@/lib/validations";
 // One definition of "the calendar day of a date-only bill value", shared with the write paths
 // so a due date cannot be truncated one way going in and another coming out.
 import { utcDayStart } from "@/lib/bill-dates";
+import { estimateBillAmount, buildEstimateSamples } from "@/lib/bill-estimate";
 import type {
   PrismaClient,
   SpendingByCategoryParams,
@@ -654,12 +655,33 @@ export const getUpcomingBills = async (
       isActive: true,
       nextDueDate: { lte: cutoff },
     },
-    include: { category: true },
+    include: {
+      category: true,
+      // For estimating a variable bill. Only those use them, but one include
+      // beats a query per bill, and this path feeds MCP, Telegram and the AI tip.
+      transactions: { select: { id: true, date: true, amount: true } },
+      // Settled occurrences give each payment its billing *period*, which is what
+      // a seasonal estimate keys on -- not the day it happened to be paid.
+      occurrences: { where: { status: "PAID" }, select: { dueDate: true, transactionId: true } },
+    },
     orderBy: { nextDueDate: "asc" },
   });
 
   const upcomingBills = bills.map((bill) => {
     const dueDate = utcDayStart(bill.nextDueDate);
+
+    // A variable bill's stored amount is a fallback, not a claim about what is
+    // owed. Every consumer of this query -- get_upcoming_bills, the Telegram
+    // /bills reply, the AI tip's context -- would otherwise state it as fact,
+    // which is precisely what marking a bill variable is supposed to stop.
+    const estimate = bill.isVariable
+      ? estimateBillAmount(
+          buildEstimateSamples(bill.transactions, bill.occurrences, params.timezoneOffset ?? 0),
+          dueDate.getUTCMonth() + 1,
+          dueDate.getUTCFullYear(),
+          bill.amount,
+        )
+      : null;
 
     return {
       id: bill.id,
@@ -667,7 +689,12 @@ export const getUpcomingBills = async (
       categoryName: bill.category.name,
       categoryIcon: bill.category.icon,
       categoryColor: bill.category.color,
-      amount: bill.amount,
+      amount: estimate ? estimate.amount : bill.amount,
+      // Whether `amount` was asserted by the bill or derived from its payments.
+      // A caller that ignores this still gets a usable figure rather than a
+      // zero, but one that reads it can say "about" instead of stating a number.
+      isEstimate: estimate !== null,
+      estimateBasis: estimate?.basis ?? null,
       dueDate: bill.nextDueDate.toISOString(),
       // `dayKey(utcDayStart(...))`, never `formatLocalDate`: a due date is date-only, and the
       // timezone shift that is correct for a transaction is wrong here.
@@ -681,6 +708,9 @@ export const getUpcomingBills = async (
   return {
     count: upcomingBills.length,
     totalAmount,
+    // True when any component was derived, so a caller can say "about" of the
+    // total rather than implying a figure it cannot know.
+    totalIsEstimate: upcomingBills.some((b) => b.isEstimate),
     bills: upcomingBills,
   };
 };

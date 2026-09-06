@@ -200,12 +200,18 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
   const [payAllProgress, setPayAllProgress] = useState<{ current: number; total: number } | null>(null);
 
   const handlePayAll = useCallback(async () => {
-    if (pendingReminders.length === 0) return;
-    const total = pendingReminders.length;
+    // Pay All sends the bare `pay` action, which records each bill's stored
+    // amount. For a variable bill that amount is a forecasting fallback, and the
+    // server refuses it -- so such bills are excluded here rather than
+    // contributing a run of 400s. They stay in the banner to be settled one at a
+    // time with the figure actually paid.
+    const payable = pendingReminders.filter((r) => !r.scheduledTransaction.isVariable);
+    if (payable.length === 0) return;
+    const total = payable.length;
     setPayAllProgress({ current: 0, total });
 
     // Copy reminders since the array will mutate as payments process
-    const remindersSnapshot = [...pendingReminders];
+    const remindersSnapshot = [...payable];
     let succeeded = 0;
     let failed = 0;
 

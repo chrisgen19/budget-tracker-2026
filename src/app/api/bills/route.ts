@@ -98,6 +98,7 @@ export async function POST(request: Request) {
       return tx.scheduledTransaction.create({
         data: {
           amount: billData.amount,
+          isVariable: billData.isVariable ?? false,
           description: billData.description,
           type: billData.type,
           frequency: billData.frequency,

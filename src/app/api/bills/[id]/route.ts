@@ -78,6 +78,9 @@ export async function PUT(
         where: { id },
         data: {
           amount: billData.amount,
+          // Absent means "unchanged", not "false": an update that does not
+          // resend the flag must not silently un-mark a variable bill.
+          ...(billData.isVariable !== undefined && { isVariable: billData.isVariable }),
           description: billData.description,
           type: billData.type,
           frequency: billData.frequency,

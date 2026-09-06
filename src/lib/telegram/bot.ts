@@ -383,11 +383,19 @@ async function handleBills(chatId: number) {
       description: string;
       categoryName: string;
       amount: number;
+      /**
+       * True when `amount` was derived from the bill's own payments rather than
+       * set on it. Optional because `callTool` casts rather than validates, so a
+       * bot pointed at an app that predates variable bills would otherwise read
+       * undefined as a missing field rather than "not an estimate".
+       */
+      isEstimate?: boolean;
       /** Absent on an app older than the localDueDate change; used only as a fallback. */
       dueDate?: string;
       localDueDate?: string;
       isOverdue: boolean;
     }[];
+    totalIsEstimate?: boolean;
   }>("get_upcoming_bills", { days: 30 });
 
   if (result.bills.length === 0) {
@@ -411,7 +419,10 @@ async function handleBills(chatId: number) {
           timeZone: "UTC",
         })
       : "date unavailable";
-    msg += `\u2022 *${b.description || b.categoryName}*: ${SYMBOL}${b.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
+    // A metered bill's amount is derived from its own payment history, not a sum
+    // owed. The tilde is the whole difference between reporting and asserting.
+    const approx = b.isEstimate ? "~" : "";
+    msg += `\u2022 *${b.description || b.categoryName}*: ${approx}${SYMBOL}${b.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
     msg += `   Due: ${due}${b.isOverdue ? " (overdue)" : ""}\n\n`;
   }
 

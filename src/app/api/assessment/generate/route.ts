@@ -70,6 +70,7 @@ export async function POST(request: Request) {
     const bills: UpcomingBillsContext = {
       count: billsResult.count,
       totalAmount: billsResult.totalAmount,
+      totalIsEstimate: billsResult.totalIsEstimate,
       bills: billsResult.bills,
     };
 

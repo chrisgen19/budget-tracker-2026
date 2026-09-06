@@ -82,6 +82,7 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
       frequency: bill?.frequency ?? "MONTHLY",
       customIntervalDays: bill?.customIntervalDays ?? undefined,
       reminderDaysBefore: bill?.reminderDaysBefore ?? 0,
+      isVariable: bill?.isVariable ?? false,
       // Bill start/end dates are date-only calendar values stored at UTC midnight ("the 5th"),
       // not instants, so they are read back with UTC accessors. Routing one through the browser's
       // zone moves the 5th to the 4th west of UTC, and saving an untouched form writes that day
@@ -312,6 +313,37 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
               {errors.amount && (
                 <p className="text-expense text-sm mt-2">{errors.amount.message}</p>
               )}
+
+              {/* A metered bill cannot be described by one figure. Marked here,
+                  the reminder stops asserting an amount and the forecast derives
+                  one from what the bill has actually cost (#217). The amount
+                  above stays required: it is the fallback until enough payments
+                  exist to estimate from, and a zero in the forecast would be
+                  worse than an approximation. */}
+              <label
+                className={cn(
+                  "mt-5 flex items-start gap-3 mx-auto max-w-[320px] text-left cursor-pointer",
+                  "rounded-xl border px-3 py-2.5 transition-colors",
+                  watch("isVariable")
+                    ? "border-amber/40 bg-amber/5"
+                    : "border-cream-300 hover:border-cream-400",
+                )}
+              >
+                <input
+                  type="checkbox"
+                  {...register("isVariable")}
+                  className="mt-0.5 w-4 h-4 shrink-0 accent-amber cursor-pointer"
+                />
+                <span>
+                  <span className="block text-sm font-semibold text-warm-600">
+                    The amount varies
+                  </span>
+                  <span className="block text-xs text-warm-400 mt-0.5">
+                    For metered bills like electricity or water. Reminders won&apos;t state a
+                    figure, and the forecast uses what you&apos;ve actually paid.
+                  </span>
+                </span>
+              </label>
             </div>
 
             {/* Category — quick picks */}

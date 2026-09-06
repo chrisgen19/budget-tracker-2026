@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { utcDayStart } from "@/lib/bill-utils";
+import { estimateBillAmount, buildEstimateSamples } from "@/lib/bill-estimate";
 
 export async function GET(request: Request) {
   const userId = await getAuthUserId();
@@ -25,7 +26,16 @@ export async function GET(request: Request) {
       isActive: true,
       nextDueDate: { lte: nextWeek },
     },
-    include: { category: true },
+    include: {
+      category: true,
+      // Payments already linked to the bill, for estimating a variable one.
+      // Only variable bills use these, but fetching them here keeps this a
+      // single round trip rather than one per bill.
+      transactions: { select: { id: true, date: true, amount: true } },
+      // Settled occurrences give each payment its billing *period*, which is
+      // what a seasonal estimate keys on -- not the day it was paid.
+      occurrences: { where: { status: "PAID" }, select: { dueDate: true, transactionId: true } },
+    },
     orderBy: { nextDueDate: "asc" },
   });
 
@@ -35,13 +45,32 @@ export async function GET(request: Request) {
     const diffMs = dueDate.getTime() - today.getTime();
     const daysUntilDue = Math.round(diffMs / (1000 * 60 * 60 * 24));
 
+    // A variable bill's stored amount is a fallback, not a claim. Its forecast
+    // comes from what it has actually cost -- preferring the same month a year
+    // ago, since an annual mean is wrong in both directions every month.
+    const estimate = bill.isVariable
+      ? estimateBillAmount(
+          buildEstimateSamples(bill.transactions, bill.occurrences, tz),
+          dueDate.getUTCMonth() + 1,
+          dueDate.getUTCFullYear(),
+          bill.amount,
+        )
+      : null;
+
     return {
       id: bill.id,
       description: bill.description || bill.category.name,
       categoryName: bill.category.name,
       categoryIcon: bill.category.icon,
       categoryColor: bill.category.color,
-      amount: bill.amount,
+      // `amount` stays the figure to plan with, so every existing caller keeps
+      // working; `isEstimate` says whether it was asserted or derived. A caller
+      // that ignores the flag gets a usable number rather than a zero, which is
+      // why a null amount was rejected for variable bills.
+      amount: estimate ? estimate.amount : bill.amount,
+      isEstimate: estimate !== null,
+      estimateBasis: estimate?.basis ?? null,
+      estimateSampleSize: estimate?.sampleSize ?? null,
       dueDate: bill.nextDueDate.toISOString(),
       isOverdue,
       daysUntilDue,
@@ -49,10 +78,14 @@ export async function GET(request: Request) {
   });
 
   const totalAmount = upcomingBills.reduce((sum, b) => sum + b.amount, 0);
+  // True when any component of the total was derived rather than asserted, so
+  // the widget can show "~" instead of implying a figure it cannot know.
+  const totalIsEstimate = upcomingBills.some((b) => b.isEstimate);
 
   return NextResponse.json({
     count: upcomingBills.length,
     totalAmount,
+    totalIsEstimate,
     bills: upcomingBills,
   });
 }

@@ -283,6 +283,11 @@ model ScheduledTransaction {
   frequency           BillFrequency
   customIntervalDays  Int?            @map("custom_interval_days")
   reminderDaysBefore  Int             @default(0) @map("reminder_days_before")
+  /// Whether this bill's cost varies month to month -- a metered utility rather than a fixed
+  /// contract. `amount` stays required and keeps working as a fallback, but for a variable bill
+  /// the reminder asserts no figure and the forecast derives one from the payments already
+  /// linked to this bill. A single constant cannot describe a cost that swings 2.7x (#217).
+  isVariable          Boolean         @default(false) @map("is_variable")
   startDate           DateTime        @map("start_date")
   endDate             DateTime?       @map("end_date")
   nextDueDate         DateTime        @map("next_due_date")
