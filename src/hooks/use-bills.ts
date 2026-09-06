@@ -23,6 +23,10 @@ export const billKeys = {
   pendingAll: ["bills", "pending"] as const,
   upcoming: (tz: number) => ["bills", "upcoming", tz] as const,
   history: (id: string) => ["bills", "history", id] as const,
+  candidates: (id: string, dueDate: string) =>
+    ["bills", "candidates", id, dueDate] as const,
+  /** Prefix for every candidate list, invalidated whenever transactions change. */
+  candidatesAll: ["bills", "candidates"] as const,
 };
 
 /* ------------------------------------------------------------------ */
@@ -133,6 +137,48 @@ export function useBillHistoryQuery(id: string) {
         ? lastPage.pagination.page + 1
         : undefined,
     enabled: !!id,
+  });
+}
+
+export type BillPaymentCandidate = {
+  id: string;
+  /** The instant, kept for ordering. */
+  date: string;
+  /** The payment's day in the account's own calendar. Render this, never `date`. */
+  localDate: string;
+  amount: number;
+  description: string;
+  category: { name: string; icon: string; color: string };
+};
+
+/**
+ * Payments that could settle a skipped occurrence, for correcting it in place.
+ * Enabled only when a due date is supplied, so opening the panel is what
+ * fetches -- a bill's history can list many skips and none of them are usually
+ * being corrected.
+ */
+export function useBillPaymentCandidatesQuery(id: string, dueDate: string | null) {
+  return useQuery({
+    queryKey: billKeys.candidates(id, dueDate ?? ""),
+    queryFn: async (): Promise<{
+      candidates: BillPaymentCandidate[];
+      windowDays: number;
+      categoryName: string;
+      expectedAmount: number;
+    }> => {
+      const res = await fetch(
+        `/api/bills/${id}/candidates?dueDate=${encodeURIComponent(dueDate!)}`,
+      );
+      if (!res.ok) throw new Error("Failed to load payments");
+      return res.json();
+    },
+    enabled: !!id && !!dueDate,
+    // Always refetch on open. The list is derived from the transaction ledger,
+    // and the client default holds a query fresh for five minutes without
+    // refetching on focus -- so a payment added or re-dated while the panel was
+    // shut stayed invisible, and the panel offered a stale set of candidates.
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 }
 

@@ -288,6 +288,11 @@ export function useCreateTransaction() {
 
       // Invalidate label counts
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
+      // Bill payment candidates are derived from transactions, so a write here
+      // can add or remove one. Keyed literally rather than through billKeys:
+      // use-bills.ts already imports from this module, and importing back would
+      // make the cycle.
+      queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] });
     },
   });
 }
@@ -331,6 +336,11 @@ export function useUpdateTransaction() {
 
       // Invalidate label counts
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
+      // Bill payment candidates are derived from transactions, so a write here
+      // can add or remove one. Keyed literally rather than through billKeys:
+      // use-bills.ts already imports from this module, and importing back would
+      // make the cycle.
+      queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] });
     },
   });
 }
@@ -365,6 +375,7 @@ export function useDeleteTransaction() {
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
         queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
         queryClient.invalidateQueries({ queryKey: labelKeys.all }),
+        queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] }),
       ]);
     },
   });
@@ -410,6 +421,7 @@ export function useBulkDeleteTransactions() {
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
         queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
         queryClient.invalidateQueries({ queryKey: labelKeys.all }),
+        queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] }),
       ]);
     },
   });
@@ -484,6 +496,7 @@ export function useBulkUpdateTransactions() {
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
         queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
         queryClient.invalidateQueries({ queryKey: labelKeys.all }),
+        queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] }),
       ]);
     },
   });
@@ -630,6 +643,11 @@ export function useRemoveTransactionLabel() {
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
       queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
+      // Bill payment candidates are derived from transactions, so a write here
+      // can add or remove one. Keyed literally rather than through billKeys:
+      // use-bills.ts already imports from this module, and importing back would
+      // make the cycle.
+      queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] });
     },
     onError: () => {
       // Refetch to restore consistent state (pill stays visible since cache

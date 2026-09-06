@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Pencil, PowerOff, CalendarClock, X, ChevronDown, ChevronUp, RotateCcw, ExternalLink } from "lucide-react";
+import { Plus, Pencil, PowerOff, CalendarClock, X, ChevronDown, ChevronUp, RotateCcw, ExternalLink, Link2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn, formatCurrency } from "@/lib/utils";
@@ -19,7 +19,10 @@ import {
   useDeleteBill,
   useReactivateBill,
   useBillHistoryQuery,
+  useBillPaymentCandidatesQuery,
+  useBillAction,
 } from "@/hooks/use-bills";
+import type { BillPaymentCandidate } from "@/hooks/use-bills";
 import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import type { ScheduledTransactionInput } from "@/lib/validations";
@@ -348,9 +351,134 @@ export default function BillsPage() {
 }
 
 /** Inline bill payment history */
+/**
+ * Attach an existing transaction to a skipped occurrence.
+ *
+ * Lists only unlinked payments of the bill's own type within a fortnight of the
+ * due date. Picking one calls `pay_existing`, which since #216 may supersede a
+ * skip -- `pay` still may not, because it would create a *second* transaction
+ * for a month that already has one.
+ */
+function LinkPaymentPanel({
+  billId,
+  dueDate,
+  currency,
+  hideAmounts,
+  onDone,
+}: {
+  billId: string;
+  dueDate: string;
+  currency: string;
+  hideAmounts: boolean;
+  onDone: () => void;
+}) {
+  const { data, isLoading, isError } = useBillPaymentCandidatesQuery(billId, dueDate);
+  const billAction = useBillAction();
+  const [error, setError] = useState<string | null>(null);
+  // Picking a row only *selects* it. Committing writes a terminal record that
+  // nothing in the app could undo before this PR, and a one-click list is far
+  // too easy to hit by accident -- a mobile top-up was linked to a water bill
+  // that way while this panel was being tried out.
+  const [pending, setPending] = useState<BillPaymentCandidate | null>(null);
+
+  const link = async () => {
+    if (!pending) return;
+    setError(null);
+    try {
+      await billAction.mutateAsync({
+        id: billId,
+        input: { action: "pay_existing", dueDate, transactionId: pending.id },
+      });
+      setPending(null);
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not link that payment");
+    }
+  };
+
+  return (
+    <div className="mt-1 ml-24 rounded-lg border border-cream-300 bg-cream-100 p-2 space-y-1">
+      {isLoading && <p className="text-[11px] text-warm-400 px-1 py-1">Looking for payments…</p>}
+      {isError && (
+        <p className="text-[11px] text-expense px-1 py-1">Could not load payments.</p>
+      )}
+      {data && data.candidates.length === 0 && (
+        <p className="text-[11px] text-warm-400 px-1 py-1">
+          No unlinked {data.categoryName} payment within {data.windowDays} days of this date.
+          Add the transaction first, then link it here.
+        </p>
+      )}
+      {data && data.candidates.length > 0 && (
+        <p className="text-[10px] text-warm-400 px-1 pb-0.5">
+          {data.categoryName} payments near this date &middot; expected{" "}
+          {hideAmounts ? "***" : formatCurrency(data.expectedAmount, currency)}
+        </p>
+      )}
+      {data?.candidates.map((c) => (
+        <button
+          key={c.id}
+          onClick={() => setPending(c)}
+          disabled={billAction.isPending}
+          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-[11px] hover:bg-cream-200 disabled:opacity-50 transition-colors relative before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']"
+        >
+          <span className="text-warm-400 tabular-nums shrink-0">
+            {formatBillDate(c.localDate)}
+          </span>
+          <span className="text-warm-600 truncate">{c.description || c.category.name}</span>
+          <span className="ml-auto text-warm-500 font-medium tabular-nums shrink-0">
+            {hideAmounts ? "***" : formatCurrency(c.amount, currency)}
+          </span>
+        </button>
+      ))}
+      {error && <p className="text-[11px] text-expense px-1">{error}</p>}
+      <button
+        onClick={onDone}
+        className="w-full text-[10px] text-warm-400 hover:text-warm-600 py-0.5 transition-colors relative before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']"
+      >
+        Cancel
+      </button>
+
+      <ConfirmModal
+        open={pending !== null}
+        onClose={() => setPending(null)}
+        onConfirm={link}
+        loading={billAction.isPending}
+        title="Mark this occurrence as paid?"
+        confirmLabel="Link payment"
+        message={
+          pending && (
+            <>
+              <span className="block">
+                {formatBillDate(dueDate)} will be recorded as paid by{" "}
+                <strong>{pending.description || pending.category.name}</strong> of{" "}
+                {hideAmounts ? "***" : formatCurrency(pending.amount, currency)} on{" "}
+                {formatBillDate(pending.localDate)}.
+              </span>
+              {data && Math.abs(pending.amount - data.expectedAmount) >
+                data.expectedAmount * 0.5 && (
+                <span className="block mt-2 text-expense">
+                  That is a long way from the{" "}
+                  {hideAmounts ? "***" : formatCurrency(data.expectedAmount, currency)} this bill
+                  usually costs. Check it is the right payment.
+                </span>
+              )}
+            </>
+          )
+        }
+      />
+    </div>
+  );
+}
+
 function BillHistory({ billId, currency, hideAmounts }: { billId: string; currency: string; hideAmounts: boolean }) {
   const router = useRouter();
   const { data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage } = useBillHistoryQuery(billId);
+  // Which skipped occurrence, if any, is being corrected. Only one at a time:
+  // the panel replaces the row's content, so two open at once would be noise.
+  // Keyed by calendar day -- HistoryResponse types dueDate as a Date but it
+  // arrives as an ISO string over JSON, which is why formatBillDate takes both.
+  const [linkingDueDate, setLinkingDueDate] = useState<string | null>(null);
+  const dueKey = (d: Date | string) => new Date(d).toISOString().slice(0, 10);
 
   if (isLoading) {
     return (
@@ -402,8 +530,36 @@ function BillHistory({ billId, currency, hideAmounts }: { billId: string; curren
               )}
             </span>
           )}
+          {/* Skip is what people press when the bill is already paid and they
+              want the reminder gone, so a skipped month is often a payment that
+              was never attached. This is the only way to say so afterwards. */}
+          {log.status === "SKIPPED" && (
+            <button
+              onClick={() =>
+                setLinkingDueDate(
+                  linkingDueDate === dueKey(log.dueDate) ? null : dueKey(log.dueDate),
+                )
+              }
+              className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium text-warm-400 hover:text-amber hover:bg-cream-200 transition-colors relative before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']"
+              aria-expanded={linkingDueDate === dueKey(log.dueDate)}
+            >
+              <Link2 className="w-3 h-3" />
+              I paid this
+            </button>
+          )}
         </div>
       ))}
+      {allLogs.some(
+        (log) => log.status === "SKIPPED" && linkingDueDate === dueKey(log.dueDate),
+      ) && (
+        <LinkPaymentPanel
+          billId={billId}
+          dueDate={linkingDueDate!}
+          currency={currency}
+          hideAmounts={hideAmounts}
+          onDone={() => setLinkingDueDate(null)}
+        />
+      )}
 
       {hasNextPage && (
         <button
