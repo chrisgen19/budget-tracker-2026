@@ -63,7 +63,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
 
   const [showSnoozeMenu, setShowSnoozeMenu] = useState(false);
   const [confirmPayAll, setConfirmPayAll] = useState(false);
-  // Skipping writes a permanent record asserting the month was not paid, and
+  // Skipping writes a permanent record asserting the occurrence was not paid, and
   // the button sits beside a dismiss control that writes nothing. Two records
   // of a bill that *had* been paid were produced this way (#221), so the
   // consequence is stated before it is written -- and the dialog names the
@@ -367,7 +367,11 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
         setConfirmSkip(null);
         if (r) handleSkip(r);
       }}
-      title="Record this month as unpaid?"
+      // Names the due date, not "this month": a bill can be DAILY, WEEKLY,
+      // ANNUALLY or CUSTOM, and the skip records one occurrence rather than a
+      // month. Overstating scope in the dialog meant to prevent a false record
+      // is the same class of error as the button that made it necessary.
+      title={`Record ${formatBillDate(confirmSkip?.dueDate ?? new Date())} as unpaid?`}
       confirmLabel="Yes, it wasn't paid"
       confirmIcon={CalendarX}
       loading={isActioning}
@@ -375,8 +379,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
         <>
           <span className="block">
             {confirmSkip?.scheduledTransaction.description || "This bill"} will be recorded as
-            <strong> not paid</strong> for {formatBillDate(confirmSkip?.dueDate ?? new Date())},
-            and the bill moves on to its next due date.
+            <strong> not paid</strong> for that date, and the bill moves on to its next due date.
           </span>
           <span className="block mt-2">
             Already paid it outside the app? Use <strong>Pay &amp; Edit</strong> instead, or

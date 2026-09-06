@@ -248,15 +248,15 @@ export function UpcomingBillRow({
           setConfirmSkip(false);
           handleSkip();
         }}
-        title="Record this month as unpaid?"
+        title={`Record ${formatBillDate(bill.dueDate)} as unpaid?`}
         confirmLabel="Yes, it wasn't paid"
         confirmIcon={CalendarX}
         loading={isActioning}
         message={
           <>
             <span className="block">
-              {bill.description} will be recorded as <strong>not paid</strong> for{" "}
-              {formatBillDate(bill.dueDate)}, and the bill moves on to its next due date.
+              {bill.description} will be recorded as <strong>not paid</strong> for that date, and
+              the bill moves on to its next due date.
             </span>
             <span className="block mt-2">
               Already paid it outside the app? Attach the payment from the bill&apos;s history
