@@ -155,7 +155,11 @@ export type BillPaymentCandidate = {
 export function useBillPaymentCandidatesQuery(id: string, dueDate: string | null) {
   return useQuery({
     queryKey: billKeys.candidates(id, dueDate ?? ""),
-    queryFn: async (): Promise<{ candidates: BillPaymentCandidate[]; windowDays: number }> => {
+    queryFn: async (): Promise<{
+      candidates: BillPaymentCandidate[];
+      windowDays: number;
+      categoryName: string;
+    }> => {
       const res = await fetch(
         `/api/bills/${id}/candidates?dueDate=${encodeURIComponent(dueDate!)}`,
       );

@@ -15,10 +15,14 @@ const WINDOW_DAYS = 14;
  * gone, and until #216 nothing could undo that -- the API refused, and the UI
  * offered no way to attach the payment that was already sitting in the ledger.
  *
- * Deliberately narrow: only the user's own transactions, only the bill's own
- * type, only rows carrying no `billId` yet, and only within a fortnight of the
- * due date. A wider net would list a page of unrelated spending and invite
- * attaching the wrong one, which is worse than the skip it corrects.
+ * Narrowed by the bill's own **category**, not merely its type. Type and a
+ * fortnight's window sound restrictive and are not: for this account they leave
+ * 145 candidates for one Meralco occurrence, so the payment being looked for
+ * would sit among two dozen unrelated expenses and invite attaching the wrong
+ * row -- worse than the skip it corrects. The same window within the bill's
+ * category leaves 2. A miscategorised payment is therefore not offered, which
+ * is the deliberate trade: a short list that can be read beats a long one that
+ * cannot, and the empty state says what was searched.
  */
 export async function GET(
   request: Request,
@@ -40,7 +44,7 @@ export async function GET(
 
   const bill = await prisma.scheduledTransaction.findUnique({
     where: { id },
-    select: { id: true, userId: true, type: true },
+    select: { id: true, userId: true, type: true, categoryId: true, category: { select: { name: true } } },
   });
   if (!bill || bill.userId !== userId) {
     return NextResponse.json({ error: "Bill not found" }, { status: 404 });
@@ -50,10 +54,11 @@ export async function GET(
   // built in UTC too rather than resolved through anybody's timezone.
   const due = utcDayStart(new Date(`${parsed.data}T00:00:00.000Z`));
 
-  const candidates = await prisma.transaction.findMany({
+  const rows = await prisma.transaction.findMany({
     where: {
       userId,
       type: bill.type,
+      categoryId: bill.categoryId,
       billId: null,
       date: { gte: addUtcDays(due, -WINDOW_DAYS), lte: addUtcDays(due, WINDOW_DAYS) },
     },
@@ -64,9 +69,19 @@ export async function GET(
       description: true,
       category: { select: { name: true, icon: true, color: true } },
     },
-    orderBy: { date: "asc" },
     take: 25,
   });
 
-  return NextResponse.json({ candidates, windowDays: WINDOW_DAYS });
+  // Nearest the due date first: a bill paid a day late is a likelier match than
+  // one paid a fortnight early, and the list is short enough to sort in memory.
+  const candidates = rows.sort(
+    (a, b) =>
+      Math.abs(a.date.getTime() - due.getTime()) - Math.abs(b.date.getTime() - due.getTime()),
+  );
+
+  return NextResponse.json({
+    candidates,
+    windowDays: WINDOW_DAYS,
+    categoryName: bill.category.name,
+  });
 }

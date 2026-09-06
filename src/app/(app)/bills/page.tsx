@@ -396,8 +396,8 @@ function LinkPaymentPanel({
       )}
       {data && data.candidates.length === 0 && (
         <p className="text-[11px] text-warm-400 px-1 py-1">
-          No unlinked payment within {data.windowDays} days of this date. Add the transaction
-          first, then link it here.
+          No unlinked {data.categoryName} payment within {data.windowDays} days of this date.
+          Add the transaction first, then link it here.
         </p>
       )}
       {data?.candidates.map((c) => (
