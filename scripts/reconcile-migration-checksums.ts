@@ -41,7 +41,64 @@ const checksumOf = (file: string): string =>
   createHash("sha256").update(readFileSync(file)).digest("hex");
 
 type Row = { id: string; migration_name: string; checksum: string };
-type Fix = { id: string; name: string; from: string; to: string; dirty: boolean };
+type Fix = {
+  id: string;
+  name: string;
+  from: string;
+  to: string;
+  dirty: boolean;
+  /** Commit whose version of the file the database actually ran, if findable. */
+  appliedAt: string | null;
+};
+
+const git = (args: string[]): string =>
+  execFileSync("git", args, { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
+
+/**
+ * The file's committed bytes, not the working tree's.
+ *
+ * A checkout with `core.autocrlf` hands `readFileSync` CRLF while the
+ * repository stores LF, so hashing the working file would store a checksum
+ * specific to that workstation and recreate the mismatch for every Linux
+ * deploy and every other developer -- with no migration having changed.
+ * `.gitattributes` pins these files to LF as well; this is the belt.
+ */
+const canonicalBytes = (relPath: string): Buffer =>
+  execFileSync("git", ["show", `HEAD:${relPath}`], { maxBuffer: 32 * 1024 * 1024 });
+
+/**
+ * Find the commit whose version of this file hashes to the stored checksum.
+ *
+ * The stored checksum is the *only* record of which SQL the database actually
+ * ran, and this repo has had migrations applied from branches that were never
+ * merged -- seven of them reached production within a minute of a branch push
+ * (AGENTS.md, issue #192). So a same-named file in the current checkout is not
+ * evidence of what ran, and reconciling without finding the real source would
+ * overwrite the last trace of the difference and report clean forever after.
+ *
+ * Searched across all refs, so a branch still present locally is enough. Null
+ * means the applied SQL exists nowhere in this repository's history, which is
+ * the case that must be refused rather than blessed.
+ */
+const findAppliedBlob = (relPath: string, storedChecksum: string): string | null => {
+  let revs: string[];
+  try {
+    revs = git(["log", "--all", "--format=%H", "--", relPath]).split("\n").filter(Boolean);
+  } catch {
+    return null;
+  }
+  for (const rev of revs) {
+    try {
+      const blob = execFileSync("git", ["show", `${rev}:${relPath}`], {
+        maxBuffer: 32 * 1024 * 1024,
+      });
+      if (createHash("sha256").update(blob).digest("hex") === storedChecksum) return rev;
+    } catch {
+      // The file did not exist at that commit; keep walking.
+    }
+  }
+  return null;
+};
 
 /**
  * Which database is about to be written to.
@@ -114,13 +171,21 @@ const scan = async (dirty: Set<string>): Promise<{ fixes: Fix[]; missing: string
       missing.push(row.migration_name);
       continue;
     }
-    const actual = checksumOf(file);
+    // Hash the committed bytes where possible; fall back to the working tree
+    // for a file git cannot show, which the dirty guard refuses anyway.
+    let actual: string;
+    try {
+      actual = createHash("sha256").update(canonicalBytes(rel)).digest("hex");
+    } catch {
+      actual = checksumOf(file);
+    }
     if (actual !== row.checksum) {
       fixes.push({
         id: row.id,
         name: row.migration_name,
         from: row.checksum,
         to: actual,
+        appliedAt: findAppliedBlob(rel, row.checksum),
         // Prefix match as well as exact, so any git version or configuration
         // that still reports a directory rather than its files is caught.
         dirty:
@@ -144,13 +209,32 @@ const report = (fixes: Fix[], missing: string[]): void => {
 
   console.log(`${APPLY ? "Updating" : "Would update"} ${fixes.length} checksum(s):\n`);
   for (const f of fixes) {
-    console.log(`  ${f.name}${f.dirty ? "   [UNCOMMITTED EDITS]" : ""}`);
+    const tags = [f.dirty ? "UNCOMMITTED EDITS" : null, f.appliedAt ? null : "SOURCE NOT FOUND"]
+      .filter(Boolean)
+      .join(", ");
+    console.log(`  ${f.name}${tags ? `   [${tags}]` : ""}`);
     console.log(`    stored ${f.from.slice(0, 16)}...  file ${f.to.slice(0, 16)}...`);
+    console.log(
+      f.appliedAt
+        ? `    applied from ${f.appliedAt.slice(0, 8)}`
+        : `    the applied SQL matches no version of this file in any branch here`,
+    );
+  }
+
+  const reviewable = fixes.filter((f) => f.appliedAt);
+  if (reviewable.length > 0) {
+    console.log(
+      `\nDiff what the database ran against what is here now:\n` +
+        reviewable
+          .map(
+            (f) =>
+              `  git diff ${f.appliedAt!.slice(0, 8)} HEAD -- prisma/migrations/${f.name}/migration.sql`,
+          )
+          .join("\n"),
+    );
   }
   console.log(
-    `\nRead what changed in each file before applying:\n` +
-      fixes.map((f) => `  git log -p -- prisma/migrations/${f.name}/migration.sql`).join("\n") +
-      `\n\nComments and guards are safe to reconcile. Added DDL is not -- that means the\n` +
+    `\nComments and guards are safe to reconcile. Added DDL is not -- that means the\n` +
       `database never received it, and rewriting the checksum would hide that.`,
   );
 };
@@ -185,13 +269,28 @@ async function main() {
 
   report(fixes, missing);
 
-  const blocked = fixes.filter((f) => f.dirty);
-  if (APPLY && blocked.length > 0) {
+  const dirtyBlocked = fixes.filter((f) => f.dirty);
+  if (APPLY && dirtyBlocked.length > 0) {
     console.log(
-      `\nRefusing to apply. ${blocked.length} of these file(s) have uncommitted edits, so the\n` +
-        `change that broke the checksum is in the working tree and \`git log\` would not show\n` +
-        `it -- exactly the case where blessing a checksum could bury real schema drift.\n` +
+      `\nRefusing to apply. ${dirtyBlocked.length} of these file(s) have uncommitted edits, so\n` +
+        `the change that broke the checksum is in the working tree and \`git log\` would not\n` +
+        `show it -- exactly the case where blessing a checksum could bury real schema drift.\n` +
         `Commit or stash them, re-read the diff, then run again.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const unsourced = fixes.filter((f) => !f.appliedAt);
+  if (APPLY && unsourced.length > 0) {
+    console.log(
+      `\nRefusing to apply. For ${unsourced.length} of these, no version of the file in any\n` +
+        `branch here hashes to what the database stored -- so the SQL that actually ran is not\n` +
+        `in this repository, and the stored checksum is the only remaining evidence of that.\n` +
+        `Overwriting it would report clean forever after.\n\n` +
+        `This repo has had exactly that happen: migrations from unmerged branches reached\n` +
+        `production within a minute of a branch push (AGENTS.md, issue #192). Fetch the\n` +
+        `branch that produced them, or treat this as drift rather than a checksum problem.`,
     );
     process.exitCode = 1;
     return;
