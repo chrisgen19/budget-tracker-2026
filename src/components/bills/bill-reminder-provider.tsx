@@ -126,7 +126,7 @@ export function BillReminderProvider({ children }: { children: React.ReactNode }
       {
         onSuccess: () => {
           setCurrentIndex((prev) => Math.max(0, prev - 1));
-          showToast(`${getBillLabel(reminder)} skipped`);
+          showToast(`${getBillLabel(reminder)} recorded as unpaid`);
         },
         onError: (error) => {
           showToast(error instanceof Error ? error.message : `Could not skip ${getBillLabel(reminder)}`);

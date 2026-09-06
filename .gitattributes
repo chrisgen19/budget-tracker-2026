@@ -1,0 +1,4 @@
+# Migration SQL is hashed by Prisma and the hash is stored in the database.
+# CRLF in a checkout would produce a workstation-specific checksum and recreate
+# the mismatch for every Linux deploy, so pin these to LF regardless of core.autocrlf.
+prisma/migrations/**/*.sql text eol=lf

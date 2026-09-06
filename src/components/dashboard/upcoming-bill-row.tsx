@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Clock, FastForward, ChevronDown } from "lucide-react";
+import { Check, Clock, CalendarX, ChevronDown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatCurrency, cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { useToast } from "@/components/ui/toast";
 import { useBillAction, type UpcomingBill } from "@/hooks/use-bills";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { formatBillDate } from "@/lib/bill-utils";
 
 interface UpcomingBillRowProps {
   bill: UpcomingBill;
@@ -34,6 +36,7 @@ export function UpcomingBillRow({
   const billAction = useBillAction();
   const { showToast } = useToast();
   const [showSnoozeMenu, setShowSnoozeMenu] = useState(false);
+  const [confirmSkip, setConfirmSkip] = useState(false);
   const snoozeRef = useRef<HTMLDivElement>(null);
 
   const isActioning = billAction.isPending;
@@ -79,16 +82,19 @@ export function UpcomingBillRow({
     );
   };
 
+  // The same permanent record as the banner's, so the same confirmation. This
+  // row was the second way to write it, and fixing only one would have left the
+  // trap open on the page people actually look at (#221).
   const handleSkip = () => {
     billAction.mutate(
       { id: bill.id, input: { action: "skip", dueDate: bill.dueDate } },
       {
         onSuccess: () => {
-          showToast(`${bill.description} skipped`);
+          showToast(`${bill.description} recorded as unpaid`);
           onActionComplete();
         },
         onError: () => {
-          showToast("Failed to skip bill", "error");
+          showToast("Could not record that", "error");
         },
       },
     );
@@ -221,19 +227,44 @@ export function UpcomingBillRow({
                 </AnimatePresence>
               </div>
 
-              {/* Skip */}
+              {/* Names the record it writes, not what happens to the row. */}
               <button
-                onClick={handleSkip}
+                onClick={() => setConfirmSkip(true)}
                 disabled={isActioning}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cream-100 text-warm-400 hover:bg-cream-200 text-xs font-medium transition-colors disabled:opacity-50"
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cream-100 text-warm-400 hover:bg-cream-200 text-xs font-medium transition-colors disabled:opacity-50 relative before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']"
               >
-                <FastForward className="w-3 h-3" />
-                Skip
+                <CalendarX className="w-3 h-3" />
+                Didn&apos;t pay
               </button>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
+
+      <ConfirmModal
+        open={confirmSkip}
+        onClose={() => setConfirmSkip(false)}
+        onConfirm={() => {
+          setConfirmSkip(false);
+          handleSkip();
+        }}
+        title={`Record ${formatBillDate(bill.dueDate)} as unpaid?`}
+        confirmLabel="Yes, it wasn't paid"
+        confirmIcon={CalendarX}
+        loading={isActioning}
+        message={
+          <>
+            <span className="block">
+              {bill.description} will be recorded as <strong>not paid</strong> for that date, and
+              the bill moves on to its next due date.
+            </span>
+            <span className="block mt-2">
+              Already paid it outside the app? Attach the payment from the bill&apos;s history
+              instead.
+            </span>
+          </>
+        }
+      />
     </motion.div>
   );
 }
