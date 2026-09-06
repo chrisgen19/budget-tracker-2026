@@ -196,7 +196,12 @@ const editWarnings = (
     );
   }
 
-  if (transaction.receiptGroupId && (moved.has("amount") || moved.has("categoryId"))) {
+  // `date` belongs here as much as amount and category, and its absence was an inconsistency:
+  // the bill warning above already covers a date change, while this one did not. Re-dating one row
+  // of a split receipt moves part of a single purchase into another day -- or another month, which
+  // is what every summary in the app groups by -- while its siblings stay put. The receipt is then
+  // spread across two periods and nothing in the row says so.
+  if (transaction.receiptGroupId && reclassified) {
     warnings.push(
       "This transaction is one of several split from a single receipt. The others were not touched, so the group no longer reflects the receipt as a whole."
     );

@@ -327,6 +327,89 @@ describe("update_transactions permission", () => {
   });
 });
 
+describe("update_transactions warnings", () => {
+  /** Drives the tool against a row carrying whatever provenance the case needs. */
+  const warningsFor = async (row: Record<string, unknown>, patch: Record<string, unknown>) => {
+    const stored = {
+      id: "tx_1",
+      amount: 250,
+      description: "Groceries",
+      type: "EXPENSE",
+      date: new Date("2026-09-06T09:00:00.000Z"),
+      categoryId: "cat_1",
+      userId: "user_1",
+      billId: null,
+      receiptGroupId: null,
+      receiptBreakdown: null,
+      category: { id: "cat_1", name: "Food", type: "EXPENSE" },
+      labels: [] as unknown[],
+      ...row,
+    };
+    const store = new Map([["tx_1", { ...stored }]]);
+    const client = {
+      transaction: {
+        findMany: vi.fn(async () => [...store.values()]),
+        update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+          store.set("tx_1", { ...store.get("tx_1")!, ...data } as typeof stored);
+          return store.get("tx_1")!;
+        }),
+        findUniqueOrThrow: vi.fn(async () => store.get("tx_1")!),
+      },
+      transactionLabel: { deleteMany: vi.fn(), createMany: vi.fn() },
+      category: { findMany: vi.fn(async () => [{ id: "cat_1", type: "EXPENSE" }]) },
+      label: { findMany: vi.fn(async () => []) },
+      user: {
+        findUnique: vi.fn(async () => ({ mcpWritesEnabledUntil: new Date(Date.now() + 60_000) })),
+      },
+      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(client)),
+    };
+
+    const server = createBudgetMcpServer({
+      prisma: client as unknown as PrismaClient,
+      userId: "user_1",
+      timezoneOffset: -480,
+      scopes: ["transactions:write"],
+      writesEnabledUntil: new Date(Date.now() + 60_000),
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const mcp = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), mcp.connect(clientTransport)]);
+
+    const result = await mcp.callTool({
+      name: "update_transactions",
+      arguments: { transactions: [{ id: "tx_1", ...patch }] },
+    });
+    await mcp.close();
+    return (result.structuredContent as { transactions: { warnings: string[] }[] })
+      .transactions[0].warnings;
+  };
+
+  it("warns when a split receipt's row is re-dated", async () => {
+    // Moving one row of a split receipt puts part of a single purchase in another day -- or
+    // another month, which every summary groups by -- while its siblings stay put. The predicate
+    // listed amount and category but not date, which the bill warning beside it already covered.
+    const warnings = await warningsFor({ receiptGroupId: "rg_1" }, { date: "2026-09-20" });
+    expect(warnings.some((w) => w.includes("split from a single receipt"))).toBe(true);
+  });
+
+  it("warns when a bill payment is re-dated", async () => {
+    const warnings = await warningsFor({ billId: "bill_1" }, { date: "2026-09-20" });
+    expect(warnings.some((w) => w.includes("settles a recurring bill"))).toBe(true);
+  });
+
+  it("stays quiet on an ordinary row", async () => {
+    // The warnings have to be rare to be read at all.
+    expect(await warningsFor({}, { date: "2026-09-20" })).toEqual([]);
+  });
+
+  it("stays quiet when a split receipt's description is fixed", async () => {
+    // Renaming a row changes nothing about how the receipt aggregates, so warning would train
+    // the reader to skip the line on the occasion it matters.
+    const warnings = await warningsFor({ receiptGroupId: "rg_1" }, { description: "Typo fixed" });
+    expect(warnings).toEqual([]);
+  });
+});
+
 describe("update_transactions date rendering", () => {
   /** Drives the tool against a stub whose row moves only in time-of-day. */
   const callWithStoredDate = async (stored: Date, patchDate: string) => {

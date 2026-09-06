@@ -82,8 +82,10 @@ telling an agent to "try the same request again" for that is how it loops.
 The tool reports what actually *moved* rather than what the patch listed -- restating a value that
 was already there is a success that changed nothing, and saying otherwise has the caller describe
 an edit the user cannot find -- along with the previous value of each changed field. It warns,
-without refusing, when the row settles a recurring bill or came from a split receipt, since both
-have consequences invisible in the row itself.
+without refusing, when the row settles a recurring bill or came from a split receipt and the edit
+touches its amount, date, type or category — every field that changes what a report makes of the
+row, not just its amount. Re-dating one row of a split receipt moves part of one purchase into
+another month while its siblings stay put, and nothing in the row says so.
 
 There is still **no delete tool**. A wrong edit is visible in the app and correctable; a wrong
 delete is silent.
