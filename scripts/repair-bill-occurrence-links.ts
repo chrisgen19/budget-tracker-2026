@@ -39,6 +39,10 @@ const daysBetween = (a: Date, b: Date) =>
   Math.abs(a.getTime() - b.getTime()) / 86_400_000;
 
 type Plan = {
+  /** Identity for the "did this pass already plan a repair here?" test. Two
+   *  bills can share a description, and comparing display text let one bill's
+   *  plan suppress another's gap report. */
+  billId: string;
   bill: string;
   dueDate: string;
   action: string;
@@ -116,6 +120,7 @@ async function main() {
         claimed.add(p.id);
         claimedBy.set(p.id, `${bill.description} ${dayKey(due)}`);
         plans.push({
+          billId: bill.id,
           bill: bill.description,
           dueDate: dayKey(due),
           action: "SKIPPED -> PAID",
@@ -152,6 +157,7 @@ async function main() {
             claimedBy.delete(current.id);
           }
           plans.push({
+            billId: bill.id,
             bill: bill.description,
             dueDate: dayKey(due),
             action: "re-point PAID",
@@ -180,7 +186,7 @@ async function main() {
     // right next to the skip, already claimed by a neighbouring occurrence.
     for (const log of bill.occurrences) {
       if (log.status !== "SKIPPED") continue;
-      if (plans.some((pl) => pl.bill === bill.description && pl.dueDate === dayKey(log.dueDate))) {
+      if (plans.some((pl) => pl.billId === bill.id && pl.dueDate === dayKey(log.dueDate))) {
         continue;
       }
       const near = payments

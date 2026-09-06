@@ -23,6 +23,8 @@ export const billKeys = {
   pendingAll: ["bills", "pending"] as const,
   upcoming: (tz: number) => ["bills", "upcoming", tz] as const,
   history: (id: string) => ["bills", "history", id] as const,
+  candidates: (id: string, dueDate: string) =>
+    ["bills", "candidates", id, dueDate] as const,
 };
 
 /* ------------------------------------------------------------------ */
@@ -133,6 +135,34 @@ export function useBillHistoryQuery(id: string) {
         ? lastPage.pagination.page + 1
         : undefined,
     enabled: !!id,
+  });
+}
+
+export type BillPaymentCandidate = {
+  id: string;
+  date: string;
+  amount: number;
+  description: string;
+  category: { name: string; icon: string; color: string };
+};
+
+/**
+ * Payments that could settle a skipped occurrence, for correcting it in place.
+ * Enabled only when a due date is supplied, so opening the panel is what
+ * fetches -- a bill's history can list many skips and none of them are usually
+ * being corrected.
+ */
+export function useBillPaymentCandidatesQuery(id: string, dueDate: string | null) {
+  return useQuery({
+    queryKey: billKeys.candidates(id, dueDate ?? ""),
+    queryFn: async (): Promise<{ candidates: BillPaymentCandidate[]; windowDays: number }> => {
+      const res = await fetch(
+        `/api/bills/${id}/candidates?dueDate=${encodeURIComponent(dueDate!)}`,
+      );
+      if (!res.ok) throw new Error("Failed to load payments");
+      return res.json();
+    },
+    enabled: !!id && !!dueDate,
   });
 }
 
