@@ -78,10 +78,34 @@ resubmits `categoryId` unchanged, so every older row on that category would have
 permanently uneditable -- down to fixing a typo. The bare type flip the check exists for is still
 caught, because `type` is in the patch.
 
-**An explicitly named label the type filter removes is reported.** Silently dropping it is the
-failure this codebase already recorded once, when a Telegram review promised a label it then did
-not write. It is worse on an edit: name a label the row already carries alongside one that does not
-fit and nothing changes at all, so the reply was a clean success that ignored half the request.
+**A label the caller does not get is reported**, from either direction: named explicitly and
+filtered out, or already on the row and excluded by a changed `type`. Silently dropping the first
+is the failure this codebase already recorded once, when a Telegram review promised a label it then
+did not write, and it is worse on an edit -- name a label the row already carries alongside one
+that does not fit and nothing changes at all, so the reply was a clean success that ignored half
+the request. The implicit half is no better: `changed` and `previous.labels` show the label
+leaving but never why, and "I flipped this to income and its label vanished" reads as a bug.
+
+**The preserved time keeps its milliseconds.** Rebuilding it as an `HH:mm:ss` string and handing
+that back to `resolveTransactionDate` truncates them -- the parser captures the seconds but leaves
+the fractional part non-capturing, and rebuilds through `Date.UTC`, which takes no millisecond
+argument. Rows carrying milliseconds are ordinary: `POST /api/bills/[id]/action` stamps bill
+payments with a bare `new Date()`. So correcting a variable bill's amount while echoing its
+`localDate` back shifted the instant by up to 999ms and reported the phantom date change this was
+all meant to prevent, one round after fixing it. The offset into the local day is a millisecond
+count now.
+
+**The category carve-out compares against the stored row, not against which fields the patch
+mentioned.** Those are different tests and only one of them works: `transactionSchema` requires
+`categoryId` and the app's edit form posts the whole object, so every browser edit names it and
+the mention-based carve-out never fired for the one path it was written for.
+
+**The tool's `date` description said the opposite of what the code does.** It still promised a bare
+date would be filled with the current clock. That description is the only contract a model sees, so
+it would have supplied an explicit time to avoid a behaviour that no longer existed -- and an
+explicit time really does overwrite the stored one. The write-lease card in Profile had gone stale
+the same way, telling a user with an edit-only token that the switch was about creating and needed
+a scope they had not been given.
 
 **`PUT /api/transactions/[id]` never checked category ownership.** Found while routing it through
 the shared service. It validated label ownership and nothing else, so the foreign key alone

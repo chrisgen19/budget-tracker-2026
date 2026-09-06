@@ -419,4 +419,87 @@ describe("updateTransactions", () => {
     if (!r.ok) return;
     expect(r.updated[0].droppedLabels).toEqual([]);
   });
+
+  // --- Sub-second precision survives (review round 2, #2) ---
+
+  it("preserves milliseconds when a bare date restates the stored day", async () => {
+    // Rows carrying milliseconds are ordinary: `POST /api/bills/[id]/action` stamps bill payments
+    // with a bare `new Date()`. Rebuilding the preserved time as an HH:mm:ss string and handing it
+    // back to `resolveTransactionDate` silently truncates them, because the parser leaves the
+    // fractional part non-capturing and rebuilds through `Date.UTC`, which takes no ms argument.
+    // The instant then shifts by up to 999ms and reports a date change with an identical before
+    // and after -- the exact failure preserving the time was meant to prevent.
+    const stored = new Date("2026-09-05T14:23:45.678Z");
+    const { stub, result } = run([{ id: "tx_1", amount: 14126, date: "2026-09-05" }], {
+      rows: [row({ date: stored })],
+    });
+    const r = await result;
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(stub.store.get("tx_1")!.date).toEqual(stored);
+    expect(r.updated[0].changed).toEqual(["amount"]);
+  });
+
+  it("carries milliseconds onto a new day too", async () => {
+    const { stub, result } = run([{ id: "tx_1", date: "2026-09-06" }], {
+      rows: [row({ date: new Date("2026-09-05T14:23:45.678Z") })],
+    });
+    await result;
+    expect(stub.store.get("tx_1")!.date).toEqual(new Date("2026-09-06T14:23:45.678Z"));
+  });
+
+  // --- The category carve-out keys on movement, not on mention (review round 2, #3) ---
+
+  it("lets the app resubmit an unchanged mismatched pair", async () => {
+    // `transactionSchema` requires `categoryId` and the edit form posts the whole object, so every
+    // browser edit *names* both fields. A carve-out testing whether they were mentioned therefore
+    // never fired for the one path it was written for; only comparing against the stored row does.
+    const { stub, result } = run(
+      [{ id: "tx_1", description: "Typo fixed", type: "EXPENSE", categoryId: "cat_flipped" }],
+      {
+        rows: [row({ categoryId: "cat_flipped" })],
+        categories: [{ id: "cat_flipped", type: "INCOME" }],
+      }
+    );
+    const r = await result;
+
+    expect(r.ok).toBe(true);
+    expect(stub.store.get("tx_1")!.description).toBe("Typo fixed");
+  });
+
+  it("still checks a pair that genuinely moves", async () => {
+    const { result } = run([{ id: "tx_1", categoryId: "cat_salary" }]);
+    expect(await result).toEqual({ ok: false, reason: "CATEGORIES_NOT_OWNED" });
+  });
+
+  // --- A label removed by a changed type is explained (review round 2, #4) ---
+
+  it("names a label a changed type removed, even though nobody listed it", async () => {
+    // The implicit half of the same event. `changed` and `previous.labels` show the label leaving
+    // but never why, and an unexplained disappearance reads as a bug in the tool.
+    const { result } = run([{ id: "tx_1", type: "INCOME", categoryId: "cat_salary" }], {
+      rows: [
+        row({
+          labels: [{ labelId: "lab_exp", label: { name: "Groceries", applicableTo: "EXPENSE" } }],
+        }),
+      ],
+    });
+    const r = await result;
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.updated[0].droppedLabels).toEqual(["Groceries"]);
+  });
+
+  it("says nothing about preserved labels that still fit", async () => {
+    const { result } = run([{ id: "tx_1", type: "INCOME", categoryId: "cat_salary" }], {
+      rows: [row({ labels: [{ labelId: "lab_both", label: { name: "Work", applicableTo: "BOTH" } }] })],
+    });
+    const r = await result;
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.updated[0].droppedLabels).toEqual([]);
+  });
 });

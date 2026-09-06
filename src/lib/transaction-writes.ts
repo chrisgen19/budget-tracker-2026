@@ -389,6 +389,19 @@ const preservedLabelIds = (
     .filter((l) => l.label.applicableTo === "BOTH" || l.label.applicableTo === effectiveType)
     .map((l) => l.labelId);
 
+/** The other side of that filter: labels the row already carried that a changed type excludes.
+ *
+ *  Reported for the same reason an explicitly named one is. `changed` and `previous.labels` do
+ *  show the label leaving, but not *why*, and "I flipped this to income and its label vanished"
+ *  is the kind of unexplained side effect that gets read as a bug in the tool. */
+const typeExcludedLabels = (
+  current: TransactionWithRelations["labels"],
+  effectiveType: TransactionType
+): string[] =>
+  current
+    .filter((l) => l.label.applicableTo !== "BOTH" && l.label.applicableTo !== effectiveType)
+    .map((l) => l.label.name);
+
 /**
  * The instant a patched date should store, given the row it is editing.
  *
@@ -405,14 +418,24 @@ const preservedLabelIds = (
 const resolvePatchDate = (value: string, stored: Date, timezoneOffset: number): Date => {
   if (!isDateOnly(value)) return new Date(resolveTransactionDate(value, timezoneOffset));
 
-  // The row's own wall clock in the user's zone, reattached to the day being asked for. Built as a
-  // zone-less string so `resolveTransactionDate` applies the one offset formula the app uses
-  // everywhere, rather than a second copy of it here.
+  // The row's exact offset into its own local day, carried onto the day being asked for.
+  //
+  // Taken as a millisecond count rather than rebuilt as an `HH:mm:ss` string handed back to
+  // `resolveTransactionDate`: that round trip drops sub-second precision, because the parser
+  // captures the seconds but leaves the fractional part non-capturing and rebuilds through
+  // `Date.UTC`, which is never given a millisecond argument. Rows carrying milliseconds are
+  // ordinary -- `POST /api/bills/[id]/action` stamps bill payments with a bare `new Date()` -- so
+  // truncating would shift the instant by up to 999ms and re-introduce exactly the phantom
+  // `changed: ["date"]`, with an identical before and after, that this function exists to prevent.
+  //
+  // Still the one `Date.UTC(y, m, d) + tzOffset * 60000` formula the rest of the app uses for day
+  // boundaries, just applied here directly.
   const local = new Date(stored.getTime() - timezoneOffset * 60_000);
-  const hh = String(local.getUTCHours()).padStart(2, "0");
-  const mm = String(local.getUTCMinutes()).padStart(2, "0");
-  const ss = String(local.getUTCSeconds()).padStart(2, "0");
-  return new Date(resolveTransactionDate(`${value}T${hh}:${mm}:${ss}`, timezoneOffset));
+  const localDayStart = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate());
+  const msIntoDay = local.getTime() - localDayStart;
+
+  const [y, m, d] = value.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d) + msIntoDay + timezoneOffset * 60_000);
 };
 
 /**
@@ -472,16 +495,19 @@ export const updateTransactions = async ({
     };
   });
 
-  // Only the rows whose patch actually touches one of the two fields. A patch naming neither
-  // leaves the stored pair exactly as it was, so checking it can never prevent an invalid state --
-  // the row is already in whatever state it is in -- and can only lock the user out of editing it.
-  // That is reachable: `PUT /api/categories/[id]` lets a custom category's `type` be flipped while
-  // its transactions keep pointing at it, and the app's edit form resubmits `categoryId`
-  // unchanged, so validating untouched pairs made every older row on that category permanently
-  // uneditable, down to fixing a typo. The bare `type` flip this check exists for is still caught,
-  // because `type` is in the patch.
+  // Only the rows whose pair actually *moves*. Testing whether the patch mentioned the fields is
+  // not the same thing and does not work: `transactionSchema` requires `categoryId`, and the app's
+  // edit form posts the whole object, so every edit from the browser names it and would be judged
+  // regardless.
+  //
+  // The state this must not punish is reachable with no MCP involvement. `PUT /api/categories/[id]`
+  // lets a custom category's `type` be flipped while its transactions keep pointing at it, leaving
+  // rows whose stored pair no longer agrees. Re-sending that pair unchanged writes exactly what is
+  // already there, so rejecting it prevents nothing and merely locks the row out of being edited
+  // at all -- down to fixing a typo in its description. Comparing against the stored row skips
+  // those and still catches every genuine reclassification, the bare `type` flip included.
   const reclassified = effective.filter(
-    (e) => e.patch.type !== undefined || e.patch.categoryId !== undefined
+    (e) => e.categoryId !== e.row.categoryId || e.type !== e.row.type
   );
   if (!(await categoriesAreUsable(prisma, userId, reclassified))) {
     return { ok: false, reason: "CATEGORIES_NOT_OWNED" };
@@ -512,12 +538,15 @@ export const updateTransactions = async ({
 
     const labelIds = requested === null ? preservedLabelIds(e.row.labels, e.type) : requested.filter(fits);
 
-    // A label the user named by id and did not get. Silently dropping it is the exact failure
-    // AGENTS.md records on the create path -- a review promising a label it then did not write --
-    // and it is worse on an edit, where the reply otherwise reads as an unqualified success.
+    // A label the caller asked for and did not get, from either direction: named by id and
+    // filtered out, or already on the row and excluded by a changed type. Silently dropping the
+    // first is the exact failure AGENTS.md records on the create path -- a review promising a
+    // label it then did not write -- and it is worse on an edit, where the reply otherwise reads
+    // as an unqualified success. The second was reported only as an unexplained disappearance
+    // from `previous.labels`, which is the same problem wearing different clothes.
     const droppedLabels =
       requested === null
-        ? []
+        ? typeExcludedLabels(e.row.labels, e.type)
         : requested.filter((id) => !fits(id)).map((id) => ownedLabelMap.get(id)!.name);
 
     return { ...e, labelIds, droppedLabels };

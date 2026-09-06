@@ -205,9 +205,11 @@ const editWarnings = (
   for (const name of droppedLabels) {
     // Reported per label and never inferred from `changed`: naming a label the row already has
     // alongside one that does not fit produces no change at all, so this is the only signal that
-    // half the request went nowhere.
+    // half the request went nowhere. Worded to cover both causes -- a label named in the call and
+    // a label the row already carried that a changed type excludes -- since from the user's side
+    // they are the same event.
     warnings.push(
-      `The label "${name}" was not applied, because it does not apply to ${transaction.type} transactions. Change the label's type in the app, or pick a different one.`
+      `The label "${name}" is not on this transaction, because it does not apply to ${transaction.type} transactions. Change the label's type in the app, or pick a different one.`
     );
   }
 
@@ -1103,7 +1105,10 @@ export const createBudgetMcpServer = ({
         "rest and they keep their current values. To clear a transaction's labels send " +
         "`labelIds: []`, and to leave them exactly as they are omit `labelIds` entirely. " +
         "Auto-apply label schedules never run on an edit, so labels the user chose by hand are " +
-        "safe. " +
+        "safe; a label already on the transaction is dropped only if a changed `type` excludes " +
+        "it, and the response says so. " +
+        "A bare `date` keeps the transaction's existing time of day rather than replacing it " +
+        "with the current clock, so echoing a `localDate` back changes nothing. " +
         "Get IDs from search_transactions or get_top_expenses. If you change `type` you must " +
         "usually send a `categoryId` of that same type as well, since the existing category " +
         "will no longer match. " +
@@ -1138,10 +1143,12 @@ export const createBudgetMcpServer = ({
                 })
                 .optional()
                 .describe(
-                  "New date in the user's own timezone. Include a time when the user gives one " +
-                    "('last night' -> 2026-08-25T21:00); a bare date such as 2026-08-25 is " +
-                    "filled in with the current clock. Omit to leave the date untouched, which " +
-                    "is what you want when you are only fixing an amount or a category."
+                  "New date in the user's own timezone. A bare date such as 2026-08-25 keeps the " +
+                    "transaction's existing time of day, so it is safe to send one back " +
+                    "unchanged and safe to use when moving a transaction to another day. " +
+                    "Include a time ONLY when the user gives one ('last night' -> " +
+                    "2026-08-25T21:00), because an explicit time overwrites the real one. Omit " +
+                    "the field entirely when you are only fixing an amount or a category."
                 ),
               categoryId: z
                 .string()

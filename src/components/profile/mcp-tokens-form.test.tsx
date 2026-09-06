@@ -57,7 +57,7 @@ describe("McpTokensForm load failures", () => {
 
     // And the lease reads as unknown rather than as the reassuring "off".
     expect(screen.getByText("Could not read write access state.")).toBeDefined();
-    expect(screen.queryByText(/cannot create transactions/)).toBeNull();
+    expect(screen.queryByText(/cannot add or change transactions/)).toBeNull();
   });
 
   it("keeps the lease panel usable when only the token read fails", async () => {
@@ -69,7 +69,7 @@ describe("McpTokensForm load failures", () => {
 
     // The lease loaded, so it reports its real state instead of an unknown one.
     expect(screen.queryByText("Could not read write access state.")).toBeNull();
-    expect(screen.getByText(/cannot create transactions/)).toBeDefined();
+    expect(screen.getByText(/cannot add or change transactions/)).toBeDefined();
   });
 
   it("reports both independently when both fail", async () => {

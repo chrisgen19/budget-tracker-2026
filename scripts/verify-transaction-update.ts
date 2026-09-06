@@ -251,12 +251,37 @@ async function main() {
 
   // --- A pre-existing type/category mismatch stays editable (found in review) ---
 
+  // Milliseconds specifically: bill payments are stamped with a bare `new Date()`, and a
+  // preserved time rebuilt as an HH:mm:ss string loses them, shifting the instant and reporting a
+  // date change with an identical before and after.
+  const precise = await seed({
+    description: "Precise",
+    date: new Date("2026-08-25T09:00:00.678Z"),
+  });
+  await callUpdate(client, [{ id: precise.id, amount: 999, date: "2026-08-25" }]);
+  const afterPrecise = await prisma.transaction.findUniqueOrThrow({ where: { id: precise.id } });
+  check(
+    "sub-second precision survives a bare date",
+    afterPrecise.date.toISOString(),
+    "2026-08-25T09:00:00.678Z"
+  );
+
   const mismatched = await seed({ description: "Mismatched" });
   // Exactly what `PUT /api/categories/[id]` allows: flip a custom category's type while its
   // transactions keep pointing at it. Judging the stored pair on every edit locked these rows out
   // of being edited at all, while preventing nothing -- the row is already in that state.
   await prisma.category.update({ where: { id: expenseCat.id }, data: { type: "INCOME" } });
-  const typoFix = await callUpdate(client, [{ id: mismatched.id, description: "Typo fixed" }]);
+  // Sent the way the app's form sends it -- every field, `categoryId` included -- because
+  // `transactionSchema` requires it. A carve-out keyed on whether the patch *mentioned* the field
+  // would not fire here, which is the whole point: it has to compare against the stored row.
+  const typoFix = await callUpdate(client, [
+    {
+      id: mismatched.id,
+      description: "Typo fixed",
+      type: "EXPENSE",
+      categoryId: expenseCat.id,
+    },
+  ]);
   check("an untouched mismatched row can still be edited", typoFix.isError, undefined);
   const afterTypo = await prisma.transaction.findUniqueOrThrow({ where: { id: mismatched.id } });
   check("and the edit landed", afterTypo.description, "Typo fixed");
@@ -274,6 +299,31 @@ async function main() {
   check("a type-excluded label is named back", warnings.some((w) => w.includes("Probe Income Only")), true);
   const noLabels = await prisma.transactionLabel.count({ where: { transactionId: labelled.id } });
   check("and really was not applied", noLabels, 0);
+
+  // --- A label a changed type removes is explained, not just deleted ---
+
+  const bothLabel = await prisma.label.create({
+    data: { name: "Probe Expense Only", color: "#555", applicableTo: "EXPENSE", userId: user.id },
+  });
+  const flipped = await prisma.transaction.create({
+    data: {
+      amount: 250, description: "Flipped", type: "EXPENSE",
+      date: new Date("2026-08-25T09:00:00.000Z"), categoryId: expenseCat.id, userId: user.id,
+      createdVia: "APP", labels: { create: [{ labelId: bothLabel.id }] },
+    },
+  });
+  const flipWarn = await callUpdate(client, [
+    { id: flipped.id, type: "INCOME", categoryId: incomeCat.id },
+  ]);
+  const flipWarnings = (flipWarn.structuredContent as { transactions: { warnings: string[] }[] })
+    .transactions[0].warnings;
+  // Nobody listed this label in the call: it was already on the row and the new type excludes it.
+  // `changed` shows it leaving but never why, and an unexplained disappearance reads as a bug.
+  check(
+    "a label removed by a type change is named",
+    flipWarnings.some((w) => w.includes("Probe Expense Only")),
+    true
+  );
 
   // --- Another user's row is invisible ---
 
