@@ -2,6 +2,79 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-06 - The MCP server can edit a transaction, and only with a scope nothing already holds
+
+Fifteen tools now. `update_transactions` changes an existing transaction's amount, description,
+type, date, category or labels. Until now the only way to fix a typo or recategorise a misfiled
+expense was to open the app, which is exactly why `src/lib/telegram/app-link.ts` puts an "Edit in
+app" button on every row the bot logs.
+
+That absence was load-bearing, and this spends part of it deliberately. Two things keep the spend
+as small as possible.
+
+**Editing is its own scope.** `transactions:edit`, not `transactions:write`. Nothing already
+minted gains anything: the Telegram bot's token carries the create scope and cannot see the new
+tool at all — not refused on call, absent from `tools/list`. The two are separate powers. A leaked
+create-only credential adds junk that is visible and deletable; an edit-capable one can quietly
+change history already recorded, and one checkbox should not hand over both. `resolveWritePermission`
+therefore takes the scope for the action being attempted, with no default value — a default is what
+would silently re-collapse the two gates the next time a write scope is added.
+
+**`isWriteScope` is an explicit list now, not `endsWith(":write")`.** This is the bug the feature
+almost shipped with. The suffix test reads `transactions:edit` as read-only, which puts it in
+`READ_ONLY_SCOPES` — the default grant, and what the local stdio server runs with — so every
+caller naming no scopes would have received the power to rewrite rows, and an edit-capable token
+would have been the one writing credential allowed to never expire. `receipts:scan` hit the
+identical trap and `isPrivilegedScope` was written for it; a name is not a permission model.
+Three tests in `scopes.test.ts` fail if anyone restores the shortcut.
+
+**Every check runs against the effective row, never the patch.** Fields are optional and only what
+you send changes, which makes a bare `type` flip the interesting case: `categoryId` is absent from
+the patch, so nothing about it looks suspicious, and it is the *stored* category that no longer
+matches. Left alone, that files income under a food category and distorts every breakdown that
+groups by one. So the patch is merged over the row first, and the merged pair is what
+`categoriesAreUsable` sees.
+
+**Label schedules never re-run on an edit.** A schedule's premise is a real clock at the moment of
+spending. Re-matching on edit would let correcting a typo in a description silently re-tag the row
+over a choice the user made by hand. Omitting `labelIds` preserves what is there, dropping only
+what a changed type excludes; `[]` clears them; explicit ids replace them.
+
+**Edits are audited separately from creations.** New `updated_via` and `updated_by_mcp_token_id`
+columns, stamped server-side like `created_via` is. An edit never touches the creation stamp: a row
+typed into the app and later corrected over MCP is both APP-created and MCP-edited, and one column
+cannot say that. The app's own `PUT` sets `updated_via: APP` and clears the token id explicitly,
+because a stale one naming a token as last editor is worse than no trail — it is a confident wrong
+one. The columns are nullable with no default; backfilling `APP` would have asserted an edit that
+never happened for every row in the table.
+
+**A whole call is all-or-nothing.** Unlike a create there is no idempotency key, and none is
+needed — a patch describes a destination rather than a delta, so applying it twice lands on the
+same row. But that also means a half-applied batch leaves the caller unable to say which rows moved
+or to safely resubmit, so one rejected transaction rolls back all of them.
+
+The tool reports what actually *moved* rather than what the patch listed — restating a value that
+was already there is a success that changed nothing, and saying otherwise has the caller describe
+an edit the user cannot find — along with the previous value of each changed field, so the change
+can be shown rather than asserted. It warns, without refusing, when the row settles a recurring
+bill or came from a split receipt, since both have consequences invisible in the row itself.
+
+There is still **no delete tool**. A wrong edit is visible in the app and correctable; a wrong
+delete is silent.
+
+**`PUT /api/transactions/[id]` never checked category ownership.** Found while routing it through
+the shared service. It validated label ownership and nothing else, so the foreign key alone
+accepted any category that exists — another user's included — and an EXPENSE could be filed under
+an INCOME category. The identical pair of holes `categoriesAreUsable` was written to close on the
+create path, still open on the edit path. Latent while the only caller was the user's own browser;
+not latent once a model supplies `categoryId`. Both callers share `updateTransactions` now, so
+the route gained the checks by moving.
+
+`scripts/verify-transaction-update.ts` drives all of it over the real `/api/mcp` route against a
+real database, because the unit tests stub Prisma and prove the rules rather than the storage: that
+the audit columns actually land, that label rows are replaced rather than appended, that a refused
+batch left every row untouched, and that a create-only token cannot see the tool.
+
 ## 2026-09-06 - The AI Assessment stops guessing and starts reading
 
 The tab was built on one period's aggregates, computed in the browser and posted to the server.

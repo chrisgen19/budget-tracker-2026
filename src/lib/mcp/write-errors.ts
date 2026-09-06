@@ -1,4 +1,4 @@
-import type { BatchFailureReason } from "@/lib/transaction-writes";
+import type { BatchFailureReason, UpdateFailureReason } from "@/lib/transaction-writes";
 import type { ScanRefusal } from "@/lib/receipt-guard";
 import type { ScanFailure } from "@/lib/receipt-scan";
 
@@ -37,6 +37,39 @@ export const WRITE_ERROR_MESSAGES: Record<BatchFailureReason, string> = {
  */
 export const isAmbiguousWriteFailure = (message: string): boolean =>
   message.trim() === WRITE_ERROR_MESSAGES.UNKNOWN_WHETHER_SAVED;
+
+/**
+ * What `update_transactions` says when an edit fails, in the same voice as the create table above.
+ *
+ * A separate map rather than entries bolted onto `WRITE_ERROR_MESSAGES`, which is total over
+ * `BatchFailureReason`: sharing one map would make every create failure a reachable answer for an
+ * edit and vice versa, and the compiler would stop objecting to either.
+ *
+ * Every one of these is deterministic and, crucially, leaves the batch untouched -- an update runs
+ * as one transaction with no idempotency key, so there is no `UNKNOWN_WHETHER_SAVED` analogue here
+ * and nothing a caller has to replay to find out what happened. Each message says what to change,
+ * because a model that cannot tell "you asked for the impossible" from "try again" will do the
+ * wrong one.
+ */
+export const UPDATE_ERROR_MESSAGES: Record<UpdateFailureReason, string> = {
+  NOT_FOUND:
+    "One or more transaction IDs do not exist on this account. Nothing was changed. Call search_transactions or get_top_expenses for current IDs.",
+  NO_FIELDS:
+    "Every transaction must name at least one field to change. Nothing was changed. Send the fields you want to differ and omit the rest.",
+  DUPLICATE_ID:
+    "The same transaction ID appeared more than once. Nothing was changed. Combine the edits for that transaction into a single entry.",
+  LABELS_NOT_OWNED:
+    "One or more label IDs are not this user's. Nothing was changed. Call get_label_list for valid IDs.",
+  // The likeliest cause is not a bad category id at all: it is changing `type` while leaving
+  // `categoryId` alone, which leaves an expense filed under an income category. Named here so the
+  // model fixes the real problem rather than re-sending the same id.
+  CATEGORIES_NOT_OWNED:
+    "One or more category IDs are not this user's, or do not match the transaction's type. Nothing was changed. If you changed `type`, send a `categoryId` of that same type as well; call get_category_list for valid IDs.",
+  NO_LONGER_PERMITTED:
+    "Writes were switched off before these could be changed, so nothing was changed. Turn them on in Profile > MCP Access, then try again.",
+  WRITE_FAILED:
+    "The update failed and was rolled back, so nothing was changed and every transaction is exactly as it was. Try the same request again.",
+};
 
 /**
  * What `scan_receipt` says when a scan is refused before it runs.

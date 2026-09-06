@@ -174,7 +174,7 @@ async function main() {
   check("writes are off by default for a new user", await leaseOf(), null);
   check(
     "a write-scoped token is refused while the lease is off",
-    resolveWritePermission(["transactions:write"], await leaseOf()),
+    resolveWritePermission(["transactions:write"], await leaseOf(), "transactions:write"),
     { allowed: false, reason: "WRITES_DISABLED" }
   );
 
@@ -184,7 +184,7 @@ async function main() {
   });
   check(
     "a write-scoped token is allowed while the lease is live",
-    resolveWritePermission(["transactions:write"], await leaseOf()),
+    resolveWritePermission(["transactions:write"], await leaseOf(), "transactions:write"),
     { allowed: true }
   );
 
@@ -193,7 +193,7 @@ async function main() {
   const readOnly = await authenticateMcpRequest(authHeaders(`Bearer ${token}`));
   check(
     "a read-only token is refused even with the lease live",
-    resolveWritePermission(readOnly.ok ? readOnly.scopes : [], await leaseOf()),
+    resolveWritePermission(readOnly.ok ? readOnly.scopes : [], await leaseOf(), "transactions:write"),
     { allowed: false, reason: "SCOPE_NOT_GRANTED" }
   );
 
@@ -203,7 +203,7 @@ async function main() {
   });
   check(
     "a lapsed lease refuses writes without anyone turning it off",
-    resolveWritePermission(["transactions:write"], await leaseOf()),
+    resolveWritePermission(["transactions:write"], await leaseOf(), "transactions:write"),
     { allowed: false, reason: "WRITES_DISABLED" }
   );
 

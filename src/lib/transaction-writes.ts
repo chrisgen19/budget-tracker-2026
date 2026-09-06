@@ -1,4 +1,4 @@
-import { Prisma, type TransactionSource } from "@prisma/client";
+import { Prisma, type TransactionSource, type TransactionType } from "@prisma/client";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 import type { BatchTransactionInput } from "@/lib/validations";
 import type { PrismaClient } from "@/lib/budget-query-types";
@@ -103,11 +103,16 @@ export const findSavedBatchUnderLock = async (
  *
  * Both were latent while the sole caller was the user's own browser session. Neither is latent
  * once a model supplies `categoryId` over an internet-facing endpoint.
+ *
+ * Typed on the two fields it reads rather than on `BatchTransactionInput`, so the update path can
+ * hand it merged patch-over-row pairs. Those carry no `amount` or `date` of their own -- an edit
+ * that changes only the category has neither -- and widening here beat inventing them at the call
+ * site to satisfy a signature that never looks at them.
  */
 const categoriesAreUsable = async (
   prisma: PrismaClient,
   userId: string,
-  items: BatchTransactionInput[]
+  items: readonly { categoryId: string; type: TransactionType }[]
 ): Promise<boolean> => {
   const categoryIds = [...new Set(items.map((t) => t.categoryId))];
   if (categoryIds.length === 0) return true;
@@ -266,5 +271,272 @@ export const createTransactionBatch = async ({
   } catch {
     // The write itself failed under the lock, so whether anything committed is unknown.
     return { ok: false, reason: "UNKNOWN_WHETHER_SAVED" };
+  }
+};
+
+// --- Updating existing transactions ---
+
+/** Fields an edit may change: exactly the six the app's own edit modal exposes.
+ *
+ *  `createdVia`, `mcpTokenId`, `clientBatchId`, `billId`, `receiptGroupId` and `receiptBreakdown`
+ *  are deliberately absent. The first two describe how the row came to exist and overwriting them
+ *  would falsify provenance; re-pointing `billId` would silently settle a different bill's
+ *  occurrence. None of them is a correction anyone makes by hand. */
+export const UPDATABLE_FIELDS = [
+  "amount",
+  "description",
+  "type",
+  "date",
+  "categoryId",
+  "labelIds",
+] as const;
+
+export type UpdatableField = (typeof UPDATABLE_FIELDS)[number];
+
+export interface TransactionPatch {
+  id: string;
+  amount?: number;
+  description?: string;
+  type?: TransactionType;
+  /** An account-local date or datetime string, resolved by the caller the same way creates are. */
+  date?: string;
+  categoryId?: string;
+  /** Explicit ids replace the row's labels. Omitted preserves what it already carries. */
+  labelIds?: string[];
+}
+
+export type UpdateFailureReason =
+  /** An id was not this user's, or does not exist. The two are not distinguished on purpose. */
+  | "NOT_FOUND"
+  /** A patch named no field to change. */
+  | "NO_FIELDS"
+  /** The same id appeared twice in one batch, so the outcome would depend on ordering. */
+  | "DUPLICATE_ID"
+  | "LABELS_NOT_OWNED"
+  | "CATEGORIES_NOT_OWNED"
+  /** Permission was withdrawn between the request arriving and the write starting. */
+  | "NO_LONGER_PERMITTED"
+  /** The write itself failed and rolled back. Every row is exactly as it was. */
+  | "WRITE_FAILED";
+
+/** One row's result: what it is now, and what actually moved. */
+export interface UpdatedTransaction {
+  transaction: TransactionWithRelations;
+  /** Only the fields whose stored value genuinely differs from what was there before. */
+  changed: UpdatableField[];
+  /** The previous values of exactly those fields, so a caller can show the edit rather than
+   *  assert it. Labels are names, matching how they are rendered everywhere else. */
+  previous: Partial<{
+    amount: number;
+    description: string;
+    type: TransactionType;
+    date: Date;
+    categoryName: string;
+    labels: string[];
+  }>;
+}
+
+export type UpdateTransactionsResult =
+  | { ok: true; updated: UpdatedTransaction[] }
+  | { ok: false; reason: UpdateFailureReason };
+
+export interface UpdateTransactionsParams {
+  prisma: PrismaClient;
+  userId: string;
+  patches: TransactionPatch[];
+  /** Stamped onto `updated_via`. Set by the caller from its own surface, never from input. */
+  updatedVia: TransactionSource;
+  /**
+   * Stamped onto `updated_by_mcp_token_id`. Pass `null` explicitly from the app, so a row edited
+   * over MCP and then corrected in the browser stops naming the token as its last editor.
+   */
+  updatedByMcpTokenId: string | null;
+  /** Re-checked inside the write transaction, for the same reason and in the same shape as on
+   *  the create path: a kill switch has to stop work already in flight, not only the next call. */
+  assertStillPermitted?: (tx: Prisma.TransactionClient) => Promise<boolean>;
+}
+
+/** Labels to keep when the caller sent none: everything already there that still fits the type.
+ *
+ *  Scheduled labels are deliberately *not* re-matched on an edit. A schedule's premise is a real
+ *  clock at the moment of spending, so re-running it here would let correcting a typo in a
+ *  description silently re-tag the row, overwriting a choice the user made by hand. */
+const preservedLabelIds = (
+  current: TransactionWithRelations["labels"],
+  effectiveType: TransactionType
+): string[] =>
+  current
+    .filter((l) => l.label.applicableTo === "BOTH" || l.label.applicableTo === effectiveType)
+    .map((l) => l.labelId);
+
+/**
+ * Apply partial edits to existing transactions, atomically.
+ *
+ * The single update path, shared by `PUT /api/transactions/[id]` and the MCP `update_transactions`
+ * tool, for the same reason `createTransactionBatch` is shared: a second copy would drift the
+ * moment the label rules or the category checks changed, and nothing would catch it. The route
+ * gained the category ownership and type-match checks by moving here -- it had never had them,
+ * which was latent while the only caller was the user's own browser and is not latent once a
+ * model supplies `categoryId` over an internet-facing endpoint.
+ *
+ * All-or-nothing across the batch. Unlike a create there is no idempotency key to replay with, so
+ * a half-applied batch would leave the caller unable to say which rows moved and unable to safely
+ * resubmit.
+ */
+export const updateTransactions = async ({
+  prisma,
+  userId,
+  patches,
+  updatedVia,
+  updatedByMcpTokenId,
+  assertStillPermitted,
+}: UpdateTransactionsParams): Promise<UpdateTransactionsResult> => {
+  const ids = patches.map((p) => p.id);
+  // Two patches for one row would apply in array order and the loser would vanish silently, which
+  // is a worse answer than refusing: the caller believes both edits landed.
+  if (new Set(ids).size !== ids.length) return { ok: false, reason: "DUPLICATE_ID" };
+
+  // A patch naming nothing still stamps the audit columns and moves `updated_at`, so it is not a
+  // free no-op and is refused rather than quietly accepted.
+  if (patches.some((p) => !UPDATABLE_FIELDS.some((f) => p[f] !== undefined))) {
+    return { ok: false, reason: "NO_FIELDS" };
+  }
+
+  // Scoped to `userId`, so another user's id is simply not found. Deliberately indistinguishable
+  // from a nonexistent one: telling them apart would let a token probe for ids it does not own.
+  const rows = await prisma.transaction.findMany({
+    where: { id: { in: ids }, userId },
+    include: TX_INCLUDE,
+  });
+  if (rows.length !== ids.length) return { ok: false, reason: "NOT_FOUND" };
+  const rowById = new Map(rows.map((r) => [r.id, r]));
+
+  // Every check below runs against the row as it *will be*, never against the patch alone. The
+  // case that makes the difference is a patch that flips `type` and sends no `categoryId`: the
+  // stored category is untouched by the patch and is exactly what has to be re-examined, or an
+  // EXPENSE turned INCOME keeps a food category and distorts every breakdown that groups by one.
+  const effective = patches.map((patch) => {
+    const row = rowById.get(patch.id)!;
+    return {
+      patch,
+      row,
+      type: patch.type ?? row.type,
+      categoryId: patch.categoryId ?? row.categoryId,
+    };
+  });
+
+  if (!(await categoriesAreUsable(prisma, userId, effective))) {
+    return { ok: false, reason: "CATEGORIES_NOT_OWNED" };
+  }
+
+  // One ownership query for every explicitly named label across the batch, as on the create path.
+  const explicitLabelIds = [...new Set(patches.flatMap((p) => p.labelIds ?? []))];
+  let ownedLabelMap = new Map<string, string>();
+  if (explicitLabelIds.length > 0) {
+    const owned = await prisma.label.findMany({
+      where: { id: { in: explicitLabelIds }, userId },
+      select: { id: true, applicableTo: true },
+    });
+    if (owned.length !== explicitLabelIds.length) return { ok: false, reason: "LABELS_NOT_OWNED" };
+    ownedLabelMap = new Map(owned.map((l) => [l.id, l.applicableTo]));
+  }
+
+  const resolved = effective.map((e) => {
+    // The same three-way rule as the create path, minus its schedule branch: explicit ids are
+    // deduped and type-filtered, `[]` clears them, and omitting the field preserves what is there.
+    const labelIds =
+      e.patch.labelIds === undefined
+        ? preservedLabelIds(e.row.labels, e.type)
+        : [...new Set(e.patch.labelIds)].filter((id) => {
+            const applicableTo = ownedLabelMap.get(id);
+            return applicableTo === "BOTH" || applicableTo === e.type;
+          });
+
+    return { ...e, labelIds };
+  });
+
+  try {
+    return await prisma.$transaction(async (tx) => {
+      if (assertStillPermitted && !(await assertStillPermitted(tx))) {
+        return { ok: false as const, reason: "NO_LONGER_PERMITTED" as const };
+      }
+
+      const updated: UpdatedTransaction[] = [];
+
+      for (const { patch, row, type, categoryId, labelIds } of resolved) {
+        const labelsBefore = row.labels.map((l) => l.label.name).sort();
+        const labelIdsBefore = row.labels.map((l) => l.labelId).sort();
+        const labelsMoved = [...labelIds].sort().join(" ") !== labelIdsBefore.join(" ");
+
+        await tx.transaction.update({
+          where: { id: patch.id },
+          data: {
+            ...(patch.amount !== undefined && { amount: patch.amount }),
+            ...(patch.description !== undefined && { description: patch.description }),
+            ...(patch.type !== undefined && { type }),
+            ...(patch.date !== undefined && { date: new Date(patch.date) }),
+            ...(patch.categoryId !== undefined && { categoryId }),
+            updatedVia,
+            updatedByMcpTokenId,
+          },
+        });
+
+        // Replaced wholesale rather than diffed. `transaction_labels` holds nothing but the
+        // pairing, so there is no per-row state a diff would preserve, and delete-then-create is
+        // the shape the app's route has always used.
+        if (labelsMoved) {
+          await tx.transactionLabel.deleteMany({ where: { transactionId: patch.id } });
+          if (labelIds.length > 0) {
+            await tx.transactionLabel.createMany({
+              data: labelIds.map((labelId) => ({ transactionId: patch.id, labelId })),
+            });
+          }
+        }
+
+        const after = await tx.transaction.findUniqueOrThrow({
+          where: { id: patch.id },
+          include: TX_INCLUDE,
+        });
+
+        // Reported by comparing stored values, not by which keys the patch carried. Sending an
+        // amount identical to the one already there changed nothing, and listing it anyway would
+        // have the caller tell the user about an edit that did not happen.
+        const changed: UpdatableField[] = [];
+        const previous: UpdatedTransaction["previous"] = {};
+        if (after.amount !== row.amount) {
+          changed.push("amount");
+          previous.amount = row.amount;
+        }
+        if (after.description !== row.description) {
+          changed.push("description");
+          previous.description = row.description;
+        }
+        if (after.type !== row.type) {
+          changed.push("type");
+          previous.type = row.type;
+        }
+        if (after.date.getTime() !== row.date.getTime()) {
+          changed.push("date");
+          previous.date = row.date;
+        }
+        if (after.categoryId !== row.categoryId) {
+          changed.push("categoryId");
+          previous.categoryName = row.category.name;
+        }
+        if (labelsMoved) {
+          changed.push("labelIds");
+          previous.labels = labelsBefore;
+        }
+
+        updated.push({ transaction: after, changed, previous });
+      }
+
+      return { ok: true as const, updated };
+    }, BATCH_TX_OPTIONS);
+  } catch {
+    // The whole batch is one transaction, so a throw rolled all of it back. Unlike the create
+    // path there is no ambiguity to report: there are no new rows to hunt for, and every row is
+    // exactly as it was, so the caller can simply try again.
+    return { ok: false, reason: "WRITE_FAILED" };
   }
 };

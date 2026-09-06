@@ -3,6 +3,7 @@ import type { TransactionSource } from "@prisma/client";
 import {
   SCAN_FAILURE_MESSAGES,
   SCAN_REFUSAL_MESSAGES,
+  UPDATE_ERROR_MESSAGES,
   WRITE_ERROR_MESSAGES,
 } from "@/lib/mcp/write-errors";
 import { z } from "zod";
@@ -34,7 +35,9 @@ import { resolveWritePermission } from "./tokens";
 import {
   createTransactionBatch,
   findSavedBatch,
+  updateTransactions,
   type TransactionWithRelations,
+  type UpdatableField,
 } from "../transaction-writes";
 import {
   clientBatchIdSchema,
@@ -44,6 +47,7 @@ import {
   mcpTransactionSchema,
   resolveTransactionDate,
   MAX_BATCH_TRANSACTIONS,
+  MAX_UPDATE_TRANSACTIONS,
 } from "../validations";
 import {
   spendingByCategoryOutput,
@@ -59,6 +63,7 @@ import {
   billHistoryOutput,
   receiptItemsOutput,
   createTransactionsOutput,
+  updateTransactionsOutput,
   scanReceiptOutput,
 } from "./output-schemas";
 
@@ -151,6 +156,47 @@ const renderCreated = (
   };
 };
 
+/**
+ * Consequences of an edit that are real but invisible in the row it returns.
+ *
+ * Warnings, never refusals. Both cases below are legitimate edits the app's own form allows, and
+ * refusing them would mean a bill payment logged at the wrong amount could never be corrected
+ * through this tool at all. But neither consequence is visible from the transaction itself, so
+ * without a word here the user finds out from a report weeks later. Same principle as the
+ * repaired receipt year: an inference the user cannot see is one they cannot undo.
+ *
+ * Conditioned on what actually moved rather than on what the row is. Renaming a bill payment
+ * changes nothing about the bill, and warning anyway trains the reader to skip the line on the
+ * one occasion it matters.
+ */
+const editWarnings = (
+  transaction: TransactionWithRelations,
+  changed: readonly UpdatableField[]
+): string[] => {
+  const warnings: string[] = [];
+  const moved = new Set(changed);
+
+  if (transaction.billId && (moved.has("amount") || moved.has("date"))) {
+    warnings.push(
+      "This transaction settles a recurring bill. Changing its amount or date changes what bill payment history and bill accuracy report for that occurrence."
+    );
+  }
+
+  if (transaction.receiptBreakdown && moved.has("amount")) {
+    warnings.push(
+      "This transaction has a stored per-item receipt breakdown, which is left as it was and no longer adds up to the new amount."
+    );
+  }
+
+  if (transaction.receiptGroupId && moved.has("amount")) {
+    warnings.push(
+      "This transaction is one of several split from a single receipt. The others were not touched, so the group no longer sums to the receipt total."
+    );
+  }
+
+  return warnings;
+};
+
 export interface BudgetMcpServerOptions {
   /** Injected so the stdio entry point and the HTTP route can each supply their own client. */
   prisma: PrismaClient;
@@ -213,8 +259,9 @@ export const createBudgetMcpServer = ({
         "spending, income, or upcoming bills. Months are YYYY-MM and are resolved in the " +
         "user's own timezone, so results match what they see in the app. Amounts are plain " +
         "numbers in the user's configured currency. Every tool whose name begins with `get_` " +
-        "or `search_` is read-only. `create_transactions`, when present, is the only tool that " +
-        "writes, and nothing here can ever change or delete existing data.",
+        "or `search_` is read-only. `create_transactions` and `update_transactions`, when " +
+        "present, are the only tools that write: one adds rows, the other changes existing " +
+        "ones. Nothing here can delete anything.",
     }
   );
 
@@ -927,7 +974,7 @@ export const createBudgetMcpServer = ({
       annotations: { destructiveHint: false, idempotentHint: true },
     },
     async ({ transactions, clientBatchId }) => {
-      const permission = resolveWritePermission(scopes, writesEnabledUntil);
+      const permission = resolveWritePermission(scopes, writesEnabledUntil, "transactions:write");
 
       if (!permission.allowed) {
         // A batch that committed but whose response was lost must stay resolvable, and the
@@ -1005,7 +1052,11 @@ export const createBudgetMcpServer = ({
             where: { id: userId },
             select: { mcpWritesEnabledUntil: true },
           });
-          return resolveWritePermission(scopes, current?.mcpWritesEnabledUntil ?? null).allowed;
+          return resolveWritePermission(
+            scopes,
+            current?.mcpWritesEnabledUntil ?? null,
+            "transactions:write"
+          ).allowed;
         },
       });
 
@@ -1019,6 +1070,169 @@ export const createBudgetMcpServer = ({
       }
 
       return renderCreated(result.transactions, result.replayed, timezoneOffset);
+    }
+  );
+
+  registered.update_transactions = server.registerTool(
+    "update_transactions",
+    {
+      title: "Update transactions",
+      description:
+        "Change one or more EXISTING transactions. Use it to correct a wrong amount, fix a " +
+        "description, move a transaction to a different category, or re-date one. " +
+        "This overwrites data the user already has, so agree the change with them first and " +
+        "report back what moved. " +
+        "Every field except `id` is optional and ONLY the fields you send are changed; omit the " +
+        "rest and they keep their current values. To clear a transaction's labels send " +
+        "`labelIds: []`, and to leave them exactly as they are omit `labelIds` entirely. " +
+        "Auto-apply label schedules never run on an edit, so labels the user chose by hand are " +
+        "safe. " +
+        "Get IDs from search_transactions or get_top_expenses. If you change `type` you must " +
+        "usually send a `categoryId` of that same type as well, since the existing category " +
+        "will no longer match. " +
+        "The whole call is all-or-nothing: if any transaction is rejected, none of them change. " +
+        "Nothing here can delete a transaction.",
+      inputSchema: {
+        transactions: z
+          .array(
+            z.object({
+              id: z.string().min(1).describe("The transaction's ID, from a read tool."),
+              amount: z
+                .number()
+                .positive()
+                .optional()
+                .describe("New amount, always positive. Omit to leave it unchanged."),
+              description: z
+                .string()
+                .max(255)
+                .optional()
+                .describe("New description. Omit to leave it unchanged."),
+              type: z
+                .enum(["INCOME", "EXPENSE"])
+                .optional()
+                .describe(
+                  "New type. Changing this usually requires a `categoryId` of the same type, " +
+                    "because the transaction's current category will no longer match it."
+                ),
+              date: z
+                .string()
+                .refine(isRealDate, {
+                  message: "date must be a real calendar date, e.g. 2026-08-25",
+                })
+                .optional()
+                .describe(
+                  "New date in the user's own timezone. Include a time when the user gives one " +
+                    "('last night' -> 2026-08-25T21:00); a bare date such as 2026-08-25 is " +
+                    "filled in with the current clock. Omit to leave the date untouched, which " +
+                    "is what you want when you are only fixing an amount or a category."
+                ),
+              categoryId: z
+                .string()
+                .optional()
+                .describe(
+                  "New category ID from get_category_list. Must be the user's own and must " +
+                    "match the transaction's type. Omit to leave it unchanged."
+                ),
+              labelIds: z
+                .array(z.string())
+                .optional()
+                .describe(
+                  "Replaces the transaction's labels entirely. Omit to keep its current " +
+                    "labels; send [] to remove all of them."
+                ),
+            })
+          )
+          .min(1)
+          .max(MAX_UPDATE_TRANSACTIONS),
+      },
+      outputSchema: updateTransactionsOutput,
+      // The only tool here that overwrites existing data, hence destructiveHint and no
+      // readOnlyHint: clients must prompt every time. Idempotent because a patch describes a
+      // destination rather than a delta -- applying the same one twice leaves the same row, so a
+      // client that retries an ambiguous failure cannot compound the change.
+      annotations: { destructiveHint: true, idempotentHint: true },
+    },
+    async ({ transactions }) => {
+      const permission = resolveWritePermission(scopes, writesEnabledUntil, "transactions:edit");
+      if (!permission.allowed) {
+        // No replay branch, unlike create. An update carries no idempotency key because it needs
+        // none: there is no committed-but-unreported batch to recover, so a lapsed lease during
+        // an edit has nothing to resolve and is simply a refusal.
+        const message =
+          permission.reason === "SCOPE_NOT_GRANTED"
+            ? "This token cannot change transactions. Mint a new token with the transactions:edit scope in Profile > MCP Access."
+            : "Writes are currently switched off for this account. Turn them on in Profile > MCP Access, then try again.";
+        return { content: [{ type: "text" as const, text: message }], isError: true };
+      }
+
+      const result = await updateTransactions({
+        prisma,
+        userId,
+        patches: transactions.map((t) => ({
+          ...t,
+          // Only when a date was actually sent. Spreading an undefined `date` through
+          // `resolveTransactionDate` would turn "leave the date alone" into "set it to now",
+          // silently re-dating every transaction whose amount was being corrected.
+          ...(t.date !== undefined && {
+            date: resolveTransactionDate(t.date, timezoneOffset),
+          }),
+        })),
+        updatedVia: createdVia,
+        updatedByMcpTokenId: tokenId ?? null,
+        // Re-read at the moment of the write, exactly as the create path does, so "turn writes
+        // off now" stops an edit already in flight rather than only the next one.
+        assertStillPermitted: async (tx) => {
+          const current = await tx.user.findUnique({
+            where: { id: userId },
+            select: { mcpWritesEnabledUntil: true },
+          });
+          return resolveWritePermission(
+            scopes,
+            current?.mcpWritesEnabledUntil ?? null,
+            "transactions:edit"
+          ).allowed;
+        },
+      });
+
+      if (!result.ok) {
+        return {
+          content: [{ type: "text" as const, text: UPDATE_ERROR_MESSAGES[result.reason] }],
+          isError: true,
+        };
+      }
+
+      const payload = {
+        // Rows whose stored values actually moved, which is not always the number sent: a patch
+        // restating what was already there is a success that changed nothing, and counting it
+        // would have the caller report an edit the user will not find.
+        updated: result.updated.filter((u) => u.changed.length > 0).length,
+        transactions: result.updated.map(({ transaction: t, changed, previous }) => ({
+          id: t.id,
+          changed: [...changed],
+          previous: {
+            ...(previous.amount !== undefined && { amount: previous.amount }),
+            ...(previous.description !== undefined && { description: previous.description }),
+            ...(previous.type !== undefined && { type: previous.type }),
+            ...(previous.date !== undefined && {
+              date: formatLocalDate(previous.date, timezoneOffset),
+            }),
+            ...(previous.categoryName !== undefined && { categoryName: previous.categoryName }),
+            ...(previous.labels !== undefined && { labels: previous.labels }),
+          },
+          amount: t.amount,
+          description: t.description,
+          type: t.type,
+          date: formatLocalDate(t.date, timezoneOffset),
+          categoryName: t.category.name,
+          labels: t.labels.map((l) => l.label.name),
+          warnings: editWarnings(t, changed),
+        })),
+      };
+
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+        structuredContent: structured(payload),
+      };
     }
   );
 

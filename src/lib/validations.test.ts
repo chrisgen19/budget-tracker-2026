@@ -127,6 +127,28 @@ describe("createMcpTokenSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("refuses an edit token that never expires", () => {
+    // The edit scope has to inherit both write refinements, not just resemble them. It reaches
+    // them through `grantsWrite`, which reaches them through `isWriteScope` -- and while that was
+    // a `:write` suffix test, the one credential that can rewrite recorded history was also the
+    // only writing credential allowed to live forever.
+    const result = createMcpTokenSchema.safeParse({
+      ...base,
+      scopes: ["transactions:edit"],
+      expiresInDays: null,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("refuses an edit token that outlives the write cap", () => {
+    const result = createMcpTokenSchema.safeParse({
+      ...base,
+      scopes: ["transactions:read", "transactions:edit"],
+      expiresInDays: 365,
+    });
+    expect(result.success).toBe(false);
+  });
+
   it("allows a write token at exactly the cap", () => {
     const result = createMcpTokenSchema.safeParse({
       ...base,

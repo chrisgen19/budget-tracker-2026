@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Prisma, type TransactionSource } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { grantsWrite, parseScopes, type McpScope } from "./scopes";
+import { parseScopes, type McpScope } from "./scopes";
 
 /** Distinctive prefix so a leaked token is greppable and recognisable in a config file. */
 const TOKEN_PREFIX = "btmcp_";
@@ -46,12 +46,19 @@ export type McpWriteRefusal = "SCOPE_NOT_GRANTED" | "WRITES_DISABLED";
 export type McpWritePermission = { allowed: true } | { allowed: false; reason: McpWriteRefusal };
 
 /**
- * Decide whether this request may write, right now.
+ * Decide whether this request may perform one specific write, right now.
  *
  * Two independent gates, deliberately not collapsed into one. The scope is least privilege fixed
- * at mint time ("may *this token* write?"); the lease is a kill switch the user can flip at any
+ * at mint time ("may *this token* do this?"); the lease is a kill switch the user can flip at any
  * moment ("may *anything* write right now?"). Either alone is insufficient: a scope cannot be
  * withdrawn without re-minting, and a lease cannot distinguish one token from another.
+ *
+ * `required` is the scope for the *action being attempted*, and it has no default on purpose.
+ * This used to ask the single question "may this token write?", which was the same question for
+ * every caller while `create_transactions` was the only write. With creating and editing split
+ * across two scopes it is two questions, and a create-only token would sail through the edit
+ * gate. A default value is exactly what would silently re-collapse them the next time a write
+ * scope is added, so every caller has to name what it is about to do.
  *
  * @param writesEnabledUntil `users.mcp_writes_enabled_until`. Null or past means writes are off,
  *   which is the safe default rather than a state the user has to remember to return to.
@@ -59,9 +66,10 @@ export type McpWritePermission = { allowed: true } | { allowed: false; reason: M
 export const resolveWritePermission = (
   scopes: readonly McpScope[],
   writesEnabledUntil: Date | null,
+  required: McpScope,
   now = new Date()
 ): McpWritePermission => {
-  if (!grantsWrite(scopes)) return { allowed: false, reason: "SCOPE_NOT_GRANTED" };
+  if (!scopes.includes(required)) return { allowed: false, reason: "SCOPE_NOT_GRANTED" };
   if (!writesEnabledUntil || writesEnabledUntil <= now) {
     return { allowed: false, reason: "WRITES_DISABLED" };
   }

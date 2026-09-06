@@ -3,6 +3,7 @@ import {
   DEFAULT_MINT_SCOPES,
   MCP_SCOPES,
   MCP_SCOPE_LABELS,
+  MCP_TOOL_SCOPES,
   READ_ONLY_SCOPES,
   grantsWrite,
   isPrivilegedScope,
@@ -66,5 +67,44 @@ describe("DEFAULT_MINT_SCOPES", () => {
     // stdio server which passes no scopes at all, would then have been able to spend real money.
     expect(DEFAULT_MINT_SCOPES).not.toContain("receipts:scan");
     expect(READ_ONLY_SCOPES).not.toContain("receipts:scan");
+  });
+});
+
+describe("isWriteScope", () => {
+  it("counts transactions:edit, whose name does not end in :write", () => {
+    // The load-bearing test for this whole scope model. `isWriteScope` was `endsWith(":write")`,
+    // which reads `transactions:edit` as harmless -- and the three assertions below are what that
+    // one wrong answer cascades into. Restoring the suffix test fails all four.
+    expect(isWriteScope("transactions:edit")).toBe(true);
+  });
+
+  it("keeps transactions:edit out of the default grant", () => {
+    // READ_ONLY_SCOPES is what a caller naming no scopes receives, including the local stdio
+    // server. A misfiled edit scope would hand every one of them the power to rewrite history.
+    expect(READ_ONLY_SCOPES).not.toContain("transactions:edit");
+    expect(DEFAULT_MINT_SCOPES).not.toContain("transactions:edit");
+  });
+
+  it("forces a bounded lifetime on an edit-only token", () => {
+    // grantsWrite drives createMcpTokenSchema's two refinements: a write-capable token may not
+    // choose "Never" and is capped at MAX_WRITE_TOKEN_EXPIRY_DAYS. An edit-only token has to
+    // inherit both, or the tightest credential in the set would be the longest-lived.
+    expect(grantsWrite(["transactions:edit"])).toBe(true);
+  });
+});
+
+describe("MCP_TOOL_SCOPES", () => {
+  it("gates editing behind its own scope, not the create scope", () => {
+    // The property AGENTS.md protects: the Telegram bot's token carries transactions:write, so
+    // it must gain nothing from this tool existing. Pointing both tools at one scope would hand
+    // every already-minted write token the ability to rewrite rows, with no re-mint and no sign.
+    expect(MCP_TOOL_SCOPES.update_transactions).toBe("transactions:edit");
+    expect(MCP_TOOL_SCOPES.create_transactions).toBe("transactions:write");
+  });
+
+  it("has no delete tool", () => {
+    // Editing was added deliberately; deleting was not. A leaked edit-capable token can garble
+    // rows, which is visible and correctable, but it still cannot make them disappear.
+    expect(Object.keys(MCP_TOOL_SCOPES).filter((n) => n.includes("delete"))).toEqual([]);
   });
 });
