@@ -128,6 +128,17 @@ export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
  *  with a generic "Invalid input" after the scan credits had already been spent. */
 export const MAX_BATCH_TRANSACTIONS = 200;
 
+/**
+ * Ceiling on one `update_transactions` call.
+ *
+ * Deliberately below `MAX_BATCH_TRANSACTIONS`. That cap is 200 because a single multi-scan
+ * receipt expands past 50 rows once itemised, and failing the save after the scan credits were
+ * spent is the failure it was raised to prevent. Editing has no such shape -- nothing produces
+ * fifty simultaneous corrections -- so the only thing a high ceiling buys here is a larger blast
+ * radius for one wrong call against rows that already exist.
+ */
+export const MAX_UPDATE_TRANSACTIONS = 50;
+
 /** Longest lifetime the MCP token UI will mint. Anything longer is re-minted deliberately. */
 export const MAX_TOKEN_EXPIRY_DAYS = 365;
 

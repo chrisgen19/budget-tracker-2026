@@ -111,7 +111,7 @@ export function McpTokenCreate({ onCreate, creating }: McpTokenCreateProps) {
       </div>
 
       <fieldset>
-        <legend className="text-sm font-medium text-warm-600">What it can read</legend>
+        <legend className="text-sm font-medium text-warm-600">What it can do</legend>
         <div className="mt-1.5 space-y-2">
           {MCP_SCOPES.map((scope) => (
             <label key={scope} className="flex items-start gap-2.5 text-xs text-warm-500">
@@ -136,7 +136,7 @@ export function McpTokenCreate({ onCreate, creating }: McpTokenCreateProps) {
           ))}
         </div>
         {scopes.length === 0 && (
-          <p className="text-xs text-red-600 mt-2">Pick at least one thing it can read.</p>
+          <p className="text-xs text-red-600 mt-2">Pick at least one thing it can do.</p>
         )}
       </fieldset>
 

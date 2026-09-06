@@ -35,7 +35,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **Scheduled Bills & Reminders** — Recurring bill management with configurable frequency (weekly, biweekly, monthly, quarterly, yearly); mobile toast reminders for upcoming and overdue bills; one-tap pay that auto-creates the expense transaction; snooze (1d/3d/1w) and skip actions; pay-all for batch payments; bill history with links to past payments
 - **Progressive Web App** — Installable PWA with offline support via Serwist service worker; install prompt banner (Android + iOS Safari guide); standalone mode with safe-area handling; smart caching for API responses and static assets
 - **Timezone-Aware Dates** — All date queries respect the user's local timezone offset for accurate day boundaries and month grouping
-- **MCP Server** - [Model Context Protocol](https://modelcontextprotocol.io/) access to your budget data in natural language, over stdio (local) or HTTP with a scoped bearer token (remote); 12 read-only tools (spending by category, top expenses, monthly summary, spending trends, search transactions, budget overview, upcoming bills, category list, label breakdown, label list, bill history, receipt items) plus one write tool (`create_transactions`), gated behind a separate scope, a time-limited write lease, and a provenance column; shared query library reusable for future in-app AI chat
+- **MCP Server** - [Model Context Protocol](https://modelcontextprotocol.io/) access to your budget data in natural language, over stdio (local) or HTTP with a scoped bearer token (remote); 12 read-only tools (spending by category, top expenses, monthly summary, spending trends, search transactions, budget overview, upcoming bills, category list, label breakdown, label list, bill history, receipt items) plus two write tools — `create_transactions` and `update_transactions` — both behind the `transactions:write` scope, a time-limited write lease, and provenance columns recording which credential created and which last edited every row; nothing can delete; shared query library reusable for future in-app AI chat
 - **Telegram Bot** - Log spending by messaging a personal Telegram bot (`100 breakfast`, `spent 350 for groceries yesterday`) and ask for summaries, recent transactions, or upcoming bills; runs inside the app on boot; talks to the app as an MCP client, so it inherits the token scope, write lease, rate limit, and audit trail rather than touching the database; Gemini only classifies each message, so every figure it reports comes from real data
 - **Analytics** — Dedicated reporting page with income vs expenses bar chart, cash flow area chart (net + cumulative), category breakdown donut chart, label breakdown horizontal bars, summary cards, and flexible time range controls (weekly/monthly/yearly/custom)
 - **Design** — Warm paper-ledger aesthetic with Young Serif + Outfit fonts, Plus Jakarta Sans for currency amounts, amber accents, and Framer Motion animations
@@ -175,7 +175,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io/) server that lets yo
 budget in natural language ("what's my biggest spending category?", "how much did I spend on food
 this month?") from Claude Code or Claude Desktop.
 
-The 14 tools are defined once, in `src/lib/mcp/server.ts`, and served over two transports:
+The 15 tools are defined once, in `src/lib/mcp/server.ts`, and served over two transports:
 
 ```
 Local:   Claude Desktop ──(stdio)──▶ mcp-server/src/index.ts ─┐
@@ -190,12 +190,18 @@ Pick by which database you want to read:
 | **[Local (stdio)](#option-a-local-stdio)** | whatever `DATABASE_URL` points at, usually your dev database | none, it is your own machine | config file per client |
 | **[Remote (HTTP)](#option-b-remote-http)** | the deployed app's database, i.e. **production** | scoped bearer token, revocable | mint a token, one command |
 
-Twelve of the fourteen tools are read-only. `scan_receipt` writes nothing either, but each call
+Twelve of the fifteen tools are read-only. `scan_receipt` writes nothing either, but each call
 spends one of your monthly receipt scans, so it is scoped separately and is never granted by
-default. The remaining exception is `create_transactions`, which is
-available only to a token minted with the `transactions:write` scope **and** only while a
-time-limited write lease is open (Profile > MCP Access). Nothing in the server can change or
-delete an existing transaction. See [MCP writes](#mcp-writes) for how the controls fit together.
+default.
+
+The two remaining tools write, and both sit behind the same `transactions:write` scope:
+`create_transactions` adds a transaction, and `update_transactions` changes an existing one's
+amount, description, type, date, category or labels. A token minted before editing existed picks
+it up with no re-mint. Both additionally require a time-limited write lease to be open
+(Profile > MCP Access).
+
+Nothing in the server can **delete** a transaction. See [MCP writes](#mcp-writes) for how the
+controls fit together.
 
 ### Option A: Local (stdio)
 
@@ -297,9 +303,9 @@ Your endpoint is `https://<your-domain>/api/mcp`.
 In the deployed app, go to **Profile → MCP Access**:
 
 1. Name it after where it will live, e.g. "Claude Code (laptop)".
-2. Tick only the scopes you need. Read scopes start ticked; `transactions:write` never does, so
-   write authority is always a deliberate choice. The descriptions say what each one actually
-   returns:
+2. Tick only the scopes you need. Read scopes start ticked; the write scope never does, so write
+   authority is always a deliberate choice. `transactions:write` covers both adding transactions
+   and changing existing ones. The descriptions say what each one actually returns:
    `receipts:read` and `bills:read` both include the parent transaction's description and
    amount, so neither is as narrow as its name suggests.
 3. Pick an expiry. 90 days is the default; "Never" exists but should be a deliberate choice.
@@ -369,26 +375,41 @@ Three details that are each enough to break it on their own:
 You can register the local and remote servers side by side under different names: local for
 development, remote for real data.
 
-#### Creating transactions
+#### Creating and editing transactions
 
-`create_transactions` is the only tool that writes. The server refuses it unless **both** of these
-are true:
+Two tools write, and the server refuses either unless **both** of these are true:
 
-1. The token carries the `transactions:write` scope. Read-only tokens cannot see the tool at all.
-   A token with a write scope cannot be set to "Never" expire and is capped at 90 days.
+1. The token carries the `transactions:write` scope, which covers both creating and changing.
+   A token without it cannot see either tool at all — they are removed from the server rather
+   than refused on call. The scope caps the token at 90 days and forbids "Never" expires.
 2. Writes are switched on under **Profile > MCP Access > Write access**. This is a lease, not a
    toggle: pick 1 hour, 8 hours, or 30 days, and it closes itself. Every token is refused while it
    is off, so it works as a kill switch when you are away from your machine.
 
-Separately, the tool omits `readOnlyHint`, so clients that support tool approval prompt you before
-each call rather than auto-approving it. That is a client-side courtesy, not something the server
-can enforce, so do not rely on it as a third gate.
+Separately, both tools omit `readOnlyHint`, so clients that support tool approval prompt you before
+each call rather than auto-approving it. `update_transactions` also declares `destructiveHint`,
+since it is the only tool that overwrites data you already have. Both are client-side courtesies,
+not something the server can enforce, so do not rely on them as a third gate.
 
-Rows it creates are stamped with `created_via = MCP` and the token that wrote them, set
-server-side. Filter them on `/transactions` with the **Added by → Claude** control, or ask the
-model directly, since `search_transactions` takes the same filter.
+`update_transactions` takes an id and only the fields you want to differ — send an amount alone
+and the description, date, category and labels are untouched. Omitting `labelIds` keeps the
+transaction's current labels; sending `[]` clears them. Auto-apply label schedules never run on an
+edit, so labels you chose by hand are safe. A date without a time keeps the transaction's existing
+time of day rather than moving it to now, so restating the day a row already has changes nothing.
 
-Nothing here can edit or delete an existing transaction.
+It reports what actually moved and what each field was before, and warns — without refusing — when
+the transaction settles a recurring bill, came from a split receipt, or when a label you named
+could not be applied because it does not apply to that transaction's type. It **cannot delete**
+anything.
+
+Rows are stamped server-side with `created_via = MCP` and the token that wrote them; edits stamp
+`updated_via` and the token that made the change, leaving the creation stamp intact. Filter on
+`/transactions` with the **Added by → Claude** control, or ask the model directly, since
+`search_transactions` takes the same filter. Only these tools write `updated_via`: the app's own
+edit paths do not, so a row edited in the browser after an MCP edit still names the token as its
+last editor.
+
+Nothing here can delete a transaction.
 
 #### Operational notes
 
@@ -419,17 +440,26 @@ Nothing here can edit or delete an existing transaction.
 | `get_receipt_items` | Individual line items from scanned receipts, filterable by month, name, or receipt |
 | `scan_receipt` | **Spends a scan.** Reads a receipt image and returns a draft; saves nothing |
 | `create_transactions` | **Write.** Creates one or more transactions in a single idempotent batch |
+| `update_transactions` | **Write.** Changes existing transactions field by field. Cannot delete |
 
 ### MCP writes
 
-`create_transactions` is the only tool that writes, and it sits behind three independent controls.
-None of them substitutes for another:
+`create_transactions` and `update_transactions` are the only tools that write, and they sit behind
+three independent controls. None of them substitutes for another:
 
 | Control | What it is | Why |
 |---|---|---|
-| `transactions:write` scope | Chosen when the token is minted and fixed for its life. Such a token cannot pick "Never" expires and is capped at 90 days | Least privilege. A read token can never be talked into writing |
+| Write scope | `transactions:write`, covering both creating and changing. Chosen when the token is minted and fixed for its life, and it caps the token at 90 days and forbids "Never" expires | Least privilege. A read token can never be talked into writing |
 | Write lease | `users.mcp_writes_enabled_until`, a timestamp rather than a boolean, set from Profile > MCP Access | Forgetting to switch writes off cannot leave them open for days |
-| Provenance | `transactions.created_via` + `mcp_token_id`, both set server-side | An audit trail. A compromised token cannot forge or omit it |
+| Provenance | `created_via` + `mcp_token_id` for creation, `updated_via` + `updated_by_mcp_token_id` for the last edit, all set server-side | An audit trail. A compromised token cannot forge or omit it, and an edit cannot erase who created the row |
+
+Creating a row and rewriting one are arguably different powers — a leaked create-only credential
+adds junk that is visible and deletable, while an edit-capable one can quietly change history
+already recorded. Editing was built behind its own scope for that reason and then folded back into
+`transactions:write`, because separating them meant re-minting every existing token, and this
+deployment has one person holding all of them. The consequence is real and worth knowing: the
+Telegram bot's token can now rewrite rows, though none of its handlers do. There is **no delete
+tool** at all.
 
 Provenance follows the **credential**, not the endpoint. A token is minted as either an AI
 assistant or a Telegram bot, and every row it writes is stamped accordingly, because every remote
@@ -437,8 +467,11 @@ write arrives through `/api/mcp` and deriving the source from the endpoint would
 rows claim Claude wrote them. `APP` is not mintable, so no token can make a row look hand-typed.
 The transactions page can filter by any of these.
 
-Writes are idempotent. Each call carries a `clientBatchId` UUID, and replaying one returns the
-original rows instead of writing a second copy, so a lost response can be retried safely.
+Writes are idempotent. `create_transactions` carries a `clientBatchId` UUID, and replaying one
+returns the original rows instead of writing a second copy, so a lost response can be retried
+safely. `update_transactions` needs no key: a patch describes a destination rather than a delta,
+so applying the same one twice lands on the same row. A whole update call is all-or-nothing — if
+any transaction in it is rejected, none of them change.
 
 ### Testing with MCP Inspector
 

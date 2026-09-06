@@ -208,6 +208,17 @@ model Transaction {
   /// the audit record has to outlive the credential, and revoking or deleting a token must not
   /// cascade away the evidence of what it did.
   mcpTokenId       String?                @map("mcp_token_id")
+  /// Which surface last *edited* this row. Null means it has not been edited since this column
+  /// existed, which is honest for every backfilled row; a default of APP would assert an edit
+  /// that never happened. Deliberately separate from `createdVia`, which describes creation and
+  /// must not be falsified by an edit: a row typed into the app and later corrected over MCP is
+  /// both APP-created and MCP-edited, and one column cannot say that. Set server-side, never
+  /// from caller input.
+  updatedVia       TransactionSource?     @map("updated_via")
+  /// Which MCP token last edited this row, when `updatedVia` is MCP or TELEGRAM. Not a foreign
+  /// key, for the same reason `mcpTokenId` is not: revoking or deleting a credential must not
+  /// cascade away the evidence of what it did.
+  updatedByMcpTokenId String?              @map("updated_by_mcp_token_id")
   billId           String?                @map("bill_id")
   bill             ScheduledTransaction?  @relation(fields: [billId], references: [id], onDelete: SetNull)
   labels           TransactionLabel[]
@@ -220,6 +231,7 @@ model Transaction {
   @@index([billId])
   @@index([userId, clientBatchId])
   @@index([userId, createdVia])
+  @@index([userId, updatedVia])
   @@map("transactions")
 }
 

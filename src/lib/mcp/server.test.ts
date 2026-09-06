@@ -176,8 +176,12 @@ describe("createBudgetMcpServer", () => {
     expect(names).not.toContain("create_transactions");
   });
 
-  it("exposes the write tool only with transactions:write", async () => {
-    expect(await listToolNames(["transactions:write"])).toEqual(["create_transactions"]);
+  it("exposes the write tools only with transactions:write", async () => {
+    // Both of them: the scope covers adding a transaction and changing one.
+    expect(await listToolNames(["transactions:write"])).toEqual([
+      "create_transactions",
+      "update_transactions",
+    ]);
   });
 
   it("removes tools outside the granted scopes rather than leaving them listed", async () => {
@@ -220,7 +224,11 @@ describe("createBudgetMcpServer", () => {
 
     // Anything that changes data or spends a metered resource must not be marked read-only, or
     // clients auto-approve it without prompting.
-    const PROMPTS_BEFORE_RUNNING = ["create_transactions", "scan_receipt"];
+    const PROMPTS_BEFORE_RUNNING = [
+      "create_transactions",
+      "update_transactions",
+      "scan_receipt",
+    ];
 
     const readTools = tools.filter((tool) => !PROMPTS_BEFORE_RUNNING.includes(tool.name));
     expect(readTools.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
@@ -230,12 +238,273 @@ describe("createBudgetMcpServer", () => {
       const tool = tools.find((t) => t.name === name);
       expect(tool, name).toBeDefined();
       expect(tool?.annotations?.readOnlyHint, name).toBeUndefined();
-      expect(tool?.annotations?.destructiveHint, name).toBe(false);
     }
 
-    // Replaying a clientBatchId returns the original rows, so the write is idempotent. A second
-    // scan is not: it costs another credit and Gemini may read the image differently.
+    // Only one tool here overwrites data that already exists, and it is the only one that may
+    // say so. Marking creating or scanning destructive would cry wolf on the two calls that
+    // cannot lose anything; marking editing non-destructive would let a client treat rewriting a
+    // recorded amount as no more consequential than adding a row.
+    expect(
+      tools.find((t) => t.name === "update_transactions")?.annotations?.destructiveHint
+    ).toBe(true);
+    expect(
+      tools.find((t) => t.name === "create_transactions")?.annotations?.destructiveHint
+    ).toBe(false);
+    expect(tools.find((t) => t.name === "scan_receipt")?.annotations?.destructiveHint).toBe(false);
+
+    // Replaying a clientBatchId returns the original rows, so the write is idempotent, and a
+    // patch describes a destination rather than a delta, so re-applying one lands on the same
+    // row. A second scan is neither: it costs another credit and Gemini may read it differently.
     expect(tools.find((t) => t.name === "create_transactions")?.annotations?.idempotentHint).toBe(true);
+    expect(tools.find((t) => t.name === "update_transactions")?.annotations?.idempotentHint).toBe(true);
     expect(tools.find((t) => t.name === "scan_receipt")?.annotations?.idempotentHint).toBe(false);
   });
+
+  // --- Both write tools ride on transactions:write ---
+
+  it("exposes both write tools with transactions:write", async () => {
+    // One scope, so a token minted before editing existed gains it without being re-minted.
+    // The trade is deliberate: that token can now rewrite rows as well as add them.
+    expect(await listToolNames(["transactions:write"])).toEqual([
+      "create_transactions",
+      "update_transactions",
+    ]);
+  });
+
+  it("never exposes the edit tool to a read-only token", async () => {
+    const names = await listToolNames(["budget:read", "transactions:read", "receipts:read"]);
+    expect(names).not.toContain("update_transactions");
+  });
+
+  it("does not offer the edit tool when no scopes are given", async () => {
+    // The local stdio server's case: it passes no scopes and supplies no write lease.
+    expect(await listToolNames()).not.toContain("update_transactions");
+  });
 });
+
+describe("update_transactions permission", () => {
+  /** Calls `update_transactions` and returns the tool's own response. */
+  const callUpdate = async (options: Parameters<typeof createBudgetMcpServer>[0]) => {
+    const server = createBudgetMcpServer(options);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const result = await client.callTool({
+      name: "update_transactions",
+      arguments: { transactions: [{ id: "tx_1", amount: 320 }] },
+    });
+    await client.close();
+    return result;
+  };
+
+  it("refuses to edit when the write lease is off, before touching the database", async () => {
+    // The scope is granted and the tool is listed; the kill switch is what stops it. `prisma` is
+    // the bare stub, so reaching a query at all would throw rather than return this message.
+    const result = await callUpdate({
+      prisma,
+      userId: "user_1",
+      timezoneOffset: -480,
+      scopes: ["transactions:write"],
+      writesEnabledUntil: null,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("Writes are currently switched off");
+  });
+
+  it("refuses to edit when the lease has lapsed", async () => {
+    const result = await callUpdate({
+      prisma,
+      userId: "user_1",
+      timezoneOffset: -480,
+      scopes: ["transactions:write"],
+      writesEnabledUntil: new Date(Date.now() - 1_000),
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("Writes are currently switched off");
+  });
+});
+
+describe("update_transactions warnings", () => {
+  /** Drives the tool against a row carrying whatever provenance the case needs. */
+  const warningsFor = async (row: Record<string, unknown>, patch: Record<string, unknown>) => {
+    const stored = {
+      id: "tx_1",
+      amount: 250,
+      description: "Groceries",
+      type: "EXPENSE",
+      date: new Date("2026-09-06T09:00:00.000Z"),
+      categoryId: "cat_1",
+      userId: "user_1",
+      billId: null,
+      receiptGroupId: null,
+      receiptBreakdown: null,
+      category: { id: "cat_1", name: "Food", type: "EXPENSE" },
+      labels: [] as unknown[],
+      ...row,
+    };
+    const store = new Map([["tx_1", { ...stored }]]);
+    const client = {
+      transaction: {
+        findMany: vi.fn(async () => [...store.values()]),
+        update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+          store.set("tx_1", { ...store.get("tx_1")!, ...data } as typeof stored);
+          return store.get("tx_1")!;
+        }),
+        findUniqueOrThrow: vi.fn(async () => store.get("tx_1")!),
+      },
+      transactionLabel: { deleteMany: vi.fn(), createMany: vi.fn() },
+      category: { findMany: vi.fn(async () => [{ id: "cat_1", type: "EXPENSE" }]) },
+      label: { findMany: vi.fn(async () => []) },
+      user: {
+        findUnique: vi.fn(async () => ({ mcpWritesEnabledUntil: new Date(Date.now() + 60_000) })),
+      },
+      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(client)),
+    };
+
+    const server = createBudgetMcpServer({
+      prisma: client as unknown as PrismaClient,
+      userId: "user_1",
+      timezoneOffset: -480,
+      scopes: ["transactions:write"],
+      writesEnabledUntil: new Date(Date.now() + 60_000),
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const mcp = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), mcp.connect(clientTransport)]);
+
+    const result = await mcp.callTool({
+      name: "update_transactions",
+      arguments: { transactions: [{ id: "tx_1", ...patch }] },
+    });
+    await mcp.close();
+    return (result.structuredContent as { transactions: { warnings: string[] }[] })
+      .transactions[0].warnings;
+  };
+
+  it("warns when a split receipt's row is re-dated", async () => {
+    // Moving one row of a split receipt puts part of a single purchase in another day -- or
+    // another month, which every summary groups by -- while its siblings stay put. The predicate
+    // listed amount and category but not date, which the bill warning beside it already covered.
+    const warnings = await warningsFor({ receiptGroupId: "rg_1" }, { date: "2026-09-20" });
+    expect(warnings.some((w) => w.includes("split from a single receipt"))).toBe(true);
+  });
+
+  it("warns when a bill payment is re-dated", async () => {
+    const warnings = await warningsFor({ billId: "bill_1" }, { date: "2026-09-20" });
+    expect(warnings.some((w) => w.includes("settles a recurring bill"))).toBe(true);
+  });
+
+  it("stays quiet on an ordinary row", async () => {
+    // The warnings have to be rare to be read at all.
+    expect(await warningsFor({}, { date: "2026-09-20" })).toEqual([]);
+  });
+
+  it("stays quiet when a split receipt's description is fixed", async () => {
+    // Renaming a row changes nothing about how the receipt aggregates, so warning would train
+    // the reader to skip the line on the occasion it matters.
+    const warnings = await warningsFor({ receiptGroupId: "rg_1" }, { description: "Typo fixed" });
+    expect(warnings).toEqual([]);
+  });
+});
+
+describe("update_transactions date rendering", () => {
+  /** Drives the tool against a stub whose row moves only in time-of-day. */
+  const callWithStoredDate = async (stored: Date, patchDate: string) => {
+    const row = {
+      id: "tx_1",
+      amount: 250,
+      description: "Dinner",
+      type: "EXPENSE",
+      date: stored,
+      categoryId: "cat_1",
+      userId: "user_1",
+      billId: null,
+      receiptGroupId: null,
+      receiptBreakdown: null,
+      category: { id: "cat_1", name: "Food", type: "EXPENSE" },
+      labels: [] as unknown[],
+    };
+    const store = new Map([["tx_1", { ...row }]]);
+    const client = {
+      transaction: {
+        findMany: vi.fn(async () => [...store.values()]),
+        update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+          store.set("tx_1", { ...store.get("tx_1")!, ...data } as typeof row);
+          return store.get("tx_1")!;
+        }),
+        findUniqueOrThrow: vi.fn(async () => store.get("tx_1")!),
+      },
+      transactionLabel: { deleteMany: vi.fn(), createMany: vi.fn() },
+      category: { findMany: vi.fn(async () => [{ id: "cat_1", type: "EXPENSE" }]) },
+      label: { findMany: vi.fn(async () => []) },
+      user: {
+        findUnique: vi.fn(async () => ({ mcpWritesEnabledUntil: new Date(Date.now() + 60_000) })),
+      },
+      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(client)),
+    };
+
+    const server = createBudgetMcpServer({
+      prisma: client as unknown as PrismaClient,
+      userId: "user_1",
+      timezoneOffset: -480,
+      scopes: ["transactions:write"],
+      writesEnabledUntil: new Date(Date.now() + 60_000),
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const mcp = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), mcp.connect(clientTransport)]);
+
+    const result = await mcp.callTool({
+      name: "update_transactions",
+      arguments: { transactions: [{ id: "tx_1", date: patchDate }] },
+    });
+    await mcp.close();
+    return result.structuredContent as {
+      transactions: { changed: string[]; date: string; previous: { date?: string } }[];
+    };
+  };
+
+  it("shows the time when only the time of day moved", async () => {
+    // The tool invites a time whenever the user gives one, so patching a 17:00 row to 21:00 is a
+    // normal call. Rendering both ends as the calendar day made the reply read "the date changed
+    // from 2026-09-06 to 2026-09-06" -- a claim its own fields contradict.
+    const payload = await callWithStoredDate(
+      new Date("2026-09-06T09:00:00.000Z"), // 17:00 for a UTC+8 account
+      "2026-09-06T21:00"
+    );
+    const row = payload.transactions[0];
+
+    expect(row.changed).toEqual(["date"]);
+    expect(row.previous.date).toBe("2026-09-06 17:00");
+    expect(row.date).toBe("2026-09-06 21:00");
+  });
+
+  it("shows seconds when only the seconds moved", async () => {
+    // The same defect one level down from the `HH:mm` fix: a change of seconds alone rendered
+    // identically at minute precision, so the reply claimed a date change and printed the same
+    // value twice. The precision is chosen by comparison now, not fixed.
+    const payload = await callWithStoredDate(
+      new Date("2026-09-06T09:00:00.000Z"),
+      "2026-09-06T17:00:30"
+    );
+    const row = payload.transactions[0];
+
+    expect(row.changed).toEqual(["date"]);
+    expect(row.previous.date).toBe("2026-09-06 17:00:00");
+    expect(row.date).toBe("2026-09-06 17:00:30");
+  });
+
+  it("stays a plain calendar day when the day itself moved", async () => {
+    // The ordinary re-date keeps the shape every other date in the payload uses.
+    const payload = await callWithStoredDate(new Date("2026-09-06T09:00:00.000Z"), "2026-09-07");
+    const row = payload.transactions[0];
+
+    expect(row.changed).toEqual(["date"]);
+    expect(row.previous.date).toBe("2026-09-06");
+    expect(row.date).toBe("2026-09-07");
+  });
+});
+

@@ -2,6 +2,109 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-06 - The MCP server can edit a transaction
+
+Fifteen tools now. `update_transactions` changes an existing transaction's amount, description,
+type, date, category or labels. Until now the only way to fix a typo or recategorise a misfiled
+expense was to open the app, which is exactly why `src/lib/telegram/app-link.ts` puts an "Edit in
+app" button on every row the bot logs.
+
+That absence was load-bearing, and this spends part of it deliberately. Two things keep the spend
+as small as possible.
+
+**Editing rides on the existing `transactions:write` scope,** so a token already minted for
+logging picks the tool up with no re-mint. It was built the other way first -- `transactions:edit`,
+its own grant -- and that is the safer shape on paper: a leaked create-only credential adds junk
+that is visible and deletable, while an edit-capable one can quietly rewrite history already
+recorded, and one checkbox arguably should not hand over both. It was reversed because the cost
+lands on the wrong person. Every existing token is powerless to edit until re-minted, and in this
+deployment that is one individual, paying a chore to narrow a credential only they hold. The trade
+is recorded rather than hidden: a leaked bot token can now rewrite rows as well as add them.
+Splitting the scope back out is tracked as its own issue, worth doing if this ever serves more than
+one person.
+
+`resolveWritePermission` still takes the scope for the action attempted, with no default, even
+though every caller passes the same value today. "May this token write?" stops being the right
+question the moment a second write scope exists, and a default is what would let that go unnoticed.
+
+**`isWriteScope` is an explicit list, not `endsWith(":write")`.** One entry makes the two behave
+identically today, but a suffix test decides authority by spelling. `receipts:scan` already slipped
+past it once and needed `isPrivilegedScope` to be filed correctly, and a scope named
+`transactions:edit` would land in `READ_ONLY_SCOPES` -- the default grant, and what the local stdio
+server runs with -- handing every caller that names no scopes the power to rewrite rows. That is
+precisely the mistake this feature nearly shipped while the split existed. Enumerating costs one
+line and cannot be wrong by accident.
+
+**Every check runs against the effective row, never the patch.** Fields are optional and only what
+you send changes, which makes a bare `type` flip the interesting case: `categoryId` is absent from
+the patch, so nothing about it looks suspicious, and it is the *stored* category that no longer
+matches. Left alone, that files income under a food category and distorts every breakdown that
+groups by one. The check runs only on rows whose pair actually *moves*: judging an unchanged pair
+prevents nothing, since re-sending it writes what is already there, and would lock the caller out
+of rows that were already mismatched -- reachable with no MCP involvement, since
+`PUT /api/categories/[id]` lets a custom category's type be flipped under its transactions.
+
+**A bare date keeps the row's existing time of day.** `resolveTransactionDate` fills a bare
+`YYYY-MM-DD` with the current wall clock, which is the only sane choice when creating a row and
+destructive when editing one -- the row already has a time. Read tools return `localDate`, so a
+model correcting an amount and echoing the date back is the *expected* shape of a call, and it
+would have moved a 17:00 purchase to whenever the request arrived, then reported
+`changed: ["date"]` with an identical before and after. Milliseconds are preserved too: the offset
+into the local day is a millisecond count rather than an `HH:mm:ss` string round-tripped through a
+parser that leaves the fractional part non-capturing. Rows carrying them are ordinary --
+`POST /api/bills/[id]/action` stamps bill payments with a bare `new Date()`. And a change that
+stays inside one local day renders both ends with an `HH:mm`, since the calendar day alone cannot
+show it.
+
+**Label schedules never re-run on an edit,** so labels chosen by hand survive a description fix.
+A label the caller does not get is reported rather than dropped in silence, from either direction:
+named explicitly and filtered out by type, or already on the row and excluded by a changed `type`.
+Silently dropping the first is the failure this codebase already recorded once, when a Telegram
+review promised a label it then did not write. The implicit half is no better -- `changed` and
+`previous.labels` show the label leaving but never why.
+
+**Edits are audited separately from creations.** New `updated_via` and `updated_by_mcp_token_id`
+columns, stamped server-side like `created_via` is. An edit never touches the creation stamp: a row
+typed into the app and later corrected over MCP is both APP-created and MCP-edited, and one column
+cannot say that. The columns are nullable with no default; backfilling `APP` would have asserted an
+edit that never happened for every row in the table. The stamp follows the *change*, not the
+request -- a patch restating stored values moves nothing, and stamping it would rewrite a genuine
+trail for something that never happened.
+
+**A whole call is all-or-nothing.** Unlike a create there is no idempotency key, and none is
+needed -- a patch describes a destination rather than a delta, so applying it twice lands on the
+same row. But that also means a half-applied batch leaves the caller unable to say which rows moved
+or to safely resubmit, so one rejected transaction rolls back all of them. A failed write splits
+two ways rather than one: the ownership checks run outside the transaction, so a category or label
+deleted in that window arrives as a constraint violation that retrying can only reproduce, and
+telling an agent to "try the same request again" for that is how it loops.
+
+The tool reports what actually *moved* rather than what the patch listed -- restating a value that
+was already there is a success that changed nothing, and saying otherwise has the caller describe
+an edit the user cannot find -- along with the previous value of each changed field. It warns,
+without refusing, when the row settles a recurring bill or came from a split receipt and the edit
+touches its amount, date, type or category — every field that changes what a report makes of the
+row, not just its amount. Re-dating one row of a split receipt moves part of one purchase into
+another month while its siblings stay put, and nothing in the row says so.
+
+There is still **no delete tool**. A wrong edit is visible in the app and correctable; a wrong
+delete is silent.
+
+**Scoped to the MCP path on purpose.** `updateTransactions` is not wired into
+`PUT /api/transactions/[id]`, which keeps its own implementation. Sharing it is the obvious next
+step and was tried: it hands the browser a stricter server than the form was written against, since
+the form posts a stale `categoryId` across a type change, and the form work that follows is a
+separate change with its own risks. Two things found along that path are worth recording even
+though they are not fixed here -- `PUT /api/transactions/[id]` validates label ownership but never
+checks that `categoryId` is the caller's own or matches the transaction's type, and no app edit
+path stamps `updated_via`, so a row edited in the browser after an MCP edit still names the token.
+
+`scripts/verify-transaction-update.ts` drives all of it over the real `/api/mcp` route against a
+real database, because the unit tests stub Prisma and prove the rules rather than the storage: that
+the audit columns actually land, that an edit moving nothing leaves the trail alone, that label
+rows are replaced rather than appended, that a refused batch left every row untouched, and that a
+create-only token cannot see the tool.
+
 ## 2026-09-06 - The AI Assessment stops guessing and starts reading
 
 The tab was built on one period's aggregates, computed in the browser and posted to the server.

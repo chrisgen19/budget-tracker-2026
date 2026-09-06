@@ -100,14 +100,14 @@ export function McpWriteAccess({ enabledUntil, onChange, onReload }: McpWriteAcc
           <p className="text-sm font-medium text-warm-600">Write access</p>
           <p className="text-xs text-warm-400 mt-0.5">
             {live
-              ? `Claude can create transactions until ${formatUntil(enabledUntil!)}.`
-              : "Claude can read your budget but cannot create transactions."}
+              ? `Claude can add and change transactions until ${formatUntil(enabledUntil!)}.`
+              : "Claude can read your budget but cannot add or change transactions."}
           </p>
           <p className="text-xs text-warm-400 mt-1">
             Each option replaces the current expiry rather than adding to it. A token still needs
-            the{" "}
-            <code className="font-mono">transactions:write</code> scope as well. This switch turns
-            writing off for every token at once.
+            the <code className="font-mono">transactions:write</code> scope as well, which covers
+            both adding and changing transactions. This switch turns writing off for every token at
+            once.
           </p>
         </div>
       </div>

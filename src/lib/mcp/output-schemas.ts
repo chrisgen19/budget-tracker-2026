@@ -454,6 +454,76 @@ export const createTransactionsOutput = {
   transactions: z.array(createdTransaction),
 };
 
+// --- update_transactions ---
+
+/**
+ * What one edited row looks like coming back.
+ *
+ * Carries the row as it now is *and* what it was, because an edit is the one write where the
+ * result alone cannot be checked. A create that reports back what it wrote is self-evidently
+ * right; an edit reporting `amount: 250` says nothing about whether it just replaced 2,500 with a
+ * typo. `changed` and `previous` are what let the caller show the user the move rather than
+ * assert the destination -- the same reason a repaired receipt year is stated in prose instead of
+ * being applied silently.
+ */
+const updatedTransaction = z.object({
+  id: z.string(),
+  /** Only the fields whose stored value actually moved. Empty when the patch matched what was
+   *  already there, which is a successful call that changed nothing. */
+  changed: z
+    .array(z.string())
+    .describe(
+      "Input field names that actually changed, e.g. `amount`, `categoryId`, `labelIds`. Empty " +
+        "means the values sent already matched the stored ones, which is a success that changed " +
+        "nothing."
+    ),
+  previous: z
+    .object({
+      amount: z.number().optional(),
+      description: z.string().optional(),
+      type: transactionType.optional(),
+      /** The previous date, rendered the same way as `date` above so the two are comparable. */
+      date: z.string().optional(),
+      categoryName: z.string().optional(),
+      labels: z.array(z.string()).optional(),
+    })
+    .describe(
+      "The old values, for the fields named in `changed` only. Two keys are deliberately not " +
+        "spelled the same as their `changed` entry, because an id is not worth showing anyone: " +
+        "`categoryId` in `changed` appears here as `categoryName`, and `labelIds` as `labels`. " +
+        "Do not index this object with a `changed` entry without translating those two."
+    ),
+  amount: z.number(),
+  description: z.string(),
+  type: transactionType,
+  /**
+   * The user's own calendar day as `YYYY-MM-DD`, not a UTC slice.
+   *
+   * When an edit moves the time *within* a single day, the day alone cannot show it, so a time is
+   * appended at whatever precision distinguishes the two ends: `YYYY-MM-DD HH:mm`, or
+   * `HH:mm:ss`, or `HH:mm:ss.mmm`. Treat this as display text, not as a value to send back --
+   * `date` on the way in resolves seconds and milliseconds it was not given to zero, so echoing a
+   * minute-precision rendering onto a row stored with seconds would quietly truncate them.
+   */
+  date: z.string(),
+  categoryName: z.string(),
+  labels: z.array(z.string()),
+  /**
+   * Consequences of the edit that are not visible in the row itself, for the caller to relay.
+   *
+   * Warnings rather than refusals: both cases are legitimate edits the app itself allows, and
+   * blocking them would mean a bill payment logged at the wrong amount could never be corrected.
+   * But neither is visible from the row, so an unwarned user finds out later from a report.
+   */
+  warnings: z.array(z.string()),
+});
+
+export const updateTransactionsOutput = {
+  /** Rows whose stored values actually moved. Can be fewer than the patches sent. */
+  updated: z.number(),
+  transactions: z.array(updatedTransaction),
+};
+
 /**
  * What `scan_receipt` returns: a draft, never a saved row.
  *
