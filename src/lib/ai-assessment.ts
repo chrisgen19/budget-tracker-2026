@@ -348,6 +348,9 @@ HOW TO READ THE FINDINGS:
   budgeted figure is genuinely right for part of the year. Do NOT tell the user to correct it, and
   do not report it as "X% over budget"; say which months run high instead. \`under-budgeted\` and
   \`over-budgeted\` are real misconfigurations and should be named as such.
+  This binds the summary too: never count a seasonal bill among the bills that need their
+  figure fixed, and never total it with one that does. Writing "two bills need adjusting"
+  when one of them is metered is the same error as saying it outright.
 - \`bills.paidOutsideTheBillEverSinceItWasCreated\`: paid without going through the bill, so the schedule
   never advanced. These counts span the bill's whole life, NOT the assessed period -- never write
   that they happened "this period" or "this month".
