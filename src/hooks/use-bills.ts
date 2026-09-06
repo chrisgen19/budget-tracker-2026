@@ -25,6 +25,8 @@ export const billKeys = {
   history: (id: string) => ["bills", "history", id] as const,
   candidates: (id: string, dueDate: string) =>
     ["bills", "candidates", id, dueDate] as const,
+  /** Prefix for every candidate list, invalidated whenever transactions change. */
+  candidatesAll: ["bills", "candidates"] as const,
 };
 
 /* ------------------------------------------------------------------ */
@@ -168,6 +170,12 @@ export function useBillPaymentCandidatesQuery(id: string, dueDate: string | null
       return res.json();
     },
     enabled: !!id && !!dueDate,
+    // Always refetch on open. The list is derived from the transaction ledger,
+    // and the client default holds a query fresh for five minutes without
+    // refetching on focus -- so a payment added or re-dated while the panel was
+    // shut stayed invisible, and the panel offered a stale set of candidates.
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 }
 
