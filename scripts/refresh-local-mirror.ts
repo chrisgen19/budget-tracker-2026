@@ -27,7 +27,7 @@
  * have local-only migrations, drop the schema by hand first.
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, existsSync, rmSync } from "node:fs";
+import { mkdirSync, existsSync, rmSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { isLocalDatabase, databaseHost } from "./db-host";
 
@@ -74,16 +74,62 @@ const runOn = (url: string, cmd: string, args: string[]): string => {
   });
 };
 
-/** One row of orientation per side, so the direction is visible before writing. */
-const describe = (url: string): string => {
+/**
+ * Both sides' orientation, including the settings an assessment depends on.
+ *
+ * Row counts alone are not a freshness signal: a settings change moves no rows.
+ * On 6 Sep both databases held 829 identical transactions while the mirror had
+ * `is_variable = 0` against the source's `2`, so a report built on it would have
+ * called two metered bills fixed and quoted the wrong forecast for each. The
+ * fingerprint covers the bill and account fields the assessment reads, so a
+ * divergence in any of them shows up here rather than in the report.
+ */
+const CONFIG_FINGERPRINT = `
+  select md5(
+    coalesce((select string_agg(id||':'||amount||':'||is_variable||':'||is_active||':'||next_due_date, ','
+                                order by id) from scheduled_transactions), '') ||
+    coalesce((select string_agg(id||':'||currency||':'||timezone_offset, ',' order by id) from users), '')
+  )`;
+
+type Snapshot = { rows: string; config: string };
+
+const describe = (url: string): Snapshot => {
   try {
-    return runOn(url, "psql", [
+    const rows = runOn(url, "psql", [
       "-tAc",
       "select count(*)||' transactions, newest '||coalesce(max(created_at)::date::text,'none') from transactions",
     ]).trim();
+    const config = runOn(url, "psql", ["-tAc", CONFIG_FINGERPRINT]).trim();
+    return { rows, config };
   } catch {
-    return UNREACHABLE;
+    return { rows: UNREACHABLE, config: UNREACHABLE };
   }
+};
+
+const line = (s: Snapshot): string => `${s.rows}  ·  settings ${s.config.slice(0, 8)}`;
+
+/**
+ * Refuse a source that permits an unencrypted connection.
+ *
+ * libpq's `disable`, `allow` and `prefer` will all send credentials and the
+ * whole database in cleartext if the server does not insist otherwise, and this
+ * copies an entire production database over that connection. `require` and
+ * above are accepted: `require` does not authenticate the server, which is a
+ * real weakness, but demanding `verify-full` here would refuse the connection
+ * string this deployment actually uses and needs a CA bundle to satisfy.
+ */
+const sslProblem = (url: string): string | null => {
+  let mode: string | null;
+  try {
+    mode = new URL(url).searchParams.get("sslmode");
+  } catch {
+    return null;
+  }
+  if (mode === null) return "no sslmode= is set, so libpq may connect in cleartext";
+  if (["disable", "allow", "prefer"].includes(mode)) {
+    return `sslmode=${mode} permits an unencrypted connection`;
+  }
+  return null;
 };
 
 function main(): number {
@@ -124,15 +170,35 @@ function main(): number {
     );
     return 1;
   }
+  const ssl = sslProblem(SOURCE);
+  if (ssl) {
+    console.error(
+      `Refusing to run: ${ssl}.\nThis copies an entire database across that connection. ` +
+        `Add sslmode=require (or stronger) to the source URL.`,
+    );
+    return 1;
+  }
 
   // Captured once, before anything is written. Comparing two fresh reads at the
   // end would call a good refresh a mismatch whenever one row lands on the
   // source in between, and -- worse -- would call two failed reads a match.
   const sourceBefore = describe(SOURCE);
-  console.log(`source  ${databaseHost(SOURCE)}   ${sourceBefore}`);
-  console.log(`dest    ${databaseHost(DEST)} (local)   ${describe(DEST)}`);
+  const destBefore = describe(DEST);
+  console.log(`source  ${databaseHost(SOURCE)}   ${line(sourceBefore)}`);
+  console.log(`dest    ${databaseHost(DEST)} (local)   ${line(destBefore)}`);
+  if (
+    sourceBefore.rows !== UNREACHABLE &&
+    destBefore.rows !== UNREACHABLE &&
+    sourceBefore.rows === destBefore.rows &&
+    sourceBefore.config !== destBefore.config
+  ) {
+    console.log(
+      `\nSame transactions, different settings -- the mirror is stale in a way row counts\n` +
+        `cannot show. This is the case a report would get wrong silently.`,
+    );
+  }
 
-  if (sourceBefore === UNREACHABLE) {
+  if (sourceBefore.rows === UNREACHABLE) {
     console.error("\nThe source is unreachable. Nothing to copy.");
     return 1;
   }
@@ -141,7 +207,12 @@ function main(): number {
     return 0;
   }
 
-  if (!existsSync(BACKUP_DIR)) mkdirSync(BACKUP_DIR, { recursive: true });
+  // Owner-only. These files are complete database dumps -- password hashes,
+  // MCP token hashes, every transaction -- and default permissions leave them
+  // readable by any other account on the machine. chmod separately from mkdir
+  // so an existing directory is tightened too, not just a freshly created one.
+  mkdirSync(BACKUP_DIR, { recursive: true, mode: 0o700 });
+  chmodSync(BACKUP_DIR, 0o700);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const backup = join(BACKUP_DIR, `local-${stamp}.sql`);
   const dump = join(BACKUP_DIR, `source-${stamp}.sql`);
@@ -155,6 +226,7 @@ function main(): number {
     // scrolls those errors past and still exits 0, so the undo would look like
     // it worked and change nothing.
     runOn(DEST, "pg_dump", ["--no-owner", "--no-privileges", "--clean", "--if-exists", "-f", backup]);
+    chmodSync(backup, 0o600);
 
     console.log("Dumping the source...");
     runOn(SOURCE, "pg_dump", [
@@ -165,9 +237,16 @@ function main(): number {
       "-f",
       dump,
     ]);
+    chmodSync(dump, 0o600);
 
     console.log("Restoring into the local database...");
-    runOn(DEST, "psql", ["-v", "ON_ERROR_STOP=1", "-q", "-f", dump]);
+    // --single-transaction with ON_ERROR_STOP: without it, psql autocommits each
+    // statement, so a dump that fails partway -- a client/server mismatch, a
+    // dependency the destination lacks -- stops with the local database already
+    // half dropped. Wrapped, a failure rolls back and the existing mirror
+    // survives, which is the difference between a failed refresh and a broken
+    // development database.
+    runOn(DEST, "psql", ["-v", "ON_ERROR_STOP=1", "--single-transaction", "-q", "-f", dump]);
   } catch (error) {
     // The local tables may already be dropped at this point, so the recovery
     // command has to be printed here rather than at the end -- which is where
@@ -186,10 +265,13 @@ function main(): number {
   }
 
   const after = describe(DEST);
-  console.log(`\nsource  ${sourceBefore}   (read before the dump)`);
-  console.log(`dest    ${after}`);
+  console.log(`\nsource  ${line(sourceBefore)}   (read before the dump)`);
+  console.log(`dest    ${line(after)}`);
 
-  const matched = after !== UNREACHABLE && after === sourceBefore;
+  const matched =
+    after.rows !== UNREACHABLE &&
+    after.rows === sourceBefore.rows &&
+    after.config === sourceBefore.config;
   console.log(
     matched
       ? "\nMatch. The local database is now a copy of the source."
