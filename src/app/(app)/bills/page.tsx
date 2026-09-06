@@ -22,6 +22,7 @@ import {
   useBillPaymentCandidatesQuery,
   useBillAction,
 } from "@/hooks/use-bills";
+import type { BillPaymentCandidate } from "@/hooks/use-bills";
 import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import type { ScheduledTransactionInput } from "@/lib/validations";
@@ -374,14 +375,21 @@ function LinkPaymentPanel({
   const { data, isLoading, isError } = useBillPaymentCandidatesQuery(billId, dueDate);
   const billAction = useBillAction();
   const [error, setError] = useState<string | null>(null);
+  // Picking a row only *selects* it. Committing writes a terminal record that
+  // nothing in the app could undo before this PR, and a one-click list is far
+  // too easy to hit by accident -- a mobile top-up was linked to a water bill
+  // that way while this panel was being tried out.
+  const [pending, setPending] = useState<BillPaymentCandidate | null>(null);
 
-  const link = async (transactionId: string) => {
+  const link = async () => {
+    if (!pending) return;
     setError(null);
     try {
       await billAction.mutateAsync({
         id: billId,
-        input: { action: "pay_existing", dueDate, transactionId },
+        input: { action: "pay_existing", dueDate, transactionId: pending.id },
       });
+      setPending(null);
       onDone();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not link that payment");
@@ -400,10 +408,16 @@ function LinkPaymentPanel({
           Add the transaction first, then link it here.
         </p>
       )}
+      {data && data.candidates.length > 0 && (
+        <p className="text-[10px] text-warm-400 px-1 pb-0.5">
+          {data.categoryName} payments near this date &middot; expected{" "}
+          {hideAmounts ? "***" : formatCurrency(data.expectedAmount, currency)}
+        </p>
+      )}
       {data?.candidates.map((c) => (
         <button
           key={c.id}
-          onClick={() => link(c.id)}
+          onClick={() => setPending(c)}
           disabled={billAction.isPending}
           className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-[11px] hover:bg-cream-200 disabled:opacity-50 transition-colors"
         >
@@ -423,6 +437,35 @@ function LinkPaymentPanel({
       >
         Cancel
       </button>
+
+      <ConfirmModal
+        open={pending !== null}
+        onClose={() => setPending(null)}
+        onConfirm={link}
+        loading={billAction.isPending}
+        title="Mark this occurrence as paid?"
+        confirmLabel="Link payment"
+        message={
+          pending && (
+            <>
+              <span className="block">
+                {formatBillDate(dueDate)} will be recorded as paid by{" "}
+                <strong>{pending.description || pending.category.name}</strong> of{" "}
+                {hideAmounts ? "***" : formatCurrency(pending.amount, currency)} on{" "}
+                {formatBillDate(pending.date)}.
+              </span>
+              {data && Math.abs(pending.amount - data.expectedAmount) >
+                data.expectedAmount * 0.5 && (
+                <span className="block mt-2 text-expense">
+                  That is a long way from the{" "}
+                  {hideAmounts ? "***" : formatCurrency(data.expectedAmount, currency)} this bill
+                  usually costs. Check it is the right payment.
+                </span>
+              )}
+            </>
+          )
+        }
+      />
     </div>
   );
 }

@@ -6,6 +6,8 @@ import { addUtcDays, utcDayStart } from "@/lib/bill-dates";
 
 /** How far from the due date a payment may sit and still be offered. */
 const WINDOW_DAYS = 14;
+/** Most candidates returned. Short on purpose: this list is read, not paged. */
+const LIMIT = 25;
 
 /**
  * Payments that could settle one occurrence of this bill.
@@ -44,7 +46,10 @@ export async function GET(
 
   const bill = await prisma.scheduledTransaction.findUnique({
     where: { id },
-    select: { id: true, userId: true, type: true, categoryId: true, category: { select: { name: true } } },
+    select: {
+      id: true, userId: true, type: true, categoryId: true, amount: true,
+      category: { select: { name: true } },
+    },
   });
   if (!bill || bill.userId !== userId) {
     return NextResponse.json({ error: "Bill not found" }, { status: 404 });
@@ -54,34 +59,51 @@ export async function GET(
   // built in UTC too rather than resolved through anybody's timezone.
   const due = utcDayStart(new Date(`${parsed.data}T00:00:00.000Z`));
 
-  const rows = await prisma.transaction.findMany({
-    where: {
-      userId,
-      type: bill.type,
-      categoryId: bill.categoryId,
-      billId: null,
-      date: { gte: addUtcDays(due, -WINDOW_DAYS), lte: addUtcDays(due, WINDOW_DAYS) },
-    },
-    select: {
-      id: true,
-      date: true,
-      amount: true,
-      description: true,
-      category: { select: { name: true, icon: true, color: true } },
-    },
-    take: 25,
-  });
+  const select = {
+    id: true,
+    date: true,
+    amount: true,
+    description: true,
+    category: { select: { name: true, icon: true, color: true } },
+  };
+  const base = { userId, type: bill.type, categoryId: bill.categoryId, billId: null };
+
+  // Taken from both sides of the due date, each ordered outwards from it, so a
+  // cap can never drop the closest match. A single query capped at 25 returns an
+  // arbitrary 25 of the window -- and ordering it by date alone returns the
+  // oldest, so a payment made on the due date itself could be missing while a
+  // fortnight-early one is listed.
+  const [before, after] = await Promise.all([
+    prisma.transaction.findMany({
+      where: { ...base, date: { gte: addUtcDays(due, -WINDOW_DAYS), lt: due } },
+      select,
+      orderBy: { date: "desc" },
+      take: LIMIT,
+    }),
+    prisma.transaction.findMany({
+      where: { ...base, date: { gte: due, lte: addUtcDays(due, WINDOW_DAYS) } },
+      select,
+      orderBy: { date: "asc" },
+      take: LIMIT,
+    }),
+  ]);
 
   // Nearest the due date first: a bill paid a day late is a likelier match than
-  // one paid a fortnight early, and the list is short enough to sort in memory.
-  const candidates = rows.sort(
-    (a, b) =>
-      Math.abs(a.date.getTime() - due.getTime()) - Math.abs(b.date.getTime() - due.getTime()),
-  );
+  // one paid a fortnight early.
+  const candidates = [...before, ...after]
+    .sort(
+      (a, b) =>
+        Math.abs(a.date.getTime() - due.getTime()) - Math.abs(b.date.getTime() - due.getTime()),
+    )
+    .slice(0, LIMIT);
 
   return NextResponse.json({
     candidates,
     windowDays: WINDOW_DAYS,
     categoryName: bill.category.name,
+    // The bill's own amount, so the panel can show what was expected beside
+    // what is offered. A mobile top-up sitting in the same category as a water
+    // bill is only obviously wrong once both numbers are on screen.
+    expectedAmount: bill.amount,
   });
 }

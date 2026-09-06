@@ -159,6 +159,7 @@ export function useBillPaymentCandidatesQuery(id: string, dueDate: string | null
       candidates: BillPaymentCandidate[];
       windowDays: number;
       categoryName: string;
+      expectedAmount: number;
     }> => {
       const res = await fetch(
         `/api/bills/${id}/candidates?dueDate=${encodeURIComponent(dueDate!)}`,

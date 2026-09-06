@@ -209,7 +209,20 @@ export async function POST(
       // Atomic: log payment, link txn to bill, advance bill — one commit.
       const linked = await prisma.$transaction(async (tx) => {
         const lockedNextDue = await lockBill(tx);
-        if (await alreadySettled(tx)) return false;
+        if (await alreadySettled(tx)) return "settled" as const;
+
+        // Claim the payment conditionally, and do it before anything else is
+        // written. A candidate list can go stale -- two panels open, or one
+        // left sitting while the transaction is linked elsewhere -- and an
+        // unconditional update would silently re-point a payment that already
+        // belongs to another bill, leaving that bill's log referencing a
+        // transaction it no longer owns. Returning early here commits nothing,
+        // since only reads and a row lock have happened so far.
+        const claim = await tx.transaction.updateMany({
+          where: { id: existingTx.id, userId, billId: null },
+          data: { billId: bill.id },
+        });
+        if (claim.count === 0) return "taken" as const;
 
         // Remove a superseded skip instead of leaving two terminal logs on one
         // occurrence. The due-date walk dedupes, so it would still advance
@@ -228,11 +241,6 @@ export async function POST(
             transactionId: existingTx.id,
           },
         });
-        await tx.transaction.update({
-          where: { id: existingTx.id },
-          data: { billId: bill.id },
-        });
-
         const nextDue = await resolveNextDueDate(tx, lockedNextDue);
 
         await tx.scheduledTransaction.update({
@@ -243,10 +251,16 @@ export async function POST(
           },
         });
 
-        return true;
+        return "ok" as const;
       });
 
-      if (!linked) return settledResponse();
+      if (linked === "settled") return settledResponse();
+      if (linked === "taken") {
+        return NextResponse.json(
+          { error: "That payment is already linked to another bill" },
+          { status: 409 },
+        );
+      }
 
       return NextResponse.json({ message: "Bill marked as paid" });
     }

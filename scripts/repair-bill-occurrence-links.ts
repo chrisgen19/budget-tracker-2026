@@ -181,6 +181,26 @@ async function main() {
       }
     }
 
+    // A PAID occurrence settled by a payment nowhere near its due date. The
+    // re-point pass above cannot always fix these: when two occurrences hold
+    // each other's payments, each correct replacement is already claimed by the
+    // other, so both candidates are filtered out and the swap produces neither
+    // a plan nor a conflict. Reporting the symptom catches the cycle without
+    // trying to solve it, which is the honest limit of an automatic pass.
+    for (const log of bill.occurrences) {
+      if (log.status !== "PAID" || !log.transactionId) continue;
+      if (plans.some((pl) => pl.billId === bill.id && pl.dueDate === dayKey(log.dueDate))) continue;
+      const linked = payments.find((p) => p.id === log.transactionId);
+      if (!linked) continue;
+      const gap = daysBetween(linked.date, log.dueDate);
+      if (gap > MATCH_WINDOW_DAYS) {
+        conflicts.push(
+          `${bill.description} ${dayKey(log.dueDate)} - paid, but settled by ${dayKey(linked.date)} ` +
+            `${linked.amount}, ${gap.toFixed(0)} days away`,
+        );
+      }
+    }
+
     // Skips this pass could not repair, split by cause. Reporting only the
     // "no payment at all" case hid the more interesting one: a payment sitting
     // right next to the skip, already claimed by a neighbouring occurrence.
