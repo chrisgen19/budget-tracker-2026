@@ -1,3 +1,8 @@
+<!-- This file is an Artifact *fragment*, not a standalone document. The publish
+     step wraps it in <!doctype html><html><head>...</head><body>, supplying the
+     doctype, charset and viewport meta itself. Adding our own here would nest a
+     second document inside that wrapper, so a linter reporting "doctype must be
+     declared first" is describing a rule that does not apply to this file. -->
 <!-- Title is the artifact's name in the gallery and must not change between
      runs. It deliberately carries no count: how many months survive the
      coverage gate is a figure, and the scope row below reports it. -->
@@ -487,6 +492,7 @@
     <figure>
       <figcaption>Income and expenses by month &middot; excluded months shown, not hidden</figcaption>
       <div class="chart-wrap"><svg class="chart" id="cashChart" role="img"></svg></div>
+      <div class="chart-wrap"><table class="readout" id="cashTable"></table></div>
       <div class="legend">
         <span><i class="sw-inc"></i>Income</span>
         <span><i class="sw-exp"></i>Expenses</span>
@@ -799,6 +805,23 @@ const REPORT = {
     });
 
     if (d.footnote) svg.appendChild(el("text", { class: "ax-text", x: PLOT.x0, y: 332 }, d.footnote));
+
+    // Table view. The chart carries income, expenses and coverage in geometry and
+    // in a hover tooltip, neither of which a keyboard or a screen reader reaches.
+    const t = document.getElementById("cashTable");
+    if (!t) return;
+    const label = m => m.status === "excluded" ? "excluded" : m.status === "partial" ? "in progress" : "ok";
+    const cols = ms.map(m => `<th>${m.label}</th>`).join("");
+    const rows = [
+      ["Income",   ms.map(m => m.income.toLocaleString("en-US"))],
+      ["Expenses", ms.map(m => m.expenses.toLocaleString("en-US"))],
+      ["Logged",   ms.map(m => `${Math.round(100 * m.days / m.dim)}%`)],
+      ["Status",   ms.map(label)]
+    ].map(([name, vals]) =>
+      `<tr><td>${name}</td>` +
+      vals.map((v, i) => `<td class="${ms[i].status === "ok" ? "" : "mark"}">${v}</td>`).join("") +
+      `</tr>`).join("");
+    t.innerHTML = `<thead><tr><th>Month</th>${cols}</tr></thead><tbody>${rows}</tbody>`;
   }
 
   renderBill();

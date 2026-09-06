@@ -110,7 +110,9 @@ select email, currency, tz offset_min,
 from me;
 
 \qecho ''
-\qecho '=== 1. DATA CONFIDENCE (months excluded from all math below) ==='
+\qecho '=== 1. DATA CONFIDENCE (excluded months are dropped from rates, averages'
+\qecho '    and trends -- sections 2, 4, 7, 8. Sections 5, 6 and 9 read the whole'
+\qecho '    window, and section 3 the whole payment history of each bill.) ==='
 select m as mth, n as txns, days days_logged, dim,
        round(100.0 * days / dim) coverage_pct,
        case when m >= to_char((select n from nowl), 'YYYY-MM') then 'PARTIAL - current month'
