@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 import { updateTransactions, type TransactionPatch } from "./transaction-writes";
 import type { PrismaClient } from "./budget-query-types";
 
@@ -30,6 +31,8 @@ interface StubOptions {
   categories?: { id: string; type: string }[];
   labels?: { id: string; applicableTo: string; name: string }[];
   permitted?: boolean;
+  /** Thrown from `$transaction`, to exercise how a failed write is classified. */
+  throwOnWrite?: unknown;
 }
 
 /**
@@ -48,6 +51,7 @@ const makePrisma = ({
   ],
   labels = [],
   permitted = true,
+  throwOnWrite,
 }: StubOptions = {}) => {
   const store = new Map(rows.map((r) => [r.id, { ...r }]));
   const labelWrites: { deleted: string[]; created: { transactionId: string; labelId: string }[] } = {
@@ -95,7 +99,10 @@ const makePrisma = ({
         labels.filter((l) => where.id.in.includes(l.id))
       ),
     },
-    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(client)),
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => {
+      if (throwOnWrite) throw throwOnWrite;
+      return fn(client);
+    }),
   };
 
   return {
@@ -501,5 +508,28 @@ describe("updateTransactions", () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.updated[0].droppedLabels).toEqual([]);
+  });
+
+  // --- A doomed request is not advertised as retryable (review round 4) ---
+
+  it("reports a vanished reference as rejected, not as worth retrying", async () => {
+    // The ownership checks run on `prisma`, outside the write transaction, so a category deleted
+    // in the window between them and the write surfaces as a foreign-key violation. Reporting it
+    // as WRITE_FAILED tells an agent to "try the same request again", which can only ever fail
+    // the same way -- a loop rather than an error.
+    const fk = new Prisma.PrismaClientKnownRequestError("FK violation", {
+      code: "P2003",
+      clientVersion: "6.19.2",
+    });
+    const { result } = run([{ id: "tx_1", amount: 320 }], { throwOnWrite: fk });
+    expect(await result).toEqual({ ok: false, reason: "WRITE_REJECTED" });
+  });
+
+  it("still reports an unrecognised failure as retryable", async () => {
+    // A dropped connection or a deadlock is the opposite case and deserves another attempt.
+    const { result } = run([{ id: "tx_1", amount: 320 }], {
+      throwOnWrite: new Error("connection reset"),
+    });
+    expect(await result).toEqual({ ok: false, reason: "WRITE_FAILED" });
   });
 });

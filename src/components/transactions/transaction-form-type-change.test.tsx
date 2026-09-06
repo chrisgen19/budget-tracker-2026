@@ -98,4 +98,35 @@ describe("editing a transaction across a type change", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0]).toMatchObject({ type: "EXPENSE", categoryId: "food" });
   });
+
+  it("restores the original category when the type is toggled back", async () => {
+    // Clearing without a way back left a no-op round trip demanding a category the user never
+    // removed. Back on the transaction's own type, its own category is the right answer.
+    const onSubmit = vi.fn((_data: TransactionInput) => Promise.resolve());
+
+    render(<TransactionForm transaction={existing} onSubmit={onSubmit} onCancel={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Income" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expense" }));
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ type: "EXPENSE", categoryId: "food" });
+  });
+
+  it("keeps a category the user flipped underneath the transaction", async () => {
+    // `PUT /api/categories/[id]` lets a custom category's type be flipped while its transactions
+    // keep pointing at it. `updateTransactions` deliberately still accepts that pair when neither
+    // field moves, so a typo fix stays possible -- and the form must not override that allowance
+    // from the client side by blanking a category the server would have taken.
+    const onSubmit = vi.fn((_data: TransactionInput) => Promise.resolve());
+    const flipped = { ...existing, categoryId: "gone-from-list" } as unknown as TransactionWithCategory;
+
+    render(<TransactionForm transaction={flipped} onSubmit={onSubmit} onCancel={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ categoryId: "gone-from-list" });
+  });
 });

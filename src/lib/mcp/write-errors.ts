@@ -67,6 +67,8 @@ export const UPDATE_ERROR_MESSAGES: Record<UpdateFailureReason, string> = {
     "One or more category IDs are not this user's, or do not match the transaction's type. Nothing was changed. If you changed `type`, send a `categoryId` of that same type as well; call get_category_list for valid IDs.",
   NO_LONGER_PERMITTED:
     "Writes were switched off before these could be changed, so nothing was changed. Turn them on in Profile > MCP Access, then try again.",
+  WRITE_REJECTED:
+    "The update refers to something that no longer exists -- most likely a category or label deleted while the request was in flight. Nothing was changed. Re-read the current categories and labels and build the request again; sending the same one will fail the same way.",
   WRITE_FAILED:
     "The update failed and was rolled back, so nothing was changed and every transaction is exactly as it was. Try the same request again.",
 };

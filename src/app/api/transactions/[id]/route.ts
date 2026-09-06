@@ -50,6 +50,8 @@ const UPDATE_FAILURE_STATUS: Record<UpdateFailureReason, number> = {
   LABELS_NOT_OWNED: 400,
   CATEGORIES_NOT_OWNED: 400,
   NO_LONGER_PERMITTED: 403,
+  // A vanished reference is the caller's problem to correct, not a server fault.
+  WRITE_REJECTED: 409,
   WRITE_FAILED: 500,
 };
 
@@ -60,6 +62,7 @@ const UPDATE_FAILURE_MESSAGE: Record<UpdateFailureReason, string> = {
   LABELS_NOT_OWNED: "One or more labels are invalid or do not belong to you",
   CATEGORIES_NOT_OWNED: "That category is invalid, or does not match the transaction's type",
   NO_LONGER_PERMITTED: "Not permitted",
+  WRITE_REJECTED: "That category or label no longer exists. Reload and try again",
   WRITE_FAILED: "Failed to update transaction",
 };
 

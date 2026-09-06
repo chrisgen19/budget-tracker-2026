@@ -175,7 +175,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io/) server that lets yo
 budget in natural language ("what's my biggest spending category?", "how much did I spend on food
 this month?") from Claude Code or Claude Desktop.
 
-The 14 tools are defined once, in `src/lib/mcp/server.ts`, and served over two transports:
+The 15 tools are defined once, in `src/lib/mcp/server.ts`, and served over two transports:
 
 ```
 Local:   Claude Desktop ──(stdio)──▶ mcp-server/src/index.ts ─┐

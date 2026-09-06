@@ -169,15 +169,33 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
       return;
     }
 
-    // Editing keeps its category across re-renders, but must not keep one the *type* has left
-    // behind. `categories` is already filtered to the selected type, so a stored id missing from
-    // it cannot apply to the transaction any more. It used to survive in form state invisibly --
-    // no tile highlights it, and `transactionSchema` only asks for a non-empty string -- so
-    // toggling an expense to Income and pressing Update posted a mismatched pair. The server
-    // saved it before the shared write path checked categories, filing income under an expense
-    // category; it now refuses, which is right, but the form should never build the request.
-    if (transaction && watchedCategoryId && !categories.some((c) => c.id === watchedCategoryId)) {
-      setValue("categoryId", "");
+    // Editing keeps its category across re-renders, but must not keep one the *selected type* has
+    // left behind. `categories` is already filtered to that type, so a category missing from it
+    // cannot apply. Such an id used to survive in form state invisibly -- no tile highlights it,
+    // and `transactionSchema` only asks for a non-empty string -- so toggling an expense to Income
+    // and pressing Update posted a mismatched pair. The server saved that before the shared write
+    // path checked categories, filing income under an expense category.
+    //
+    // What replaces it depends on whether the type has actually moved, and simply clearing was
+    // wrong in both directions. Back on the transaction's own type, the row's stored category is
+    // restored: it is the pair the server accepts unchanged, so a user who toggles away and back
+    // must not be left staring at "Category is required" after a round trip that changed nothing,
+    // and a row whose category was flipped underneath it (`PUT /api/categories/[id]` allows that)
+    // must stay editable for a typo fix -- which is exactly what `updateTransactions` goes out of
+    // its way to permit, and the form has no business overriding from this side. On a type the
+    // user really did change to, there is no valid category to fall back to, so it clears and the
+    // form asks for one in its own words instead of posting a request bound to 400.
+    if (transaction) {
+      const usable =
+        watchedCategoryId !== "" && categories.some((c) => c.id === watchedCategoryId);
+      const fallback = selectedType === transaction.type ? transaction.categoryId : "";
+      // Compared before writing, not just guarded on `usable`. `setValue` notifies its watchers
+      // whether or not the value moved, so re-setting the same one re-runs this effect and loops
+      // forever -- which is precisely what happens on the type the user switched *to*, where the
+      // fallback is "" and nothing ever becomes usable.
+      if (!usable && watchedCategoryId !== fallback) {
+        setValue("categoryId", fallback);
+      }
     }
   }, [categories, selectedType, setValue, transaction, initialData, watchedCategoryId]);
 

@@ -108,11 +108,30 @@ categories the server saved that, filing income under an expense category; now i
 `useUpdateTransaction` surfaces a bare "Failed to update transaction". The server is right and the
 form should never have posted it, so it clears a category the selected type has left behind.
 
+**The form restores the category rather than only clearing it.** Clearing alone was wrong in both
+directions: toggling the type away and back demanded a category the user never removed, and a row
+whose category had been flipped underneath it was blocked from a typo fix that the server
+deliberately still permits. Back on the transaction's own type it restores the row's own category;
+on a type the user really did change to it clears. The write is compared against the value already
+in the field, since `setValue` notifies watchers whether or not the value moved and re-setting the
+same one re-runs the effect forever.
+
+**A doomed write is no longer advertised as retryable.** The ownership checks run outside the write
+transaction, so a category or label deleted in that window arrives as a constraint violation.
+Reporting it the same way as a dropped connection told an agent to "try the same request again",
+which can only fail identically -- a loop rather than an error. `WRITE_REJECTED` now says to
+rebuild the request; `WRITE_FAILED` still says to retry.
+
 **Bulk edits stamp the audit columns too.** `PATCH /api/transactions/batch` changes existing rows
 -- a bulk recategorise, a bulk label add or remove -- and stamped nothing, so a row edited over MCP
 and then bulk-changed in the browser went on naming the MCP token as its last editor. That is the
 stale confidently-wrong trail `PUT` clears the token id to avoid, reached from the other side.
-The label branches get their own `updateMany`, since they touch no column on `transactions` at all.
+The label branches get their own `updateMany`, since they touch no column on `transactions` at all,
+and every branch stamps only the rows that actually changed -- a forty-row recategorise where ten
+are already in the target category must not record an edit on those ten, which would replace an
+accurate MCP trail with a fabricated one. `POST /api/labels/[id]/apply` stamps too. Narrowing or
+deleting a label does not: those are edits to the *label*, and recording an edit on every
+transaction that referenced it would make renaming one thing look like touching hundreds.
 
 **A time-only change no longer reports an identical before and after.** `formatLocalDate` is
 day-only, which is right everywhere else and wrong for an edit that moves the time within a day --

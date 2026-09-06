@@ -205,7 +205,9 @@ export async function PATCH(request: NextRequest) {
     const result = await prisma.$transaction(async (tx) => {
       const transactions = await tx.transaction.findMany({
         where: { id: { in: input.ids }, userId },
-        select: { id: true, type: true },
+        // `categoryId` so the stamp below can skip rows already in the target category. Selecting
+        // it is cheaper than the alternative of recording an edit that did not happen.
+        select: { id: true, type: true, categoryId: true },
       });
       const matchedIds = transactions.map((transaction) => transaction.id);
       if (matchedIds.length === 0) {
@@ -228,8 +230,17 @@ export async function PATCH(request: NextRequest) {
           };
         }
 
+        // Only the rows whose category actually moves, on the same rule the label branches below
+        // follow: a selection of forty where ten are already in the target category must not
+        // record an edit on those ten. Stamping them would replace an accurate MCP trail with a
+        // fabricated `updated_via: APP` for something that never happened -- the confidently
+        // wrong trail this column exists to avoid, written by the code that added it.
+        const movingIds = transactions
+          .filter((transaction) => transaction.categoryId !== category.id)
+          .map((transaction) => transaction.id);
+
         const updated = await tx.transaction.updateMany({
-          where: { id: { in: matchedIds }, userId },
+          where: { id: { in: movingIds }, userId },
           data: { categoryId: category.id, updatedVia: "APP", updatedByMcpTokenId: null },
         });
         return { matched: matchedIds.length, updated: updated.count, ids: matchedIds };

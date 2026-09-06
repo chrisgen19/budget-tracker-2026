@@ -324,7 +324,10 @@ export type UpdateFailureReason =
   | "CATEGORIES_NOT_OWNED"
   /** Permission was withdrawn between the request arriving and the write starting. */
   | "NO_LONGER_PERMITTED"
-  /** The write itself failed and rolled back. Every row is exactly as it was. */
+  /** The write failed for a reason retrying cannot change -- a category or label deleted between
+   *  the ownership checks and the write, say. Every row is exactly as it was. */
+  | "WRITE_REJECTED"
+  /** The write failed and rolled back for a reason that may not recur. Every row is as it was. */
   | "WRITE_FAILED";
 
 /** One row's result: what it is now, and what actually moved. */
@@ -632,10 +635,21 @@ export const updateTransactions = async ({
 
       return { ok: true as const, updated };
     }, BATCH_TX_OPTIONS);
-  } catch {
-    // The whole batch is one transaction, so a throw rolled all of it back. Unlike the create
-    // path there is no ambiguity to report: there are no new rows to hunt for, and every row is
-    // exactly as it was, so the caller can simply try again.
-    return { ok: false, reason: "WRITE_FAILED" };
+  } catch (error) {
+    // The whole batch is one transaction, so a throw rolled all of it back. Unlike the create path
+    // there is no ambiguity to report: there are no new rows to hunt for and every row is exactly
+    // as it was. What the caller should *do* about it still splits two ways, though, and telling
+    // it to retry unconditionally is how an agent ends up looping.
+    //
+    // The ownership checks above run on `prisma`, outside this transaction, so a category or label
+    // deleted in the window between them and the write surfaces here as a constraint violation.
+    // Retrying replays the same doomed request forever. A deadlock or a lost connection is the
+    // opposite and is worth another attempt, so the two get different reasons and different advice.
+    const permanent =
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      // P2003 foreign key, P2025 required record missing: both mean the request refers to
+      // something that is no longer there.
+      (error.code === "P2003" || error.code === "P2025");
+    return { ok: false, reason: permanent ? "WRITE_REJECTED" : "WRITE_FAILED" };
   }
 };
