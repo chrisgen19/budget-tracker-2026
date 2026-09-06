@@ -508,6 +508,15 @@ export interface AssessmentBillAccuracy {
    * year. A bill budgeted at 100 and paid 300-600 swings 2x and is simply wrong.
    */
   verdict: "ok" | "under-budgeted" | "over-budgeted" | "seasonal" | "no-payments";
+  /**
+   * What each billing period actually cost, oldest first.
+   *
+   * Carried only for a `seasonal` bill, where the shape is the finding: no single
+   * figure is right, so "which months run high" is the only useful answer. Months
+   * are printed rather than seasons — which ones run hot depends on the
+   * hemisphere and the household.
+   */
+  monthlySeries: Array<{ month: string; label: string; amount: number }>;
 }
 
 /** A bill occurrence that came due and was never paid, skipped or snoozed. */
@@ -526,7 +535,14 @@ export interface AssessmentMissedBill {
   estimatedArrears: number;
 }
 
-/** Spending that matches a bill by name but was never linked to it, so the schedule never advanced. */
+/**
+ * Spending that matches a bill by name but was never linked to it, so the schedule never advanced.
+ *
+ * Read across the user's **whole history**, not the assessment window. The finding
+ * is about the bill's integrity rather than about this period's spending: a
+ * payment made outside the bill system two years ago still left the schedule
+ * wrong, and it stays wrong until someone notices.
+ */
 export interface AssessmentUnlinkedBillPayment {
   billId: string;
   billDescription: string;
@@ -534,6 +550,33 @@ export interface AssessmentUnlinkedBillPayment {
   total: number;
   /** Days the most recent unlinked payment happened on, newest first. */
   recentDates: string[];
+}
+
+/**
+ * The figures a reader wants before any of the detail.
+ *
+ * `runningBalance` is deliberately all-time, not windowed: it is what the account
+ * actually holds, and a six-month slice of it is not a balance. Runway divides it
+ * by the burn of the trustworthy months only, so a logging gap cannot flatter it.
+ */
+export interface AssessmentHeadline {
+  /** Months the rates below are averaged over — the trustworthy ones. */
+  months: number;
+  income: number;
+  expenses: number;
+  net: number;
+  savingsRatePct: number | null;
+  avgMonthlyBurn: number | null;
+  /**
+   * Every income minus every expense, across the user's whole history.
+   *
+   * Null when the caller did not supply all-time totals. Deliberately not zero:
+   * a balance of nothing and a balance nobody asked for render identically, and
+   * one of them is a figure this report invented.
+   */
+  runningBalance: number | null;
+  /** Months of typical spending the balance covers **if income stopped**. Null when unknowable. */
+  monthsOfRunway: number | null;
 }
 
 export interface AssessmentBillFacts {
@@ -630,6 +673,8 @@ export interface AssessmentHygieneFacts {
   /** Share of income from the single largest source — concentration risk. */
   incomeConcentrationPct: number | null;
   topIncomeSource: string | null;
+  /** Every income source in the trustworthy months, largest first. */
+  incomeSources: Array<{ source: string; count: number; total: number; pct: number | null }>;
 }
 
 /** A pattern in the assessed period that the baseline says should not be there. */
@@ -666,6 +711,7 @@ export interface AssessmentFacts {
   /** The history the trends read, ending with the period's own month. */
   window: { from: string; to: string; months: number };
   confidence: AssessmentDataConfidence;
+  headline: AssessmentHeadline;
   bills: AssessmentBillFacts;
   trends: AssessmentTrendFacts;
   recurring: AssessmentRecurringFacts;

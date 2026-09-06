@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { stagger } from "@/components/analytics/motion-variants";
 import { formatCurrency } from "@/lib/utils";
+import { HeadlineCard } from "./headline-card";
 import { ConfidenceCard } from "./confidence-card";
 import { PatternsCard } from "./patterns-card";
 import { MissedBillsCard, BillAccuracyCard } from "./bills-card";
@@ -53,6 +54,7 @@ export function AssessmentFactsPanel({ facts, isLoading, isError, currency, hide
 
   return (
     <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-4">
+      <HeadlineCard headline={facts.headline} fmt={fmt} />
       <ConfidenceCard confidence={facts.confidence} />
       <PatternsCard anomalies={facts.anomalies} fmt={fmt} />
       <MissedBillsCard bills={facts.bills} fmt={fmt} />
