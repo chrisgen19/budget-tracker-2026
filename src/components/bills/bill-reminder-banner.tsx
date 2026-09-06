@@ -114,7 +114,11 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
   const dueDateDisplay = reminder
     ? formatDueDateDisplay(reminder.isOverdue, reminder.daysPastDue, reminder.daysUntilDue)
     : "";
-  const payAllTotal = pendingReminders.reduce((sum, r) => sum + r.scheduledTransaction.amount, 0);
+  // Pay All writes each bill's stored amount, so a variable one is excluded:
+  // paying several guesses at once is the same error as paying one, multiplied
+  // and less visible. They stay in the banner to be settled individually.
+  const payAllReminders = pendingReminders.filter((r) => !r.scheduledTransaction.isVariable);
+  const payAllTotal = payAllReminders.reduce((sum, r) => sum + r.scheduledTransaction.amount, 0);
 
   const handlePayAndEditClick = () => {
     if (!reminder || !bill) return;
@@ -247,7 +251,7 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
             {/* Action buttons */}
             <div className="flex items-center gap-1.5 ml-auto flex-wrap justify-end">
               {/* Pay All — only when multiple reminders */}
-              {pendingReminders.length > 1 && (
+              {payAllReminders.length > 1 && (
                 <button
                   onClick={() => setConfirmPayAll(true)}
                   disabled={isActioning || payAllProgress !== null}
@@ -256,24 +260,31 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
                   <CheckCheck className="w-3 h-3" />
                   {payAllProgress
                     ? `Paying ${payAllProgress.current}/${payAllProgress.total}...`
-                    : `Pay All (${pendingReminders.length})`}
+                    : `Pay All (${payAllReminders.length})`}
                 </button>
               )}
-              <button
-                onClick={() => handlePay(reminder)}
-                disabled={isActioning || payAllProgress !== null}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-income/10 text-income hover:bg-income/20 text-xs font-medium transition-colors disabled:opacity-50"
-              >
-                <Check className="w-3 h-3" />
-                Pay
-              </button>
+              {/* One-click Pay writes the bill's stored amount. For a variable
+                  bill that figure is a forecasting fallback, so a click would
+                  put a guess in the ledger -- which the estimator reads back as
+                  history. Such a bill goes straight to amount entry instead; the
+                  server refuses the bare `pay` either way. */}
+              {!bill.isVariable && (
+                <button
+                  onClick={() => handlePay(reminder)}
+                  disabled={isActioning || payAllProgress !== null}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-income/10 text-income hover:bg-income/20 text-xs font-medium transition-colors disabled:opacity-50"
+                >
+                  <Check className="w-3 h-3" />
+                  Pay
+                </button>
+              )}
               <button
                 onClick={handlePayAndEditClick}
                 disabled={isActioning || payAllProgress !== null}
                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-light text-amber-dark hover:bg-amber/20 text-xs font-medium transition-colors disabled:opacity-50"
               >
                 <Pencil className="w-3 h-3" />
-                Pay &amp; Edit
+                {bill.isVariable ? "Enter amount" : "Pay & Edit"}
               </button>
 
               {/* Snooze dropdown */}

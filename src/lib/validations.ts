@@ -211,6 +211,13 @@ export const scheduledTransactionSchema = z.object({
 export const billActionSchema = z.object({
   action: z.enum(["pay", "pay_existing", "skip", "snooze"]),
   dueDate: z.string().min(1, "Due date is required"),
+  /**
+   * What was actually paid. Optional for a fixed bill, whose stored amount is
+   * the figure; **required** for a variable one, where that amount is only a
+   * fallback and writing it would put a guess in the ledger -- which the
+   * estimator then reads back as history and compounds.
+   */
+  amount: z.number().positive().optional(),
   transactionId: z.string().optional(),
   snoozeDays: z.number().int().min(1).max(7).optional(),
 }).refine(

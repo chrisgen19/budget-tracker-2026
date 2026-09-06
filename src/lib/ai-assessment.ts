@@ -84,7 +84,17 @@ export type AssessmentPayload = z.infer<typeof assessmentPayloadSchema>;
 export interface UpcomingBillsContext {
   count: number;
   totalAmount: number;
-  bills: Array<{ description: string; categoryName: string; amount: number; dueDate: string; isOverdue: boolean }>;
+  /** True when any bill's amount was derived from history rather than asserted. */
+  totalIsEstimate: boolean;
+  bills: Array<{
+    description: string;
+    categoryName: string;
+    amount: number;
+    /** A metered bill's figure is derived from past payments, not a sum owed. */
+    isEstimate: boolean;
+    dueDate: string;
+    isOverdue: boolean;
+  }>;
 }
 
 /* ------------------------------------------------------------------ */
@@ -195,7 +205,18 @@ const buildDataSnapshot = (p: AssessmentPayload, bills: UpcomingBillsContext): s
     upcomingBills: {
       count: bills.count,
       total: bills.totalAmount,
-      items: bills.bills.slice(0, 8).map((b) => ({ name: b.description, category: b.categoryName, amount: b.amount, overdue: b.isOverdue })),
+      // A metered bill's amount is derived from its own history, not owed. The
+      // flag travels with it so the model qualifies the figure instead of
+      // asserting it -- a report that says "you owe 5,990" of a bill nobody has
+      // issued yet is confidently wrong in the one place it must not be.
+      totalIsEstimate: bills.totalIsEstimate,
+      items: bills.bills.slice(0, 8).map((b) => ({
+        name: b.description,
+        category: b.categoryName,
+        amount: b.amount,
+        isEstimate: b.isEstimate,
+        overdue: b.isOverdue,
+      })),
     },
   });
 };
@@ -212,6 +233,9 @@ const PRIVACY_RULE =
 const generateAssessmentBody = async (snapshot: string, region: string) => {
   const prompt = `You are a practical, encouraging personal finance coach for someone in ${region}.
 Analyze this user's financial data for the period and produce a concise, specific assessment.
+A bill marked isEstimate is a metered one -- electricity, water -- whose figure was derived from
+past payments rather than being a sum owed. Qualify it ("about", "roughly") and never present it
+as an amount due; the same applies to the upcoming-bills total when totalIsEstimate is true.
 
 DATA (JSON):
 ${snapshot}
@@ -329,10 +353,17 @@ export const generateDailyTip = async (
     upcomingBills: {
       count: input.upcomingBills.count,
       total: input.upcomingBills.totalAmount,
-      items: input.upcomingBills.bills.slice(0, 6).map((b) => ({ name: b.description, amount: b.amount, overdue: b.isOverdue })),
+      totalIsEstimate: input.upcomingBills.totalIsEstimate,
+      items: input.upcomingBills.bills.slice(0, 6).map((b) => ({
+        name: b.description,
+        amount: b.amount,
+        isEstimate: b.isEstimate,
+        overdue: b.isOverdue,
+      })),
     },
   });
   const prompt = `You are a friendly money coach for someone in ${region}. From this user's current-month data, give ONE short, specific money tip for today (saving or earning).
+A bill marked isEstimate is a metered one whose figure was derived from past payments, not a sum owed: say "about" of it, never state it as a bill to pay.
 
 DATA (JSON):
 ${snapshot}
