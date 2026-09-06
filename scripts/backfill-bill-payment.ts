@@ -47,7 +47,21 @@ if (!email || bills.length === 0 || bills.length !== dues.length || bills.length
   process.exit(1);
 }
 
-const dayStart = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+/**
+ * Parse a calendar day, refusing one that does not exist.
+ *
+ * `new Date("2026-02-30T00:00:00Z")` rolls forward to 2 March, so the script
+ * would query and settle the March occurrence while printing the February date
+ * it was given. The same rule `resolvePeriod` follows for query windows.
+ */
+const dayStart = (iso: string) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) throw new Error(`Bad date "${iso}" -- use YYYY-MM-DD`);
+  const d = new Date(`${iso}T00:00:00.000Z`);
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== iso) {
+    throw new Error(`No such date as ${iso}`);
+  }
+  return d;
+};
 
 async function main() {
   const user = await prisma.user.findUnique({ where: { email }, select: { id: true, currency: true } });
@@ -126,6 +140,18 @@ async function main() {
     planned.push(`  ${name.padEnd(24)} ${dues[i]}  create ${amount} and settle (${log.status} -> PAID)`);
     runs.push(async () => {
       await prisma.$transaction(async (tx) => {
+        // Plans are built before any write, so the occurrence may have been
+        // settled since -- by the app, or by a second run of this script. The
+        // delete is conditional on the state planned against and must remove
+        // exactly one row; throwing rolls back the transaction created just
+        // above, which is the difference between a stale plan and duplicate
+        // spending attached to nothing.
+        const removed = await tx.scheduledTransactionLog.deleteMany({
+          where: { id: log.id, status: log.status, transactionId: log.transactionId },
+        });
+        if (removed.count !== 1) {
+          throw new Error(`${name} ${dues[i]} changed since planning -- re-run`);
+        }
         const created = await tx.transaction.create({
           data: {
             amount,
@@ -137,9 +163,16 @@ async function main() {
             billId: bill.id,
           },
         });
-        await tx.scheduledTransactionLog.update({
-          where: { id: log.id },
-          data: { status: "PAID", transactionId: created.id, actionDate: new Date() },
+        // Delete-and-create rather than relabel, so a backfilled occurrence is
+        // indistinguishable from one settled through pay_existing.
+        await tx.scheduledTransactionLog.create({
+          data: {
+            scheduledTransactionId: bill.id,
+            dueDate: due,
+            status: "PAID",
+            actionDate: new Date(),
+            transactionId: created.id,
+          },
         });
       });
     });

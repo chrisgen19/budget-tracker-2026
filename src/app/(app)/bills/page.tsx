@@ -419,7 +419,7 @@ function LinkPaymentPanel({
           key={c.id}
           onClick={() => setPending(c)}
           disabled={billAction.isPending}
-          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-[11px] hover:bg-cream-200 disabled:opacity-50 transition-colors"
+          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-[11px] hover:bg-cream-200 disabled:opacity-50 transition-colors relative before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']"
         >
           <span className="text-warm-400 tabular-nums shrink-0">
             {formatBillDate(c.date)}
@@ -433,7 +433,7 @@ function LinkPaymentPanel({
       {error && <p className="text-[11px] text-expense px-1">{error}</p>}
       <button
         onClick={onDone}
-        className="w-full text-[10px] text-warm-400 hover:text-warm-600 py-0.5 transition-colors"
+        className="w-full text-[10px] text-warm-400 hover:text-warm-600 py-0.5 transition-colors relative before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']"
       >
         Cancel
       </button>
@@ -540,7 +540,7 @@ function BillHistory({ billId, currency, hideAmounts }: { billId: string; curren
                   linkingDueDate === dueKey(log.dueDate) ? null : dueKey(log.dueDate),
                 )
               }
-              className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium text-warm-400 hover:text-amber hover:bg-cream-200 transition-colors"
+              className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium text-warm-400 hover:text-amber hover:bg-cream-200 transition-colors relative before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']"
               aria-expanded={linkingDueDate === dueKey(log.dueDate)}
             >
               <Link2 className="w-3 h-3" />

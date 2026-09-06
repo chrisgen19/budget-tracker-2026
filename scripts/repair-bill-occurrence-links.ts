@@ -126,16 +126,41 @@ async function main() {
           action: "SKIPPED -> PAID",
           detail: `link ${dayKey(p.date)} ${p.amount}${p.billId ? "" : " (also sets bill_id)"}`,
           run: async () => {
-            await prisma.$transaction([
-              prisma.scheduledTransactionLog.update({
-                where: { id: log.id },
-                data: { status: "PAID", transactionId: p.id },
-              }),
-              prisma.transaction.update({
-                where: { id: p.id },
+            await prisma.$transaction(async (tx) => {
+              // Every plan is built before any write, so the occurrence may have
+              // moved since -- the app can settle it, and so can a second run.
+              // Each write is conditional on the state that was planned against
+              // and must touch exactly one row; anything else throws and rolls
+              // the whole repair back rather than overwriting a newer link.
+              const removed = await tx.scheduledTransactionLog.deleteMany({
+                where: { id: log.id, status: "SKIPPED", transactionId: null },
+              });
+              if (removed.count !== 1) {
+                throw new Error(
+                  `${bill.description} ${dayKey(due)} changed since planning -- re-run`,
+                );
+              }
+              // Delete-and-create rather than relabel, so a repaired occurrence
+              // is indistinguishable from one settled through pay_existing.
+              await tx.scheduledTransactionLog.create({
+                data: {
+                  scheduledTransactionId: bill.id,
+                  dueDate: due,
+                  status: "PAID",
+                  actionDate: new Date(),
+                  transactionId: p.id,
+                },
+              });
+              const claimed = await tx.transaction.updateMany({
+                where: { id: p.id, OR: [{ billId: null }, { billId: bill.id }] },
                 data: { billId: bill.id },
-              }),
-            ]);
+              });
+              if (claimed.count !== 1) {
+                throw new Error(
+                  `payment ${dayKey(p.date)} ${p.amount} was linked elsewhere -- re-run`,
+                );
+              }
+            });
           },
         });
         continue;
@@ -165,16 +190,26 @@ async function main() {
               `${current ? dayKey(current.date) : "none"} (${currentGap.toFixed(0)}d) ` +
               `-> ${dayKey(p.date)} (${candidate.gap.toFixed(0)}d)`,
             run: async () => {
-              await prisma.$transaction([
-                prisma.scheduledTransactionLog.update({
-                  where: { id: log.id },
+              await prisma.$transaction(async (tx) => {
+                const moved = await tx.scheduledTransactionLog.updateMany({
+                  where: { id: log.id, status: "PAID", transactionId: log.transactionId },
                   data: { transactionId: p.id },
-                }),
-                prisma.transaction.update({
-                  where: { id: p.id },
+                });
+                if (moved.count !== 1) {
+                  throw new Error(
+                    `${bill.description} ${dayKey(due)} changed since planning -- re-run`,
+                  );
+                }
+                const claimed = await tx.transaction.updateMany({
+                  where: { id: p.id, OR: [{ billId: null }, { billId: bill.id }] },
                   data: { billId: bill.id },
-                }),
-              ]);
+                });
+                if (claimed.count !== 1) {
+                  throw new Error(
+                    `payment ${dayKey(p.date)} ${p.amount} was linked elsewhere -- re-run`,
+                  );
+                }
+              });
             },
           });
         }
@@ -214,8 +249,13 @@ async function main() {
         .map((p) => ({ p, holder: claimedBy.get(p.id) }));
 
       if (near.length === 0) {
+        // With an ambiguous description the payment query never looked at
+        // unlinked rows, so "no payment" would name the wrong cause.
         gaps.push(
-          `${bill.description} ${dayKey(log.dueDate)} - skipped, no payment within ${MATCH_WINDOW_DAYS}d`,
+          byDescription
+            ? `${bill.description} ${dayKey(log.dueDate)} - skipped, no payment within ${MATCH_WINDOW_DAYS}d`
+            : `${bill.description} ${dayKey(log.dueDate)} - skipped; its description is blank or ` +
+              `shared with another bill, so unlinked payments were not searched`,
         );
         continue;
       }
