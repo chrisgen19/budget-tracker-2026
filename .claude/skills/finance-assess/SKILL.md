@@ -97,7 +97,7 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
 |---|---|
 | 1. Data confidence | Excluded months, logging gaps of 4+ days |
 | 2. Headline | Savings rate, monthly burn, months of runway |
-| 3. Bill accuracy | `variance_pct` over ~15% — the forecast is wrong, not the spending. Also bills paid *outside* the bill system, which silently skip the schedule |
+| 3. Bill accuracy | **Read `swing` before `variance_pct`.** Swing under ~1.5 means a fixed bill, and a high variance there really is a misconfigured figure. A bill in the *second* table is a metered one — high swing **and** a budget inside the range actually paid — where no single figure can be right and the month-by-month shape is shown. High swing alone is not enough: a bill nobody budgeted anywhere near still needs its warning. Also bills paid *outside* the bill system, which silently skip the schedule |
 | 4. Category trend | Rising categories only; a fall is usually the gap, not thrift |
 | 5. Recurring spend | The fixed monthly base, and **new** recurring charges — habits forming before they are noticed |
 | 6. Duplicates | Same day, description and amount — usually a double-submit |
@@ -116,8 +116,12 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
   net-positive is a good result; say so plainly and move on to what needs attention.
 - **Attribute causes honestly.** Unlabeled bill payments are the app's behavior, not the
   user's. Do not turn a system gap into a lecture about discipline.
-- **A high-swing bill is not a misconfigured one.** For a bill whose payments swing 2x or
-  more, do not report "X% over budget" as though a better constant existed. The monthly
+- **A bill in section 3's second table is not a misconfigured one.** That table requires two
+  things — payments swinging 2x or more, *and* the budgeted figure falling between the lowest
+  and highest actually paid, so it is right for part of the year. A bill with a high swing
+  whose budget sits outside that range (100 budgeted, 300-600 paid) is simply wrong and its
+  variance warning stands. Only the listed ones get this exception; for those, do not report
+  "X% over budget" as though a better constant existed. The monthly
   series will usually show a season, and the budgeted figure is often exactly right for part
   of the year. Say which months run high, say what the *next* due date is likely to cost,
   and point at issue #217 rather than recommending a number — an annual average makes the

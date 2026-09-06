@@ -163,7 +163,14 @@ group by s.id, s.description, s.amount
 order by abs(coalesce(avg(t.amount), s.amount) - s.amount) desc;
 
 \qecho ''
-\qecho '--- bills that vary (swing 2x+): no single figure describes these ---'
+\qecho '--- bills that genuinely vary: swing 2x+ AND the budget sits inside the'
+\qecho '    range actually paid, so it is right for part of the year ---'
+-- Both conditions are needed. Swing alone would list a bill budgeted at 100 and
+-- paid 300, 300, 600: that swings 2x, but every payment disagrees with the
+-- figure and a better constant plainly exists, so the variance warning should
+-- stand. Requiring the budget to fall between the lowest and highest payment
+-- separates "right for half the year" from "simply wrong".
+--
 -- Months are printed rather than seasons: which months run hot depends on the
 -- hemisphere and the household, and a tool that assumed Apr-Aug would be wrong
 -- for half the world. The shape is legible from the series itself.
@@ -178,7 +185,9 @@ with pay as (
 ),
 varying as (
   select id from pay group by id
-  having count(*) >= 3 and max(amount) / nullif(min(amount), 0) >= 2
+  having count(*) >= 3
+     and max(amount) / nullif(min(amount), 0) >= 2
+     and max(budgeted) between min(amount) and max(amount)
 )
 select p.description bill, round(p.budgeted::numeric) budgeted,
        string_agg(p.mon || ' ' || round(p.amount::numeric), '  ' order by p.monthno) by_month,
