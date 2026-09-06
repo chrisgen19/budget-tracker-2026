@@ -57,3 +57,7 @@ next-env.d.ts
 # serwist (generated service worker)
 public/sw.js
 public/sw.js.map
+
+# Local mirror backups from scripts/refresh-local-mirror.ts.
+# These are full database dumps: password hashes, MCP token hashes, every transaction.
+.mirror-backups/
