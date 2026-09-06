@@ -222,6 +222,12 @@ export const budgetOverviewOutput = budgetOverview.shape;
 const upcomingBills = z.object({
   count: z.number(),
   totalAmount: z.number(),
+  totalIsEstimate: z
+    .boolean()
+    .describe(
+      "True when any bill in the total had its amount derived rather than asserted, so the " +
+        "total is an approximation."
+    ),
   bills: z.array(
     z.object({
       id: z.string(),
@@ -229,7 +235,24 @@ const upcomingBills = z.object({
       categoryName: z.string(),
       categoryIcon: z.string(),
       categoryColor: z.string(),
-      amount: z.number(),
+      amount: z
+        .number()
+        .describe(
+          "What the bill is expected to cost. For a fixed bill this is the amount set on it; " +
+            "for a variable one it is derived from the payments already linked to it. Check " +
+            "`isEstimate` before stating it as fact."
+        ),
+      isEstimate: z
+        .boolean()
+        .describe(
+          "True when `amount` was derived from payment history rather than set on the bill. " +
+            "Say \"about\" or \"roughly\" for such a figure: a metered bill can swing severalfold " +
+            "across a year and the app cannot know what the next one will be."
+        ),
+      estimateBasis: z
+        .enum(["same-month-last-year", "last-payment", "budgeted"])
+        .nullable()
+        .describe("How a derived amount was arrived at; null when `amount` was asserted."),
       dueDate: z.string().describe("The stored value as an ISO instant."),
       localDueDate: z
         .string()

@@ -21,8 +21,15 @@ export type BillEstimate = {
   sampleSize: number;
 };
 
-/** Payments used for an estimate: the local calendar month, and what was paid. */
-export type EstimateSample = { month: number; year: number; amount: number };
+/**
+ * A payment, as the estimator sees it.
+ *
+ * `at` is the raw instant. Year and month alone tie for two payments in the same
+ * month, and "the last payment" would then depend on the order the caller
+ * happened to fetch in -- which for a bill paid twice in a month is exactly the
+ * case where the two figures differ.
+ */
+export type EstimateSample = { month: number; year: number; amount: number; at: number };
 
 /**
  * Estimate the next payment for a bill due in `dueMonth` of `dueYear`.
@@ -69,7 +76,7 @@ export const estimateBillAmount = (
     };
   }
 
-  const newest = [...samples].sort((a, b) => b.year - a.year || b.month - a.month)[0];
+  const newest = [...samples].sort((a, b) => b.at - a.at)[0];
   return { amount: Math.round(newest.amount), basis: "last-payment", sampleSize: 1 };
 };
 

@@ -192,7 +192,15 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
               "text-base font-bold tabular-nums shrink-0",
               bill.type === "INCOME" ? "text-income" : "text-expense"
             )}>
-              {hideAmounts ? "***" : formatCurrency(bill.amount, user.currency)}
+              {/* A variable bill's stored amount is a fallback, not what is owed.
+                  Stating it here is the same assertion the reminder email was
+                  changed to stop making (#217): the in-app banner is a reminder
+                  too, and the user has explicitly said this bill varies. */}
+              {hideAmounts
+                ? "***"
+                : bill.isVariable
+                  ? "varies"
+                  : formatCurrency(bill.amount, user.currency)}
             </span>
 
             {/* Dismiss for the day */}

@@ -292,7 +292,17 @@ export interface UpcomingBill {
   categoryName: string;
   categoryIcon: string;
   categoryColor: string;
+  /**
+   * What the bill is expected to cost. For a fixed bill this is the amount set
+   * on it; for a variable one it is derived from the payments already linked to
+   * it, and `isEstimate` says which. A caller that ignores the flag still gets a
+   * usable figure rather than a zero -- but one that reads it can say "about"
+   * instead of stating a number the app cannot know (#217).
+   */
   amount: number;
+  isEstimate: boolean;
+  /** How a derived amount was arrived at; null when `amount` was asserted. */
+  estimateBasis: "same-month-last-year" | "last-payment" | "budgeted" | null;
   /** The stored value as an ISO instant. Kept for callers that already read it. */
   dueDate: string;
   /**
@@ -316,6 +326,8 @@ export interface UpcomingBill {
 export interface UpcomingBillsResult {
   count: number;
   totalAmount: number;
+  /** True when any bill's amount was derived from history rather than asserted. */
+  totalIsEstimate: boolean;
   bills: UpcomingBill[];
 }
 

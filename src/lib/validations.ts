@@ -188,8 +188,15 @@ export const scheduledTransactionSchema = z.object({
   frequency: z.enum(["DAILY", "WEEKLY", "MONTHLY", "ANNUALLY", "CUSTOM"]),
   customIntervalDays: z.number().int().min(1).optional(),
   reminderDaysBefore: z.number().int().min(0).max(30).default(0),
-  /** A metered bill whose cost varies. `amount` stays required as a fallback. */
-  isVariable: z.boolean().default(false),
+  /**
+   * A metered bill whose cost varies. `amount` stays required as a fallback.
+   *
+   * Deliberately optional with no default: a PUT that omits it must leave the
+   * existing value alone. `.default(false)` would have silently un-marked a
+   * variable bill on any update that did not resend the field, which is a
+   * setting quietly reverting rather than an error anyone would see.
+   */
+  isVariable: z.boolean().optional(),
   startDate: z.string().min(1, "Start date is required"),
   endDate: z.string().optional(),
   labelIds: z.array(z.string()).optional(),

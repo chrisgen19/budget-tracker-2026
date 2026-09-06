@@ -7,13 +7,13 @@ import {
 
 /** Meralco's real 2026 history, the bill that motivated #217. */
 const meralco2026: EstimateSample[] = [
-  { year: 2026, month: 3, amount: 5300 },
-  { year: 2026, month: 4, amount: 6513 },
-  { year: 2026, month: 5, amount: 8564 },
-  { year: 2026, month: 6, amount: 14126 },
-  { year: 2026, month: 7, amount: 9970 },
-  { year: 2026, month: 8, amount: 8350 },
-  { year: 2026, month: 9, amount: 5990 },
+  { year: 2026, month: 3, amount: 5300, at: Date.UTC(2026, 2, 15) },
+  { year: 2026, month: 4, amount: 6513, at: Date.UTC(2026, 3, 15) },
+  { year: 2026, month: 5, amount: 8564, at: Date.UTC(2026, 4, 15) },
+  { year: 2026, month: 6, amount: 14126, at: Date.UTC(2026, 5, 15) },
+  { year: 2026, month: 7, amount: 9970, at: Date.UTC(2026, 6, 15) },
+  { year: 2026, month: 8, amount: 8350, at: Date.UTC(2026, 7, 15) },
+  { year: 2026, month: 9, amount: 5990, at: Date.UTC(2026, 8, 15) },
 ];
 
 describe("estimateBillAmount", () => {
@@ -46,9 +46,9 @@ describe("estimateBillAmount", () => {
   it("averages the same month across several earlier years", () => {
     const e = estimateBillAmount(
       [
-        { year: 2025, month: 6, amount: 10000 },
-        { year: 2026, month: 6, amount: 14000 },
-        { year: 2026, month: 1, amount: 5000 },
+        { year: 2025, month: 6, amount: 10000, at: Date.UTC(2025, 5, 15) },
+        { year: 2026, month: 6, amount: 14000, at: Date.UTC(2026, 5, 15) },
+        { year: 2026, month: 1, amount: 5000, at: Date.UTC(2026, 0, 15) },
       ],
       6,
       2027,
@@ -74,17 +74,27 @@ describe("estimateBillAmount", () => {
     expect(e.amount).toBeLessThan(sixMonthMean - 2500);
   });
 
+  // Year and month alone tie, so "the last payment" would have depended on the
+  // order the caller fetched in -- and a bill paid twice in one month is exactly
+  // where the two figures differ.
+  it("picks the later of two payments in the same month, whatever the input order", () => {
+    const early = { year: 2026, month: 7, amount: 100, at: Date.UTC(2026, 6, 3) };
+    const late = { year: 2026, month: 7, amount: 900, at: Date.UTC(2026, 6, 28) };
+    expect(estimateBillAmount([early, late], 8, 2026, 50).amount).toBe(900);
+    expect(estimateBillAmount([late, early], 8, 2026, 50).amount).toBe(900);
+  });
+
   it("takes the newest payment, so a drifted bill is not anchored to its past", () => {
     const drifted: EstimateSample[] = [
-      { year: 2026, month: 1, amount: 100 },
-      { year: 2026, month: 6, amount: 900 },
-      { year: 2026, month: 7, amount: 950 },
+      { year: 2026, month: 1, amount: 100, at: Date.UTC(2026, 0, 15) },
+      { year: 2026, month: 6, amount: 900, at: Date.UTC(2026, 5, 15) },
+      { year: 2026, month: 7, amount: 950, at: Date.UTC(2026, 6, 15) },
     ];
     expect(estimateBillAmount(drifted, 8, 2026, 50).amount).toBe(950);
   });
 
   it("rounds to whole units — a forecast to the centavo is false precision", () => {
-    const e = estimateBillAmount([{ year: 2026, month: 2, amount: 100.34 }], 3, 2026, 0);
+    const e = estimateBillAmount([{ year: 2026, month: 2, amount: 100.34, at: Date.UTC(2026, 1, 15) }], 3, 2026, 0);
     expect(Number.isInteger(e.amount)).toBe(true);
   });
 });

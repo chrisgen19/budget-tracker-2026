@@ -53,6 +53,7 @@ export async function GET(request: Request) {
               year: local.getUTCFullYear(),
               month: local.getUTCMonth() + 1,
               amount: t.amount,
+              at: t.date.getTime(),
             };
           }),
           dueDate.getUTCMonth() + 1,

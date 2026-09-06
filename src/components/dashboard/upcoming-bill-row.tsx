@@ -151,7 +151,11 @@ export function UpcomingBillRow({
           {dueLabel}
         </span>
         <span className="text-sm font-semibold tabular-nums text-warm-600 shrink-0">
-          {hideAmounts ? "***" : formatCurrency(bill.amount, currency)}
+          {/* A derived figure is prefixed rather than stated flat: a metered
+              bill can swing severalfold and the app cannot know the next one. */}
+          {hideAmounts
+            ? "***"
+            : `${bill.isEstimate ? "~" : ""}${formatCurrency(bill.amount, currency)}`}
         </span>
         <ChevronDown
           className={cn(
