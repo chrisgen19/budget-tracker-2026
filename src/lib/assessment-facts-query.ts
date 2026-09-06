@@ -60,7 +60,7 @@ export const collectAssessmentFacts = async (
   // week is what tells us last month's bill was settled after all.
   const rangeEnd = window.dataTo > today ? window.dataTo : today;
 
-  const [rows, bills, firstSightings] = await Promise.all([
+  const [rows, bills, firstSightings, allTime] = await Promise.all([
     prisma.transaction.findMany({
       where: { userId, date: { gte: localDayStart(window.dataFrom, tzMs), lte: localDayEnd(rangeEnd, tzMs) } },
       select: {
@@ -108,6 +108,9 @@ export const collectAssessmentFacts = async (
       where: { userId, type: "EXPENSE" },
       _min: { date: true },
     }),
+    // Every row the user has, for the running balance. A balance is not a window:
+    // six months of it is a period's net, which answers a different question.
+    prisma.transaction.groupBy({ by: ["type"], where: { userId }, _sum: { amount: true } }),
   ]);
 
   // Folded here rather than in SQL: `groupBy` is exact, and "Netflix " and
@@ -134,6 +137,27 @@ export const collectAssessmentFacts = async (
     labelCount: t._count.labels,
   }));
 
+  // Payments named after a bill but carrying no `billId`, across all history. The
+  // window would clip the finding: a payment made outside the bill system before
+  // it still left that schedule stalled, and it stays stalled. Matched by an OR of
+  // case-insensitive equalities rather than `in`, which Prisma cannot make
+  // insensitive for an array, and bounded by the number of bills.
+  const billNames = [...new Set(bills.map((b) => (b.description || b.category.name).trim()).filter(Boolean))];
+  const unlinkedRows = billNames.length === 0
+    ? []
+    : await prisma.transaction.findMany({
+        where: {
+          userId,
+          billId: null,
+          type: "EXPENSE",
+          OR: billNames.map((name) => ({ description: { equals: name, mode: "insensitive" as const } })),
+        },
+        select: {
+          id: true, amount: true, type: true, date: true, description: true,
+          categoryId: true, billId: true, category: { select: { name: true } },
+        },
+      });
+
   const factBills: FactBill[] = bills.map((b) => ({
     id: b.id,
     description: b.description || b.category.name,
@@ -149,6 +173,23 @@ export const collectAssessmentFacts = async (
     occurrences: b.occurrences,
   }));
 
+  const unlinkedCandidates: FactTransaction[] = unlinkedRows.map((t) => ({
+    id: t.id,
+    amount: t.amount,
+    type: t.type as TransactionType,
+    localDate: formatLocalDate(t.date, tzOffset),
+    description: t.description ?? "",
+    categoryId: t.categoryId,
+    categoryName: t.category.name,
+    billId: t.billId,
+    // Not read by the unlinked check, which asks only whether a payment bypassed
+    // its bill. Left at zero rather than joined for a field nothing consults.
+    labelCount: 0,
+  }));
+
+  const totalOf = (type: "INCOME" | "EXPENSE") =>
+    allTime.find((row) => row.type === type)?._sum.amount ?? 0;
+
   return buildAssessmentFacts({
     currency: user?.currency ?? "PHP",
     period: { from: params.from, to: params.to, label: params.periodLabel, granularity: params.granularity },
@@ -158,5 +199,7 @@ export const collectAssessmentFacts = async (
     transactions,
     bills: factBills,
     historyFirstSeen,
+    allTimeTotals: { income: totalOf("INCOME"), expenses: totalOf("EXPENSE") },
+    unlinkedCandidates,
   });
 };

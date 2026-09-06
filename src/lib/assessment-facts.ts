@@ -26,6 +26,7 @@ import { buildEstimateSamples, estimateBillAmount } from "@/lib/bill-estimate";
 import type {
   AiWatchSeverity,
   AssessmentAnomaly,
+  AssessmentHeadline,
   AssessmentBillAccuracy,
   AssessmentBillFacts,
   AssessmentCategoryMovement,
@@ -94,6 +95,21 @@ export interface FactsInput {
   bills: FactBill[];
   /** Earliest sighting of each folded expense description across the user's whole history. */
   historyFirstSeen?: ReadonlyMap<string, string>;
+  /**
+   * Every income and expense the user has ever recorded, for the running balance.
+   *
+   * A balance is not a window: six months of it is a period's net, which is a
+   * different number answering a different question.
+   */
+  allTimeTotals?: { income: number; expenses: number };
+  /**
+   * Expenses named after a bill but carrying no `billId`, across all history.
+   *
+   * Passed in rather than filtered out of `transactions`, because the window
+   * would clip the finding: a payment made outside the bill system before the
+   * window still left that schedule wrong.
+   */
+  unlinkedCandidates?: FactTransaction[];
 }
 
 /* ------------------------------------------------------------------ */
@@ -391,6 +407,38 @@ export const computeTrends = (
   };
 };
 
+/**
+ * The figures that come before the detail.
+ *
+ * Rates read only the trustworthy months, so a logging gap cannot flatter the
+ * savings rate. The balance deliberately does not: it is every row the user has,
+ * because what an account holds is not a property of the window being assessed.
+ */
+export const computeHeadline = (
+  coverage: AssessmentMonthCoverage[],
+  trustworthy: string[],
+  allTime: { income: number; expenses: number },
+): AssessmentHeadline => {
+  const trusted = coverage.filter((m) => trustworthy.includes(m.month));
+  const income = sum(trusted.map((m) => m.income));
+  const expenses = sum(trusted.map((m) => m.expenses));
+  const burn = trusted.length === 0 ? null : expenses / trusted.length;
+  const runningBalance = allTime.income - allTime.expenses;
+
+  return {
+    months: trusted.length,
+    income: round(income),
+    expenses: round(expenses),
+    net: round(income - expenses),
+    savingsRatePct: pct(income - expenses, income),
+    avgMonthlyBurn: burn === null ? null : round(burn),
+    runningBalance: round(runningBalance),
+    // A negative balance has no runway to speak of, and dividing it yields a
+    // negative month count that reads as a figure rather than as a warning.
+    monthsOfRunway: burn === null || burn <= 0 || runningBalance <= 0 ? null : Math.round((runningBalance / burn) * 10) / 10,
+  };
+};
+
 /* ------------------------------------------------------------------ */
 /*  3. Recurring spend                                                 */
 /* ------------------------------------------------------------------ */
@@ -536,14 +584,16 @@ export const computeHygiene = (
   const totalSpend = sum(expenses.map((t) => t.amount));
 
   const income = scoped.filter((t) => t.type === "INCOME");
-  const bySource = new Map<string, { total: number; label: string }>();
+  const bySource = new Map<string, { total: number; count: number; label: string }>();
   for (const t of income) {
     const key = foldDescription(t.description) || t.categoryName.toLowerCase();
-    const g = bySource.get(key) ?? { total: 0, label: t.description.trim() || t.categoryName };
+    const g = bySource.get(key) ?? { total: 0, count: 0, label: t.description.trim() || t.categoryName };
     g.total += t.amount;
+    g.count += 1;
     bySource.set(key, g);
   }
-  const top = [...bySource.values()].sort((a, b) => b.total - a.total)[0] ?? null;
+  const ranked = [...bySource.values()].sort((a, b) => b.total - a.total);
+  const top = ranked[0] ?? null;
   const totalIncome = sum(income.map((t) => t.amount));
 
   return {
@@ -556,6 +606,12 @@ export const computeHygiene = (
     fragmentation: findFragmentation(transactions),
     incomeConcentrationPct: top ? pct(top.total, totalIncome) : null,
     topIncomeSource: top?.label ?? null,
+    incomeSources: ranked.slice(0, 8).map((g) => ({
+      source: g.label,
+      count: g.count,
+      total: round(g.total),
+      pct: pct(g.total, totalIncome),
+    })),
   };
 };
 
@@ -634,8 +690,26 @@ export const findMissedOccurrences = (
   };
 };
 
+/**
+ * What a bill's payments cost, month by month, oldest first.
+ *
+ * Keyed on the **occurrence's** billing period rather than the day the payment
+ * happened, the same rule `buildEstimateSamples` uses: a bill due 1 September and
+ * paid 31 August belongs to September, and filing it under August moves the
+ * seasonal shape by a month.
+ */
+const paymentSeries = (bill: FactBill, timezoneOffset: number): AssessmentBillAccuracy["monthlySeries"] => {
+  const samples = buildEstimateSamples(bill.payments, bill.occurrences.filter((o) => o.status === "PAID"), timezoneOffset);
+  return samples
+    .map((sample) => {
+      const month = `${sample.year}-${String(sample.month).padStart(2, "0")}`;
+      return { month, label: monthLabel(month), amount: round(sample.amount) };
+    })
+    .sort((a, b) => a.month.localeCompare(b.month));
+};
+
 /** Budgeted against actually paid, with `swing` separating a metered bill from a wrong figure. */
-export const assessBillAccuracy = (bill: FactBill): AssessmentBillAccuracy => {
+export const assessBillAccuracy = (bill: FactBill, timezoneOffset = 0): AssessmentBillAccuracy => {
   const amounts = bill.payments.map((p) => p.amount);
   const base = {
     id: bill.id,
@@ -646,7 +720,7 @@ export const assessBillAccuracy = (bill: FactBill): AssessmentBillAccuracy => {
     payments: amounts.length,
   };
   if (amounts.length === 0) {
-    return { ...base, avgPaid: null, lowest: null, highest: null, swing: null, variancePct: null, verdict: "no-payments" };
+    return { ...base, avgPaid: null, lowest: null, highest: null, swing: null, variancePct: null, verdict: "no-payments", monthlySeries: [] };
   }
 
   const avg = sum(amounts) / amounts.length;
@@ -669,17 +743,35 @@ export const assessBillAccuracy = (bill: FactBill): AssessmentBillAccuracy => {
         ? "under-budgeted"
         : "over-budgeted";
 
-  return { ...base, avgPaid: round(avg), lowest: round(lowest), highest: round(highest), swing, variancePct, verdict };
+  return {
+    ...base,
+    avgPaid: round(avg),
+    lowest: round(lowest),
+    highest: round(highest),
+    swing,
+    variancePct,
+    verdict,
+    // Only where the shape is the finding. For a fixed bill the series is seven
+    // copies of one number, which is noise in a payload a model has to read.
+    monthlySeries: seasonal ? paymentSeries(bill, timezoneOffset) : [],
+  };
 };
 
-/** Spending named after a bill but never linked to it, so the schedule never advanced. */
+/**
+ * Spending named after a bill but never linked to it, so the schedule never advanced.
+ *
+ * `candidates` is the user's whole history, not the window. The finding is about
+ * the bill being wrong rather than about this period's spending: a payment made
+ * outside the bill system before the window still left that schedule stalled, and
+ * clipping it to six months hides a defect that has not gone away.
+ */
 export const findUnlinkedBillPayments = (
   bills: FactBill[],
-  transactions: FactTransaction[],
+  candidates: FactTransaction[],
 ): AssessmentUnlinkedBillPayment[] => {
   const byName = new Map(bills.map((b) => [foldDescription(b.description), b]));
   const hits = new Map<string, { bill: FactBill; rows: FactTransaction[] }>();
-  for (const t of transactions) {
+  for (const t of candidates) {
     if (t.type !== "EXPENSE" || t.billId !== null) continue;
     const bill = byName.get(foldDescription(t.description));
     if (!bill) continue;
@@ -700,7 +792,7 @@ export const findUnlinkedBillPayments = (
 
 export const computeBillFacts = (
   bills: FactBill[],
-  transactions: FactTransaction[],
+  unlinkedCandidates: FactTransaction[],
   today: string,
   timezoneOffset: number,
 ): AssessmentBillFacts => {
@@ -741,9 +833,9 @@ export const computeBillFacts = (
     asOf: today,
     missed: missed.sort((a, b) => b.daysOverdue - a.daysOverdue),
     accuracy: bills
-      .map(assessBillAccuracy)
+      .map((bill) => assessBillAccuracy(bill, timezoneOffset))
       .sort((a, b) => Math.abs(b.variancePct ?? 0) - Math.abs(a.variancePct ?? 0)),
-    unlinkedPayments: findUnlinkedBillPayments(bills, transactions),
+    unlinkedPayments: findUnlinkedBillPayments(bills, unlinkedCandidates),
     dueSoonCount,
     dueSoonTotal: round(dueSoonTotal),
     dueSoonIsEstimate,
@@ -1023,7 +1115,11 @@ export const buildAssessmentFacts = (input: FactsInput): AssessmentFacts => {
   const trends = computeTrends(transactions, confidence.months, confidence.trustworthyMonths, period);
   const recurring = computeRecurring(transactions, today, trends.avgMonthlyBurn, input.historyFirstSeen);
   const hygiene = computeHygiene(transactions, confidence.trustworthyMonths, period);
-  const billFacts = computeBillFacts(bills, transactions, today, input.timezoneOffset);
+  const headline = computeHeadline(confidence.months, confidence.trustworthyMonths, input.allTimeTotals ?? { income: 0, expenses: 0 });
+  // Falls back to the window when the caller supplies no wider set, so a test or
+  // a caller that has only the window still gets an answer -- a narrower one,
+  // never a wrong one.
+  const billFacts = computeBillFacts(bills, input.unlinkedCandidates ?? transactions, today, input.timezoneOffset);
 
   const periodTx = transactions.filter((t) => t.localDate >= period.from && t.localDate <= period.to);
   const periodMonth = monthOf(period.from) === monthOf(period.to) ? monthOf(period.from) : null;
@@ -1057,6 +1153,7 @@ export const buildAssessmentFacts = (input: FactsInput): AssessmentFacts => {
     period: { ...period },
     window: { from: window.dataFrom, to: window.dataTo, months: window.months.length },
     confidence,
+    headline,
     bills: billFacts,
     trends,
     recurring,

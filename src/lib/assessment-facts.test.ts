@@ -9,6 +9,7 @@ import {
   findMissedOccurrences,
   assessBillAccuracy,
   findUnlinkedBillPayments,
+  computeHeadline,
   monthRange,
   resolveFactsWindow,
   MIN_COVERAGE_PCT,
@@ -472,5 +473,81 @@ describe("missing income", () => {
    */
   it("says nothing when no earlier month recorded income either", () => {
     expect(build(0).anomalies.find((x) => x.kind === "missing-income")).toBeUndefined();
+  });
+});
+
+describe("computeHeadline", () => {
+  const coverage = (months: string[], income: number, expenses: number) =>
+    months.map((month) => ({
+      month, label: month, daysLogged: 28, daysInMonth: 30, coveragePct: 93,
+      transactionCount: 30, income, expenses, status: "ok" as const,
+    }));
+
+  it("averages rates over the trustworthy months only", () => {
+    const months = ["2026-04", "2026-05"];
+    const h = computeHeadline(
+      [...coverage(months, 40_000, 30_000), { month: "2026-07", label: "2026-07", daysLogged: 5, daysInMonth: 31, coveragePct: 16, transactionCount: 5, income: 0, expenses: 900, status: "low-coverage" as const }],
+      months,
+      { income: 500_000, expenses: 300_000 },
+    );
+    // The excluded month's 900 must not drag the burn down toward a figure
+    // nothing actually spent.
+    expect(h.avgMonthlyBurn).toBe(30_000);
+    expect(h.savingsRatePct).toBe(25);
+    expect(h.months).toBe(2);
+  });
+
+  /**
+   * The balance is all-time on purpose. Six months of it is a period's net, which
+   * is a different number answering a different question.
+   */
+  it("takes the balance from all history, not the window", () => {
+    const h = computeHeadline(coverage(["2026-04"], 40_000, 30_000), ["2026-04"], { income: 500_000, expenses: 300_000 });
+    expect(h.runningBalance).toBe(200_000);
+    expect(h.monthsOfRunway).toBe(6.7);
+  });
+
+  it("reports no runway rather than a negative month count", () => {
+    const h = computeHeadline(coverage(["2026-04"], 10_000, 30_000), ["2026-04"], { income: 10_000, expenses: 50_000 });
+    expect(h.runningBalance).toBe(-40_000);
+    expect(h.monthsOfRunway).toBeNull();
+  });
+
+  it("reports no runway when nothing was spent to measure a pace against", () => {
+    expect(computeHeadline([], [], { income: 100, expenses: 0 }).monthsOfRunway).toBeNull();
+  });
+});
+
+describe("assessBillAccuracy monthly series", () => {
+  const payments = (...amounts: number[]) =>
+    amounts.map((amount, i) => ({ id: `p${i}`, date: new Date(Date.UTC(2026, i + 2, 15)), amount }));
+
+  it("carries the month-by-month shape for a seasonal bill, since that is the finding", () => {
+    const b = assessBillAccuracy(bill({ amount: 5500, payments: payments(5300, 6513, 8564, 14126) }), -480);
+    expect(b.verdict).toBe("seasonal");
+    expect(b.monthlySeries.map((m) => m.amount)).toEqual([5300, 6513, 8564, 14126]);
+    expect(b.monthlySeries[0].month).toBe("2026-03");
+  });
+
+  /**
+   * A payment settling an occurrence belongs to that occurrence's billing period,
+   * not to the day it happened. A bill due 1 September paid 31 August is
+   * September's, and filing it under August moves the seasonal shape by a month.
+   */
+  it("files a payment under the period it settled, not the day it was made", () => {
+    const b = assessBillAccuracy(bill({
+      amount: 5500,
+      payments: [
+        { id: "p0", date: new Date(Date.UTC(2026, 7, 31)), amount: 14000 },
+        { id: "p1", date: new Date(Date.UTC(2026, 8, 15)), amount: 5300 },
+        { id: "p2", date: new Date(Date.UTC(2026, 9, 15)), amount: 6000 },
+      ],
+      occurrences: [{ dueDate: new Date(Date.UTC(2026, 8, 1)), status: "PAID", transactionId: "p0", snoozeUntil: null }],
+    }), -480);
+    expect(b.monthlySeries.find((m) => m.amount === 14000)?.month).toBe("2026-09");
+  });
+
+  it("leaves the series empty for a fixed bill — seven copies of one number is noise", () => {
+    expect(assessBillAccuracy(bill({ amount: 1000, payments: payments(1000, 1000, 1000) }), -480).monthlySeries).toEqual([]);
   });
 });
