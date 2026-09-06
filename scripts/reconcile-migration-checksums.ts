@@ -49,6 +49,8 @@ type Fix = {
   dirty: boolean;
   /** Commit whose version of the file the database actually ran, if findable. */
   appliedAt: string | null;
+  /** Disk bytes differ from the committed ones -- e.g. a CRLF worktree. */
+  denormalized: boolean;
 };
 
 const git = (args: string[]): string =>
@@ -153,7 +155,9 @@ const dirtyFiles = (): Set<string> => {
   }
 };
 
-const scan = async (dirty: Set<string>): Promise<{ fixes: Fix[]; missing: string[] }> => {
+const scan = async (
+  dirty: Set<string>,
+) => {
   const rows = await prisma.$queryRaw<Row[]>`
     SELECT id, migration_name, checksum
     FROM _prisma_migrations
@@ -163,6 +167,11 @@ const scan = async (dirty: Set<string>): Promise<{ fixes: Fix[]; missing: string
 
   const fixes: Fix[] = [];
   const missing: string[] = [];
+  // Every file whose disk bytes differ from the committed ones, whether or not
+  // its checksum matches. A matching checksum with a denormalised file is the
+  // *worst* case, not a safe one: Prisma hashes the disk, so migrate dev stays
+  // blocked while this script reports everything in order.
+  const denormalized: string[] = [];
 
   for (const row of rows) {
     const rel = `prisma/migrations/${row.migration_name}/migration.sql`;
@@ -174,8 +183,19 @@ const scan = async (dirty: Set<string>): Promise<{ fixes: Fix[]; missing: string
     // Hash the committed bytes where possible; fall back to the working tree
     // for a file git cannot show, which the dirty guard refuses anyway.
     let actual: string;
+    let denormalizedFile = false;
     try {
-      actual = createHash("sha256").update(canonicalBytes(rel)).digest("hex");
+      const canonical = canonicalBytes(rel);
+      actual = createHash("sha256").update(canonical).digest("hex");
+      // Prisma hashes the file on disk; this hashes the committed bytes. They
+      // differ on a worktree materialised with CRLF, and git can report such a
+      // file clean once its `text` attribute normalises it away. Writing the
+      // canonical hash there would report success while leaving `migrate dev`
+      // blocked by the disk file it never saw.
+      if (!canonical.equals(readFileSync(file))) {
+        denormalizedFile = true;
+        denormalized.push(row.migration_name);
+      }
     } catch {
       actual = checksumOf(file);
     }
@@ -186,6 +206,7 @@ const scan = async (dirty: Set<string>): Promise<{ fixes: Fix[]; missing: string
         from: row.checksum,
         to: actual,
         appliedAt: findAppliedBlob(rel, row.checksum),
+        denormalized: denormalizedFile,
         // Prefix match as well as exact, so any git version or configuration
         // that still reports a directory rather than its files is caught.
         dirty:
@@ -194,7 +215,7 @@ const scan = async (dirty: Set<string>): Promise<{ fixes: Fix[]; missing: string
       });
     }
   }
-  return { fixes, missing };
+  return { fixes, missing, denormalized };
 };
 
 const report = (fixes: Fix[], missing: string[]): void => {
@@ -209,7 +230,11 @@ const report = (fixes: Fix[], missing: string[]): void => {
 
   console.log(`${APPLY ? "Updating" : "Would update"} ${fixes.length} checksum(s):\n`);
   for (const f of fixes) {
-    const tags = [f.dirty ? "UNCOMMITTED EDITS" : null, f.appliedAt ? null : "SOURCE NOT FOUND"]
+    const tags = [
+      f.dirty ? "UNCOMMITTED EDITS" : null,
+      f.appliedAt ? null : "SOURCE NOT FOUND",
+      f.denormalized ? "LINE ENDINGS DIFFER FROM GIT" : null,
+    ]
       .filter(Boolean)
       .join(", ");
     console.log(`  ${f.name}${tags ? `   [${tags}]` : ""}`);
@@ -251,11 +276,30 @@ const applyFixes = async (fixes: Fix[]): Promise<void> => {
   console.log(`\nUpdated ${fixes.length} checksum(s).`);
 };
 
-async function main() {
+async function main(): Promise<number> {
   console.log(`Target: ${describeTarget()}\n`);
 
   const dirty = dirtyFiles();
-  const { fixes, missing } = await scan(dirty);
+  const { fixes, missing, denormalized } = await scan(dirty);
+
+  // Reported before anything else, and on its own: a denormalised file blocks
+  // `migrate dev` no matter what the checksums say, and reconciling checksums
+  // cannot fix it. Prisma hashes what is on disk.
+  if (denormalized.length > 0) {
+    console.log(
+      `${denormalized.length} migration file(s) differ on disk from their committed bytes --\n` +
+        `almost always CRLF line endings on a worktree checked out before .gitattributes\n` +
+        `pinned these to LF. Prisma hashes the file on disk, so this blocks migrate dev even\n` +
+        `where the stored checksum looks right, and no checksum change can fix it:\n`,
+    );
+    for (const m of denormalized) console.log(`  - ${m}`);
+    console.log(
+      `\nNormalise first:\n` +
+        `  git add --renormalize prisma/migrations && git checkout -- prisma/migrations\n`,
+    );
+  }
+
+  if (denormalized.length > 0) return 1;
 
   if (fixes.length === 0) {
     console.log(
@@ -264,7 +308,7 @@ async function main() {
         : "Every applied migration's checksum matches its file.",
     );
     if (missing.length > 0) report(fixes, missing);
-    return;
+    return 0;
   }
 
   report(fixes, missing);
@@ -277,8 +321,7 @@ async function main() {
         `show it -- exactly the case where blessing a checksum could bury real schema drift.\n` +
         `Commit or stash them, re-read the diff, then run again.`,
     );
-    process.exitCode = 1;
-    return;
+    return 1;
   }
 
   const unsourced = fixes.filter((f) => !f.appliedAt);
@@ -292,21 +335,35 @@ async function main() {
         `production within a minute of a branch push (AGENTS.md, issue #192). Fetch the\n` +
         `branch that produced them, or treat this as drift rather than a checksum problem.`,
     );
-    process.exitCode = 1;
-    return;
+    return 1;
   }
 
   if (!APPLY) {
     console.log("\nDry run. Re-run with --apply once you have read the diffs.");
-    return;
+    return 0;
   }
 
   await applyFixes(fixes);
+  return 0;
 }
 
-main()
-  .catch((e) => {
-    console.error(String(e instanceof Error ? e.message : e));
-    process.exitCode = 1;
-  })
-  .finally(() => prisma.$disconnect());
+/**
+ * Awaited, not left in a `.finally` callback. A rejected disconnect there --
+ * a pooler dropping the connection after the update, say -- becomes an
+ * unhandled rejection with nothing after it to catch, which can kill the CLI
+ * *after* the transaction has committed and make a successful write look like
+ * a failure. Same shape as check-migration-drift.ts.
+ */
+const run = async () => {
+  let code = 1;
+  try {
+    code = await main();
+  } catch (error) {
+    console.error("[reconcile-migration-checksums] failed:", error);
+  } finally {
+    await prisma.$disconnect().catch(() => {});
+  }
+  process.exit(code);
+};
+
+run();
