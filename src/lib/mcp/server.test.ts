@@ -325,3 +325,87 @@ describe("update_transactions permission", () => {
     expect(JSON.stringify(result.content)).toContain("Writes are currently switched off");
   });
 });
+
+describe("update_transactions date rendering", () => {
+  /** Drives the tool against a stub whose row moves only in time-of-day. */
+  const callWithStoredDate = async (stored: Date, patchDate: string) => {
+    const row = {
+      id: "tx_1",
+      amount: 250,
+      description: "Dinner",
+      type: "EXPENSE",
+      date: stored,
+      categoryId: "cat_1",
+      userId: "user_1",
+      billId: null,
+      receiptGroupId: null,
+      receiptBreakdown: null,
+      category: { id: "cat_1", name: "Food", type: "EXPENSE" },
+      labels: [] as unknown[],
+    };
+    const store = new Map([["tx_1", { ...row }]]);
+    const client = {
+      transaction: {
+        findMany: vi.fn(async () => [...store.values()]),
+        update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+          store.set("tx_1", { ...store.get("tx_1")!, ...data } as typeof row);
+          return store.get("tx_1")!;
+        }),
+        findUniqueOrThrow: vi.fn(async () => store.get("tx_1")!),
+      },
+      transactionLabel: { deleteMany: vi.fn(), createMany: vi.fn() },
+      category: { findMany: vi.fn(async () => [{ id: "cat_1", type: "EXPENSE" }]) },
+      label: { findMany: vi.fn(async () => []) },
+      user: {
+        findUnique: vi.fn(async () => ({ mcpWritesEnabledUntil: new Date(Date.now() + 60_000) })),
+      },
+      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(client)),
+    };
+
+    const server = createBudgetMcpServer({
+      prisma: client as unknown as PrismaClient,
+      userId: "user_1",
+      timezoneOffset: -480,
+      scopes: ["transactions:edit"],
+      writesEnabledUntil: new Date(Date.now() + 60_000),
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const mcp = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), mcp.connect(clientTransport)]);
+
+    const result = await mcp.callTool({
+      name: "update_transactions",
+      arguments: { transactions: [{ id: "tx_1", date: patchDate }] },
+    });
+    await mcp.close();
+    return result.structuredContent as {
+      transactions: { changed: string[]; date: string; previous: { date?: string } }[];
+    };
+  };
+
+  it("shows the time when only the time of day moved", async () => {
+    // The tool invites a time whenever the user gives one, so patching a 17:00 row to 21:00 is a
+    // normal call. Rendering both ends as the calendar day made the reply read "the date changed
+    // from 2026-09-06 to 2026-09-06" -- a claim its own fields contradict.
+    const payload = await callWithStoredDate(
+      new Date("2026-09-06T09:00:00.000Z"), // 17:00 for a UTC+8 account
+      "2026-09-06T21:00"
+    );
+    const row = payload.transactions[0];
+
+    expect(row.changed).toEqual(["date"]);
+    expect(row.previous.date).toBe("2026-09-06 17:00");
+    expect(row.date).toBe("2026-09-06 21:00");
+  });
+
+  it("stays a plain calendar day when the day itself moved", async () => {
+    // The ordinary re-date keeps the shape every other date in the payload uses.
+    const payload = await callWithStoredDate(new Date("2026-09-06T09:00:00.000Z"), "2026-09-07");
+    const row = payload.transactions[0];
+
+    expect(row.changed).toEqual(["date"]);
+    expect(row.previous.date).toBe("2026-09-06");
+    expect(row.date).toBe("2026-09-07");
+  });
+});
+

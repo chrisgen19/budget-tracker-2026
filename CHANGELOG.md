@@ -100,6 +100,25 @@ mentioned.** Those are different tests and only one of them works: `transactionS
 `categoryId` and the app's edit form posts the whole object, so every browser edit names it and
 the mention-based carve-out never fired for the one path it was written for.
 
+**The edit form could still build the request the new check rejects.** `transaction-form.tsx`
+deliberately skipped its category reset when editing, so toggling an existing expense to Income
+kept the expense `categoryId` in form state -- invisible, since no tile highlights it and
+`transactionSchema` only asks for a non-empty string. Before the shared write path checked
+categories the server saved that, filing income under an expense category; now it refuses, and
+`useUpdateTransaction` surfaces a bare "Failed to update transaction". The server is right and the
+form should never have posted it, so it clears a category the selected type has left behind.
+
+**Bulk edits stamp the audit columns too.** `PATCH /api/transactions/batch` changes existing rows
+-- a bulk recategorise, a bulk label add or remove -- and stamped nothing, so a row edited over MCP
+and then bulk-changed in the browser went on naming the MCP token as its last editor. That is the
+stale confidently-wrong trail `PUT` clears the token id to avoid, reached from the other side.
+The label branches get their own `updateMany`, since they touch no column on `transactions` at all.
+
+**A time-only change no longer reports an identical before and after.** `formatLocalDate` is
+day-only, which is right everywhere else and wrong for an edit that moves the time within a day --
+and the tool invites exactly that, telling the model to include a time whenever the user gives one.
+Both ends of such a change now carry an `HH:mm`; an ordinary re-date keeps the plain calendar day.
+
 **The tool's `date` description said the opposite of what the code does.** It still promised a bare
 date would be filled with the current clock. That description is the only contract a model sees, so
 it would have supplied an explicit time to avoid a behaviour that no longer existed -- and an

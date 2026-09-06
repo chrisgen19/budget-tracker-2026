@@ -166,8 +166,20 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     // Reset category when type changes (unless editing an existing transaction or applying initialData)
     if (!transaction && !initialData?.categoryId) {
       setValue("categoryId", "");
+      return;
     }
-  }, [categories, selectedType, setValue, transaction, initialData]);
+
+    // Editing keeps its category across re-renders, but must not keep one the *type* has left
+    // behind. `categories` is already filtered to the selected type, so a stored id missing from
+    // it cannot apply to the transaction any more. It used to survive in form state invisibly --
+    // no tile highlights it, and `transactionSchema` only asks for a non-empty string -- so
+    // toggling an expense to Income and pressing Update posted a mismatched pair. The server
+    // saved it before the shared write path checked categories, filing income under an expense
+    // category; it now refuses, which is right, but the form should never build the request.
+    if (transaction && watchedCategoryId && !categories.some((c) => c.id === watchedCategoryId)) {
+      setValue("categoryId", "");
+    }
+  }, [categories, selectedType, setValue, transaction, initialData, watchedCategoryId]);
 
   // Auto-apply or remove scheduled label when date changes
   useEffect(() => {

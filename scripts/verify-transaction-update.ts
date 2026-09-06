@@ -325,6 +325,29 @@ async function main() {
     true
   );
 
+  // --- A bulk edit in the app clears a stale MCP trail too ---
+
+  const bulk = await seed({ description: "Bulk" });
+  await callUpdate(client, [{ id: bulk.id, amount: 777 }]);
+  const bulkAfterMcp = await prisma.transaction.findUniqueOrThrow({ where: { id: bulk.id } });
+  check("the MCP edit stamped it", bulkAfterMcp.updatedVia, "MCP");
+
+  const patchRes = await fetch(`${BASE_URL}/api/transactions/batch`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", cookie: `next-auth.session-token=${sessionToken}` },
+    body: JSON.stringify({
+      action: "category",
+      categoryId: otherExpenseCat.id,
+      ids: [bulk.id],
+    }),
+  });
+  check("the bulk recategorise succeeded", patchRes.status, 200);
+  const bulkAfterApp = await prisma.transaction.findUniqueOrThrow({ where: { id: bulk.id } });
+  // A bulk change is an edit. Without a stamp here the row would go on naming the MCP token as
+  // its last editor -- the stale, confidently-wrong trail PUT clears the token id to avoid.
+  check("a bulk recategorise stamps APP", bulkAfterApp.updatedVia, "APP");
+  check("and clears the token id", bulkAfterApp.updatedByMcpTokenId, null);
+
   // --- Another user's row is invisible ---
 
   const stranger = await prisma.user.create({

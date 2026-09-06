@@ -482,7 +482,7 @@ const updatedTransaction = z.object({
       amount: z.number().optional(),
       description: z.string().optional(),
       type: transactionType.optional(),
-      /** The previous date as the user's own calendar day, YYYY-MM-DD. */
+      /** The previous date, rendered the same way as `date` above so the two are comparable. */
       date: z.string().optional(),
       categoryName: z.string().optional(),
       labels: z.array(z.string()).optional(),
@@ -496,7 +496,8 @@ const updatedTransaction = z.object({
   amount: z.number(),
   description: z.string(),
   type: transactionType,
-  /** The user's own calendar day, not a UTC slice. */
+  /** The user's own calendar day as `YYYY-MM-DD`, not a UTC slice -- or `YYYY-MM-DD HH:mm` when
+   *  this edit moved the time within a single day, which the day alone cannot show. */
   date: z.string(),
   categoryName: z.string(),
   labels: z.array(z.string()),

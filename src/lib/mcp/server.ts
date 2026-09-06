@@ -216,6 +216,27 @@ const editWarnings = (
   return warnings;
 };
 
+/**
+ * Render a changed date so the change is actually visible.
+ *
+ * `formatLocalDate` is day-only, which is right for every other date this server reports and wrong
+ * for exactly one case here: an edit that moves the time within a day. The tool invites a time
+ * ("include one ONLY when the user gives one"), so patching a 17:00 row to 21:00 is a normal call,
+ * and rendering both ends as the calendar day made the reply read "the date changed from
+ * 2026-09-06 to 2026-09-06" -- a claim its own fields contradict.
+ *
+ * The time is appended only when the day did not move, so the ordinary re-date keeps the plain
+ * `YYYY-MM-DD` shape the rest of the payload uses.
+ */
+const renderChangedDate = (instant: Date, sameDay: boolean, timezoneOffset: number): string => {
+  const day = formatLocalDate(instant, timezoneOffset);
+  if (!sameDay) return day;
+  const local = new Date(instant.getTime() - timezoneOffset * 60_000);
+  const hh = String(local.getUTCHours()).padStart(2, "0");
+  const mm = String(local.getUTCMinutes()).padStart(2, "0");
+  return `${day} ${hh}:${mm}`;
+};
+
 export interface BudgetMcpServerOptions {
   /** Injected so the stdio entry point and the HTTP route can each supply their own client. */
   prisma: PrismaClient;
@@ -1226,7 +1247,15 @@ export const createBudgetMcpServer = ({
         // restating what was already there is a success that changed nothing, and counting it
         // would have the caller report an edit the user will not find.
         updated: result.updated.filter((u) => u.changed.length > 0).length,
-        transactions: result.updated.map(({ transaction: t, changed, previous, droppedLabels }) => ({
+        transactions: result.updated.map(({ transaction: t, changed, previous, droppedLabels }) => {
+          // A date change that stayed inside one local day is the only case the day-only rendering
+          // cannot express, so both ends carry a time for it and only for it.
+          const sameLocalDay =
+            previous.date !== undefined &&
+            formatLocalDate(previous.date, timezoneOffset) ===
+              formatLocalDate(t.date, timezoneOffset);
+
+          return {
           id: t.id,
           changed: [...changed],
           previous: {
@@ -1234,7 +1263,7 @@ export const createBudgetMcpServer = ({
             ...(previous.description !== undefined && { description: previous.description }),
             ...(previous.type !== undefined && { type: previous.type }),
             ...(previous.date !== undefined && {
-              date: formatLocalDate(previous.date, timezoneOffset),
+              date: renderChangedDate(previous.date, sameLocalDay, timezoneOffset),
             }),
             ...(previous.categoryName !== undefined && { categoryName: previous.categoryName }),
             ...(previous.labels !== undefined && { labels: previous.labels }),
@@ -1242,11 +1271,12 @@ export const createBudgetMcpServer = ({
           amount: t.amount,
           description: t.description,
           type: t.type,
-          date: formatLocalDate(t.date, timezoneOffset),
+          date: renderChangedDate(t.date, sameLocalDay, timezoneOffset),
           categoryName: t.category.name,
           labels: t.labels.map((l) => l.label.name),
           warnings: editWarnings(t, changed, droppedLabels),
-        })),
+          };
+        }),
       };
 
       return {

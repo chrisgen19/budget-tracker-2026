@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import {
@@ -176,6 +177,24 @@ export async function DELETE(request: NextRequest) {
   }
 }
 
+/**
+ * Stamp the audit columns on rows this route changed.
+ *
+ * `updated_via` means "which surface last edited this row", and a bulk recategorise or a bulk
+ * label change is an edit. Without this, a row edited over MCP and then bulk-changed here would go
+ * on naming the MCP token as its last editor -- the same stale, confidently-wrong trail that
+ * `PUT /api/transactions/[id]` clears the token id to avoid. Written as its own `updateMany`
+ * rather than folded into the category branch's, because the label branches change no column on
+ * `transactions` at all and would otherwise stamp nothing.
+ */
+const stampEdited = (tx: Prisma.TransactionClient, userId: string, ids: string[]) =>
+  ids.length === 0
+    ? Promise.resolve({ count: 0 })
+    : tx.transaction.updateMany({
+        where: { id: { in: ids }, userId },
+        data: { updatedVia: "APP", updatedByMcpTokenId: null },
+      });
+
 export async function PATCH(request: NextRequest) {
   const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
@@ -211,7 +230,7 @@ export async function PATCH(request: NextRequest) {
 
         const updated = await tx.transaction.updateMany({
           where: { id: { in: matchedIds }, userId },
-          data: { categoryId: category.id },
+          data: { categoryId: category.id, updatedVia: "APP", updatedByMcpTokenId: null },
         });
         return { matched: matchedIds.length, updated: updated.count, ids: matchedIds };
       }
@@ -259,6 +278,9 @@ export async function PATCH(request: NextRequest) {
           linksToAdd.length > 0
             ? await tx.transactionLabel.createMany({ data: linksToAdd, skipDuplicates: true })
             : { count: 0 };
+        // Only the rows that actually gained a link. Stamping every matched id would record an
+        // edit on transactions that already carried the label and did not change.
+        await stampEdited(tx, userId, affectedIds);
         return {
           matched: matchedIds.length,
           updated: affectedIds.length,
@@ -276,6 +298,7 @@ export async function PATCH(request: NextRequest) {
               where: { transactionId: { in: matchedIds }, labelId: { in: labelIds } },
             })
           : { count: 0 };
+      await stampEdited(tx, userId, affectedIds);
       return {
         matched: matchedIds.length,
         updated: affectedIds.length,
