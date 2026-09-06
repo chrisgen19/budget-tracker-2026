@@ -14,6 +14,7 @@ import { formatLocalDate } from "@/lib/validations";
 import {
   buildAssessmentFacts,
   foldDescription,
+  longestToken,
   resolveFactsWindow,
   DEFAULT_HISTORY_MONTHS,
   type FactBill,
@@ -141,12 +142,16 @@ export const collectAssessmentFacts = async (
   // window would clip the finding: a payment made outside the bill system while
   // that bill existed left its schedule stalled, and it stays stalled.
   //
-  // `contains`, not `equals`. Descriptions are never trimmed on write -- nine rows
-  // in one real account carry leading or trailing whitespace -- and SQL equality
-  // does no trimming, so `equals` silently drops exactly the rows the fold-match
-  // in `findUnlinkedBillPayments` was written to catch. `contains` widens the net
-  // to whitespace and casing; the fold-match then narrows it back, so a
-  // "Meralco payment" fetched here is still rejected there.
+  // Prefiltered on the bill name's longest **token**, not on the name itself.
+  //
+  // Descriptions are never trimmed or normalised on write: one real account holds
+  // nine rows with leading or trailing whitespace and two with a double space
+  // inside. SQL equality does no trimming, so `equals` dropped exactly the rows
+  // `foldDescription` exists to catch -- and `contains` of the whole name still
+  // misses "Mirea  Rent", because that string does not contain "Mirea Rent".
+  // A single token survives every spacing variant the fold would normalise, and
+  // the fold-match in `findUnlinkedBillPayments` narrows the extras back out, so
+  // a "Meralco payment" fetched here is still rejected there.
   const billNames = [...new Set(bills.map((b) => (b.description || b.category.name).trim()).filter(Boolean))];
   const unlinkedRows = billNames.length === 0
     ? []
@@ -155,7 +160,7 @@ export const collectAssessmentFacts = async (
           userId,
           billId: null,
           type: "EXPENSE",
-          OR: billNames.map((name) => ({ description: { contains: name, mode: "insensitive" as const } })),
+          OR: billNames.map((name) => ({ description: { contains: longestToken(name), mode: "insensitive" as const } })),
         },
         select: {
           id: true, amount: true, type: true, date: true, description: true,

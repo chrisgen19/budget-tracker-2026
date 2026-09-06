@@ -10,6 +10,7 @@ import {
   assessBillAccuracy,
   findUnlinkedBillPayments,
   computeHeadline,
+  longestToken,
   monthRange,
   resolveFactsWindow,
   MIN_COVERAGE_PCT,
@@ -312,9 +313,43 @@ describe("findUnlinkedBillPayments", () => {
   it("counts a payment made on the bill's own start date", () => {
     const b = bill({ startDate: new Date(Date.UTC(2026, 2, 17)) });
     const rows = [tx({ localDate: "2026-03-17", amount: 22_000, description: "  MERALCO " })];
-    // Also pins the fold: the loader widens its query to `contains` precisely so a
+    // Also pins the fold: the loader prefilters on a bare token precisely so a
     // description carrying stray whitespace still reaches this matcher.
     expect(findUnlinkedBillPayments([b], rows)[0].count).toBe(1);
+  });
+
+  it("matches a description whose only difference is a doubled inner space", () => {
+    const b = bill({ description: "Mirea Rent", startDate: new Date(Date.UTC(2026, 2, 17)) });
+    const rows = [tx({ localDate: "2026-04-18", amount: 22_000, description: "Mirea  Rent" })];
+    expect(findUnlinkedBillPayments([b], rows)[0].count).toBe(1);
+  });
+});
+
+describe("longestToken", () => {
+  /**
+   * The loader prefilters in SQL, which knows nothing about the fold collapsing
+   * runs of whitespace. Searching for the whole name misses "Mirea  Rent" —
+   * two spaces, and two such rows exist in one real account — because that
+   * string does not contain "Mirea Rent". A single token survives any spacing.
+   */
+  it("picks a needle no spacing variant can hide from", () => {
+    const needle = longestToken("Mirea Rent");
+    expect(needle).toBe("Mirea");
+    for (const spelling of ["Mirea Rent", "Mirea  Rent", "  mirea rent ", "MIREA\tRent"]) {
+      expect(spelling.toLowerCase().includes(needle.toLowerCase())).toBe(true);
+    }
+  });
+
+  it("prefers the most selective token, not the first", () => {
+    expect(longestToken("BRV Contribution - Dad")).toBe("Contribution");
+  });
+
+  it("returns a single-word name unchanged", () => {
+    expect(longestToken("Meralco")).toBe("Meralco");
+  });
+
+  it("does not choke on a name that is only whitespace", () => {
+    expect(longestToken("   ")).toBe("   ");
   });
 });
 

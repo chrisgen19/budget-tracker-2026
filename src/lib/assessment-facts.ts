@@ -201,6 +201,25 @@ const pct = (part: number, whole: number): number | null =>
  */
 export const foldDescription = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, " ");
 
+/**
+ * The most selective whitespace-free token of a name.
+ *
+ * The loader prefilters candidate rows in SQL before `foldDescription` can run,
+ * and SQL has no idea the fold collapses runs of whitespace. Searching for the
+ * whole name misses "Mirea  Rent" -- two spaces, and two such rows exist in one
+ * real account -- because that string does not contain "Mirea Rent". Searching
+ * for the longest single token instead is immune to every spacing variant the
+ * fold would have normalised, and the fold then narrows the extra rows back out.
+ *
+ * Longest rather than first because it is the most selective: "Contribution"
+ * fetches far fewer rows than "BRV".
+ */
+export const longestToken = (name: string): string => {
+  const tokens = name.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return name;
+  return tokens.reduce((longest, token) => (token.length > longest.length ? token : longest));
+};
+
 /* ------------------------------------------------------------------ */
 /*  1. Data confidence                                                 */
 /* ------------------------------------------------------------------ */
