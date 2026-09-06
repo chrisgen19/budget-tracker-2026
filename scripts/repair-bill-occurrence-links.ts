@@ -37,6 +37,30 @@ const dayKey = (d: Date) => d.toISOString().slice(0, 10);
 const daysBetween = (a: Date, b: Date) =>
   Math.abs(a.getTime() - b.getTime()) / 86_400_000;
 
+/**
+ * Whether a bill's description is specific enough to find its payments by.
+ *
+ * Matching unlinked payments on description is what catches the ones entered by
+ * hand, but the description does not have to be unique: `description` defaults
+ * to "" in the schema, and nothing stops two bills sharing a name. Either case
+ * makes one transaction match several bills, and since every plan is built
+ * before any write lands, the same payment could be handed to occurrences of
+ * two different bills -- each write overwriting the previous `billId`, leaving
+ * every log but the last pointing at a payment now owned by another bill.
+ *
+ * Ambiguous descriptions are therefore not matched at all. Such a bill is still
+ * repaired through payments already carrying its `billId`, and anything else is
+ * reported rather than guessed.
+ */
+export const descriptionCanMatch = (
+  description: string,
+  allDescriptions: readonly string[],
+): boolean => {
+  const key = description.trim().toLowerCase();
+  if (key === "") return false;
+  return allDescriptions.filter((d) => d.trim().toLowerCase() === key).length === 1;
+};
+
 type Plan = {
   bill: string;
   dueDate: string;
@@ -54,34 +78,42 @@ async function main() {
   const gaps: string[] = [];
   const conflicts: string[] = [];
 
+  // Claims are tracked across *every* bill, not per bill: one payment settles at
+  // most one occurrence anywhere, and a per-bill set let two bills plan to claim
+  // the same transaction before either write happened.
+  const claimedBy = new Map<string, string>();
+  for (const b of bills) {
+    for (const l of b.occurrences) {
+      if (l.transactionId) claimedBy.set(l.transactionId, `${b.description} ${dayKey(l.dueDate)}`);
+    }
+  }
+  const claimed = new Set(claimedBy.keys());
+  const allDescriptions = bills.map((b) => b.description);
+
   for (const bill of bills) {
     // Every payment recorded for this bill, linked or not. Description matching
     // catches the ones entered by hand, which are exactly the unlinked cases.
+    const byDescription = descriptionCanMatch(bill.description, allDescriptions);
     const payments = await prisma.transaction.findMany({
       where: {
         userId: bill.userId,
         type: bill.type,
         OR: [
           { billId: bill.id },
-          {
-            billId: null,
-            description: { equals: bill.description, mode: "insensitive" },
-          },
+          ...(byDescription
+            ? [{
+                billId: null,
+                description: { equals: bill.description, mode: "insensitive" as const },
+              }]
+            : []),
         ],
       },
       select: { id: true, date: true, amount: true, billId: true, description: true },
       orderBy: { date: "asc" },
     });
-    if (payments.length === 0) continue;
-
-    // A payment settles at most one occurrence, so claim them as we go, and
-    // remember which occurrence holds each -- a claim is the usual reason a
-    // repair cannot proceed, and saying so beats silence.
-    const claimedBy = new Map<string, string>();
-    for (const l of bill.occurrences) {
-      if (l.transactionId) claimedBy.set(l.transactionId, dayKey(l.dueDate));
-    }
-    const claimed = new Set(claimedBy.keys());
+    // No early return on an empty payment list: a bill whose payments were never
+    // logged at all is precisely what the gap report below exists to surface,
+    // and skipping ahead here printed "Nothing to repair" over it.
 
     for (const log of bill.occurrences) {
       const due = log.dueDate;
@@ -97,6 +129,7 @@ async function main() {
         if (!candidate) continue; // a genuine skip: nothing was paid
         const { p } = candidate;
         claimed.add(p.id);
+        claimedBy.set(p.id, `${bill.description} ${dayKey(due)}`);
         plans.push({
           bill: bill.description,
           dueDate: dayKey(due),
@@ -128,7 +161,11 @@ async function main() {
         if (candidate.gap < currentGap) {
           const { p } = candidate;
           claimed.add(p.id);
-          if (current) claimed.delete(current.id);
+          claimedBy.set(p.id, `${bill.description} ${dayKey(due)}`);
+          if (current) {
+            claimed.delete(current.id);
+            claimedBy.delete(current.id);
+          }
           plans.push({
             bill: bill.description,
             dueDate: dayKey(due),
