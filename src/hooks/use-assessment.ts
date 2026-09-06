@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useUser } from "@/components/user-provider";
-import type { AiAssessmentResponse, AiDailyTipResponse } from "@/types";
+import { analyticsKeys } from "@/hooks/use-analytics";
+import type { AiAssessmentResponse, AiDailyTipResponse, AssessmentFactsResponse } from "@/types";
 
 /* ------------------------------------------------------------------ */
 /*  Keys — scoped by user so a shared queryClient can't leak cached    */
@@ -16,6 +17,21 @@ export interface AssessmentPeriod {
 export const assessmentKeys = {
   all: ["assessment"] as const,
   report: (userKey: string, p: AssessmentPeriod) => ["assessment", "report", userKey, p] as const,
+  /**
+   * Deliberately nested under the **analytics** namespace, not this one.
+   *
+   * The facts are computed from the same rows the analytics page reads, so they
+   * go stale at exactly the same moments — and every financial mutation already
+   * invalidates `analyticsKeys.all`. Riding on that means a tenth mutation added
+   * later cannot forget this key, where a second list of call sites would drift
+   * the first time someone updated only one of them. Without it, paying a bill
+   * and returning to the tab still showed it as missed for five minutes.
+   *
+   * The cached *report* stays under "assessment" on purpose: it is a written
+   * narrative tied to a generation, stamped "updated 2h ago", and it cannot
+   * change without someone pressing Generate.
+   */
+  facts: (userKey: string, p: AssessmentPeriod) => [...analyticsKeys.all, "assessment-facts", userKey, p] as const,
   // localDate in the key so the tip naturally refetches once the user crosses local midnight.
   dailyTip: (userKey: string, localDate: string) => ["assessment", "daily-tip", userKey, localDate] as const,
 };
@@ -65,5 +81,33 @@ export function useDailyTipQuery() {
     queryKey: assessmentKeys.dailyTip(user.email, localDateFor(user.timezoneOffset)),
     queryFn: fetchDailyTip,
     staleTime: Infinity,
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/*  Computed facts (GET) — the deterministic half                      */
+/* ------------------------------------------------------------------ */
+
+const fetchFacts = async (p: AssessmentPeriod): Promise<AssessmentFactsResponse> => {
+  const search = new URLSearchParams({ granularity: p.granularity, from: p.from, to: p.to });
+  const res = await fetch(`/api/assessment/facts?${search}`);
+  if (!res.ok) throw new Error("Failed to load assessment facts");
+  return res.json();
+};
+
+/**
+ * Coverage, missed bills, trends and anomalies for the period.
+ *
+ * Deliberately not `staleTime: Infinity` like the cached report: these are live
+ * aggregates over the user's rows, and logging a transaction should change them.
+ * Five minutes keeps a tab switch instant without pinning a stale figure beside
+ * a fact the user has just corrected.
+ */
+export function useAssessmentFactsQuery(p: AssessmentPeriod) {
+  const { user } = useUser();
+  return useQuery({
+    queryKey: assessmentKeys.facts(user.email, p),
+    queryFn: () => fetchFacts(p),
+    staleTime: 5 * 60_000,
   });
 }

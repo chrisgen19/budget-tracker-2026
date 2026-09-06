@@ -2,6 +2,69 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-06 - The AI Assessment stops guessing and starts reading
+
+The tab was built on one period's aggregates, computed in the browser and posted to the server.
+Five totals and a health score. A model handed that can produce coaching that would fit anyone,
+because it cannot see that July is missing fifteen days of logging, that a bill has had no payment
+recorded since June, or that a category has quietly doubled against its own six-month baseline.
+So it filled the gap with patterns it inferred from nothing, which is the one thing a report about
+money must not do.
+
+The report now has two halves. `src/lib/assessment-facts.ts` computes the findings from the
+database - coverage, missed bills, bill accuracy, category movement, recurring spend, duplicates,
+fragmentation, income concentration, and the anomalies that fall out of comparing this period with
+the months that came before it. The model is given those and told to *explain* them, never to
+derive a finding of its own. The page renders both, one under the other, so every claim in the
+prose can be checked against the row it came from. The analyses mirror the `finance-assess` skill
+(#215) rather than reinventing them, so the in-app report and the SQL one cannot disagree.
+
+The facts are served live from `GET /api/assessment/facts` instead of being cached beside the
+narrative. They are cheap aggregates over the user's own rows, and finding out that a bill has gone
+unpaid should not cost an AI generation - the tab is useful now before anyone presses Generate.
+
+Everything below was found by running `scripts/verify-assessment-facts.ts` against real data. The
+unit tests feed the pure functions hand-built rows and would not have caught any of it.
+
+**Missed bills walk forward from `nextDueDate`, not from the bill's start date.** Walking from the
+start date reported every occurrence since January for a bill the app itself says is due in July.
+`nextDueDate` is the app's own cursor; occurrences earlier than it were already passed over, and
+chasing them contradicts the bills page over payments the app never asked for. That drift is real
+and it is `heal-bill-next-due-dates.ts`'s job. "Passed" means strictly before the user's own today
+- the same rule `getUpcomingBills` uses for `isOverdue` - so a bill due today is not late. A live
+snooze is a deferral the user chose; a lapsed one is a miss again.
+
+**A month still running is compared against the same days of the months before it.** The first
+version projected linearly: spend so far, divided by days elapsed, times days in the month. But
+spending is front-loaded - rent and the utilities all land in the first week - so on day six that
+multiplies one rent payment by five and cries wolf every single month. Clipping both sides to the
+same day-of-month removes the problem instead of tuning around it, and the projection it does
+report is a ratio between comparable windows.
+
+**A charge's first sighting comes from the whole history, not the window.** Within a six-month
+window, the window's own first row is all there is to see, so a subscription running for two years
+looked 120 days old and every established charge was reported as creep. The loader now carries a
+`groupBy(description) _min(date)` over all of it. A new charge also has to cost at least 1% of a
+month's spending to be worth a line - the list was otherwise led by bananas and jeepney fares,
+which repeat faithfully and decide nothing.
+
+Three things kept from the skill because they were already learned the hard way. Months under 60%
+coverage are excluded from every rate and trend, and the calendar is generated first so a month
+with no rows at all still shows at 0% rather than disappearing. Category movements are zero-filled
+and ranked by money moved, since averaging only the months a category appeared in measures it
+against itself. And `swing` is read before variance: a metered bill whose budget sits inside the
+range actually paid is seasonal and must not be told to fix its figure, while one budgeted at 100
+and paid 300-600 swings just as much and is simply wrong.
+
+Unlabeled spend is split by cause rather than totalled. Bill payments bypass label auto-apply, so
+those rows are the app's behaviour and not the user's carelessness, and saying which it is matters
+more than the number.
+
+`outlook`, `patterns`, `trends` and `dataQuality` are new sections on the report itself. Each
+defaults to empty in `assessmentReportSchema` and `GET /api/assessment` re-validates stored rows on
+the way out, so a report generated last month still renders - minus the sections it was never
+asked for.
+
 ## 2026-09-01 - One message can describe more than one transaction
 
 Issue #204. The shorthand logger used a single greedy regex - an amount, then "everything after it

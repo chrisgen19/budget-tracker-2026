@@ -366,10 +366,45 @@ export interface AiSource {
   url: string;
 }
 
+/** A pattern the assessment found in the period, grounded in a computed fact. */
+export interface AiPatternItem {
+  title: string;
+  detail: string;
+  severity: AiWatchSeverity;
+}
+
+/** Where a category is heading, read against the trustworthy baseline months. */
+export interface AiTrendItem {
+  title: string;
+  detail: string;
+  direction: "up" | "down" | "new" | "stable";
+}
+
+/**
+ * An accuracy problem rather than a money problem.
+ *
+ * Kept as its own list because the two need separating: "your July spending fell"
+ * is wrong when July is a logging gap, and telling someone to be more frugal
+ * about a number that is simply missing rows is worse than saying nothing.
+ */
+export interface AiDataQualityItem {
+  title: string;
+  detail: string;
+  fix: string;
+}
+
 /** Full AI assessment report content (stored as JSON, validated by Zod) */
 export interface AiAssessmentReport {
   summary: string;
   scoreCommentary: string;
+  /** What the next few weeks look like given bills due and the current run rate. */
+  outlook: string;
+  /** What went wrong (or unusually) in this period, grounded in `AssessmentFacts`. */
+  patterns: AiPatternItem[];
+  /** Where categories are heading against their own baseline. */
+  trends: AiTrendItem[];
+  /** Logging gaps, duplicates, unlinked bill payments — the numbers being wrong. */
+  dataQuality: AiDataQualityItem[];
   watchList: AiWatchItem[];
   cutBack: AiCutBackItem[];
   boostSavings: AiTip[];
@@ -397,6 +432,251 @@ export interface AiAssessmentResponse {
 export interface AiDailyTipResponse {
   tip: AiDailyTip | null;
   generatedAt: string | null;
+}
+
+/* ------------------------------------------------------------------ */
+/*  AI Assessment — deterministic facts                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * How much of a month was actually logged.
+ *
+ * A month logged on 16 of 31 days is a logging gap, not a cheap month, and
+ * averaging it into a trend drags every downstream figure toward a number
+ * nothing actually spent. Every rate, average and trend below reads only the
+ * months this marks `ok`.
+ */
+export interface AssessmentMonthCoverage {
+  /** "YYYY-MM" in the user's own calendar. */
+  month: string;
+  /** "Aug 2026" */
+  label: string;
+  daysLogged: number;
+  daysInMonth: number;
+  coveragePct: number;
+  transactionCount: number;
+  income: number;
+  expenses: number;
+  /** `partial` is the month still in progress — incomplete by definition, never a trend. */
+  status: "ok" | "low-coverage" | "partial";
+}
+
+/** A stretch inside the window with nothing logged at all. */
+export interface AssessmentLoggingGap {
+  /** Last day with a transaction before the gap. */
+  from: string;
+  /** First day with a transaction after it. */
+  to: string;
+  days: number;
+  /** True when the gap falls inside the period being assessed. */
+  inPeriod: boolean;
+}
+
+export interface AssessmentDataConfidence {
+  months: AssessmentMonthCoverage[];
+  /** "YYYY-MM" keys that passed the coverage gate — the basis of every trend. */
+  trustworthyMonths: string[];
+  excludedMonths: string[];
+  gaps: AssessmentLoggingGap[];
+  /** Coverage of the selected period itself, 0-100. */
+  periodCoveragePct: number;
+  /** True when the period has not finished yet (the current month, this week). */
+  periodIsPartial: boolean;
+  /** Days of the period elapsed so far / in total — the basis of the pace projection. */
+  periodDaysElapsed: number;
+  periodDaysTotal: number;
+}
+
+/** What a bill's budgeted figure is worth, measured against what it has actually cost. */
+export interface AssessmentBillAccuracy {
+  id: string;
+  description: string;
+  categoryName: string;
+  budgeted: number;
+  isVariable: boolean;
+  payments: number;
+  avgPaid: number | null;
+  lowest: number | null;
+  highest: number | null;
+  /** highest / lowest. Under ~1.5 is a fixed bill, so a variance there is a wrong figure. */
+  swing: number | null;
+  /** Average paid vs budgeted, as a percentage. */
+  variancePct: number | null;
+  /**
+   * `seasonal` needs two things: payments swinging 2x or more **and** a budget
+   * that falls inside the range actually paid, so it is right for part of the
+   * year. A bill budgeted at 100 and paid 300-600 swings 2x and is simply wrong.
+   */
+  verdict: "ok" | "under-budgeted" | "over-budgeted" | "seasonal" | "no-payments";
+}
+
+/** A bill occurrence that came due and was never paid, skipped or snoozed. */
+export interface AssessmentMissedBill {
+  id: string;
+  description: string;
+  categoryName: string;
+  /** What the next one is likely to cost — derived for a variable bill. */
+  amount: number;
+  isEstimate: boolean;
+  /** Every unsettled occurrence, oldest first, as "YYYY-MM-DD". */
+  missedDueDates: string[];
+  /** Days since the oldest unsettled occurrence. */
+  daysOverdue: number;
+  /** Sum of `amount` across the missed occurrences — what catching up would cost. */
+  estimatedArrears: number;
+}
+
+/** Spending that matches a bill by name but was never linked to it, so the schedule never advanced. */
+export interface AssessmentUnlinkedBillPayment {
+  billId: string;
+  billDescription: string;
+  count: number;
+  total: number;
+  /** Days the most recent unlinked payment happened on, newest first. */
+  recentDates: string[];
+}
+
+export interface AssessmentBillFacts {
+  /** Resolved against the user's own calendar day, not the server's. */
+  asOf: string;
+  missed: AssessmentMissedBill[];
+  accuracy: AssessmentBillAccuracy[];
+  unlinkedPayments: AssessmentUnlinkedBillPayment[];
+  /** Bills due within the next 14 days, as a forward-looking claim on cash. */
+  dueSoonCount: number;
+  dueSoonTotal: number;
+  dueSoonIsEstimate: boolean;
+}
+
+/** One category's movement between the compared month and the baseline months. */
+export interface AssessmentCategoryMovement {
+  category: string;
+  type: TransactionType;
+  current: number;
+  priorAvg: number;
+  /** Null when there is no baseline to compare against (a debut). */
+  changePct: number | null;
+  /** Absolute movement, which is what the list is ranked by. */
+  change: number;
+  direction: "up" | "down" | "new";
+  /** Months the baseline averaged over. */
+  baselineMonths: number;
+}
+
+export interface AssessmentTrendFacts {
+  /** "YYYY-MM" the movements describe. */
+  comparedMonth: string | null;
+  comparedMonthLabel: string | null;
+  /** The trustworthy months averaged to form the baseline. */
+  baselineMonths: string[];
+  movements: AssessmentCategoryMovement[];
+  /** Net cash flow per trustworthy month, oldest first — the shape behind the headline. */
+  monthlyNet: Array<{ month: string; label: string; income: number; expenses: number; net: number }>;
+  /** Savings rate across the trustworthy months, 0-100, or null with no income. */
+  baselineSavingsRatePct: number | null;
+  avgMonthlyBurn: number | null;
+}
+
+/** Something charged in most months — the fixed base under the discretionary spending. */
+export interface AssessmentRecurringItem {
+  description: string;
+  months: number;
+  occurrences: number;
+  avgAmount: number;
+  total: number;
+  /** First seen inside the last 120 days: a habit forming rather than an old one. */
+  isNew: boolean;
+  firstSeen: string;
+  lastSeen: string;
+}
+
+export interface AssessmentRecurringFacts {
+  items: AssessmentRecurringItem[];
+  newItems: AssessmentRecurringItem[];
+  /** Monthly cost of everything recurring, as a share of average monthly spend. */
+  monthlyBase: number;
+  monthlyBasePct: number | null;
+}
+
+/** Two rows the same day, description and amount — almost always a double submit. */
+export interface AssessmentDuplicateGroup {
+  date: string;
+  description: string;
+  amount: number;
+  copies: number;
+  inPeriod: boolean;
+}
+
+/** One thing stored several ways, which the Telegram bot's description search cannot see through. */
+export interface AssessmentFragmentation {
+  normalized: string;
+  variants: string[];
+  transactions: number;
+}
+
+export interface AssessmentHygieneFacts {
+  duplicates: AssessmentDuplicateGroup[];
+  /**
+   * Unlabeled spend split by cause. Bill payments bypass label auto-apply, so
+   * those are a system gap rather than user sloppiness, and saying which it is
+   * matters more than the total.
+   */
+  unlabeled: {
+    fromBills: { count: number; total: number };
+    manual: { count: number; total: number };
+    pctOfSpend: number;
+  };
+  fragmentation: AssessmentFragmentation[];
+  /** Share of income from the single largest source — concentration risk. */
+  incomeConcentrationPct: number | null;
+  topIncomeSource: string | null;
+}
+
+/** A pattern in the assessed period that the baseline says should not be there. */
+export type AssessmentAnomalyKind =
+  | "category-spike"
+  | "new-category"
+  | "outlier-transaction"
+  | "overspend"
+  | "savings-drop"
+  | "pace"
+  | "missing-income"
+  | "duplicate"
+  | "logging-gap"
+  | "missed-bill";
+
+export interface AssessmentAnomaly {
+  kind: AssessmentAnomalyKind;
+  title: string;
+  /** Relative/percentage prose — amounts travel in the numeric fields so the UI can mask them. */
+  detail: string;
+  severity: AiWatchSeverity;
+  /** The figure this period, where one applies. */
+  current: number | null;
+  /** What the trustworthy months said to expect. */
+  baseline: number | null;
+  changePct: number | null;
+}
+
+/** Everything the assessment knows for certain, computed from the database rather than inferred. */
+export interface AssessmentFacts {
+  generatedAt: string;
+  currency: string;
+  period: { from: string; to: string; label: string; granularity: string };
+  /** The history the trends read, ending with the period's own month. */
+  window: { from: string; to: string; months: number };
+  confidence: AssessmentDataConfidence;
+  bills: AssessmentBillFacts;
+  trends: AssessmentTrendFacts;
+  recurring: AssessmentRecurringFacts;
+  hygiene: AssessmentHygieneFacts;
+  /** Ranked most severe first. */
+  anomalies: AssessmentAnomaly[];
+}
+
+/** GET /api/assessment/facts response. */
+export interface AssessmentFactsResponse {
+  facts: AssessmentFacts;
 }
 
 /** Extend next-auth types */

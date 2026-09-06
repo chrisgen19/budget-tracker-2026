@@ -4,6 +4,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type { LabelInput } from "@/lib/validations";
+import { analyticsKeys } from "@/hooks/use-analytics";
 import type { LabelWithCountAndSchedules } from "@/types";
 import { usePreferencesQuery, preferencesKeys } from "@/hooks/use-preferences";
 
@@ -123,6 +124,11 @@ export function useUpdateLabel() {
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      // Renaming, retyping, deleting or retroactively applying a label changes
+      // the analytics label breakdown and the assessment's unlabeled-spend
+      // figure. Neither was invalidated, so both kept showing the old grouping
+      // until something else happened to refresh them.
+      queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
     },
   });
 }
@@ -143,6 +149,11 @@ export function useDeleteLabel() {
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      // Renaming, retyping, deleting or retroactively applying a label changes
+      // the analytics label breakdown and the assessment's unlabeled-spend
+      // figure. Neither was invalidated, so both kept showing the old grouping
+      // until something else happened to refresh them.
+      queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
     },
   });
 }
@@ -163,6 +174,11 @@ export function useApplyLabelSchedule() {
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      // Renaming, retyping, deleting or retroactively applying a label changes
+      // the analytics label breakdown and the assessment's unlabeled-spend
+      // figure. Neither was invalidated, so both kept showing the old grouping
+      // until something else happened to refresh them.
+      queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
     },
   });
 }

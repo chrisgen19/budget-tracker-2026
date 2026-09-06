@@ -310,6 +310,33 @@ const tipField = z.object({
 export const assessmentReportSchema = z.object({
   summary: z.string().catch(""),
   scoreCommentary: z.string().catch(""),
+  // The four fields below arrived after reports were already cached, so each one
+  // defaults rather than failing: an older row must still render, minus the
+  // sections it was never asked for.
+  outlook: z.string().default("").catch(""),
+  patterns: z.array(z.object({
+    title: z.string().catch(""),
+    detail: z.string().catch(""),
+    severity: severityField,
+  })).default([]).catch([]),
+  trends: z.array(z.object({
+    title: z.string().catch(""),
+    detail: z.string().catch(""),
+    direction: z
+      .preprocess((v) => {
+        const s = typeof v === "string" ? v.toLowerCase() : "";
+        if (s.startsWith("u") || s.includes("ris") || s.includes("increas")) return "up";
+        if (s.startsWith("d") || s.includes("fall") || s.includes("decreas")) return "down";
+        if (s.startsWith("n")) return "new";
+        return "stable";
+      }, z.enum(["up", "down", "new", "stable"]))
+      .catch("stable"),
+  })).default([]).catch([]),
+  dataQuality: z.array(z.object({
+    title: z.string().catch(""),
+    detail: z.string().catch(""),
+    fix: z.string().catch(""),
+  })).default([]).catch([]),
   watchList: z.array(z.object({
     title: z.string().catch(""),
     detail: z.string().catch(""),
