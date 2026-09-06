@@ -341,6 +341,10 @@ HOW TO READ THE FINDINGS:
 - \`dataConfidence\`: months listed in \`excludedForLowCoverage\` have missing rows, NOT low spending.
   Never describe a fall in an excluded or partial month as thrift or improvement. A period marked
   \`periodIsPartial\` is incomplete by definition -- it is never a trend.
+  **Name each excluded month explicitly** -- by name, in the summary or in dataQuality -- and say
+  its figures were withheld for want of coverage. Someone who sees a cheap-looking month in the app
+  deserves to be told it is a gap rather than a win, and silently dropping it from the averages
+  leaves them believing the wrong thing about a month they can still see on screen.
 - \`bills.missed\`: due dates that passed with no payment, skip or snooze recorded. Say plainly
   which bills and how far behind. It may be an unlogged payment rather than an unpaid bill; give
   both readings rather than accusing.

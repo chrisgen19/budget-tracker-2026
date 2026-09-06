@@ -41,10 +41,74 @@ const allProse = (r: AiAssessmentReport): string[] => [
   ...r.boostSavings.flatMap((t) => [t.title, t.detail]),
   ...r.earnIdeas.flatMap((t) => [t.title, t.detail]),
   ...r.quickActions,
+  // The grounded call carries its own "no raw currency" rule and is the section
+  // most likely to break it: search results quote rates and peso figures, and the
+  // model carries them through. Counting it and not scanning it exempted the one
+  // section with an external source of raw amounts.
+  ...r.webTips.flatMap((t) => [t.title, t.detail]),
 ];
 
-/** The rule the report promises: percentages and relative terms, never raw money, in prose. */
-const CURRENCY_IN_PROSE = /(?:[₱$€£¥]|\b(?:PHP|USD|EUR|GBP|AUD|CAD|SGD|INR|JPY))\s?\d[\d,]*(?:\.\d+)?/i;
+/**
+ * The rule the report promises: percentages and relative terms, never raw money.
+ *
+ * Three shapes, because the model is handed bare numbers in the snapshot and told
+ * the currency separately -- so the likeliest leak carries no symbol at all.
+ * Checking only for a leading `₱` would have passed "electricity hit 14,126 in
+ * May" and "about 1,500 PHP", which are the two forms this actually takes.
+ *
+ * A bare number counts as money when it has a thousands separator or four-plus
+ * digits. That deliberately spares percentages, counts and day figures, and it
+ * spares years -- "2026" is not a peso amount, and flagging it would train a
+ * reader to ignore the check, which is worse than not having one.
+ */
+const CURRENCY_CODE = "PHP|USD|EUR|GBP|AUD|CAD|SGD|INR|JPY";
+const CURRENCY_IN_PROSE = new RegExp(
+  [
+    // ₱1,200 / PHP 500
+    `(?:[₱$€£¥]|\\b(?:${CURRENCY_CODE}))\\s?\\d[\\d,]*(?:\\.\\d+)?`,
+    // 1,500 PHP / 1500 pesos
+    `\\d[\\d,]*(?:\\.\\d+)?\\s?(?:${CURRENCY_CODE}|pesos?)\\b`,
+    // 14,126 — a separated figure is never a count or a percentage
+    `\\b\\d{1,3}(?:,\\d{3})+(?:\\.\\d+)?\\b(?!\\s?%)`,
+    // 14126 — four-plus digits, but not a year
+    `\\b(?!(?:19|20)\\d{2}\\b)\\d{4,}(?:\\.\\d+)?\\b(?!\\s?%)`,
+  ].join("|"),
+  "i",
+);
+
+/**
+ * The window `/api/analytics` would compare this one against.
+ *
+ * Derived from `from`/`to`, never from today. Deriving it from the clock meant
+ * `FROM=2026-08-01 TO=2026-08-31` run in September compared August against
+ * itself: `previousSummary` came back byte-identical to `summary`, and the model
+ * was told income and expenses had not moved while the facts digest showed real
+ * movement. The script's own documented invocation exercised a payload
+ * production cannot produce.
+ *
+ * Mirrors `analytics/route.ts`: a full calendar month shifts back one month,
+ * anything else shifts back by its own length.
+ */
+const previousPeriod = (from: string, to: string): { from: string; to: string; label: string } => {
+  const [fY, fM, fD] = from.split("-").map(Number);
+  const [tY, tM, tD] = to.split("-").map(Number);
+  const pad = (n: number) => String(n).padStart(2, "0");
+
+  const lastDayOfFromMonth = new Date(Date.UTC(fY, fM, 0)).getUTCDate();
+  if (fD === 1 && fY === tY && fM === tM && tD === lastDayOfFromMonth) {
+    const pm = fM === 1 ? 12 : fM - 1;
+    const py = fM === 1 ? fY - 1 : fY;
+    const lastDay = new Date(Date.UTC(py, pm, 0)).getUTCDate();
+    return { from: `${py}-${pad(pm)}-01`, to: `${py}-${pad(pm)}-${pad(lastDay)}`, label: `${py}-${pad(pm)}` };
+  }
+
+  const start = Date.UTC(fY, fM - 1, fD);
+  const span = Date.UTC(tY, tM - 1, tD) - start + 86_400_000;
+  const prevTo = new Date(start - 86_400_000);
+  const prevFrom = new Date(start - span);
+  const key = (d: Date) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+  return { from: key(prevFrom), to: key(prevTo), label: `${key(prevFrom)} – ${key(prevTo)}` };
+};
 
 const resolveUser = async () => {
   const id = process.env.BUDGET_USER_ID;
@@ -81,17 +145,17 @@ async function main() {
   const tzMs = user.timezoneOffset * 60_000;
   const today = formatLocalDate(new Date(), user.timezoneOffset);
   const [y, m] = today.split("-").map(Number);
-  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const currentMonthLastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const from = process.env.FROM ?? `${y}-${String(m).padStart(2, "0")}-01`;
-  const to = process.env.TO ?? `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
-  const prevMonth = new Date(Date.UTC(y, m - 2, 1));
-  const pm = `${prevMonth.getUTCFullYear()}-${String(prevMonth.getUTCMonth() + 1).padStart(2, "0")}`;
+  const to = process.env.TO ?? `${y}-${String(m).padStart(2, "0")}-${String(currentMonthLastDay).padStart(2, "0")}`;
+  const previous = previousPeriod(from, to);
 
   console.log(`user:   ${user.email}`);
-  console.log(`period: ${from} .. ${to}  (today ${today})\n`);
+  console.log(`period: ${from} .. ${to}  (today ${today})`);
+  console.log(`vs:     ${previous.from} .. ${previous.to}\n`);
 
   const current = await summarize(user.id, from, to, tzMs);
-  const previous = await summarize(user.id, `${pm}-01`, `${pm}-${new Date(Date.UTC(y, m - 1, 0)).getUTCDate()}`, tzMs);
+  const prior = await summarize(user.id, previous.from, previous.to, tzMs);
 
   const byCategory = new Map<string, { amount: number; count: number; type: "INCOME" | "EXPENSE" }>();
   for (const r of current.rows) {
@@ -109,6 +173,14 @@ async function main() {
   const savingsRate = current.summary.totalIncome > 0 ? current.summary.netCashFlow / current.summary.totalIncome : null;
   const activeDays = new Set(current.rows.map((r) => formatLocalDate(r.date, user.timezoneOffset))).size;
   const expenseRows = current.rows.filter((r) => r.type === "EXPENSE");
+  // Days in the assessed range, not days in the current month, and not the days
+  // that happen to carry a row. `/api/analytics` divides by this for
+  // `avgDailySpend`, and the prompt asks the model to reason from "the current
+  // run rate" -- dividing by active days instead handed it a figure ~2.5x the
+  // real one for anyone who logs on half the days, so the `outlook` section under
+  // test was generated from a number the app never produces.
+  const totalDaysInPeriod =
+    Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
 
   // The sub-scores are computed inside the analytics route and are not exported, so these are
   // stand-ins. They are labelled as such here because nothing in the new sections reads them --
@@ -118,9 +190,9 @@ async function main() {
     currency: user.currency,
     granularity: "monthly",
     periodLabel: `${from} – ${to}`,
-    previousPeriodLabel: pm,
+    previousPeriodLabel: previous.label,
     summary: current.summary,
-    previousSummary: previous.summary,
+    previousSummary: prior.summary,
     healthScore: {
       overallScore: 70,
       overallLabel: "Fair",
@@ -130,11 +202,11 @@ async function main() {
     },
     categoryBreakdown,
     statistics: {
-      avgDailySpend: activeDays > 0 ? current.summary.totalExpenses / activeDays : null,
+      avgDailySpend: totalDaysInPeriod > 0 ? current.summary.totalExpenses / totalDaysInPeriod : null,
       avgExpenseSize: expenseRows.length > 0 ? current.summary.totalExpenses / expenseRows.length : null,
       spendingStreak: 0,
       activeDays,
-      totalDaysInPeriod: lastDay,
+      totalDaysInPeriod,
       totalTransactions: current.summary.transactionCount,
       categoriesUsed: byCategory.size,
       mostUsedCategory: null,
@@ -169,7 +241,15 @@ async function main() {
   check(report.trends.length > 0 || facts.trends.movements.length === 0, "trends present when categories moved", `${facts.trends.movements.length} movements, 0 trends`);
 
   const hygieneFindings =
-    facts.hygiene.duplicates.length + facts.hygiene.fragmentation.length + facts.confidence.excludedMonths.length + facts.bills.unlinkedPayments.length;
+    facts.hygiene.duplicates.length +
+    facts.hygiene.fragmentation.length +
+    facts.confidence.excludedMonths.length +
+    facts.bills.unlinkedPayments.length +
+    // The prompt lists unlabeled spend as a dataQuality candidate and the script
+    // prints it, but the gate did not count it -- so an account whose only
+    // accuracy problem was a fifth of its spending carrying no label scored zero
+    // findings, and an empty `dataQuality` passed.
+    (facts.hygiene.unlabeled.pctOfSpend > 0 ? 1 : 0);
   check(report.dataQuality.length > 0 || hygieneFindings === 0, "dataQuality present when the data has problems", `${hygieneFindings} findings, 0 dataQuality items`);
 
   const leaks = allProse(report).filter((s) => CURRENCY_IN_PROSE.test(s));
@@ -184,10 +264,24 @@ async function main() {
   }
 
   // Same for a month the coverage gate dropped: reporting its spending as thrift is the failure
-  // the gate exists to prevent, so the report has to acknowledge the gap somewhere.
+  // the gate exists to prevent, so the report has to name that month.
+  //
+  // Matched on the month itself, not on words like "gap" or "logging". Those
+  // appear in nearly every report -- the dataQuality section is prompted to
+  // discuss logging and unlabeled spend -- so the check passed whether or not the
+  // excluded month was ever mentioned, which is the opposite of what it claims.
   if (facts.confidence.excludedMonths.length > 0) {
     const prose = allProse(report).join(" ").toLowerCase();
-    check(/gap|coverage|logg|incomplete|missing/.test(prose), "the excluded month's logging gap is acknowledged");
+    const named = facts.confidence.excludedMonths.filter((month) => {
+      const [yy, mm] = month.split("-").map(Number);
+      const full = new Date(Date.UTC(yy, mm - 1, 1)).toLocaleString("en-US", { month: "long", timeZone: "UTC" }).toLowerCase();
+      return prose.includes(month) || prose.includes(full) || prose.includes(full.slice(0, 3));
+    });
+    check(
+      named.length > 0,
+      `an excluded month (${facts.confidence.excludedMonths.join(", ")}) is named in the report`,
+      "the report never mentions the month whose figures were withheld",
+    );
   }
 
   console.log(failures.length === 0 ? "\nAll checks passed." : `\n${failures.length} check(s) failed.`);
