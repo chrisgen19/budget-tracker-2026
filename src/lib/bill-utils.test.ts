@@ -4,6 +4,7 @@ import {
   advanceToNextUnpaidOccurrence,
   describeDueDate,
   formatBillDate,
+  settledStatusesFor,
 } from "./bill-utils";
 import { addUtcDays, userToday, utcDayStart } from "./bill-dates";
 
@@ -232,4 +233,26 @@ describe("describeDueDate", () => {
       describeDueDate("2026-09-05T00:00:00.000Z", -480, new Date("2026-09-05T08:00:00.000Z")).text,
     ).toBe("Due today");
   });
+});
+
+describe("settledStatusesFor", () => {
+  // #216: a skip used to be a one-way door. Skip is what people press when the
+  // bill is already paid and they want the reminder gone, so the record then
+  // claimed a non-payment that no route could correct.
+  it("lets pay_existing supersede a skipped occurrence", () => {
+    expect(settledStatusesFor("pay_existing")).toEqual(["PAID"]);
+  });
+
+  it("keeps PAID terminal for pay_existing, so one occurrence cannot be paid twice", () => {
+    expect(settledStatusesFor("pay_existing")).toContain("PAID");
+  });
+
+  // `pay` writes a *new* transaction, so running it against a skipped month is
+  // how a duplicate payment gets created. It must keep refusing.
+  it.each(["pay", "skip", "snooze"] as const)(
+    "keeps both statuses terminal for %s",
+    (action) => {
+      expect(settledStatusesFor(action)).toEqual(["PAID", "SKIPPED"]);
+    },
+  );
 });

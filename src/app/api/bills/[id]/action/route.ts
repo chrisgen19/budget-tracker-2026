@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { getAuthUserId } from "@/lib/session";
 import { billActionSchema } from "@/lib/validations";
-import { advanceToNextUnpaidOccurrence } from "@/lib/bill-utils";
+import { advanceToNextUnpaidOccurrence, settledStatusesFor } from "@/lib/bill-utils";
 import { addUtcDays, userToday } from "@/lib/bill-dates";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 
@@ -72,7 +72,10 @@ export async function POST(
         where: {
           scheduledTransactionId: bill.id,
           dueDate,
-          status: { in: ["PAID", "SKIPPED"] },
+          // Which statuses count as terminal depends on the action: pay_existing
+          // may supersede a SKIPPED occurrence, since correcting a wrongly
+          // skipped month is the whole point of it. See settledStatusesFor.
+          status: { in: settledStatusesFor(action) },
         },
         select: { id: true },
       });
@@ -113,7 +116,14 @@ export async function POST(
 
     const settledResponse = () =>
       NextResponse.json(
-        { error: "This occurrence has already been paid or skipped" },
+        {
+          // pay_existing can now supersede a skip, so "or skipped" would name a
+          // state it did not refuse on.
+          error:
+            action === "pay_existing"
+              ? "This occurrence has already been paid"
+              : "This occurrence has already been paid or skipped",
+        },
         { status: 409 },
       );
 
@@ -200,6 +210,14 @@ export async function POST(
       const linked = await prisma.$transaction(async (tx) => {
         const lockedNextDue = await lockBill(tx);
         if (await alreadySettled(tx)) return false;
+
+        // Remove a superseded skip instead of leaving two terminal logs on one
+        // occurrence. The due-date walk dedupes, so it would still advance
+        // correctly, but the bill's history would list the month twice -- once
+        // as skipped and once as paid -- which is the record this is correcting.
+        await tx.scheduledTransactionLog.deleteMany({
+          where: { scheduledTransactionId: bill.id, dueDate, status: "SKIPPED" },
+        });
 
         await tx.scheduledTransactionLog.create({
           data: {

@@ -3,6 +3,28 @@ import { addUtcDays, clampToMonth, userToday, utcDayStart } from "@/lib/bill-dat
 
 export { addUtcDays, utcDayStart } from "@/lib/bill-dates";
 
+/**
+ * Which occurrence statuses block a bill action from being written.
+ *
+ * PAID is terminal for every action -- that is the guard against paying one
+ * occurrence twice, and it must never be relaxed.
+ *
+ * SKIPPED is terminal for every action *except* `pay_existing`, which exists
+ * precisely to attach a payment the user made outside the app. A skip asserts
+ * "this month was not paid", which is exactly the claim such a correction has
+ * to overturn. Treating it as terminal there made a skip a one-way door: two
+ * bills in production recorded a false non-payment because Skip is what people
+ * press when they have *already* paid and want the reminder gone, and nothing
+ * in the app could undo it afterwards (#216).
+ *
+ * `pay` keeps SKIPPED terminal on purpose: it creates a *new* transaction, so
+ * running it against a skipped month is how a duplicate payment gets written.
+ */
+export const settledStatusesFor = (
+  action: "pay" | "pay_existing" | "skip" | "snooze",
+): BillOccurrenceStatus[] =>
+  action === "pay_existing" ? ["PAID"] : ["PAID", "SKIPPED"];
+
 
 /**
  * Advance a due date by the given frequency.
