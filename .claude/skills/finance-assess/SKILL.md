@@ -21,6 +21,12 @@ is a **mirror** and drifts as soon as the app is used again — the script print
 `newest_row` so you can see how stale it is. If `newest_row` is more than a couple of days
 behind, say so rather than reporting the current month as fact.
 
+MCP is also the staleness signal that survives the network being closed down (#194): it
+reaches the app over HTTPS rather than opening a Postgres connection, so
+`get_budget_overview` still answers when `psql` against the source does not. Cross-check
+its `runningBalance` against the script's — a divergence means the mirror is behind, and
+that is how a report quoting a balance 22,000 out of date was caught.
+
 Never hand-write aggregate SQL over `transaction_labels` or bill dates unless the script
 has no answer. A transaction can carry several labels and its amount splits evenly between
 them, so a naive join double-counts; bill due dates are date-only at UTC midnight and must
@@ -28,12 +34,54 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
 
 ## Steps
 
-1. **Run the script.** From the repo root:
+0. **Ask which database to read, before running anything.**
+
+   The local database is a *mirror*, and a stale one produces a confident report
+   about figures that have moved. Use `AskUserQuestion` with these options:
+
+   - **Refresh the mirror, then assess** — the safe default when anything has
+     changed in the app since the last refresh
+   - **Assess the mirror as it is** — fine when nothing has changed, and the only
+     option if direct access to the source is closed (see #194)
+   - **Read the source directly** — set `DATABASE_URL` to it for the one command;
+     `assess.sql` is read-only, so this is safe where the network allows it
+
+   Gather the evidence first so the question is answerable, not a guess:
+
+   ```bash
+   pnpm exec tsx --env-file=.env scripts/refresh-local-mirror.ts --from "<source url>"
+   ```
+
+   It prints both sides' transaction count and newest row without writing
+   anything. **Do not treat matching counts as "fresh".** A settings change moves
+   no rows: on 6 Sep both sides held identical 829 transactions while the mirror
+   had `is_variable = 0` against production's `2`, so an assessment would have
+   described two metered bills as fixed. Check what the question is actually
+   about before answering it.
+
+   To refresh, add `--apply`. It backs the local database up first and prints the
+   command to undo, and it refuses to run unless `DATABASE_URL` is local — it
+   overwrites its destination, and a reversed `--from` is the one mistake here a
+   later backup cannot fix.
+
+1. **Run the script.** Against the mirror, from the repo root:
 
    ```bash
    set -a; . ./.env; set +a
    psql "$DATABASE_URL" -q -f .claude/skills/finance-assess/scripts/assess.sql
    ```
+
+   Against the source instead — note the URL goes **on the command**, because
+   `set -a; . ./.env` reassigns `DATABASE_URL` unconditionally and would otherwise
+   silently send you back to the mirror, producing the stale report step 0 exists to
+   prevent:
+
+   ```bash
+   DATABASE_URL="<source url>" psql "$DATABASE_URL" -q -f .claude/skills/finance-assess/scripts/assess.sql
+   ```
+
+   Either way, check the `WHO / WINDOW` row the script prints: it reports `newest_row`,
+   and the assessment should say which database answered.
 
    Optional: `-v email=someone@example.com` to pick a user (defaults to whoever has the
    most transactions), `-v months=12` to widen the window (defaults to 6).
