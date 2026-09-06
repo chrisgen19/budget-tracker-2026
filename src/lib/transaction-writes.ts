@@ -1,6 +1,6 @@
 import { Prisma, type TransactionSource, type TransactionType } from "@prisma/client";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
-import type { BatchTransactionInput } from "@/lib/validations";
+import { isDateOnly, resolveTransactionDate, type BatchTransactionInput } from "@/lib/validations";
 import type { PrismaClient } from "@/lib/budget-query-types";
 
 /** Bounds for the keyed batch transaction. Prisma defaults to 5s, which a full
@@ -298,7 +298,15 @@ export interface TransactionPatch {
   amount?: number;
   description?: string;
   type?: TransactionType;
-  /** An account-local date or datetime string, resolved by the caller the same way creates are. */
+  /**
+   * An account-local date or datetime, resolved *here* rather than by the caller.
+   *
+   * Deliberately not pre-resolved. `resolveTransactionDate` fills a bare `YYYY-MM-DD` with the
+   * current wall clock, which is the only sane choice when creating a row and the wrong one when
+   * editing an existing one: the row already has a time, and a model correcting an amount will
+   * plausibly echo the date back from a read tool, silently moving a 17:00 purchase to whenever
+   * the request happened to arrive. The service holds the stored row, so only it can preserve it.
+   */
   date?: string;
   categoryId?: string;
   /** Explicit ids replace the row's labels. Omitted preserves what it already carries. */
@@ -324,6 +332,15 @@ export interface UpdatedTransaction {
   transaction: TransactionWithRelations;
   /** Only the fields whose stored value genuinely differs from what was there before. */
   changed: UpdatableField[];
+  /**
+   * Labels the caller named explicitly that were not applied, because the label's `applicableTo`
+   * excludes the transaction's (possibly just-changed) type. Names, not ids.
+   *
+   * Neither an error nor a change, so it fits in neither field above, and it must not be inferred
+   * from `changed`: asking for a label the row already carries plus one that does not fit produces
+   * no change at all, and the reply would be a clean success that quietly ignored half the request.
+   */
+  droppedLabels: string[];
   /** The previous values of exactly those fields, so a caller can show the edit rather than
    *  assert it. Labels are names, matching how they are rendered everywhere else. */
   previous: Partial<{
@@ -344,6 +361,9 @@ export interface UpdateTransactionsParams {
   prisma: PrismaClient;
   userId: string;
   patches: TransactionPatch[];
+  /** Minutes, `getTimezoneOffset()` convention (UTC+8 is -480). Needed to resolve a patch's
+   *  account-local date, and to read a stored row's local time-of-day when preserving it. */
+  timezoneOffset: number;
   /** Stamped onto `updated_via`. Set by the caller from its own surface, never from input. */
   updatedVia: TransactionSource;
   /**
@@ -370,6 +390,32 @@ const preservedLabelIds = (
     .map((l) => l.labelId);
 
 /**
+ * The instant a patched date should store, given the row it is editing.
+ *
+ * A value carrying a time (or a zone) means what it says. A bare `YYYY-MM-DD` does not: it names a
+ * calendar day and is silent about the time, so the row's existing time-of-day is carried onto it.
+ *
+ * `resolveTransactionDate` would instead fill it with the current clock, which is right for a
+ * create -- there is no prior value to keep -- and wrong here twice over. Re-dating a 17:00 dinner
+ * to the previous day would stamp it with whenever the request arrived, and, worse, *restating the
+ * day a row already has* would rewrite its time while reporting `changed: ["date"]` with an
+ * identical before and after. Read tools return `localDate`, so a model correcting an amount
+ * echoing the date back is the expected case, not an exotic one.
+ */
+const resolvePatchDate = (value: string, stored: Date, timezoneOffset: number): Date => {
+  if (!isDateOnly(value)) return new Date(resolveTransactionDate(value, timezoneOffset));
+
+  // The row's own wall clock in the user's zone, reattached to the day being asked for. Built as a
+  // zone-less string so `resolveTransactionDate` applies the one offset formula the app uses
+  // everywhere, rather than a second copy of it here.
+  const local = new Date(stored.getTime() - timezoneOffset * 60_000);
+  const hh = String(local.getUTCHours()).padStart(2, "0");
+  const mm = String(local.getUTCMinutes()).padStart(2, "0");
+  const ss = String(local.getUTCSeconds()).padStart(2, "0");
+  return new Date(resolveTransactionDate(`${value}T${hh}:${mm}:${ss}`, timezoneOffset));
+};
+
+/**
  * Apply partial edits to existing transactions, atomically.
  *
  * The single update path, shared by `PUT /api/transactions/[id]` and the MCP `update_transactions`
@@ -387,6 +433,7 @@ export const updateTransactions = async ({
   prisma,
   userId,
   patches,
+  timezoneOffset,
   updatedVia,
   updatedByMcpTokenId,
   assertStillPermitted,
@@ -425,34 +472,55 @@ export const updateTransactions = async ({
     };
   });
 
-  if (!(await categoriesAreUsable(prisma, userId, effective))) {
+  // Only the rows whose patch actually touches one of the two fields. A patch naming neither
+  // leaves the stored pair exactly as it was, so checking it can never prevent an invalid state --
+  // the row is already in whatever state it is in -- and can only lock the user out of editing it.
+  // That is reachable: `PUT /api/categories/[id]` lets a custom category's `type` be flipped while
+  // its transactions keep pointing at it, and the app's edit form resubmits `categoryId`
+  // unchanged, so validating untouched pairs made every older row on that category permanently
+  // uneditable, down to fixing a typo. The bare `type` flip this check exists for is still caught,
+  // because `type` is in the patch.
+  const reclassified = effective.filter(
+    (e) => e.patch.type !== undefined || e.patch.categoryId !== undefined
+  );
+  if (!(await categoriesAreUsable(prisma, userId, reclassified))) {
     return { ok: false, reason: "CATEGORIES_NOT_OWNED" };
   }
 
   // One ownership query for every explicitly named label across the batch, as on the create path.
   const explicitLabelIds = [...new Set(patches.flatMap((p) => p.labelIds ?? []))];
-  let ownedLabelMap = new Map<string, string>();
+  let ownedLabelMap = new Map<string, { applicableTo: string; name: string }>();
   if (explicitLabelIds.length > 0) {
     const owned = await prisma.label.findMany({
       where: { id: { in: explicitLabelIds }, userId },
-      select: { id: true, applicableTo: true },
+      // `name` is selected so a label the type filter removes can be named back. An id would be
+      // useless to the person being told about it.
+      select: { id: true, applicableTo: true, name: true },
     });
     if (owned.length !== explicitLabelIds.length) return { ok: false, reason: "LABELS_NOT_OWNED" };
-    ownedLabelMap = new Map(owned.map((l) => [l.id, l.applicableTo]));
+    ownedLabelMap = new Map(owned.map((l) => [l.id, { applicableTo: l.applicableTo, name: l.name }]));
   }
 
   const resolved = effective.map((e) => {
     // The same three-way rule as the create path, minus its schedule branch: explicit ids are
     // deduped and type-filtered, `[]` clears them, and omitting the field preserves what is there.
-    const labelIds =
-      e.patch.labelIds === undefined
-        ? preservedLabelIds(e.row.labels, e.type)
-        : [...new Set(e.patch.labelIds)].filter((id) => {
-            const applicableTo = ownedLabelMap.get(id);
-            return applicableTo === "BOTH" || applicableTo === e.type;
-          });
+    const requested = e.patch.labelIds === undefined ? null : [...new Set(e.patch.labelIds)];
+    const fits = (id: string) => {
+      const owned = ownedLabelMap.get(id);
+      return owned?.applicableTo === "BOTH" || owned?.applicableTo === e.type;
+    };
 
-    return { ...e, labelIds };
+    const labelIds = requested === null ? preservedLabelIds(e.row.labels, e.type) : requested.filter(fits);
+
+    // A label the user named by id and did not get. Silently dropping it is the exact failure
+    // AGENTS.md records on the create path -- a review promising a label it then did not write --
+    // and it is worse on an edit, where the reply otherwise reads as an unqualified success.
+    const droppedLabels =
+      requested === null
+        ? []
+        : requested.filter((id) => !fits(id)).map((id) => ownedLabelMap.get(id)!.name);
+
+    return { ...e, labelIds, droppedLabels };
   });
 
   try {
@@ -463,7 +531,7 @@ export const updateTransactions = async ({
 
       const updated: UpdatedTransaction[] = [];
 
-      for (const { patch, row, type, categoryId, labelIds } of resolved) {
+      for (const { patch, row, type, categoryId, labelIds, droppedLabels } of resolved) {
         const labelsBefore = row.labels.map((l) => l.label.name).sort();
         const labelIdsBefore = row.labels.map((l) => l.labelId).sort();
         const labelsMoved = [...labelIds].sort().join(" ") !== labelIdsBefore.join(" ");
@@ -474,7 +542,9 @@ export const updateTransactions = async ({
             ...(patch.amount !== undefined && { amount: patch.amount }),
             ...(patch.description !== undefined && { description: patch.description }),
             ...(patch.type !== undefined && { type }),
-            ...(patch.date !== undefined && { date: new Date(patch.date) }),
+            ...(patch.date !== undefined && {
+              date: resolvePatchDate(patch.date, row.date, timezoneOffset),
+            }),
             ...(patch.categoryId !== undefined && { categoryId }),
             updatedVia,
             updatedByMcpTokenId,
@@ -528,7 +598,7 @@ export const updateTransactions = async ({
           previous.labels = labelsBefore;
         }
 
-        updated.push({ transaction: after, changed, previous });
+        updated.push({ transaction: after, changed, previous, droppedLabels });
       }
 
       return { ok: true as const, updated };

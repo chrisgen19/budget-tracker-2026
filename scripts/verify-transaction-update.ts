@@ -226,6 +226,55 @@ async function main() {
   ]);
   check("a type flip with a matching category succeeds", flipOk.isError, undefined);
 
+  // --- A bare date must not overwrite the stored time (found in review) ---
+
+  const dated = await seed({ description: "Dated", date: new Date("2026-08-25T09:00:00.000Z") });
+  await callUpdate(client, [{ id: dated.id, amount: 400, date: "2026-08-25" }]);
+  const afterSameDay = await prisma.transaction.findUniqueOrThrow({ where: { id: dated.id } });
+  // The probe user is UTC+8, so 09:00Z is a 17:00 purchase. Resolving the bare date with the
+  // current clock -- correct when creating a row, destructive when editing one -- would move it to
+  // whenever this script happened to run, and report a date change with an identical before and
+  // after, since both render as the same local day.
+  check(
+    "restating the same day leaves the time alone",
+    afterSameDay.date.toISOString(),
+    "2026-08-25T09:00:00.000Z"
+  );
+
+  await callUpdate(client, [{ id: dated.id, date: "2026-08-26" }]);
+  const afterReDate = await prisma.transaction.findUniqueOrThrow({ where: { id: dated.id } });
+  check(
+    "re-dating carries the stored time to the new day",
+    afterReDate.date.toISOString(),
+    "2026-08-26T09:00:00.000Z"
+  );
+
+  // --- A pre-existing type/category mismatch stays editable (found in review) ---
+
+  const mismatched = await seed({ description: "Mismatched" });
+  // Exactly what `PUT /api/categories/[id]` allows: flip a custom category's type while its
+  // transactions keep pointing at it. Judging the stored pair on every edit locked these rows out
+  // of being edited at all, while preventing nothing -- the row is already in that state.
+  await prisma.category.update({ where: { id: expenseCat.id }, data: { type: "INCOME" } });
+  const typoFix = await callUpdate(client, [{ id: mismatched.id, description: "Typo fixed" }]);
+  check("an untouched mismatched row can still be edited", typoFix.isError, undefined);
+  const afterTypo = await prisma.transaction.findUniqueOrThrow({ where: { id: mismatched.id } });
+  check("and the edit landed", afterTypo.description, "Typo fixed");
+  await prisma.category.update({ where: { id: expenseCat.id }, data: { type: "EXPENSE" } });
+
+  // --- An explicitly named label that does not fit is reported, not dropped in silence ---
+
+  const incomeOnly = await prisma.label.create({
+    data: { name: "Probe Income Only", color: "#444", applicableTo: "INCOME", userId: user.id },
+  });
+  const labelled = await seed({ description: "Labelled" });
+  const dropped = await callUpdate(client, [{ id: labelled.id, labelIds: [incomeOnly.id] }]);
+  const warnings = (dropped.structuredContent as { transactions: { warnings: string[] }[] })
+    .transactions[0].warnings;
+  check("a type-excluded label is named back", warnings.some((w) => w.includes("Probe Income Only")), true);
+  const noLabels = await prisma.transactionLabel.count({ where: { transactionId: labelled.id } });
+  check("and really was not applied", noLabels, 0);
+
   // --- Another user's row is invisible ---
 
   const stranger = await prisma.user.create({
@@ -259,7 +308,13 @@ async function main() {
 
   await client.close();
 
-  await prisma.user.deleteMany({ where: { id: { in: [user.id, stranger.id] } } });
+  // The stranger goes first, and separately. Their transaction points at a category owned by the
+  // probe user, and `transactions.category_id` is ON DELETE RESTRICT: deleting the probe user
+  // cascades that category away, and the FK is checked immediately, so a combined delete that
+  // happened to process the probe user first would raise a violation *after* every check passed
+  // and turn a green run into exit 1 with the probe user left behind.
+  await prisma.user.delete({ where: { id: stranger.id } });
+  await prisma.user.delete({ where: { id: user.id } });
 
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
   process.exitCode = failures === 0 ? 0 : 1;

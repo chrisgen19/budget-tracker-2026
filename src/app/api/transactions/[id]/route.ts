@@ -73,6 +73,15 @@ export async function PUT(request: Request, { params }: RouteParams) {
     const body = await request.json();
     const validated = transactionSchema.parse(body);
 
+    // The form already resolves its picker value to an absolute instant client-side, so this is
+    // only ever the fallback branch of `resolvePatchDate`. Read rather than assumed anyway: a
+    // hardcoded 0 would silently resolve any bare date that ever reached here against UTC.
+    const account = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { timezoneOffset: true },
+    });
+    if (!account) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
     // The whole edit -- ownership, category usability, label reconciliation, the audit stamp --
     // goes through the same service the MCP `update_transactions` tool uses. It used to be
     // written out here, and the copy was missing the category ownership and type-match checks
@@ -93,6 +102,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
           labelIds: validated.labelIds,
         },
       ],
+      timezoneOffset: account.timezoneOffset,
       updatedVia: "APP",
       // Cleared explicitly, not left alone. Without this a row edited over MCP and then corrected
       // here would go on naming the token as its last editor, which is worse than no audit trail:

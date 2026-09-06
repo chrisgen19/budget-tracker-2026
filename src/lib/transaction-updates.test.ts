@@ -28,7 +28,7 @@ const row = (over: Record<string, unknown> = {}) => ({
 interface StubOptions {
   rows?: ReturnType<typeof row>[];
   categories?: { id: string; type: string }[];
-  labels?: { id: string; applicableTo: string }[];
+  labels?: { id: string; applicableTo: string; name: string }[];
   permitted?: boolean;
 }
 
@@ -114,6 +114,7 @@ const run = (patches: TransactionPatch[], opts: StubOptions = {}) => {
       prisma: stub.prisma,
       userId: "user_1",
       patches,
+      timezoneOffset: -480,
       updatedVia: "MCP",
       updatedByMcpTokenId: "tok_1",
       ...(opts.permitted === false && { assertStillPermitted: async () => false }),
@@ -233,7 +234,7 @@ describe("updateTransactions", () => {
   it("replaces labels wholesale when explicit ids are sent", async () => {
     const { stub, result } = run([{ id: "tx_1", labelIds: ["lab_food"] }], {
       rows: [row({ labels: [{ labelId: "lab_work", label: { name: "Work", applicableTo: "BOTH" } }] })],
-      labels: [{ id: "lab_food", applicableTo: "BOTH" }],
+      labels: [{ id: "lab_food", applicableTo: "BOTH", name: "Food" }],
     });
 
     expect((await result).ok).toBe(true);
@@ -305,5 +306,117 @@ describe("updateTransactions", () => {
 
     expect(await result).toEqual({ ok: false, reason: "NO_LONGER_PERMITTED" });
     expect(stub.store.get("tx_1")!.amount).toBe(250);
+  });
+
+  // --- Dates (review #1) ---
+  //
+  // `resolveTransactionDate` fills a bare YYYY-MM-DD with the current clock, which is correct on
+  // the create path and destructive here: the row already has a time. Read tools return
+  // `localDate`, so a model correcting an amount and echoing the date back is the expected shape
+  // of a call, not an exotic one.
+
+  it("keeps the stored time when a bare date restates the day the row already has", async () => {
+    const { stub, result } = run([{ id: "tx_1", amount: 320, date: "2026-08-25" }]);
+    const r = await result;
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // 09:00Z is 17:00 for a UTC+8 account. Filling it with the current clock would move a 17:00
+    // purchase to whenever the request happened to arrive.
+    expect(stub.store.get("tx_1")!.date).toEqual(new Date("2026-08-25T09:00:00.000Z"));
+    // And the report would have claimed a change while printing an identical before and after,
+    // since both render as the same local day.
+    expect(r.updated[0].changed).toEqual(["amount"]);
+  });
+
+  it("carries the stored time onto a new day when a bare date re-dates the row", async () => {
+    const { stub, result } = run([{ id: "tx_1", date: "2026-08-26" }]);
+    const r = await result;
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // The day moves, the time of day does not: a 17:00 dinner moved to the 26th is still 17:00.
+    expect(stub.store.get("tx_1")!.date).toEqual(new Date("2026-08-26T09:00:00.000Z"));
+    expect(r.updated[0].changed).toEqual(["date"]);
+  });
+
+  it("uses a supplied time as given", async () => {
+    // A caller that names a time means it. Only the silent case is inferred.
+    const { stub, result } = run([{ id: "tx_1", date: "2026-08-25T21:00" }]);
+    await result;
+    // 21:00 local at UTC+8 is 13:00Z.
+    expect(stub.store.get("tx_1")!.date).toEqual(new Date("2026-08-25T13:00:00.000Z"));
+  });
+
+  it("preserves an absolute instant, which is what the app's own form sends", async () => {
+    const { stub, result } = run([{ id: "tx_1", date: "2026-08-25T15:45:00.000Z" }]);
+    await result;
+    expect(stub.store.get("tx_1")!.date).toEqual(new Date("2026-08-25T15:45:00.000Z"));
+  });
+
+  // --- The category check only judges what the patch touches (review #2) ---
+
+  it("lets an untouched row with a mismatched category still be edited", async () => {
+    // Reachable without any MCP involvement: `PUT /api/categories/[id]` allows flipping a custom
+    // category's type while its transactions keep pointing at it. Judging the stored pair on every
+    // edit made those rows permanently uneditable -- a user could not fix a typo in the
+    // description -- while preventing nothing, since the row is already in that state.
+    const { stub, result } = run([{ id: "tx_1", description: "Fixed typo" }], {
+      rows: [row({ categoryId: "cat_flipped" })],
+      categories: [{ id: "cat_flipped", type: "INCOME" }],
+    });
+    const r = await result;
+
+    expect(r.ok).toBe(true);
+    expect(stub.store.get("tx_1")!.description).toBe("Fixed typo");
+  });
+
+  it("still refuses a bare type flip on a row whose category was already mismatched", async () => {
+    // The relaxation above must not reach the case the check exists for. `type` is in the patch,
+    // so the pair is judged.
+    const { result } = run([{ id: "tx_1", type: "INCOME" }]);
+    expect(await result).toEqual({ ok: false, reason: "CATEGORIES_NOT_OWNED" });
+  });
+
+  // --- Explicitly named labels that do not fit are reported (review #6) ---
+
+  it("names an explicit label the type filter removed", async () => {
+    const { result } = run([{ id: "tx_1", labelIds: ["lab_income_only"] }], {
+      labels: [{ id: "lab_income_only", applicableTo: "INCOME", name: "Freelance" }],
+    });
+    const r = await result;
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.updated[0].droppedLabels).toEqual(["Freelance"]);
+  });
+
+  it("reports a dropped label even when nothing else changed", async () => {
+    // The case that makes silence dangerous: the row already carries the label that fits, so
+    // `changed` is empty and the reply is an unqualified success that ignored half the request.
+    const { result } = run([{ id: "tx_1", labelIds: ["lab_work", "lab_income_only"] }], {
+      rows: [row({ labels: [{ labelId: "lab_work", label: { name: "Work", applicableTo: "BOTH" } }] })],
+      labels: [
+        { id: "lab_work", applicableTo: "BOTH", name: "Work" },
+        { id: "lab_income_only", applicableTo: "INCOME", name: "Freelance" },
+      ],
+    });
+    const r = await result;
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.updated[0].changed).toEqual([]);
+    expect(r.updated[0].droppedLabels).toEqual(["Freelance"]);
+  });
+
+  it("reports nothing dropped when every named label fits", async () => {
+    const { result } = run([{ id: "tx_1", labelIds: ["lab_food"] }], {
+      labels: [{ id: "lab_food", applicableTo: "BOTH", name: "Food" }],
+    });
+    const r = await result;
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.updated[0].droppedLabels).toEqual([]);
   });
 });

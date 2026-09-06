@@ -470,8 +470,13 @@ const updatedTransaction = z.object({
   id: z.string(),
   /** Only the fields whose stored value actually moved. Empty when the patch matched what was
    *  already there, which is a successful call that changed nothing. */
-  changed: z.array(z.string()),
-  /** The old values of exactly the fields in `changed`. Absent keys did not move. */
+  changed: z
+    .array(z.string())
+    .describe(
+      "Input field names that actually changed, e.g. `amount`, `categoryId`, `labelIds`. Empty " +
+        "means the values sent already matched the stored ones, which is a success that changed " +
+        "nothing."
+    ),
   previous: z
     .object({
       amount: z.number().optional(),
@@ -482,7 +487,12 @@ const updatedTransaction = z.object({
       categoryName: z.string().optional(),
       labels: z.array(z.string()).optional(),
     })
-    .describe("Old values of the fields named in `changed`."),
+    .describe(
+      "The old values, for the fields named in `changed` only. Two keys are deliberately not " +
+        "spelled the same as their `changed` entry, because an id is not worth showing anyone: " +
+        "`categoryId` in `changed` appears here as `categoryName`, and `labelIds` as `labels`. " +
+        "Do not index this object with a `changed` entry without translating those two."
+    ),
   amount: z.number(),
   description: z.string(),
   type: transactionType,

@@ -397,9 +397,13 @@ not something the server can enforce, so do not rely on them as a third gate.
 `update_transactions` takes an id and only the fields you want to differ — send an amount alone
 and the description, date, category and labels are untouched. Omitting `labelIds` keeps the
 transaction's current labels; sending `[]` clears them. Auto-apply label schedules never run on an
-edit, so labels you chose by hand are safe. It reports what actually moved and what each field was
-before, and warns when the transaction settles a recurring bill or came from a split receipt,
-where the change has consequences the row itself does not show. It **cannot delete** anything.
+edit, so labels you chose by hand are safe. A date without a time keeps the transaction's existing
+time of day rather than moving it to now, so restating the day a row already has changes nothing.
+
+It reports what actually moved and what each field was before, and warns — without refusing — when
+the transaction settles a recurring bill, came from a split receipt, or when a label you named
+could not be applied because it does not apply to that transaction's type. It **cannot delete**
+anything.
 
 Rows are stamped server-side with `created_via = MCP` and the token that wrote them; edits stamp
 `updated_via` and the token that made the change, leaving the creation stamp intact. Filter on

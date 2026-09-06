@@ -62,6 +62,27 @@ bill or came from a split receipt, since both have consequences invisible in the
 There is still **no delete tool**. A wrong edit is visible in the app and correctable; a wrong
 delete is silent.
 
+**A bare date keeps the row's existing time of day.** `resolveTransactionDate` fills a bare
+`YYYY-MM-DD` with the current wall clock, which is the only sane choice when creating a row and
+destructive when editing one -- the row already has a time. Read tools return `localDate`, so a
+model correcting an amount and echoing the date back is the *expected* shape of a call, and it
+would have moved a 17:00 purchase to whenever the request arrived, then reported
+`changed: ["date"]` with an identical before and after. Resolution moved into the service, which
+is the only place holding the stored row.
+
+**The category check only judges rows whose patch names `type` or `categoryId`.** Checking an
+untouched pair prevents nothing, since the row is already in that state, and locks the user out of
+editing it. That is reachable with no MCP involvement: `PUT /api/categories/[id]` lets a custom
+category's type be flipped while its transactions keep pointing at it, and the app's edit form
+resubmits `categoryId` unchanged, so every older row on that category would have become
+permanently uneditable -- down to fixing a typo. The bare type flip the check exists for is still
+caught, because `type` is in the patch.
+
+**An explicitly named label the type filter removes is reported.** Silently dropping it is the
+failure this codebase already recorded once, when a Telegram review promised a label it then did
+not write. It is worse on an edit: name a label the row already carries alongside one that does not
+fit and nothing changes at all, so the reply was a clean success that ignored half the request.
+
 **`PUT /api/transactions/[id]` never checked category ownership.** Found while routing it through
 the shared service. It validated label ownership and nothing else, so the foreign key alone
 accepted any category that exists — another user's included — and an EXPENSE could be filed under

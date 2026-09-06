@@ -171,26 +171,43 @@ const renderCreated = (
  */
 const editWarnings = (
   transaction: TransactionWithRelations,
-  changed: readonly UpdatableField[]
+  changed: readonly UpdatableField[],
+  droppedLabels: readonly string[]
 ): string[] => {
   const warnings: string[] = [];
   const moved = new Set(changed);
+  // Every field that changes what a *report* makes of the row, not just its amount. Flipping a
+  // bill payment to INCOME leaves `billId` in place, so bill history and the assessment's bill
+  // accuracy would read an income row as that occurrence's payment; moving it to another category
+  // takes it out of the one the bill is filed under. Both are exactly the invisible consequence
+  // these warnings exist for, and listing only amount and date missed them.
+  const reclassified =
+    moved.has("amount") || moved.has("date") || moved.has("type") || moved.has("categoryId");
 
-  if (transaction.billId && (moved.has("amount") || moved.has("date"))) {
+  if (transaction.billId && reclassified) {
     warnings.push(
-      "This transaction settles a recurring bill. Changing its amount or date changes what bill payment history and bill accuracy report for that occurrence."
+      "This transaction settles a recurring bill. Changing its amount, date, type or category changes what bill payment history and bill accuracy report for that occurrence."
     );
   }
 
-  if (transaction.receiptBreakdown && moved.has("amount")) {
+  if (transaction.receiptBreakdown && (moved.has("amount") || moved.has("categoryId"))) {
     warnings.push(
-      "This transaction has a stored per-item receipt breakdown, which is left as it was and no longer adds up to the new amount."
+      "This transaction has a stored per-item receipt breakdown, which is left as it was and no longer matches the transaction."
     );
   }
 
-  if (transaction.receiptGroupId && moved.has("amount")) {
+  if (transaction.receiptGroupId && (moved.has("amount") || moved.has("categoryId"))) {
     warnings.push(
-      "This transaction is one of several split from a single receipt. The others were not touched, so the group no longer sums to the receipt total."
+      "This transaction is one of several split from a single receipt. The others were not touched, so the group no longer reflects the receipt as a whole."
+    );
+  }
+
+  for (const name of droppedLabels) {
+    // Reported per label and never inferred from `changed`: naming a label the row already has
+    // alongside one that does not fit produces no change at all, so this is the only signal that
+    // half the request went nowhere.
+    warnings.push(
+      `The label "${name}" was not applied, because it does not apply to ${transaction.type} transactions. Change the label's type in the app, or pick a different one.`
     );
   }
 
@@ -1168,15 +1185,11 @@ export const createBudgetMcpServer = ({
       const result = await updateTransactions({
         prisma,
         userId,
-        patches: transactions.map((t) => ({
-          ...t,
-          // Only when a date was actually sent. Spreading an undefined `date` through
-          // `resolveTransactionDate` would turn "leave the date alone" into "set it to now",
-          // silently re-dating every transaction whose amount was being corrected.
-          ...(t.date !== undefined && {
-            date: resolveTransactionDate(t.date, timezoneOffset),
-          }),
-        })),
+        // Passed through unresolved. `updateTransactions` resolves each date against the row it
+        // is editing, which is the only place that can keep a bare `YYYY-MM-DD` from overwriting
+        // the row's existing time-of-day with the current clock.
+        patches: transactions,
+        timezoneOffset,
         updatedVia: createdVia,
         updatedByMcpTokenId: tokenId ?? null,
         // Re-read at the moment of the write, exactly as the create path does, so "turn writes
@@ -1206,7 +1219,7 @@ export const createBudgetMcpServer = ({
         // restating what was already there is a success that changed nothing, and counting it
         // would have the caller report an edit the user will not find.
         updated: result.updated.filter((u) => u.changed.length > 0).length,
-        transactions: result.updated.map(({ transaction: t, changed, previous }) => ({
+        transactions: result.updated.map(({ transaction: t, changed, previous, droppedLabels }) => ({
           id: t.id,
           changed: [...changed],
           previous: {
@@ -1225,7 +1238,7 @@ export const createBudgetMcpServer = ({
           date: formatLocalDate(t.date, timezoneOffset),
           categoryName: t.category.name,
           labels: t.labels.map((l) => l.label.name),
-          warnings: editWarnings(t, changed),
+          warnings: editWarnings(t, changed, droppedLabels),
         })),
       };
 
