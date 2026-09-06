@@ -568,20 +568,39 @@ export const updateTransactions = async ({
         const labelIdsBefore = row.labels.map((l) => l.labelId).sort();
         const labelsMoved = [...labelIds].sort().join(" ") !== labelIdsBefore.join(" ");
 
-        await tx.transaction.update({
-          where: { id: patch.id },
-          data: {
-            ...(patch.amount !== undefined && { amount: patch.amount }),
-            ...(patch.description !== undefined && { description: patch.description }),
-            ...(patch.type !== undefined && { type }),
-            ...(patch.date !== undefined && {
-              date: resolvePatchDate(patch.date, row.date, timezoneOffset),
-            }),
-            ...(patch.categoryId !== undefined && { categoryId }),
-            updatedVia,
-            updatedByMcpTokenId,
-          },
+        const scalars = {
+          ...(patch.amount !== undefined && { amount: patch.amount }),
+          ...(patch.description !== undefined && { description: patch.description }),
+          ...(patch.type !== undefined && { type }),
+          ...(patch.date !== undefined && {
+            date: resolvePatchDate(patch.date, row.date, timezoneOffset),
+          }),
+          ...(patch.categoryId !== undefined && { categoryId }),
+        };
+
+        // Whether any scalar genuinely differs from what is stored. The keys the patch carried are
+        // not the question: the app's form posts every field on every save, so pressing Update
+        // with nothing edited names all five and moves none of them.
+        const scalarsMoved = Object.entries(scalars).some(([key, value]) => {
+          const current = row[key as keyof typeof row];
+          return value instanceof Date && current instanceof Date
+            ? value.getTime() !== current.getTime()
+            : value !== current;
         });
+
+        // Stamped only when the row actually moves. An unchanged row must keep the trail it has:
+        // opening the edit modal and pressing Update with no edits would otherwise rewrite
+        // `updated_via` to APP and null the token id, erasing a genuine MCP trail for something
+        // that never happened -- the same fabricated trail the bulk route goes out of its way not
+        // to write, and the reason this column exists at all.
+        const moved = scalarsMoved || labelsMoved;
+
+        if (moved || Object.keys(scalars).length > 0) {
+          await tx.transaction.update({
+            where: { id: patch.id },
+            data: { ...scalars, ...(moved && { updatedVia, updatedByMcpTokenId }) },
+          });
+        }
 
         // Replaced wholesale rather than diffed. `transaction_labels` holds nothing but the
         // pairing, so there is no per-row state a diff would preserve, and delete-then-create is

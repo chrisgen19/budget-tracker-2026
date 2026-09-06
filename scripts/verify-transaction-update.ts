@@ -325,6 +325,32 @@ async function main() {
     true
   );
 
+  // --- An edit that moves nothing leaves the trail alone ---
+
+  const untouched = await seed({ description: "Untouched" });
+  await callUpdate(client, [{ id: untouched.id, amount: 990 }]);
+  const stamped = await prisma.transaction.findUniqueOrThrow({ where: { id: untouched.id } });
+  check("the first edit stamped it", stamped.updatedVia, "MCP");
+
+  // The app's form posts every field on every save, so pressing Update with no edits names them
+  // all and moves none. Stamping on the request rather than on the change would rewrite this to
+  // APP and null the token id for something that never happened.
+  const noopRes = await fetch(`${BASE_URL}/api/transactions/${untouched.id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", cookie: `next-auth.session-token=${sessionToken}` },
+    body: JSON.stringify({
+      amount: 990,
+      description: "Untouched",
+      type: "EXPENSE",
+      date: stamped.date.toISOString(),
+      categoryId: stamped.categoryId,
+    }),
+  });
+  check("a no-op save still succeeds", noopRes.status, 200);
+  const afterNoop = await prisma.transaction.findUniqueOrThrow({ where: { id: untouched.id } });
+  check("a no-op save does not rewrite the trail", afterNoop.updatedVia, "MCP");
+  check("nor clears the token id", afterNoop.updatedByMcpTokenId, editToken.record.id);
+
   // --- A bulk edit in the app clears a stale MCP trail too ---
 
   const bulk = await seed({ description: "Bulk" });

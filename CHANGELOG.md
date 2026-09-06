@@ -108,6 +108,23 @@ categories the server saved that, filing income under an expense category; now i
 `useUpdateTransaction` surfaces a bare "Failed to update transaction". The server is right and the
 form should never have posted it, so it clears a category the selected type has left behind.
 
+**One branch decides the category for both paths.** Splitting create and edit across two branches
+of one effect got it wrong twice. Adding `watchedCategoryId` to the dependency array for the edit
+guard made the effect re-run on every category write, and the create branch above it still cleared
+unconditionally -- so tapping a category tile blanked it again, no tile ever highlighted, and **no
+transaction could be created** from the FAB, the dashboard or the transactions page. Every
+create-path test passed `initialData.categoryId`, which short-circuits that branch, so nothing
+caught it. Both paths ask one question now -- is this category still valid for the selected type --
+and differ only in the fallback.
+
+**The audit stamp follows the change, not the request.** The form posts every field on every save,
+so pressing Update with no edits names all five and moves none; stamping on the request rewrote
+`updated_via` to APP and nulled the token id, erasing a genuine MCP trail for something that never
+happened. That is the same fabricated trail the bulk route goes out of its way not to write, made
+by the code that added the column. Removing a single label from a transaction now stamps too, and
+the bulk category toast says "No categories changed" rather than "0 transactions updated" when a
+selection is already in the target category.
+
 **The form restores the category rather than only clearing it.** Clearing alone was wrong in both
 directions: toggling the type away and back demanded a category the user never removed, and a row
 whose category had been flipped underneath it was blocked from a typo fix that the server

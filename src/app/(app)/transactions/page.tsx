@@ -518,7 +518,15 @@ export default function TransactionsPage() {
       });
       setShowBulkCategory(false);
       clearSelection(true);
-      showToast(`${result.updated} transaction${result.updated === 1 ? "" : "s"} updated`);
+      // `updated` counts the rows whose category actually moved, so re-applying the category a
+      // selection already has reports zero rather than the size of the selection. Worded like the
+      // label branch below, which has always had this case: "0 transactions updated" reads as a
+      // failure, where nothing needing to change is a success.
+      if (result.updated === 0) {
+        showToast("No categories changed");
+      } else {
+        showToast(`${result.updated} transaction${result.updated === 1 ? "" : "s"} updated`);
+      }
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Failed to change category", "error");
     }

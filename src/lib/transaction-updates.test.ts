@@ -532,4 +532,64 @@ describe("updateTransactions", () => {
     });
     expect(await result).toEqual({ ok: false, reason: "WRITE_FAILED" });
   });
+
+  // --- The audit stamp follows the change, not the request (review round 5) ---
+
+  it("leaves the trail alone when nothing actually moved", async () => {
+    // The app's form posts every field on every save, so pressing Update with no edits names all
+    // five and moves none. Stamping on the request rather than the change rewrote `updated_via`
+    // to APP and nulled the token id, erasing a genuine MCP trail for something that never
+    // happened -- the fabricated trail the bulk route goes out of its way not to write.
+    const { stub, result } = run(
+      [
+        {
+          id: "tx_1",
+          amount: 250,
+          description: "Grab to office",
+          type: "EXPENSE",
+          categoryId: "cat_transport",
+        },
+      ],
+      { rows: [row({ updatedVia: "MCP", updatedByMcpTokenId: "tok_old" })] }
+    );
+    const r = await result;
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.updated[0].changed).toEqual([]);
+
+    const after = stub.store.get("tx_1")! as unknown as Record<string, unknown>;
+    expect(after.updatedVia).toBe("MCP");
+    expect(after.updatedByMcpTokenId).toBe("tok_old");
+  });
+
+  it("stamps as soon as one field does move", async () => {
+    const { stub, result } = run([{ id: "tx_1", amount: 320 }], {
+      rows: [row({ updatedVia: "MCP", updatedByMcpTokenId: "tok_old" })],
+    });
+    await result;
+
+    const after = stub.store.get("tx_1")! as unknown as Record<string, unknown>;
+    expect(after.updatedVia).toBe("MCP");
+    expect(after.updatedByMcpTokenId).toBe("tok_1");
+  });
+
+  it("stamps when only the labels moved", async () => {
+    // A label-only edit writes no scalar at all, so a stamp keyed on the scalar write would miss
+    // it and the row would keep naming whoever last touched its amount.
+    const { stub, result } = run([{ id: "tx_1", labelIds: [] }], {
+      rows: [
+        row({
+          updatedVia: "APP",
+          updatedByMcpTokenId: null,
+          labels: [{ labelId: "lab_work", label: { name: "Work", applicableTo: "BOTH" } }],
+        }),
+      ],
+    });
+    await result;
+
+    const after = stub.store.get("tx_1")! as unknown as Record<string, unknown>;
+    expect(after.updatedVia).toBe("MCP");
+    expect(after.updatedByMcpTokenId).toBe("tok_1");
+  });
 });
