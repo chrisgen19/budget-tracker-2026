@@ -287,6 +287,35 @@ describe("findUnlinkedBillPayments", () => {
       expect.objectContaining({ billDescription: "Meralco", count: 1, total: 5300 }),
     ]);
   });
+
+  /**
+   * A payment made before the bill existed settled no occurrence, because there
+   * were none. Someone who logged "Rent" by hand for two years and then created a
+   * Rent bill would otherwise be told, permanently, that two dozen payments
+   * skipped a schedule that did not yet exist.
+   *
+   * Not hypothetical: the SQL this replaced had no such guard, and the single
+   * finding it produced on real data was a February payment against a bill
+   * starting in March.
+   */
+  it("ignores a payment made before the bill existed", () => {
+    const b = bill({ startDate: new Date(Date.UTC(2026, 2, 17)) });
+    const rows = [
+      tx({ localDate: "2026-02-18", amount: 22_000, description: "Meralco" }),
+      tx({ localDate: "2026-03-17", amount: 22_000, description: "Meralco" }),
+    ];
+    const [found] = findUnlinkedBillPayments([b], rows);
+    expect(found.count).toBe(1);
+    expect(found.recentDates).toEqual(["2026-03-17"]);
+  });
+
+  it("counts a payment made on the bill's own start date", () => {
+    const b = bill({ startDate: new Date(Date.UTC(2026, 2, 17)) });
+    const rows = [tx({ localDate: "2026-03-17", amount: 22_000, description: "  MERALCO " })];
+    // Also pins the fold: the loader widens its query to `contains` precisely so a
+    // description carrying stray whitespace still reaches this matcher.
+    expect(findUnlinkedBillPayments([b], rows)[0].count).toBe(1);
+  });
 });
 
 describe("resolveFactsWindow", () => {
@@ -477,24 +506,23 @@ describe("missing income", () => {
 });
 
 describe("computeHeadline", () => {
-  const coverage = (months: string[], income: number, expenses: number) =>
-    months.map((month) => ({
-      month, label: month, daysLogged: 28, daysInMonth: 30, coveragePct: 93,
-      transactionCount: 30, income, expenses, status: "ok" as const,
-    }));
+  const trends = (months: Array<{ month: string; income: number; expenses: number }>) => ({
+    comparedMonth: months.at(-1)?.month ?? null,
+    comparedMonthLabel: null,
+    baselineMonths: months.map((m) => m.month),
+    movements: [],
+    monthlyNet: months.map((m) => ({ month: m.month, label: m.month, income: m.income, expenses: m.expenses, net: m.income - m.expenses })),
+    baselineSavingsRatePct: 25,
+    avgMonthlyBurn: months.length === 0 ? null : Math.round(months.reduce((a, m) => a + m.expenses, 0) / months.length),
+  });
 
-  it("averages rates over the trustworthy months only", () => {
-    const months = ["2026-04", "2026-05"];
-    const h = computeHeadline(
-      [...coverage(months, 40_000, 30_000), { month: "2026-07", label: "2026-07", daysLogged: 5, daysInMonth: 31, coveragePct: 16, transactionCount: 5, income: 0, expenses: 900, status: "low-coverage" as const }],
-      months,
-      { income: 500_000, expenses: 300_000 },
-    );
-    // The excluded month's 900 must not drag the burn down toward a figure
-    // nothing actually spent.
+  it("sums only the months the trends already vouched for", () => {
+    // `monthlyNet` carries the trustworthy months and nothing else, so an
+    // excluded month cannot drag the burn toward a figure nothing spent.
+    const h = computeHeadline(trends([{ month: "2026-04", income: 40_000, expenses: 30_000 }, { month: "2026-05", income: 40_000, expenses: 30_000 }]), { income: 500_000, expenses: 300_000 });
     expect(h.avgMonthlyBurn).toBe(30_000);
-    expect(h.savingsRatePct).toBe(25);
     expect(h.months).toBe(2);
+    expect(h.net).toBe(20_000);
   });
 
   /**
@@ -502,19 +530,29 @@ describe("computeHeadline", () => {
    * is a different number answering a different question.
    */
   it("takes the balance from all history, not the window", () => {
-    const h = computeHeadline(coverage(["2026-04"], 40_000, 30_000), ["2026-04"], { income: 500_000, expenses: 300_000 });
+    const h = computeHeadline(trends([{ month: "2026-04", income: 40_000, expenses: 30_000 }]), { income: 500_000, expenses: 300_000 });
     expect(h.runningBalance).toBe(200_000);
     expect(h.monthsOfRunway).toBe(6.7);
   });
 
+  /**
+   * A balance nobody supplied and a balance of nothing render identically, and
+   * one of them is a figure the report invented.
+   */
+  it("reports an unsupplied balance as null, never as zero", () => {
+    const h = computeHeadline(trends([{ month: "2026-04", income: 40_000, expenses: 30_000 }]), null);
+    expect(h.runningBalance).toBeNull();
+    expect(h.monthsOfRunway).toBeNull();
+  });
+
   it("reports no runway rather than a negative month count", () => {
-    const h = computeHeadline(coverage(["2026-04"], 10_000, 30_000), ["2026-04"], { income: 10_000, expenses: 50_000 });
+    const h = computeHeadline(trends([{ month: "2026-04", income: 10_000, expenses: 30_000 }]), { income: 10_000, expenses: 50_000 });
     expect(h.runningBalance).toBe(-40_000);
     expect(h.monthsOfRunway).toBeNull();
   });
 
   it("reports no runway when nothing was spent to measure a pace against", () => {
-    expect(computeHeadline([], [], { income: 100, expenses: 0 }).monthsOfRunway).toBeNull();
+    expect(computeHeadline(trends([]), { income: 100, expenses: 0 }).monthsOfRunway).toBeNull();
   });
 });
 
@@ -538,13 +576,34 @@ describe("assessBillAccuracy monthly series", () => {
     const b = assessBillAccuracy(bill({
       amount: 5500,
       payments: [
+        // Paid 31 August against a 1 September occurrence: September's bill.
         { id: "p0", date: new Date(Date.UTC(2026, 7, 31)), amount: 14000 },
-        { id: "p1", date: new Date(Date.UTC(2026, 8, 15)), amount: 5300 },
-        { id: "p2", date: new Date(Date.UTC(2026, 9, 15)), amount: 6000 },
+        { id: "p1", date: new Date(Date.UTC(2026, 9, 15)), amount: 5300 },
+        { id: "p2", date: new Date(Date.UTC(2026, 10, 15)), amount: 6000 },
       ],
       occurrences: [{ dueDate: new Date(Date.UTC(2026, 8, 1)), status: "PAID", transactionId: "p0", snoozeUntil: null }],
     }), -480);
     expect(b.monthlySeries.find((m) => m.amount === 14000)?.month).toBe("2026-09");
+    expect(b.monthlySeries.some((m) => m.month === "2026-08")).toBe(false);
+  });
+
+  /**
+   * A bill settled in two instalments produced two entries for one month, which
+   * `scripts/assess.ts` printed as "Sep 5990  Sep 4200" — reading as two months,
+   * the opposite of what a series showing seasonal shape is for.
+   */
+  it("sums a period settled in more than one payment", () => {
+    const b = assessBillAccuracy(bill({
+      amount: 5500,
+      payments: [
+        { id: "p0", date: new Date(Date.UTC(2026, 8, 5)), amount: 5990 },
+        { id: "p1", date: new Date(Date.UTC(2026, 8, 20)), amount: 4200 },
+        { id: "p2", date: new Date(Date.UTC(2026, 9, 15)), amount: 14000 },
+      ],
+    }), -480);
+    expect(b.monthlySeries.filter((m) => m.month === "2026-09")).toEqual([
+      { month: "2026-09", label: "Sep 2026", amount: 10_190 },
+    ]);
   });
 
   it("leaves the series empty for a fixed bill — seven copies of one number is noise", () => {

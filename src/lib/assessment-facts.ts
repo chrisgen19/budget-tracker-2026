@@ -410,32 +410,42 @@ export const computeTrends = (
 /**
  * The figures that come before the detail.
  *
- * Rates read only the trustworthy months, so a logging gap cannot flatter the
- * savings rate. The balance deliberately does not: it is every row the user has,
- * because what an account holds is not a property of the window being assessed.
+ * Reads `computeTrends`' output rather than recomputing the same sums from the
+ * coverage rows twelve lines away. Two copies of one piece of arithmetic is the
+ * drift this whole module exists to remove, and it would be a poor place to
+ * reintroduce it.
+ *
+ * The balance is the exception to the coverage gate: rates and the burn average
+ * over trustworthy months so a logging gap cannot flatter them, but what an
+ * account holds is not a property of the window being assessed. Unknown is
+ * `null`, never zero -- a fabricated balance is the one figure a report about
+ * money must not print.
  */
 export const computeHeadline = (
-  coverage: AssessmentMonthCoverage[],
-  trustworthy: string[],
-  allTime: { income: number; expenses: number },
+  trends: AssessmentTrendFacts,
+  allTime: { income: number; expenses: number } | null,
 ): AssessmentHeadline => {
-  const trusted = coverage.filter((m) => trustworthy.includes(m.month));
-  const income = sum(trusted.map((m) => m.income));
-  const expenses = sum(trusted.map((m) => m.expenses));
-  const burn = trusted.length === 0 ? null : expenses / trusted.length;
-  const runningBalance = allTime.income - allTime.expenses;
+  const income = sum(trends.monthlyNet.map((m) => m.income));
+  const expenses = sum(trends.monthlyNet.map((m) => m.expenses));
+  const burn = trends.avgMonthlyBurn;
+  const runningBalance = allTime === null ? null : round(allTime.income - allTime.expenses);
 
   return {
-    months: trusted.length,
+    months: trends.monthlyNet.length,
     income: round(income),
     expenses: round(expenses),
     net: round(income - expenses),
-    savingsRatePct: pct(income - expenses, income),
-    avgMonthlyBurn: burn === null ? null : round(burn),
-    runningBalance: round(runningBalance),
-    // A negative balance has no runway to speak of, and dividing it yields a
+    savingsRatePct: trends.baselineSavingsRatePct,
+    avgMonthlyBurn: burn,
+    runningBalance,
+    // What the balance covers if income stopped -- the ordinary meaning of
+    // runway, and why it divides by gross spending rather than by net. A balance
+    // already under water has no runway to report, and dividing it yields a
     // negative month count that reads as a figure rather than as a warning.
-    monthsOfRunway: burn === null || burn <= 0 || runningBalance <= 0 ? null : Math.round((runningBalance / burn) * 10) / 10,
+    monthsOfRunway:
+      runningBalance === null || runningBalance <= 0 || burn === null || burn <= 0
+        ? null
+        : Math.round((runningBalance / burn) * 10) / 10,
   };
 };
 
@@ -700,12 +710,19 @@ export const findMissedOccurrences = (
  */
 const paymentSeries = (bill: FactBill, timezoneOffset: number): AssessmentBillAccuracy["monthlySeries"] => {
   const samples = buildEstimateSamples(bill.payments, bill.occurrences.filter((o) => o.status === "PAID"), timezoneOffset);
-  return samples
-    .map((sample) => {
-      const month = `${sample.year}-${String(sample.month).padStart(2, "0")}`;
-      return { month, label: monthLabel(month), amount: round(sample.amount) };
-    })
-    .sort((a, b) => a.month.localeCompare(b.month));
+  // Summed per period, not listed per payment. A bill settled in two instalments
+  // yields two samples for one month, and printing them side by side reads as two
+  // months -- "Sep 5990  Sep 4200" -- which is the opposite of what a series
+  // showing seasonal shape is for. What the period cost is the sum of what was
+  // paid against it.
+  const byMonth = new Map<string, number>();
+  for (const sample of samples) {
+    const month = `${sample.year}-${String(sample.month).padStart(2, "0")}`;
+    byMonth.set(month, (byMonth.get(month) ?? 0) + sample.amount);
+  }
+  return [...byMonth.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, amount]) => ({ month, label: monthLabel(month), amount: round(amount) }));
 };
 
 /** Budgeted against actually paid, with `swing` separating a metered bill from a wrong figure. */
@@ -775,6 +792,13 @@ export const findUnlinkedBillPayments = (
     if (t.type !== "EXPENSE" || t.billId !== null) continue;
     const bill = byName.get(foldDescription(t.description));
     if (!bill) continue;
+    // A payment made before the bill existed settled no occurrence because there
+    // were none: someone logging "Rent" by hand for two years and then creating a
+    // Rent bill would otherwise be told, permanently, that two dozen payments
+    // skipped a schedule that did not yet exist. The SQL this replaced had the
+    // same fault, and the one finding it produced on real data -- a February
+    // payment against a bill starting in March -- was exactly this false positive.
+    if (t.localDate < utcDayKey(bill.startDate)) continue;
     const g = hits.get(bill.id) ?? { bill, rows: [] };
     g.rows.push(t);
     hits.set(bill.id, g);
@@ -1115,7 +1139,7 @@ export const buildAssessmentFacts = (input: FactsInput): AssessmentFacts => {
   const trends = computeTrends(transactions, confidence.months, confidence.trustworthyMonths, period);
   const recurring = computeRecurring(transactions, today, trends.avgMonthlyBurn, input.historyFirstSeen);
   const hygiene = computeHygiene(transactions, confidence.trustworthyMonths, period);
-  const headline = computeHeadline(confidence.months, confidence.trustworthyMonths, input.allTimeTotals ?? { income: 0, expenses: 0 });
+  const headline = computeHeadline(trends, input.allTimeTotals ?? null);
   // Falls back to the window when the caller supplies no wider set, so a test or
   // a caller that has only the window still gets an answer -- a narrower one,
   // never a wrong one.

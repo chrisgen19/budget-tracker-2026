@@ -268,8 +268,16 @@ const buildFactsDigest = (f: AssessmentFacts): string =>
       misbudgeted: f.bills.accuracy
         .filter((b) => b.verdict !== "ok" && b.verdict !== "no-payments")
         .slice(0, 6)
-        .map((b) => ({ bill: b.description, verdict: b.verdict, variancePct: b.variancePct, swing: b.swing, payments: b.payments })),
-      paidOutsideTheBill: f.bills.unlinkedPayments.map((u) => ({ bill: u.billDescription, count: u.count })),
+        .map((b) => ({
+          bill: b.description, verdict: b.verdict, variancePct: b.variancePct, swing: b.swing, payments: b.payments,
+          // The seasonal shape is the finding for a metered bill: "which months
+          // run high" is the only useful answer where no constant is right.
+          costByMonth: b.monthlySeries.map((m) => `${m.label} ${Math.round(m.amount)}`),
+        })),
+      // Counted across the user's WHOLE history, not this period -- the finding is
+      // that the schedule stalled, which does not expire. Never describe these as
+      // having happened "this period".
+      paidOutsideTheBillEverSinceItWasCreated: f.bills.unlinkedPayments.map((u) => ({ bill: u.billDescription, count: u.count })),
       dueInNext14Days: { count: f.bills.dueSoonCount, totalIsEstimate: f.bills.dueSoonIsEstimate },
     },
     trends: {
@@ -340,7 +348,9 @@ HOW TO READ THE FINDINGS:
   budgeted figure is genuinely right for part of the year. Do NOT tell the user to correct it, and
   do not report it as "X% over budget"; say which months run high instead. \`under-budgeted\` and
   \`over-budgeted\` are real misconfigurations and should be named as such.
-- \`bills.paidOutsideTheBill\`: paid without going through the bill, so the schedule never advanced.
+- \`bills.paidOutsideTheBillEverSinceItWasCreated\`: paid without going through the bill, so the schedule
+  never advanced. These counts span the bill's whole life, NOT the assessed period -- never write
+  that they happened "this period" or "this month".
 - \`dataQuality.unlabeledFromBills\`: bill payments bypass label auto-apply. That is the app's
   behaviour, not the user's carelessness -- attribute it honestly and never lecture about it.
 - A bill marked isEstimate (or a total marked totalIsEstimate) is derived from past payments, not a

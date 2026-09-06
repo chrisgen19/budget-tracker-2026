@@ -98,7 +98,7 @@ const printBills = (f: AssessmentFacts, currency: string) => {
     }
   }
 
-  h2("paid outside the bill, so the schedule never advanced (all history)");
+  h2("paid outside the bill since it was created, so the schedule never advanced (all history)");
   if (f.bills.unlinkedPayments.length === 0) none();
   for (const u of f.bills.unlinkedPayments) {
     console.log(`  ${u.billDescription}: ${u.count} payment(s), ${money(u.total, currency)}, most recent ${u.recentDates.join(", ")}`);
@@ -200,9 +200,24 @@ async function main() {
   printAnomalies(facts, user.currency);
 }
 
-main()
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  })
-  .finally(() => prisma.$disconnect());
+/**
+ * `main().catch(...).finally(() => prisma.$disconnect())` leaves the promise the
+ * `finally` callback returns unawaited, so a disconnect that rejects -- a pooler
+ * dropping the connection -- becomes an unhandled rejection with nothing left to
+ * catch it. Same shape as `check-migration-drift.ts` and
+ * `reconcile-migration-checksums.ts`.
+ */
+const run = async () => {
+  let code = 1;
+  try {
+    await main();
+    code = 0;
+  } catch (error) {
+    console.error("[assess] failed:", error instanceof Error ? error.message : error);
+  } finally {
+    await prisma.$disconnect().catch(() => {});
+  }
+  process.exit(code);
+};
+
+run();

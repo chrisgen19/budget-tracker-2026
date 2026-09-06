@@ -63,13 +63,16 @@ export function MissedBillsCard({ bills, fmt }: { bills: AssessmentBillFacts; fm
         <div className="mt-4 pt-3 border-t border-cream-200/70">
           <div className="flex items-center gap-2 mb-2">
             <Link2Off className="w-3.5 h-3.5 text-warm-400" />
-            <p className="text-[11px] font-medium tracking-wider text-warm-400 uppercase">Paid outside the bill</p>
+            <p className="text-[11px] font-medium tracking-wider text-warm-400 uppercase">
+              Paid outside the bill · all history
+            </p>
           </div>
           <ul className="space-y-1.5">
             {unlinkedPayments.map((u) => (
               <li key={u.billId} className="text-sm text-warm-500">
                 <span className="font-medium text-warm-700">{u.billDescription}</span> — {u.count} payment
-                {u.count > 1 ? "s" : ""} ({fmt(u.total)}) recorded by hand, so the schedule never advanced.
+                {u.count > 1 ? "s" : ""} ({fmt(u.total)}) recorded by hand since the bill was created, so the
+                schedule never advanced. Dates: {u.recentDates.join(", ")}.
               </li>
             ))}
           </ul>
@@ -114,6 +117,11 @@ export function BillAccuracyCard({ bills, fmt }: { bills: AssessmentBillFacts; f
                 {b.variancePct !== null && ` · average ${b.variancePct > 0 ? "+" : ""}${b.variancePct}%`}
               </p>
               <p className="text-sm text-warm-500 mt-1">{copy.note}</p>
+              {b.monthlySeries.length > 0 && (
+                <p className="text-[11px] text-warm-400 mt-1.5 overflow-x-auto whitespace-nowrap">
+                  {b.monthlySeries.map((m) => `${m.label.split(" ")[0]} ${fmt(m.amount)}`).join("  ·  ")}
+                </p>
+              )}
             </li>
           );
         })}

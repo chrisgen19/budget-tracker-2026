@@ -567,9 +567,15 @@ export interface AssessmentHeadline {
   net: number;
   savingsRatePct: number | null;
   avgMonthlyBurn: number | null;
-  /** Every income minus every expense, across the user's whole history. */
-  runningBalance: number;
-  /** How many months of typical spending the balance covers, or null with no burn. */
+  /**
+   * Every income minus every expense, across the user's whole history.
+   *
+   * Null when the caller did not supply all-time totals. Deliberately not zero:
+   * a balance of nothing and a balance nobody asked for render identically, and
+   * one of them is a figure this report invented.
+   */
+  runningBalance: number | null;
+  /** Months of typical spending the balance covers **if income stopped**. Null when unknowable. */
   monthsOfRunway: number | null;
 }
 
