@@ -3,13 +3,15 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import type { CSSProperties } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronLeft, ChevronRight, Check, Clock, FastForward, Pencil, ChevronUp, CheckCheck, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, Clock, CalendarX, Pencil, ChevronUp, CheckCheck, X } from "lucide-react";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { cn, formatCurrency } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import { useBillReminders } from "@/components/bills/bill-reminder-provider";
+import { formatBillDate } from "@/lib/bill-utils";
+import type { PendingReminder } from "@/types";
 import {
   BILL_BANNER_BASE_DESKTOP_REM,
   BILL_BANNER_BASE_REM,
@@ -61,6 +63,12 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
 
   const [showSnoozeMenu, setShowSnoozeMenu] = useState(false);
   const [confirmPayAll, setConfirmPayAll] = useState(false);
+  // Skipping writes a permanent record asserting the month was not paid, and
+  // the button sits beside a dismiss control that writes nothing. Two records
+  // of a bill that *had* been paid were produced this way (#221), so the
+  // consequence is stated before it is written -- and the dialog names the
+  // alternative, which is what neither person had reason to look for.
+  const [confirmSkip, setConfirmSkip] = useState<PendingReminder | null>(null);
   const snoozeRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
 
@@ -332,13 +340,17 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
                 </AnimatePresence>
               </div>
 
+              {/* "Didn't pay", not "Skip": the label now names the record that
+                  gets written rather than what happens to the banner. A
+                  fast-forward icon said "move past this", which is the ✕ beside
+                  it -- that one is temporary and writes nothing. */}
               <button
-                onClick={() => handleSkip(reminder)}
+                onClick={() => setConfirmSkip(reminder)}
                 disabled={isActioning || payAllProgress !== null}
                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cream-100 text-warm-400 hover:bg-cream-200 text-xs font-medium transition-colors disabled:opacity-50"
               >
-                <FastForward className="w-3 h-3" />
-                Skip
+                <CalendarX className="w-3 h-3" />
+                Didn&apos;t pay
               </button>
             </div>
           </div>
@@ -346,6 +358,33 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
       </motion.div>
       )}
     </AnimatePresence>
+
+    <ConfirmModal
+      open={confirmSkip !== null}
+      onClose={() => setConfirmSkip(null)}
+      onConfirm={() => {
+        const r = confirmSkip;
+        setConfirmSkip(null);
+        if (r) handleSkip(r);
+      }}
+      title="Record this month as unpaid?"
+      confirmLabel="Yes, it wasn't paid"
+      confirmIcon={CalendarX}
+      loading={isActioning}
+      message={
+        <>
+          <span className="block">
+            {confirmSkip?.scheduledTransaction.description || "This bill"} will be recorded as
+            <strong> not paid</strong> for {formatBillDate(confirmSkip?.dueDate ?? new Date())},
+            and the bill moves on to its next due date.
+          </span>
+          <span className="block mt-2">
+            Already paid it outside the app? Use <strong>Pay &amp; Edit</strong> instead, or
+            attach the payment later from the bill&apos;s history.
+          </span>
+        </>
+      }
+    />
 
     <ConfirmModal
       open={confirmPayAll}
