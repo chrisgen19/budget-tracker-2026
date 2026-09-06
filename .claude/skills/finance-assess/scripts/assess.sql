@@ -145,9 +145,15 @@ from l;
 
 \qecho ''
 \qecho '=== 3. BILL ACCURACY (budgeted vs actually paid) ==='
+-- `swing` is max/min across the bill's own payments. Variance alone reads as
+-- "this figure is misconfigured", which is the wrong story for a metered bill:
+-- a budgeted amount can be exactly right for half the year and hopeless for the
+-- other half. Swing separates the two cases, so read it before variance_pct.
 select s.description bill, round(s.amount::numeric) budgeted,
        count(t.id) payments, round(avg(t.amount)::numeric) avg_paid,
-       round(max(t.amount)::numeric) worst,
+       round(min(t.amount)::numeric) lowest,
+       round(max(t.amount)::numeric) highest,
+       round((max(t.amount) / nullif(min(t.amount), 0))::numeric, 1) swing,
        case when count(t.id) = 0 then null
             else round(100.0 * (avg(t.amount)::numeric - s.amount::numeric) / nullif(s.amount::numeric, 0)) end variance_pct
 from scheduled_transactions s
@@ -155,6 +161,33 @@ from scheduled_transactions s
 where s.user_id = (select id from me) and s.is_active
 group by s.id, s.description, s.amount
 order by abs(coalesce(avg(t.amount), s.amount) - s.amount) desc;
+
+\qecho ''
+\qecho '--- bills that vary (swing 2x+): no single figure describes these ---'
+-- Months are printed rather than seasons: which months run hot depends on the
+-- hemisphere and the household, and a tool that assumed Apr-Aug would be wrong
+-- for half the world. The shape is legible from the series itself.
+with pay as (
+  select s.id, s.description, s.amount budgeted,
+         to_char(t.date - (select tz from me) * interval '1 minute', 'Mon') mon,
+         date_part('month', t.date - (select tz from me) * interval '1 minute') monthno,
+         t.amount
+  from scheduled_transactions s
+    join transactions t on t.bill_id = s.id
+  where s.user_id = (select id from me) and s.is_active
+),
+varying as (
+  select id from pay group by id
+  having count(*) >= 3 and max(amount) / nullif(min(amount), 0) >= 2
+)
+select p.description bill, round(p.budgeted::numeric) budgeted,
+       string_agg(p.mon || ' ' || round(p.amount::numeric), '  ' order by p.monthno) by_month,
+       round(avg(p.amount) filter (where p.amount >= (select avg(amount) from pay q where q.id = p.id))::numeric) high_avg,
+       round(avg(p.amount) filter (where p.amount <  (select avg(amount) from pay q where q.id = p.id))::numeric) low_avg
+from pay p
+where p.id in (select id from varying)
+group by p.id, p.description, p.budgeted
+order by p.description;
 
 \qecho ''
 \qecho '--- payments matching a bill name but NOT linked to it (paid outside the bill) ---'
