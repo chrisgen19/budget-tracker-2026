@@ -128,19 +128,61 @@ const parseLocalDay = (day: string, tzOffset: number, endOfDay: boolean): Date =
   return new Date(base + tzOffset * 60 * 1000);
 };
 
+/** Calendar days in a "YYYY-MM" month. Day 0 of the next month is the last day of this one. */
+const daysInMonth = (month: string): number => {
+  const [year, m] = month.split("-").map(Number);
+  return new Date(Date.UTC(year, m, 0)).getUTCDate();
+};
+
+/** Whole days from `a` to `b`, both YYYY-MM-DD. Negative when `b` precedes `a`. */
+const daysBetween = (a: string, b: string): number => {
+  const parse = (d: string) => {
+    const [y, m, day] = d.split("-").map(Number);
+    return Date.UTC(y, m - 1, day);
+  };
+  return Math.round((parse(b) - parse(a)) / 86400000);
+};
+
+/**
+ * How much of a window has actually happened, in the user's own calendar.
+ *
+ * Separated from the bounds themselves because it is the only part that depends on *now*.
+ * Every figure a period-taking query returns is a subtotal while `isPartial` holds, and until
+ * #236 nothing in any payload said which of the two it was -- so a running month and a finished
+ * one were reported in the same shape, and the caller had no way to tell them apart.
+ *
+ * An open end counts as partial: a window that runs to now has not finished by definition.
+ */
+const describeCompleteness = (
+  from: string | null,
+  to: string | null,
+  tzOffset: number
+): Pick<ResolvedPeriod, "isPartial" | "daysInPeriod" | "daysElapsed"> => {
+  const today = dayKey(toLocal(new Date(), tzOffset));
+
+  return {
+    isPartial: to === null || to >= today,
+    daysInPeriod: from && to ? daysBetween(from, to) + 1 : null,
+    // Clipped at both ends: never past the window's own last day, and never below zero for a
+    // window that has not started. `to` open means the window runs to today.
+    daysElapsed: from
+      ? Math.max(0, daysBetween(from, to && to < today ? to : today) + 1)
+      : null,
+  };
+};
+
 /** A month as both the instants to filter on and the local days to echo back. */
 const describeMonth = (
   month: string,
   tzOffset: number
 ): { range: DateRange; period: ResolvedPeriod } => {
   const range = parseMonth(month, tzOffset);
+  const from = dayKey(toLocal(range.startDate, tzOffset));
+  const to = dayKey(toLocal(range.endDate, tzOffset));
+
   return {
     range,
-    period: {
-      month,
-      from: dayKey(toLocal(range.startDate, tzOffset)),
-      to: dayKey(toLocal(range.endDate, tzOffset)),
-    },
+    period: { month, from, to, ...describeCompleteness(from, to, tzOffset) },
   };
 };
 
@@ -178,7 +220,12 @@ const resolvePeriod = (
 
   return {
     range: { startDate, endDate },
-    period: { month: null, from: from ?? null, to: to ?? null },
+    period: {
+      month: null,
+      from: from ?? null,
+      to: to ?? null,
+      ...describeCompleteness(from ?? null, to ?? null, tzOffset),
+    },
   };
 };
 
@@ -360,11 +407,21 @@ export const getMonthlySummary = async (
       .filter((t) => t.type === "EXPENSE")
       .reduce((sum, t) => sum + t.amount, 0);
 
+    // A running month reported in the same shape as a finished one is how "September 19,121"
+    // came to sit beside "August 82,123" as though spending had collapsed (#236). The row now
+    // says which it is, and how far through.
+    const monthDays = daysInMonth(key);
+    const elapsed = describeCompleteness(`${key}-01`, `${key}-${String(monthDays).padStart(2, "0")}`, tz);
+
     result.push({
       month: monthLabel,
+      monthKey: key,
       income,
       expenses,
       net: income - expenses,
+      isPartial: elapsed.isPartial,
+      daysInMonth: monthDays,
+      daysElapsed: elapsed.daysElapsed ?? 0,
     });
   }
 
@@ -372,7 +429,36 @@ export const getMonthlySummary = async (
 };
 
 /**
+ * The window to compare one month over, clipped to `throughDay` when the month is still running.
+ *
+ * Returned as `from`/`to` rather than as a month so both sides go through one code path: a bare
+ * month always means the whole of it, and the clip has to be expressible on the comparison month
+ * too, which is finished.
+ *
+ * `throughDay` is clamped to the month's own length, because February has no 30th and
+ * `parseLocalDay` correctly refuses one. Clamping rather than erroring matches
+ * `assessment-facts.ts`, where a day-of-month filter simply leaves a shorter month contributing
+ * the days it has.
+ */
+const clipMonthTo = (month: string, throughDay: number | null): PeriodParams => {
+  if (throughDay === null) return { month };
+  const lastDay = Math.min(throughDay, daysInMonth(month));
+  return { from: `${month}-01`, to: `${month}-${String(lastDay).padStart(2, "0")}` };
+};
+
+/**
  * Compare spending between two months, broken down by category.
+ *
+ * When `currentMonth` is the month still in progress, **both sides are clipped to the same day
+ * of the month** and `throughDay` reports which. Comparing a part-month against a whole one is
+ * not a comparison, and it fails in a specific, reassuring direction rather than randomly:
+ * spending is front-loaded, rent and the utilities land in the first week, so every category
+ * that has not been paid yet reads as a saving. On 2026-09-07 this tool reported a 77% fall in
+ * total spending and a 100% fall in Housing, when the same seven days of August came to 15,883
+ * against September's 19,121 -- a 20% *rise*, with the rent merely not yet due (#236).
+ *
+ * Only the current month is clipped. Two finished months are compared whole, which is what the
+ * caller asked for and what the figures support.
  */
 export const getSpendingTrends = async (
   prisma: PrismaClient,
@@ -380,9 +466,22 @@ export const getSpendingTrends = async (
   params: SpendingTrendsParams
 ): Promise<SpendingTrends> => {
   const tz = params.timezoneOffset ?? 0;
+
+  // Only ever set for the month in progress. A future month is left unclipped: it has no rows,
+  // and clipping to day 0 would be meaningless rather than merely empty.
+  const localToday = toLocal(new Date(), tz);
+  const throughDay =
+    monthKey(localToday) === params.currentMonth &&
+    localToday.getUTCDate() < daysInMonth(params.currentMonth)
+      ? localToday.getUTCDate()
+      : null;
+
+  const currentWindow = clipMonthTo(params.currentMonth, throughDay);
+  const previousWindow = clipMonthTo(params.previousMonth, throughDay);
+
   const [currentSpending, previousSpending] = await Promise.all([
-    getSpendingByCategory(prisma, userId, { month: params.currentMonth, timezoneOffset: tz }),
-    getSpendingByCategory(prisma, userId, { month: params.previousMonth, timezoneOffset: tz }),
+    getSpendingByCategory(prisma, userId, { ...currentWindow, timezoneOffset: tz }),
+    getSpendingByCategory(prisma, userId, { ...previousWindow, timezoneOffset: tz }),
   ]);
 
   const currentTotal = currentSpending.reduce((sum, c) => sum + c.amount, 0);
@@ -419,6 +518,9 @@ export const getSpendingTrends = async (
         ? Math.round((totalChange / previousTotal) * 100)
         : null,
     byCategory,
+    throughDay,
+    currentPeriod: describePeriodOrCurrentMonth(currentWindow, tz),
+    previousPeriod: describePeriodOrCurrentMonth(previousWindow, tz),
   };
 };
 
@@ -447,6 +549,15 @@ export const searchTransactions = async (
 
   if (params.categoryId) {
     where.categoryId = params.categoryId;
+  }
+
+  // Re-reading known rows by id. Added instead of a `get_transaction` tool: this already returns
+  // everything such a tool would, plus the totals, so a second tool would be a narrower copy of
+  // one that exists -- and every extra tool is advertised to every token that holds the scope.
+  // An empty array is ignored rather than matching nothing: `in: []` returns zero rows, which
+  // reads exactly like "no such transaction" for a caller that simply had nothing to pass.
+  if (params.ids && params.ids.length > 0) {
+    where.id = { in: params.ids };
   }
 
   if (params.createdVia) {
