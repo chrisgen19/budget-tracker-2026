@@ -79,6 +79,7 @@ const makePrisma = (options: StubOptions = {}) => {
   const logWrites: Record<string, unknown>[] = [];
   const billLabelWrites: Record<string, unknown>[] = [];
   let deletedBillLabels = 0;
+  let locks = 0;
 
   const client = {
     scheduledTransaction: {
@@ -179,7 +180,10 @@ const makePrisma = (options: StubOptions = {}) => {
         mcpWritesEnabledUntil: new Date(Date.now() + 60_000),
       })),
     },
-    $queryRaw: vi.fn(async () => [{ next_due_date: bill.nextDueDate }]),
+    $queryRaw: vi.fn(async () => {
+      locks += 1;
+      return [{ next_due_date: bill.nextDueDate }];
+    }),
     $transaction: vi.fn(async (arg: unknown) =>
       Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => unknown)(client)
     ),
@@ -192,6 +196,7 @@ const makePrisma = (options: StubOptions = {}) => {
     logWrites,
     billLabelWrites,
     deletedBillLabels: () => deletedBillLabels,
+    locks: () => locks,
   };
 };
 
@@ -598,6 +603,24 @@ describe("settleBill — skipping and snoozing", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  /**
+   * The replay guard has to run behind the row lock, not ahead of the transaction.
+   *
+   * Read outside it the check is only advisory: two overlapping retries both see no live snooze
+   * before either insert commits, and both write one -- so `pay_bill` still would not satisfy its
+   * `idempotentHint` under concurrent retries, which is the whole claim the guard exists to make
+   * good. A stub cannot run two transactions at once, so what is pinned is the lock being taken.
+   */
+  it("takes the bill lock before deciding whether to write a snooze", async () => {
+    const { client, locks, logWrites } = makePrisma();
+
+    const result = await settle(client, { action: "snooze", snoozeDays: 1 });
+
+    expect(result.ok).toBe(true);
+    expect(logWrites).toHaveLength(1);
+    expect(locks()).toBe(1);
   });
 
   /** Every other branch re-reads the lease inside its transaction; this one used to skip it, so

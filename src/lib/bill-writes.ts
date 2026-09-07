@@ -232,11 +232,14 @@ export const settleBill = async ({
   const originalStartDay = bill.startDate.getUTCDate();
 
   /**
-   * Every log this occurrence already carries, read once.
+   * Every log this occurrence already carries.
    *
-   * Serves three questions below -- is this date an occurrence at all, is it already settled, and
-   * is there a live snooze to replay -- and the double-settle guard re-reads it under the row lock
-   * where the answer has to be race-free.
+   * Read for one question only: whether this date is an occurrence at all, where a date the
+   * schedule no longer produces is still settleable if it was settled under an older one. That
+   * answer cannot change under a concurrent write, so it needs no lock.
+   *
+   * Everything that decides whether to *write* -- the double-settle guard, the snooze replay --
+   * re-reads inside its own transaction behind the row lock, where the answer has to be race-free.
    */
   const existingLogs = await prisma.scheduledTransactionLog.findMany({
     where: { scheduledTransactionId: bill.id, dueDate },
@@ -552,28 +555,27 @@ export const settleBill = async ({
      * expired is a fresh decision the user is entitled to make, and collapsing it into the old one
      * would silently refuse them.
      */
-    const live = existingLogs.find(
-      (log) => log.status === "SNOOZED" && log.snoozeUntil !== null && log.snoozeUntil > today,
-    );
-    if (live?.snoozeUntil) {
-      return {
-        ok: true,
-        action,
-        billId,
-        transactionId: null,
-        amountPaid: null,
-        nextDueDate: null,
-        deactivated: false,
-        snoozeUntil: live.snoozeUntil,
-        warnings: [],
-        replayed: true,
-      };
-    }
+    const liveSnooze = (logs: { status: string; snoozeUntil: Date | null }[]) =>
+      logs.find(
+        (log) => log.status === "SNOOZED" && log.snoozeUntil !== null && log.snoozeUntil > today,
+      )?.snoozeUntil ?? null;
 
-    // In a transaction for the lease re-check alone, which every other branch performs and this one
-    // used to skip -- so switching writes off mid-request stopped a payment and not a snooze.
+    // In a transaction for the lease re-check every other branch performs, and for the row lock
+    // that makes the guard above race-free. Read outside a transaction the check is only advisory:
+    // two overlapping retries both see no live snooze before either insert commits, and both write
+    // one. The lock is the transaction's FIRST statement, as everywhere else here -- the log insert
+    // takes FOR KEY SHARE through its foreign key, so upgrading to FOR UPDATE afterwards deadlocks.
     const deferred = await prisma.$transaction(async (tx) => {
+      await lockBill(tx);
       if (assertStillPermitted && !(await assertStillPermitted(tx))) return "not-permitted" as const;
+
+      const alreadyDeferred = liveSnooze(
+        await tx.scheduledTransactionLog.findMany({
+          where: { scheduledTransactionId: bill.id, dueDate },
+          select: { status: true, snoozeUntil: true },
+        }),
+      );
+      if (alreadyDeferred) return { replayedUntil: alreadyDeferred };
 
       await tx.scheduledTransactionLog.create({
         data: {
@@ -589,6 +591,21 @@ export const settleBill = async ({
     }, SETTLE_TX_OPTIONS);
 
     if (deferred === "not-permitted") return { ok: false, reason: "NO_LONGER_PERMITTED" };
+
+    if (typeof deferred === "object") {
+      return {
+        ok: true,
+        action,
+        billId,
+        transactionId: null,
+        amountPaid: null,
+        nextDueDate: null,
+        deactivated: false,
+        snoozeUntil: deferred.replayedUntil,
+        warnings: [],
+        replayed: true,
+      };
+    }
 
     // Deliberately does NOT advance nextDueDate: a snooze defers the reminder, it does not settle
     // the occurrence.
