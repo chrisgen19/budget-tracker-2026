@@ -158,9 +158,12 @@ const spendingTrends = z.object({
     .number()
     .nullable()
     .describe(
-      "The day of the month both sides were clipped to, set whenever the current month is " +
-        "still running. When it is set, say the comparison covers the first N days of each " +
-        "month -- the figures are not whole-month totals."
+      "The day of the month the comparison was cut off at, set whenever the current month is " +
+        "still running. It is the cutoff asked for, not necessarily the last day of both " +
+        "windows: a comparison month shorter than this day ends at its own month end instead " +
+        "(cutoff 30 against February ends on the 28th). Read `currentPeriod` and " +
+        "`previousPeriod` for the exact windows. When it is set the figures are not " +
+        "whole-month totals, so say the comparison runs to that cutoff in each month."
     ),
   currentPeriod: resolvedPeriod.describe("The window currentTotal covers, after clipping."),
   previousPeriod: resolvedPeriod.describe("The window previousTotal covers, after clipping."),

@@ -449,9 +449,11 @@ export const createBudgetMcpServer = ({
         "Compare spending between two months, broken down by category. Shows which categories " +
         "increased or decreased. When the current month is still running, BOTH months are " +
         "clipped to the same day of the month so the two windows are comparable, and " +
-        "`throughDay` says which day; report that the comparison covers the first N days of " +
-        "each month rather than presenting it as whole-month totals. `currentPeriod` and " +
-        "`previousPeriod` state the exact windows used.",
+        "`throughDay` says which day it cut off at. That cutoff is not always the last day of " +
+        "both windows: a shorter comparison month ends at its own month end instead (cutoff 30 " +
+        "against February ends on the 28th), so read `currentPeriod` and `previousPeriod` for " +
+        "the exact windows compared. Report the comparison as running to that cutoff in each " +
+        "month rather than as whole-month totals.",
       inputSchema: {
         currentMonth: z
           .string()
