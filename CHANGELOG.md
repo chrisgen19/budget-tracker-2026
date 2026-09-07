@@ -19,6 +19,8 @@ nothing to do with it. It is checked separately instead: the effective cursor is
 one where the schedule's shape moved and the stored one otherwise, and a cursor past the new
 `endDate` means nothing valid is left to be due, so the bill switches off.
 
+Both halves are derived **under the bill's row lock**, as `updateBill` has done since #239. Read before the transaction it was a read-then-write across an unlocked gap: a `pay_bill` or a payment in the app committing in between is invisible to the walk, which then puts the cursor back on the occurrence just settled -- refused for ever by `alreadySettled`, reminders stuck on it -- and invisible to the cursor check, which then leaves the bill active past its own end. `lockBillRow` is exported from `src/lib/bill-writes.ts` rather than copied, so the two paths cannot disagree about how the row is taken.
+
 Writing the test that pins "do not re-walk on an end-date-only edit" turned up a second gap in the
 same three lines. `scheduledTransactionSchema` leaves `customIntervalDays` **absent** on every
 non-custom bill while the column holds `null`, so the raw `!==` made `frequencyChanged` true on
