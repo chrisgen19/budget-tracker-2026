@@ -36,8 +36,13 @@ export async function PUT(
     // from the new startDate past any PAID/SKIPPED logs so payment progress is
     // preserved (fixes bug where editing a bill reset nextDueDate and
     // resurrected already-paid occurrences).
+    // `?? null` on both sides, matching what the update below writes. The schema leaves
+    // `customIntervalDays` *absent* on every non-custom bill while the column holds `null`, so a
+    // bare `!==` made `frequencyChanged` true on every edit of one: each save re-walked the
+    // schedule from `startDate`, dragging a cursor that a snooze or a manual advance had moved
+    // back onto the first occurrence the walk found.
     const frequencyChanged = billData.frequency !== existing.frequency
-      || billData.customIntervalDays !== existing.customIntervalDays;
+      || (billData.customIntervalDays ?? null) !== existing.customIntervalDays;
     const startDateChanged = startDate.getTime() !== existing.startDate.getTime();
     const needsRecalculate = frequencyChanged || startDateChanged;
 
@@ -56,6 +61,23 @@ export async function PUT(
         { endDate },
       );
     }
+
+    /**
+     * An end date is deliberately *not* part of `needsRecalculate`.
+     *
+     * Moving it does not change where the recurrence falls, only where it stops, so re-walking
+     * from `startDate` would rewrite a cursor that is already correct -- and the walk only skips
+     * terminal logs, so a cursor sitting ahead for any other reason would be dragged backwards by
+     * an edit that had nothing to do with it.
+     *
+     * What an end date *can* do is leave the cursor pointing past the schedule's own end. Nothing
+     * downstream filters on `endDate` -- `getUpcomingBills`, `/api/bills/upcoming` and
+     * `pending-bills.ts` all select on `isActive` alone -- so such a bill showed as permanently
+     * overdue and kept mailing reminders until somebody settled it by hand (#240). Same rule as
+     * `updateBill` in `src/lib/bill-writes.ts`, which is the MCP path onto the same row.
+     */
+    const cursor = needsRecalculate ? recalculatedNextDue : existing.nextDueDate;
+    const ranOut = cursor === null || (endDate !== null && cursor > endDate);
 
     const bill = await prisma.$transaction(async (tx) => {
       // Validate label ownership + type compatibility
@@ -89,7 +111,7 @@ export async function PUT(
           startDate,
           endDate,
           ...(needsRecalculate && recalculatedNextDue && { nextDueDate: recalculatedNextDue }),
-          ...(needsRecalculate && !recalculatedNextDue && { isActive: false }),
+          ...(ranOut && { isActive: false }),
           categoryId: billData.categoryId,
         },
         include: billInclude,
