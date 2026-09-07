@@ -1045,7 +1045,15 @@ export const updateBill = async ({
     })) ?? { timezoneOffset: 0 };
     const today = userToday(timezoneOffset ?? 0);
     const from = recalculated ?? stored.nextDueDate;
-    reactivatedNextDue = from < today ? firstOccurrenceOnOrAfter(effective, today) : from;
+    const resumeAt = from < today ? firstOccurrenceOnOrAfter(effective, today) : from;
+    // A cursor already in the future was taken unchecked, which one patch could exploit by hand:
+    // `{ isActive: true, endDate: <before that cursor> }` reactivated the bill past its own end,
+    // because the reactivation branch below wins over `ranOut`. The end date applies to the day the
+    // bill resumes on however that day was chosen.
+    reactivatedNextDue =
+      resumeAt !== null && effective.endDate !== null && resumeAt > effective.endDate
+        ? null
+        : resumeAt;
   }
 
   // Nothing left to be due, so there is nothing to switch back on. Reported through `deactivated`

@@ -1004,6 +1004,50 @@ describe("updateBill", () => {
     }
   });
 
+  /**
+   * One patch doing both is the case that slipped through.
+   *
+   * A cursor already in the future skipped the "resume from today" branch and was taken unchecked,
+   * and the reactivation branch wins over `ranOut` -- so `{ isActive: true, endDate: <before that
+   * cursor> }` brought the bill back past its own end, overdue and mailing reminders, which is the
+   * exact state the end-date fix was supposed to have closed.
+   */
+  it("will not reactivate past an end date set in the same patch", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-06T18:00:00.000Z"));
+    try {
+      const { client, billUpdates } = makePrisma({
+        // Inactive, and its cursor is already in the future, so no resume-from-today walk happens.
+        bill: { isActive: false, nextDueDate: day("2026-12-05") },
+      });
+
+      const result = await update(client, { isActive: true, endDate: day("2026-10-31") });
+
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.deactivated).toBe(true);
+      expect(billUpdates[0].isActive).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still reactivates onto a future cursor the end date allows", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-06T18:00:00.000Z"));
+    try {
+      const { client, billUpdates } = makePrisma({
+        bill: { isActive: false, nextDueDate: day("2026-12-05") },
+      });
+
+      const result = await update(client, { isActive: true, endDate: day("2027-06-30") });
+
+      expect(result.ok && result.deactivated).toBe(false);
+      expect(billUpdates[0].isActive).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   /** A bill whose end date has already passed has nothing left to be due, so there is nothing to
    *  switch back on. Reported rather than refused: the rest of the patch may have applied fine. */
   it("cannot resume a bill whose schedule has already ended", async () => {
