@@ -161,11 +161,11 @@ describe("the period a query ran over is reported back", () => {
       timezoneOffset: MANILA,
     });
 
-    expect(result.period).toEqual({ month: null, from: "2026-08-24", to: "2026-08-29" });
+    expect(result.period).toMatchObject({ month: null, from: "2026-08-24", to: "2026-08-29" });
   });
 
   it("expands a month into its first and last local day", () => {
-    expect(describePeriod({ month: "2026-02" }, MANILA)).toEqual({
+    expect(describePeriod({ month: "2026-02" }, MANILA)).toMatchObject({
       month: "2026-02",
       from: "2026-02-01",
       to: "2026-02-28",
@@ -268,6 +268,6 @@ describe("get_budget_overview anchors relative dates", () => {
     });
 
     expect(result.month).toBeNull();
-    expect(result.period).toEqual({ month: null, from: "2026-08-24", to: "2026-08-29" });
+    expect(result.period).toMatchObject({ month: null, from: "2026-08-24", to: "2026-08-29" });
   });
 });

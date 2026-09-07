@@ -59,6 +59,27 @@ export interface ResolvedPeriod {
   from: string | null;
   /** Last local day included, YYYY-MM-DD. Null when the window is open at the end. */
   to: string | null;
+  /**
+   * Whether the window is still running: its last day is on or after the user's today, so more
+   * transactions can still land in it.
+   *
+   * The figures for such a window are a running subtotal, not a result. Nothing else in the
+   * payload says so, and the difference is invisible: asked for the current month on day 7, a
+   * caller gets a real total over a third of a month and no signal that it is not comparable to
+   * the finished month beside it. That is how `get_spending_trends` came to report a 20% rise
+   * as a 77% fall (#236).
+   *
+   * True for a window left open at the end, which by definition runs to now.
+   */
+  isPartial: boolean;
+  /** Calendar days the window spans. Null when either bound is open, since it is unbounded. */
+  daysInPeriod: number | null;
+  /**
+   * Calendar days of the window that have actually happened, counting from `from` through the
+   * earlier of `to` and today. Null when `from` is open. Zero for a window entirely in the
+   * future.
+   */
+  daysElapsed: number | null;
 }
 
 // --- get_spending_by_category ---
@@ -116,10 +137,22 @@ export interface MonthlySummaryParams {
 }
 
 export interface MonthSummary {
+  /** Display label, e.g. "Sep 2026". Not machine-parseable; use `monthKey` to query. */
   month: string;
+  /** The same month as YYYY-MM, so a caller can follow up on a row without re-deriving it from
+   *  the label. Every other tool takes this format. */
+  monthKey: string;
   income: number;
   expenses: number;
   net: number;
+  /** Whether this month is still running. The current month is always partial until its last
+   *  day, and its totals must not be compared with a finished month's without saying so. */
+  isPartial: boolean;
+  /** Calendar days in the month. */
+  daysInMonth: number;
+  /** Days of it that have happened, so a caller can weigh a partial row rather than only skip
+   *  it. Equal to `daysInMonth` for any finished month. */
+  daysElapsed: number;
 }
 
 // --- get_spending_trends ---
@@ -149,12 +182,30 @@ export interface SpendingTrends {
   totalChange: number;
   totalChangePercent: number | null;
   byCategory: CategoryTrend[];
+  /**
+   * The day of the month both sides were clipped to, or null when neither needed clipping.
+   *
+   * Set whenever `currentMonth` is still running. Comparing seven days against a finished
+   * month is not a comparison, and the shape of the error is not random: spending is
+   * front-loaded, so rent and the utilities land in the first week and every partial month
+   * looks like a collapse in whichever categories have not been paid yet.
+   *
+   * Clipping is by day of month, matching `throughDay` in `assessment-facts.ts`. A shorter
+   * comparison month simply contributes the days it has.
+   */
+  throughDay: number | null;
+  /** The window `currentTotal` actually covers, after any clipping. */
+  currentPeriod: ResolvedPeriod;
+  /** The window `previousTotal` actually covers, after any clipping. */
+  previousPeriod: ResolvedPeriod;
 }
 
 // --- search_transactions ---
 
 /** Covers all time when no period is given. */
 export interface SearchTransactionsParams extends PeriodParams {
+  /** Restrict to these transaction ids. Empty is treated as unset, not as "match nothing". */
+  ids?: string[];
   /** Search term for description (case-insensitive) */
   search?: string;
   /** Filter by type */

@@ -61,6 +61,24 @@ const resolvedPeriod = z.object({
   month: z.string().nullable().describe("The month covered, or null for an explicit day range."),
   from: z.string().nullable().describe("First local day included, YYYY-MM-DD."),
   to: z.string().nullable().describe("Last local day included, YYYY-MM-DD, inclusive."),
+  isPartial: z
+    .boolean()
+    .describe(
+      "True when this window is still running, so its figures are a running subtotal rather " +
+        "than a result. Do not compare a partial window's totals with a finished period's " +
+        "without saying so, and do not describe it as a complete month."
+    ),
+  daysInPeriod: z
+    .number()
+    .nullable()
+    .describe("Calendar days the window spans. Null when either end is open."),
+  daysElapsed: z
+    .number()
+    .nullable()
+    .describe(
+      "Days of the window that have actually happened. Null when the start is open. Use it " +
+        "with daysInPeriod to say how far through a partial period the figures reach."
+    ),
 });
 assertExact<z.infer<typeof resolvedPeriod>, ResolvedPeriod>(true);
 
@@ -102,10 +120,19 @@ export const topExpensesOutput = {
 // --- get_monthly_summary ---
 
 const monthSummary = z.object({
-  month: z.string(),
+  month: z.string().describe('Display label, e.g. "Sep 2026".'),
+  monthKey: z.string().describe("The same month as YYYY-MM, for querying other tools."),
   income: z.number(),
   expenses: z.number(),
   net: z.number(),
+  isPartial: z
+    .boolean()
+    .describe(
+      "True while the month is still running. A partial month's totals are NOT comparable " +
+        "with the finished months beside them; say so rather than reporting a fall."
+    ),
+  daysInMonth: z.number(),
+  daysElapsed: z.number().describe("Days of the month that have happened."),
 });
 assertExact<z.infer<typeof monthSummary>, MonthSummary>(true);
 
@@ -127,6 +154,16 @@ const spendingTrends = z.object({
       changePercent: z.number().nullable(),
     })
   ),
+  throughDay: z
+    .number()
+    .nullable()
+    .describe(
+      "The day of the month both sides were clipped to, set whenever the current month is " +
+        "still running. When it is set, say the comparison covers the first N days of each " +
+        "month -- the figures are not whole-month totals."
+    ),
+  currentPeriod: resolvedPeriod.describe("The window currentTotal covers, after clipping."),
+  previousPeriod: resolvedPeriod.describe("The window previousTotal covers, after clipping."),
 });
 assertExact<z.infer<typeof spendingTrends>, SpendingTrends>(true);
 
