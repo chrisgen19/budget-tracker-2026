@@ -179,6 +179,45 @@ describe("PUT /api/transactions/[id]", () => {
     expect(mocks.update).not.toHaveBeenCalled();
   });
 
+  // The state this must not punish is reachable with no MCP involvement: `PUT /api/categories/[id]`
+  // flips a custom category's type while its transactions keep pointing at it. This route is a full
+  // replace, so the browser re-sends the stale pair on every edit -- and rejecting it would lock the
+  // row out of being edited at all, down to fixing a typo in its description.
+  it("allows an edit that re-sends an already-mismatched pair unchanged", async () => {
+    mocks.findFirst.mockResolvedValue({
+      id: "tx-1",
+      userId: "user-1",
+      categoryId: "cat-flipped",
+      type: "EXPENSE",
+    });
+    // The stored category's type has since been flipped, so the pair no longer agrees.
+    mocks.categoryFindMany.mockResolvedValue([{ id: "cat-flipped", type: "INCOME" }]);
+
+    const response = await put(
+      body({ categoryId: "cat-flipped", type: "EXPENSE", description: "typo fixed" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.update).toHaveBeenCalled();
+    // Not merely tolerated -- not asked about, since writing back what is stored moves nothing.
+    expect(mocks.categoryFindMany).not.toHaveBeenCalled();
+  });
+
+  it("still refuses a move onto a mismatched category from an already-mismatched row", async () => {
+    mocks.findFirst.mockResolvedValue({
+      id: "tx-1",
+      userId: "user-1",
+      categoryId: "cat-flipped",
+      type: "EXPENSE",
+    });
+    mocks.categoryFindMany.mockResolvedValue([{ id: "cat-salary", type: "INCOME" }]);
+
+    const response = await put(body({ categoryId: "cat-salary", type: "EXPENSE" }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
   it("404s a transaction that is not the caller's before reading the body", async () => {
     mocks.findFirst.mockResolvedValue(null);
 

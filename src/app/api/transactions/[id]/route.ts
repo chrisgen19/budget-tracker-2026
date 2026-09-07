@@ -59,7 +59,17 @@ export async function PUT(request: Request, { params }: RouteParams) {
     // an EXPENSE could be filed under an INCOME category, or another user's category attached and
     // then rendered back by the `include` below (#229). `transactionSchema` requires both fields on
     // every PUT, so `validated` is the effective row and needs no merge with `existing`.
-    if (!(await categoriesAreUsable(prisma, userId, [validated]))) {
+    //
+    // Only when the pair actually *moves*, matching `updateTransactions`, which documents why at
+    // length: `PUT /api/categories/[id]` lets a custom category's `type` be flipped while its
+    // transactions keep pointing at it, leaving rows whose stored pair no longer agrees. This
+    // route is a full replace, so the browser re-sends that pair on every edit -- judging it would
+    // reject a correction to the amount or the description, locking the row out over a state the
+    // edit did not create and does not worsen. Writing back what is already stored introduces
+    // nothing, and every genuine reclassification still moves one of the two fields.
+    const reclassifies =
+      validated.categoryId !== existing.categoryId || validated.type !== existing.type;
+    if (reclassifies && !(await categoriesAreUsable(prisma, userId, [validated]))) {
       return NextResponse.json(
         { error: "The category is invalid, does not belong to you, or does not match the transaction type" },
         { status: 400 }
