@@ -346,6 +346,31 @@ describe("settleBill — the date must name a real occurrence", () => {
    * old one. Refusing to act on those would make history unreachable rather than safe, so a date
    * that already carries a log is accepted whatever the current schedule says.
    */
+  /**
+   * The end date has to be tested before the equality, not after.
+   *
+   * The other way round, a candidate exactly one step past `endDate` matched the target and
+   * returned true without the end date ever being consulted, so the February occurrence of a bill
+   * that ended in January was settleable.
+   */
+  it("refuses an occurrence one step past the end date", async () => {
+    const { client, written, logWrites } = makePrisma({
+      bill: { endDate: day("2026-01-31") },
+    });
+
+    const result = await settle(client, { dueDate: day("2026-02-05") });
+
+    expect(result).toEqual({ ok: false, reason: "NOT_AN_OCCURRENCE" });
+    expect(written).toHaveLength(0);
+    expect(logWrites).toHaveLength(0);
+  });
+
+  it("still accepts the occurrence that falls on the end date itself", async () => {
+    const { client } = makePrisma({ bill: { endDate: day("2026-01-05") } });
+
+    expect((await settle(client, { dueDate: day("2026-01-05") })).ok).toBe(true);
+  });
+
   it("still accepts a date that already carries a log", async () => {
     const { client } = makePrisma({
       logs: [{ dueDate: day("2026-09-08"), status: "SNOOZED", snoozeUntil: day("2020-01-01") }],

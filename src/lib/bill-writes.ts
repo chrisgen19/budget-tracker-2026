@@ -187,9 +187,13 @@ const isScheduledOccurrence = (
 
   for (let i = 0; i < WALK_BUDGET; i++) {
     const ms = candidate.getTime();
+    // The end date is tested *before* the equality, not after. The other way round, a candidate
+    // that is exactly one step past `endDate` matched the target and returned true without the end
+    // date ever being consulted -- so the February occurrence of a bill that ended in January could
+    // be paid or skipped, writing history for a month the schedule never produced.
+    if (bill.endDate && candidate > bill.endDate) return false;
     if (ms === target) return true;
     if (ms > target) return false;
-    if (bill.endDate && candidate > bill.endDate) return false;
     candidate = utcDayStart(
       computeNextDueDate(candidate, bill.frequency, originalStartDay, bill.customIntervalDays),
     );
