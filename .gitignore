@@ -45,6 +45,9 @@ yarn-error.log*
 # claude code
 .claude-work/
 .claude/settings.local.json
+# Agent worktrees: a second checkout of this repo, so each holds a `.git` file and
+# `git add -A` stages it as a gitlink -- a bare SHA nobody who clones can resolve.
+.claude/worktrees/
 .agents/
 
 # mcp server
