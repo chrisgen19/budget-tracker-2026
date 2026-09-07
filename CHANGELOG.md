@@ -2,6 +2,37 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-08 - Editing a bill in the app honours its end date (#240)
+
+`PUT /api/bills/[id]` recalculated `nextDueDate` when the frequency or the start date changed, but
+never when the **end date** did. Pulling an end date back before the stored cursor left the bill
+active pointing past its own end, and nothing downstream filters on `endDate` -- `getUpcomingBills`,
+`/api/bills/upcoming` and `pending-bills.ts` all select on `isActive` alone -- so it sat in Upcoming
+Bills as permanently overdue and mailed a reminder every day until somebody settled it by hand.
+`updateBill` fixed this on the MCP path in #239; the app route kept its own implementation and the
+defect with it.
+
+The rule copied over rather than reinvented: an end date is deliberately *not* part of
+`needsRecalculate`, because it says where the recurrence stops and not where it falls, and the walk
+only skips terminal logs -- so re-walking would drag a cursor backwards over an edit that had
+nothing to do with it. It is checked separately instead: the effective cursor is the recalculated
+one where the schedule's shape moved and the stored one otherwise, and a cursor past the new
+`endDate` means nothing valid is left to be due, so the bill switches off.
+
+Both halves are derived **under the bill's row lock**, as `updateBill` has done since #239. Read before the transaction it was a read-then-write across an unlocked gap: a `pay_bill` or a payment in the app committing in between is invisible to the walk, which then puts the cursor back on the occurrence just settled -- refused for ever by `alreadySettled`, reminders stuck on it -- and invisible to the cursor check, which then leaves the bill active past its own end. `lockBillRow` is exported from `src/lib/bill-writes.ts` rather than copied, so the two paths cannot disagree about how the row is taken.
+
+Writing the test that pins "do not re-walk on an end-date-only edit" turned up a second gap in the
+same three lines. `scheduledTransactionSchema` leaves `customIntervalDays` **absent** on every
+non-custom bill while the column holds `null`, so the raw `!==` made `frequencyChanged` true on
+*every* save of a monthly or weekly bill: each one re-walked the schedule from `startDate`, pulling
+a cursor that a snooze or a manual advance had moved back onto the first occurrence the walk found.
+Both sides are normalised with `?? null`, matching what the update statement already writes.
+
+The two implementations remain separate. Converging the form on `updateBill` would mean the browser
+posting a patch, and there an absent `endDate` means "cleared" while an absent `labelIds` means
+"leave alone" -- reconciling that is a change to what `bill-form.tsx` sends, with its own risk, so
+it belongs in its own PR.
+
 ## 2026-09-07 - The record and assess loops no longer dead-end in the app (#237)
 
 Four things a person actually does with this app were audited against the MCP tool set. Three of

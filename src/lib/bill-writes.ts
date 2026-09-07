@@ -838,7 +838,7 @@ const firstOccurrenceOnOrAfter = (
  * through those foreign keys; two transactions both holding KEY SHARE and then upgrading to
  * FOR UPDATE deadlock, and one rolls back with a 500.
  */
-const lockBillRow = async (tx: Prisma.TransactionClient, billId: string): Promise<void> => {
+export const lockBillRow = async (tx: Prisma.TransactionClient, billId: string): Promise<void> => {
   await tx.$queryRaw`SELECT id FROM scheduled_transactions WHERE id = ${billId} FOR UPDATE`;
 };
 
