@@ -513,7 +513,12 @@ export const createBudgetMcpServer = ({
     "get_monthly_summary",
     {
       title: "Monthly summary",
-      description: "Get income, expenses, and net for each of the last N months. Good for trend analysis.",
+      description:
+        "Get income, expenses, and net for each of the last N months. Good for trend analysis. " +
+        "The current month is still running: its row carries `isPartial: true` with " +
+        "`daysElapsed` of `daysInMonth`, and its totals are a running subtotal. Never read a " +
+        "partial row as a fall against the finished months beside it -- compare it with the " +
+        "same number of days, or say how far through the month it reaches.",
       inputSchema: {
         months: z
           .number()
@@ -540,7 +545,15 @@ export const createBudgetMcpServer = ({
     "get_spending_trends",
     {
       title: "Spending trends",
-      description: "Compare spending between two months, broken down by category. Shows which categories increased or decreased.",
+      description:
+        "Compare spending between two months, broken down by category. Shows which categories " +
+        "increased or decreased. When the current month is still running, BOTH months are " +
+        "clipped to the same day of the month so the two windows are comparable, and " +
+        "`throughDay` says which day it cut off at. That cutoff is not always the last day of " +
+        "both windows: a shorter comparison month ends at its own month end instead (cutoff 30 " +
+        "against February ends on the 28th), so read `currentPeriod` and `previousPeriod` for " +
+        "the exact windows compared. Report the comparison as running to that cutoff in each " +
+        "month rather than as whole-month totals.",
       inputSchema: {
         currentMonth: z
           .string()
@@ -577,8 +590,18 @@ export const createBudgetMcpServer = ({
         "a month or an explicit day range. Supports pagination and sorting. `totals` aggregates " +
         "every match rather than the page, so use it instead of summing rows; each row's " +
         "`localDate` is the user's own calendar day, and rows sharing a `receiptGroupId` are one " +
-        "receipt split across categories.",
+        "receipt split across categories. This searches transaction DESCRIPTIONS. For what was " +
+        "bought line by line, use get_receipt_items -- but note it only covers receipts that " +
+        "went through itemized scanning, so search here as well before concluding something " +
+        "was never bought.",
       inputSchema: {
+        ids: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Re-read specific transactions by ID, e.g. to check a row before or after editing " +
+              "it. Other filters still apply on top. Ignored when empty."
+          ),
         search: z
           .string()
           .optional()
@@ -873,7 +896,10 @@ export const createBudgetMcpServer = ({
         "'what did I buy at the grocery?', 'how much have I spent on coffee this month?'. " +
         "Filter by month, by an explicit day range, by item name, or by receiptGroupId to pull " +
         "one whole receipt (a receipt spanning several categories becomes several transactions " +
-        "sharing that id).",
+        "sharing that id). Covers ONLY receipts that were itemized during scanning, which is a " +
+        "subset of transactions: an empty result means no itemized receipt matched, never that " +
+        "the user did not buy the thing. Always fall back to search_transactions, whose " +
+        "descriptions often name the purchase.",
       inputSchema: {
         month: z
           .string()
