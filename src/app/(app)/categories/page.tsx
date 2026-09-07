@@ -107,6 +107,20 @@ export default function CategoriesPage() {
     }
   };
 
+  // Opening a form clears the message as well as closing one does. A save that fails *after* its
+  // modal was closed still lands in `saveError` -- the request was already in flight -- and the
+  // state is shared by both dialogs, so without this the next form opened greets the user with a
+  // stale error from a different category, or from the other operation entirely.
+  const openCreateForm = () => {
+    setSaveError("");
+    setShowForm(true);
+  };
+
+  const openEditForm = (category: Category) => {
+    setSaveError("");
+    setEditingCategory(category);
+  };
+
   const handleDelete = () => {
     if (!deletingCategory) return;
     setDeleteError("");
@@ -132,7 +146,7 @@ export default function CategoriesPage() {
           </p>
         </div>
         <button
-          onClick={() => setShowForm(true)}
+          onClick={openCreateForm}
           className="hidden sm:inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-5 py-2.5 rounded-xl transition-colors shadow-soft hover:shadow-soft-md"
         >
           <Plus className="w-4 h-4" />
@@ -368,7 +382,7 @@ export default function CategoriesPage() {
                         </div>
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button
-                            onClick={() => setEditingCategory(cat)}
+                            onClick={() => openEditForm(cat)}
                             className="p-1.5 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors"
                           >
                             <Pencil className="w-3.5 h-3.5" />
@@ -434,7 +448,7 @@ export default function CategoriesPage() {
               description="Create custom categories to organize your transactions."
               action={
                 <button
-                  onClick={() => setShowForm(true)}
+                  onClick={openCreateForm}
                   className="inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white text-sm font-medium px-4 py-2.5 rounded-xl transition-colors shadow-soft"
                 >
                   <Plus className="w-4 h-4" />
@@ -533,7 +547,7 @@ export default function CategoriesPage() {
       />
 
       {/* Mobile FAB */}
-      <ActionFab label="Category" icon={Plus} onClick={() => setShowForm(true)} />
+      <ActionFab label="Category" icon={Plus} onClick={openCreateForm} />
     </div>
   );
 }
