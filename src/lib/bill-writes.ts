@@ -831,12 +831,23 @@ const firstOccurrenceOnOrAfter = (
   return null;
 };
 
+/**
+ * Take the bill row's write lock. Must be the transaction's FIRST statement.
+ *
+ * The updates and inserts that follow reference this row, so Postgres takes FOR KEY SHARE on it
+ * through those foreign keys; two transactions both holding KEY SHARE and then upgrading to
+ * FOR UPDATE deadlock, and one rolls back with a 500.
+ */
+const lockBillRow = async (tx: Prisma.TransactionClient, billId: string): Promise<void> => {
+  await tx.$queryRaw`SELECT id FROM scheduled_transactions WHERE id = ${billId} FOR UPDATE`;
+};
+
 const recalculateNextDueDate = async (
-  prisma: PrismaClient,
+  tx: Prisma.TransactionClient,
   billId: string,
   d: BillDefinition,
 ): Promise<Date | null> => {
-  const logs = await prisma.scheduledTransactionLog.findMany({
+  const logs = await tx.scheduledTransactionLog.findMany({
     where: { scheduledTransactionId: billId },
     select: { dueDate: true, status: true },
   });
@@ -1007,8 +1018,6 @@ export const updateBill = async ({
     effective.customIntervalDays !== current.customIntervalDays ||
     effective.startDate.getTime() !== current.startDate.getTime();
 
-  const recalculated = shapeMoved ? await recalculateNextDueDate(prisma, billId, effective) : null;
-
   /**
    * An end date is deliberately *not* part of `shapeMoved`.
    *
@@ -1024,41 +1033,60 @@ export const updateBill = async ({
    */
   const endDateMoved =
     (effective.endDate?.getTime() ?? null) !== (current.endDate?.getTime() ?? null);
-  const cursor = shapeMoved ? recalculated : stored.nextDueDate;
-  const ranOut =
-    cursor === null || (effective.endDate !== null && cursor > effective.endDate);
 
-  // Reactivating resets a due date left in the past, or the bill returns already overdue. "Today"
-  // is the *user's* calendar day: between their midnight and UTC's, a plain UTC today is still
-  // yesterday.
-  //
-  // The reset lands on the next day the schedule actually falls on, not on today itself. Today is
-  // an arbitrary calendar day: a monthly bill due on the 5th and switched back on the 7th would
-  // advertise the 7th, and `settleBill` walks the recurrence and refuses it -- active again, with
-  // an occurrence nobody can pay, skip or snooze.
   const reactivating = effective.isActive && !current.isActive;
-  let reactivatedNextDue: Date | null = null;
-  if (reactivating) {
-    const { timezoneOffset } = (await prisma.user.findUnique({
-      where: { id: userId },
-      select: { timezoneOffset: true },
-    })) ?? { timezoneOffset: 0 };
-    const today = userToday(timezoneOffset ?? 0);
-    const from = recalculated ?? stored.nextDueDate;
-    const resumeAt = from < today ? firstOccurrenceOnOrAfter(effective, today) : from;
-    // A cursor already in the future was taken unchecked, which one patch could exploit by hand:
-    // `{ isActive: true, endDate: <before that cursor> }` reactivated the bill past its own end,
-    // because the reactivation branch below wins over `ranOut`. The end date applies to the day the
-    // bill resumes on however that day was chosen.
-    reactivatedNextDue =
-      resumeAt !== null && effective.endDate !== null && resumeAt > effective.endDate
-        ? null
-        : resumeAt;
-  }
 
-  // Nothing left to be due, so there is nothing to switch back on. Reported through `deactivated`
-  // rather than refused: the patch may carry other fields that applied perfectly well.
-  const reactivationFailed = reactivating && reactivatedNextDue === null;
+  // Read outside the transaction: it depends on the user row, not the bill, so nothing a
+  // concurrent settlement does can change it.
+  const { timezoneOffset } = (await prisma.user.findUnique({
+    where: { id: userId },
+    select: { timezoneOffset: true },
+  })) ?? { timezoneOffset: 0 };
+
+  /**
+   * Everything the schedule decides, derived **under the bill's row lock**.
+   *
+   * The walk reads occurrence logs and the stored cursor, and the update writes that cursor back.
+   * Computed before the transaction it was a read-then-write across an unlocked gap: a `pay_bill`
+   * committing in between writes a terminal log and advances the cursor, then this stale value puts
+   * it back on the occurrence that was just settled -- which `alreadySettled` then refuses for
+   * ever, with reminders stuck on it and only another edit able to shift it.
+   */
+  const deriveSchedule = async (tx: Prisma.TransactionClient) => {
+    const recalculated = shapeMoved
+      ? await recalculateNextDueDate(tx, billId, effective)
+      : null;
+
+    const cursor = shapeMoved ? recalculated : stored.nextDueDate;
+    const ranOut = cursor === null || (effective.endDate !== null && cursor > effective.endDate);
+
+    // Reactivating resets a due date left in the past, or the bill returns already overdue.
+    // "Today" is the *user's* calendar day: between their midnight and UTC's, a plain UTC today is
+    // still yesterday.
+    //
+    // The reset lands on the next day the schedule actually falls on, not on today itself. Today
+    // is an arbitrary calendar day: a monthly bill due on the 5th and switched back on the 7th
+    // would advertise the 7th, and `settleBill` walks the recurrence and refuses it -- active
+    // again, with an occurrence nobody can pay, skip or snooze.
+    let reactivatedNextDue: Date | null = null;
+    if (reactivating) {
+      const today = userToday(timezoneOffset ?? 0);
+      const from = recalculated ?? stored.nextDueDate;
+      const resumeAt = from < today ? firstOccurrenceOnOrAfter(effective, today) : from;
+      // A cursor already in the future was taken unchecked, which one patch could exploit by hand:
+      // `{ isActive: true, endDate: <before that cursor> }` reactivated the bill past its own end,
+      // because the reactivation branch wins over `ranOut`. The end date applies to the day the
+      // bill resumes on however that day was chosen.
+      reactivatedNextDue =
+        resumeAt !== null && effective.endDate !== null && resumeAt > effective.endDate
+          ? null
+          : resumeAt;
+    }
+
+    // Nothing left to be due, so there is nothing to switch back on. Reported through
+    // `deactivated` rather than refused: the patch may carry other fields that applied fine.
+    return { recalculated, ranOut, reactivatedNextDue, failed: reactivating && reactivatedNextDue === null };
+  };
 
   const changed = (Object.keys(current) as (keyof BillDefinition)[]).filter((key) => {
     const was = current[key];
@@ -1069,12 +1097,16 @@ export const updateBill = async ({
     return was !== now;
   }) as string[];
   if (labelsMoved) changed.push("labels");
-  // The patch asked for `isActive: true` and the schedule had nothing left to give, so the row did
-  // not move. `changed` describes what was written, never what was requested.
-  const reported = reactivationFailed ? changed.filter((f) => f !== "isActive") : changed;
 
-  const updated = await prisma.$transaction(async (tx) => {
+  const written = await prisma.$transaction(async (tx) => {
+    // First statement, as everywhere else here: the update below takes FOR KEY SHARE through its
+    // foreign keys, so upgrading to FOR UPDATE afterwards deadlocks. It also serialises this whole
+    // edit against `settleBill`, which is what the derivation needs to be sound.
+    await lockBillRow(tx, billId);
     if (assertStillPermitted && !(await assertStillPermitted(tx))) return null;
+
+    const schedule = await deriveSchedule(tx);
+    const { recalculated, ranOut, reactivatedNextDue, failed: reactivationFailed } = schedule;
 
     await tx.scheduledTransaction.update({
       where: { id: billId },
@@ -1106,19 +1138,24 @@ export const updateBill = async ({
       }
     }
 
-    return tx.scheduledTransaction.findUniqueOrThrow({
+    const bill = await tx.scheduledTransaction.findUniqueOrThrow({
       where: { id: billId },
       include: BILL_INCLUDE,
     });
+
+    return { bill, reactivationFailed, ranOut };
   });
 
-  if (updated === null) return { ok: false, reason: "NO_LONGER_PERMITTED" };
+  if (written === null) return { ok: false, reason: "NO_LONGER_PERMITTED" };
 
   return {
     ok: true,
-    bill: updated,
-    changed: reported,
+    bill: written.bill,
+    // The patch asked for `isActive: true` and the schedule had nothing left to give, so the row
+    // did not move. `changed` describes what was written, never what was requested.
+    changed: written.reactivationFailed ? changed.filter((f) => f !== "isActive") : changed,
     droppedLabels: labels.dropped,
-    deactivated: reactivationFailed || (!reactivating && ranOut && current.isActive),
+    deactivated:
+      written.reactivationFailed || (!reactivating && written.ranOut && current.isActive),
   };
 };

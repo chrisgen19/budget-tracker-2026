@@ -80,6 +80,8 @@ const makePrisma = (options: StubOptions = {}) => {
   const billLabelWrites: Record<string, unknown>[] = [];
   let deletedBillLabels = 0;
   let locks = 0;
+  /** Whether each occurrence-log read happened before or after the row lock was taken. */
+  const logReads: string[] = [];
 
   const client = {
     scheduledTransaction: {
@@ -117,11 +119,12 @@ const makePrisma = (options: StubOptions = {}) => {
         return hit ? { id: "log_existing" } : null;
       }),
       // The occurrence and snooze-replay reads narrow by dueDate; the schedule walk does not.
-      findMany: vi.fn(async ({ where }: { where?: { dueDate?: Date } } = {}) =>
-        where?.dueDate
+      findMany: vi.fn(async ({ where }: { where?: { dueDate?: Date } } = {}) => {
+        if (!where?.dueDate) logReads.push(locks > 0 ? "after-lock" : "before-lock");
+        return where?.dueDate
           ? logs.filter((l) => l.dueDate.getTime() === where.dueDate!.getTime())
-          : logs
-      ),
+          : logs;
+      }),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
         logWrites.push(data);
         logs.push({
@@ -197,6 +200,7 @@ const makePrisma = (options: StubOptions = {}) => {
     billLabelWrites,
     deletedBillLabels: () => deletedBillLabels,
     locks: () => locks,
+    logReads: () => logReads,
   };
 };
 
@@ -813,6 +817,36 @@ describe("updateBill", () => {
     await update(client, { amount: 1900 });
 
     expect(billUpdates[0].nextDueDate).toBeUndefined();
+  });
+
+  /**
+   * The walk reads occurrence logs and the stored cursor; the update writes that cursor back.
+   *
+   * Derived before the transaction it was a read-then-write across an unlocked gap: a `pay_bill`
+   * committing in between writes a terminal log and advances the cursor, and the stale value then
+   * puts it back on the occurrence that was just settled -- which `alreadySettled` refuses for ever
+   * after, with reminders stuck on it. A stub cannot interleave two transactions, so what is pinned
+   * is that the row is locked and the walk happens after it.
+   */
+  it("takes the bill lock before recalculating the schedule", async () => {
+    const { client, locks, logReads } = makePrisma();
+
+    const result = await update(client, { frequency: "WEEKLY" });
+
+    expect(result.ok).toBe(true);
+    expect(locks()).toBe(1);
+    // The occurrence-log read that feeds the walk happened after the lock, not before it.
+    expect(logReads()).toEqual(["after-lock"]);
+  });
+
+  it("takes no lock at all when the schedule did not move", async () => {
+    const { client, locks } = makePrisma();
+
+    await update(client, { amount: 1900 });
+
+    // Still locked: the update writes the row either way, and the lock has to be the transaction's
+    // first statement, so it cannot be made conditional on what the patch happens to contain.
+    expect(locks()).toBe(1);
   });
 
   it("recalculates the due date when the frequency changes", async () => {
