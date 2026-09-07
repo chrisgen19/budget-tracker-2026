@@ -108,8 +108,16 @@ export const findSavedBatchUnderLock = async (
  * hand it merged patch-over-row pairs. Those carry no `amount` or `date` of their own -- an edit
  * that changes only the category has neither -- and widening here beat inventing them at the call
  * site to satisfy a signature that never looks at them.
+ *
+ * Exported because `PUT /api/transactions/[id]` needs the identical pair and had neither (#229).
+ * That route checked the transaction's owner and its labels' owner, then wrote `categoryId`
+ * straight through, so the create path refused what the edit path accepted -- the same row, one
+ * request later. Calling this rather than restating the rule is the point: a predicate written
+ * twice is one that disagrees with itself the first time either copy is touched. Note the route
+ * passes its *validated body*, not a merge, because `transactionSchema` requires `categoryId` and
+ * `type` on every PUT -- it is a full replace, so the body already is the effective row.
  */
-const categoriesAreUsable = async (
+export const categoriesAreUsable = async (
   prisma: PrismaClient,
   userId: string,
   items: readonly { categoryId: string; type: TransactionType }[]
