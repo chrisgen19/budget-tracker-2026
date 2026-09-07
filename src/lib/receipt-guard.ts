@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { reserveScanCredit } from "@/lib/scan-quota";
 import { MAX_FILE_SIZE } from "@/lib/receipt-limits";
+import { overBodySizeLimit } from "@/lib/request-size";
 
 /** Formats Gemini accepts inline and the client can realistically produce. */
 const ALLOWED_TYPES = new Set([
@@ -84,10 +85,19 @@ interface ScanPermissions {
   categories: Array<{ id: string; name: string }>;
 }
 
-/** Reject oversized bodies before request.formData() buffers them into memory. */
+/**
+ * Reject oversized multipart bodies before request.formData() buffers them into memory.
+ *
+ * The `content-length` reading moved to `request-size.ts` so a route that is not a receipt route
+ * can have a ceiling without importing this module's Prisma client. The limit and the wording
+ * stay here: 5 MB is derived from `MAX_FILE_SIZE` plus multipart framing, and the message names
+ * a file because a file is what the caller sent.
+ *
+ * Unlike the JSON routes this stays a header check only. `request.formData()` gives no metered
+ * read, so closing the chunked gap here would mean re-implementing multipart parsing.
+ */
 export const checkBodySize = (request: Request): NextResponse | null => {
-  const declaredLength = Number(request.headers.get("content-length") ?? "");
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_SIZE) {
+  if (overBodySizeLimit(request, MAX_BODY_SIZE)) {
     return NextResponse.json({ error: "File too large. Maximum size is 4 MB." }, { status: 413 });
   }
   return null;

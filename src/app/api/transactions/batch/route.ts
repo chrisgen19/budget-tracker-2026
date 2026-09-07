@@ -16,6 +16,31 @@ import {
   boundedTransactionIdsSchema,
   bulkTransactionMutationSchema,
 } from "@/lib/transaction-bulk";
+import { bodyTooLargeResponse, readJsonWithinLimit } from "@/lib/request-size";
+
+/**
+ * Ceiling on one request to this route, in bytes.
+ *
+ * `MAX_BATCH_TRANSACTIONS` bounds rows, not their size, and every row may carry a
+ * `receiptBreakdown` blob: 200 rows x `MAX_BREAKDOWN_LINE_ITEMS` (150) x a 255-char name is a
+ * schema-legal body of roughly 8.6 MB, which `request.json()` would materialise, zod-parse and
+ * write to JSONB inside a transaction holding a Postgres advisory lock for up to 60s — on a VPS
+ * sharing one Postgres with every other app on it (#138).
+ *
+ * 5 MB refuses that while sitting well above anything the app can actually produce: an upload is
+ * capped at 50 receipts, a receipt splits into at most `MAX_BREAKDOWN_GROUPS` (20) rows, and real
+ * item names run nearer 40 chars than 255, so even a pathological 200-row supermarket save lands
+ * around 2 MB.
+ *
+ * **Never lower this without checking the replay path.** The refusal is a 4xx, which the client
+ * reads as proof nothing was written (`BatchSaveError("no")`): it drops the idempotency pin and
+ * unfreezes the rows. That is correct — the guard fires before any write — but it means a body
+ * accepted on the first attempt and refused on its retry would let a corrected resubmit duplicate
+ * a batch that had in fact committed. Unlike the schema check below, this one cannot be routed
+ * through `rejectUnlessAlreadySaved`: reading `clientBatchId` means reading the body, which is
+ * the thing being refused. A constant ceiling makes the question moot; a shrinking one does not.
+ */
+const MAX_BATCH_BODY_BYTES = 5 * 1024 * 1024;
 
 const batchSchema = z.object({
   transactions: z.array(batchTransactionSchema).min(1).max(MAX_BATCH_TRANSACTIONS),
@@ -72,7 +97,11 @@ export async function POST(request: Request) {
   let replayKey: string | undefined;
 
   try {
-    const body: unknown = await request.json();
+    // Ahead of everything, including the replay pre-check: see MAX_BATCH_BODY_BYTES on why the
+    // ordering is forced and what it costs.
+    const read = await readJsonWithinLimit(request, MAX_BATCH_BODY_BYTES);
+    if (!read.ok) return bodyTooLargeResponse();
+    const body: unknown = read.value;
 
     // A replay creates nothing, so it must not be judged on the validity of inputs it will
     // never use, neither the label ownership query below nor the transaction payload itself.
@@ -149,8 +178,12 @@ export async function DELETE(request: NextRequest) {
   if (userId instanceof NextResponse) return userId;
 
   try {
-    const body = await request.json();
-    const { ids } = batchDeleteSchema.parse(body);
+    // Already bounded by `boundedTransactionIdsSchema` (2,000 ids x 100 chars), so this guards
+    // nothing today. It is here because #138 was not a missing limit but a guard one route
+    // forgot to call, and a sibling verb left out is how that happens again.
+    const read = await readJsonWithinLimit(request, MAX_BATCH_BODY_BYTES);
+    if (!read.ok) return bodyTooLargeResponse();
+    const { ids } = batchDeleteSchema.parse(read.value);
 
     const ownedIds = await prisma.$transaction(async (tx) => {
       const owned = await tx.transaction.findMany({
@@ -181,7 +214,10 @@ export async function PATCH(request: NextRequest) {
   if (userId instanceof NextResponse) return userId;
 
   try {
-    const input = bulkTransactionMutationSchema.parse(await request.json());
+    // Bounded by its own schema too — see the note on DELETE.
+    const read = await readJsonWithinLimit(request, MAX_BATCH_BODY_BYTES);
+    if (!read.ok) return bodyTooLargeResponse();
+    const input = bulkTransactionMutationSchema.parse(read.value);
 
     const result = await prisma.$transaction(async (tx) => {
       const transactions = await tx.transaction.findMany({

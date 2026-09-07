@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { MAX_BULK_TRANSACTIONS } from "@/lib/transaction-bulk";
+import { MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
 
 const mocks = vi.hoisted(() => {
   const transactionFindMany = vi.fn();
@@ -22,6 +23,9 @@ const mocks = vi.hoisted(() => {
     transactionLabelDeleteMany,
     getAuthUserId: vi.fn(),
     databaseTransaction: vi.fn(),
+    createTransactionBatch: vi.fn(),
+    findSavedBatch: vi.fn(),
+    findSavedBatchUnderLock: vi.fn(),
     tx: {
       transaction: {
         findMany: transactionFindMany,
@@ -44,12 +48,12 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/session", () => ({ getAuthUserId: mocks.getAuthUserId }));
 vi.mock("@/lib/transaction-writes", () => ({
-  createTransactionBatch: vi.fn(),
-  findSavedBatch: vi.fn(),
-  findSavedBatchUnderLock: vi.fn(),
+  createTransactionBatch: mocks.createTransactionBatch,
+  findSavedBatch: mocks.findSavedBatch,
+  findSavedBatchUnderLock: mocks.findSavedBatchUnderLock,
 }));
 
-import { DELETE, PATCH } from "@/app/api/transactions/batch/route";
+import { DELETE, PATCH, POST } from "@/app/api/transactions/batch/route";
 
 const patchRequest = (body: unknown) =>
   new NextRequest("http://localhost/api/transactions/batch", {
@@ -65,6 +69,135 @@ const deleteRequest = (body: unknown) =>
     body: JSON.stringify(body),
   });
 
+const postRequest = (body: unknown) =>
+  new NextRequest("http://localhost/api/transactions/batch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+/**
+ * A request that declares its size up front, the honest-client case the header check exists for.
+ *
+ * Set by hand because `new Request(url, { body: string })` does *not* populate `content-length`
+ * in undici — a plain `postRequest` therefore exercises the metered read, not the header, and
+ * naming that here is the difference between two tests and one test written twice.
+ */
+const declaredRequest = (body: unknown) => {
+  const payload = JSON.stringify(body);
+  return new NextRequest("http://localhost/api/transactions/batch", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "content-length": String(new TextEncoder().encode(payload).byteLength),
+    },
+    body: payload,
+  });
+};
+
+/** The same body with no `content-length` at all, which a header check cannot see. */
+const chunkedRequest = (body: unknown, method = "POST") =>
+  new NextRequest("http://localhost/api/transactions/batch", {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        const bytes = new TextEncoder().encode(JSON.stringify(body));
+        for (let at = 0; at < bytes.byteLength; at += 64 * 1024) {
+          controller.enqueue(bytes.slice(at, at + 64 * 1024));
+        }
+        controller.close();
+      },
+    }),
+    duplex: "half",
+  } as ConstructorParameters<typeof NextRequest>[1] & { duplex: "half" });
+
+const BATCH_ID = "3f1c2b7a-2f5e-4d0a-9b1e-0c8a6d4e5f21";
+
+const row = (overrides: Record<string, unknown> = {}) => ({
+  amount: 12.5,
+  description: "Groceries",
+  type: "EXPENSE",
+  date: "2026-09-08",
+  categoryId: "cat-1",
+  ...overrides,
+});
+
+/** A row carrying the blob #137 tripled the ceiling on: 150 items x a 255-char name, ~43 KB. */
+const fatRow = () =>
+  row({
+    receiptBreakdown: {
+      total: 1000,
+      items: Array.from({ length: MAX_BREAKDOWN_LINE_ITEMS }, () => ({
+        name: "x".repeat(255),
+        amount: 1,
+      })),
+    },
+  });
+
+/**
+ * Far past what `boundedTransactionIdsSchema` allows, which is the point for DELETE and PATCH:
+ * the size guard is reached first, so an oversized body is refused rather than materialised in
+ * order to be rejected.
+ */
+const floodOfIds = () => Array.from({ length: 60_000 }, () => "x".repeat(100));
+
+describe("POST /api/transactions/batch", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getAuthUserId.mockResolvedValue("user-1");
+    mocks.findSavedBatch.mockResolvedValue([]);
+    mocks.createTransactionBatch.mockResolvedValue({
+      ok: true,
+      replayed: false,
+      transactions: [{ id: "tx-1" }],
+    });
+  });
+
+  it("saves a batch that stays under the body ceiling", async () => {
+    const response = await POST(postRequest({ transactions: [row()], clientBatchId: BATCH_ID }));
+    expect(response.status).toBe(201);
+    expect(mocks.createTransactionBatch).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a declared oversize without reading the body or looking it up", async () => {
+    // 200 rows x 150 items x a 255-char name is schema-legal and lands near 8.6 MB.
+    const request = declaredRequest({
+      transactions: Array.from({ length: 200 }, fatRow),
+      clientBatchId: BATCH_ID,
+    });
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ code: "BODY_TOO_LARGE" });
+    // Never buffered: the whole point of checking the header first.
+    expect(request.bodyUsed).toBe(false);
+    // And nothing was written, nor was the idempotency lookup reached.
+    expect(mocks.findSavedBatch).not.toHaveBeenCalled();
+    expect(mocks.createTransactionBatch).not.toHaveBeenCalled();
+  });
+
+  it("refuses an oversized body that declares no content-length", async () => {
+    // The half a header check cannot do. Without the metered read this is a 201.
+    const response = await POST(
+      chunkedRequest({ transactions: Array.from({ length: 200 }, fatRow) }),
+    );
+
+    expect(response.status).toBe(413);
+    expect(mocks.createTransactionBatch).not.toHaveBeenCalled();
+  });
+
+  it("still replays a committed batch whose body is within the ceiling", async () => {
+    mocks.findSavedBatch.mockResolvedValue([{ id: "tx-1" }]);
+
+    const response = await POST(postRequest({ transactions: [row()], clientBatchId: BATCH_ID }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.createTransactionBatch).not.toHaveBeenCalled();
+  });
+});
+
 describe("DELETE /api/transactions/batch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -72,6 +205,12 @@ describe("DELETE /api/transactions/batch", () => {
     mocks.databaseTransaction.mockImplementation((callback) => callback(mocks.tx));
     mocks.transactionFindMany.mockResolvedValue([{ id: "tx-1" }]);
     mocks.transactionDeleteMany.mockResolvedValue({ count: 1 });
+  });
+
+  it("refuses an oversized body before opening a database transaction", async () => {
+    const response = await DELETE(chunkedRequest({ ids: floodOfIds() }, "DELETE"));
+    expect(response.status).toBe(413);
+    expect(mocks.databaseTransaction).not.toHaveBeenCalled();
   });
 
   it("deletes only the authenticated user's owned subset and returns exact IDs", async () => {
@@ -209,6 +348,14 @@ describe("PATCH /api/transactions/batch", () => {
       changedLinks: 1,
       ids: ["tx-2"],
     });
+  });
+
+  it("refuses an oversized body before opening a database transaction", async () => {
+    const response = await PATCH(
+      chunkedRequest({ action: "category", ids: floodOfIds(), categoryId: "cat-1" }, "PATCH"),
+    );
+    expect(response.status).toBe(413);
+    expect(mocks.databaseTransaction).not.toHaveBeenCalled();
   });
 
   it("rejects unbounded ID arrays before opening a database transaction", async () => {
