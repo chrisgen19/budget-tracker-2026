@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { transactionSchema } from "@/lib/validations";
+import { categoriesAreUsable } from "@/lib/transaction-writes";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -52,6 +53,18 @@ export async function PUT(request: Request, { params }: RouteParams) {
 
     const body = await request.json();
     const validated = transactionSchema.parse(body);
+
+    // Validate the category the same way the create path does. The foreign key only requires the
+    // row to exist -- not that it is this user's, and not that its type matches -- so without this
+    // an EXPENSE could be filed under an INCOME category, or another user's category attached and
+    // then rendered back by the `include` below (#229). `transactionSchema` requires both fields on
+    // every PUT, so `validated` is the effective row and needs no merge with `existing`.
+    if (!(await categoriesAreUsable(prisma, userId, [validated]))) {
+      return NextResponse.json(
+        { error: "The category is invalid, does not belong to you, or does not match the transaction type" },
+        { status: 400 }
+      );
+    }
 
     // Validate label ownership before writing (only when labelIds is explicitly provided)
     const hasLabelIds = validated.labelIds !== undefined;

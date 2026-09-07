@@ -2,6 +2,40 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-07 - The edit route checks the category, like the create route already did
+
+`PUT /api/transactions/[id]` verified that the transaction was yours and that any `labelIds` were
+yours, then wrote `categoryId` straight through. The foreign key only requires the row to exist --
+not that it is the caller's, and not that its type matches -- so two things were accepted that the
+create path refuses (#229).
+
+Another user's category could be attached to your transaction, and the route's response `include`s
+`category`, so their category name came back and rendered in the list. Separately an EXPENSE could
+be filed under an INCOME category: the picker filters by type client-side, so the form cannot
+normally produce one, but nothing stopped a request that skipped the form. Such a row is internally
+inconsistent and distorts everything that groups by category -- `/api/dashboard`, `/api/analytics`,
+`getSpendingByCategory`, and the assessment's category-movement analysis.
+
+The fix calls `categoriesAreUsable`, which `createTransactionBatch` has used since a model could
+reach the create path over MCP, rather than restating the rule. That is the whole point: a
+predicate written twice disagrees with itself the first time either copy is touched, and this gap
+existed precisely because the edit path never got the treatment the create path did. It is now
+exported rather than module-private.
+
+It is checked **before** the labels, so a request wrong in both ways names one cause rather than
+sending you to fix the labels first. The route passes its validated body directly, with no merge
+against the stored row: `transactionSchema` requires `categoryId` and `type` on every PUT, so a
+PUT is a full replace and the body already is the effective row -- unlike `updateTransactions`,
+whose patches are partial and which therefore has to merge before it can check.
+
+Routing `PUT` through `updateTransactions` was the other option, and is what #228 tried before
+reverting to keep that PR scoped. It works, but makes the server stricter than the form currently
+is, so it stays its own piece of work.
+
+Low severity in practice -- this is a single-user deployment, so there is no second user's category
+to reach for. Worth fixing because the write path is reachable by more than the browser now, and
+because the create path already refuses it.
+
 ## 2026-09-06 - The MCP server can edit a transaction
 
 Fifteen tools now. `update_transactions` changes an existing transaction's amount, description,
