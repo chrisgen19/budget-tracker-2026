@@ -19,23 +19,41 @@ vi.mock("@/components/user-provider", () => ({
 }));
 
 vi.mock("@/hooks/use-categories", () => {
-  const categories = [
-    {
-      id: "food",
-      name: "Food",
-      type: "EXPENSE",
-      icon: "utensils",
-      color: "#000000",
-    },
-  ];
+  // Keyed by type and built once: the real hook is a per-type React Query cache, so its `data` is
+  // a stable reference until the type changes. An inline literal per call would hand the form a
+  // new `categories` array on every render, the category-reset effect would re-run forever and
+  // the worker would hang rather than fail.
+  const byType = {
+    EXPENSE: [
+      {
+        id: "food",
+        name: "Food",
+        type: "EXPENSE",
+        icon: "utensils",
+        color: "#000000",
+      },
+    ],
+    INCOME: [
+      {
+        id: "salary",
+        name: "Salary",
+        type: "INCOME",
+        icon: "wallet",
+        color: "#000000",
+      },
+    ],
+  };
+  const all = [...byType.EXPENSE, ...byType.INCOME];
   const quickPreferences = {
     quickExpenseCategories: ["food"],
+    // Left empty so `resolveQuickCategories` falls back to the first few INCOME categories,
+    // which is what a user who never picked income quick tiles actually sees.
     quickIncomeCategories: [],
   };
 
   return {
-    useCategoriesQuery: () => ({
-      data: categories,
+    useCategoriesQuery: (type?: "INCOME" | "EXPENSE") => ({
+      data: type ? byType[type] : all,
       isLoading: false,
     }),
     useQuickPreferencesQuery: () => ({
@@ -388,5 +406,76 @@ describe("TransactionForm label intent", () => {
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
     expect(onSubmit.mock.calls[0][0]).not.toHaveProperty("labelIds");
+  });
+});
+
+// The flow the FAB and both page modals actually use: `<TransactionForm onSubmit onCancel />` with
+// no `initialData` and no `transaction`. Every other test in this file prefills
+// `initialData.categoryId`, which short-circuits the category-reset effect before its third branch
+// can run — so the branch that blanks the category on a type change had no coverage at all, and a
+// change to that effect's dependency array blanked every tapped category with lint, type-check and
+// the whole suite still green (#230).
+describe("TransactionForm plain add flow", () => {
+  const enterAmount = (value: string) =>
+    fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value } });
+
+  const tile = (name: string) => screen.getByRole("button", { name });
+
+  it("keeps a tapped category and submits it when nothing was prefilled", async () => {
+    const onSubmit = vi.fn((_data: TransactionInput) => Promise.resolve());
+    render(<TransactionForm onSubmit={onSubmit} onCancel={() => {}} />);
+
+    enterAmount("12");
+    fireEvent.click(tile("Food"));
+
+    // Asserted on the tile as well as on the payload: when the reset effect re-runs on its own
+    // write, the category is blanked as fast as it is tapped, so what the user sees is a tile that
+    // never highlights rather than a save that fails.
+    await waitFor(() => expect(tile("Food").className).toContain("ring-amber"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Transaction" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      amount: 12,
+      type: "EXPENSE",
+      categoryId: "food",
+    });
+  });
+
+  it("drops a category that does not apply to the new type", async () => {
+    const onSubmit = vi.fn((_data: TransactionInput) => Promise.resolve());
+    render(<TransactionForm onSubmit={onSubmit} onCancel={() => {}} />);
+
+    enterAmount("12");
+    fireEvent.click(tile("Food"));
+    fireEvent.click(screen.getByRole("button", { name: "Income" }));
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Food" })).toBeNull());
+    expect(tile("Salary").className).not.toContain("ring-amber");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Transaction" }));
+
+    expect(await screen.findByText("Category is required")).toBeTruthy();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("accepts a category of the new type after switching", async () => {
+    const onSubmit = vi.fn((_data: TransactionInput) => Promise.resolve());
+    render(<TransactionForm onSubmit={onSubmit} onCancel={() => {}} />);
+
+    enterAmount("12");
+    fireEvent.click(screen.getByRole("button", { name: "Income" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Salary" }));
+
+    await waitFor(() => expect(tile("Salary").className).toContain("ring-amber"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Transaction" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      type: "INCOME",
+      categoryId: "salary",
+    });
   });
 });
