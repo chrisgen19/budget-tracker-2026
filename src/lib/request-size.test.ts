@@ -28,7 +28,7 @@ const declaredRequest = (payload: string, contentLength: number) =>
     body: payload,
   });
 
-const padded = (bytes: number) => JSON.stringify({ pad: "x".repeat(bytes) });
+const padded = (bytes: number) => JSON.stringify({ pad: "y".repeat(bytes) });
 
 describe("overBodySizeLimit", () => {
   it("refuses a declared length above the limit", () => {
@@ -74,6 +74,39 @@ describe("readJsonWithinLimit", () => {
     const payload = JSON.stringify({ items: Array.from({ length: 20 }, (_, i) => i) });
     const result = await readJsonWithinLimit(chunkedRequest(payload, 8), LIMIT);
     expect(result).toEqual({ ok: true, value: JSON.parse(payload) });
+  });
+
+  // The coalescing buffer starts at 64 KB and doubles, capped at the limit. These pin the seams
+  // where a growth off-by-one would live, and the tiny-chunk case is the one the buffer exists
+  // for: a sender picks the chunk size, so bytes alone do not bound how many objects arrive.
+  const BIG_LIMIT = 2 * 1024 * 1024;
+
+  /** Asserted on length rather than by deep-equalling megabytes, so a failure stays readable. */
+  const expectPadOfLength = (result: Awaited<ReturnType<typeof readJsonWithinLimit>>, size: number) => {
+    expect(result.ok).toBe(true);
+    const pad = (result as { ok: true; value: { pad: string } }).value.pad;
+    expect(pad.length).toBe(size);
+    expect(pad.endsWith("yy")).toBe(true);
+  };
+
+  it.each([
+    ["under the initial buffer", 1_000],
+    ["astride the first growth", 64 * 1024 + 1],
+    // `padded` adds 12 bytes of JSON around the string, so leave room under the ceiling.
+    ["just under the limit", BIG_LIMIT - 64],
+  ])("reassembles a body %s", async (_name, size) => {
+    const result = await readJsonWithinLimit(chunkedRequest(padded(size), 4_096), BIG_LIMIT);
+    expectPadOfLength(result, size);
+  });
+
+  it("reassembles a body delivered one byte at a time", async () => {
+    const result = await readJsonWithinLimit(chunkedRequest(padded(300), 1), LIMIT);
+    expectPadOfLength(result, 300);
+  });
+
+  it("refuses on the byte that crosses the limit, however finely it is sliced", async () => {
+    const result = await readJsonWithinLimit(chunkedRequest(padded(LIMIT * 2), 1), LIMIT);
+    expect(result.ok).toBe(false);
   });
 
   it("throws on malformed JSON, the way request.json() always did", async () => {
