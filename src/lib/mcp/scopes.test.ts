@@ -5,8 +5,10 @@ import {
   MCP_SCOPE_LABELS,
   MCP_TOOL_SCOPES,
   READ_ONLY_SCOPES,
+  grantCoversTool,
   grantsWrite,
   isPrivilegedScope,
+  scopesRequiredBy,
   isWriteScope,
   parseScopes,
 } from "./scopes";
@@ -75,6 +77,28 @@ describe("isWriteScope", () => {
     expect(isWriteScope("transactions:write")).toBe(true);
   });
 
+  /**
+   * Settling an occurrence is a different authority from adding a row: it advances a schedule
+   * cursor, writes a terminal log nothing here can remove, and can switch a bill off. Filing these
+   * as writes is what subjects them to the write lease and the 90-day expiry cap; a suffix test on
+   * ":write" would happen to get both right today and is exactly how `receipts:scan` was once
+   * mis-filed as harmless.
+   */
+  it("counts the bill and label write scopes", () => {
+    expect(isWriteScope("bills:write")).toBe(true);
+    expect(isWriteScope("labels:write")).toBe(true);
+    expect(grantsWrite(["bills:read", "bills:write"])).toBe(true);
+    expect(grantsWrite(["labels:write"])).toBe(true);
+  });
+
+  /** Reading bills and settling them are separate grants: a token minted to answer "what is due?"
+   *  must not be able to mark one paid. */
+  it("keeps reading a bill separate from settling one", () => {
+    expect(isWriteScope("bills:read")).toBe(false);
+    expect(READ_ONLY_SCOPES).toContain("bills:read");
+    expect(READ_ONLY_SCOPES).not.toContain("bills:write");
+  });
+
   it("does not count a scope that only spends money", () => {
     // receipts:scan is privileged but writes nothing, so it must not inherit the write expiry cap.
     expect(isWriteScope("receipts:scan")).toBe(false);
@@ -99,6 +123,20 @@ describe("MCP_TOOL_SCOPES", () => {
     expect(MCP_TOOL_SCOPES.update_transactions).toBe("transactions:write");
   });
 
+  /**
+   * `bills:write` rather than `transactions:write`, deliberately.
+   *
+   * A token minted to log fares has no business advancing a schedule cursor or retiring a bill,
+   * and folding these into the existing write scope would have granted exactly that to every token
+   * already holding it -- the Telegram bot's included -- with no re-mint and no notice.
+   */
+  it("gates the bill tools behind their own write scope", () => {
+    expect(MCP_TOOL_SCOPES.pay_bill).toBe("bills:write");
+    expect(MCP_TOOL_SCOPES.create_bill).toBe("bills:write");
+    expect(MCP_TOOL_SCOPES.update_bill).toBe("bills:write");
+    expect(MCP_TOOL_SCOPES.create_label).toBe("labels:write");
+  });
+
   it("has no delete tool", () => {
     // Editing was added deliberately; deleting was not. A leaked write token can garble rows,
     // which is visible and correctable, but still cannot make them disappear.
@@ -106,8 +144,39 @@ describe("MCP_TOOL_SCOPES", () => {
   });
 
   it("names a known scope for every registered tool", () => {
-    for (const scope of Object.values(MCP_TOOL_SCOPES)) {
-      expect(MCP_SCOPES).toContain(scope);
+    for (const tool of Object.keys(MCP_TOOL_SCOPES) as (keyof typeof MCP_TOOL_SCOPES)[]) {
+      for (const scope of scopesRequiredBy(tool)) {
+        expect(MCP_SCOPES).toContain(scope);
+      }
     }
+  });
+
+  /**
+   * The assessment facts are not aggregates.
+   *
+   * `MCP_SCOPE_LABELS` promises `budget:read` means "monthly totals, category breakdowns, trends",
+   * and this tool's payload carries transaction descriptions, amounts and dates alongside full bill
+   * payment history. Serving it on that scope alone made the mint form misleading about what a
+   * narrowed token hands over -- the exact failure the labels' own doc comment warns about.
+   */
+  it("requires every kind of data the assessment facts actually return", () => {
+    expect(scopesRequiredBy("get_assessment_facts")).toEqual([
+      "budget:read",
+      "transactions:read",
+      "bills:read",
+    ]);
+    expect(grantCoversTool(["budget:read"], "get_assessment_facts")).toBe(false);
+    expect(grantCoversTool(READ_ONLY_SCOPES, "get_assessment_facts")).toBe(true);
+  });
+
+  /** Every scope in a list is required, not any of them. */
+  it("refuses a partial grant and accepts a complete one", () => {
+    expect(grantCoversTool(["budget:read", "transactions:read"], "get_assessment_facts")).toBe(false);
+    expect(
+      grantCoversTool(["bills:read", "budget:read", "transactions:read"], "get_assessment_facts")
+    ).toBe(true);
+    // A single-scope tool still behaves exactly as before.
+    expect(grantCoversTool(["bills:read"], "get_upcoming_bills")).toBe(true);
+    expect(grantCoversTool(["budget:read"], "get_upcoming_bills")).toBe(false);
   });
 });

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { scheduledTransactionSchema } from "@/lib/validations";
 import { advanceToNextUnpaidOccurrence } from "@/lib/bill-utils";
+import { createBill } from "@/lib/bill-writes";
 import type { BillOccurrenceStatus } from "@/types";
 
 const billInclude = {
@@ -79,47 +80,40 @@ export async function POST(request: Request) {
     const body = await request.json();
     const validated = scheduledTransactionSchema.parse(body);
 
-    const startDate = new Date(validated.startDate);
     const { labelIds, ...billData } = validated;
 
-    const bill = await prisma.$transaction(async (tx) => {
-      // Validate label ownership + type compatibility
-      let verifiedLabelIds: string[] = [];
-      if (labelIds && labelIds.length > 0) {
-        const owned = await tx.label.findMany({
-          where: { id: { in: labelIds }, userId },
-          select: { id: true, applicableTo: true },
-        });
-        verifiedLabelIds = owned
-          .filter((l) => l.applicableTo === "BOTH" || l.applicableTo === billData.type)
-          .map((l) => l.id);
-      }
-
-      return tx.scheduledTransaction.create({
-        data: {
-          amount: billData.amount,
-          isVariable: billData.isVariable ?? false,
-          description: billData.description,
-          type: billData.type,
-          frequency: billData.frequency,
-          customIntervalDays: billData.customIntervalDays ?? null,
-          reminderDaysBefore: billData.reminderDaysBefore,
-          startDate,
-          endDate: billData.endDate ? new Date(billData.endDate) : null,
-          nextDueDate: startDate,
-          categoryId: billData.categoryId,
-          userId,
-          ...(verifiedLabelIds.length > 0 && {
-            labels: {
-              create: verifiedLabelIds.map((id) => ({ labelId: id })),
-            },
-          }),
-        },
-        include: billInclude,
-      });
+    // Shared with the MCP `create_bill` tool. The ownership check inside it is stricter than what
+    // this route used to do -- it trusted whatever `categoryId` it was handed -- which the form
+    // cannot trip, since it can only offer the user's own categories of the right type.
+    const result = await createBill({
+      prisma,
+      userId,
+      input: {
+        amount: billData.amount,
+        description: billData.description,
+        type: billData.type,
+        categoryId: billData.categoryId,
+        frequency: billData.frequency,
+        customIntervalDays: billData.customIntervalDays ?? null,
+        reminderDaysBefore: billData.reminderDaysBefore,
+        isVariable: billData.isVariable ?? false,
+        startDate: new Date(billData.startDate),
+        endDate: billData.endDate ? new Date(billData.endDate) : null,
+        isActive: true,
+      },
+      labelIds,
     });
 
-    return NextResponse.json(bill, { status: 201 });
+    if (!result.ok) {
+      const status = result.reason === "CATEGORY_NOT_USABLE" || result.reason === "LABELS_NOT_OWNED"
+        ? 400
+        : result.reason === "INVALID_SCHEDULE"
+          ? 400
+          : 500;
+      return NextResponse.json({ error: "Failed to create bill" }, { status });
+    }
+
+    return NextResponse.json(result.bill, { status: 201 });
   } catch (error) {
     if (error instanceof Error && error.name === "ZodError") {
       return NextResponse.json({ error: "Invalid input" }, { status: 400 });

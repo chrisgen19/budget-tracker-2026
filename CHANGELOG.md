@@ -2,6 +2,74 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-07 - The record and assess loops no longer dead-end in the app (#237)
+
+Four things a person actually does with this app were audited against the MCP tool set. Three of
+them ended by opening the browser, and one could not be served at all.
+
+**Settling a bill.** "I paid Meralco, 5,990" had no tool. `create_transactions` writes a loose row:
+`nextDueDate` never advances, the reminder keeps firing, and `findUnlinkedBillPayments` later
+reports the payment as an integrity problem -- so paying through MCP was *worse* than not logging
+it. `billId` stays out of the transaction write path, which was always right; what was missing is
+the deliberate action. `pay_bill` now serves `pay`, `pay_existing`, `skip` and `snooze` through
+`settleBill`, extracted from `POST /api/bills/[id]/action` into `src/lib/bill-writes.ts`. The route
+is now a mapping from its result to a status code and nothing else, so the row lock, the
+double-settle guard, the walk to the earliest unsettled occurrence and the end-date deactivation
+cannot drift between the two callers.
+
+**Defining a bill.** `create_bill` and `update_bill`. The update is a *patch* merged over the
+stored row, not the full replacement the PUT route takes: "PLDT went up to 1,900" is one field, and
+a tool demanding every other field back would lose whichever one the caller failed to echo. Its
+checks run against the effective row, which catches a bare `type` flip that leaves the category
+behind -- the same defect fixed for transactions in the previous release, arriving here before it
+could ship. Switching a bill off is the only retirement there is, and it keeps every payment.
+
+**Creating a label.** `create_label`. Every label path in the Telegram bot ended by telling the
+user to create it in the app, and so did MCP: a name matching nothing was reported back and then
+nothing could act on it.
+
+**Assessing.** `src/lib/assessment-facts.ts` is ~1,200 lines of deterministic analysis that exists
+precisely because a model handed five totals invents patterns instead. None of it was reachable
+over MCP, so a client asked "how am I doing?" re-derived it all from raw aggregates and reproduced
+exactly the failure the two-half split was built to prevent -- a month logged on 16 of its 31 days
+reads as a cheap month rather than a gap. `get_assessment_facts` exposes it, on the existing
+`budget:read` scope, with no AI call and no new logic. This also unblocks the `finance-assess`
+skill dropping `psql` against a local mirror that has already produced a report quoting a balance
+22,000 out of date.
+
+Exposing it needed one unrelated change: the `next-auth` module augmentation moved from
+`src/types/index.ts` into `src/types/next-auth.d.ts`. `mcp-server/` has no next-auth, so `@/types`
+had been unreachable from its type-check -- which is also why `bill-dates.ts` was written with no
+imports at all.
+
+**Two new scopes**, `bills:write` and `labels:write`, rather than more work behind
+`transactions:write`. Settling an occurrence advances a schedule cursor and writes a terminal log
+nothing here can remove; folding it into the existing scope would have granted that to every token
+already holding it, the Telegram bot's included, with no re-mint and no notice. `isWriteScope` is
+an explicit list for exactly this reason, so both are subject to the write lease and the 90-day
+expiry cap.
+
+Six things came out of review and are fixed here rather than deferred, five of them
+hardening `settleBill` and so landing on the app's own bill actions too:
+
+- the `dueDate` has to name an occurrence the schedule actually produces. A real but
+  wrong date wrote a payment and a PAID log against a month that does not exist, and
+  because the walk matches by exact timestamp the cursor never moved and the reminder
+  kept firing -- the failure this whole change exists to prevent, through the front door
+- `pay_existing` checked ownership and nothing else. It now refuses a row of the wrong
+  type or one far from the due date, and *reports* a category mismatch instead of
+  refusing it: the candidates list hides those, which makes naming the id the only way
+  to attach one, and a miscategorised payment is exactly the mess it exists to clean up.
+  The window formula is shared with that list, so the two cannot disagree
+- snooze wrote outside a transaction, skipping the write-lease re-check every other
+  branch performs, and had no occurrence guard, so a retry stacked a second deferral and
+  pushed `snoozeUntil` out -- contradicting the tool's own `idempotentHint`
+- an `endDate` moved before the next due date left the bill active past its own end.
+  Nothing downstream filters on `endDate`, so it read as permanently overdue
+- `update_bill` could set an end date and never clear one, since the schema had no null
+
+Still no delete tool for anything.
+
 ## 2026-09-07 - A category's type cannot be flipped out from under its transactions
 
 `PUT /api/categories/[id]` wrote `type` with no check on what already pointed at the category. The

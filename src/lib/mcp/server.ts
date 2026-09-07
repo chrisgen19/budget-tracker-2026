@@ -1,6 +1,9 @@
 import { McpServer, type RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { TransactionSource } from "@prisma/client";
 import {
+  BILL_ACTION_ERROR_MESSAGES,
+  BILL_WRITE_ERROR_MESSAGES,
+  LABEL_WRITE_ERROR_MESSAGES,
   SCAN_FAILURE_MESSAGES,
   SCAN_REFUSAL_MESSAGES,
   UPDATE_ERROR_MESSAGES,
@@ -30,7 +33,7 @@ import {
   getReceiptItems,
 } from "../budget-queries";
 import type { PrismaClient } from "../budget-query-types";
-import { READ_ONLY_SCOPES, MCP_TOOL_SCOPES, type McpScope, type McpToolName } from "./scopes";
+import { READ_ONLY_SCOPES, grantCoversTool, type McpScope, type McpToolName } from "./scopes";
 import { resolveWritePermission } from "./tokens";
 import {
   createTransactionBatch,
@@ -40,12 +43,23 @@ import {
   type UpdatableField,
 } from "../transaction-writes";
 import {
+  createBill,
+  settleBill,
+  updateBill,
+  type BillWithRelations,
+} from "../bill-writes";
+import { createLabel } from "../label-writes";
+import { collectAssessmentFacts } from "../assessment-facts-query";
+import { formatPeriodLabel } from "../analytics-period";
+import { utcDayKey } from "../bill-dates";
+import {
   clientBatchIdSchema,
   formatLocalDate,
   hasTrustworthyTime,
   isRealDate,
   mcpTransactionSchema,
   resolveTransactionDate,
+  HH_MM,
   MAX_BATCH_TRANSACTIONS,
   MAX_UPDATE_TRANSACTIONS,
 } from "../validations";
@@ -65,6 +79,11 @@ import {
   createTransactionsOutput,
   updateTransactionsOutput,
   scanReceiptOutput,
+  assessmentFactsOutput,
+  payBillOutput,
+  createBillOutput,
+  updateBillOutput,
+  createLabelOutput,
 } from "./output-schemas";
 
 /**
@@ -262,6 +281,80 @@ const renderDatePair = (
   return [`${day(previous)} ${hmsMs(previous)}`, `${day(next)} ${hmsMs(next)}`];
 };
 
+/**
+ * Render a bill row for a tool payload.
+ *
+ * Every date goes through `utcDayKey`, never `formatLocalDate`. A bill's dates are date-only
+ * values stored at midnight UTC and meaning "the 5th" for everyone; resolving one through a
+ * timezone behind UTC moves it to the 4th and turns every on-time payment into a day late. This
+ * is the same rule `get_upcoming_bills` follows for `localDueDate`.
+ */
+const renderBill = (bill: BillWithRelations) => ({
+  id: bill.id,
+  description: bill.description,
+  amount: bill.amount,
+  isVariable: bill.isVariable,
+  type: bill.type,
+  categoryId: bill.categoryId,
+  categoryName: bill.category.name,
+  frequency: bill.frequency as string,
+  customIntervalDays: bill.customIntervalDays,
+  reminderDaysBefore: bill.reminderDaysBefore,
+  startDate: utcDayKey(bill.startDate),
+  endDate: bill.endDate ? utcDayKey(bill.endDate) : null,
+  nextDueDate: utcDayKey(bill.nextDueDate),
+  isActive: bill.isActive,
+  labels: bill.labels.map((bl) => bl.label.name),
+});
+
+/**
+ * Consequences of a bill edit that the row itself does not show.
+ *
+ * Warnings rather than refusals, for the same reason `editWarnings` above is: each of these is a
+ * legitimate edit the app allows too. But a caller reading `changed: ["frequency"]` has no way to
+ * see that the next due date moved with it, and a bill that quietly stopped reminding is exactly
+ * the failure this whole issue is about.
+ */
+const billEditWarnings = (
+  changed: string[],
+  bill: BillWithRelations,
+  deactivated: boolean
+): string[] => {
+  const warnings: string[] = [];
+
+  if (changed.includes("frequency") || changed.includes("startDate") || changed.includes("customIntervalDays")) {
+    warnings.push(
+      `The schedule changed, so the next due date was recalculated to ${utcDayKey(bill.nextDueDate)}. ` +
+        "Occurrences already paid or skipped were walked past, so payment progress was kept."
+    );
+  }
+
+  // `deactivated` is the consequential case and is not visible in `changed`: pulling an end date
+  // back before the next due date moves `endDate`, never `isActive`, so a caller reading `changed`
+  // alone would never learn the bill had stopped.
+  if (deactivated) {
+    warnings.push(
+      "The schedule has no valid occurrence left after this change, so the bill was switched off. " +
+        "Its payment history is untouched, and update_bill with `isActive: true` brings it back."
+    );
+  } else if (changed.includes("isActive") && !bill.isActive) {
+    warnings.push(
+      "This bill is switched off: it no longer appears in get_upcoming_bills and sends no " +
+        "reminders. Its payment history is untouched, and update_bill with `isActive: true` " +
+        "brings it back."
+    );
+  }
+
+  if (changed.includes("isVariable") && bill.isVariable) {
+    warnings.push(
+      "This bill is now variable, so its stored amount is only a forecast fallback and pay_bill " +
+        "will require the amount actually paid on each occurrence."
+    );
+  }
+
+  return warnings;
+};
+
 export interface BudgetMcpServerOptions {
   /** Injected so the stdio entry point and the HTTP route can each supply their own client. */
   prisma: PrismaClient;
@@ -324,9 +417,16 @@ export const createBudgetMcpServer = ({
         "spending, income, or upcoming bills. Months are YYYY-MM and are resolved in the " +
         "user's own timezone, so results match what they see in the app. Amounts are plain " +
         "numbers in the user's configured currency. Every tool whose name begins with `get_` " +
-        "or `search_` is read-only. `create_transactions` and `update_transactions`, when " +
-        "present, are the only tools that write: one adds rows, the other changes existing " +
-        "ones. Nothing here can delete anything.",
+        "or `search_` is read-only. The tools that write, when present, are " +
+        "`create_transactions` and `update_transactions` for individual rows, `pay_bill` to " +
+        "settle an occurrence of a recurring bill, `create_bill` and `update_bill` to define " +
+        "one, and `create_label`. Nothing here can delete anything: a bill can only be switched " +
+        "off, and it keeps its history. For an open question about how the user is doing, start " +
+        "with `get_assessment_facts` rather than assembling an answer out of raw totals -- it " +
+        "already excludes months that were barely logged, which a comparison built from totals " +
+        "cannot see and will report as an improvement. When the user says they paid a bill, use " +
+        "`pay_bill`, not `create_transactions`: the latter writes a loose row that leaves the " +
+        "schedule stalled and the reminder still firing.",
     }
   );
 
@@ -1334,11 +1434,642 @@ export const createBudgetMcpServer = ({
     }
   );
 
+  registered.get_assessment_facts = server.registerTool(
+    "get_assessment_facts",
+    {
+      title: "Assessment facts",
+      description:
+        "The measured half of the financial assessment for a period: how much of each month was " +
+        "actually logged, which bills came due and were never settled, how far each bill's " +
+        "budgeted figure is from what it really costs, which categories moved and by how much, " +
+        "recurring charges and which of them are new, duplicate rows, unlabeled spend, and " +
+        "ranked anomalies. USE THIS FIRST for any open question about how the user is doing -- " +
+        "'how am I doing this month?', 'anything I should look at?', 'am I spending more than " +
+        "usual?'. Everything here is computed from the user's rows, so answer from these numbers " +
+        "rather than deriving your own from the raw totals: `confidence` is the reason why. A " +
+        "month logged on 16 of its 31 days is a logging gap, not a cheap month, and every rate, " +
+        "average and trend here already excludes those months. A comparison built from raw " +
+        "aggregates cannot see that and will report a gap as an improvement. Read " +
+        "`confidence.excludedMonths` and say so when a month was left out. Costs no AI call.",
+      inputSchema: {
+        // Same pattern as the six other month-taking tools here, and it has to be: `\d{2}` accepts
+        // `2026-00` and `2026-13`, which `parseMonth` hands to `Date.UTC` unguarded. Those
+        // normalise to December 2025 and January 2027, so the tool would answer about one month
+        // while `period.month` echoed back the other.
+        month: z
+          .string()
+          .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
+          .optional()
+          .describe("YYYY-MM. Defaults to the current month. Cannot be combined with `from`/`to`."),
+        ...periodInput,
+        historyMonths: z
+          .number()
+          .int()
+          .min(2)
+          .max(24)
+          .optional()
+          .describe(
+            "How many months of history the trends and baselines read, ending with the period's " +
+              "own month. Defaults to 6. More months make a baseline steadier and a seasonal " +
+              "bill's shape visible; fewer make a recent change stand out sooner."
+          ),
+      },
+      outputSchema: assessmentFactsOutput,
+      annotations: { readOnlyHint: true },
+    },
+    async ({ month, from, to, historyMonths }) =>
+      withPeriodErrors(async () => {
+        // Resolved through the same `resolvePeriod` every other period-taking tool uses, so a
+        // contradictory window (`month` with `from`) or an impossible day is refused here rather
+        // than half-applied -- and so "this month" means the same window it does everywhere else.
+        const period = describePeriodOrCurrentMonth({ month, from, to }, timezoneOffset);
+
+        if (!period.from || !period.to) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text:
+                  "An assessment needs both ends of its window. Send `month`, or both `from` and " +
+                  "`to`. A one-sided range has no length, and coverage, pace and every baseline " +
+                  "here are measured against one.",
+              },
+            ],
+            isError: true as const,
+          };
+        }
+
+        // `monthly` only when a whole month was named. A hand-built range that happens to cover a
+        // month is still `custom`: the label is what the caller shows the user, and calling a
+        // seven-day window "September 2026" would misdescribe every figure beside it.
+        const granularity = period.month ? "monthly" : "custom";
+        const facts = await collectAssessmentFacts(prisma, userId, {
+          from: period.from,
+          to: period.to,
+          granularity,
+          periodLabel: formatPeriodLabel(granularity, period.from, period.to),
+          historyMonths,
+        });
+
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(facts, null, 2) }],
+          structuredContent: structured(facts),
+        };
+      })
+  );
+
+  registered.pay_bill = server.registerTool(
+    "pay_bill",
+    {
+      title: "Settle a recurring bill",
+      description:
+        "Settle one occurrence of a recurring bill: `pay` records a new payment, `pay_existing` " +
+        "attaches a transaction the user already logged, `skip` marks the occurrence as not " +
+        "owed, and `snooze` defers the reminder without settling anything. USE THIS, NOT " +
+        "create_transactions, whenever the user says they paid a bill. create_transactions " +
+        "writes a loose row: the schedule never advances, the reminder keeps firing, and the " +
+        "payment is later reported as an integrity problem because nothing links it to the bill. " +
+        "Call get_upcoming_bills first for the bill's ID and the `dueDate` of the occurrence you " +
+        "mean. If the user has already logged the payment themselves, use `pay_existing` with " +
+        "its transaction ID rather than `pay`, which would write a second one. A bill whose " +
+        "amount varies (`isVariable`) requires `amount`: its stored figure is a forecast, and " +
+        "writing it as the payment would feed a guess back into every future estimate.",
+      inputSchema: {
+        billId: z.string().describe("From get_upcoming_bills or get_bill_history."),
+        action: z
+          .enum(["pay", "pay_existing", "skip", "snooze"])
+          .describe(
+            "`pay` writes a new transaction and advances the schedule. `pay_existing` links a " +
+              "transaction that already exists and advances it. `skip` advances without any " +
+              "payment. `snooze` defers the reminder and advances nothing."
+          ),
+        dueDate: z
+          .string()
+          .regex(LOCAL_DAY_REGEX)
+          .describe(
+            "The occurrence being settled, YYYY-MM-DD, exactly as `localDueDate` reported it. A " +
+              "bill's due date is a calendar day, not an instant, so do not convert it through a " +
+              "timezone."
+          ),
+        amount: z
+          .number()
+          .positive()
+          .optional()
+          .describe(
+            "What was actually paid. REQUIRED when the bill is variable; ignored for a fixed " +
+              "bill, whose stored amount is the payment. Ask the user rather than guessing: this " +
+              "figure becomes the history the next forecast is derived from."
+          ),
+        transactionId: z
+          .string()
+          .optional()
+          .describe("Required for `pay_existing`: the payment to attach, from search_transactions."),
+        snoozeDays: z
+          .number()
+          .int()
+          .min(1)
+          .max(7)
+          .optional()
+          .describe("Days to defer, for `snooze`. Defaults to 1."),
+      },
+      outputSchema: payBillOutput,
+      // Deliberately no readOnlyHint, so clients prompt. Not destructive: nothing existing is
+      // overwritten -- `pay` adds a row, `pay_existing` links one the user already has. Idempotent
+      // because the occurrence is locked and a second terminal log is refused, so a retry after a
+      // lost response reports ALREADY_SETTLED rather than paying twice.
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async ({ billId, action, dueDate, amount, transactionId, snoozeDays }) => {
+      const permission = resolveWritePermission(scopes, writesEnabledUntil, "bills:write");
+      if (!permission.allowed) {
+        const message =
+          permission.reason === "SCOPE_NOT_GRANTED"
+            ? "This token cannot settle bills. Mint a new token with the bills:write scope in Profile > MCP Access."
+            : "Writes are currently switched off for this account. Turn them on in Profile > MCP Access, then try again.";
+        return { content: [{ type: "text" as const, text: message }], isError: true };
+      }
+
+      if (!isRealDate(dueDate)) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `"${dueDate}" is not a real calendar date. Send the occurrence's own \`localDueDate\` from get_upcoming_bills.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      if (action === "pay_existing" && !transactionId) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "`pay_existing` needs the `transactionId` of the payment to attach. Call search_transactions to find it, or use `pay` to record a new one.",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const result = await settleBill({
+        prisma,
+        userId,
+        billId,
+        action,
+        // A due date is a date-only value stored at UTC midnight and meaning "the 5th" for
+        // everyone. Resolving it through the user's offset would move it to the 4th for anyone
+        // behind Greenwich and match no stored occurrence at all.
+        dueDate: new Date(`${dueDate}T00:00:00.000Z`),
+        amount,
+        transactionId,
+        snoozeDays,
+        timezoneOffset,
+        createdVia,
+        mcpTokenId: tokenId,
+        // The lease was read when the request arrived. Re-read at the moment of the write so
+        // "Turn off now" stops work already in flight rather than only refusing the next request.
+        assertStillPermitted: async (tx) => {
+          const current = await tx.user.findUnique({
+            where: { id: userId },
+            select: { mcpWritesEnabledUntil: true },
+          });
+          return resolveWritePermission(
+            scopes,
+            current?.mcpWritesEnabledUntil ?? null,
+            "bills:write"
+          ).allowed;
+        },
+      });
+
+      if (!result.ok) {
+        return {
+          content: [{ type: "text" as const, text: BILL_ACTION_ERROR_MESSAGES[result.reason] }],
+          isError: true,
+        };
+      }
+
+      const payload = {
+        billId: result.billId,
+        action: result.action,
+        transactionId: result.transactionId,
+        amountPaid: result.amountPaid,
+        nextDueDate: result.nextDueDate ? utcDayKey(result.nextDueDate) : null,
+        deactivated: result.deactivated,
+        snoozeUntil: result.snoozeUntil ? utcDayKey(result.snoozeUntil) : null,
+        warnings: result.warnings,
+        replayed: result.replayed,
+      };
+
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+        structuredContent: structured(payload),
+      };
+    }
+  );
+
+  registered.create_bill = server.registerTool(
+    "create_bill",
+    {
+      title: "Create a recurring bill",
+      description:
+        "Add a recurring bill so it appears in get_upcoming_bills, sends its reminder, and can be " +
+        "settled with pay_bill. Use it when the user says a new regular charge has started -- a " +
+        "subscription, rent, a utility. Call get_category_list first: the category must be the " +
+        "user's own or a default, and of the same type as the bill. Set `isVariable` for anything " +
+        "metered whose cost swings month to month (electricity, water); `amount` is then only a " +
+        "forecast fallback and pay_bill will require the real figure each time, which is what " +
+        "keeps a guess out of the payment history the next forecast is built from.",
+      inputSchema: {
+        description: z.string().min(1).max(255).describe("What the bill is, e.g. 'Meralco'."),
+        amount: z
+          .number()
+          .positive()
+          .describe(
+            "The expected amount. For a variable bill this is the forecast fallback used until " +
+              "payments exist, never a claim about what will be paid."
+          ),
+        type: z.enum(["INCOME", "EXPENSE"]),
+        categoryId: z.string().describe("From get_category_list. Must match `type`."),
+        frequency: z.enum(["DAILY", "WEEKLY", "MONTHLY", "ANNUALLY", "CUSTOM"]),
+        customIntervalDays: z
+          .number()
+          .int()
+          .min(1)
+          .optional()
+          .describe("Required when `frequency` is CUSTOM, ignored otherwise."),
+        startDate: z
+          .string()
+          .regex(LOCAL_DAY_REGEX)
+          .describe(
+            "The first occurrence, YYYY-MM-DD. This is a calendar day, not an instant, and it " +
+              "also fixes the day of the month a MONTHLY bill falls on."
+          ),
+        endDate: z
+          .string()
+          .regex(LOCAL_DAY_REGEX)
+          .optional()
+          .describe("Last day the bill runs, YYYY-MM-DD. Omit for an open-ended bill."),
+        isVariable: z
+          .boolean()
+          .optional()
+          .describe(
+            "True for a metered bill whose cost varies. Defaults to false. A variable bill's " +
+              "forecast is derived from its own payment history, and pay_bill then requires an " +
+              "explicit amount."
+          ),
+        reminderDaysBefore: z
+          .number()
+          .int()
+          .min(0)
+          .max(30)
+          .optional()
+          .describe("Days before the due date to send the email reminder. Defaults to 0."),
+        labelIds: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Labels applied to every payment this bill records. From get_label_list. A label " +
+              "whose type excludes the bill's is reported in `droppedLabels`, not applied."
+          ),
+      },
+      outputSchema: createBillOutput,
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async (input) => {
+      const permission = resolveWritePermission(scopes, writesEnabledUntil, "bills:write");
+      if (!permission.allowed) {
+        const message =
+          permission.reason === "SCOPE_NOT_GRANTED"
+            ? "This token cannot create bills. Mint a new token with the bills:write scope in Profile > MCP Access."
+            : "Writes are currently switched off for this account. Turn them on in Profile > MCP Access, then try again.";
+        return { content: [{ type: "text" as const, text: message }], isError: true };
+      }
+
+      const badDay = [input.startDate, input.endDate].find((d) => d !== undefined && !isRealDate(d));
+      if (badDay !== undefined) {
+        return {
+          content: [
+            { type: "text" as const, text: `"${badDay}" is not a real calendar date.` },
+          ],
+          isError: true,
+        };
+      }
+
+      const result = await createBill({
+        prisma,
+        userId,
+        input: {
+          amount: input.amount,
+          description: input.description,
+          type: input.type,
+          categoryId: input.categoryId,
+          frequency: input.frequency,
+          customIntervalDays: input.customIntervalDays ?? null,
+          reminderDaysBefore: input.reminderDaysBefore ?? 0,
+          isVariable: input.isVariable ?? false,
+          // Bill dates are calendar days at UTC midnight, never resolved through an offset.
+          startDate: new Date(`${input.startDate}T00:00:00.000Z`),
+          endDate: input.endDate ? new Date(`${input.endDate}T00:00:00.000Z`) : null,
+          isActive: true,
+        },
+        labelIds: input.labelIds,
+        assertStillPermitted: async (tx) => {
+          const current = await tx.user.findUnique({
+            where: { id: userId },
+            select: { mcpWritesEnabledUntil: true },
+          });
+          return resolveWritePermission(
+            scopes,
+            current?.mcpWritesEnabledUntil ?? null,
+            "bills:write"
+          ).allowed;
+        },
+      });
+
+      if (!result.ok) {
+        return {
+          content: [{ type: "text" as const, text: BILL_WRITE_ERROR_MESSAGES[result.reason] }],
+          isError: true,
+        };
+      }
+
+      const payload = { bill: renderBill(result.bill), droppedLabels: result.droppedLabels };
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+        structuredContent: structured(payload),
+      };
+    }
+  );
+
+  registered.update_bill = server.registerTool(
+    "update_bill",
+    {
+      title: "Change a recurring bill",
+      description:
+        "Change an existing bill: its amount when a charge goes up, its category, its schedule, " +
+        "or whether it is still running. Send ONLY the fields that differ -- everything omitted " +
+        "keeps its stored value, so 'PLDT went up to 1,900' is one field and nothing else has to " +
+        "be echoed back. Changing `frequency` or `startDate` recalculates the next due date, " +
+        "walking past occurrences that were already settled so payment progress survives. This " +
+        "does NOT record a payment: use pay_bill for that. Setting `isActive: false` switches a " +
+        "bill off, which stops its reminders and hides it from get_upcoming_bills while keeping " +
+        "every payment it recorded; setting it back to true brings it and its schedule back. " +
+        "There is no way to delete a bill.",
+      inputSchema: {
+        billId: z.string().describe("From get_upcoming_bills or get_bill_history."),
+        description: z.string().min(1).max(255).optional(),
+        amount: z.number().positive().optional(),
+        type: z
+          .enum(["INCOME", "EXPENSE"])
+          .optional()
+          .describe(
+            "Changing this requires a `categoryId` of the same type in the same call, or the " +
+              "bill would end up filed under a category of the other kind."
+          ),
+        categoryId: z.string().optional().describe("From get_category_list. Must match the type."),
+        frequency: z.enum(["DAILY", "WEEKLY", "MONTHLY", "ANNUALLY", "CUSTOM"]).optional(),
+        customIntervalDays: z.number().int().min(1).optional(),
+        startDate: z
+          .string()
+          .regex(LOCAL_DAY_REGEX)
+          .optional()
+          .describe("YYYY-MM-DD. Changing it recalculates where the schedule now points."),
+        endDate: z
+          .string()
+          .regex(LOCAL_DAY_REGEX)
+          .nullable()
+          .optional()
+          .describe(
+            "YYYY-MM-DD. Omitting it leaves the stored end date alone; send null to remove one, " +
+              "making the bill open-ended again. Moving it before the next due date ends the " +
+              "schedule, which switches the bill off."
+          ),
+        isVariable: z.boolean().optional(),
+        reminderDaysBefore: z.number().int().min(0).max(30).optional(),
+        isActive: z
+          .boolean()
+          .optional()
+          .describe(
+            "False switches the bill off, the only way to retire one; true brings it back, moving " +
+              "a due date left in the past up to today so it does not return already overdue."
+          ),
+        labelIds: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Replaces the bill's labels outright. Omit to leave them alone; send [] to clear them."
+          ),
+      },
+      outputSchema: updateBillOutput,
+      // The only bill tool that overwrites values already stored, so clients that respect
+      // destructiveHint prompt harder for it than for a create.
+      annotations: { destructiveHint: true, idempotentHint: true },
+    },
+    async ({ billId, startDate, endDate, ...rest }) => {
+      const permission = resolveWritePermission(scopes, writesEnabledUntil, "bills:write");
+      if (!permission.allowed) {
+        const message =
+          permission.reason === "SCOPE_NOT_GRANTED"
+            ? "This token cannot change bills. Mint a new token with the bills:write scope in Profile > MCP Access."
+            : "Writes are currently switched off for this account. Turn them on in Profile > MCP Access, then try again.";
+        return { content: [{ type: "text" as const, text: message }], isError: true };
+      }
+
+      // `null` is a deliberate value here (clear the end date), not a bad date.
+      const badDay = [startDate, endDate].find(
+        (d) => d !== undefined && d !== null && !isRealDate(d)
+      );
+      if (badDay !== undefined) {
+        return {
+          content: [{ type: "text" as const, text: `"${badDay}" is not a real calendar date.` }],
+          isError: true,
+        };
+      }
+
+      const result = await updateBill({
+        prisma,
+        userId,
+        billId,
+        patch: {
+          ...rest,
+          ...(startDate !== undefined && { startDate: new Date(`${startDate}T00:00:00.000Z`) }),
+          // Null reaches the patch as null and clears the stored end date; the merge filters on
+          // `undefined` alone, so the two absences stay distinguishable all the way down.
+          ...(endDate !== undefined && {
+            endDate: endDate === null ? null : new Date(`${endDate}T00:00:00.000Z`),
+          }),
+        },
+        assertStillPermitted: async (tx) => {
+          const current = await tx.user.findUnique({
+            where: { id: userId },
+            select: { mcpWritesEnabledUntil: true },
+          });
+          return resolveWritePermission(
+            scopes,
+            current?.mcpWritesEnabledUntil ?? null,
+            "bills:write"
+          ).allowed;
+        },
+      });
+
+      if (!result.ok) {
+        return {
+          content: [{ type: "text" as const, text: BILL_WRITE_ERROR_MESSAGES[result.reason] }],
+          isError: true,
+        };
+      }
+
+      const payload = {
+        bill: renderBill(result.bill),
+        changed: result.changed,
+        droppedLabels: result.droppedLabels,
+        warnings: billEditWarnings(result.changed, result.bill, result.deactivated),
+      };
+
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+        structuredContent: structured(payload),
+      };
+    }
+  );
+
+  registered.create_label = server.registerTool(
+    "create_label",
+    {
+      title: "Create a label",
+      description:
+        "Create a label the user does not have yet, so a transaction can be tagged with it. Call " +
+        "get_label_list first and reuse an existing label wherever one fits: labels are how " +
+        "spending is grouped here, and a near-duplicate ('Japan' beside 'Japan 2026') splits one " +
+        "trip's spending across two lines in every breakdown. Names are compared without case, so " +
+        "'work' collides with an existing 'Work'. Set `applicableTo` to EXPENSE or INCOME when " +
+        "the label only makes sense for one of them, which keeps it out of the other's picker. " +
+        "A `schedule` auto-applies the label to transactions written inside a time window on " +
+        "given weekdays -- useful for something like weekday office lunches, and worth confirming " +
+        "with the user first, since it will tag rows nobody asked it to.",
+      inputSchema: {
+        // `.min(1)` accepts "   ", which the handler then trims to "" and writes: a label with no
+        // name, unpickable in the app and unresolvable by the Telegram label matcher, which reads
+        // names. The pattern rather than a refine, so the constraint reaches the model in the
+        // serialized JSON Schema instead of only failing at the call.
+        name: z
+          .string()
+          .min(1)
+          .max(30)
+          .regex(/\S/, "A label name must contain something other than whitespace."),
+        color: z
+          .string()
+          .regex(/^#[0-9A-Fa-f]{6}$/)
+          .describe("Hex, e.g. #A8763E. Pick something distinguishable from the existing labels."),
+        applicableTo: z
+          .enum(["EXPENSE", "INCOME", "BOTH"])
+          .optional()
+          .describe("Which transaction types may carry it. Defaults to BOTH."),
+        schedules: z
+          .array(
+            z.object({
+              days: z
+                .array(z.number().int().min(0).max(6))
+                .min(1)
+                .describe("Weekdays, 0 = Sunday."),
+              startTime: z
+                .string()
+                .regex(HH_MM)
+                .describe("Zero-padded 24-hour HH:mm. '08:00', never '8:00'."),
+              endTime: z
+                .string()
+                .regex(HH_MM)
+                .describe("Zero-padded HH:mm, later than startTime. Overnight ranges are not supported."),
+            })
+          )
+          .max(10)
+          .optional()
+          .describe(
+            "Auto-apply rules. Omit unless the user asked for one: a schedule tags future " +
+              "transactions on its own, and a label applied by mistake moves money in the " +
+              "label breakdown."
+          ),
+      },
+      outputSchema: createLabelOutput,
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ name, color, applicableTo, schedules }) => {
+      const permission = resolveWritePermission(scopes, writesEnabledUntil, "labels:write");
+      if (!permission.allowed) {
+        const message =
+          permission.reason === "SCOPE_NOT_GRANTED"
+            ? "This token cannot create labels. Mint a new token with the labels:write scope in Profile > MCP Access."
+            : "Writes are currently switched off for this account. Turn them on in Profile > MCP Access, then try again.";
+        return { content: [{ type: "text" as const, text: message }], isError: true };
+      }
+
+      const badWindow = (schedules ?? []).find((s) => s.startTime >= s.endTime);
+      if (badWindow) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `A schedule's endTime must be later than its startTime (got ${badWindow.startTime}-${badWindow.endTime}). Overnight windows are not supported; use two schedules instead.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const result = await createLabel({
+        prisma,
+        userId,
+        name: name.trim(),
+        color,
+        applicableTo: applicableTo ?? "BOTH",
+        schedules,
+        assertStillPermitted: async (tx) => {
+          const current = await tx.user.findUnique({
+            where: { id: userId },
+            select: { mcpWritesEnabledUntil: true },
+          });
+          return resolveWritePermission(
+            scopes,
+            current?.mcpWritesEnabledUntil ?? null,
+            "labels:write"
+          ).allowed;
+        },
+      });
+
+      if (!result.ok) {
+        return {
+          content: [{ type: "text" as const, text: LABEL_WRITE_ERROR_MESSAGES[result.reason] }],
+          isError: true,
+        };
+      }
+
+      const payload = {
+        id: result.label.id,
+        name: result.label.name,
+        color: result.label.color,
+        applicableTo: result.label.applicableTo,
+        schedules: result.label.schedules.map((s) => ({
+          id: s.id,
+          days: s.days,
+          startTime: s.startTime,
+          endTime: s.endTime,
+        })),
+      };
+
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+        structuredContent: structured(payload),
+      };
+    }
+  );
+
   // Registration above is unconditional so every tool keeps its inferred input/output types;
   // narrowing happens here, once, against one map. Anything not covered by a granted scope is
   // removed rather than left disabled, so `tools/list` never names it.
   for (const [name, tool] of Object.entries(registered) as [McpToolName, RegisteredTool][]) {
-    if (!scopes.includes(MCP_TOOL_SCOPES[name])) tool.remove();
+    if (!grantCoversTool(scopes, name)) tool.remove();
   }
 
   return server;

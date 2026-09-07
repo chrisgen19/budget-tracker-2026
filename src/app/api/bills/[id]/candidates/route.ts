@@ -3,11 +3,13 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { utcDayStart } from "@/lib/bill-dates";
+import { PAYMENT_WINDOW_DAYS, paymentWindow } from "@/lib/bill-writes";
 import { formatLocalDate } from "@/lib/validations";
 import { estimateBillAmount, buildEstimateSamples } from "@/lib/bill-estimate";
 
-/** How far from the due date a payment may sit and still be offered. */
-const WINDOW_DAYS = 14;
+/** How far from the due date a payment may sit and still be offered. Defined in `bill-writes.ts`,
+ *  which enforces the same window when the payment is actually linked. */
+const WINDOW_DAYS = PAYMENT_WINDOW_DAYS;
 /** Most candidates returned. Short on purpose: this list is read, not paged. */
 const LIMIT = 25;
 
@@ -64,23 +66,22 @@ export async function GET(
     return NextResponse.json({ error: "Bill not found" }, { status: 404 });
   }
 
+  const due = utcDayStart(new Date(`${parsed.data}T00:00:00.000Z`));
+
   // The due date is a date-only value stored at midnight UTC and means "the
   // 8th" -- but a transaction's `date` is an *instant*, so the window has to be
   // the user's calendar days, not UTC's. Under UTC+8 a payment made at 00:30 on
   // the boundary day is stored on the previous UTC date and was being dropped,
-  // while the empty state claimed no payment existed. One formula app-wide:
-  // Date.UTC(y, m, d) + tzOffset * 60000 (AGENTS.md).
-  const due = utcDayStart(new Date(`${parsed.data}T00:00:00.000Z`));
-  const y = due.getUTCFullYear();
-  const mo = due.getUTCMonth();
-  const d = due.getUTCDate();
-  // Date.UTC normalises day over- and underflow, so ±14 needs no clamping.
-  const localDayStart = (offsetDays: number) =>
-    new Date(Date.UTC(y, mo, d + offsetDays) + timezoneOffset * 60000);
-  const windowStart = localDayStart(-WINDOW_DAYS);
-  const dueDayStart = localDayStart(0);
-  // Inclusive of the whole last day, or the window silently loses it.
-  const windowEnd = new Date(localDayStart(WINDOW_DAYS + 1).getTime() - 1);
+  // while the empty state claimed no payment existed.
+  //
+  // `paymentWindow` lives in `bill-writes.ts`, which enforces the same window when the payment is
+  // actually linked. The two computing it separately is the hazard: this list would offer a
+  // payment the write then refused, or hide one it would have accepted.
+  const { start: windowStart, dueDayStart, end: windowEnd } = paymentWindow(
+    due,
+    timezoneOffset ?? 0,
+    WINDOW_DAYS,
+  );
 
   const select = {
     id: true,

@@ -1,11 +1,49 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import type { Prisma } from "@prisma/client";
 import { getAuthUserId } from "@/lib/session";
 import { billActionSchema } from "@/lib/validations";
-import { advanceToNextUnpaidOccurrence, settledStatusesFor } from "@/lib/bill-utils";
-import { addUtcDays, userToday } from "@/lib/bill-dates";
-import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
+import { settleBill, type BillActionFailureReason } from "@/lib/bill-writes";
+
+/**
+ * What each refusal looks like over HTTP.
+ *
+ * The logic itself lives in `settleBill`, shared with the MCP `pay_bill` tool: locking the bill
+ * row, refusing a second terminal log on one occurrence, walking to the earliest unsettled
+ * occurrence and switching the bill off when the schedule runs out. This route is the mapping from
+ * that result to a status code and nothing more.
+ */
+const FAILURES: Record<BillActionFailureReason, { status: number; error: string }> = {
+  BILL_NOT_FOUND: { status: 404, error: "Bill not found" },
+  TRANSACTION_NOT_FOUND: { status: 404, error: "Transaction not found" },
+  PAYMENT_ALREADY_LINKED: { status: 409, error: "That payment is already linked to another bill" },
+  // The browser posts a due date it was given by the bills list or the history panel, so these
+  // three are unreachable from a form working normally. They are the reason the map is total: a
+  // stale tab posting a due date the schedule no longer produces gets a named 400 rather than a
+  // phantom occurrence written into the ledger.
+  NOT_AN_OCCURRENCE: {
+    status: 400,
+    error: "That date is not one this bill falls due on",
+  },
+  TRANSACTION_TYPE_MISMATCH: {
+    status: 400,
+    error: "That payment is the opposite type from the bill",
+  },
+  TRANSACTION_OUTSIDE_WINDOW: {
+    status: 400,
+    error: "That payment is too far from the due date to settle this occurrence",
+  },
+  AMOUNT_REQUIRED: {
+    status: 400,
+    error:
+      "This bill's amount varies, so the payment amount is required. " +
+      "Use Pay & Edit to enter what you actually paid.",
+  },
+  // The app holds no write lease, so `settleBill` is called without one and this is unreachable
+  // from here. Listed because the map is total over the reason union: a reason added later has to
+  // be answered here rather than falling through to a generic 500.
+  NO_LONGER_PERMITTED: { status: 409, error: "Writes are currently switched off for this account" },
+  ALREADY_SETTLED: { status: 409, error: "This occurrence has already been paid or skipped" },
+};
 
 export async function POST(
   request: Request,
@@ -17,329 +55,47 @@ export async function POST(
   const { id } = await params;
 
   try {
-    const bill = await prisma.scheduledTransaction.findUnique({
-      where: { id },
-      include: { category: true, labels: { include: { label: true } } },
-    });
-
-    if (!bill || bill.userId !== userId) {
-      return NextResponse.json({ error: "Bill not found" }, { status: 404 });
-    }
-
     const body = await request.json();
-    const { action, dueDate: dueDateStr, transactionId: existingTransactionId, snoozeDays, amount: paidAmount } =
-      billActionSchema.parse(body);
-    const dueDate = new Date(dueDateStr);
-
-    const originalStartDay = bill.startDate.getUTCDate();
+    const { action, dueDate, transactionId, snoozeDays, amount } = billActionSchema.parse(body);
 
     // "Snooze for a day" means a day in the user's calendar, not the server's and not UTC's.
-    // Computed from `new Date()` alone, a snooze started at 02:00 in Manila expired the same
-    // morning, because the UTC day had not turned over yet.
     const { timezoneOffset } = (await prisma.user.findUnique({
       where: { id: userId },
       select: { timezoneOffset: true },
     })) ?? { timezoneOffset: 0 };
 
-    /**
-     * Lock the bill row. Must be a transaction's FIRST statement.
-     *
-     * The transaction and log inserts below reference this row, so Postgres
-     * takes a FOR KEY SHARE lock on it via those foreign keys. If two overlapping
-     * actions both hold KEY SHARE and then try to upgrade to FOR UPDATE, they
-     * deadlock and one rolls back with a 500. Taking FOR UPDATE before any
-     * referencing insert means the second transaction simply waits.
-     *
-     * Returns the locked row's nextDueDate, which is the value to walk from --
-     * the copy read before the transaction may already be stale.
-     */
-    const lockBill = async (tx: Prisma.TransactionClient) => {
-      const [locked] = await tx.$queryRaw<{ next_due_date: Date }[]>`
-        SELECT next_due_date FROM scheduled_transactions WHERE id = ${id} FOR UPDATE
-      `;
-      return locked?.next_due_date ?? bill.nextDueDate;
-    };
+    const result = await settleBill({
+      prisma,
+      userId,
+      billId: id,
+      action,
+      dueDate: new Date(dueDate),
+      amount,
+      transactionId,
+      snoozeDays,
+      timezoneOffset: timezoneOffset ?? 0,
+    });
 
-    /**
-     * Whether this occurrence already has a terminal log.
-     *
-     * There is no unique constraint on (scheduledTransactionId, dueDate), so a
-     * resubmit -- a double click, or a click against a stale reminder list that
-     * has not refetched yet -- would otherwise write a second transaction and
-     * pay the same occurrence twice. Only race-free when called after lockBill.
-     */
-    const alreadySettled = async (tx: Prisma.TransactionClient) => {
-      const existing = await tx.scheduledTransactionLog.findFirst({
-        where: {
-          scheduledTransactionId: bill.id,
-          dueDate,
-          // Which statuses count as terminal depends on the action: pay_existing
-          // may supersede a SKIPPED occurrence, since correcting a wrongly
-          // skipped month is the whole point of it. See settledStatusesFor.
-          status: { in: settledStatusesFor(action) },
-        },
-        select: { id: true },
-      });
-      return existing !== null;
-    };
-
-    /**
-     * Resolve the bill's next due date after a terminal log has been written.
-     *
-     * Advancing from the *acted-on* occurrence loses data: occurrences earlier
-     * than the result are never regenerated by getPendingRemindersForUser (it
-     * only walks forward from nextDueDate), so paying or skipping an occurrence
-     * out of order silently discarded every unpaid one before it. Walk from the
-     * locked nextDueDate to the earliest occurrence with no terminal log instead.
-     *
-     * Call after inserting this action's log so the walk counts it too.
-     */
-    const resolveNextDueDate = async (tx: Prisma.TransactionClient, lockedNextDueDate: Date) => {
-      const logs = await tx.scheduledTransactionLog.findMany({
-        where: { scheduledTransactionId: bill.id },
-        select: { dueDate: true, status: true },
-      });
-
-      return advanceToNextUnpaidOccurrence(
-        lockedNextDueDate,
-        bill.frequency,
-        originalStartDay,
-        bill.customIntervalDays,
-        logs,
-        // advanceToNextUnpaidOccurrence returns null both when the walk passes
-        // endDate and when it exhausts its budget, and this route deactivates
-        // the bill on null. The default budget of 500 would deactivate a daily
-        // bill with 500 consecutive settled occurrences, so it is raised until
-        // exhaustion is implausible and null means endDate in practice.
-        { endDate: bill.endDate, maxIterations: 20_000 },
-      );
-    };
-
-    const settledResponse = () =>
-      NextResponse.json(
-        {
-          // pay_existing can now supersede a skip, so "or skipped" would name a
-          // state it did not refuse on.
-          error:
-            action === "pay_existing"
-              ? "This occurrence has already been paid"
-              : "This occurrence has already been paid or skipped",
-        },
-        { status: 409 },
-      );
+    if (!result.ok) {
+      const failure = FAILURES[result.reason];
+      // `pay_existing` can supersede a skip, so "or skipped" would name a state it did not refuse
+      // on.
+      const error =
+        result.reason === "ALREADY_SETTLED" && action === "pay_existing"
+          ? "This occurrence has already been paid"
+          : failure.error;
+      return NextResponse.json({ error }, { status: failure.status });
+    }
 
     if (action === "pay") {
-      // A variable bill's stored amount is a fallback for *forecasting*, not a
-      // claim about what was paid. Writing it as a transaction would put a guess
-      // in the ledger, and the estimator reads the ledger back as history -- so
-      // one wrong click compounds into every future estimate. The caller must
-      // say what was actually paid.
-      if (bill.isVariable && paidAmount === undefined) {
-        return NextResponse.json(
-          {
-            error:
-              "This bill's amount varies, so the payment amount is required. " +
-              "Use Pay & Edit to enter what you actually paid.",
-          },
-          { status: 400 },
-        );
-      }
-      // Resolve labels: bill labels take priority over scheduled auto-labels
-      const billLabelIds = (bill.labels ?? [])
-        .filter((bl) => bl.label.applicableTo === "BOTH" || bl.label.applicableTo === bill.type)
-        .map((bl) => bl.labelId);
-      let transactionLabelIds: string[] = [];
-
-      if (billLabelIds.length > 0) {
-        transactionLabelIds = billLabelIds;
-      } else {
-        const paymentDate = new Date();
-        const ctx = await getScheduleContext(userId);
-        const scheduledLabelId = ctx ? matchScheduledLabel(paymentDate, ctx, bill.type) : null;
-        if (scheduledLabelId) transactionLabelIds = [scheduledLabelId];
-      }
-
-      // Atomic: create transaction, log payment, advance bill. Prevents
-      // partial writes that leave nextDueDate stale or logs orphaned.
-      const paid = await prisma.$transaction(async (tx) => {
-        const lockedNextDue = await lockBill(tx);
-        if (await alreadySettled(tx)) return null;
-
-        const transaction = await tx.transaction.create({
-          data: {
-            // Only a variable bill takes the caller's figure. For a fixed one
-            // the stored amount *is* the asserted payment, and honouring an
-            // amount here would let a stale client write a transaction that
-            // silently disagrees with the bill. Pay & Edit remains the way to
-            // record a one-off different figure on any bill.
-            amount: bill.isVariable ? (paidAmount ?? bill.amount) : bill.amount,
-            description: bill.description,
-            type: bill.type,
-            date: new Date(),
-            categoryId: bill.categoryId,
-            userId,
-            billId: bill.id,
-            ...(transactionLabelIds.length > 0 && {
-              labels: {
-                create: transactionLabelIds.map((labelId) => ({ labelId })),
-              },
-            }),
-          },
-        });
-
-        await tx.scheduledTransactionLog.create({
-          data: {
-            scheduledTransactionId: bill.id,
-            dueDate,
-            status: "PAID",
-            actionDate: new Date(),
-            transactionId: transaction.id,
-          },
-        });
-
-        // Earliest still-unpaid occurrence, not simply the one just paid
-        const nextDue = await resolveNextDueDate(tx, lockedNextDue);
-
-        await tx.scheduledTransaction.update({
-          where: { id },
-          data: {
-            ...(nextDue && { nextDueDate: nextDue }),
-            // null means no valid occurrence left (past endDate or none found)
-            ...(nextDue === null && { isActive: false }),
-          },
-        });
-
-        return transaction.id;
-      });
-
-      if (paid === null) return settledResponse();
-
-      return NextResponse.json({ message: "Bill paid", transactionId: paid });
+      return NextResponse.json({ message: "Bill paid", transactionId: result.transactionId });
     }
-
-    if (action === "pay_existing") {
-      // Verify the target transaction belongs to the authenticated user
-      const existingTx = await prisma.transaction.findFirst({
-        where: { id: existingTransactionId!, userId },
-        select: { id: true },
-      });
-      if (!existingTx) {
-        return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
-      }
-
-      // Atomic: log payment, link txn to bill, advance bill — one commit.
-      const linked = await prisma.$transaction(async (tx) => {
-        const lockedNextDue = await lockBill(tx);
-        if (await alreadySettled(tx)) return "settled" as const;
-
-        // Claim the payment conditionally, and do it before anything else is
-        // written. A candidate list can go stale -- two panels open, or one
-        // left sitting while the transaction is linked elsewhere -- and an
-        // unconditional update would silently re-point a payment that already
-        // belongs to another bill, leaving that bill's log referencing a
-        // transaction it no longer owns. Returning early here commits nothing,
-        // since only reads and a row lock have happened so far.
-        const claim = await tx.transaction.updateMany({
-          where: { id: existingTx.id, userId, billId: null },
-          data: { billId: bill.id },
-        });
-        if (claim.count === 0) return "taken" as const;
-
-        // Remove a superseded skip instead of leaving two terminal logs on one
-        // occurrence. The due-date walk dedupes, so it would still advance
-        // correctly, but the bill's history would list the month twice -- once
-        // as skipped and once as paid -- which is the record this is correcting.
-        await tx.scheduledTransactionLog.deleteMany({
-          where: { scheduledTransactionId: bill.id, dueDate, status: "SKIPPED" },
-        });
-
-        await tx.scheduledTransactionLog.create({
-          data: {
-            scheduledTransactionId: bill.id,
-            dueDate,
-            status: "PAID",
-            actionDate: new Date(),
-            transactionId: existingTx.id,
-          },
-        });
-        const nextDue = await resolveNextDueDate(tx, lockedNextDue);
-
-        await tx.scheduledTransaction.update({
-          where: { id },
-          data: {
-            ...(nextDue && { nextDueDate: nextDue }),
-            ...(nextDue === null && { isActive: false }),
-          },
-        });
-
-        return "ok" as const;
-      });
-
-      if (linked === "settled") return settledResponse();
-      if (linked === "taken") {
-        return NextResponse.json(
-          { error: "That payment is already linked to another bill" },
-          { status: 409 },
-        );
-      }
-
-      return NextResponse.json({ message: "Bill marked as paid" });
-    }
-
+    if (action === "pay_existing") return NextResponse.json({ message: "Bill marked as paid" });
     if (action === "snooze") {
-      // Snooze for N days (default 1) — do NOT advance nextDueDate
       const days = snoozeDays ?? 1;
-      // The user's own day, N days on, stored at UTC midnight the way a due date is. Readers
-      // therefore take it as date-only and must not convert it back through an offset.
-      const snoozeUntil = addUtcDays(userToday(timezoneOffset ?? 0), days);
-
-      await prisma.scheduledTransactionLog.create({
-        data: {
-          scheduledTransactionId: bill.id,
-          dueDate,
-          status: "SNOOZED",
-          actionDate: new Date(),
-          snoozeUntil,
-        },
-      });
-
       return NextResponse.json({ message: `Bill snoozed for ${days} day${days > 1 ? "s" : ""}` });
     }
-
-    if (action === "skip") {
-      // Atomic: log skip + advance bill together.
-      const skipped = await prisma.$transaction(async (tx) => {
-        const lockedNextDue = await lockBill(tx);
-        if (await alreadySettled(tx)) return false;
-
-        await tx.scheduledTransactionLog.create({
-          data: {
-            scheduledTransactionId: bill.id,
-            dueDate,
-            status: "SKIPPED",
-            actionDate: new Date(),
-          },
-        });
-
-        const nextDue = await resolveNextDueDate(tx, lockedNextDue);
-
-        await tx.scheduledTransaction.update({
-          where: { id },
-          data: {
-            ...(nextDue && { nextDueDate: nextDue }),
-            ...(nextDue === null && { isActive: false }),
-          },
-        });
-
-        return true;
-      });
-
-      if (!skipped) return settledResponse();
-
-      return NextResponse.json({ message: "Bill skipped" });
-    }
-
-    return NextResponse.json({ error: "Invalid action" }, { status: 400 });
+    return NextResponse.json({ message: "Bill skipped" });
   } catch (error) {
     if (error instanceof Error && error.name === "ZodError") {
       return NextResponse.json({ error: "Invalid input" }, { status: 400 });

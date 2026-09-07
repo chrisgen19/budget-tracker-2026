@@ -27,6 +27,25 @@ import type {
 } from "../budget-query-types";
 import type { ResolvedPeriod, TransactionTotals } from "../budget-query-types";
 import type { ScanResultPayload } from "../receipt-scan";
+import type {
+  AssessmentAnomaly,
+  AssessmentBillAccuracy,
+  AssessmentBillFacts,
+  AssessmentCategoryMovement,
+  AssessmentDataConfidence,
+  AssessmentDuplicateGroup,
+  AssessmentFacts,
+  AssessmentFragmentation,
+  AssessmentHeadline,
+  AssessmentHygieneFacts,
+  AssessmentLoggingGap,
+  AssessmentMissedBill,
+  AssessmentMonthCoverage,
+  AssessmentRecurringFacts,
+  AssessmentRecurringItem,
+  AssessmentTrendFacts,
+  AssessmentUnlinkedBillPayment,
+} from "@/types";
 
 /**
  * True only when A and B have exactly the same keys *and* are mutually assignable.
@@ -632,3 +651,345 @@ export const scanReceiptOutput = {
   usedPhotoFallback: z.boolean(),
 };
 assertExact<z.infer<z.ZodObject<typeof scanReceiptOutput>>, ScanResultPayload>(true);
+
+// --- get_assessment_facts ---
+
+/**
+ * The deterministic half of the AI Assessment, pinned field for field to `AssessmentFacts`.
+ *
+ * Every one of these is a *measurement*, not an interpretation. That distinction is the reason
+ * the module behind it exists: handed five totals, a model cannot see that July is missing fifteen
+ * days of logging or that a bill has had no payment recorded since June, so it invents patterns
+ * instead -- the one thing a report about money must not do. Exposing the measurements is what
+ * lets a client on a phone answer "how am I doing?" with the same figures the app shows rather
+ * than re-deriving them from raw aggregates and reproducing exactly that failure.
+ *
+ * Pinned with `assertExact` like every read schema here, and for a sharper reason than usual: the
+ * type is nine nested structures deep, so a field added to one of them is precisely the drift
+ * nobody would notice by eye.
+ */
+const monthCoverage = z.object({
+  month: z.string(),
+  label: z.string(),
+  daysLogged: z.number(),
+  daysInMonth: z.number(),
+  coveragePct: z.number(),
+  transactionCount: z.number(),
+  income: z.number(),
+  expenses: z.number(),
+  status: z.enum(["ok", "low-coverage", "partial"]),
+});
+assertExact<z.infer<typeof monthCoverage>, AssessmentMonthCoverage>(true);
+
+const loggingGap = z.object({
+  from: z.string(),
+  to: z.string(),
+  days: z.number(),
+  inPeriod: z.boolean(),
+});
+assertExact<z.infer<typeof loggingGap>, AssessmentLoggingGap>(true);
+
+const dataConfidence = z.object({
+  months: z.array(monthCoverage),
+  trustworthyMonths: z.array(z.string()),
+  excludedMonths: z.array(z.string()),
+  gaps: z.array(loggingGap),
+  periodCoveragePct: z.number(),
+  periodIsPartial: z.boolean(),
+  periodDaysElapsed: z.number(),
+  periodDaysTotal: z.number(),
+});
+assertExact<z.infer<typeof dataConfidence>, AssessmentDataConfidence>(true);
+
+const billAccuracy = z.object({
+  id: z.string(),
+  description: z.string(),
+  categoryName: z.string(),
+  budgeted: z.number(),
+  isVariable: z.boolean(),
+  payments: z.number(),
+  avgPaid: z.number().nullable(),
+  lowest: z.number().nullable(),
+  highest: z.number().nullable(),
+  swing: z.number().nullable(),
+  variancePct: z.number().nullable(),
+  verdict: z.enum(["ok", "under-budgeted", "over-budgeted", "seasonal", "no-payments"]),
+  monthlySeries: z.array(z.object({ month: z.string(), label: z.string(), amount: z.number() })),
+});
+assertExact<z.infer<typeof billAccuracy>, AssessmentBillAccuracy>(true);
+
+const missedBill = z.object({
+  id: z.string(),
+  description: z.string(),
+  categoryName: z.string(),
+  amount: z.number(),
+  isEstimate: z.boolean(),
+  missedDueDates: z.array(z.string()),
+  daysOverdue: z.number(),
+  estimatedArrears: z.number(),
+});
+assertExact<z.infer<typeof missedBill>, AssessmentMissedBill>(true);
+
+const unlinkedBillPayment = z.object({
+  billId: z.string(),
+  billDescription: z.string(),
+  count: z.number(),
+  total: z.number(),
+  recentDates: z.array(z.string()),
+});
+assertExact<z.infer<typeof unlinkedBillPayment>, AssessmentUnlinkedBillPayment>(true);
+
+const headline = z.object({
+  months: z.number(),
+  income: z.number(),
+  expenses: z.number(),
+  net: z.number(),
+  savingsRatePct: z.number().nullable(),
+  avgMonthlyBurn: z.number().nullable(),
+  runningBalance: z.number().nullable(),
+  monthsOfRunway: z.number().nullable(),
+});
+assertExact<z.infer<typeof headline>, AssessmentHeadline>(true);
+
+const billFacts = z.object({
+  asOf: z.string(),
+  missed: z.array(missedBill),
+  accuracy: z.array(billAccuracy),
+  unlinkedPayments: z.array(unlinkedBillPayment),
+  dueSoonCount: z.number(),
+  dueSoonTotal: z.number(),
+  dueSoonIsEstimate: z.boolean(),
+});
+assertExact<z.infer<typeof billFacts>, AssessmentBillFacts>(true);
+
+const categoryMovement = z.object({
+  category: z.string(),
+  type: transactionType,
+  current: z.number(),
+  priorAvg: z.number(),
+  changePct: z.number().nullable(),
+  change: z.number(),
+  direction: z.enum(["up", "down", "new"]),
+  baselineMonths: z.number(),
+});
+assertExact<z.infer<typeof categoryMovement>, AssessmentCategoryMovement>(true);
+
+const trendFacts = z.object({
+  comparedMonth: z.string().nullable(),
+  comparedMonthLabel: z.string().nullable(),
+  baselineMonths: z.array(z.string()),
+  movements: z.array(categoryMovement),
+  monthlyNet: z.array(
+    z.object({
+      month: z.string(),
+      label: z.string(),
+      income: z.number(),
+      expenses: z.number(),
+      net: z.number(),
+    })
+  ),
+  baselineSavingsRatePct: z.number().nullable(),
+  avgMonthlyBurn: z.number().nullable(),
+});
+assertExact<z.infer<typeof trendFacts>, AssessmentTrendFacts>(true);
+
+const recurringItem = z.object({
+  description: z.string(),
+  months: z.number(),
+  occurrences: z.number(),
+  avgAmount: z.number(),
+  total: z.number(),
+  isNew: z.boolean(),
+  firstSeen: z.string(),
+  lastSeen: z.string(),
+});
+assertExact<z.infer<typeof recurringItem>, AssessmentRecurringItem>(true);
+
+const recurringFacts = z.object({
+  items: z.array(recurringItem),
+  newItems: z.array(recurringItem),
+  monthlyBase: z.number(),
+  monthlyBasePct: z.number().nullable(),
+});
+assertExact<z.infer<typeof recurringFacts>, AssessmentRecurringFacts>(true);
+
+const duplicateGroup = z.object({
+  date: z.string(),
+  description: z.string(),
+  amount: z.number(),
+  copies: z.number(),
+  inPeriod: z.boolean(),
+});
+assertExact<z.infer<typeof duplicateGroup>, AssessmentDuplicateGroup>(true);
+
+const fragmentation = z.object({
+  normalized: z.string(),
+  variants: z.array(z.string()),
+  transactions: z.number(),
+});
+assertExact<z.infer<typeof fragmentation>, AssessmentFragmentation>(true);
+
+const hygieneFacts = z.object({
+  duplicates: z.array(duplicateGroup),
+  unlabeled: z.object({
+    fromBills: z.object({ count: z.number(), total: z.number() }),
+    manual: z.object({ count: z.number(), total: z.number() }),
+    pctOfSpend: z.number(),
+  }),
+  fragmentation: z.array(fragmentation),
+  incomeConcentrationPct: z.number().nullable(),
+  topIncomeSource: z.string().nullable(),
+  incomeSources: z.array(
+    z.object({
+      source: z.string(),
+      count: z.number(),
+      total: z.number(),
+      pct: z.number().nullable(),
+    })
+  ),
+});
+assertExact<z.infer<typeof hygieneFacts>, AssessmentHygieneFacts>(true);
+
+const anomaly = z.object({
+  kind: z.enum([
+    "category-spike",
+    "new-category",
+    "outlier-transaction",
+    "overspend",
+    "savings-drop",
+    "pace",
+    "missing-income",
+    "duplicate",
+    "logging-gap",
+    "missed-bill",
+  ]),
+  title: z.string(),
+  detail: z.string(),
+  severity: z.enum(["high", "medium", "low"]),
+  current: z.number().nullable(),
+  baseline: z.number().nullable(),
+  changePct: z.number().nullable(),
+});
+assertExact<z.infer<typeof anomaly>, AssessmentAnomaly>(true);
+
+export const assessmentFactsOutput = {
+  generatedAt: z.string(),
+  currency: z.string(),
+  period: z.object({
+    from: z.string(),
+    to: z.string(),
+    label: z.string(),
+    granularity: z.string(),
+  }),
+  window: z.object({ from: z.string(), to: z.string(), months: z.number() }),
+  confidence: dataConfidence,
+  headline: headline,
+  bills: billFacts,
+  trends: trendFacts,
+  recurring: recurringFacts,
+  hygiene: hygieneFacts,
+  anomalies: z.array(anomaly),
+};
+assertExact<z.infer<z.ZodObject<typeof assessmentFactsOutput>>, AssessmentFacts>(true);
+
+// --- pay_bill ---
+
+/**
+ * What settling an occurrence reports back.
+ *
+ * Says what the schedule now points at rather than only "done", because advancing the cursor is
+ * the half of this that `create_transactions` could never do and the half the caller cannot see
+ * from a transaction id. `deactivated` is called out separately: a bill going quiet because its
+ * schedule ran out looks identical to one going quiet because nothing is due, and only one of
+ * those is worth telling the user about.
+ */
+export const payBillOutput = {
+  billId: z.string(),
+  action: z.enum(["pay", "pay_existing", "skip", "snooze"]),
+  /** The transaction that settled it: created by `pay`, named by `pay_existing`, null otherwise. */
+  transactionId: z.string().nullable(),
+  /** What actually reached the ledger, so a variable bill's fallback figure is never a guess the
+   *  caller has to make. Null when no money moved. */
+  amountPaid: z.number().nullable(),
+  /** The bill's next due date as a calendar day, YYYY-MM-DD. Null after a snooze, which defers the
+   *  reminder without settling the occurrence, and null when the schedule has run out. */
+  nextDueDate: z.string().nullable(),
+  /** True when the walk found no further occurrence, so the bill was switched off. Reversible:
+   *  `update_bill` with `isActive: true` brings it back. */
+  deactivated: z.boolean(),
+  /** For a snooze: the calendar day the reminder returns on, YYYY-MM-DD. */
+  snoozeUntil: z.string().nullable(),
+  /** Consequences the row itself does not show, for the caller to relay -- most importantly a
+   *  payment linked from a different category than the bill's. */
+  warnings: z.array(z.string()),
+  /** True when the work was already done and this call wrote nothing: a retried snooze resolves to
+   *  the deferral already in place rather than writing a second one. */
+  replayed: z.boolean(),
+};
+
+// --- create_bill / update_bill ---
+
+const billPayload = z.object({
+  id: z.string(),
+  description: z.string(),
+  amount: z.number(),
+  /** True when the amount varies month to month, so `amount` is only a forecasting fallback and
+   *  `pay_bill` requires an explicit figure. */
+  isVariable: z.boolean(),
+  type: transactionType,
+  categoryId: z.string(),
+  categoryName: z.string(),
+  frequency: z.string(),
+  customIntervalDays: z.number().nullable(),
+  reminderDaysBefore: z.number(),
+  /** Calendar days, YYYY-MM-DD. Bill dates are date-only values and are never converted through a
+   *  timezone: a due date of the 5th is the 5th for everyone. */
+  startDate: z.string(),
+  endDate: z.string().nullable(),
+  nextDueDate: z.string(),
+  isActive: z.boolean(),
+  labels: z.array(z.string()),
+});
+
+/** A label the caller asked for and did not get, with the reason. Reported rather than dropped in
+ *  silence: `changed` shows a label leaving but never why, and an unexplained disappearance reads
+ *  as a bug in the tool. */
+const droppedLabel = z.object({
+  labelId: z.string(),
+  name: z.string().nullable(),
+  reason: z.literal("TYPE_MISMATCH"),
+});
+
+export const createBillOutput = {
+  bill: billPayload,
+  droppedLabels: z.array(droppedLabel),
+};
+
+export const updateBillOutput = {
+  bill: billPayload,
+  /** Only the fields whose stored value actually moved. Empty means the patch matched what was
+   *  already there, which is a success that changed nothing. */
+  changed: z.array(z.string()),
+  droppedLabels: z.array(droppedLabel),
+  /** Consequences not visible in the row itself, for the caller to relay -- a recalculated due
+   *  date, or a bill switched off because its schedule ran out. */
+  warnings: z.array(z.string()),
+};
+
+// --- create_label ---
+
+export const createLabelOutput = {
+  id: z.string(),
+  name: z.string(),
+  color: z.string(),
+  applicableTo: z.enum(["EXPENSE", "INCOME", "BOTH"]),
+  /** Auto-apply rules, if any were given. A schedule tags matching transactions at write time. */
+  schedules: z.array(
+    z.object({
+      id: z.string(),
+      days: z.array(z.number()),
+      startTime: z.string(),
+      endTime: z.string(),
+    })
+  ),
+};
