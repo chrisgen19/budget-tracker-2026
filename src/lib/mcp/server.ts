@@ -1426,9 +1426,13 @@ export const createBudgetMcpServer = ({
         "aggregates cannot see that and will report a gap as an improvement. Read " +
         "`confidence.excludedMonths` and say so when a month was left out. Costs no AI call.",
       inputSchema: {
+        // Same pattern as the six other month-taking tools here, and it has to be: `\d{2}` accepts
+        // `2026-00` and `2026-13`, which `parseMonth` hands to `Date.UTC` unguarded. Those
+        // normalise to December 2025 and January 2027, so the tool would answer about one month
+        // while `period.month` echoed back the other.
         month: z
           .string()
-          .regex(/^\d{4}-\d{2}$/)
+          .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
           .optional()
           .describe("YYYY-MM. Defaults to the current month. Cannot be combined with `from`/`to`."),
         ...periodInput,

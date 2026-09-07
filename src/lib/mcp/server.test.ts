@@ -331,6 +331,39 @@ describe("createBudgetMcpServer", () => {
   });
 
   /**
+   * Every month-taking tool has to reject a month that is not one.
+   *
+   * `\d{2}` accepts `2026-00` and `2026-13`, and `parseMonth` hands those to `Date.UTC` unguarded:
+   * they normalise to December 2025 and January 2027, so the tool answers about one month while
+   * `period.month` echoes back the other. The six older tools already spelled this correctly;
+   * `get_assessment_facts` arrived with the loose pattern.
+   */
+  it("rejects an impossible month on every tool that takes one", async () => {
+    const server = createBudgetMcpServer({
+      prisma,
+      userId: "user_1",
+      timezoneOffset: -480,
+      scopes: Object.values(MCP_TOOL_SCOPES),
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const { tools } = await client.listTools();
+    await client.close();
+
+    const withMonth = tools.filter(
+      (t) => (t.inputSchema.properties as Record<string, unknown> | undefined)?.month
+    );
+    // Guards the guard: if `month` were renamed or dropped everywhere, an empty list would pass.
+    expect(withMonth.length).toBeGreaterThanOrEqual(7);
+
+    for (const tool of withMonth) {
+      const month = (tool.inputSchema.properties as Record<string, { pattern?: string }>).month;
+      expect(month.pattern, tool.name).toBe("^\\d{4}-(0[1-9]|1[0-2])$");
+    }
+  });
+
+  /**
    * A finite bill has to be able to become open-ended again.
    *
    * The service layer always supported it -- the patch merge filters on `undefined`, so `null`
