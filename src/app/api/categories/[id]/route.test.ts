@@ -6,15 +6,29 @@ const mocks = vi.hoisted(() => ({
   categoryUpdate: vi.fn(),
   transactionCount: vi.fn(),
   billCount: vi.fn(),
+  queryRaw: vi.fn(),
+  /** Call order across the mocked client, so "locked before counting" is assertable. */
+  calls: [] as string[],
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    category: { findFirst: mocks.categoryFindFirst, update: mocks.categoryUpdate },
-    transaction: { count: mocks.transactionCount },
-    scheduledTransaction: { count: mocks.billCount },
-  },
-}));
+vi.mock("@/lib/prisma", () => {
+  const track = <T,>(name: string, fn: (...args: never[]) => T) =>
+    (...args: never[]) => {
+      mocks.calls.push(name);
+      return fn(...args);
+    };
+  const client = {
+    category: {
+      findFirst: mocks.categoryFindFirst,
+      update: track("update", mocks.categoryUpdate),
+    },
+    transaction: { count: track("countTransactions", mocks.transactionCount) },
+    scheduledTransaction: { count: track("countBills", mocks.billCount) },
+    $queryRaw: track("lock", mocks.queryRaw),
+    $transaction: (run: (tx: unknown) => unknown) => run(client),
+  };
+  return { prisma: client };
+});
 vi.mock("@/lib/session", () => ({ getAuthUserId: mocks.getAuthUserId }));
 
 import { PUT } from "@/app/api/categories/[id]/route";
@@ -41,7 +55,9 @@ const put = (payload: Record<string, unknown>, id = "cat-1") =>
 describe("PUT /api/categories/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.calls.length = 0;
     mocks.getAuthUserId.mockResolvedValue("user-1");
+    mocks.queryRaw.mockResolvedValue([{ "?column?": 1 }]);
     mocks.categoryFindFirst.mockResolvedValue({
       id: "cat-1",
       userId: "user-1",
@@ -60,8 +76,10 @@ describe("PUT /api/categories/[id]", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.categoryUpdate).toHaveBeenCalled();
-    // Not even counted: the rows are unaffected by a rename or a recolour.
+    // Not even counted: the rows are unaffected by a rename or a recolour, so the row is not
+    // locked either -- a rename must not make concurrent transaction inserts wait.
     expect(mocks.transactionCount).not.toHaveBeenCalled();
+    expect(mocks.queryRaw).not.toHaveBeenCalled();
   });
 
   it("flips the type freely while nothing points at the category", async () => {
@@ -119,6 +137,15 @@ describe("PUT /api/categories/[id]", () => {
     expect((await response.json()).error).toBe(
       "Cannot change type: 12 transaction(s) and 1 bill(s) use this category. Move them to another category first.",
     );
+  });
+
+  // Counting and then updating are two snapshots: a transaction inserted between them commits
+  // against the old type while the flip commits after it, recreating the very mismatch this
+  // refuses. The row lock has to be taken before the counts are read, not merely at the write.
+  it("locks the category row before counting, and holds it through the update", async () => {
+    await put(body({ type: "INCOME" }));
+
+    expect(mocks.calls).toEqual(["lock", "countTransactions", "countBills", "update"]);
   });
 
   it("404s a category that is not the caller's, or is a default", async () => {

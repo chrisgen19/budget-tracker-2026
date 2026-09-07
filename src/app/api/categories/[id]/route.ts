@@ -47,37 +47,66 @@ export async function PUT(request: Request, { params }: RouteParams) {
     // Counts bills as well as transactions: `ScheduledTransaction.categoryId` is the same
     // NOT NULL reference, and a bill left pointing at a mismatched category writes a wrong-typed
     // transaction every time it is paid.
-    if (validated.type !== existing.type) {
-      const [transactionCount, billCount] = await Promise.all([
-        prisma.transaction.count({ where: { categoryId: id } }),
-        prisma.scheduledTransaction.count({ where: { categoryId: id } }),
-      ]);
+    type Outcome =
+      | { conflict: { transactionCount: number; billCount: number }; category?: undefined }
+      | { conflict?: undefined; category: Awaited<ReturnType<typeof prisma.category.update>> };
 
-      if (transactionCount + billCount > 0) {
-        const parts = [
-          transactionCount > 0 ? `${transactionCount} transaction(s)` : null,
-          billCount > 0 ? `${billCount} bill(s)` : null,
-        ].filter(Boolean);
-        return NextResponse.json(
-          {
-            error: `Cannot change type: ${parts.join(" and ")} use this category. Move them to another category first.`,
-            transactionCount,
-            billCount,
-          },
-          { status: 409 }
-        );
+    const outcome: Outcome = await prisma.$transaction(async (tx): Promise<Outcome> => {
+      if (validated.type !== existing.type) {
+        // Lock the category row before counting, and hold it through the write.
+        //
+        // Counting and then updating are two snapshots, and a transaction or bill inserted
+        // between them commits against the old type while the flip commits after it -- exactly
+        // the mismatch this guard exists to prevent. Postgres takes `FOR KEY SHARE` on the
+        // parent row to enforce the foreign key whenever such a row is inserted, and `FOR
+        // UPDATE` conflicts with it, so taking it here makes any concurrent insert wait for
+        // this transaction rather than slip between the two statements. Nothing is needed from
+        // the writers themselves: the lock they already take is what this conflicts with.
+        //
+        // The update alone is not enough, even though `UPDATE ... SET type` does take `FOR
+        // UPDATE` of its own accord -- `type` sits in the `(name, type, user_id)` unique index,
+        // which is what makes it a key update. That lock is acquired when the write runs, which
+        // is after the counts have already been read.
+        await tx.$queryRaw`SELECT 1 FROM categories WHERE id = ${id} FOR UPDATE`;
+
+        const transactionCount = await tx.transaction.count({ where: { categoryId: id } });
+        const billCount = await tx.scheduledTransaction.count({ where: { categoryId: id } });
+
+        if (transactionCount + billCount > 0) {
+          return { conflict: { transactionCount, billCount } };
+        }
       }
+
+      return {
+        category: await tx.category.update({
+          where: { id },
+          data: {
+            name: validated.name,
+            type: validated.type,
+            icon: validated.icon,
+            color: validated.color,
+          },
+        }),
+      };
+    });
+
+    if (outcome.conflict) {
+      const { transactionCount, billCount } = outcome.conflict;
+      const parts = [
+        transactionCount > 0 ? `${transactionCount} transaction(s)` : null,
+        billCount > 0 ? `${billCount} bill(s)` : null,
+      ].filter(Boolean);
+      return NextResponse.json(
+        {
+          error: `Cannot change type: ${parts.join(" and ")} use this category. Move them to another category first.`,
+          transactionCount,
+          billCount,
+        },
+        { status: 409 }
+      );
     }
 
-    const category = await prisma.category.update({
-      where: { id },
-      data: {
-        name: validated.name,
-        type: validated.type,
-        icon: validated.icon,
-        color: validated.color,
-      },
-    });
+    const category = outcome.category;
 
     return NextResponse.json(category);
   } catch (error) {
