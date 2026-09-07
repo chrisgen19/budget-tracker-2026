@@ -28,15 +28,85 @@ export async function PUT(request: Request, { params }: RouteParams) {
     const body = await request.json();
     const validated = categorySchema.parse(body);
 
-    const category = await prisma.category.update({
-      where: { id },
-      data: {
-        name: validated.name,
-        type: validated.type,
-        icon: validated.icon,
-        color: validated.color,
-      },
+    // A category's type may not be flipped out from under rows that already point at it.
+    //
+    // Nothing stopped this before, and the result was silent: the transactions kept their own
+    // type and their category no longer agreed with it. Such a row is internally inconsistent
+    // and distorts everything grouping by category, and because `PUT /api/transactions/[id]` is
+    // a full replace, the browser re-sends that stale pair on every subsequent edit -- which is
+    // why that route has to tolerate it rather than reject it (#229). This removes the state
+    // instead of accommodating it.
+    //
+    // Refusing outright, rather than the 409-then-confirm the sibling label route uses. That
+    // flow deletes `TransactionLabel` join rows, which are optional; `transactions.category_id`
+    // is NOT NULL, so there is no association to remove here -- something would have to be
+    // rewritten instead, either the rows' own `type` (restating spending history) or their
+    // category (a destructive move behind a confirm). Neither is worth doing on the user's
+    // behalf when they can recategorise the rows themselves, or make a second category.
+    //
+    // Counts bills as well as transactions: `ScheduledTransaction.categoryId` is the same
+    // NOT NULL reference, and a bill left pointing at a mismatched category writes a wrong-typed
+    // transaction every time it is paid.
+    type Outcome =
+      | { conflict: { transactionCount: number; billCount: number }; category?: undefined }
+      | { conflict?: undefined; category: Awaited<ReturnType<typeof prisma.category.update>> };
+
+    const outcome: Outcome = await prisma.$transaction(async (tx): Promise<Outcome> => {
+      if (validated.type !== existing.type) {
+        // Lock the category row before counting, and hold it through the write.
+        //
+        // Counting and then updating are two snapshots, and a transaction or bill inserted
+        // between them commits against the old type while the flip commits after it -- exactly
+        // the mismatch this guard exists to prevent. Postgres takes `FOR KEY SHARE` on the
+        // parent row to enforce the foreign key whenever such a row is inserted, and `FOR
+        // UPDATE` conflicts with it, so taking it here makes any concurrent insert wait for
+        // this transaction rather than slip between the two statements. Nothing is needed from
+        // the writers themselves: the lock they already take is what this conflicts with.
+        //
+        // The update alone is not enough, even though `UPDATE ... SET type` does take `FOR
+        // UPDATE` of its own accord -- `type` sits in the `(name, type, user_id)` unique index,
+        // which is what makes it a key update. That lock is acquired when the write runs, which
+        // is after the counts have already been read.
+        await tx.$queryRaw`SELECT 1 FROM categories WHERE id = ${id} FOR UPDATE`;
+
+        const transactionCount = await tx.transaction.count({ where: { categoryId: id } });
+        const billCount = await tx.scheduledTransaction.count({ where: { categoryId: id } });
+
+        if (transactionCount + billCount > 0) {
+          return { conflict: { transactionCount, billCount } };
+        }
+      }
+
+      return {
+        category: await tx.category.update({
+          where: { id },
+          data: {
+            name: validated.name,
+            type: validated.type,
+            icon: validated.icon,
+            color: validated.color,
+          },
+        }),
+      };
     });
+
+    if (outcome.conflict) {
+      const { transactionCount, billCount } = outcome.conflict;
+      const parts = [
+        transactionCount > 0 ? `${transactionCount} transaction(s)` : null,
+        billCount > 0 ? `${billCount} bill(s)` : null,
+      ].filter(Boolean);
+      return NextResponse.json(
+        {
+          error: `Cannot change type: ${parts.join(" and ")} use this category. Move them to another category first.`,
+          transactionCount,
+          billCount,
+        },
+        { status: 409 }
+      );
+    }
+
+    const category = outcome.category;
 
     return NextResponse.json(category);
   } catch (error) {

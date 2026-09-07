@@ -24,12 +24,22 @@ import {
 import type { CategoryInput } from "@/lib/validations";
 import type { Category } from "@/types";
 
+/** The save refusal, styled to match the delete refusal already shown in the delete dialog. */
+function SaveError({ message }: { message: string }) {
+  return (
+    <div className="bg-expense-light border border-expense/20 text-expense-dark px-4 py-3 rounded-xl text-sm mb-4">
+      {message}
+    </div>
+  );
+}
+
 export default function CategoriesPage() {
   const [filter, setFilter] = useState<"ALL" | "INCOME" | "EXPENSE">("ALL");
   const [showForm, setShowForm] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [deletingCategory, setDeletingCategory] = useState<Category | null>(null);
   const [deleteError, setDeleteError] = useState("");
+  const [saveError, setSaveError] = useState("");
   const [quickPickerType, setQuickPickerType] = useState<"EXPENSE" | "INCOME" | null>(null);
 
   // TanStack Query hooks
@@ -74,14 +84,41 @@ export default function CategoriesPage() {
   };
 
   const handleCreate = async (input: CategoryInput) => {
-    await createCategory.mutateAsync(input);
-    setShowForm(false);
+    setSaveError("");
+    try {
+      await createCategory.mutateAsync(input);
+      setShowForm(false);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Failed to create category");
+    }
   };
 
+  // The save error is rendered rather than thrown away. The route refuses a type flip while
+  // transactions or bills still point at the category, and without this the rejection reached
+  // nobody: the modal simply stayed open with the toggle showing the type it had refused to save.
   const handleUpdate = async (input: CategoryInput) => {
     if (!editingCategory) return;
-    await updateCategory.mutateAsync({ id: editingCategory.id, input });
-    setEditingCategory(null);
+    setSaveError("");
+    try {
+      await updateCategory.mutateAsync({ id: editingCategory.id, input });
+      setEditingCategory(null);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Failed to update category");
+    }
+  };
+
+  // Opening a form clears the message as well as closing one does. A save that fails *after* its
+  // modal was closed still lands in `saveError` -- the request was already in flight -- and the
+  // state is shared by both dialogs, so without this the next form opened greets the user with a
+  // stale error from a different category, or from the other operation entirely.
+  const openCreateForm = () => {
+    setSaveError("");
+    setShowForm(true);
+  };
+
+  const openEditForm = (category: Category) => {
+    setSaveError("");
+    setEditingCategory(category);
   };
 
   const handleDelete = () => {
@@ -109,7 +146,7 @@ export default function CategoriesPage() {
           </p>
         </div>
         <button
-          onClick={() => setShowForm(true)}
+          onClick={openCreateForm}
           className="hidden sm:inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-5 py-2.5 rounded-xl transition-colors shadow-soft hover:shadow-soft-md"
         >
           <Plus className="w-4 h-4" />
@@ -345,7 +382,7 @@ export default function CategoriesPage() {
                         </div>
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button
-                            onClick={() => setEditingCategory(cat)}
+                            onClick={() => openEditForm(cat)}
                             className="p-1.5 rounded-lg text-warm-300 hover:text-amber hover:bg-amber-light transition-colors"
                           >
                             <Pencil className="w-3.5 h-3.5" />
@@ -411,7 +448,7 @@ export default function CategoriesPage() {
               description="Create custom categories to organize your transactions."
               action={
                 <button
-                  onClick={() => setShowForm(true)}
+                  onClick={openCreateForm}
                   className="inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white text-sm font-medium px-4 py-2.5 rounded-xl transition-colors shadow-soft"
                 >
                   <Plus className="w-4 h-4" />
@@ -426,26 +463,40 @@ export default function CategoriesPage() {
       {/* Create Category Modal */}
       <Modal
         open={showForm}
-        onClose={() => setShowForm(false)}
+        onClose={() => {
+          setShowForm(false);
+          setSaveError("");
+        }}
         title="New Category"
       >
+        {saveError && <SaveError message={saveError} />}
         <CategoryForm
           onSubmit={handleCreate}
-          onCancel={() => setShowForm(false)}
+          onCancel={() => {
+            setShowForm(false);
+            setSaveError("");
+          }}
         />
       </Modal>
 
       {/* Edit Category Modal */}
       <Modal
         open={!!editingCategory}
-        onClose={() => setEditingCategory(null)}
+        onClose={() => {
+          setEditingCategory(null);
+          setSaveError("");
+        }}
         title="Edit Category"
       >
+        {saveError && <SaveError message={saveError} />}
         {editingCategory && (
           <CategoryForm
             category={editingCategory}
             onSubmit={handleUpdate}
-            onCancel={() => setEditingCategory(null)}
+            onCancel={() => {
+              setEditingCategory(null);
+              setSaveError("");
+            }}
           />
         )}
       </Modal>
@@ -496,7 +547,7 @@ export default function CategoriesPage() {
       />
 
       {/* Mobile FAB */}
-      <ActionFab label="Category" icon={Plus} onClick={() => setShowForm(true)} />
+      <ActionFab label="Category" icon={Plus} onClick={openCreateForm} />
     </div>
   );
 }
