@@ -88,6 +88,11 @@ export const UPDATE_ERROR_MESSAGES: Record<UpdateFailureReason, string> = {
 export const BILL_ACTION_ERROR_MESSAGES: Record<BillActionFailureReason, string> = {
   BILL_NOT_FOUND:
     "No bill with that ID on this account. Nothing was changed. Call get_upcoming_bills for current bill IDs.",
+  // The date has to name an occurrence the schedule actually produces. A phantom one used to be
+  // accepted, writing a payment and a history entry against a month that does not exist while the
+  // cursor stayed put and the reminder kept firing.
+  NOT_AN_OCCURRENCE:
+    "That date is not one this bill's schedule falls on, so there is no occurrence to settle. Nothing was changed. Use the `localDueDate` from get_upcoming_bills, or an occurrence's own date from get_bill_history -- do not compute the date yourself.",
   // The likeliest cause is not a race: it is acting twice on one occurrence, which is exactly what
   // the guard exists to stop. Saying "already done" rather than "failed" matters, because a model
   // told a write failed will retry it.
@@ -97,6 +102,11 @@ export const BILL_ACTION_ERROR_MESSAGES: Record<BillActionFailureReason, string>
     "This bill's amount varies month to month, so its stored amount is only a forecast and cannot be written to the ledger as if it were the payment. Nothing was changed. Ask the user what they actually paid and send it as `amount`.",
   TRANSACTION_NOT_FOUND:
     "That transaction ID is not this user's. Nothing was changed. Call search_transactions for the payment you meant to link.",
+  // Ownership alone was the whole check once, and it let an income row settle an expense bill.
+  TRANSACTION_TYPE_MISMATCH:
+    "That transaction is the opposite type from the bill, so it cannot be the payment for it. Nothing was changed. Call search_transactions for one matching the bill's own type.",
+  TRANSACTION_OUTSIDE_WINDOW:
+    "That payment is more than two weeks from this occurrence's due date, so it is not settling this one. Nothing was changed. Pick a payment nearer the due date, or settle the occurrence that payment actually belongs to.",
   PAYMENT_ALREADY_LINKED:
     "That payment is already linked to another bill, so linking it here would leave the other bill's history pointing at a payment it no longer owns. Nothing was changed. Pick a different transaction, or use `pay` to record a new one.",
   NO_LONGER_PERMITTED:

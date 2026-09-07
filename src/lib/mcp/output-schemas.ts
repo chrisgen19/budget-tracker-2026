@@ -879,6 +879,12 @@ export const payBillOutput = {
   deactivated: z.boolean(),
   /** For a snooze: the calendar day the reminder returns on, YYYY-MM-DD. */
   snoozeUntil: z.string().nullable(),
+  /** Consequences the row itself does not show, for the caller to relay -- most importantly a
+   *  payment linked from a different category than the bill's. */
+  warnings: z.array(z.string()),
+  /** True when the work was already done and this call wrote nothing: a retried snooze resolves to
+   *  the deferral already in place rather than writing a second one. */
+  replayed: z.boolean(),
 };
 
 // --- create_bill / update_bill ---

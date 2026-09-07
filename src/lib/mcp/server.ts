@@ -315,7 +315,11 @@ const renderBill = (bill: BillWithRelations) => ({
  * see that the next due date moved with it, and a bill that quietly stopped reminding is exactly
  * the failure this whole issue is about.
  */
-const billEditWarnings = (changed: string[], bill: BillWithRelations): string[] => {
+const billEditWarnings = (
+  changed: string[],
+  bill: BillWithRelations,
+  deactivated: boolean
+): string[] => {
   const warnings: string[] = [];
 
   if (changed.includes("frequency") || changed.includes("startDate") || changed.includes("customIntervalDays")) {
@@ -325,7 +329,15 @@ const billEditWarnings = (changed: string[], bill: BillWithRelations): string[] 
     );
   }
 
-  if (changed.includes("isActive") && !bill.isActive) {
+  // `deactivated` is the consequential case and is not visible in `changed`: pulling an end date
+  // back before the next due date moves `endDate`, never `isActive`, so a caller reading `changed`
+  // alone would never learn the bill had stopped.
+  if (deactivated) {
+    warnings.push(
+      "The schedule has no valid occurrence left after this change, so the bill was switched off. " +
+        "Its payment history is untouched, and update_bill with `isActive: true` brings it back."
+    );
+  } else if (changed.includes("isActive") && !bill.isActive) {
     warnings.push(
       "This bill is switched off: it no longer appears in get_upcoming_bills and sends no " +
         "reminders. Its payment history is untouched, and update_bill with `isActive: true` " +
@@ -1616,6 +1628,8 @@ export const createBudgetMcpServer = ({
         nextDueDate: result.nextDueDate ? utcDayKey(result.nextDueDate) : null,
         deactivated: result.deactivated,
         snoozeUntil: result.snoozeUntil ? utcDayKey(result.snoozeUntil) : null,
+        warnings: result.warnings,
+        replayed: result.replayed,
       };
 
       return {
@@ -1795,8 +1809,13 @@ export const createBudgetMcpServer = ({
         endDate: z
           .string()
           .regex(LOCAL_DAY_REGEX)
+          .nullable()
           .optional()
-          .describe("YYYY-MM-DD. Omitting it leaves the stored end date alone."),
+          .describe(
+            "YYYY-MM-DD. Omitting it leaves the stored end date alone; send null to remove one, " +
+              "making the bill open-ended again. Moving it before the next due date ends the " +
+              "schedule, which switches the bill off."
+          ),
         isVariable: z.boolean().optional(),
         reminderDaysBefore: z.number().int().min(0).max(30).optional(),
         isActive: z
@@ -1828,7 +1847,10 @@ export const createBudgetMcpServer = ({
         return { content: [{ type: "text" as const, text: message }], isError: true };
       }
 
-      const badDay = [startDate, endDate].find((d) => d !== undefined && !isRealDate(d));
+      // `null` is a deliberate value here (clear the end date), not a bad date.
+      const badDay = [startDate, endDate].find(
+        (d) => d !== undefined && d !== null && !isRealDate(d)
+      );
       if (badDay !== undefined) {
         return {
           content: [{ type: "text" as const, text: `"${badDay}" is not a real calendar date.` }],
@@ -1843,7 +1865,11 @@ export const createBudgetMcpServer = ({
         patch: {
           ...rest,
           ...(startDate !== undefined && { startDate: new Date(`${startDate}T00:00:00.000Z`) }),
-          ...(endDate !== undefined && { endDate: new Date(`${endDate}T00:00:00.000Z`) }),
+          // Null reaches the patch as null and clears the stored end date; the merge filters on
+          // `undefined` alone, so the two absences stay distinguishable all the way down.
+          ...(endDate !== undefined && {
+            endDate: endDate === null ? null : new Date(`${endDate}T00:00:00.000Z`),
+          }),
         },
         assertStillPermitted: async (tx) => {
           const current = await tx.user.findUnique({
@@ -1869,7 +1895,7 @@ export const createBudgetMcpServer = ({
         bill: renderBill(result.bill),
         changed: result.changed,
         droppedLabels: result.droppedLabels,
-        warnings: billEditWarnings(result.changed, result.bill),
+        warnings: billEditWarnings(result.changed, result.bill, result.deactivated),
       };
 
       return {

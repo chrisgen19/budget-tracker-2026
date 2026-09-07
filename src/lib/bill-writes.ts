@@ -5,8 +5,12 @@ import {
   type TransactionType,
 } from "@prisma/client";
 import type { PrismaClient } from "@/lib/budget-query-types";
-import { advanceToNextUnpaidOccurrence, settledStatusesFor } from "@/lib/bill-utils";
-import { addUtcDays, userToday } from "@/lib/bill-dates";
+import {
+  advanceToNextUnpaidOccurrence,
+  computeNextDueDate,
+  settledStatusesFor,
+} from "@/lib/bill-utils";
+import { addUtcDays, userToday, utcDayStart } from "@/lib/bill-dates";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 import { categoriesAreUsable } from "@/lib/transaction-writes";
 
@@ -39,17 +43,60 @@ const SETTLE_TX_OPTIONS = { maxWait: 10_000, timeout: 30_000 };
  */
 const WALK_BUDGET = 20_000;
 
+/**
+ * How far from its due date a payment may sit and still settle an occurrence.
+ *
+ * Shared with `GET /api/bills/[id]/candidates`, which offers the browser its shortlist. The two
+ * disagreeing is the whole hazard: the list would hide a payment the write then happily accepted,
+ * or offer one it refused.
+ */
+export const PAYMENT_WINDOW_DAYS = 14;
+
+/**
+ * The instants bounding a payment window around a due date, in the user's own calendar days.
+ *
+ * A due date is date-only at UTC midnight; a transaction's `date` is an *instant*. Under UTC+8 a
+ * payment made at 00:30 on the boundary day is stored on the previous UTC date, so a window built
+ * from UTC days drops it. One formula app-wide: `Date.UTC(y, m, d) + tzOffset * 60000`.
+ */
+export const paymentWindow = (
+  dueDate: Date,
+  timezoneOffset: number,
+  windowDays = PAYMENT_WINDOW_DAYS,
+): { start: Date; dueDayStart: Date; end: Date } => {
+  const due = utcDayStart(dueDate);
+  const y = due.getUTCFullYear();
+  const mo = due.getUTCMonth();
+  const d = due.getUTCDate();
+  // Date.UTC normalises day over- and underflow, so the offsets need no clamping.
+  const localDayStart = (offsetDays: number) =>
+    new Date(Date.UTC(y, mo, d + offsetDays) + timezoneOffset * 60_000);
+
+  return {
+    start: localDayStart(-windowDays),
+    dueDayStart: localDayStart(0),
+    // Inclusive of the whole last day, or the window silently loses it.
+    end: new Date(localDayStart(windowDays + 1).getTime() - 1),
+  };
+};
+
 export type BillActionKind = "pay" | "pay_existing" | "skip" | "snooze";
 
 export type BillActionFailureReason =
   /** No bill with that id on this account. */
   | "BILL_NOT_FOUND"
+  /** The date given is not an occurrence this bill's schedule ever produced. */
+  | "NOT_AN_OCCURRENCE"
   /** This occurrence already carries a terminal log, so acting again would settle it twice. */
   | "ALREADY_SETTLED"
   /** A variable bill was paid without saying what was actually paid. */
   | "AMOUNT_REQUIRED"
   /** `pay_existing` named a transaction that is not this user's. */
   | "TRANSACTION_NOT_FOUND"
+  /** `pay_existing` named a transaction of the wrong type for this bill. */
+  | "TRANSACTION_TYPE_MISMATCH"
+  /** `pay_existing` named a payment too far from the due date to be settling it. */
+  | "TRANSACTION_OUTSIDE_WINDOW"
   /** `pay_existing` named a transaction that already belongs to another bill. */
   | "PAYMENT_ALREADY_LINKED"
   /** The write lease lapsed between the request arriving and the write. Nothing was written. */
@@ -72,6 +119,20 @@ export interface BillActionSuccess {
   deactivated: boolean;
   /** For a snooze: the user's own calendar day the reminder returns on, at UTC midnight. */
   snoozeUntil: Date | null;
+  /**
+   * Things worth relaying that are not refusals.
+   *
+   * The one that matters is a `pay_existing` whose payment sits in a different category from the
+   * bill. Refusing it would be wrong -- a miscategorised payment is exactly the mess this action
+   * exists to clean up, and `GET /api/bills/[id]/candidates` deliberately hides those from its
+   * shortlist, so the only way to attach one is by naming its id. But settling a Meralco
+   * occurrence with a row filed under Groceries is also how the wrong row gets linked, and there
+   * is no unlink anywhere in the app. So it is written, and said.
+   */
+  warnings: string[];
+  /** True when this action found the work already done and wrote nothing. A retry after a lost
+   *  response lands here rather than snoozing the occurrence a second time. */
+  replayed: boolean;
 }
 
 export type BillActionResult = BillActionSuccess | { ok: false; reason: BillActionFailureReason };
@@ -102,6 +163,42 @@ export interface SettleBillParams {
 }
 
 /**
+ * Whether a date is one this bill's schedule actually produces.
+ *
+ * Walked from `startDate` rather than computed modularly, because `computeNextDueDate` clamps to
+ * month length: a bill starting on the 31st falls on the 30th in November and the 28th in
+ * February, and no arithmetic on the day-of-month gets that right.
+ *
+ * The walk stops as soon as it passes the target, so an ordinary monthly bill costs a handful of
+ * iterations. `WALK_BUDGET` bounds a daily bill started decades ago.
+ */
+const isScheduledOccurrence = (
+  bill: {
+    startDate: Date;
+    frequency: BillFrequency;
+    customIntervalDays: number | null;
+    endDate: Date | null;
+  },
+  dueDate: Date,
+): boolean => {
+  const target = utcDayStart(dueDate).getTime();
+  const originalStartDay = bill.startDate.getUTCDate();
+  let candidate = utcDayStart(bill.startDate);
+
+  for (let i = 0; i < WALK_BUDGET; i++) {
+    const ms = candidate.getTime();
+    if (ms === target) return true;
+    if (ms > target) return false;
+    if (bill.endDate && candidate > bill.endDate) return false;
+    candidate = utcDayStart(
+      computeNextDueDate(candidate, bill.frequency, originalStartDay, bill.customIntervalDays),
+    );
+  }
+
+  return false;
+};
+
+/**
  * Settle (or defer) one occurrence of a bill.
  *
  * Lifted out of `POST /api/bills/[id]/action`, which now delegates here. Every comment below
@@ -129,6 +226,36 @@ export const settleBill = async ({
   if (!bill || bill.userId !== userId) return { ok: false, reason: "BILL_NOT_FOUND" };
 
   const originalStartDay = bill.startDate.getUTCDate();
+
+  /**
+   * Every log this occurrence already carries, read once.
+   *
+   * Serves three questions below -- is this date an occurrence at all, is it already settled, and
+   * is there a live snooze to replay -- and the double-settle guard re-reads it under the row lock
+   * where the answer has to be race-free.
+   */
+  const existingLogs = await prisma.scheduledTransactionLog.findMany({
+    where: { scheduledTransactionId: bill.id, dueDate },
+    select: { status: true, snoozeUntil: true },
+  });
+
+  /**
+   * The date has to name an occurrence this schedule actually produces.
+   *
+   * Nothing checked this before: `billActionSchema` asks only for a non-empty string, and the MCP
+   * layer only asks for a real calendar date. A mistyped or model-invented day therefore wrote a
+   * transaction and a PAID log against an occurrence that does not exist -- and because the walk
+   * matches candidates by exact timestamp, the phantom log matched nothing, `nextDueDate` never
+   * moved, and the reminder kept firing. That is precisely the failure this whole tool exists to
+   * prevent, arriving through the front door.
+   *
+   * A date that already carries a log is accepted regardless. Editing a bill's `startDate` moves
+   * the recurrence out from under occurrences that were genuinely settled under the old one, and
+   * refusing to act on those would make history unreachable rather than safe.
+   */
+  if (existingLogs.length === 0 && !isScheduledOccurrence(bill, dueDate)) {
+    return { ok: false, reason: "NOT_AN_OCCURRENCE" };
+  }
 
   /**
    * Lock the bill row. Must be a transaction's FIRST statement.
@@ -288,6 +415,8 @@ export const settleBill = async ({
       nextDueDate: paid.nextDue,
       deactivated: paid.nextDue === null,
       snoozeUntil: null,
+      warnings: [],
+      replayed: false,
     };
   }
 
@@ -295,9 +424,48 @@ export const settleBill = async ({
     // Verify the target transaction belongs to the authenticated user.
     const existingTx = await prisma.transaction.findFirst({
       where: { id: existingTransactionId ?? "", userId },
-      select: { id: true, amount: true },
+      select: { id: true, amount: true, type: true, categoryId: true, date: true },
     });
     if (!existingTx) return { ok: false, reason: "TRANSACTION_NOT_FOUND" };
+
+    /**
+     * Ownership alone was the whole check, and it is not enough.
+     *
+     * `GET /api/bills/[id]/candidates` narrows the browser's shortlist to the bill's type, its
+     * category and a fortnight either side of the due date, but that is a *listing*: this write
+     * accepted any unlinked row the user happened to own. A human picking from a filtered list
+     * could not reach the bad cases; a model naming an id can, and there is no unlink anywhere in
+     * the app, so a wrong link is permanent.
+     *
+     * Type and window are refusals. An income row cannot settle an expense bill under any reading,
+     * and a payment two months from the due date is not settling this occurrence.
+     */
+    if (existingTx.type !== bill.type) {
+      return { ok: false, reason: "TRANSACTION_TYPE_MISMATCH" };
+    }
+
+    const window = paymentWindow(dueDate, timezoneOffset);
+    if (existingTx.date < window.start || existingTx.date > window.end) {
+      return { ok: false, reason: "TRANSACTION_OUTSIDE_WINDOW" };
+    }
+
+    /**
+     * A category mismatch is reported, never refused.
+     *
+     * The candidates route hides a miscategorised payment from its shortlist and says why: a short
+     * list that can be read beats a long one that cannot. But hiding it there makes naming its id
+     * the *only* way to attach it, and a payment filed under the wrong category is exactly the
+     * mess `pay_existing` exists to clean up. Refusing it here would turn a deliberate display
+     * trade-off into a permanent inability to correct the record.
+     */
+    const warnings: string[] =
+      existingTx.categoryId === bill.categoryId
+        ? []
+        : [
+            `The payment is filed under a different category from the bill (${bill.category.name}). ` +
+              "It was linked anyway, since a miscategorised payment is still a real one, but check " +
+              "it is the row you meant: nothing in the app can unlink it afterwards.",
+          ];
 
     // Atomic: log payment, link txn to bill, advance bill -- one commit.
     const linked = await prisma.$transaction(async (tx) => {
@@ -353,26 +521,70 @@ export const settleBill = async ({
       nextDueDate: linked.nextDue,
       deactivated: linked.nextDue === null,
       snoozeUntil: null,
+      warnings,
+      replayed: false,
     };
   }
 
   if (action === "snooze") {
     const days = snoozeDays ?? 1;
+    const today = userToday(timezoneOffset);
     // The user's own day, N days on, stored at UTC midnight the way a due date is. Readers
     // therefore take it as date-only and must not convert it back through an offset. Computed from
     // `new Date()` alone, a snooze started at 02:00 in Manila expired the same morning, because
     // the UTC day had not turned over yet.
-    const snoozeUntil = addUtcDays(userToday(timezoneOffset), days);
+    const snoozeUntil = addUtcDays(today, days);
 
-    await prisma.scheduledTransactionLog.create({
-      data: {
-        scheduledTransactionId: bill.id,
-        dueDate,
-        status: "SNOOZED",
-        actionDate: new Date(),
-        snoozeUntil,
-      },
-    });
+    /**
+     * A live snooze on this occurrence is the answer, not a reason to write another.
+     *
+     * Every other action here is guarded by its terminal log, which is what lets `pay_bill` claim
+     * `idempotentHint`. Snooze had no guard at all: a retry after a lost response wrote a second
+     * SNOOZED row, and one sent on a later calendar day also pushed `snoozeUntil` further out --
+     * so the same call twice produced a different state, which is exactly what that annotation
+     * promises it will not.
+     *
+     * Scoped to a snooze that has not yet lapsed. Re-snoozing an occurrence whose deferral has
+     * expired is a fresh decision the user is entitled to make, and collapsing it into the old one
+     * would silently refuse them.
+     */
+    const live = existingLogs.find(
+      (log) => log.status === "SNOOZED" && log.snoozeUntil !== null && log.snoozeUntil > today,
+    );
+    if (live?.snoozeUntil) {
+      return {
+        ok: true,
+        action,
+        billId,
+        transactionId: null,
+        amountPaid: null,
+        nextDueDate: null,
+        deactivated: false,
+        snoozeUntil: live.snoozeUntil,
+        warnings: [],
+        replayed: true,
+      };
+    }
+
+    // In a transaction for the lease re-check alone, which every other branch performs and this one
+    // used to skip -- so switching writes off mid-request stopped a payment and not a snooze.
+    const deferred = await prisma.$transaction(async (tx) => {
+      if (assertStillPermitted && !(await assertStillPermitted(tx))) return "not-permitted" as const;
+
+      await tx.scheduledTransactionLog.create({
+        data: {
+          scheduledTransactionId: bill.id,
+          dueDate,
+          status: "SNOOZED",
+          actionDate: new Date(),
+          snoozeUntil,
+        },
+      });
+
+      return "ok" as const;
+    }, SETTLE_TX_OPTIONS);
+
+    if (deferred === "not-permitted") return { ok: false, reason: "NO_LONGER_PERMITTED" };
 
     // Deliberately does NOT advance nextDueDate: a snooze defers the reminder, it does not settle
     // the occurrence.
@@ -385,6 +597,8 @@ export const settleBill = async ({
       nextDueDate: null,
       deactivated: false,
       snoozeUntil,
+      warnings: [],
+      replayed: false,
     };
   }
 
@@ -421,6 +635,8 @@ export const settleBill = async ({
     nextDueDate: skipped.nextDue,
     deactivated: skipped.nextDue === null,
     snoozeUntil: null,
+    warnings: [],
+    replayed: false,
   };
 };
 
@@ -463,6 +679,15 @@ export interface BillWriteSuccess {
   /** Fields whose stored value actually moved. Empty for a create, where everything is new. */
   changed: string[];
   droppedLabels: DroppedBillLabel[];
+  /**
+   * True when this edit left the schedule with nothing valid to be due, so the bill was switched
+   * off as a *consequence* rather than because the caller asked.
+   *
+   * Not visible in `changed`, which compares the patch against the stored row: pulling an end date
+   * back before the cursor moves `endDate`, never `isActive`, so a caller reading `changed` alone
+   * would never learn the bill had stopped.
+   */
+  deactivated: boolean;
 }
 
 export type BillWriteResult = BillWriteSuccess | { ok: false; reason: BillWriteFailureReason };
@@ -619,7 +844,7 @@ export const createBill = async ({
 
   if (created === null) return { ok: false, reason: "NO_LONGER_PERMITTED" };
 
-  return { ok: true, bill: created, changed: [], droppedLabels: labels.dropped };
+  return { ok: true, bill: created, changed: [], droppedLabels: labels.dropped, deactivated: false };
 };
 
 export interface UpdateBillParams {
@@ -704,14 +929,33 @@ export const updateBill = async ({
   const after = [...labels.ids].sort();
   const labelsMoved = before.length !== after.length || before.some((id, i) => id !== after[i]);
 
-  // The schedule's *shape* changed, so where it points has to be re-derived. A changed amount or
-  // description does not move a due date and must not trigger a walk.
+  // The schedule's *shape* changed, so where it points has to be re-derived from the start date. A
+  // changed amount or description does not move a due date and must not trigger a walk.
   const shapeMoved =
     effective.frequency !== current.frequency ||
     effective.customIntervalDays !== current.customIntervalDays ||
     effective.startDate.getTime() !== current.startDate.getTime();
 
   const recalculated = shapeMoved ? await recalculateNextDueDate(prisma, billId, effective) : null;
+
+  /**
+   * An end date is deliberately *not* part of `shapeMoved`.
+   *
+   * Moving it does not change where the recurrence falls, only where it stops, so re-walking from
+   * `startDate` would rewrite a cursor that is already correct -- and the walk only skips terminal
+   * logs, so a bill whose cursor sits ahead for any other reason would be dragged backwards by an
+   * edit that had nothing to do with it.
+   *
+   * What an end date *can* do is leave the cursor pointing past the schedule's own end. Nothing
+   * downstream filters on `endDate` -- `getUpcomingBills`, `/api/bills/upcoming` and
+   * `pending-bills.ts` all select on `isActive` alone -- so such a bill showed as permanently
+   * overdue and kept mailing reminders until somebody settled it by hand.
+   */
+  const endDateMoved =
+    (effective.endDate?.getTime() ?? null) !== (current.endDate?.getTime() ?? null);
+  const cursor = shapeMoved ? recalculated : stored.nextDueDate;
+  const ranOut =
+    cursor === null || (effective.endDate !== null && cursor > effective.endDate);
 
   // Reactivating resets a due date left in the past, or the bill returns already overdue. "Today"
   // is the *user's* calendar day: between their midnight and UTC's, a plain UTC today is still
@@ -754,9 +998,9 @@ export const updateBill = async ({
         startDate: effective.startDate,
         endDate: effective.endDate,
         categoryId: effective.categoryId,
-        // A walk that finds nothing left means the schedule has run out, which switches the bill
-        // off -- unless this same patch is switching it back on, where the reactivation rule wins.
-        isActive: reactivating ? true : shapeMoved && !recalculated ? false : effective.isActive,
+        // Nothing valid left to be due means the schedule has run out, which switches the bill off
+        // -- unless this same patch is switching it back on, where the reactivation rule wins.
+        isActive: reactivating ? true : ranOut ? false : effective.isActive,
         ...(reactivatedNextDue && { nextDueDate: reactivatedNextDue }),
         ...(!reactivating && shapeMoved && recalculated && { nextDueDate: recalculated }),
       },
@@ -779,5 +1023,11 @@ export const updateBill = async ({
 
   if (updated === null) return { ok: false, reason: "NO_LONGER_PERMITTED" };
 
-  return { ok: true, bill: updated, changed, droppedLabels: labels.dropped };
+  return {
+    ok: true,
+    bill: updated,
+    changed,
+    droppedLabels: labels.dropped,
+    deactivated: !reactivating && ranOut && current.isActive,
+  };
 };

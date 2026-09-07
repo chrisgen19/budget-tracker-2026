@@ -16,6 +16,22 @@ const FAILURES: Record<BillActionFailureReason, { status: number; error: string 
   BILL_NOT_FOUND: { status: 404, error: "Bill not found" },
   TRANSACTION_NOT_FOUND: { status: 404, error: "Transaction not found" },
   PAYMENT_ALREADY_LINKED: { status: 409, error: "That payment is already linked to another bill" },
+  // The browser posts a due date it was given by the bills list or the history panel, so these
+  // three are unreachable from a form working normally. They are the reason the map is total: a
+  // stale tab posting a due date the schedule no longer produces gets a named 400 rather than a
+  // phantom occurrence written into the ledger.
+  NOT_AN_OCCURRENCE: {
+    status: 400,
+    error: "That date is not one this bill falls due on",
+  },
+  TRANSACTION_TYPE_MISMATCH: {
+    status: 400,
+    error: "That payment is the opposite type from the bill",
+  },
+  TRANSACTION_OUTSIDE_WINDOW: {
+    status: 400,
+    error: "That payment is too far from the due date to settle this occurrence",
+  },
   AMOUNT_REQUIRED: {
     status: 400,
     error:

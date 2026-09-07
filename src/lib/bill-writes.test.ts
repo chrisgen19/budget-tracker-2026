@@ -49,14 +49,17 @@ const BILL: BillRow = {
 interface StubOptions {
   bill?: Partial<BillRow>;
   billLabels?: { labelId: string; label: { id: string; name: string; applicableTo: string } }[];
-  /** Terminal logs already on the bill, which is what the double-settle guard reads. */
-  logs?: { dueDate: Date; status: "PAID" | "SKIPPED" | "SNOOZED" }[];
+  /** Logs already on the bill: read by the double-settle guard, the occurrence check and the
+   *  snooze replay. */
+  logs?: { dueDate: Date; status: "PAID" | "SKIPPED" | "SNOOZED"; snoozeUntil?: Date | null }[];
   ownedLabels?: { id: string; name: string; applicableTo: string }[];
   usableCategoryIds?: string[];
   categoryType?: "INCOME" | "EXPENSE";
   /** How many rows `transaction.updateMany` claims — 0 means the payment already had a bill. */
   claimCount?: number;
-  existingTransaction?: { id: string; amount: number } | null;
+  existingTransaction?:
+    | { id: string; amount: number; type?: "INCOME" | "EXPENSE"; categoryId?: string; date?: Date }
+    | null;
   timezoneOffset?: number;
 }
 
@@ -69,7 +72,8 @@ interface StubOptions {
 const makePrisma = (options: StubOptions = {}) => {
   const bill: BillRow = { ...BILL, ...options.bill };
   const billLabels = options.billLabels ?? [];
-  const logs = [...(options.logs ?? [])];
+  const logs: { dueDate: Date; status: "PAID" | "SKIPPED" | "SNOOZED"; snoozeUntil: Date | null }[] =
+    (options.logs ?? []).map((l) => ({ snoozeUntil: null, ...l }));
   const written: Record<string, unknown>[] = [];
   const billUpdates: Record<string, unknown>[] = [];
   const logWrites: Record<string, unknown>[] = [];
@@ -111,12 +115,18 @@ const makePrisma = (options: StubOptions = {}) => {
         );
         return hit ? { id: "log_existing" } : null;
       }),
-      findMany: vi.fn(async () => logs),
+      // The occurrence and snooze-replay reads narrow by dueDate; the schedule walk does not.
+      findMany: vi.fn(async ({ where }: { where?: { dueDate?: Date } } = {}) =>
+        where?.dueDate
+          ? logs.filter((l) => l.dueDate.getTime() === where.dueDate!.getTime())
+          : logs
+      ),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
         logWrites.push(data);
         logs.push({
           dueDate: data.dueDate as Date,
           status: data.status as "PAID" | "SKIPPED" | "SNOOZED",
+          snoozeUntil: (data.snoozeUntil as Date | undefined) ?? null,
         });
         return { id: `log_${logWrites.length}` };
       }),
@@ -127,7 +137,18 @@ const makePrisma = (options: StubOptions = {}) => {
         written.push(data);
         return { id: "tx_new", ...data };
       }),
-      findFirst: vi.fn(async () => options.existingTransaction ?? null),
+      findFirst: vi.fn(async () =>
+        options.existingTransaction
+          ? {
+              // Defaults describe the ordinary case: the bill's own type and category, paid on the
+              // due date. Each is overridden by the tests that probe its guard.
+              type: bill.type,
+              categoryId: bill.categoryId,
+              date: new Date("2026-09-04T10:00:00.000Z"),
+              ...options.existingTransaction,
+            }
+          : null
+      ),
       updateMany: vi.fn(async () => ({ count: options.claimCount ?? 1 })),
     },
     category: {
@@ -280,6 +301,60 @@ describe("settleBill — paying", () => {
   });
 });
 
+describe("settleBill — the date must name a real occurrence", () => {
+  /**
+   * Nothing checked this before, in the route or over MCP.
+   *
+   * A real but wrong calendar date wrote a transaction and a PAID log against an occurrence that
+   * does not exist -- and because the walk matches candidates by exact timestamp, the phantom log
+   * matched nothing, the cursor never moved, and the reminder kept firing. That is the failure the
+   * whole tool exists to prevent, arriving through the front door.
+   */
+  it("refuses a date the schedule does not fall on, and writes nothing", async () => {
+    const { client, written, logWrites } = makePrisma();
+
+    // The bill is monthly on the 5th; the 8th is a real date and not an occurrence.
+    const result = await settle(client, { dueDate: day("2026-09-08") });
+
+    expect(result).toEqual({ ok: false, reason: "NOT_AN_OCCURRENCE" });
+    expect(written).toHaveLength(0);
+    expect(logWrites).toHaveLength(0);
+  });
+
+  it("accepts an occurrence the schedule really produces", async () => {
+    const { client } = makePrisma();
+
+    expect((await settle(client, { dueDate: day("2026-10-05") })).ok).toBe(true);
+  });
+
+  /** Month lengths, not arithmetic on the day-of-month: a bill starting on the 31st falls on the
+   *  30th in November, which no modular rule gets right. */
+  it("follows the clamp for a short month", async () => {
+    const { client } = makePrisma({
+      bill: { startDate: day("2026-01-31"), nextDueDate: day("2026-11-30") },
+    });
+
+    expect((await settle(client, { dueDate: day("2026-11-30") })).ok).toBe(true);
+    expect(await settle(client, { dueDate: day("2026-11-31") })).toEqual({
+      ok: false,
+      reason: "NOT_AN_OCCURRENCE",
+    });
+  });
+
+  /**
+   * Editing a bill's start date moves the recurrence out from under occurrences settled under the
+   * old one. Refusing to act on those would make history unreachable rather than safe, so a date
+   * that already carries a log is accepted whatever the current schedule says.
+   */
+  it("still accepts a date that already carries a log", async () => {
+    const { client } = makePrisma({
+      logs: [{ dueDate: day("2026-09-08"), status: "SNOOZED", snoozeUntil: day("2020-01-01") }],
+    });
+
+    expect((await settle(client, { dueDate: day("2026-09-08"), action: "skip" })).ok).toBe(true);
+  });
+});
+
 describe("settleBill — linking a payment the user already logged", () => {
   it("attaches the transaction and advances without writing a new one", async () => {
     const { client, written, billUpdates } = makePrisma({
@@ -339,6 +414,76 @@ describe("settleBill — linking a payment the user already logged", () => {
 
     expect(result).toEqual({ ok: false, reason: "TRANSACTION_NOT_FOUND" });
   });
+
+  /**
+   * Ownership alone was the whole check, and the browser never depended on it: its candidate list
+   * is already narrowed to the bill's type, category and a fortnight either side. A model naming
+   * an id has no such list, and there is no unlink anywhere in the app, so a wrong link is
+   * permanent.
+   */
+  it("refuses a payment of the opposite type", async () => {
+    const { client, logWrites } = makePrisma({
+      existingTransaction: { id: "tx_salary", amount: 40000, type: "INCOME" },
+    });
+
+    const result = await settle(client, { action: "pay_existing", transactionId: "tx_salary" });
+
+    expect(result).toEqual({ ok: false, reason: "TRANSACTION_TYPE_MISMATCH" });
+    expect(logWrites).toHaveLength(0);
+  });
+
+  it("refuses a payment too far from the due date", async () => {
+    const { client, logWrites } = makePrisma({
+      // Two months before a 5 September occurrence.
+      existingTransaction: { id: "tx_old", amount: 5990, date: new Date("2026-07-04T10:00:00Z") },
+    });
+
+    const result = await settle(client, { action: "pay_existing", transactionId: "tx_old" });
+
+    expect(result).toEqual({ ok: false, reason: "TRANSACTION_OUTSIDE_WINDOW" });
+    expect(logWrites).toHaveLength(0);
+  });
+
+  it("accepts a payment at the far edge of the window", async () => {
+    const { client } = makePrisma({
+      existingTransaction: { id: "tx_edge", amount: 5990, date: new Date("2026-09-19T10:00:00Z") },
+    });
+
+    expect((await settle(client, { action: "pay_existing", transactionId: "tx_edge" })).ok).toBe(
+      true
+    );
+  });
+
+  /**
+   * A category mismatch is reported, never refused.
+   *
+   * `GET /api/bills/[id]/candidates` hides a miscategorised payment from its shortlist, which
+   * makes naming its id the *only* way to attach one -- and a payment filed under the wrong
+   * category is exactly the mess this action exists to clean up. Refusing here would turn a
+   * display trade-off into a permanent inability to correct the record.
+   */
+  it("links a payment from another category, and says so", async () => {
+    const { client } = makePrisma({
+      existingTransaction: { id: "tx_misfiled", amount: 5990, categoryId: "cat_groceries" },
+    });
+
+    const result = await settle(client, {
+      action: "pay_existing",
+      transactionId: "tx_misfiled",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.warnings).toHaveLength(1);
+    expect(result.ok && result.warnings[0]).toContain("different category");
+  });
+
+  it("says nothing when the categories agree", async () => {
+    const { client } = makePrisma({ existingTransaction: { id: "tx_ok", amount: 5990 } });
+
+    const result = await settle(client, { action: "pay_existing", transactionId: "tx_ok" });
+
+    expect(result.ok && result.warnings).toEqual([]);
+  });
 });
 
 describe("settleBill — skipping and snoozing", () => {
@@ -380,6 +525,68 @@ describe("settleBill — skipping and snoozing", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  /**
+   * The guard that makes `pay_bill`'s `idempotentHint` honest.
+   *
+   * Snooze had none: a retry after a lost response wrote a second SNOOZED row, and one sent on a
+   * later calendar day pushed `snoozeUntil` further out -- so the same call twice produced a
+   * different state, which is exactly what that annotation promises it will not.
+   */
+  it("resolves a retry to the deferral already in place", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-06T18:00:00.000Z"));
+    try {
+      const { client, logWrites } = makePrisma({
+        logs: [
+          { dueDate: day("2026-09-05"), status: "SNOOZED", snoozeUntil: day("2026-09-09") },
+        ],
+      });
+
+      const result = await settle(client, { action: "snooze", snoozeDays: 1 });
+
+      expect(result).toMatchObject({ ok: true, replayed: true });
+      expect(result.ok && result.snoozeUntil?.toISOString()).toBe("2026-09-09T00:00:00.000Z");
+      expect(logWrites).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /** Re-snoozing an occurrence whose deferral has lapsed is a fresh decision the user is entitled
+   *  to make, so the replay guard is scoped to a snooze that is still live. */
+  it("writes a new snooze once the old one has lapsed", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-06T18:00:00.000Z"));
+    try {
+      const { client, logWrites } = makePrisma({
+        logs: [
+          { dueDate: day("2026-09-05"), status: "SNOOZED", snoozeUntil: day("2026-09-01") },
+        ],
+      });
+
+      const result = await settle(client, { action: "snooze", snoozeDays: 2 });
+
+      expect(result).toMatchObject({ ok: true, replayed: false });
+      expect(logWrites).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /** Every other branch re-reads the lease inside its transaction; this one used to skip it, so
+   *  switching writes off mid-request stopped a payment and not a snooze. */
+  it("refuses a snooze when the write lease lapses mid-flight", async () => {
+    const { client, logWrites } = makePrisma();
+
+    const result = await settle(client, {
+      action: "snooze",
+      assertStillPermitted: async () => false,
+    });
+
+    expect(result).toEqual({ ok: false, reason: "NO_LONGER_PERMITTED" });
+    expect(logWrites).toHaveLength(0);
   });
 });
 
@@ -561,6 +768,57 @@ describe("updateBill", () => {
     await update(client, { startDate: day("2026-09-05") });
 
     expect((billUpdates[0].nextDueDate as Date).toISOString()).toBe("2026-11-05T00:00:00.000Z");
+  });
+
+  /**
+   * An end date pulled back before the cursor used to leave the bill active pointing past its own
+   * end. Nothing downstream filters on `endDate` -- `getUpcomingBills`, `/api/bills/upcoming` and
+   * `pending-bills.ts` all select on `isActive` alone -- so it showed as permanently overdue and
+   * kept mailing reminders.
+   */
+  it("switches the bill off when a new end date leaves nothing due", async () => {
+    const { client, billUpdates } = makePrisma();
+
+    const result = await update(client, { endDate: day("2026-08-31") });
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.deactivated).toBe(true);
+    expect(billUpdates[0].isActive).toBe(false);
+  });
+
+  it("leaves the bill running when the new end date is still ahead of it", async () => {
+    const { client, billUpdates } = makePrisma();
+
+    const result = await update(client, { endDate: day("2027-01-31") });
+
+    expect(result.ok && result.deactivated).toBe(false);
+    expect(billUpdates[0].isActive).toBe(true);
+  });
+
+  /**
+   * An end date says where the recurrence *stops*, never where it falls, so it must not trigger the
+   * walk from `startDate`. The walk only skips terminal logs, so a cursor sitting ahead for any
+   * other reason would be dragged backwards by an edit that had nothing to do with it.
+   */
+  it("does not rewrite the cursor when only the end date moved", async () => {
+    const { client, billUpdates } = makePrisma();
+
+    await update(client, { endDate: day("2027-01-31") });
+
+    expect(billUpdates[0].nextDueDate).toBeUndefined();
+  });
+
+  /** A finite bill has to be able to become open-ended again, or setting an end date once is a
+   *  one-way door for every caller that cannot reach the app. */
+  it("clears the end date when the patch sends null", async () => {
+    const { client, billUpdates } = makePrisma({ bill: { endDate: day("2026-12-31") } });
+
+    const result = await update(client, { endDate: null });
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.changed).toEqual(["endDate"]);
+    expect(billUpdates[0].endDate).toBeNull();
+    expect(billUpdates[0].isActive).toBe(true);
   });
 
   it("refuses a patch that names nothing", async () => {

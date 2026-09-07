@@ -12,7 +12,13 @@
  *     fired from a guard that matched nothing
  *   - a `SKIPPED` occurrence can be corrected by `pay_existing` and cannot be by `pay`, which is
  *     the whole of #216 and depends on `settledStatusesFor` reaching a real query
- *   - a schedule that runs past its `end_date` deactivates the bill instead of looping
+ *   - a schedule that runs past its `end_date` deactivates the bill instead of looping, and an
+ *     `end_date` pulled back over `update_bill` does the same rather than leaving an active bill
+ *     mailing reminders for ever
+ *   - `pay_existing` refuses a row of the wrong type or far from the due date, and *reports*
+ *     rather than refuses a miscategorised one -- the case the candidates list deliberately hides
+ *   - a date off the recurrence is refused before anything is written, and a retried snooze
+ *     resolves to the deferral already in place instead of stacking a second one
  *   - a `bills:read` token cannot see any of the write tools, and a `transactions:write` token
  *     cannot either: settling an occurrence is its own authority
  *
@@ -95,6 +101,12 @@ async function main() {
 
   const category = await prisma.category.create({
     data: { name: "Probe Utilities", type: "EXPENSE", icon: "tag", color: "#000", userId: user.id },
+  });
+  const otherCategory = await prisma.category.create({
+    data: { name: "Probe Groceries", type: "EXPENSE", icon: "tag", color: "#000", userId: user.id },
+  });
+  const incomeCategory = await prisma.category.create({
+    data: { name: "Probe Salary", type: "INCOME", icon: "tag", color: "#000", userId: user.id },
   });
 
   const billToken = await mintMcpToken({
@@ -235,6 +247,8 @@ async function main() {
   // payment gets written. SKIPPED stays terminal for it.
   check("`pay` will not supersede a skip", rePay.isError, true);
 
+  // Same type, same category, a day before the due date -- inside every guard `pay_existing` now
+  // applies. The refusals below use rows that break one guard each.
   const loose = await prisma.transaction.create({
     data: {
       amount: 1899,
@@ -265,6 +279,120 @@ async function main() {
   // way, but the bill's history would otherwise list the month twice, once as each.
   check("only one terminal log remains", logs.length, 1);
   check("and it is the payment", logs[0]?.status, "PAID");
+
+  // --- pay_existing will not link a row that cannot be this payment ---
+
+  const guarded = await makeBill({ description: "Probe Guarded" });
+  const income = await prisma.transaction.create({
+    data: {
+      amount: 40000,
+      description: "Salary",
+      type: "INCOME",
+      date: new Date("2026-09-04T10:00:00.000Z"),
+      categoryId: incomeCategory.id,
+      userId: user.id,
+    },
+  });
+  const wrongType = await call(client, "pay_bill", {
+    billId: guarded.id,
+    action: "pay_existing",
+    dueDate: "2026-09-05",
+    transactionId: income.id,
+  });
+  // Ownership alone was the whole check once, which let an income row settle an expense bill.
+  check("an income row cannot settle an expense bill", wrongType.isError, true);
+
+  const stale = await prisma.transaction.create({
+    data: {
+      amount: 1899,
+      description: "Paid ages ago",
+      type: "EXPENSE",
+      date: new Date("2026-07-04T10:00:00.000Z"),
+      categoryId: category.id,
+      userId: user.id,
+    },
+  });
+  const outsideWindow = await call(client, "pay_bill", {
+    billId: guarded.id,
+    action: "pay_existing",
+    dueDate: "2026-09-05",
+    transactionId: stale.id,
+  });
+  check("a payment two months out is refused", outsideWindow.isError, true);
+  check(
+    "and neither refusal claimed the row",
+    (await prisma.transaction.findUniqueOrThrow({ where: { id: stale.id } })).billId,
+    null,
+  );
+
+  // A miscategorised payment is linked and *reported*, never refused: the candidates list hides
+  // those, so naming the id is the only way to attach one, and it is exactly the mess this action
+  // exists to clean up.
+  const misfiled = await prisma.transaction.create({
+    data: {
+      amount: 1899,
+      description: "PLDT at the mall",
+      type: "EXPENSE",
+      date: new Date("2026-09-04T10:00:00.000Z"),
+      categoryId: otherCategory.id,
+      userId: user.id,
+    },
+  });
+  const linkedAnyway = await call(client, "pay_bill", {
+    billId: guarded.id,
+    action: "pay_existing",
+    dueDate: "2026-09-05",
+    transactionId: misfiled.id,
+  });
+  check("a miscategorised payment still links", linkedAnyway.isError ?? false, false);
+  check(
+    "and the mismatch is reported",
+    ((linkedAnyway.structuredContent?.warnings as string[]) ?? []).length,
+    1,
+  );
+
+  // --- The date has to name a real occurrence ---
+
+  const phantom = await makeBill({ description: "Probe Phantom" });
+  const notDue = await call(client, "pay_bill", {
+    billId: phantom.id,
+    action: "pay",
+    dueDate: "2026-09-08",
+  });
+  // Monthly on the 5th. A real but wrong date used to write a payment and a PAID log against a
+  // month that does not exist, while the cursor stayed put and the reminder kept firing.
+  check("a date off the recurrence is refused", notDue.isError, true);
+  check(
+    "and nothing was written",
+    await prisma.transaction.count({ where: { billId: phantom.id } }),
+    0,
+  );
+
+  // --- A snooze retried does not stack ---
+
+  const resnooze = await makeBill({ description: "Probe Resnooze" });
+  await call(client, "pay_bill", {
+    billId: resnooze.id,
+    action: "snooze",
+    dueDate: "2026-09-05",
+    snoozeDays: 3,
+  });
+  const retried = await call(client, "pay_bill", {
+    billId: resnooze.id,
+    action: "snooze",
+    dueDate: "2026-09-05",
+    snoozeDays: 3,
+  });
+  // `pay_bill` claims idempotentHint. Snooze had no guard, so a retry after a lost response wrote
+  // a second SNOOZED row and pushed the deferral further out.
+  check("a retried snooze reports a replay", retried.structuredContent?.replayed, true);
+  check(
+    "and wrote no second log",
+    await prisma.scheduledTransactionLog.count({
+      where: { scheduledTransactionId: resnooze.id, status: "SNOOZED" },
+    }),
+    1,
+  );
 
   // --- A schedule that runs out switches the bill off ---
 
@@ -338,6 +466,34 @@ async function main() {
     afterPatch.nextDueDate.toISOString(),
     "2026-10-01T00:00:00.000Z"
   );
+
+  // An end date pulled back before the cursor leaves nothing due, which has to switch the bill off
+  // -- nothing downstream filters on `endDate`, so an active bill past its end mails reminders for
+  // ever.
+  const ended = await call(client, "update_bill", {
+    billId: newBill.id,
+    endDate: "2026-09-30",
+  });
+  check("an end date before the cursor ends the bill", ended.isError ?? false, false);
+  check(
+    "the row is switched off",
+    (await prisma.scheduledTransaction.findUniqueOrThrow({ where: { id: newBill.id } })).isActive,
+    false,
+  );
+
+  // A finite bill has to be able to become open-ended again, or setting an end date once is a
+  // one-way door for any caller that cannot reach the app.
+  const reopened = await call(client, "update_bill", {
+    billId: newBill.id,
+    endDate: null,
+    isActive: true,
+  });
+  check("the end date can be cleared", reopened.isError ?? false, false);
+  const afterReopen = await prisma.scheduledTransaction.findUniqueOrThrow({
+    where: { id: newBill.id },
+  });
+  check("endDate is null again", afterReopen.endDate, null);
+  check("and the bill is running", afterReopen.isActive, true);
 
   const flipped = await call(client, "update_bill", { billId: newBill.id, type: "INCOME" });
   // The effective-row check: `categoryId` is absent, so nothing about it looks wrong on its own,

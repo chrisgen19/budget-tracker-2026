@@ -330,6 +330,37 @@ describe("createBudgetMcpServer", () => {
     expect(await listToolNames(READ_ONLY_SCOPES)).toContain("get_assessment_facts");
   });
 
+  /**
+   * A finite bill has to be able to become open-ended again.
+   *
+   * The service layer always supported it -- the patch merge filters on `undefined`, so `null`
+   * passes straight through -- but the tool schema accepted only a date string or omission, and
+   * omission means "leave alone". So setting an end date once was a one-way door for any caller
+   * that cannot reach the app.
+   */
+  it("lets update_bill clear an end date", async () => {
+    const server = createBudgetMcpServer({
+      prisma,
+      userId: "user_1",
+      timezoneOffset: -480,
+      scopes: ["bills:write"],
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const { tools } = await client.listTools();
+    await client.close();
+
+    const properties = tools.find((t) => t.name === "update_bill")?.inputSchema.properties as
+      | Record<string, unknown>
+      | undefined;
+
+    // Checked on the serialized JSON Schema the client actually receives, not on the zod object:
+    // a `.nullable()` that failed to reach the wire would leave the caller unable to send null
+    // however the type reads locally.
+    expect(JSON.stringify(properties?.endDate)).toContain("null");
+  });
+
   it("never exposes the edit tool to a read-only token", async () => {
     const names = await listToolNames(["budget:read", "transactions:read", "receipts:read"]);
     expect(names).not.toContain("update_transactions");
@@ -713,6 +744,25 @@ describe("pay_bill", () => {
 
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toContain("not a real calendar date");
+  });
+
+  /**
+   * A real date that is not an occurrence used to be accepted, writing a payment and a PAID log
+   * against a month that does not exist while the cursor stayed put and the reminder kept firing.
+   */
+  it("refuses a real date that is not one of the bill's occurrences", async () => {
+    const { client, settled, logged } = makeBillPrisma();
+
+    // The stub bill is monthly on the 5th.
+    const result = await callPayBill(
+      { ...GRANTED, prisma: client },
+      { billId: "bill_1", action: "pay", dueDate: "2026-09-08" }
+    );
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("not one this bill's schedule falls on");
+    expect(settled).toHaveLength(0);
+    expect(logged).toHaveLength(0);
   });
 
   it("refuses pay_existing with no transaction to attach", async () => {

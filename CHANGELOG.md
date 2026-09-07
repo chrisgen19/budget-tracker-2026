@@ -49,6 +49,25 @@ already holding it, the Telegram bot's included, with no re-mint and no notice. 
 an explicit list for exactly this reason, so both are subject to the write lease and the 90-day
 expiry cap.
 
+Six things came out of review and are fixed here rather than deferred, five of them
+hardening `settleBill` and so landing on the app's own bill actions too:
+
+- the `dueDate` has to name an occurrence the schedule actually produces. A real but
+  wrong date wrote a payment and a PAID log against a month that does not exist, and
+  because the walk matches by exact timestamp the cursor never moved and the reminder
+  kept firing -- the failure this whole change exists to prevent, through the front door
+- `pay_existing` checked ownership and nothing else. It now refuses a row of the wrong
+  type or one far from the due date, and *reports* a category mismatch instead of
+  refusing it: the candidates list hides those, which makes naming the id the only way
+  to attach one, and a miscategorised payment is exactly the mess it exists to clean up.
+  The window formula is shared with that list, so the two cannot disagree
+- snooze wrote outside a transaction, skipping the write-lease re-check every other
+  branch performs, and had no occurrence guard, so a retry stacked a second deferral and
+  pushed `snoozeUntil` out -- contradicting the tool's own `idempotentHint`
+- an `endDate` moved before the next due date left the bill active past its own end.
+  Nothing downstream filters on `endDate`, so it read as permanently overdue
+- `update_bill` could set an end date and never clear one, since the schema had no null
+
 Still no delete tool for anything.
 
 ## 2026-09-07 - A category's type cannot be flipped out from under its transactions
