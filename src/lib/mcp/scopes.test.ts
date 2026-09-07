@@ -5,8 +5,10 @@ import {
   MCP_SCOPE_LABELS,
   MCP_TOOL_SCOPES,
   READ_ONLY_SCOPES,
+  grantCoversTool,
   grantsWrite,
   isPrivilegedScope,
+  scopesRequiredBy,
   isWriteScope,
   parseScopes,
 } from "./scopes";
@@ -135,13 +137,6 @@ describe("MCP_TOOL_SCOPES", () => {
     expect(MCP_TOOL_SCOPES.create_label).toBe("labels:write");
   });
 
-  /** The assessment facts are read-only and free -- cheap aggregates over the user's own rows --
-   *  so they ride on the read scope every client already has rather than needing a re-mint. */
-  it("serves the assessment facts under the existing read scope", () => {
-    expect(MCP_TOOL_SCOPES.get_assessment_facts).toBe("budget:read");
-    expect(READ_ONLY_SCOPES).toContain("budget:read");
-  });
-
   it("has no delete tool", () => {
     // Editing was added deliberately; deleting was not. A leaked write token can garble rows,
     // which is visible and correctable, but still cannot make them disappear.
@@ -149,8 +144,39 @@ describe("MCP_TOOL_SCOPES", () => {
   });
 
   it("names a known scope for every registered tool", () => {
-    for (const scope of Object.values(MCP_TOOL_SCOPES)) {
-      expect(MCP_SCOPES).toContain(scope);
+    for (const tool of Object.keys(MCP_TOOL_SCOPES) as (keyof typeof MCP_TOOL_SCOPES)[]) {
+      for (const scope of scopesRequiredBy(tool)) {
+        expect(MCP_SCOPES).toContain(scope);
+      }
     }
+  });
+
+  /**
+   * The assessment facts are not aggregates.
+   *
+   * `MCP_SCOPE_LABELS` promises `budget:read` means "monthly totals, category breakdowns, trends",
+   * and this tool's payload carries transaction descriptions, amounts and dates alongside full bill
+   * payment history. Serving it on that scope alone made the mint form misleading about what a
+   * narrowed token hands over -- the exact failure the labels' own doc comment warns about.
+   */
+  it("requires every kind of data the assessment facts actually return", () => {
+    expect(scopesRequiredBy("get_assessment_facts")).toEqual([
+      "budget:read",
+      "transactions:read",
+      "bills:read",
+    ]);
+    expect(grantCoversTool(["budget:read"], "get_assessment_facts")).toBe(false);
+    expect(grantCoversTool(READ_ONLY_SCOPES, "get_assessment_facts")).toBe(true);
+  });
+
+  /** Every scope in a list is required, not any of them. */
+  it("refuses a partial grant and accepts a complete one", () => {
+    expect(grantCoversTool(["budget:read", "transactions:read"], "get_assessment_facts")).toBe(false);
+    expect(
+      grantCoversTool(["bills:read", "budget:read", "transactions:read"], "get_assessment_facts")
+    ).toBe(true);
+    // A single-scope tool still behaves exactly as before.
+    expect(grantCoversTool(["bills:read"], "get_upcoming_bills")).toBe(true);
+    expect(grantCoversTool(["budget:read"], "get_upcoming_bills")).toBe(false);
   });
 });

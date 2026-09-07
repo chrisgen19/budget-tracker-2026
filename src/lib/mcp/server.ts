@@ -33,7 +33,7 @@ import {
   getReceiptItems,
 } from "../budget-queries";
 import type { PrismaClient } from "../budget-query-types";
-import { READ_ONLY_SCOPES, MCP_TOOL_SCOPES, type McpScope, type McpToolName } from "./scopes";
+import { READ_ONLY_SCOPES, grantCoversTool, type McpScope, type McpToolName } from "./scopes";
 import { resolveWritePermission } from "./tokens";
 import {
   createTransactionBatch,
@@ -2043,7 +2043,7 @@ export const createBudgetMcpServer = ({
   // narrowing happens here, once, against one map. Anything not covered by a granted scope is
   // removed rather than left disabled, so `tools/list` never names it.
   for (const [name, tool] of Object.entries(registered) as [McpToolName, RegisteredTool][]) {
-    if (!scopes.includes(MCP_TOOL_SCOPES[name])) tool.remove();
+    if (!grantCoversTool(scopes, name)) tool.remove();
   }
 
   return server;

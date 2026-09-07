@@ -2,7 +2,13 @@ import { describe, it, expect, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createBudgetMcpServer } from "./server";
-import { MCP_TOOL_SCOPES, READ_ONLY_SCOPES, type McpScope } from "./scopes";
+import {
+  MCP_SCOPES,
+  MCP_TOOL_SCOPES,
+  READ_ONLY_SCOPES,
+  grantCoversTool,
+  type McpScope,
+} from "./scopes";
 import type { PrismaClient } from "../budget-query-types";
 
 /** Registration never touches the database (only the tool handlers do, and none are called
@@ -138,7 +144,7 @@ describe("search_transactions provenance filter", () => {
       prisma,
       userId: "user_1",
       timezoneOffset: -480,
-      scopes: Object.values(MCP_TOOL_SCOPES),
+      scopes: MCP_SCOPES,
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "test", version: "1.0.0" });
@@ -163,9 +169,10 @@ describe("createBudgetMcpServer", () => {
     const names = await listToolNames();
 
     expect(names).toEqual(
-      Object.entries(MCP_TOOL_SCOPES)
-        .filter(([, scope]) => READ_ONLY_SCOPES.includes(scope))
-        .map(([name]) => name)
+      (Object.keys(MCP_TOOL_SCOPES) as (keyof typeof MCP_TOOL_SCOPES)[])
+        // Through `grantCoversTool`, not a membership test on a single scope: a tool requiring
+        // several is served only when the default grant covers every one of them.
+        .filter((name) => grantCoversTool(READ_ONLY_SCOPES, name))
         .sort()
     );
     expect(names).not.toContain("create_transactions");
@@ -200,7 +207,7 @@ describe("createBudgetMcpServer", () => {
   it("declares every registered tool in the scope map", async () => {
     // A tool added to server.ts without a MCP_TOOL_SCOPES entry would be removed from every
     // token. Catch that here rather than in a client that silently cannot see it.
-    const registered = await listToolNames(Object.values(MCP_TOOL_SCOPES));
+    const registered = await listToolNames(MCP_SCOPES);
     const mapped = Object.keys(MCP_TOOL_SCOPES).sort();
 
     expect(registered).toEqual(mapped);
@@ -211,7 +218,7 @@ describe("createBudgetMcpServer", () => {
       prisma,
       userId: "user_1",
       timezoneOffset: -480,
-      scopes: Object.values(MCP_TOOL_SCOPES),
+      scopes: MCP_SCOPES,
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "test", version: "1.0.0" });
@@ -343,7 +350,7 @@ describe("createBudgetMcpServer", () => {
       prisma,
       userId: "user_1",
       timezoneOffset: -480,
-      scopes: Object.values(MCP_TOOL_SCOPES),
+      scopes: MCP_SCOPES,
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "test", version: "1.0.0" });

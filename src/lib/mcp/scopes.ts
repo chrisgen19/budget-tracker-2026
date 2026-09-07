@@ -104,11 +104,22 @@ export const READ_ONLY_SCOPES: readonly McpScope[] = MCP_SCOPES.filter((s) => !i
 export const DEFAULT_MINT_SCOPES = READ_ONLY_SCOPES;
 
 /**
- * Which scope each tool belongs to.
+ * Which scope each tool requires.
  *
  * Keyed by the exact tool name registered in `server.ts`. A tool added there without an entry
  * here is removed from every token, which fails visibly (the tool is simply absent) rather than
  * silently serving data no scope was granted for.
+ *
+ * A **list** means every scope in it is required, not any of them. Only `get_assessment_facts`
+ * needs that today, and it needs it because the labels above have to describe what a tool
+ * *returns*: its payload carries transaction descriptions, amounts and dates (`hygiene.duplicates`,
+ * `recurring.items`) and full bill payment history (`bills.accuracy`, `bills.missed`), so serving
+ * it on `budget:read` alone -- labelled "monthly totals, category breakdowns, trends" -- would make
+ * the mint form actively misleading about what a narrowed token hands over.
+ *
+ * Costs nobody a re-mint: all three are in `READ_ONLY_SCOPES`, so the default grant and the local
+ * stdio server keep the tool. Only a token deliberately narrowed to aggregates loses it, which is
+ * the whole point.
  */
 export const MCP_TOOL_SCOPES = {
   get_spending_by_category: "budget:read",
@@ -116,9 +127,10 @@ export const MCP_TOOL_SCOPES = {
   get_spending_trends: "budget:read",
   get_budget_overview: "budget:read",
   get_category_list: "budget:read",
-  // Read-only and free: these are cheap aggregates over the user's own rows, computed live rather
-  // than cached beside an AI report. Finding out a bill has gone unpaid must not cost a generation.
-  get_assessment_facts: "budget:read",
+  // Read-only and free -- cheap aggregates over the user's own rows, computed live rather than
+  // cached beside an AI report, so finding out a bill has gone unpaid never costs a generation.
+  // All three scopes, because the payload really does carry all three kinds of data.
+  get_assessment_facts: ["budget:read", "transactions:read", "bills:read"],
   get_top_expenses: "transactions:read",
   search_transactions: "transactions:read",
   get_label_breakdown: "labels:read",
@@ -133,9 +145,19 @@ export const MCP_TOOL_SCOPES = {
   create_bill: "bills:write",
   update_bill: "bills:write",
   create_label: "labels:write",
-} as const satisfies Record<string, McpScope>;
+} as const satisfies Record<string, McpScope | readonly McpScope[]>;
 
 export type McpToolName = keyof typeof MCP_TOOL_SCOPES;
+
+/** Every scope a tool requires, as a list, so callers need not care which entries are lists. */
+export const scopesRequiredBy = (tool: McpToolName): readonly McpScope[] => {
+  const required = MCP_TOOL_SCOPES[tool];
+  return typeof required === "string" ? [required] : required;
+};
+
+/** True when the grant covers every scope the tool requires. Every one, not any. */
+export const grantCoversTool = (grant: readonly McpScope[], tool: McpToolName): boolean =>
+  scopesRequiredBy(tool).every((scope) => grant.includes(scope));
 
 /** Keep only the scopes this build knows about, preserving declaration order. */
 export const parseScopes = (values: string[]): McpScope[] =>
