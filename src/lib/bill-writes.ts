@@ -175,6 +175,7 @@ export interface SettleBillParams {
 const isScheduledOccurrence = (
   bill: {
     startDate: Date;
+    nextDueDate: Date;
     frequency: BillFrequency;
     customIntervalDays: number | null;
     endDate: Date | null;
@@ -182,6 +183,23 @@ const isScheduledOccurrence = (
   dueDate: Date,
 ): boolean => {
   const target = utcDayStart(dueDate).getTime();
+
+  /**
+   * The bill's own cursor is settleable whatever the recurrence says.
+   *
+   * `nextDueDate` is not always on the recurrence: reactivating a bill sets it to the user's today
+   * so it does not come back already overdue, and `PATCH /api/bills/[id]` has done exactly that on
+   * live rows for as long as it has existed. Every reader -- `getUpcomingBills`, the reminder mail,
+   * the bills page -- advertises that date as the one that is due. Refusing to settle the date the
+   * whole app is asking the user to settle is incoherent, and it would have turned this check into
+   * a 400 on a button that works today.
+   *
+   * Not a hole in the check: this is read off the stored row, so a caller cannot name a date that
+   * makes it pass. It admits exactly one extra day, the one already being advertised.
+   */
+
+  if (utcDayStart(bill.nextDueDate).getTime() === target) return true;
+
   const originalStartDay = bill.startDate.getUTCDate();
   let candidate = utcDayStart(bill.startDate);
 
@@ -781,6 +799,38 @@ const scheduleIsValid = (d: BillDefinition): boolean => {
  * edit. Editing a bill used to reset `nextDueDate` outright, which resurrected occurrences that
  * had already been paid.
  */
+/**
+ * The first day the schedule falls on at or after `from`, or null when the end date passes first.
+ *
+ * Used when a bill is switched back on. Assigning the user's today directly is what a reactivation
+ * used to do, and it puts the cursor on a day the recurrence never produces: a monthly bill due on
+ * the 5th, reactivated on the 7th, advertised the 7th while `settleBill` walked the recurrence and
+ * refused that same date. Active again, and its advertised occurrence unpayable.
+ */
+const firstOccurrenceOnOrAfter = (
+  bill: {
+    startDate: Date;
+    frequency: BillFrequency;
+    customIntervalDays: number | null;
+    endDate: Date | null;
+  },
+  from: Date,
+): Date | null => {
+  const target = utcDayStart(from).getTime();
+  const originalStartDay = bill.startDate.getUTCDate();
+  let candidate = utcDayStart(bill.startDate);
+
+  for (let i = 0; i < WALK_BUDGET; i++) {
+    if (bill.endDate && candidate > bill.endDate) return null;
+    if (candidate.getTime() >= target) return candidate;
+    candidate = utcDayStart(
+      computeNextDueDate(candidate, bill.frequency, originalStartDay, bill.customIntervalDays),
+    );
+  }
+
+  return null;
+};
+
 const recalculateNextDueDate = async (
   prisma: PrismaClient,
   billId: string,
@@ -981,6 +1031,11 @@ export const updateBill = async ({
   // Reactivating resets a due date left in the past, or the bill returns already overdue. "Today"
   // is the *user's* calendar day: between their midnight and UTC's, a plain UTC today is still
   // yesterday.
+  //
+  // The reset lands on the next day the schedule actually falls on, not on today itself. Today is
+  // an arbitrary calendar day: a monthly bill due on the 5th and switched back on the 7th would
+  // advertise the 7th, and `settleBill` walks the recurrence and refuses it -- active again, with
+  // an occurrence nobody can pay, skip or snooze.
   const reactivating = effective.isActive && !current.isActive;
   let reactivatedNextDue: Date | null = null;
   if (reactivating) {
@@ -990,8 +1045,12 @@ export const updateBill = async ({
     })) ?? { timezoneOffset: 0 };
     const today = userToday(timezoneOffset ?? 0);
     const from = recalculated ?? stored.nextDueDate;
-    reactivatedNextDue = from < today ? today : from;
+    reactivatedNextDue = from < today ? firstOccurrenceOnOrAfter(effective, today) : from;
   }
+
+  // Nothing left to be due, so there is nothing to switch back on. Reported through `deactivated`
+  // rather than refused: the patch may carry other fields that applied perfectly well.
+  const reactivationFailed = reactivating && reactivatedNextDue === null;
 
   const changed = (Object.keys(current) as (keyof BillDefinition)[]).filter((key) => {
     const was = current[key];
@@ -1002,6 +1061,9 @@ export const updateBill = async ({
     return was !== now;
   }) as string[];
   if (labelsMoved) changed.push("labels");
+  // The patch asked for `isActive: true` and the schedule had nothing left to give, so the row did
+  // not move. `changed` describes what was written, never what was requested.
+  const reported = reactivationFailed ? changed.filter((f) => f !== "isActive") : changed;
 
   const updated = await prisma.$transaction(async (tx) => {
     if (assertStillPermitted && !(await assertStillPermitted(tx))) return null;
@@ -1021,7 +1083,7 @@ export const updateBill = async ({
         categoryId: effective.categoryId,
         // Nothing valid left to be due means the schedule has run out, which switches the bill off
         // -- unless this same patch is switching it back on, where the reactivation rule wins.
-        isActive: reactivating ? true : ranOut ? false : effective.isActive,
+        isActive: reactivationFailed ? false : reactivating ? true : ranOut ? false : effective.isActive,
         ...(reactivatedNextDue && { nextDueDate: reactivatedNextDue }),
         ...(!reactivating && shapeMoved && recalculated && { nextDueDate: recalculated }),
       },
@@ -1047,8 +1109,8 @@ export const updateBill = async ({
   return {
     ok: true,
     bill: updated,
-    changed,
+    changed: reported,
     droppedLabels: labels.dropped,
-    deactivated: !reactivating && ranOut && current.isActive,
+    deactivated: reactivationFailed || (!reactivating && ranOut && current.isActive),
   };
 };

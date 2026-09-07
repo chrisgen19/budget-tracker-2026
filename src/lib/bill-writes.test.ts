@@ -376,6 +376,29 @@ describe("settleBill — the date must name a real occurrence", () => {
     expect((await settle(client, { dueDate: day("2026-01-05") })).ok).toBe(true);
   });
 
+  /**
+   * The bill's own cursor is settleable whatever the recurrence says.
+   *
+   * `nextDueDate` is not always on the recurrence: reactivating sets it to the user's today, and
+   * `PATCH /api/bills/[id]` has done that on live rows for as long as it has existed. Every reader
+   * advertises that date as due, so refusing to settle it would be a 400 on a button that works.
+   */
+  it("accepts the cursor the bill itself advertises, off-recurrence or not", async () => {
+    // Monthly on the 5th, but reactivated onto the 7th by the app's own PATCH route.
+    const { client } = makePrisma({ bill: { nextDueDate: day("2026-09-07") } });
+
+    expect((await settle(client, { dueDate: day("2026-09-07") })).ok).toBe(true);
+  });
+
+  it("does not let that admit any other off-recurrence day", async () => {
+    const { client } = makePrisma({ bill: { nextDueDate: day("2026-09-07") } });
+
+    expect(await settle(client, { dueDate: day("2026-09-08") })).toEqual({
+      ok: false,
+      reason: "NOT_AN_OCCURRENCE",
+    });
+  });
+
   it("still accepts a date that already carries a log", async () => {
     const { client } = makePrisma({
       logs: [{ dueDate: day("2026-09-08"), status: "SNOOZED", snoozeUntil: day("2020-01-01") }],
@@ -948,8 +971,56 @@ describe("updateBill", () => {
 
       expect(result.ok).toBe(true);
       expect(billUpdates[0].isActive).toBe(true);
-      // 2026-09-07 in Manila, not 2026-09-06 as a plain UTC "today" would give.
-      expect((billUpdates[0].nextDueDate as Date).toISOString()).toBe("2026-09-07T00:00:00.000Z");
+      // The next day the schedule actually falls on at or after the user's today (2026-09-07 in
+      // Manila), not today itself: a monthly bill due on the 5th resumes on 5 October.
+      expect((billUpdates[0].nextDueDate as Date).toISOString()).toBe("2026-10-05T00:00:00.000Z");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * Today is an arbitrary calendar day, and assigning it directly put the cursor on a day the
+   * recurrence never produces: the bill came back active advertising an occurrence that
+   * `settleBill` then refused as NOT_AN_OCCURRENCE, so it could not be paid, skipped or snoozed.
+   */
+  it("resumes on a day the schedule really falls on", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-06T18:00:00.000Z"));
+    try {
+      const { client, billUpdates } = makePrisma({
+        bill: { isActive: false, nextDueDate: day("2026-05-05") },
+      });
+
+      await update(client, { isActive: true });
+      const resumed = billUpdates[0].nextDueDate as Date;
+
+      // The proof that matters: whatever day it picked, settleBill will accept it.
+      const settling = makePrisma({ bill: { nextDueDate: resumed, isActive: true } });
+      expect((await settle(settling.client, { dueDate: resumed })).ok).toBe(true);
+      expect(resumed.getUTCDate()).toBe(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /** A bill whose end date has already passed has nothing left to be due, so there is nothing to
+   *  switch back on. Reported rather than refused: the rest of the patch may have applied fine. */
+  it("cannot resume a bill whose schedule has already ended", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-06T18:00:00.000Z"));
+    try {
+      const { client, billUpdates } = makePrisma({
+        bill: { isActive: false, nextDueDate: day("2026-05-05"), endDate: day("2026-06-30") },
+      });
+
+      const result = await update(client, { isActive: true });
+
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.deactivated).toBe(true);
+      expect(billUpdates[0].isActive).toBe(false);
+      // `changed` describes what was written, never what was asked for.
+      expect(result.ok && result.changed).not.toContain("isActive");
     } finally {
       vi.useRealTimers();
     }
