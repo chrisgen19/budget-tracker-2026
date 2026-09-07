@@ -2,6 +2,37 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-07 - A category's type cannot be flipped out from under its transactions
+
+`PUT /api/categories/[id]` wrote `type` with no check on what already pointed at the category. The
+flip succeeded silently and left every transaction using it with a type its category no longer
+agreed with -- internally inconsistent rows that distort anything grouping by category.
+
+This is the state the earlier fix in this same release had to *accommodate*: `PUT
+/api/transactions/[id]` is a full replace, so the browser re-sends that stale pair on every later
+edit, and rejecting it would lock the row out of being edited at all. Removing the source is the
+better half of the pair.
+
+It refuses outright rather than confirming, which is where it parts company with the sibling label
+route. `PUT /api/labels/[id]` answers 409 and, on confirmation, deletes the affected
+`TransactionLabel` rows -- it can, because a label association is an optional join row.
+`transactions.category_id` is NOT NULL, so there is no association to delete here. Something would
+have to be rewritten instead: either the rows' own `type`, which restates spending history and
+every figure derived from it, or their category, a destructive move behind a confirm. Neither is
+worth doing on the user's behalf when they can recategorise the rows themselves, or keep the
+category and make a second one.
+
+Bills are counted as well as transactions. `ScheduledTransaction.categoryId` is the same NOT NULL
+reference, and a bill left pointing at a mismatched category writes a wrong-typed transaction every
+time it is paid -- so counting transactions alone would pass a category that is unused today and
+scheduled to be wrong tomorrow.
+
+The refusal is *shown*. `handleUpdate` on the categories page awaited the mutation with no catch,
+so a rejection reached nobody: the modal stayed open with the toggle displaying the type the server
+had just refused, which reads as a UI that ignored the click. Both save handlers now surface the
+message, styled to match the delete refusal already in that page, and it is cleared when either
+modal closes. Same rule as the preference toggles in #212: a failed save has to say so.
+
 ## 2026-09-07 - The edit route checks the category, like the create route already did
 
 `PUT /api/transactions/[id]` verified that the transaction was yours and that any `labelIds` were
