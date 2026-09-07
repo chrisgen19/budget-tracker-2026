@@ -2,6 +2,41 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-08 - The batch save has a body-size ceiling (#138)
+
+`checkBodySize` existed and exactly one route called it. `POST /api/transactions/batch` bounded
+rows and nothing else, and `MAX_BATCH_TRANSACTIONS` says how many rows arrive, not how large each
+one is: every row may carry a `receiptBreakdown`, and #137 tripled `MAX_BREAKDOWN_LINE_ITEMS` from
+50 to 150, taking a schema-legal body from ~2.6 MB to ~8.6 MB. All of it is `request.json()`-ed
+into memory, zod-parsed and written to JSONB **inside** the transaction that holds a Postgres
+advisory lock for up to 60 seconds, on a VPS where every other Coolify app shares that Postgres.
+The guard was missing before #137; that PR only tripled what it failed to guard.
+
+All three verbs of the route now refuse above 5 MB with a 413. The ceiling lives in the new
+`src/lib/request-size.ts` rather than in `receipt-guard.ts`, which pulls in the Prisma singleton
+and the scan-quota layer -- most of why this route never got one.
+
+Two mechanisms, and neither is decoration. `content-length` is a *claim*: it is absent on a chunked
+request, and it turns out `new Request(url, { body })` does not set it either, so a check built on
+it alone is advisory. It stays because it refuses an honest oversized client before a single byte
+is buffered. `readJsonWithinLimit` is what enforces -- it counts bytes as it reads and cancels the
+stream at the limit. A test for each; each fails when the other half is removed.
+
+5 MB is not a round number picked for comfort. It sits about 2.5x above anything the app can
+actually produce, because a 413 on a legitimate save is a dead end: there is no UI to split a batch
+and the scan credits are already spent, which is precisely the failure #137 raised the item cap to
+prevent. It also must not be lowered casually. The refusal is a 4xx, which the client reads as
+proof nothing was written, so it drops its idempotency pin and unfreezes the rows -- a body
+accepted on one attempt and refused on its retry would let a corrected resubmit duplicate a batch
+that had in fact committed. And unlike the schema rejection beneath it, this one cannot be routed
+through `rejectUnlessAlreadySaved`: reading `clientBatchId` means reading the body, which is the
+thing being refused.
+
+DELETE and PATCH are already byte-bounded by `boundedTransactionIdsSchema` and guard nothing today.
+They carry it anyway, because #138 was never a missing limit -- it was a guard one route forgot to
+call, and a sibling verb left out is how that happens again. `POST /api/mcp` reaches the same write
+path with the same payload shape and still has no ceiling; that is its own issue.
+
 ## 2026-09-08 - Editing a bill in the app honours its end date (#240)
 
 `PUT /api/bills/[id]` recalculated `nextDueDate` when the frequency or the start date changed, but
