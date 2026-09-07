@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { labelSchema } from "@/lib/validations";
+import { createLabel } from "@/lib/label-writes";
 
 export async function GET() {
   const userId = await getAuthUserId();
@@ -27,40 +28,25 @@ export async function POST(request: Request) {
     const body = await request.json();
     const validated = labelSchema.parse(body);
 
-    const existing = await prisma.label.findFirst({
-      where: { name: { equals: validated.name, mode: "insensitive" }, userId },
+    // Shared with the MCP `create_label` tool, so the case-insensitive duplicate rule cannot
+    // diverge between the two.
+    const result = await createLabel({
+      prisma,
+      userId,
+      name: validated.name,
+      color: validated.color,
+      applicableTo: validated.applicableTo,
+      schedules: validated.schedules,
     });
 
-    if (existing) {
+    if (!result.ok) {
       return NextResponse.json(
         { error: "A label with this name already exists" },
         { status: 400 }
       );
     }
 
-    const label = await prisma.label.create({
-      data: {
-        name: validated.name,
-        color: validated.color,
-        applicableTo: validated.applicableTo,
-        userId,
-        ...(validated.schedules && validated.schedules.length > 0 && {
-          schedules: {
-            create: validated.schedules.map((s) => ({
-              days: s.days,
-              startTime: s.startTime,
-              endTime: s.endTime,
-            })),
-          },
-        }),
-      },
-      include: {
-        _count: { select: { transactions: true } },
-        schedules: { orderBy: { createdAt: "asc" } },
-      },
-    });
-
-    return NextResponse.json(label, { status: 201 });
+    return NextResponse.json(result.label, { status: 201 });
   } catch (error) {
     if (error instanceof Error && error.name === "ZodError") {
       return NextResponse.json({ error: "Invalid input" }, { status: 400 });

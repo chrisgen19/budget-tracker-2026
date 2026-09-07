@@ -724,22 +724,3 @@ export interface AssessmentFacts {
 export interface AssessmentFactsResponse {
   facts: AssessmentFacts;
 }
-
-/** Extend next-auth types */
-declare module "next-auth" {
-  interface Session {
-    user: {
-      id: string;
-      name: string;
-      email: string;
-      role: UserRole;
-    };
-  }
-}
-
-declare module "next-auth/jwt" {
-  interface JWT {
-    id: string;
-    role: UserRole;
-  }
-}

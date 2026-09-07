@@ -1,4 +1,6 @@
 import type { BatchFailureReason, UpdateFailureReason } from "@/lib/transaction-writes";
+import type { BillActionFailureReason, BillWriteFailureReason } from "@/lib/bill-writes";
+import type { LabelWriteFailureReason } from "@/lib/label-writes";
 import type { ScanRefusal } from "@/lib/receipt-guard";
 import type { ScanFailure } from "@/lib/receipt-scan";
 
@@ -71,6 +73,67 @@ export const UPDATE_ERROR_MESSAGES: Record<UpdateFailureReason, string> = {
     "The update refers to something that no longer exists -- most likely a category or label deleted while the request was in flight. Nothing was changed. Re-read the current categories and labels and build the request again; sending the same one will fail the same way.",
   WRITE_FAILED:
     "The update failed and was rolled back, so nothing was changed and every transaction is exactly as it was. Try the same request again.",
+};
+
+/**
+ * What `pay_bill` says when settling an occurrence fails.
+ *
+ * Every one of these leaves the bill exactly as it was: each check runs before or inside the same
+ * transaction as the write, so there is no ambiguous outcome here and nothing a caller has to
+ * replay to find out what happened. Each message says what to do instead, because the two that
+ * look alike are the ones a model would otherwise get wrong -- `ALREADY_SETTLED` means the work is
+ * already done and retrying is the mistake, while `AMOUNT_REQUIRED` means the same call with one
+ * more field will succeed.
+ */
+export const BILL_ACTION_ERROR_MESSAGES: Record<BillActionFailureReason, string> = {
+  BILL_NOT_FOUND:
+    "No bill with that ID on this account. Nothing was changed. Call get_upcoming_bills for current bill IDs.",
+  // The likeliest cause is not a race: it is acting twice on one occurrence, which is exactly what
+  // the guard exists to stop. Saying "already done" rather than "failed" matters, because a model
+  // told a write failed will retry it.
+  ALREADY_SETTLED:
+    "That occurrence has already been paid or skipped, so nothing was changed and nothing needs to be. Do not retry. Call get_bill_history to see how it was settled, or get_upcoming_bills for the next due date.",
+  AMOUNT_REQUIRED:
+    "This bill's amount varies month to month, so its stored amount is only a forecast and cannot be written to the ledger as if it were the payment. Nothing was changed. Ask the user what they actually paid and send it as `amount`.",
+  TRANSACTION_NOT_FOUND:
+    "That transaction ID is not this user's. Nothing was changed. Call search_transactions for the payment you meant to link.",
+  PAYMENT_ALREADY_LINKED:
+    "That payment is already linked to another bill, so linking it here would leave the other bill's history pointing at a payment it no longer owns. Nothing was changed. Pick a different transaction, or use `pay` to record a new one.",
+  NO_LONGER_PERMITTED:
+    "Writes were switched off before this could be saved, so nothing was changed. Turn them on in Profile > MCP Access, then try again.",
+};
+
+/**
+ * What `create_bill` and `update_bill` say when defining a bill fails.
+ *
+ * Shared by both, since the failures are the same question asked of a new row or an edited one.
+ * `CATEGORY_NOT_USABLE` names the cause a model will not guess: the usual reason is not a bad id
+ * at all but changing `type` while leaving `categoryId` alone, which would file an income bill
+ * under a food category and distort every breakdown that groups by one.
+ */
+export const BILL_WRITE_ERROR_MESSAGES: Record<BillWriteFailureReason, string> = {
+  BILL_NOT_FOUND:
+    "No bill with that ID on this account. Nothing was changed. Call get_upcoming_bills for current bill IDs.",
+  CATEGORY_NOT_USABLE:
+    "That category is not this user's, or its type does not match the bill's. Nothing was changed. If you changed `type`, send a `categoryId` of that same type as well; call get_category_list for valid IDs.",
+  LABELS_NOT_OWNED:
+    "One or more label IDs are not this user's. Nothing was changed. Call get_label_list for valid IDs, or create_label to make one.",
+  INVALID_SCHEDULE:
+    "The schedule is not usable: a CUSTOM frequency needs `customIntervalDays`, and `endDate` cannot fall before `startDate`. Nothing was changed.",
+  NO_FIELDS:
+    "The patch named no fields to change. Nothing was changed. Send the fields you want to differ and omit the rest.",
+  NO_LONGER_PERMITTED:
+    "Writes were switched off before this could be saved, so nothing was changed. Turn them on in Profile > MCP Access, then try again.",
+};
+
+/** What `create_label` says when a label cannot be created. Names are matched without case, so
+ *  "work" collides with an existing "Work" -- and it must, or the label resolver would report the
+ *  two as ambiguous and refuse every mention of either. */
+export const LABEL_WRITE_ERROR_MESSAGES: Record<LabelWriteFailureReason, string> = {
+  DUPLICATE_NAME:
+    "A label with that name already exists on this account (names are compared without case). Nothing was created. Call get_label_list and use the existing label's ID.",
+  NO_LONGER_PERMITTED:
+    "Writes were switched off before this could be saved, so nothing was created. Turn them on in Profile > MCP Access, then try again.",
 };
 
 /**

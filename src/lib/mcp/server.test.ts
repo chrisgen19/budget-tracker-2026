@@ -228,6 +228,10 @@ describe("createBudgetMcpServer", () => {
       "create_transactions",
       "update_transactions",
       "scan_receipt",
+      "pay_bill",
+      "create_bill",
+      "update_bill",
+      "create_label",
     ];
 
     const readTools = tools.filter((tool) => !PROMPTS_BEFORE_RUNNING.includes(tool.name));
@@ -258,6 +262,19 @@ describe("createBudgetMcpServer", () => {
     expect(tools.find((t) => t.name === "create_transactions")?.annotations?.idempotentHint).toBe(true);
     expect(tools.find((t) => t.name === "update_transactions")?.annotations?.idempotentHint).toBe(true);
     expect(tools.find((t) => t.name === "scan_receipt")?.annotations?.idempotentHint).toBe(false);
+
+    // The bill tools follow the same rule. `update_bill` is the only one of the four that
+    // overwrites a stored value; `pay_bill` adds a payment and moves a cursor, and its occurrence
+    // guard means a retry after a lost response refuses rather than paying twice, which is
+    // exactly what idempotentHint claims. A create is neither destructive nor idempotent: two
+    // calls make two bills, or two labels.
+    expect(tools.find((t) => t.name === "update_bill")?.annotations?.destructiveHint).toBe(true);
+    expect(tools.find((t) => t.name === "pay_bill")?.annotations?.destructiveHint).toBe(false);
+    expect(tools.find((t) => t.name === "pay_bill")?.annotations?.idempotentHint).toBe(true);
+    expect(tools.find((t) => t.name === "create_bill")?.annotations?.destructiveHint).toBe(false);
+    expect(tools.find((t) => t.name === "create_bill")?.annotations?.idempotentHint).toBe(false);
+    expect(tools.find((t) => t.name === "create_label")?.annotations?.destructiveHint).toBe(false);
+    expect(tools.find((t) => t.name === "create_label")?.annotations?.idempotentHint).toBe(false);
   });
 
   // --- Both write tools ride on transactions:write ---
@@ -269,6 +286,48 @@ describe("createBudgetMcpServer", () => {
       "create_transactions",
       "update_transactions",
     ]);
+  });
+
+  /**
+   * A token that can log a fare must not be able to settle a bill.
+   *
+   * Folding the bill tools into `transactions:write` would have handed that authority to every
+   * token already holding it -- the Telegram bot's included -- with no re-mint and no notice.
+   * Settling advances a schedule cursor and writes a terminal log nothing here can remove.
+   */
+  it("keeps the bill tools out of transactions:write", async () => {
+    expect(await listToolNames(["transactions:write"])).toEqual([
+      "create_transactions",
+      "update_transactions",
+    ]);
+  });
+
+  it("exposes the bill tools only with bills:write", async () => {
+    expect(await listToolNames(["bills:write"])).toEqual([
+      "create_bill",
+      "pay_bill",
+      "update_bill",
+    ]);
+  });
+
+  /** Reading what is due and settling it are separate grants. */
+  it("never exposes a bill write tool to a bills:read token", async () => {
+    const names = await listToolNames(["bills:read"]);
+    expect(names).toEqual(["get_bill_history", "get_upcoming_bills"]);
+  });
+
+  it("exposes create_label only with labels:write", async () => {
+    expect(await listToolNames(["labels:write"])).toEqual(["create_label"]);
+    expect(await listToolNames(["labels:read"])).toEqual([
+      "get_label_breakdown",
+      "get_label_list",
+    ]);
+  });
+
+  /** The measured half of the assessment is read-only and costs no AI call, so it rides on the
+   *  read scope every existing token already carries. */
+  it("serves get_assessment_facts to a read-only token", async () => {
+    expect(await listToolNames(READ_ONLY_SCOPES)).toContain("get_assessment_facts");
   });
 
   it("never exposes the edit tool to a read-only token", async () => {
@@ -505,6 +564,165 @@ describe("update_transactions date rendering", () => {
     expect(row.changed).toEqual(["date"]);
     expect(row.previous.date).toBe("2026-09-06");
     expect(row.date).toBe("2026-09-07");
+  });
+});
+
+describe("pay_bill", () => {
+  const utcDay = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+
+  /** A Prisma stub over the settle path, recording what the transaction and log were written with. */
+  const makeBillPrisma = () => {
+    const settled: Record<string, unknown>[] = [];
+    const logged: Record<string, unknown>[] = [];
+    const client = {
+      scheduledTransaction: {
+        findUnique: vi.fn(async () => ({
+          id: "bill_1",
+          userId: "user_1",
+          description: "Meralco",
+          amount: 5500,
+          isVariable: false,
+          type: "EXPENSE",
+          categoryId: "cat_1",
+          frequency: "MONTHLY",
+          customIntervalDays: null,
+          reminderDaysBefore: 3,
+          startDate: utcDay("2026-01-05"),
+          nextDueDate: utcDay("2026-09-05"),
+          endDate: null,
+          isActive: true,
+          category: { id: "cat_1", name: "Utilities", type: "EXPENSE" },
+          // A bill carrying its own labels takes them, which is also what keeps this stub off the
+          // schedule lookup -- that one reads the app's Prisma singleton rather than the injected
+          // client, so a bill with no labels would reach a real database from a unit test.
+          labels: [
+            { labelId: "lab_1", label: { id: "lab_1", name: "Utilities", applicableTo: "BOTH" } },
+          ],
+        })),
+        update: vi.fn(async () => ({})),
+      },
+      scheduledTransactionLog: {
+        findFirst: vi.fn(async () => null),
+        // The walk reads the logs *including* the one this action just wrote, which is what makes
+        // it land on the next unsettled occurrence rather than the one it settled.
+        findMany: vi.fn(async () => logged),
+        create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+          logged.push(data);
+          return { id: "log_1" };
+        }),
+        deleteMany: vi.fn(async () => ({ count: 0 })),
+      },
+      transaction: {
+        create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+          settled.push(data);
+          return { id: "tx_paid", ...data };
+        }),
+      },
+      user: {
+        findUnique: vi.fn(async () => ({
+          timezoneOffset: -480,
+          mcpWritesEnabledUntil: new Date(Date.now() + 60_000),
+        })),
+      },
+      $queryRaw: vi.fn(async () => [{ next_due_date: utcDay("2026-09-05") }]),
+      $transaction: vi.fn(async (arg: unknown) =>
+        Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => unknown)(client)
+      ),
+    };
+    return { client: client as unknown as PrismaClient, settled, logged };
+  };
+
+  const callPayBill = async (
+    options: Parameters<typeof createBudgetMcpServer>[0],
+    args: Record<string, unknown>
+  ) => {
+    const server = createBudgetMcpServer(options);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const result = await client.callTool({ name: "pay_bill", arguments: args });
+    await client.close();
+    return result;
+  };
+
+  const GRANTED = {
+    userId: "user_1",
+    timezoneOffset: -480,
+    scopes: ["bills:write"] as const,
+    writesEnabledUntil: new Date(Date.now() + 60_000),
+  };
+
+  it("refuses when the write lease is off, before touching the database", async () => {
+    // `prisma` is the bare stub, so reaching a query at all would throw rather than return this.
+    const result = await callPayBill(
+      { ...GRANTED, prisma, writesEnabledUntil: null },
+      { billId: "bill_1", action: "pay", dueDate: "2026-09-05" }
+    );
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("Writes are currently switched off");
+  });
+
+  /**
+   * A due date is a date-only value stored at UTC midnight and meaning "the 5th" for everyone.
+   * Resolving it through the user's offset, as a transaction date must be, would move it to
+   * 2026-09-04T16:00Z for a UTC+8 account and match no stored occurrence at all -- so the guard
+   * would find no terminal log and the walk would settle the wrong month.
+   */
+  it("does not resolve the occurrence's due date through the timezone offset", async () => {
+    const { client, logged } = makeBillPrisma();
+
+    const result = await callPayBill(
+      { ...GRANTED, prisma: client },
+      { billId: "bill_1", action: "pay", dueDate: "2026-09-05" }
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect((logged[0].dueDate as Date).toISOString()).toBe("2026-09-05T00:00:00.000Z");
+  });
+
+  /** The whole reason this tool exists: `create_transactions` cannot set `billId`, so a bill paid
+   *  through it leaves the schedule stalled and the reminder still firing. */
+  it("links the payment to the bill and reports where the schedule now points", async () => {
+    const { client, settled } = makeBillPrisma();
+
+    const result = await callPayBill(
+      { ...GRANTED, prisma: client, tokenId: "tok_1", createdVia: "TELEGRAM" },
+      { billId: "bill_1", action: "pay", dueDate: "2026-09-05" }
+    );
+
+    expect(settled[0].billId).toBe("bill_1");
+    expect(settled[0].createdVia).toBe("TELEGRAM");
+    expect(settled[0].mcpTokenId).toBe("tok_1");
+    expect(result.structuredContent).toMatchObject({
+      billId: "bill_1",
+      action: "pay",
+      transactionId: "tx_paid",
+      amountPaid: 5500,
+      nextDueDate: "2026-10-05",
+      deactivated: false,
+    });
+  });
+
+  it("refuses an impossible calendar day rather than rolling it forward", async () => {
+    // `new Date("2026-02-31")` rolls to 3 March, which would settle a month nobody named.
+    const result = await callPayBill(
+      { ...GRANTED, prisma },
+      { billId: "bill_1", action: "pay", dueDate: "2026-02-31" }
+    );
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("not a real calendar date");
+  });
+
+  it("refuses pay_existing with no transaction to attach", async () => {
+    const result = await callPayBill(
+      { ...GRANTED, prisma },
+      { billId: "bill_1", action: "pay_existing", dueDate: "2026-09-05" }
+    );
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("transactionId");
   });
 });
 

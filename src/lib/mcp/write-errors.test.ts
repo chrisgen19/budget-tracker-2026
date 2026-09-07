@@ -2,7 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createBudgetMcpServer } from "./server";
-import { WRITE_ERROR_MESSAGES, isAmbiguousWriteFailure } from "./write-errors";
+import {
+  BILL_ACTION_ERROR_MESSAGES,
+  BILL_WRITE_ERROR_MESSAGES,
+  LABEL_WRITE_ERROR_MESSAGES,
+  WRITE_ERROR_MESSAGES,
+  isAmbiguousWriteFailure,
+} from "./write-errors";
 import type { PrismaClient } from "../budget-query-types";
 
 /**
@@ -92,5 +98,57 @@ describe("write error messages", () => {
   it("says plainly that a lapsed lease wrote nothing", () => {
     expect(WRITE_ERROR_MESSAGES.NO_LONGER_PERMITTED).toContain("nothing was written");
     expect(WRITE_ERROR_MESSAGES.NO_LONGER_PERMITTED).not.toContain("Could not confirm");
+  });
+});
+
+describe("bill and label write messages", () => {
+  /**
+   * None of these leaves the outcome unknown.
+   *
+   * Every bill and label failure is decided before or inside the same transaction as the write, so
+   * unlike a keyed create there is nothing to replay and nothing to go looking for. The bot's
+   * classifier keys on the create table's exact wording, so any of these being mistaken for it
+   * would send it into a same-key retry it has no key for.
+   */
+  it("never reads as ambiguous", () => {
+    for (const message of [
+      ...Object.values(BILL_ACTION_ERROR_MESSAGES),
+      ...Object.values(BILL_WRITE_ERROR_MESSAGES),
+      ...Object.values(LABEL_WRITE_ERROR_MESSAGES),
+    ]) {
+      expect(isAmbiguousWriteFailure(message)).toBe(false);
+    }
+  });
+
+  it("says what was changed, which is nothing, in every case", () => {
+    for (const message of [
+      ...Object.values(BILL_ACTION_ERROR_MESSAGES),
+      ...Object.values(BILL_WRITE_ERROR_MESSAGES),
+      ...Object.values(LABEL_WRITE_ERROR_MESSAGES),
+    ]) {
+      expect(message.toLowerCase()).toMatch(/nothing was (changed|created)/);
+    }
+  });
+
+  /**
+   * The one that has to read as "already done", not "failed".
+   *
+   * A model told a write failed retries it. Here the work is complete and the retry is the
+   * mistake: the occurrence carries a terminal log, and only the lock and this guard stand between
+   * a resubmit and paying the same month twice.
+   */
+  it("tells the caller not to retry an occurrence that is already settled", () => {
+    expect(BILL_ACTION_ERROR_MESSAGES.ALREADY_SETTLED).toContain("Do not retry");
+  });
+
+  /** A variable bill's stored amount is a forecast. The message has to name the missing field, or
+   *  the model retries the identical call. */
+  it("names the field that would make a variable bill's payment succeed", () => {
+    expect(BILL_ACTION_ERROR_MESSAGES.AMOUNT_REQUIRED).toContain("`amount`");
+  });
+
+  /** The likeliest cause is not a bad id but a bare `type` flip that left the category behind. */
+  it("points a category refusal at the type mismatch rather than the id", () => {
+    expect(BILL_WRITE_ERROR_MESSAGES.CATEGORY_NOT_USABLE).toContain("type");
   });
 });

@@ -75,6 +75,28 @@ describe("isWriteScope", () => {
     expect(isWriteScope("transactions:write")).toBe(true);
   });
 
+  /**
+   * Settling an occurrence is a different authority from adding a row: it advances a schedule
+   * cursor, writes a terminal log nothing here can remove, and can switch a bill off. Filing these
+   * as writes is what subjects them to the write lease and the 90-day expiry cap; a suffix test on
+   * ":write" would happen to get both right today and is exactly how `receipts:scan` was once
+   * mis-filed as harmless.
+   */
+  it("counts the bill and label write scopes", () => {
+    expect(isWriteScope("bills:write")).toBe(true);
+    expect(isWriteScope("labels:write")).toBe(true);
+    expect(grantsWrite(["bills:read", "bills:write"])).toBe(true);
+    expect(grantsWrite(["labels:write"])).toBe(true);
+  });
+
+  /** Reading bills and settling them are separate grants: a token minted to answer "what is due?"
+   *  must not be able to mark one paid. */
+  it("keeps reading a bill separate from settling one", () => {
+    expect(isWriteScope("bills:read")).toBe(false);
+    expect(READ_ONLY_SCOPES).toContain("bills:read");
+    expect(READ_ONLY_SCOPES).not.toContain("bills:write");
+  });
+
   it("does not count a scope that only spends money", () => {
     // receipts:scan is privileged but writes nothing, so it must not inherit the write expiry cap.
     expect(isWriteScope("receipts:scan")).toBe(false);
@@ -97,6 +119,27 @@ describe("MCP_TOOL_SCOPES", () => {
     // The trade, taken knowingly: such a token can rewrite rows as well as add them.
     expect(MCP_TOOL_SCOPES.create_transactions).toBe("transactions:write");
     expect(MCP_TOOL_SCOPES.update_transactions).toBe("transactions:write");
+  });
+
+  /**
+   * `bills:write` rather than `transactions:write`, deliberately.
+   *
+   * A token minted to log fares has no business advancing a schedule cursor or retiring a bill,
+   * and folding these into the existing write scope would have granted exactly that to every token
+   * already holding it -- the Telegram bot's included -- with no re-mint and no notice.
+   */
+  it("gates the bill tools behind their own write scope", () => {
+    expect(MCP_TOOL_SCOPES.pay_bill).toBe("bills:write");
+    expect(MCP_TOOL_SCOPES.create_bill).toBe("bills:write");
+    expect(MCP_TOOL_SCOPES.update_bill).toBe("bills:write");
+    expect(MCP_TOOL_SCOPES.create_label).toBe("labels:write");
+  });
+
+  /** The assessment facts are read-only and free -- cheap aggregates over the user's own rows --
+   *  so they ride on the read scope every client already has rather than needing a re-mint. */
+  it("serves the assessment facts under the existing read scope", () => {
+    expect(MCP_TOOL_SCOPES.get_assessment_facts).toBe("budget:read");
+    expect(READ_ONLY_SCOPES).toContain("budget:read");
   });
 
   it("has no delete tool", () => {

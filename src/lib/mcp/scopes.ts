@@ -25,6 +25,8 @@ export const MCP_SCOPES = [
   "receipts:read",
   "receipts:scan",
   "transactions:write",
+  "bills:write",
+  "labels:write",
 ] as const;
 
 export type McpScope = (typeof MCP_SCOPES)[number];
@@ -49,6 +51,10 @@ export const MCP_SCOPE_LABELS: Record<McpScope, string> = {
     "Read a receipt photo with AI and return the amount, date, and category. Spends one scan from your monthly allowance per call",
   "transactions:write":
     "Create new transactions, and change existing ones — amount, description, type, date, category and labels. Cannot delete anything. Also requires writes to be switched on below, and cannot be granted to a token that never expires",
+  "bills:write":
+    "Settle a recurring bill (pay, skip, snooze, or link a payment already recorded), and create or change bills. Paying writes a transaction and advances the schedule. Cannot delete a bill, only switch it off",
+  "labels:write":
+    "Create new labels. Cannot rename or delete an existing one, and cannot change what any transaction is tagged with",
 };
 
 /**
@@ -61,7 +67,15 @@ export const MCP_SCOPE_LABELS: Record<McpScope, string> = {
  * local stdio server runs with -- handing every caller that names no scopes the power to rewrite
  * rows. Enumerating costs one line and cannot be wrong by accident.
  */
-const WRITE_SCOPES: readonly McpScope[] = ["transactions:write"];
+const WRITE_SCOPES: readonly McpScope[] = [
+  "transactions:write",
+  // Settling an occurrence is a different authority from adding a row: it advances a schedule
+  // cursor, writes a terminal log nothing here can remove, and can switch a bill off when the walk
+  // runs out. A token minted to log fares has no business doing any of that, which is why this is
+  // its own scope rather than more work behind `transactions:write`.
+  "bills:write",
+  "labels:write",
+];
 
 /** True for scopes that let the caller change data. Used to force a bounded token lifetime at
  *  mint time and to decide whether the write lease has to be consulted. */
@@ -102,6 +116,9 @@ export const MCP_TOOL_SCOPES = {
   get_spending_trends: "budget:read",
   get_budget_overview: "budget:read",
   get_category_list: "budget:read",
+  // Read-only and free: these are cheap aggregates over the user's own rows, computed live rather
+  // than cached beside an AI report. Finding out a bill has gone unpaid must not cost a generation.
+  get_assessment_facts: "budget:read",
   get_top_expenses: "transactions:read",
   search_transactions: "transactions:read",
   get_label_breakdown: "labels:read",
@@ -112,6 +129,10 @@ export const MCP_TOOL_SCOPES = {
   scan_receipt: "receipts:scan",
   create_transactions: "transactions:write",
   update_transactions: "transactions:write",
+  pay_bill: "bills:write",
+  create_bill: "bills:write",
+  update_bill: "bills:write",
+  create_label: "labels:write",
 } as const satisfies Record<string, McpScope>;
 
 export type McpToolName = keyof typeof MCP_TOOL_SCOPES;
