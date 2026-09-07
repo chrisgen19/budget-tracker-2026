@@ -1924,7 +1924,15 @@ export const createBudgetMcpServer = ({
         "given weekdays -- useful for something like weekday office lunches, and worth confirming " +
         "with the user first, since it will tag rows nobody asked it to.",
       inputSchema: {
-        name: z.string().min(1).max(30),
+        // `.min(1)` accepts "   ", which the handler then trims to "" and writes: a label with no
+        // name, unpickable in the app and unresolvable by the Telegram label matcher, which reads
+        // names. The pattern rather than a refine, so the constraint reaches the model in the
+        // serialized JSON Schema instead of only failing at the call.
+        name: z
+          .string()
+          .min(1)
+          .max(30)
+          .regex(/\S/, "A label name must contain something other than whitespace."),
         color: z
           .string()
           .regex(/^#[0-9A-Fa-f]{6}$/)

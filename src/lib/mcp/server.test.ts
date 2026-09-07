@@ -364,6 +364,42 @@ describe("createBudgetMcpServer", () => {
   });
 
   /**
+   * `.min(1)` accepts "   ", which the handler trims to "" and writes.
+   *
+   * An unnamed label is unpickable in the app and invisible to the Telegram label matcher, which
+   * resolves by name. Asserted on the serialized schema the client receives, since that is what
+   * stops the call being made at all.
+   */
+  it("will not let create_label be given a whitespace-only name", async () => {
+    const server = createBudgetMcpServer({
+      prisma,
+      userId: "user_1",
+      timezoneOffset: -480,
+      scopes: ["labels:write"],
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const { tools } = await client.listTools();
+
+    const name = (
+      tools.find((t) => t.name === "create_label")?.inputSchema.properties as
+        | Record<string, { pattern?: string }>
+        | undefined
+    )?.name;
+    expect(name?.pattern).toBe("\\S");
+
+    // And the call itself is refused, rather than reaching `createLabel` on the bare stub.
+    const result = await client.callTool({
+      name: "create_label",
+      arguments: { name: "   ", color: "#A8763E" },
+    });
+    await client.close();
+
+    expect(result.isError).toBe(true);
+  });
+
+  /**
    * A finite bill has to be able to become open-ended again.
    *
    * The service layer always supported it -- the patch merge filters on `undefined`, so `null`
