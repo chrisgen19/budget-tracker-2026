@@ -2,6 +2,109 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-08 - One habit, one slot in the Frequent grid (#268)
+
+The Frequent section shipped with #259 and spent five of its six slots on two things. Real data,
+the same day:
+
+```
+9x  uv express & jeep fare    mode=38    (78%)
+6x  uv & jeep                 mode=38    (50%)
+3x  jeep & uv                 mode=38    (100%)
+13x gsm green                 mode=231.5 (15%)
+4x  gsm green ride            mode=247   (25%)
+```
+
+Three of those are one commute and two are one ride. A grid meant to surface six habits surfaced
+two, and `Pandesal` -- a real one -- was pushed off the bottom by a second spelling of a button
+already on the grid. `jeep & uv` against `uv & jeep` is the tell: not different words, only a
+different order.
+
+`deriveFrequentTiles` grouped by `foldDescription`, an **exact** match once case, typographic
+apostrophes and repeated whitespace are normalised. That is all it was ever meant to be -- #250 and
+#252 stretched it to apostrophes and deliberately stopped. `excludeKeys` had the same shape, so
+configuring `UV Express & Jeep fare` as a tile did not remove `uv & jeep` from Frequent underneath
+it: the redundancy survived the one action a user would take to fix it, which is what made this
+worth a change rather than a note.
+
+Three layers, and `foldDescription` is not one of them. It also drives duplicate detection,
+recurring-charge creep and income concentration, so sorting its tokens would make `Mirea Rent` and
+`Rent Mirea` one charge in the assessment and silently move a financial finding. The stronger key
+is `frequentKey`, in `frequent-tiles.ts`, built on top of that rule rather than beside it.
+
+**Tokenised in the order written.** A token with no letter or digit is dropped, so the dash in
+`UV Express - Office to House` is not a word -- tested with `\p{L}`/`\p{N}` and not `a-z0-9`, or
+`Piñata` loses half of itself and `e-load` becomes two words a bare `load` then contains.
+
+**Word order is not sorted away, and the two attempts to sort it are the part worth recording.**
+Sorting is the obvious way to collapse `uv & jeep` and `jeep & uv`. It was tried twice and merged a
+*direction* both times: unconditionally it merged `Office to House` with `House to Office`, and
+gated on a conjunction it merged `Office & House fare` with `House & Office fare`, which carries no
+preposition to notice.
+
+Neither is cosmetic. Six 38 trips out and three 80 trips back become nine rows whose modal amount is
+38 at a 67% share, which clears `FREQUENT_STABLE_SHARE`, while `description` is the most recent
+spelling -- so the tile reads as the *return* trip and one-taps the *outbound* fare. A wrong fare,
+written with no confirmation, by the grouping step, in the very change whose argument was that a
+wrong merge must never reach a write. The suppression rule was reasoned about carefully and the
+grouping rule was not.
+
+The lesson is that **commutativity cannot be read off the text**. `&` joins two things; whether
+their order carries meaning is semantics no token test can see, and each guess was breached by a
+phrasing the previous one had not considered. A third heuristic would have been a third guess, so
+sorting is gone instead.
+
+Nothing was lost by removing it: on the real ledger the output is identical either way, because
+`containsEitherWay` already suppresses both variants under the `uv express & jeep fare` that
+contains them -- containment does the work without ever deciding whether order carries meaning. The
+residual gap is that two *bare* order-variants with no containing superset each keep a slot. That
+costs a slot on a grid, where the merge cost a fare in the ledger, and this module already prefers
+the visible mistake to the silent one.
+
+`containsEitherWay` needs its own guard for the same reason: it compares token *sets*, and
+`{office, to, house}` equals `{house, to, office}`, so two directions would be collapsed at
+suppression even with grouping order-aware. Equal-sized sets are therefore never a duplicate.
+
+**Containment suppression** after ranking, and **before** the cap, so a suppressed variant hands
+its slot to the next real habit instead of leaving a hole. Both directions, because ranking is by
+count and not by length: `gsm green` (13x) survives over the longer `gsm green ride`, while
+`uv express & jeep fare` (9x) survives over the shorter `uv & jeep`.
+
+Suppression, deliberately not merging. Merging is the obvious reading of "deduplicate" and is wrong
+here: the `gsm green` pair carries modes of 231.5 and 247, so a merge has to pick between two real
+amounts, and `description` is deliberately the most recent spelling, so a plain trip could end up
+captioned with the longer variant. The two mistakes do not cost the same, the asymmetry
+`caption-labels.ts` already argues about labels -- a wrong suppression loses a button, visible on
+the grid and recoverable in the editor; a wrong merge offers a wrong amount under a wrong
+description and one tap writes it. It also keeps every `count` honest, since an absorbed group's
+occurrences never move to the survivor.
+
+Still nothing fuzzy. A set relation, no edit distance, no similarity score, no threshold to tune.
+The accepted cost is that a genuinely distinct trip sharing every word loses its slot -- `Grab`
+takes it from `Grab to airport` -- and that is pinned by a test so it is recorded here rather than
+discovered on somebody's grid. The recovery is to configure the airport trip as a tile, which is
+the surface that exists for a thing you want to name yourself.
+
+**`excludeKeys` matched by containment too**, taking raw descriptions folded on the way in rather
+than pre-folded keys, so a caller cannot pass one folded by a rule that has since moved on. This is
+the layer that makes the grid self-heal: tapping a tile writes one fixed description, so the
+variants stop accumulating and age out of the 60-day window on their own.
+
+On the real ledger the same rows now yield three distinct habits instead of five entries for two
+things:
+
+```
+13x GSM Green              231.5  asks
+ 9x UV Express & Jeep fare     38  ONE-TAP
+ 3x Pandesal                   40  ONE-TAP
+```
+
+An interim version of this change reported a fourth, `Astra to Mirea` at 4x, and it is worth saying
+why it is gone: it was two trips each way over two days in July, merged by the very direction bug
+above. Four trips between two places, five weeks ago, is not a current habit, and the honest answer
+is that it does not earn a button. That figure is the reason to distrust a merge that looks like a
+discovery.
+
 ## 2026-09-08 - A quick-log grid inside Telegram (#259)
 
 `quick-keyboard.ts` pins three fares to a `ReplyKeyboardMarkup`, and it works. It also stated its

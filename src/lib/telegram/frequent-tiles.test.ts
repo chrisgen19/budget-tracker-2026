@@ -221,6 +221,17 @@ describe("deriveFrequentTiles: selection", () => {
     expect(deriveFrequentTiles(rows, { limit: 2 })).toHaveLength(2);
   });
 
+  it("honours a zero, negative or fractional cap", () => {
+    // The cap was `.slice(0, limit)`, which absorbed all three quietly. Moving it into the
+    // suppression loop as `=== limit` meant none of them ever matched, so a limit of 0 returned the
+    // entire list -- the opposite of what was asked for.
+    const rows = ["a", "b", "c", "d"].flatMap((d) => repeat(3, { description: d }));
+
+    expect(deriveFrequentTiles(rows, { limit: 0 })).toHaveLength(0);
+    expect(deriveFrequentTiles(rows, { limit: -1 })).toHaveLength(0);
+    expect(deriveFrequentTiles(rows, { limit: 2.5 })).toHaveLength(2);
+  });
+
   it("uses the category most of the rows were filed under", () => {
     const tiles = deriveFrequentTiles([
       row({ date: day(1), categoryId: "food", categoryName: "Food & Dining" }),
@@ -244,5 +255,224 @@ describe("deriveFrequentTiles: selection", () => {
     ];
 
     expect(deriveFrequentTiles(rows)[0].lastLoggedAt).toEqual(day(3));
+  });
+});
+
+describe("deriveFrequentTiles: one habit, one slot (#268)", () => {
+  it("deduplicates order variants through the superset that contains them", () => {
+    // How the real ledger's three spellings of one commute collapse, now that sorting is gone.
+    // `uv & jeep` and `jeep & uv` are each contained by `uv express & jeep fare`, so containment
+    // does the work the sorted key was added for -- and does it without ever having to decide
+    // whether word order carries meaning.
+    const tiles = deriveFrequentTiles([
+      ...repeat(9, { description: "UV Express & Jeep fare", amount: 38 }),
+      ...repeat(6, { description: "UV & Jeep", amount: 38 }),
+      ...repeat(3, { description: "Jeep & UV", amount: 38 }),
+    ]);
+
+    expect(tiles.map((t) => t.description)).toEqual(["UV Express & Jeep fare"]);
+  });
+
+  it("leaves two bare order variants each holding a slot", () => {
+    // The accepted residual, pinned so it is a recorded limit rather than a surprise. With no
+    // containing superset there is nothing to suppress them under, and the alternative -- deciding
+    // they are the same by sorting -- is what merged two fares twice. A duplicate button costs a
+    // slot on the grid; that merge cost a wrong fare in the ledger.
+    const tiles = deriveFrequentTiles([
+      ...repeat(4, { description: "UV & Jeep", amount: 38 }),
+      ...repeat(3, { description: "Jeep & UV", amount: 38 }),
+    ]);
+
+    expect(tiles.map((t) => t.description)).toEqual(["UV & Jeep", "Jeep & UV"]);
+  });
+
+  it("gives the slot to whichever variant is logged more, and keeps its count honest", () => {
+    // `uv express & jeep fare` (4x) outranks `uv & jeep` (3x), so it survives. The suppressed
+    // group's occurrences stay where they were -- they were never the survivor's, and reporting 7x
+    // would be a figure nothing paid.
+    const tiles = deriveFrequentTiles([
+      ...repeat(4, { description: "UV Express & Jeep fare", amount: 38 }),
+      ...repeat(3, { description: "UV & Jeep", amount: 38 }),
+    ]);
+
+    expect(tiles).toHaveLength(1);
+    expect(tiles[0]).toMatchObject({ description: "UV Express & Jeep fare", count: 4 });
+  });
+
+  it("suppresses the longer variant when the shorter one is logged more", () => {
+    // Both directions, because ranking is by count and not by length. On real data `gsm green`
+    // (13x) outranked `gsm green ride` (4x), so the survivor was the shorter description.
+    const tiles = deriveFrequentTiles([
+      ...repeat(5, { description: "GSM Green", amount: 231.5 }),
+      ...repeat(3, { description: "GSM Green ride", amount: 247 }),
+    ]);
+
+    expect(tiles).toHaveLength(1);
+    expect(tiles[0]).toMatchObject({ description: "GSM Green", count: 5, amount: 231.5 });
+  });
+
+  it("hands a suppressed slot to the next real habit rather than leaving a hole", () => {
+    // The bug this closes. Suppression runs before the cap, so a variant of a button already on
+    // the grid cannot push a genuine sixth habit off the bottom -- which is how `Pandesal` was
+    // lost.
+    const tiles = deriveFrequentTiles([
+      ...repeat(9, { description: "UV Express & Jeep fare", amount: 38 }),
+      ...repeat(6, { description: "UV & Jeep", amount: 38 }),
+      ...repeat(5, { description: "Jeep & UV fare", amount: 38 }),
+      ...repeat(4, { description: "a", amount: 10 }),
+      ...repeat(4, { description: "b", amount: 10 }),
+      ...repeat(4, { description: "c", amount: 10 }),
+      ...repeat(4, { description: "d", amount: 10 }),
+      ...repeat(3, { description: "pandesal", amount: 40 }),
+    ]);
+
+    expect(tiles.map((t) => t.description)).toEqual([
+      "UV Express & Jeep fare",
+      "a",
+      "b",
+      "c",
+      "d",
+      "pandesal",
+    ]);
+  });
+
+  it("clears a configured tile's variants, not just its exact spelling", () => {
+    // The layer that makes the grid self-heal. Exact-matching the exclusion list left a variant
+    // sitting in Frequent underneath the very tile configured to replace it, so the redundancy
+    // survived the one action a user would take to fix it.
+    const tiles = deriveFrequentTiles(
+      [
+        ...repeat(4, { description: "UV & Jeep", amount: 38 }),
+        ...repeat(3, { description: "pandesal", amount: 40 }),
+      ],
+      { excludeKeys: ["UV Express & Jeep fare"] }
+    );
+
+    expect(tiles.map((t) => t.description)).toEqual(["pandesal"]);
+  });
+
+  it("suppresses a genuinely distinct trip that happens to share every word", () => {
+    // The accepted cost, pinned so it is recorded here rather than discovered on someone's grid.
+    // An airport run is not a `Grab` to the office, but its words contain the shorter one's, so it
+    // loses the slot. Deliberate: a lost button is visible and configurable, where a merge would
+    // have offered 250 under "Grab to airport" and written it on one tap.
+    const tiles = deriveFrequentTiles([
+      ...repeat(5, { description: "Grab", amount: 250 }),
+      ...repeat(3, { description: "Grab to airport", amount: 3000 }),
+    ]);
+
+    expect(tiles).toHaveLength(1);
+    expect(tiles[0]).toMatchObject({ description: "Grab", amount: 250 });
+  });
+
+  it("picks the same survivor however the rows arrive", () => {
+    // Ranking used to decide only the order of two tiles that both appeared, so a tie could fall
+    // back to the caller's row order harmlessly. Suppression made a tie decide which tile *exists*:
+    // equal counts and an equal `lastLoggedAt` here, so without a final tie-break reversing the
+    // input swapped a 100 tile for a 900 one.
+    const rows = [
+      ...repeat(3, { description: "grab", amount: 100 }),
+      ...repeat(3, { description: "grab to airport", amount: 900 }),
+    ];
+
+    const forward = deriveFrequentTiles(rows);
+    const reversed = deriveFrequentTiles([...rows].reverse());
+
+    expect(forward).toHaveLength(1);
+    expect(forward).toEqual(reversed);
+  });
+
+  it("does not let a dash count as a word", () => {
+    // `UV Express - Office to House` is a real configured tile description. A bare "-" in its token
+    // set would stop it containing the variant it should.
+    const tiles = deriveFrequentTiles(repeat(3, { description: "Office - To House" }), {
+      excludeKeys: ["Office To House"],
+    });
+
+    expect(tiles).toHaveLength(0);
+  });
+
+  it("keeps a hyphenated word and a non-ASCII one whole", () => {
+    // Splitting on punctuation generally would cut `Piñata` in half on a non-ASCII-blind rule, and
+    // would make `e-load` two words that a bare `load` then contains.
+    const tiles = deriveFrequentTiles([
+      ...repeat(3, { description: "e-load", amount: 100 }),
+      ...repeat(3, { description: "Piñata", amount: 500 }),
+    ]);
+
+    expect(tiles.map((t) => t.description).sort()).toEqual(["Piñata", "e-load"]);
+  });
+
+  it("never merges two directions of one trip", () => {
+    // The P1 raised on #269, and the reason sorting is gated. Six 38 trips out and three 80 trips
+    // back merge to nine rows whose modal amount is 38 at a 67% share -- over
+    // `FREQUENT_STABLE_SHARE` -- while `description` is the most recent spelling. The tile read
+    // "House to Office" and one-tapped 38: a wrong fare written with no confirmation, which is the
+    // exact failure this module argues against for merging, committed by the grouping step.
+    const tiles = deriveFrequentTiles([
+      ...[1, 2, 3, 4, 5, 6].map((d) =>
+        row({ description: "UV Express - Office to House", amount: 38, date: day(d) })
+      ),
+      ...[7, 8, 9].map((d) =>
+        row({ description: "UV Express - House to Office", amount: 80, date: day(d) })
+      ),
+    ]);
+
+    expect(tiles).toEqual([
+      expect.objectContaining({
+        description: "UV Express - Office to House",
+        amount: 38,
+        count: 6,
+      }),
+      expect.objectContaining({
+        description: "UV Express - House to Office",
+        amount: 80,
+        count: 3,
+      }),
+    ]);
+  });
+
+  it("keeps two directions apart at the suppression step too", () => {
+    // Gating the sort is not sufficient on its own: suppression compares token *sets*, and
+    // `{office, to, house}` equals `{house, to, office}`, so the two would survive grouping and be
+    // collapsed here instead -- suppressing one real trip in favour of the other.
+    const tiles = deriveFrequentTiles([
+      ...repeat(4, { description: "Astra to Mirea", amount: 213 }),
+      ...repeat(3, { description: "Mirea to Astra", amount: 390 }),
+    ]);
+
+    expect(tiles.map((t) => t.description)).toEqual(["Astra to Mirea", "Mirea to Astra"]);
+  });
+
+  it("never merges a direction written with a conjunction instead of a preposition", () => {
+    // The second review round's P1, and the reason sorting was removed rather than gated harder.
+    // `Office & House fare` carries no `to`/`from`, so a rule that sorted "across a conjunction"
+    // treated it as commutative and merged it with `House & Office fare` -- nine rows, modal 38 at
+    // a 67% share, captioned as the return trip and one-tapping the outbound fare. Commutativity
+    // is not readable from the text, so it is no longer guessed at.
+    const tiles = deriveFrequentTiles([
+      ...[1, 2, 3, 4, 5, 6].map((d) =>
+        row({ description: "Office & House fare", amount: 38, date: day(d) })
+      ),
+      ...[7, 8, 9].map((d) =>
+        row({ description: "House & Office fare", amount: 80, date: day(d) })
+      ),
+    ]);
+
+    expect(tiles).toEqual([
+      expect.objectContaining({ description: "Office & House fare", amount: 38, count: 6 }),
+      expect.objectContaining({ description: "House & Office fare", amount: 80, count: 3 }),
+    ]);
+  });
+
+  it("leaves two habits that merely share a word alone", () => {
+    // Containment, not overlap. `lunch` is in both, but neither word set contains the other, so
+    // both keep their slot -- the rule is a set relation and not a similarity score.
+    const tiles = deriveFrequentTiles([
+      ...repeat(4, { description: "lunch at work", amount: 150 }),
+      ...repeat(3, { description: "lunch with mom", amount: 400 }),
+    ]);
+
+    expect(tiles.map((t) => t.description)).toEqual(["lunch at work", "lunch with mom"]);
   });
 });
