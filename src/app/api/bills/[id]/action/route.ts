@@ -74,6 +74,10 @@ export async function POST(
       transactionId,
       snoozeDays,
       timezoneOffset: timezoneOffset ?? 0,
+      // Named rather than left to the fallback. It reaches both audit columns -- `created_via` on
+      // a payment this writes, `updated_via` on one it links -- and a surface that does not say
+      // who it is only works while it is the sole caller that stays quiet.
+      createdVia: "APP",
     });
 
     if (!result.ok) {

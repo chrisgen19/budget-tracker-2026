@@ -78,6 +78,8 @@ const makePrisma = (options: StubOptions = {}) => {
   const billUpdates: Record<string, unknown>[] = [];
   const logWrites: Record<string, unknown>[] = [];
   const billLabelWrites: Record<string, unknown>[] = [];
+  /** What `pay_existing` wrote onto the row it claimed, provenance included. */
+  const claims: Record<string, unknown>[] = [];
   let deletedBillLabels = 0;
   let locks = 0;
   /** Whether each occurrence-log read happened before or after the row lock was taken. */
@@ -153,7 +155,10 @@ const makePrisma = (options: StubOptions = {}) => {
             }
           : null
       ),
-      updateMany: vi.fn(async () => ({ count: options.claimCount ?? 1 })),
+      updateMany: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+        claims.push(data);
+        return { count: options.claimCount ?? 1 };
+      }),
     },
     category: {
       findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
@@ -198,6 +203,7 @@ const makePrisma = (options: StubOptions = {}) => {
     billUpdates,
     logWrites,
     billLabelWrites,
+    claims,
     deletedBillLabels: () => deletedBillLabels,
     locks: () => locks,
     logReads: () => logReads,
@@ -423,6 +429,64 @@ describe("settleBill — linking a payment the user already logged", () => {
     expect(result).toMatchObject({ ok: true, transactionId: "tx_existing", amountPaid: 5990 });
     expect(written).toHaveLength(0);
     expect(billUpdates[0].nextDueDate).toBeInstanceOf(Date);
+  });
+
+  /**
+   * #256. Attaching a payment writes `billId` onto a row that already exists, so it is an edit and
+   * has to name its author. Left unstamped, a row corrected over MCP and then linked from the app
+   * went on naming the token as its last editor.
+   */
+  it("stamps the claimed row with the acting surface", async () => {
+    const { client, claims } = makePrisma({
+      existingTransaction: { id: "tx_existing", amount: 5990 },
+    });
+
+    await settle(client, {
+      action: "pay_existing",
+      transactionId: "tx_existing",
+      createdVia: "MCP",
+      mcpTokenId: "tok_1",
+    });
+
+    expect(claims[0]).toMatchObject({
+      billId: "bill_1",
+      updatedVia: "MCP",
+      updatedByMcpTokenId: "tok_1",
+    });
+  });
+
+  // The other direction, and the one that makes a stale id a wrong answer rather than a gap: a
+  // caller that is not a token clears the column instead of leaving whatever was there.
+  it("clears the token id when the app links the payment", async () => {
+    const { client, claims } = makePrisma({
+      existingTransaction: { id: "tx_existing", amount: 5990 },
+    });
+
+    await settle(client, {
+      action: "pay_existing",
+      transactionId: "tx_existing",
+      createdVia: "APP",
+    });
+
+    expect(claims[0]).toMatchObject({ updatedVia: "APP", updatedByMcpTokenId: null });
+  });
+
+  // The claim is already conditional on `billId: null`, so a payment another bill took is not
+  // stamped either -- the row is not this request's to edit.
+  it("stamps nothing when the payment was already claimed elsewhere", async () => {
+    const { client, billUpdates } = makePrisma({
+      existingTransaction: { id: "tx_existing", amount: 5990 },
+      claimCount: 0,
+    });
+
+    const result = await settle(client, {
+      action: "pay_existing",
+      transactionId: "tx_existing",
+      createdVia: "APP",
+    });
+
+    expect(result).toMatchObject({ ok: false });
+    expect(billUpdates).toHaveLength(0);
   });
 
   /**

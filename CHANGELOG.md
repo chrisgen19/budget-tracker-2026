@@ -2,6 +2,40 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-08 - Linking a payment to a bill signs the trail too (#256)
+
+#232 stamped `updated_via` on the app's own edit paths. `settleBill`'s `pay_existing` was the one
+write left that changes a transaction nobody had noticed was a change: attaching a payment sets
+`billId` on a row that already exists.
+
+Left unstamped it produced the same confidently wrong trail #232 exists to prevent, in a worse
+place. Correct a row over MCP, then link it to a bill from the app, and the row still names the
+token as its last editor -- while this particular edit settles an occurrence, writes a terminal
+`PAID` log, advances the schedule cursor, and cannot be unlinked by anything in the app.
+
+The fix is small because the parameters were already there. `settleBill` takes `createdVia` and
+`mcpTokenId` and used them for the transaction `pay` *creates*; the claim now applies the same
+values as an update. `createdVia` names the caller rather than the verb, so its doc says so and it
+reaches both columns.
+
+Two things fell out of the existing shape rather than needing work:
+
+- The claim is already conditional on `billId: null`, so it only ever touches the row it actually
+  claimed. The "stamp only what moved" rule that #247 had to engineer at three separate sites is
+  satisfied here by a predicate that was already there for a different reason.
+- `pay` creates a row, so `created_via` covers it and `updated_via` correctly stays null -- null
+  means "never edited", which is the honest value. `skip` and `snooze` touch no transaction row at
+  all. Neither was changed.
+
+`POST /api/bills/[id]/action` now passes `createdVia: "APP"` explicitly instead of leaning on the
+column default. The fallback stays as a backstop, but a surface that does not say who it is only
+works while it is the only caller that stays quiet.
+
+Three unit tests, and the assertion that matters is in `scripts/verify-mcp-bill-writes.ts`, since
+it needs a real row: a payment written straight to the database, then claimed over MCP, must end up
+`created_via: APP` and `updated_via: MCP` at once. That is the pair of columns' entire reason for
+being separate, and a stubbed Prisma cannot show it.
+
 ## 2026-09-08 - The app's own edits sign the audit trail (#232)
 
 #228 added `transactions.updated_via` and `updated_by_mcp_token_id` to record which surface last
