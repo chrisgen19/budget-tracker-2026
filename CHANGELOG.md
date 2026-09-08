@@ -2,6 +2,56 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-08 - Label removal stamps what it removed, not what it planned (#251)
+
+#247 fixed three of the five sites where a bulk edit derived its `updated_via: APP` stamp from a
+snapshot taken before the write. The two **removal** branches were left open and said so: the bulk
+label-remove branch of `PATCH /api/transactions/batch`, and the stale-link removal in
+`POST /api/labels/[id]/apply`.
+
+The insert branches were fixable because `createManyAndReturn` reports the rows really inserted.
+There is no `deleteManyAndReturn` in Prisma 6.19.2, and `deleteMany` returns `{ count }` with no
+row identity, so both branches planned from a snapshot and stamped every row in the plan. When a
+concurrent writer removed the same link first, the delete became a partial no-op while the rows
+were stamped anyway -- an `APP` edit recorded over an accurate MCP trail for something that never
+happened, with `updated` and `ids` over-reporting by the same amount.
+
+Both now go through one shared `removeTransactionLabels` in `src/lib/label-writes.ts`, which
+issues `DELETE ... RETURNING transaction_id`. Postgres re-evaluates the predicate against the
+committed rows, so a link somebody else deleted first is simply absent from the result, and the
+stamp follows the result.
+
+What was deliberately not done, because the issue asked for it not to be: re-reading the links
+inside the transaction immediately before the delete. Under READ COMMITTED that narrows the window
+to microseconds without closing it, which reads as fixed and is not.
+
+Three things settled while shaping it:
+
+- **One helper, not two implementations.** The issue's own note -- the two would drift otherwise.
+  It matches on `(transaction_id, label_id)` rather than on link-row ids, which is what lets one
+  predicate serve both callers, and is the identity they actually mean: `@@unique([transactionId,
+  labelId])` allows one row per pair. The apply route therefore collects transaction ids where it
+  used to collect link ids.
+- **The raw SQL is scoped by owner**, joining `transactions` on `user_id`. Both callers already
+  narrow their ids, so this is belt and braces -- but a raw delete is the wrong place to rely on a
+  caller's discipline.
+- **The `@map` names are restated in application code**, which is the approach's one real cost and
+  the reason the issue called it out. `TRANSACTION_LABELS_TABLE` / `TRANSACTION_LABELS_COLUMNS`
+  hold them once, and `label-writes.schema.test.ts` asserts they still match `prisma/schema.prisma`
+  -- a rename would otherwise leave `pnpm type-check` green and 500 at runtime.
+
+The bulk route also stopped reading `existingLinks` on the remove path: only the insert branch
+needs them now, so the removal is one round trip lighter than before the fix.
+
+`scripts/verify-label-removal-stamps.ts` is the honest half, since a stubbed Prisma can show the
+route reads its own result but never that the result *differs* from the plan. It reproduces the
+race through the real HTTP route: another connection holds `FOR UPDATE` on the link row, the
+route's delete blocks on it, the link is deleted and committed underneath, and the route must
+report `updated: 0` and leave the trail alone. The release waits until the route is provably
+blocked rather than sleeping -- sleeping lets the delete win and the check passes against the
+pre-fix code too. Confirmed failing against it, where the route answers `updated: 1` with
+`changedLinks: 0` in the same response and stamps `APP` over `MCP`.
+
 ## 2026-09-08 - Linking a payment to a bill signs the trail too (#256)
 
 #232 stamped `updated_via` on the app's own edit paths. `settleBill`'s `pay_existing` was the one
