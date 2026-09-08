@@ -42,15 +42,52 @@ describe("loadFrequentTiles", () => {
 
   it("resolves the window in the user's calendar, not the container's", () => {
     // The container runs UTC. At 01:00 UTC on 1 September, a UTC+8 user is already on the 1st at
-    // 09:00, and their 60-day window starts on 3 July local -- which is 2 July 16:00Z. Computing
-    // it in the process zone would start it a day late and quietly drop a day's habits.
+    // 09:00, so their window starts at local midnight on 4 July -- which is 3 July 16:00Z.
+    // Computing it in the process zone would start it a day late and quietly drop a day's habits.
     findMany.mockResolvedValue([]);
     const now = new Date("2026-09-01T01:00:00Z");
 
     return loadFrequentTiles(prisma, "user_1", -480, { now, windowDays: 60 }).then(() => {
       const { where } = findMany.mock.calls.at(-1)![0];
 
-      expect(where.date.gte.toISOString()).toBe("2026-07-02T16:00:00.000Z");
+      expect(where.date.gte.toISOString()).toBe("2026-07-03T16:00:00.000Z");
+    });
+  });
+
+  it("spans exactly windowDays calendar days, counting today", async () => {
+    // Asserted as a span rather than as a boundary date, so it stays honest if the fixture moves.
+    //
+    // The upper bound already covers the whole of today, so counting back a full `windowDays`
+    // spans `windowDays + 1` days. Pinned at three sizes because an off-by-one is invisible at
+    // one: a single case passes just as happily under `d - windowDays` if the expectation was
+    // written from the code.
+    //
+    // Awaited one at a time on purpose. Under `Promise.all` every assertion reads
+    // `calls.at(-1)`, which is whichever call resolved last rather than its own.
+    findMany.mockResolvedValue([]);
+    const now = new Date("2026-09-01T01:00:00Z");
+    const DAY = 86_400_000;
+
+    for (const windowDays of [1, 7, 60]) {
+      await loadFrequentTiles(prisma, "user_1", -480, { now, windowDays });
+
+      const { where } = findMany.mock.calls.at(-1)![0];
+      // lte is 23:59:59.999, so the difference rounds to the number of days spanned.
+      const spanned = Math.round((where.date.lte - where.date.gte) / DAY);
+
+      expect(spanned).toBe(windowDays);
+    }
+  });
+
+  it("covers only today when windowDays is 1", () => {
+    findMany.mockResolvedValue([]);
+    const now = new Date("2026-09-01T01:00:00Z");
+
+    return loadFrequentTiles(prisma, "user_1", -480, { now, windowDays: 1 }).then(() => {
+      const { where } = findMany.mock.calls.at(-1)![0];
+
+      expect(where.date.gte.toISOString()).toBe("2026-08-31T16:00:00.000Z");
+      expect(where.date.lte.toISOString()).toBe("2026-09-01T15:59:59.999Z");
     });
   });
 

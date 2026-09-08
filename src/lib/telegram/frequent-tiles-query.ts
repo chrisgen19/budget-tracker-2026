@@ -58,7 +58,12 @@ export const loadFrequentTiles = async (
       // out of a window whose whole premise is recency -- and it would sort first under
       // `date: desc` and eat the row cap ahead of genuine history.
       date: {
-        gte: localDayStart(now, timezoneOffset, windowDays),
+        // `windowDays - 1`, because the upper bound already includes the whole of today. Counting
+        // back a full `windowDays` from today spans `windowDays + 1` calendar days, which is not
+        // what the constant says and is a day of history nobody asked for. Small in effect and
+        // worth being exact about: the threshold is three occurrences, so one extra boundary day
+        // can be the difference between a tile appearing and not.
+        gte: localDayStart(now, timezoneOffset, windowDays - 1),
         lte: localDayEnd(now, timezoneOffset),
       },
       // A tile writing a plain transaction with no `bill_id` settles no occurrence and does not

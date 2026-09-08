@@ -11,8 +11,18 @@
  * named user, which is not a thing a deploy should decide, and re-running it after someone has
  * renamed their buttons should not quietly restore the originals.
  *
- * Safe to re-run: a tile whose label already exists is left alone, never overwritten. That is what
- * makes it a seed rather than a reset.
+ * **It seeds an empty grid and does nothing else.** An account that already has a single tile is
+ * reported and left completely alone.
+ *
+ * Per-label deduplication was the obvious alternative and is quietly wrong, because a label is the
+ * one field the editor exists to change. Rename "To office" to "Office" and its original label is
+ * free again, so the next run recreates it beside the renamed one -- restoring exactly the button
+ * somebody had deliberately edited, and pushing the account one tile closer to `MAX_QUICK_TILES`
+ * every time. Nothing distinguishes a seeded row from a hand-made one after the fact, and adding a
+ * column to mark them is a schema change to serve a script that runs once.
+ *
+ * All-or-nothing also means the cap cannot be breached: the list below is shorter than
+ * `MAX_QUICK_TILES` and only ever lands in an empty grid.
  *
  * Usage:
  *   EMAIL=you@example.com pnpm exec tsx --env-file=.env \
@@ -24,7 +34,7 @@
  * against the production DATABASE_URL.
  */
 import { PrismaClient } from "@prisma/client";
-import { resolveTileCategory, SORT_ORDER_GAP } from "../src/lib/telegram/quick-tiles";
+import { MAX_QUICK_TILES, resolveTileCategory, SORT_ORDER_GAP } from "../src/lib/telegram/quick-tiles";
 import type { BotCategory } from "../src/lib/telegram/category-match";
 
 const prisma = new PrismaClient();
@@ -56,6 +66,14 @@ const TILES = [
 async function main() {
   console.log(`[seed-telegram-quick-tiles] mode: ${apply ? "APPLY" : "DRY RUN"}`);
 
+  // Checked rather than assumed, because the empty-grid guard below is what keeps the cap out of
+  // reach: it is only safe while this list is the shorter of the two.
+  if (TILES.length > MAX_QUICK_TILES) {
+    throw new Error(
+      `TILES has ${TILES.length} entries but MAX_QUICK_TILES is ${MAX_QUICK_TILES}.`
+    );
+  }
+
   if (!email) {
     throw new Error("EMAIL is required, e.g. EMAIL=you@example.com");
   }
@@ -83,25 +101,22 @@ async function main() {
     select: { id: true, name: true, type: true },
   });
 
-  const existing = await prisma.telegramQuickTile.findMany({
-    where: { userId: user.id },
-    select: { label: true, sortOrder: true },
-  });
-  const taken = new Set(existing.map((t) => t.label));
+  const existing = await prisma.telegramQuickTile.count({ where: { userId: user.id } });
 
-  let order =
-    existing.length === 0
-      ? SORT_ORDER_GAP
-      : Math.max(...existing.map((t) => t.sortOrder)) + SORT_ORDER_GAP;
+  // The whole guard, and it is deliberately blunt. Anything finer has to decide which existing
+  // tiles "are" the seeded ones, and after a rename nothing can tell.
+  if (existing > 0) {
+    console.log(
+      `  ${user.email} already has ${existing} tile(s), so there is nothing to seed. ` +
+        "Add or edit buttons in the Mini App instead."
+    );
+    return;
+  }
 
+  let order = SORT_ORDER_GAP;
   let created = 0;
 
   for (const tile of TILES) {
-    if (taken.has(tile.label)) {
-      console.log(`  skip   ${tile.label} (already exists)`);
-      continue;
-    }
-
     // Resolved and printed rather than assumed. These descriptions are chosen to land on
     // Transportation and Food & Dining through the real matcher, and if one ever stops doing so
     // the run says which before writing anything.
