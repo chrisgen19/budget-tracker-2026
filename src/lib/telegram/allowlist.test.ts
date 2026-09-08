@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { callbackIsAllowed, messageIsAllowed, type TelegramMessage } from "@/lib/telegram/allowlist";
+import {
+  callbackIsAllowed,
+  messageIsAllowed,
+  parseAllowlist,
+  type TelegramMessage,
+} from "@/lib/telegram/allowlist";
 
 const LIST = { ids: new Set(["12345"]), usernames: new Set(["chrisgen19"]) };
 const EMPTY = { ids: new Set<string>(), usernames: new Set<string>() };
@@ -93,5 +98,38 @@ describe("callbackIsAllowed", () => {
 
   it("denies everyone when the allowlist is empty", () => {
     expect(callbackIsAllowed(query(), { ids: new Set(), usernames: new Set() })).toBe(false);
+  });
+});
+
+describe("parseAllowlist", () => {
+  it("keeps ids as trimmed strings, matching how a Telegram id is compared", () => {
+    // `messageIsAllowed` does `ids.has(String(from.id))` and `verifyInitData` hands back a
+    // string. Storing numbers here would make both comparisons silently miss.
+    expect(parseAllowlist({ TELEGRAM_ALLOWED_IDS: " 42 , 777 " }).ids).toEqual(
+      new Set(["42", "777"])
+    );
+  });
+
+  it("lower-cases usernames and strips a leading @", () => {
+    expect(parseAllowlist({ TELEGRAM_ALLOWED_USERNAMES: "@Chris_Dev, Someone" }).usernames).toEqual(
+      new Set(["chris_dev", "someone"])
+    );
+  });
+
+  it("drops empty entries rather than admitting a blank", () => {
+    // A trailing comma, or a Coolify field left as "". An empty string in the username set is
+    // matched by every sender who has not set a username.
+    const list = parseAllowlist({ TELEGRAM_ALLOWED_IDS: "42,,", TELEGRAM_ALLOWED_USERNAMES: "," });
+
+    expect(list.ids).toEqual(new Set(["42"]));
+    expect(list.usernames.size).toBe(0);
+  });
+
+  it("denies everyone when neither variable is set", () => {
+    const list = parseAllowlist({});
+
+    expect(messageIsAllowed({ chat: { id: 42, type: "private" }, from: { id: 42 } }, list)).toBe(
+      false
+    );
   });
 });

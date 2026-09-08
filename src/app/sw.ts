@@ -4,6 +4,7 @@
 import { defaultCache } from "@serwist/next/worker";
 import type { PrecacheEntry, SerwistGlobalConfig } from "serwist";
 import { Serwist, NetworkOnly } from "serwist";
+import { isProtectedPagePath } from "@/lib/protected-paths";
 
 declare global {
   interface WorkerGlobalScope extends SerwistGlobalConfig {
@@ -26,12 +27,13 @@ const serwist = new Serwist({
       },
       handler: new NetworkOnly(),
     },
-    // Authenticated page routes — HTML/RSC payloads contain user data via UserProvider
+    // Authenticated page routes — HTML/RSC payloads contain user data via UserProvider, or (for
+    // the Telegram Mini App) via initData-authenticated fetches. The list lives in
+    // src/lib/protected-paths.ts so a test can assert it: this file cannot be imported under
+    // jsdom, so an omission here was previously invisible, and the list fails open.
     {
       matcher({ url, sameOrigin }: { url: URL; sameOrigin: boolean }) {
-        if (!sameOrigin) return false;
-        const protectedPaths = ["/dashboard", "/transactions", "/bills", "/categories", "/profile", "/admin"];
-        return protectedPaths.some((p) => url.pathname.startsWith(p));
+        return sameOrigin && isProtectedPagePath(url.pathname);
       },
       handler: new NetworkOnly(),
     },

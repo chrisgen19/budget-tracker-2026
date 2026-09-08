@@ -19,6 +19,7 @@ import { describeWindow, type ReportedPeriod } from "@/lib/telegram/period-label
 import {
   callbackIsAllowed,
   messageIsAllowed,
+  parseAllowlist,
   type Allowlist,
   type TelegramCallbackQuery,
   type TelegramMessage,
@@ -1746,18 +1747,13 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
  * stone.
  *
  * Empty means deny everyone. Failing closed matters more than failing usefully here.
+ *
+ * Parsed by `parseAllowlist` rather than inline, so the Mini App reads the same two variables the
+ * same way: revoking access in one place has to revoke it everywhere.
  */
-const ALLOWED_IDS = new Set(
-  (process.env.TELEGRAM_ALLOWED_IDS ?? "").split(",").map((v) => v.trim()).filter(Boolean)
-);
-const ALLOWED_USERNAMES = new Set(
-  (process.env.TELEGRAM_ALLOWED_USERNAMES ?? "")
-    .split(",")
-    .map((v) => v.trim().replace(/^@/, "").toLowerCase())
-    .filter(Boolean)
-);
-
-const ALLOWLIST: Allowlist = { ids: ALLOWED_IDS, usernames: ALLOWED_USERNAMES };
+const ALLOWLIST: Allowlist = parseAllowlist(process.env);
+const ALLOWED_IDS = ALLOWLIST.ids;
+const ALLOWED_USERNAMES = ALLOWLIST.usernames;
 
 /**
  * Every tool a handler calls, so a token too narrow to serve them says so at boot.

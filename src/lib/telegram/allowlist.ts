@@ -34,6 +34,41 @@ export interface Allowlist {
 }
 
 /**
+ * Build the allowlist from the raw environment values.
+ *
+ * Lifted out of `bot.ts`, where it was inline, because the Mini App has to answer the same
+ * question about the same two variables. Two copies would drift, and the direction they drift in
+ * is the one that matters: a Mini App parsing `TELEGRAM_ALLOWED_IDS` slightly more loosely than
+ * the bot would serve somebody the bot refuses to talk to. Revoking access has to mean revoking
+ * it everywhere, and that needs one parser.
+ *
+ * Ids stay trimmed *strings* rather than numbers, matching `messageIsAllowed`'s
+ * `ids.has(String(from.id))` and `verifyInitData`'s `telegramUserId`. Usernames are lower-cased
+ * with a leading `@` stripped, so either spelling of a configured handle works.
+ *
+ * Empty means deny everyone, in both directions. Failing closed matters more than failing
+ * usefully: bot usernames are searchable and the `t.me` link is public.
+ *
+ * Takes a bag of strings rather than the two named keys so `process.env` can be passed straight
+ * in, the way `appBaseUrl` already takes it. `ProcessEnv` is an index-signature type and TypeScript
+ * refuses it against a weak object type with no properties in common.
+ */
+export const parseAllowlist = (env: Record<string, string | undefined>): Allowlist => ({
+  ids: new Set(
+    (env.TELEGRAM_ALLOWED_IDS ?? "")
+      .split(",")
+      .map((v) => v.trim())
+      .filter(Boolean)
+  ),
+  usernames: new Set(
+    (env.TELEGRAM_ALLOWED_USERNAMES ?? "")
+      .split(",")
+      .map((v) => v.trim().replace(/^@/, "").toLowerCase())
+      .filter(Boolean)
+  ),
+});
+
+/**
  * Whether this bot may answer a message.
  *
  * Two independent conditions, and both must hold.
