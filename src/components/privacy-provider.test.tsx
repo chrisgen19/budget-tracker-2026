@@ -186,6 +186,67 @@ describe("two presses inside one round trip", () => {
  * press's optimistic value - one the database never accepted - so the screen ends up inverted
  * against storage.
  */
+/**
+ * Only the newest press describes what the user wants, so only its outcome may move the screen.
+ *
+ * A superseded write's failure says nothing about the current intent - the user has pressed past
+ * it - and applying its rollback throws away a later press that is already on screen and about
+ * to be saved.
+ */
+describe("a failed write that a later press has superseded", () => {
+  it("leaves the latest press on screen when the writes after it land", async () => {
+    const { result } = await mountedHook();
+
+    let fail: () => void = () => {};
+    vi.mocked(fetch).mockImplementationOnce(
+      () => new Promise<Response>((_, reject) => (fail = () => reject(new Error("dropped"))))
+    );
+    vi.mocked(fetch).mockResolvedValue({ ok: true } as Response);
+
+    // Three presses inside the first request's flight: hide, show, hide.
+    for (let press = 0; press < 3; press += 1) {
+      await act(async () => {
+        result.current.toggleHideAmounts();
+      });
+    }
+    expect(result.current.hideAmounts).toBe(true);
+
+    await act(async () => fail());
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+
+    // The last two writes stored `true`, so the screen must still say `true`.
+    expect(
+      JSON.parse(String((vi.mocked(fetch).mock.calls[2][1] as RequestInit).body))
+    ).toEqual({ hideAmounts: true });
+    expect(result.current.hideAmounts).toBe(true);
+  });
+
+  /** Three presses the user made before anything could answer are one failed save, not three. */
+  it("reports one failure when every queued write fails", async () => {
+    const { result } = await mountedHook();
+
+    // Deferred, so all three presses queue before the first write settles. Rejecting straight
+    // away would run them one after another, and three separate failed saves really are three.
+    let fail: () => void = () => {};
+    vi.mocked(fetch).mockImplementationOnce(
+      () => new Promise<Response>((_, reject) => (fail = () => reject(new Error("offline"))))
+    );
+    vi.mocked(fetch).mockRejectedValue(new Error("offline"));
+
+    for (let press = 0; press < 3; press += 1) {
+      await act(async () => {
+        result.current.toggleHideAmounts();
+      });
+    }
+
+    await act(async () => fail());
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+
+    expect(mocks.showToast).toHaveBeenCalledTimes(1);
+    expect(result.current.hideAmounts).toBe(false);
+  });
+});
+
 describe("two queued writes that both fail", () => {
   /** Fails the first write on demand, so the second press lands while it is still in flight. */
   const deferredFailure = () => {

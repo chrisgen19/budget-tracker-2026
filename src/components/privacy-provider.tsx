@@ -69,6 +69,20 @@ export function PrivacyProvider({
   const confirmedValue = useRef(initialHideAmounts);
 
   /**
+   * Counts presses, so a write can tell whether it still speaks for the user.
+   *
+   * Only the newest press describes what they want. A superseded write's failure says nothing
+   * about that - they have pressed past it - and applying its rollback discards a later press
+   * that is already on screen and still queued to be saved. Press three times inside one round
+   * trip and let only the first write fail: its rollback wins the screen, the two writes behind
+   * it store the opposite, and the amounts sit visible over a database that says hide.
+   *
+   * It also settles how many complaints one bad moment earns. Three queued failures are one
+   * failed save from the user's side, not three.
+   */
+  const pressCount = useRef(0);
+
+  /**
    * Reconcile with the stored value once on mount - unless the user has already spoken.
    *
    * The seed is only as fresh as the server render, so this catches a change made on another
@@ -118,8 +132,16 @@ export function PrivacyProvider({
    */
   const toggleHideAmounts = useCallback(async () => {
     const newValue = !hideAmounts;
+    const press = (pressCount.current += 1);
     toggledLocally.current = true;
     setHideAmounts(newValue);
+
+    /** Only the newest press still describes what the user wants; an older one has been answered. */
+    const rollBack = (message: string) => {
+      if (press !== pressCount.current) return;
+      setHideAmounts(confirmedValue.current);
+      showToast(message, "error");
+    };
 
     const write = writeQueue.current.then(async () => {
       try {
@@ -132,12 +154,13 @@ export function PrivacyProvider({
         if (res.ok) {
           confirmedValue.current = newValue;
         } else {
-          setHideAmounts(confirmedValue.current);
-          showToast("Could not save that. Please try again.", "error");
+          // The two failures need different advice: the server refused this value, versus the
+          // request never arrived. Telling someone to check their connection when the server
+          // rejected the value sends them to look at the wrong thing.
+          rollBack("Could not save that. Please try again.");
         }
       } catch {
-        setHideAmounts(confirmedValue.current);
-        showToast("Could not save that. Check your connection.", "error");
+        rollBack("Could not save that. Check your connection.");
       }
     });
 
