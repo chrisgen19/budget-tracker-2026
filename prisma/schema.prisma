@@ -128,6 +128,7 @@ model User {
   aiUsageLogs             AiUsageLog[]
   mcpTokens               McpToken[]
   telegramPromptLogs      TelegramPromptLog[]
+  telegramQuickTiles      TelegramQuickTile[]
   createdAt    DateTime      @default(now()) @map("created_at")
   updatedAt    DateTime      @updatedAt @map("updated_at")
 
@@ -188,6 +189,7 @@ model Category {
   user         User?           @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions          Transaction[]
   scheduledTransactions ScheduledTransaction[]
+  telegramQuickTiles    TelegramQuickTile[]
   createdAt    DateTime        @default(now()) @map("created_at")
 
   // NOTE: this constraint does NOT cover defaults. Their userId is NULL, and Postgres treats
@@ -452,4 +454,65 @@ model TelegramPromptLog {
 
   @@unique([userId, promptedOn])
   @@map("telegram_prompt_logs")
+}
+
+/// One button in the Telegram Mini App's quick-log grid: a routine expense whose description and
+/// category are already decided, so logging it costs a tap instead of a sentence.
+///
+/// This is `QUICK_FARES` (`src/lib/telegram/quick-keyboard.ts`) made into data. That file names the
+/// point at which the trade flips - "storing them per user means a column, an editor and a settings
+/// page, which is most of the work this whole approach exists to avoid" - and a Mini App *is* the
+/// editor, so the editor stops being an additional cost. The reply keyboard itself stays: it is
+/// zero latency and needs no webview.
+///
+/// A table rather than a `Json` column on `users`, and rather than the `String[]` of ids the
+/// quick-pick preferences use. Both were considered and both fail the same two ways. They hold a
+/// category id nothing enforces, which is the defect `quickPickIdsSchema` papers over and
+/// `scripts/prune-quick-category-ids.ts` cleans up after. And they have no per-row identity, so
+/// renaming or deleting one button means rewriting the whole array, and two edits in flight lose
+/// one. The `Json` precedent that does exist - `transactions.receipt_breakdown` - is the opposite
+/// case: a derived snapshot attached to one row, never edited on its own.
+model TelegramQuickTile {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// What the button reads. Kept short: the grid is three columns on a phone.
+  label       String
+  /// What is written to `transactions.description`.
+  ///
+  /// Separate from `label` because the two are read in different places at different times.
+  /// "Office" is a good button and a useless ledger entry a year later.
+  description String
+  /// The amount a tap logs, or NULL to ask for one on the numeric pad.
+  ///
+  /// NULL *is* the "ask" state. A separate `kind` enum beside this was considered and rejected:
+  /// it states the same fact twice, and two statements of one fact can disagree - a FIXED tile
+  /// with no amount is unloggable and an ASK tile with one is a lie about what the button does.
+  /// Nullable rather than 0, because a zero-amount transaction is a real thing to write by
+  /// accident and nothing downstream would flag it.
+  amount      Float?
+  /// Almost always EXPENSE, but it has to travel with `categoryId`: `categoriesAreUsable` refuses
+  /// a category whose type disagrees with the item's, so a tile carrying one without the other
+  /// would fail at the write rather than at the edit.
+  type        TransactionType @default(EXPENSE)
+  /// Where this tile files, or NULL to let `matchCategory` decide from `description` at log time.
+  ///
+  /// `SetNull` is deliberately neither rule already in this file. `Transaction.category` is
+  /// `Restrict`, because a transaction with no category is meaningless; `User` is `Cascade`,
+  /// because the row belongs to them. A button is neither: deleting a category must not delete
+  /// the buttons that referenced it, which would read as data loss from an unrelated action, and
+  /// must not be blocked by them either. So the tile survives and the log path falls back, which
+  /// is what the shorthand path has always done.
+  categoryId  String?  @map("category_id")
+  category    Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  /// Sparse (10, 20, 30...) so one tile can be moved without rewriting every other row.
+  sortOrder   Int      @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  /// Two buttons reading the same thing are indistinguishable in a grid, and a mis-tap between
+  /// them is invisible. A duplicate is refused with a named cause, not accepted silently.
+  @@unique([userId, label])
+  @@index([userId, sortOrder])
+  @@map("telegram_quick_tiles")
 }
