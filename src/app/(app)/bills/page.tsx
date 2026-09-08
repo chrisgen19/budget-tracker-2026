@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Plus, Pencil, PowerOff, CalendarClock, X, ChevronDown, ChevronUp, RotateCcw, ExternalLink, Link2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { cn, formatCurrency } from "@/lib/utils";
+import { cn, maskCurrency } from "@/lib/utils";
 import { describeDueDate, formatBillDate, formatFrequency } from "@/lib/bill-utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { Modal } from "@/components/ui/modal";
@@ -227,7 +227,7 @@ export default function BillsPage() {
                         "text-sm font-semibold tabular-nums shrink-0",
                         bill.type === "INCOME" ? "text-income" : "text-expense"
                       )}>
-                        {hideAmounts ? "***" : formatCurrency(bill.amount, user.currency)}
+                        {maskCurrency(bill.amount, user.currency, hideAmounts)}
                       </span>
 
                       {/* Actions */}
@@ -412,7 +412,7 @@ function LinkPaymentPanel({
         <p className="text-[10px] text-warm-400 px-1 pb-0.5">
           {data.categoryName} payments near this date &middot;{" "}
           {data.expectedIsEstimate ? "roughly " : "expected "}
-          {hideAmounts ? "***" : formatCurrency(data.expectedAmount, currency)}
+          {maskCurrency(data.expectedAmount, currency, hideAmounts)}
         </p>
       )}
       {data?.candidates.map((c) => (
@@ -427,7 +427,7 @@ function LinkPaymentPanel({
           </span>
           <span className="text-warm-600 truncate">{c.description || c.category.name}</span>
           <span className="ml-auto text-warm-500 font-medium tabular-nums shrink-0">
-            {hideAmounts ? "***" : formatCurrency(c.amount, currency)}
+            {maskCurrency(c.amount, currency, hideAmounts)}
           </span>
         </button>
       ))}
@@ -452,7 +452,7 @@ function LinkPaymentPanel({
               <span className="block">
                 {formatBillDate(dueDate)} will be recorded as paid by{" "}
                 <strong>{pending.description || pending.category.name}</strong> of{" "}
-                {hideAmounts ? "***" : formatCurrency(pending.amount, currency)} on{" "}
+                {maskCurrency(pending.amount, currency, hideAmounts)} on{" "}
                 {formatBillDate(pending.localDate)}.
               </span>
               {/* Not shown for a variable bill: it has no single expected figure,
@@ -464,7 +464,7 @@ function LinkPaymentPanel({
                 Math.abs(pending.amount - data.expectedAmount) > data.expectedAmount * 0.5 && (
                 <span className="block mt-2 text-expense">
                   That is a long way from the{" "}
-                  {hideAmounts ? "***" : formatCurrency(data.expectedAmount, currency)} this bill
+                  {maskCurrency(data.expectedAmount, currency, hideAmounts)} this bill
                   usually costs. Check it is the right payment.
                 </span>
               )}
@@ -524,7 +524,7 @@ function BillHistory({ billId, currency, hideAmounts }: { billId: string; curren
           </span>
           {log.paidAmount != null && (
             <span className="text-warm-500 font-medium ml-auto tabular-nums flex items-center gap-1">
-              {hideAmounts ? "***" : formatCurrency(log.paidAmount, currency)}
+              {maskCurrency(log.paidAmount, currency, hideAmounts)}
               {log.transactionId && (
                 <button
                   onClick={() => router.push(`/transactions?highlight=${log.transactionId}`)}

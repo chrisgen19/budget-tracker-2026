@@ -15,6 +15,16 @@ export const getCurrencySymbol = (currency = "PHP"): string =>
     .formatToParts(0)
     .find((p) => p.type === "currency")?.value ?? currency;
 
+/**
+ * An amount, or the app-wide mask when the user has hidden figures.
+ *
+ * Written once because the mask was spelled two ways: `PHP ••••••` nearly everywhere, and `***`
+ * on the bills page, the reminder banner and the dashboard's upcoming-bill row - so switching
+ * hiding on produced two different-looking redactions on one screen.
+ */
+export const maskCurrency = (amount: number, currency: string, hide: boolean): string =>
+  hide ? `${getCurrencySymbol(currency)} ••••••` : formatCurrency(amount, currency);
+
 /** Format a date for display */
 export const formatDate = (date: Date | string): string =>
   new Intl.DateTimeFormat("en-PH", {

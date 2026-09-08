@@ -27,6 +27,45 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
+/** A user who asked for hiding saw the real figures until the fetch landed - a flash of the exact
+ *  thing the setting exists to hide. The layout reads the preference server-side and seeds it. */
+describe("the starting value", () => {
+  it("uses the server-rendered preference before the fetch resolves", () => {
+    vi.mocked(fetch).mockReturnValue(new Promise(() => {}) as Promise<Response>);
+
+    const { result } = renderHook(() => usePrivacy(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <PrivacyProvider initialHideAmounts>{children}</PrivacyProvider>
+      ),
+    });
+
+    expect(result.current.hideAmounts).toBe(true);
+  });
+
+  it("falls back to showing amounts when nothing was passed", () => {
+    vi.mocked(fetch).mockReturnValue(new Promise(() => {}) as Promise<Response>);
+
+    const { result } = renderHook(() => usePrivacy(), { wrapper });
+
+    expect(result.current.hideAmounts).toBe(false);
+  });
+
+  it("still reconciles with the stored value on mount", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({ hideAmounts: false }),
+    } as Response);
+
+    const { result } = renderHook(() => usePrivacy(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <PrivacyProvider initialHideAmounts>{children}</PrivacyProvider>
+      ),
+    });
+
+    await waitFor(() => expect(result.current.hideAmounts).toBe(false));
+  });
+});
+
 describe("toggling hidden amounts", () => {
   it("applies the new value and keeps it when the save lands", async () => {
     const { result } = await mountedHook();

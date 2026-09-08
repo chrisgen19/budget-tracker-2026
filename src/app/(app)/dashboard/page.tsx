@@ -10,8 +10,6 @@ import {
   ChevronRight,
   BarChart3,
   Plus,
-  Eye,
-  EyeOff,
   ScanLine,
   CalendarClock,
   Receipt,
@@ -43,7 +41,7 @@ export default function DashboardPage() {
   const [showForm, setShowForm] = useState(false);
   const [shouldScrollToRecent, setShouldScrollToRecent] = useState(false);
   const recentTransactionsRef = useRef<HTMLDivElement>(null);
-  const { hideAmounts, toggleHideAmounts } = usePrivacy();
+  const { hideAmounts } = usePrivacy();
   const { user } = useUser();
   const { canScan, openScan, scanLimitReached, scansRemaining, hasLimit } = useScan();
   const currency = user.currency;
@@ -219,7 +217,7 @@ export default function DashboardPage() {
           {/* Order: Running Balance (most important) → Expenses → Income */}
           <div className="flex gap-4 overflow-x-auto snap-x snap-mandatory scrollbar-hide pb-2 mb-8 sm:grid sm:grid-cols-3 sm:overflow-visible sm:pb-0">
             <motion.div variants={fadeUp} className="card p-5 grain-overlay min-w-[260px] shrink-0 snap-start sm:min-w-0">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center mb-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center">
                     <Wallet className="w-5 h-5 text-amber" />
@@ -229,19 +227,12 @@ export default function DashboardPage() {
                     <p className="text-xs text-warm-300">Cumulative</p>
                   </div>
                 </div>
-                <button
-                  onClick={toggleHideAmounts}
-                  className="p-1.5 rounded-lg text-warm-300 hover:text-warm-600 hover:bg-cream-200/60 transition-colors"
-                  title={hideAmounts ? "Show amounts" : "Hide amounts"}
-                >
-                  {hideAmounts ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
               </div>
               {displayAmount(stats.runningBalance, stats.runningBalance >= 0 ? "text-income" : "text-expense")}
             </motion.div>
 
             <motion.div variants={fadeUp} className="card p-5 grain-overlay min-w-[260px] shrink-0 snap-start sm:min-w-0">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center mb-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-expense-light flex items-center justify-center">
                     <TrendingDown className="w-5 h-5 text-expense" />
@@ -251,19 +242,12 @@ export default function DashboardPage() {
                     <p className="text-xs text-warm-300">This month</p>
                   </div>
                 </div>
-                <button
-                  onClick={toggleHideAmounts}
-                  className="p-1.5 rounded-lg text-warm-300 hover:text-warm-600 hover:bg-cream-200/60 transition-colors"
-                  title={hideAmounts ? "Show amounts" : "Hide amounts"}
-                >
-                  {hideAmounts ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
               </div>
               {displayAmount(stats.totalExpenses, "text-expense")}
             </motion.div>
 
             <motion.div variants={fadeUp} className="card p-5 grain-overlay min-w-[260px] shrink-0 snap-start sm:min-w-0">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center mb-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-income-light flex items-center justify-center">
                     <TrendingUp className="w-5 h-5 text-income" />
@@ -273,13 +257,6 @@ export default function DashboardPage() {
                     <p className="text-xs text-warm-300">This month</p>
                   </div>
                 </div>
-                <button
-                  onClick={toggleHideAmounts}
-                  className="p-1.5 rounded-lg text-warm-300 hover:text-warm-600 hover:bg-cream-200/60 transition-colors"
-                  title={hideAmounts ? "Show amounts" : "Hide amounts"}
-                >
-                  {hideAmounts ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
               </div>
               {displayAmount(stats.totalIncome, "text-income")}
             </motion.div>

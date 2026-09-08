@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Clock, CalendarX, ChevronDown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { formatCurrency, cn } from "@/lib/utils";
+import { maskCurrency, cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { useToast } from "@/components/ui/toast";
 import { useBillAction, type UpcomingBill } from "@/hooks/use-bills";
@@ -159,9 +159,7 @@ export function UpcomingBillRow({
         <span className="text-sm font-semibold tabular-nums text-warm-600 shrink-0">
           {/* A derived figure is prefixed rather than stated flat: a metered
               bill can swing severalfold and the app cannot know the next one. */}
-          {hideAmounts
-            ? "***"
-            : `${bill.isEstimate ? "~" : ""}${formatCurrency(bill.amount, currency)}`}
+          {`${bill.isEstimate && !hideAmounts ? "~" : ""}${maskCurrency(bill.amount, currency, hideAmounts)}`}
         </span>
         <ChevronDown
           className={cn(

@@ -15,10 +15,25 @@ const PrivacyContext = createContext<PrivacyContextValue>({
 
 export const usePrivacy = () => useContext(PrivacyContext);
 
-export function PrivacyProvider({ children }: { children: React.ReactNode }) {
-  const [hideAmounts, setHideAmounts] = useState(false);
+export function PrivacyProvider({
+  children,
+  initialHideAmounts = false,
+}: {
+  children: React.ReactNode;
+  /**
+   * The stored preference, read server-side in `(app)/layout.tsx`.
+   *
+   * Without it this started at `false` and only learned the truth after a client fetch, so a
+   * user who asked for their amounts hidden saw the real figures on screen on every page load
+   * until the round trip landed. A flash of the exact thing the setting exists to hide.
+   */
+  initialHideAmounts?: boolean;
+}) {
+  const [hideAmounts, setHideAmounts] = useState(initialHideAmounts);
   const { showToast } = useToast();
 
+  // Still fetched, as the reconciliation path: the preference can have been changed on another
+  // device since this page was rendered, and the seed is only as fresh as the last navigation.
   useEffect(() => {
     const fetchPreference = async () => {
       const res = await fetch("/api/preferences");

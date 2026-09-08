@@ -5,7 +5,7 @@ import type { CSSProperties } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, ChevronRight, Check, Clock, CalendarX, Pencil, ChevronUp, CheckCheck, X } from "lucide-react";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
-import { cn, formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency, maskCurrency } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
@@ -208,11 +208,9 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
                   Stating it here is the same assertion the reminder email was
                   changed to stop making (#217): the in-app banner is a reminder
                   too, and the user has explicitly said this bill varies. */}
-              {hideAmounts
-                ? "***"
-                : bill.isVariable
-                  ? "varies"
-                  : formatCurrency(bill.amount, user.currency)}
+              {bill.isVariable && !hideAmounts
+                ? "varies"
+                : maskCurrency(bill.amount, user.currency, hideAmounts)}
             </span>
 
             {/* Dismiss for the day */}
