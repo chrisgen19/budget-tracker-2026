@@ -2,6 +2,192 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-08 - A quick-log grid inside Telegram (#259)
+
+`quick-keyboard.ts` pins three fares to a `ReplyKeyboardMarkup`, and it works. It also stated its
+own ceiling in its own comments, and every part of that ceiling had become the thing in the way.
+
+A reply-keyboard button **sends its label verbatim as an ordinary message**, which is exactly what
+made it so cheap -- the button *is* the message, no new write path and no state. It is also why a
+button can never ask "how much?", so Grab, taxi and a lunch that is 150 one day and 220 the next
+got no button at all, which is most of what actually gets spent. The amounts were hardcoded, and
+the file said why: storing them per user means a column, an editor and a settings page, which is
+most of the work the approach existed to avoid. And nothing adapted -- the three buttons were the
+three somebody guessed at once.
+
+The trade flipped for a different reason than the one anticipated. A Mini App **is** the editor, so
+the editor stopped being an additional cost and became the surface being built anyway. Changing 38
+to 40 should not be a commit and a deploy.
+
+This supersedes #208 and #209, both specified and then closed undone. The reply keyboard **stays**:
+it is zero latency and needs no webview, so nothing regresses when the Mini App is slow or
+unreachable.
+
+### Identity, and why it is a new column
+
+`users.telegram_user_id`, not the MCP token's owner. The bot needs no such link because it writes
+through a token already bound to a user; a Mini App cannot use that token, because the page runs in
+a browser and a credential shipped to a client is a leaked credential. Deriving identity from
+`TELEGRAM_MCP_TOKEN` would have coupled the Mini App to the bot's write credential, so rotating the
+token would silently break it and `mcp_tokens.revoked_at` would come to mean two things.
+
+The gate is three independent conditions and all are required: the payload is signed by *this* bot
+and is fresh, the id is in `TELEGRAM_ALLOWED_IDS`, and it resolves to a linked account. The
+allowlist is the operational switch and the column is the identity; either alone answers half the
+question, and a link left behind after an allowlist entry is removed would keep working if only the
+column were consulted. `parseAllowlist` was lifted out of `bot.ts` and shared, because two parsers
+drift in the direction that matters -- a Mini App reading the list more loosely would serve
+somebody the bot refuses to talk to.
+
+`verifyInitData` is the whole security boundary, so it is a pure function with no Prisma, no
+environment reads beyond the token it is handed, and its own fixed test vector. Three things worth
+not relearning: the key/message order in Telegram's algorithm is the reverse of the intuitive
+reading (the constant is the key, the token is the message), and getting it the other way round
+produces a stable, plausible digest that never matches; the check string covers **every** field
+including ones nothing here reads, since Telegram keeps adding them; and the freshness window is
+24h rather than the hour that reads as safer, because Telegram does not refresh `initData` while
+the app stays open, so a shorter window produces 401s the page cannot recover from. The window
+bounds replay. What bounds *use* is the allowlist and the link, both revocable in a second.
+
+No cookie. Telegram re-supplies `initData` on every launch and revalidating it is two HMACs; a
+session cookie would be a second auth system beside NextAuth with its own expiry, refresh and
+revocation questions, and would not survive the third-party iframe anyway, since NextAuth's cookie
+is not `SameSite=None`. `/tg` and `/api/tg` therefore stay **out** of the middleware matcher, and
+`middleware.test.ts` pins the absence so it cannot be tidied away as an oversight.
+
+### Tiles as data, and Frequent
+
+`TelegramQuickTile` is a table, not a Json column or a `String[]` of ids. Editing means create,
+rename, reorder and delete one at a time, and a JSON array makes each of those a read-modify-write
+of the whole list where two edits in flight lose one. A table also gets a real foreign key --
+`onDelete: SetNull`, so deleting a category leaves the button working and the log path falls back
+to `matchCategory`, which the shorthand path already does.
+
+`label` and `description` are separate fields, because the grid is three columns on a phone and the
+ledger is read a year later: "Office" is a good button and a useless description. `amount` is
+nullable and NULL *is* the "ask" state; a `kind` enum beside it would state the same fact twice,
+and two statements of one fact can disagree.
+
+`resolveTileCategory` is the runtime successor to a compile-time guarantee. `quick-keyboard.test.ts`
+could assert `38 fare to office` resolves to Transportation because `QUICK_FARES` was an `as const`
+list; once tiles are user data the same property has to be answered at three runtime moments -- on
+save, on read, and on the write -- and one function answers all three so the editor's promise and
+the write's behaviour cannot drift apart.
+
+Frequent is the half nobody configures. Six rules earned their place:
+
+- **A derived tile never logs an inferred amount on one tap unless it is stable.** The user may
+  assert a fixed amount; the system may never infer one. Below 60% modal share the tile still
+  appears -- the description is worth not typing -- but the pad opens and asks.
+- **The mode, not the mean or the median.** One 3,000 airport trip drags a 60-peso fare to 778. A
+  median is worse in the exact case this exists for: a commute logged as one description at 38 out
+  and 80 home has a median of 59, a figure never paid. The mode is always a real amount from a real
+  row.
+- **Grouped by `foldDescription`**, imported rather than re-implemented. A second folding rule is
+  drift, and this needs the property that rule exists for: iOS substitutes U+2019, so one merchant
+  written two ways would fall below the threshold twice and appear neither time.
+- **Bill payments and receipt splits are excluded.** A "Meralco" tile writing a plain transaction
+  with no `bill_id` settles no occurrence and manufactures exactly the finding
+  `findUnlinkedBillPayments` exists to report.
+- **The window is bounded at both ends.** A lower bound alone is "the last 60 days, plus all of the
+  future", and nothing stops a row landing there -- `transactionSchema.date` has no ceiling. Such a
+  row never ages out of a window whose premise is recency, and sorts first, eating the row cap.
+- **`timezoneOffset` comes from `users.timezone_offset`**, never `TELEGRAM_TZ_OFFSET`, which
+  describes the bot's prompt clock and would be a second source of truth for the same fact.
+
+### Writing
+
+Through `createTransactionBatch` with `createdVia: TELEGRAM` and no `mcpTokenId` -- not through
+`/api/mcp`. That would have meant either a token in browser code or a loopback proxy holding
+`TELEGRAM_MCP_TOKEN`, and the proxy would put every tap behind `users.mcp_writes_enabled_until`, a
+lease designed to lapse. A button that stops working whenever a kill switch fires is not a button.
+The consequence is recorded rather than hidden: `created_via: TELEGRAM` is now ambiguous between
+the bot and the Mini App, distinguishable only by `mcp_token_id IS NULL`, and nobody should later
+"fix" that null.
+
+`labelIds` is absent rather than `[]`, so auto-apply schedules run: a tap happens *now*, which is
+the real clock a schedule's premise needs and a backdated receipt does not have. The tile is loaded
+server-side rather than trusted from the payload, so a stale client cannot log a figure that
+disagrees with the button it came from -- the rule `settleBill` applies to a fixed bill. And the
+`clientBatchId` replay is checked **ahead of** the tile lookup, because a replay creates nothing
+and must not be judged on references it will never use: a 404 there is a 4xx, the client reads a
+4xx as proof nothing was written, drops its idempotency pin, and a corrected resubmit duplicates a
+committed row.
+
+### Getting in
+
+Three doors, all built from one module, because all three fail the same way: Telegram rejects the
+**whole** message when a keyboard carries a URL it will not accept. `miniAppUrl` is stricter than
+`appBaseUrl` in exactly one way -- **https only** -- since a `web_app` URL is framed inside the
+client and an insecure origin is refused outright, where a plain URL button accepts one.
+
+The Menu button is scoped per allowlisted chat with the default cleared, the reasoning
+`menuRegistrations` already established: the default scope is what every stranger who finds the bot
+sees, and a button there opens a page that 401s them, which is worse than the silent denial because
+it confirms the bot is live and hands them a URL. A null URL **clears** the button rather than
+leaving it, so a deployment that loses `TELEGRAM_APP_URL` cannot keep one pointing at a host it no
+longer controls.
+
+`/quick` is the one door that can be offered to somebody who cannot use it, and review caught it.
+The Mini App's gate is stricter than the bot's by exactly one case -- `messageIsAllowed` accepts a
+username as a bootstrapping convenience, `getTelegramUserId` refuses one outright -- so a sender
+allowlisted only by username could type `/quick` and be handed a button opening a page that 401s.
+The other two surfaces cannot express that: both iterate numeric ids and skip everything else, so a
+username-only allowlist simply gets neither. `miniAppOffer` now answers it, outside `bot.ts`, which
+has no test of its own.
+
+The evening prompt's button was the riskiest change of the lot. A rejected send makes
+`/api/cron/telegram-prompts` release its claimed `telegram_prompt_logs` row, so the next tick fails
+identically and the prompt disappears **permanently** rather than merely losing a button.
+`miniAppButtonRow` yields an empty list on an unusable URL, leaving one fewer row rather than a
+hole, so "Nothing today" survives. `sendOne`'s plain-text retry is a backstop and not the guard: it
+drops `reply_markup` entirely, so a bad button would take that one and the Markdown with it. Both
+https-guard tests were confirmed failable against a build with the protocol check removed.
+
+### Three things that would have bitten later
+
+- **The service worker.** `/tg` would have fallen through to `defaultCache`, which is
+  `NetworkFirst`, writing a page of someone's spending to disk. The path list moved out of `sw.ts`
+  into `src/lib/protected-paths.ts` so a test can assert it: inside the worker it was unreachable
+  from a test, so an omission failed silently -- and the list is a denylist, the shape that fails
+  open.
+- **`frame-ancestors`.** Telegram Desktop and Web iframe a Mini App, which worked only because
+  nothing in this repo set a framing header at all. The day someone adds a blanket
+  `X-Frame-Options: DENY` -- the first thing any security-headers pass recommends -- the Mini App
+  breaks on Desktop and Web while mobile keeps working, which looks like a Telegram bug rather than
+  ours. The requirement is now written down as code in `next.config.ts`.
+- **A restored database loses `telegram_user_id`**, and the Mini App then 401s with no clue
+  anywhere: the right person, from the right bot, with an allowlisted id, refused by a missing
+  column. `getTelegramUserId` now writes one server-side line naming
+  `scripts/link-telegram-user.ts`. The response stays byte-identical, since a caller who is refused
+  must not learn which half of the gate to work on, and the branch is unreachable without a valid
+  signature from this bot, so it cannot be flooded. It lives there and not at bot startup because
+  `bot.ts` is an MCP client holding no database credentials, and importing Prisma to answer a
+  question would give that up.
+
+### Deliberately not built
+
+The full transaction form from #209 -- the grid answers the routine case, the form answers the
+detailed one and is its own change with its own risks. Receipt capture, since `scan_receipt` is not
+idempotent and needs the care the bot's path already has. Editing or deleting transactions: #209 is
+explicit that the Mini App must not quietly become the delete surface, and there is still no delete
+tool for anyone. Per-tile labels, which are an additive `TelegramQuickTileLabel` table later.
+
+`themeParams` is not mapped either. `tailwind.config.ts` has no dark mode and the palette has no
+dark counterpart, so mapping means inventing a second design system for one page, and the realistic
+outcome is a half-themed page -- the exact failure #209 warned about. `setHeaderColor`,
+`setBackgroundColor` and a `MainButton` colour reach the chrome CSS cannot, in three calls.
+
+No new environment variables: it reuses `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_IDS` and
+`TELEGRAM_APP_URL`. The bot keeps writing through `TELEGRAM_MCP_TOKEN` as an MCP client, and
+`telegramPromptOwnerId` keeps deriving the prompt's owner from that token's hash. Converging the
+two -- and with it closing the 409 in `/api/cron/telegram-prompts` that exists because nothing maps
+a Telegram account to an app user -- becomes possible after this and is left as its own change
+(#132).
+
+Shipped as #260 (identity), #262 (tiles and Frequent), #263 (the API), #264 (the grid, pad and
+editor) and #265 (launch surfaces), with the documentation following in its own change.
+
 ## 2026-09-08 - Label removal stamps what it removed, not what it planned (#251)
 
 #247 fixed three of the five sites where a bulk edit derived its `updated_via: APP` stamp from a
