@@ -1,11 +1,13 @@
 /**
  * The financial assessment report, printed for a human (or a model) to read.
  *
- * This replaces `assess.sql`. The two computed the same nine analyses in two languages, and they
+ * This replaced the `finance-assess` skill's own `assess.sql`, deleted in #227. The two computed
+ * the same nine analyses in two languages, and they
  * had already drifted: the SQL listed ten "new recurring charges" where the app listed none, and
- * scoped the unlinked-payment check to all history where the app scoped it to the window. Same
- * question, two answers, nothing to catch it -- so the report and the app's AI Assessment tab now
- * read one implementation, `src/lib/assessment-facts.ts`.
+ * it reported payments made *before* a bill existed as payments that had skipped its schedule,
+ * where the app bounds that check to the bill's own lifetime. Same question, two answers, nothing
+ * to catch it -- so the report and the app's AI Assessment tab now read one implementation,
+ * `src/lib/assessment-facts.ts`.
  *
  *   pnpm exec tsx --env-file=.env scripts/assess.ts
  *   EMAIL=you@example.com MONTHS=12 pnpm exec tsx --env-file=.env scripts/assess.ts
@@ -52,14 +54,19 @@ const resolveUser = async () => {
   return busiest;
 };
 
-const printConfidence = (f: AssessmentFacts) => {
+const printConfidence = (f: AssessmentFacts, currency: string) => {
   h1("1. DATA CONFIDENCE");
   console.log("    Months below 60% coverage are excluded from every rate, average and trend.");
   console.log("    A month with no rows at all still appears, at 0%.\n");
-  console.log("  month     txns  logged  coverage  status");
+  // Income and expenses per month are carried here rather than only in the headline
+  // total: the skill's report page draws a month-by-month cash-flow chart, and without
+  // them step 5 has to improvise the one aggregate query the skill tells it not to write.
+  console.log("  month     txns  logged  coverage  status                    income      expenses");
   for (const m of f.confidence.months) {
     const status = m.status === "ok" ? "ok" : m.status === "partial" ? "PARTIAL - current month" : "EXCLUDED - low coverage";
-    console.log(`  ${m.month}  ${String(m.transactionCount).padStart(4)}   ${String(m.daysLogged).padStart(2)}/${m.daysInMonth}    ${String(m.coveragePct).padStart(3)}%    ${status}`);
+    console.log(
+      `  ${m.month}  ${String(m.transactionCount).padStart(4)}   ${String(m.daysLogged).padStart(2)}/${m.daysInMonth}    ${String(m.coveragePct).padStart(3)}%    ${status.padEnd(23)} ${money(m.income, currency).padStart(12)}  ${money(m.expenses, currency).padStart(12)}`,
+    );
   }
   h2("gaps of 4+ days with nothing logged");
   if (f.confidence.gaps.length === 0) none();
@@ -190,7 +197,7 @@ async function main() {
   // stale snapshot answers "this month" with a confident number that is out of date.
   console.log(`  newest row written ${newest._max.createdAt ? newest._max.createdAt.toISOString().slice(0, 10) : "never"}`);
 
-  printConfidence(facts);
+  printConfidence(facts, user.currency);
   printHeadline(facts, user.currency);
   printBills(facts, user.currency);
   printTrends(facts, user.currency);

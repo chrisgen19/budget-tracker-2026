@@ -9,28 +9,31 @@ You are producing a financial assessment from the budget tracker's own database.
 
 Two sources, each for what it is actually good at:
 
-- **`scripts/assess.sql` against the local database** does the pattern work — trends,
-  variance, recurrence, duplicates, data quality. One `psql` call returns every section,
-  which is far cheaper than improvising a dozen queries and re-deriving the timezone
-  logic each time.
+- **`scripts/assess.ts` against the local database** does the pattern work — coverage,
+  trends, bill accuracy, recurrence, data quality, and what changed this period. One
+  command returns every section, which is far cheaper than improvising a dozen queries and
+  re-deriving the timezone logic each time. It prints `src/lib/assessment-facts.ts`, the
+  same module the app's AI Assessment reads, so the report and the app cannot give one
+  question two answers.
 - **The `budget` MCP tools** supply live, authoritative figures for anything
   forward-looking or current: `get_budget_overview` and `get_upcoming_bills`.
 
 Prefer MCP for "right now", the script for "what has been happening". The local database
-is a **mirror** and drifts as soon as the app is used again — the script prints
-`newest_row` so you can see how stale it is. If `newest_row` is more than a couple of days
+is a **mirror** and drifts as soon as the app is used again — the script prints the newest
+row written so you can see how stale it is. If that date is more than a couple of days
 behind, say so rather than reporting the current month as fact.
 
 MCP is also the staleness signal that survives the network being closed down (#194): it
 reaches the app over HTTPS rather than opening a Postgres connection, so
-`get_budget_overview` still answers when `psql` against the source does not. Cross-check
-its `runningBalance` against the script's — a divergence means the mirror is behind, and
-that is how a report quoting a balance 22,000 out of date was caught.
+`get_budget_overview` still answers when a direct connection to the source does not.
+Cross-check its `runningBalance` against the script's — a divergence means the mirror is
+behind, and that is how a report quoting a balance 22,000 out of date was caught.
 
 Never hand-write aggregate SQL over `transaction_labels` or bill dates unless the script
 has no answer. A transaction can carry several labels and its amount splits evenly between
 them, so a naive join double-counts; bill due dates are date-only at UTC midnight and must
-not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`.
+not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts` and
+`src/lib/assessment-facts.ts`.
 
 ## Steps
 
@@ -44,7 +47,7 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
    - **Assess the mirror as it is** — fine when nothing has changed, and the only
      option if direct access to the source is closed (see #194)
    - **Read the source directly** — set `DATABASE_URL` to it for the one command;
-     `assess.sql` is read-only, so this is safe where the network allows it
+     `assess.ts` is read-only, so this is safe where the network allows it
 
    Gather the evidence first so the question is answerable, not a guess:
 
@@ -67,40 +70,42 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
 1. **Run the script.** Against the mirror, from the repo root:
 
    ```bash
-   set -a; . ./.env; set +a
-   psql "$DATABASE_URL" -q -f .claude/skills/finance-assess/scripts/assess.sql
+   pnpm exec tsx --env-file=.env scripts/assess.ts
    ```
 
-   Against the source instead — note the URL goes **on the command**, because
-   `set -a; . ./.env` reassigns `DATABASE_URL` unconditionally and would otherwise
-   silently send you back to the mirror, producing the stale report step 0 exists to
-   prevent:
+   Against the source instead — put the URL **on the command**. A shell variable wins over
+   `--env-file`, so this really does dial the source, and nothing has to be unset afterwards:
 
    ```bash
-   DATABASE_URL="<source url>" psql "$DATABASE_URL" -q -f .claude/skills/finance-assess/scripts/assess.sql
+   DATABASE_URL="<source url>" pnpm exec tsx --env-file=.env scripts/assess.ts
    ```
 
-   Either way, check the `WHO / WINDOW` row the script prints: it reports `newest_row`,
-   and the assessment should say which database answered.
+   Either way, check the `WHO / WINDOW` block the script prints: it reports the newest row
+   written, and the assessment should say which database answered.
 
-   Optional: `-v email=someone@example.com` to pick a user (defaults to whoever has the
-   most transactions), `-v months=12` to widen the window (defaults to 6).
+   Optional: `EMAIL=someone@example.com` to pick a user (defaults to whoever has the
+   most transactions), `MONTHS=12` to widen the window (defaults to 6).
 
 2. **Read section 1 before anything else.** Months marked `EXCLUDED - low coverage` are
    months where logging stopped, not cheap months. Say which months were dropped and why —
    a user who sees a low month in their app deserves to know it is a gap, not a win.
 
    The gate applies to every **rate, average and trend**: sections 2, 4, 7 and 8 read only
-   trustworthy months. It deliberately does **not** apply to the sections that detect
-   whether something *exists* — recurring spend (5), duplicates (6) and fragmentation (9)
-   read the whole window. An excluded month is missing rows, not wrong ones: a duplicate
-   submitted in it is still a duplicate, a misspelling is still a misspelling, and hiding
-   them would suppress real findings while filtering recurrence would only understate it.
-   Section 3 reads a bill's whole payment history, since a bill is judged against every
-   payment it ever took.
+   trustworthy months, and so does section 6's unlabeled-spend split. It deliberately does
+   **not** apply to the checks that detect whether something *exists* — recurring spend (5),
+   and section 6's duplicates and fragmentation — which read the whole window. An excluded
+   month is missing rows, not wrong ones: a duplicate submitted in it is still a duplicate,
+   a misspelling is still a misspelling, and hiding them would suppress real findings while
+   filtering recurrence would only understate it. Section 3 reads a bill's whole payment
+   history, since a bill is judged against every payment it ever took.
+
+   Note section 6 **straddles** the gate: it groups the data-quality findings by what they
+   are about, not by whether the gate applies to them. Do not describe the whole section as
+   gated or ungated.
 
 3. **Pull live figures from MCP** for the current month and upcoming bills. Cross-check the
-   bill amounts against section 3's `avg_paid`.
+   bill amounts against section 3's paid range and its `ok` / `under-budgeted` / `seasonal`
+   classification.
 
 4. **Write the assessment** in the terminal, following the rules below.
 
@@ -109,21 +114,42 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
    and edit two things:
 
    - **The `REPORT` block** at the top of the `<script>` — the bill series with its
-     budgeted amount, and the cash-flow months with their coverage. That is the *only*
+     budgeted amount (section 3's second table), and the cash-flow months with their
+     income, expenses and coverage (section 1, which prints all four). That is the *only*
      numeric edit: the renderer below it computes every bar, gridline, tick and label
      from those figures. Never hand-write chart geometry, and never edit the renderer.
+
+     **`bill` is only fillable when a bill is `seasonal`, and that is deliberate.**
+     `assessment-facts.ts` computes `monthlySeries` for seasonal bills alone, because for a
+     fixed bill the series is seven copies of one number — noise in a payload a model has
+     to read. So when section 3 lists no seasonal bill there is nothing to chart: **drop
+     the bill figure from the page** and make the point in prose. Do not chart a flat line,
+     do not carry the previous run's series over, and do not query for one. The chart
+     exists for a bill whose *shape* is the finding; with no such bill, the finding is that
+     the bills are accurate.
+
+     The `note: "unlinked"` marker comes from section 3's unlinked-payments list, whose
+     `recentDates` give the month. An unlinked payment is not in `monthlySeries` at all —
+     it carries no `bill_id`, so it is not one of the bill's payments — so add it as its own
+     month only when that bill's count is 1 and the total is therefore its amount. With more
+     than one, name them in prose instead of splitting a total you were not given.
    - **The prose** — headline, ledger figures, the row stacks, the spellings, the action
      block, the scope row in the masthead. This is the judgement half and gets rewritten
      each run.
 
    Then publish it to the **same URL**, so there is one link that always holds the current
-   assessment rather than a new artifact each month:
+   assessment rather than a new artifact each month.
 
-   ```
-   https://claude.ai/code/artifact/b0780155-aeab-44e9-8d84-88b5ac03f854
-   ```
+   **Find that URL, do not trust a literal one written here.** Two pinned URLs have now
+   been deleted, and each time the deletion was discovered only when a run reached this
+   step and hit "artifact not found". Run the Artifact tool's `action: "list"` and look for
+   **The Trustworthy Months** — the title is fixed across runs precisely so it is findable
+   this way. Publish over the URL the listing returns, passing it as `url` with
+   `action: "read"` first, per the tool's update flow.
 
-   Pass that as `url` (with `action: "read"` first, per the Artifact tool's update flow).
+   If the listing does not hold it, publish a fresh one and say so in the handover, so the
+   user knows the link they had is gone rather than wondering why it moved.
+
    Publish a *separate* artifact only if the user asks to keep a run for comparison.
 
    Three things about the template that are settled and should not be relitigated:
@@ -145,13 +171,12 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
 |---|---|
 | 1. Data confidence | Excluded months, logging gaps of 4+ days |
 | 2. Headline | Savings rate, monthly burn, months of runway |
-| 3. Bill accuracy | **Read `swing` before `variance_pct`.** Swing under ~1.5 means a fixed bill, and a high variance there really is a misconfigured figure. A bill in the *second* table is a metered one — high swing **and** a budget inside the range actually paid — where no single figure can be right and the month-by-month shape is shown. High swing alone is not enough: a bill nobody budgeted anywhere near still needs its warning. Also bills paid *outside* the bill system, which silently skip the schedule |
+| 3. Bills | **Missed occurrences first** — a due date that passed with no payment, skip or snooze is the most actionable thing in the report. Then **read `swing` before `variance`.** Swing under ~1.5 means a fixed bill, and a high variance there really is a misconfigured figure. A bill marked `seasonal` — and listed again in the second table — is a metered one, where the budget sits inside the range actually paid and no single figure can be right; the month-by-month shape is shown for those. High swing alone is not enough: a bill nobody budgeted anywhere near is `under-budgeted` and still needs its warning. Also bills paid *outside* the bill system, which silently skip the schedule |
 | 4. Category trend | Rising categories only; a fall is usually the gap, not thrift |
-| 5. Recurring spend | The fixed monthly base, and **new** recurring charges — habits forming before they are noticed |
-| 6. Duplicates | Same day, description and amount — usually a double-submit |
+| 5. Recurring spend | The fixed monthly base, and **new** recurring charges — habits forming before they are noticed. Immaterial ones are dropped on purpose: a faithfully repeating jeepney fare decides nothing |
+| 6. Data quality | Three findings, grouped: **duplicates** (same day, description and amount — usually a double-submit); **unlabeled spend** split by cause, where `bill payment` is a **system gap** — bill payments bypass label auto-apply — not user sloppiness, so say which it is; and **fragmentation**, one thing stored several ways, which matters because the Telegram bot searches by description text |
 | 7. Income concentration | Share from the single largest source |
-| 8. Unlabeled spend | Split by cause. `bill payment (auto-created)` is a **system gap** — bill payments bypass label auto-apply — not user sloppiness. Say which it is |
-| 9. Fragmentation | One thing stored several ways. Matters because the Telegram bot searches by description text |
+| 8. What changed this period | Anomalies against the trustworthy months — a pace that has moved, a category above its baseline, a logging gap. A month still running is compared against the *same days* of those months, never scaled up |
 
 ## Writing rules
 
@@ -164,11 +189,13 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
   net-positive is a good result; say so plainly and move on to what needs attention.
 - **Attribute causes honestly.** Unlabeled bill payments are the app's behavior, not the
   user's. Do not turn a system gap into a lecture about discipline.
-- **A bill in section 3's second table is not a misconfigured one.** That table requires two
+- **A bill marked `seasonal` is not a misconfigured one.** That classification requires two
   things — payments swinging 2x or more, *and* the budgeted figure falling between the lowest
-  and highest actually paid, so it is right for part of the year. A bill with a high swing
-  whose budget sits outside that range (100 budgeted, 300-600 paid) is simply wrong and its
-  variance warning stands. Only the listed ones get this exception; for those, do not report
+  and highest actually paid, so it is right for part of the year. Those bills are listed again
+  in section 3's second table with their month-by-month shape. A bill with a high swing whose
+  budget sits outside that range (100 budgeted, 300-600 paid) is `under-budgeted`, not
+  `seasonal`: it is simply wrong and its variance warning stands. Only the `seasonal` ones get
+  this exception; for those, do not report
   "X% over budget" as though a better constant existed. The monthly
   series will usually show a season, and the budgeted figure is often exactly right for part
   of the year. Say which months run high, say what the *next* due date is likely to cost,
@@ -186,7 +213,16 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
 
 ## Extending
 
-Add a section by appending a `\qecho` header plus one query to `assess.sql`. Keep the
-`ld` local-time view rather than raw `date`, keep it read-only, and keep output narrow —
-this report is read by a model before a human, and wide result sets cost tokens without
-adding insight.
+Add an analysis to `src/lib/assessment-facts.ts` and print it from `scripts/assess.ts`.
+Both consumers gain it at once: this report and the app's AI Assessment tab read the same
+module, and its pure functions are unit-tested without a database.
+
+**Never add a second implementation.** This skill used to carry its own `assess.sql`
+computing the same analyses in SQL, and within days the two had drifted — the SQL reported
+ten "new recurring charges" where the module reported none, and flagged two rent and wifi
+payments as "paid outside the bill" when both predated the bill they were matched to. Same
+question, two answers, and nothing to catch it. That is why the SQL is gone (#227).
+
+Keep it read-only, resolve local days through `formatLocalDate` rather than raw `date`, and
+keep output narrow — this report is read by a model before a human, and wide result sets
+cost tokens without adding insight.
