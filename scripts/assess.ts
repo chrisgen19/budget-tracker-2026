@@ -1,7 +1,8 @@
 /**
  * The financial assessment report, printed for a human (or a model) to read.
  *
- * This replaces `assess.sql`. The two computed the same nine analyses in two languages, and they
+ * This replaced the `finance-assess` skill's own `assess.sql`, deleted in #227. The two computed
+ * the same nine analyses in two languages, and they
  * had already drifted: the SQL listed ten "new recurring charges" where the app listed none, and
  * scoped the unlinked-payment check to all history where the app scoped it to the window. Same
  * question, two answers, nothing to catch it -- so the report and the app's AI Assessment tab now
