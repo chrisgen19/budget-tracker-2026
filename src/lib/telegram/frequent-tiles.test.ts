@@ -221,6 +221,17 @@ describe("deriveFrequentTiles: selection", () => {
     expect(deriveFrequentTiles(rows, { limit: 2 })).toHaveLength(2);
   });
 
+  it("honours a zero, negative or fractional cap", () => {
+    // The cap was `.slice(0, limit)`, which absorbed all three quietly. Moving it into the
+    // suppression loop as `=== limit` meant none of them ever matched, so a limit of 0 returned the
+    // entire list -- the opposite of what was asked for.
+    const rows = ["a", "b", "c", "d"].flatMap((d) => repeat(3, { description: d }));
+
+    expect(deriveFrequentTiles(rows, { limit: 0 })).toHaveLength(0);
+    expect(deriveFrequentTiles(rows, { limit: -1 })).toHaveLength(0);
+    expect(deriveFrequentTiles(rows, { limit: 2.5 })).toHaveLength(2);
+  });
+
   it("uses the category most of the rows were filed under", () => {
     const tiles = deriveFrequentTiles([
       row({ date: day(1), categoryId: "food", categoryName: "Food & Dining" }),
@@ -338,6 +349,23 @@ describe("deriveFrequentTiles: one habit, one slot (#268)", () => {
 
     expect(tiles).toHaveLength(1);
     expect(tiles[0]).toMatchObject({ description: "Grab", amount: 250 });
+  });
+
+  it("picks the same survivor however the rows arrive", () => {
+    // Ranking used to decide only the order of two tiles that both appeared, so a tie could fall
+    // back to the caller's row order harmlessly. Suppression made a tie decide which tile *exists*:
+    // equal counts and an equal `lastLoggedAt` here, so without a final tie-break reversing the
+    // input swapped a 100 tile for a 900 one.
+    const rows = [
+      ...repeat(3, { description: "grab", amount: 100 }),
+      ...repeat(3, { description: "grab to airport", amount: 900 }),
+    ];
+
+    const forward = deriveFrequentTiles(rows);
+    const reversed = deriveFrequentTiles([...rows].reverse());
+
+    expect(forward).toHaveLength(1);
+    expect(forward).toEqual(reversed);
   });
 
   it("does not let a dash count as a word", () => {

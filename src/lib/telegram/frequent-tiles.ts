@@ -218,9 +218,24 @@ export const deriveFrequentTiles = (
     });
   }
 
+  // The key breaks a remaining tie, and it is not cosmetic. Ranking used to decide only the *order*
+  // of two tiles that both appeared, so `Array.prototype.sort`'s stability was enough and a tie
+  // fell back to the caller's row order harmlessly. Suppression made a tie decide which tile
+  // *exists*: two contained groups with equal counts and an equal `lastLoggedAt` would otherwise
+  // keep whichever came first in `rows`, so reversing identical input swapped `Grab` (100) for
+  // `Grab to airport` (900) -- a ninefold difference in the amount offered, chosen by row order, in
+  // a module that promises not to depend on it.
   const ranked = tiles.sort(
-    (a, b) => b.count - a.count || b.lastLoggedAt.getTime() - a.lastLoggedAt.getTime()
+    (a, b) =>
+      b.count - a.count ||
+      b.lastLoggedAt.getTime() - a.lastLoggedAt.getTime() ||
+      (a.key > b.key ? 1 : a.key < b.key ? -1 : 0)
   );
+
+  // Floored and clamped rather than trusted. The cap was `.slice(0, limit)`, which quietly absorbed
+  // a zero and a fractional value; moving it into the loop as `=== limit` meant neither ever
+  // matched, so `limit: 0` returned the whole list instead of nothing.
+  const cap = Math.max(0, Math.floor(limit));
 
   // Suppression runs on the *ranked* list and before the limit, so the survivor is whichever is
   // logged more and a suppressed variant hands its slot to the next real habit rather than leaving
@@ -228,9 +243,9 @@ export const deriveFrequentTiles = (
   // bug: `Pandesal` was pushed off the bottom by a second spelling of a button already on the grid.
   const kept: FrequentTile[] = [];
   for (const tile of ranked) {
+    if (kept.length >= cap) break;
     if (kept.some((k) => containsEitherWay(k.key, tile.key))) continue;
     kept.push(tile);
-    if (kept.length === limit) break;
   }
 
   return kept;
