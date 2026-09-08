@@ -10,6 +10,8 @@ import {
   assessBillAccuracy,
   findUnlinkedBillPayments,
   computeHeadline,
+  computeHygiene,
+  foldDescription,
   longestToken,
   monthRange,
   resolveFactsWindow,
@@ -325,6 +327,71 @@ describe("findUnlinkedBillPayments", () => {
   });
 });
 
+describe("foldDescription", () => {
+  /**
+   * iOS substitutes U+2019 for the apostrophe as you type, so one source ends up
+   * written both ways by the same person on the same phone. Six analyses key on
+   * this fold, and each of them splits a group it should merge -- the worst being
+   * `findUnlinkedBillPayments`, where the split is a false negative on a stalled
+   * schedule and reads exactly like a clean result.
+   */
+  it("folds a typographic apostrophe onto the straight one", () => {
+    expect(foldDescription("Yosh\u2019s Salary")).toBe(foldDescription("Yosh's Salary"));
+  });
+
+  it("still folds case and runs of whitespace", () => {
+    expect(foldDescription("  Mirea   RENT ")).toBe("mirea rent");
+  });
+
+  /**
+   * Deliberately narrow. `findFragmentation` strips every non-alphanumeric, and
+   * widening the fold to match would merge these two -- changing duplicate and
+   * recurrence detection, and hiding the spellings from the report whose whole
+   * job is to surface them. An apostrophe is a keyboard artifact; a colon was
+   * typed on purpose.
+   */
+  it("does not merge punctuation the user actually typed", () => {
+    expect(foldDescription("7:11 Hot Choco")).not.toBe(foldDescription("711 Hot Choco"));
+  });
+});
+
+describe("computeHygiene income sources", () => {
+  const trustworthy = ["2026-04"];
+  const period = { from: "2026-04-01", to: "2026-04-30" };
+
+  /**
+   * Seen on real data: "Yosh's Salary" was reported as two income sources at 16%
+   * and 10% while section 6 listed the same pair as one thing stored two ways --
+   * the report contradicting itself in a single run.
+   */
+  it("counts one source written two ways as one source", () => {
+    const rows = [
+      tx({ localDate: "2026-04-05", amount: 90000, type: "INCOME", description: "Yosh's Salary", categoryName: "Salary" }),
+      tx({ localDate: "2026-04-20", amount: 60000, type: "INCOME", description: "Yosh\u2019s Salary", categoryName: "Salary" }),
+    ];
+    const { incomeSources } = computeHygiene(rows, trustworthy, period);
+    expect(incomeSources).toHaveLength(1);
+    expect(incomeSources[0].total).toBe(150000);
+    expect(incomeSources[0].count).toBe(2);
+    expect(incomeSources[0].pct).toBe(100);
+  });
+});
+
+describe("findUnlinkedBillPayments apostrophes", () => {
+  /**
+   * The fold is what matches a payment description against a bill *name*, so a
+   * bill written one way and paid the other reports nothing -- silence that is
+   * indistinguishable from a schedule with no problem.
+   */
+  it("matches a payment whose apostrophe differs from the bill name", () => {
+    const bills = [bill({ description: "Angel\u2019s Rent", startDate: new Date(Date.UTC(2026, 0, 1)) })];
+    const payment = tx({ localDate: "2026-04-05", amount: 22000, description: "Angel's Rent", billId: null });
+    const found = findUnlinkedBillPayments(bills, [payment]);
+    expect(found).toHaveLength(1);
+    expect(found[0].total).toBe(22000);
+  });
+});
+
 describe("longestToken", () => {
   /**
    * The loader prefilters in SQL, which knows nothing about the fold collapsing
@@ -342,6 +409,22 @@ describe("longestToken", () => {
 
   it("prefers the most selective token, not the first", () => {
     expect(longestToken("BRV Contribution - Dad")).toBe("Contribution");
+  });
+
+  /**
+   * The loader's prefilter runs in SQL, which cannot fold: a token carrying the
+   * apostrophe is compared with its own punctuation, so a bill named
+   * "Angel\u2019s Rent" discards a payment written "Angel's Rent" before
+   * `foldDescription` ever sees it -- the fold fixing nothing in production
+   * while the pure matcher's own test passes. The token has to be apostrophe-free
+   * for the same reason it has to be whitespace-free.
+   */
+  it("picks a needle no apostrophe variant can hide from", () => {
+    const needle = longestToken("Angel\u2019s Rent");
+    expect(needle).toBe("Angel");
+    for (const spelling of ["Angel's Rent", "Angel\u2019s Rent", "angel\u02BCs rent"]) {
+      expect(spelling.toLowerCase().includes(needle.toLowerCase())).toBe(true);
+    }
   });
 
   it("returns a single-word name unchanged", () => {

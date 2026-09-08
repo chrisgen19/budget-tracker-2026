@@ -194,28 +194,53 @@ const pct = (part: number, whole: number): number | null =>
   whole === 0 ? null : Math.round((part / whole) * 100);
 
 /**
- * Descriptions are compared folded: "Netflix " and "netflix" are one thing.
+ * Descriptions are compared folded: "Netflix " and "netflix" are one thing, and
+ * so are "Yosh\u2019s Salary" and "Yosh's Salary".
+ *
+ * The apostrophe is folded because iOS substitutes U+2019 as you type, so one
+ * source ends up written both ways by the same person on the same phone. Six
+ * analyses key on this, and each splits a group it should merge: an income source
+ * counted twice, a recurring charge that reaches `RECURRING_MIN_MONTHS` in total
+ * and never in either spelling, a double-submit typed once each way. The worst is
+ * `findUnlinkedBillPayments`, which matches payments against bill *names* -- there
+ * the split is a false negative on a stalled schedule, and silence reads exactly
+ * like a clean result.
+ *
+ * Deliberately narrower than `findFragmentation`, which strips every
+ * non-alphanumeric. Folding that far would merge "7:11 Hot Choco" with "711 Hot
+ * Choco", changing duplicate and recurrence detection, and would hide those
+ * spellings from the one report meant to surface them. An apostrophe is a keyboard
+ * artifact; a colon was typed on purpose.
  *
  * Exported because the loader keys its whole-history lookup the same way, and two
  * folding rules would silently stop the two maps meeting.
  */
-export const foldDescription = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, " ");
+export const foldDescription = (s: string): string =>
+  s.trim().toLowerCase().replace(/[\u2018\u2019\u02BC]/g, "'").replace(/\s+/g, " ");
 
 /**
- * The most selective whitespace-free token of a name.
+ * The most selective token of a name, free of whitespace *and* apostrophes.
  *
  * The loader prefilters candidate rows in SQL before `foldDescription` can run,
- * and SQL has no idea the fold collapses runs of whitespace. Searching for the
- * whole name misses "Mirea  Rent" -- two spaces, and two such rows exist in one
- * real account -- because that string does not contain "Mirea Rent". Searching
- * for the longest single token instead is immune to every spacing variant the
- * fold would have normalised, and the fold then narrows the extra rows back out.
+ * and SQL has no idea what the fold collapses. Searching for the whole name
+ * misses "Mirea  Rent" -- two spaces, and two such rows exist in one real
+ * account -- because that string does not contain "Mirea Rent". Searching for
+ * the longest single token instead is immune to every spacing variant the fold
+ * would have normalised, and the fold then narrows the extra rows back out.
+ *
+ * Apostrophes split a token for exactly the same reason, and it is the half that
+ * was missed: a bill named "Angel\u2019s Rent" prefiltered on "Angel\u2019s"
+ * discards a payment written "Angel's Rent" in Postgres, so the fold that was
+ * added to catch it never sees the row. A pure-matcher test cannot detect that --
+ * it is handed a candidate the real query would already have dropped.
  *
  * Longest rather than first because it is the most selective: "Contribution"
- * fetches far fewer rows than "BRV".
+ * fetches far fewer rows than "BRV". Splitting costs a little selectivity
+ * ("Angel" over "Angel\u2019s"), which is the trade this module already makes
+ * everywhere: prefilter wide, narrow with the fold.
  */
 export const longestToken = (name: string): string => {
-  const tokens = name.split(/\s+/).filter(Boolean);
+  const tokens = name.split(/[\s'\u2018\u2019\u02BC]+/).filter(Boolean);
   if (tokens.length === 0) return name;
   return tokens.reduce((longest, token) => (token.length > longest.length ? token : longest));
 };
