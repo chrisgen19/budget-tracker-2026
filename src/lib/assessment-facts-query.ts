@@ -152,6 +152,10 @@ export const collectAssessmentFacts = async (
   // A single token survives every spacing variant the fold would normalise, and
   // the fold-match in `findUnlinkedBillPayments` narrows the extras back out, so
   // a "Meralco payment" fetched here is still rejected there.
+  //
+  // The token is apostrophe-free for the same reason. This runs in SQL, which
+  // cannot fold, so a bill named "Angel’s Rent" searched on "Angel’s" drops a
+  // payment written "Angel's Rent" here -- before `foldDescription` is reached.
   const billNames = [...new Set(bills.map((b) => (b.description || b.category.name).trim()).filter(Boolean))];
   const unlinkedRows = billNames.length === 0
     ? []

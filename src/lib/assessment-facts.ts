@@ -219,20 +219,28 @@ export const foldDescription = (s: string): string =>
   s.trim().toLowerCase().replace(/[\u2018\u2019\u02BC]/g, "'").replace(/\s+/g, " ");
 
 /**
- * The most selective whitespace-free token of a name.
+ * The most selective token of a name, free of whitespace *and* apostrophes.
  *
  * The loader prefilters candidate rows in SQL before `foldDescription` can run,
- * and SQL has no idea the fold collapses runs of whitespace. Searching for the
- * whole name misses "Mirea  Rent" -- two spaces, and two such rows exist in one
- * real account -- because that string does not contain "Mirea Rent". Searching
- * for the longest single token instead is immune to every spacing variant the
- * fold would have normalised, and the fold then narrows the extra rows back out.
+ * and SQL has no idea what the fold collapses. Searching for the whole name
+ * misses "Mirea  Rent" -- two spaces, and two such rows exist in one real
+ * account -- because that string does not contain "Mirea Rent". Searching for
+ * the longest single token instead is immune to every spacing variant the fold
+ * would have normalised, and the fold then narrows the extra rows back out.
+ *
+ * Apostrophes split a token for exactly the same reason, and it is the half that
+ * was missed: a bill named "Angel\u2019s Rent" prefiltered on "Angel\u2019s"
+ * discards a payment written "Angel's Rent" in Postgres, so the fold that was
+ * added to catch it never sees the row. A pure-matcher test cannot detect that --
+ * it is handed a candidate the real query would already have dropped.
  *
  * Longest rather than first because it is the most selective: "Contribution"
- * fetches far fewer rows than "BRV".
+ * fetches far fewer rows than "BRV". Splitting costs a little selectivity
+ * ("Angel" over "Angel\u2019s"), which is the trade this module already makes
+ * everywhere: prefilter wide, narrow with the fold.
  */
 export const longestToken = (name: string): string => {
-  const tokens = name.split(/\s+/).filter(Boolean);
+  const tokens = name.split(/[\s'\u2018\u2019\u02BC]+/).filter(Boolean);
   if (tokens.length === 0) return name;
   return tokens.reduce((longest, token) => (token.length > longest.length ? token : longest));
 };

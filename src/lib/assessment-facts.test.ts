@@ -411,6 +411,22 @@ describe("longestToken", () => {
     expect(longestToken("BRV Contribution - Dad")).toBe("Contribution");
   });
 
+  /**
+   * The loader's prefilter runs in SQL, which cannot fold: a token carrying the
+   * apostrophe is compared with its own punctuation, so a bill named
+   * "Angel\u2019s Rent" discards a payment written "Angel's Rent" before
+   * `foldDescription` ever sees it -- the fold fixing nothing in production
+   * while the pure matcher's own test passes. The token has to be apostrophe-free
+   * for the same reason it has to be whitespace-free.
+   */
+  it("picks a needle no apostrophe variant can hide from", () => {
+    const needle = longestToken("Angel\u2019s Rent");
+    expect(needle).toBe("Angel");
+    for (const spelling of ["Angel's Rent", "Angel\u2019s Rent", "angel\u02BCs rent"]) {
+      expect(spelling.toLowerCase().includes(needle.toLowerCase())).toBe(true);
+    }
+  });
+
   it("returns a single-word name unchanged", () => {
     expect(longestToken("Meralco")).toBe("Meralco");
   });
