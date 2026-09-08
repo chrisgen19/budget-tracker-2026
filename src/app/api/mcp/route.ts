@@ -3,15 +3,44 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createBudgetMcpServer } from "@/lib/mcp/server";
 import { authenticateMcpRequest, type McpAuthFailure } from "@/lib/mcp/tokens";
+import { MAX_BASE64_LENGTH } from "@/lib/receipt-limits";
+import { overBodySizeLimit, readJsonWithinLimit } from "@/lib/request-size";
 
 /** Every request reads the database and mints a fresh server, so nothing here is cacheable. */
 export const dynamic = "force-dynamic";
 
 /** JSON-RPC error codes: -32603 is the spec's Internal error; -32001 is the SDK's convention
- *  for auth failures. */
+ *  for auth failures. -32700 is Parse error, matching what the transport returns for a body it
+ *  cannot read, and -32600 is Invalid Request. */
 const JSONRPC_UNAUTHORIZED = -32001;
 const JSONRPC_INTERNAL_ERROR = -32603;
 const JSONRPC_METHOD_NOT_FOUND = -32601;
+const JSONRPC_PARSE_ERROR = -32700;
+const JSONRPC_INVALID_REQUEST = -32600;
+
+/**
+ * Ceiling on one MCP request body, in bytes.
+ *
+ * The transport reads the body with a bare `await req.json()` and applies no limit of its own
+ * (`webStandardStreamableHttp.js`), so before this the only ingress bound was the network's
+ * (#245). It is not the tool schemas that were unbounded — `create_transactions` caps rows at
+ * `MAX_BATCH_TRANSACTIONS` and descriptions at 255, and does not accept a `receiptBreakdown` at
+ * all — it is that the body is materialised *before* any schema is consulted, so a valid token
+ * of any scope, read-only included, could post a body of any size.
+ *
+ * Derived rather than chosen, and deliberately **not** the batch route's `MAX_BATCH_BODY_BYTES`.
+ * `scan_receipt` legitimately carries a base64 image bounded by `MAX_BASE64_LENGTH` (5.33 MB for
+ * a 4 MB file), so the 5 MB ceiling that suits `POST /api/transactions/batch` would refuse every
+ * receipt scan over MCP. Deriving it means a change to `MAX_FILE_SIZE` carries this with it
+ * instead of silently breaking scanning. The 2 MB of headroom covers the JSON-RPC envelope, the
+ * method name and the other params; base64 needs no escaping, so the encoded image costs its own
+ * length and nothing more.
+ */
+const MAX_MCP_BODY_BYTES = MAX_BASE64_LENGTH + 2 * 1024 * 1024;
+
+/** A JSON-RPC error envelope. An MCP client parses these, not a framework error page. */
+const jsonRpcError = (status: number, code: number, message: string) =>
+  NextResponse.json({ jsonrpc: "2.0", error: { code, message }, id: null }, { status });
 
 /**
  * Render an auth failure.
@@ -109,8 +138,59 @@ const serve = async (request: Request) => {
   });
 
   await server.connect(transport);
-  return transport.handleRequest(request);
+
+  // DELETE terminates a session and carries no body, so there is nothing to meter and reading
+  // one would throw. Only POST carries JSON-RPC.
+  if (request.method !== "POST") return transport.handleRequest(request);
+
+  const body = await readBodyWithinLimit(request);
+  if ("refusal" in body) return body.refusal;
+
+  // `parsedBody` is the transport's own documented hook for a caller that has already read the
+  // body ("useful when using body-parser middleware"), so metering costs no reconstructed
+  // Request and no second parse.
+  return transport.handleRequest(request, { parsedBody: body.value });
 };
+
+/**
+ * Read the JSON-RPC body under `MAX_MCP_BODY_BYTES`, in the envelopes this route already speaks.
+ *
+ * Note this moves the size check *ahead* of the transport's own `Accept` (406) and `Content-Type`
+ * (415) validation, which it does before touching the body. That ordering is deliberate: a
+ * ceiling is only a ceiling if nothing is buffered before it, and refusing an oversized body
+ * without first judging its headers is the safer direction. The cost is that a request with a bad
+ * `Accept` header now has its body read before the 406 — bounded by the ceiling, and it is a
+ * malformed request either way.
+ *
+ * A body that is not JSON returns the transport's own parse error rather than this route's
+ * generic 500, so metering does not change what a client sees for a malformed request.
+ */
+const readBodyWithinLimit = async (
+  request: Request,
+): Promise<{ value: unknown } | { refusal: NextResponse }> => {
+  // The cheap half first: an honest oversized client is refused with nothing buffered at all.
+  if (overBodySizeLimit(request, MAX_MCP_BODY_BYTES)) return { refusal: tooLarge() };
+
+  try {
+    const read = await readJsonWithinLimit(request, MAX_MCP_BODY_BYTES);
+    if (!read.ok) return { refusal: tooLarge() };
+    // `undefined` would make the transport fall back to re-reading a body already consumed.
+    // JSON cannot encode it, so this is unreachable, but the fallback it would trigger is silent.
+    if (read.value === undefined) {
+      return { refusal: jsonRpcError(400, JSONRPC_INVALID_REQUEST, "Empty request body.") };
+    }
+    return { value: read.value };
+  } catch {
+    return { refusal: jsonRpcError(400, JSONRPC_PARSE_ERROR, "Parse error: Invalid JSON") };
+  }
+};
+
+const tooLarge = () =>
+  jsonRpcError(
+    413,
+    JSONRPC_INVALID_REQUEST,
+    "Request body too large. Send fewer items, or a smaller image.",
+  );
 
 /**
  * Refuse the standalone SSE stream.
