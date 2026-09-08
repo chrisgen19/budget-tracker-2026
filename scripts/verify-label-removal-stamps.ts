@@ -36,6 +36,23 @@ const prisma = new PrismaClient();
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:3111";
 const EMAIL = "label-removal-probe@scratch.invalid";
 const STRANGER_EMAIL = "label-removal-stranger@scratch.invalid";
+/**
+ * Refuse to send a session cookie over cleartext to anything but this machine.
+ *
+ * Same guard as `verify-transaction-update.ts` and `verify-mcp-bill-writes.ts`, and it matters
+ * more here, not less: those mint a *scoped* MCP token, while this mints a NextAuth session, which
+ * is the whole account. `BASE_URL` is an environment variable, so pointing it at a staging host
+ * over plain `http:` is one paste away.
+ */
+const requireSafeBaseUrl = (raw: string): void => {
+  const url = new URL(raw);
+  const loopback = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
+  if (url.protocol === "https:" || (url.protocol === "http:" && loopback)) return;
+  throw new Error(
+    `BASE_URL must use https outside this machine; got ${url.protocol}//${url.hostname}`
+  );
+};
+
 let failures = 0;
 
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -50,6 +67,9 @@ const removeFixtures = () =>
   prisma.user.deleteMany({ where: { email: { in: [EMAIL, STRANGER_EMAIL] } } });
 
 async function main() {
+  // Before the fixtures and before anything is sent, so a misdirected BASE_URL costs nothing.
+  requireSafeBaseUrl(BASE_URL);
+
   const secret = process.env.NEXTAUTH_SECRET;
   if (!secret) throw new Error("NEXTAUTH_SECRET is required to mint a session");
 
@@ -117,11 +137,21 @@ async function main() {
       body: JSON.stringify({ action: "labels", operation: "remove", ids, labelIds }),
     });
 
-  /** Is some session blocked on a row lock? That is the route waiting inside its DELETE. */
-  const someoneBlockedOnRowLock = async () => {
+  /**
+   * Is a backend blocked *by the holder specifically*? That is the route waiting inside its DELETE.
+   *
+   * Bound to the holder's backend pid via `pg_blocking_pids`, not a bare "is anything blocked
+   * anywhere" count. Any unrelated blocked lock in the database would otherwise end the wait early,
+   * and releasing the holder before the route reaches its delete lets the holder win the race --
+   * after which even the pre-fix route reads an empty snapshot and answers `updated: 0`. The check
+   * would then pass against the very code it exists to catch, which is the failure mode this whole
+   * script is built to avoid.
+   */
+  const blockedByHolder = async (holderPid: number) => {
     const [row] = await prisma.$queryRaw<Array<{ n: bigint }>>`
-      SELECT count(*)::bigint AS n FROM pg_locks
-      WHERE locktype IN ('tuple', 'transactionid') AND NOT granted`;
+      SELECT count(*)::bigint AS n
+      FROM pg_stat_activity
+      WHERE ${holderPid} = ANY(pg_blocking_pids(pid))`;
     return Number(row.n) > 0;
   };
 
@@ -156,9 +186,18 @@ async function main() {
       releaseHold = resolve;
     });
 
+    // Resolved with the holder's backend pid once its lock is actually held, so the wait below can
+    // ask "is anything blocked *by this transaction*" rather than "is anything blocked at all".
+    let announceHolderPid: (pid: number) => void = () => {};
+    const holderPid = new Promise<number>((resolve) => {
+      announceHolderPid = resolve;
+    });
+
     const holder = other.$transaction(
       async (tx) => {
         await tx.$queryRaw`SELECT id FROM transaction_labels WHERE id = ${racedLink.id} FOR UPDATE`;
+        const [{ pid }] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+        announceHolderPid(pid);
         await held;
         // The concurrent writer wins: the link is gone before the route's delete can take it.
         await tx.$queryRaw`DELETE FROM transaction_labels WHERE id = ${racedLink.id}`;
@@ -166,7 +205,9 @@ async function main() {
       { maxWait: 10_000, timeout: 30_000 },
     );
 
-    await new Promise((r) => setTimeout(r, 250)); // let the lock be taken first
+    // Awaiting the pid replaces the sleep that used to stand in for "the lock is taken": the pid is
+    // announced *after* the FOR UPDATE returns, so it is evidence rather than an estimate.
+    const pid = await holderPid;
 
     let routeSettled = false;
     const routeCall = patchRemove([raced.id], [label.id]).then(async (r) => {
@@ -174,15 +215,22 @@ async function main() {
       return r.json();
     });
 
-    // Release only once the route has provably reached the lock. Sleeping instead would let the
-    // route's delete run first, after which it really does remove the row and the check passes
-    // even with the fix reverted -- precisely what it exists to catch.
+    // Release only once the route is provably blocked *by the holder*. Sleeping instead, or
+    // accepting any blocked backend, would let the holder win the race -- after which even the
+    // pre-fix route reads an empty snapshot and answers `updated: 0`, so the check passes against
+    // the code it exists to catch.
+    let sawBlocked = false;
     const deadline = Date.now() + 15_000;
-    while (!routeSettled && !(await someoneBlockedOnRowLock())) {
+    while (!routeSettled && !sawBlocked) {
       if (Date.now() > deadline) break;
-      await new Promise((r) => setTimeout(r, 25));
+      sawBlocked = await blockedByHolder(pid);
+      if (!sawBlocked) await new Promise((r) => setTimeout(r, 25));
     }
-    check("the route blocked on the concurrent writer's lock", routeSettled, false);
+    // Both halves are needed. Without the first, a route that answered without ever reaching the
+    // lock would fall through and prove nothing; without the second, a run that merely timed out
+    // would look the same as one that waited.
+    check("the route was still in flight", routeSettled, false);
+    check("...and blocked by the concurrent writer specifically", sawBlocked, true);
 
     releaseHold();
     await holder;
