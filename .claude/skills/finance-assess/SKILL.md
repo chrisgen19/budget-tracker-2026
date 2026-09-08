@@ -126,17 +126,18 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
      each run.
 
    Then publish it to the **same URL**, so there is one link that always holds the current
-   assessment rather than a new artifact each month:
+   assessment rather than a new artifact each month.
 
-   ```
-   https://claude.ai/code/artifact/085dbb62-e66f-4a2e-84f9-0e5b370aabaa
-   ```
+   **Find that URL, do not trust a literal one written here.** Two pinned URLs have now
+   been deleted, and each time the deletion was discovered only when a run reached this
+   step and hit "artifact not found". Run the Artifact tool's `action: "list"` and look for
+   **The Trustworthy Months** — the title is fixed across runs precisely so it is findable
+   this way. Publish over the URL the listing returns, passing it as `url` with
+   `action: "read"` first, per the tool's update flow.
 
-   If that URL ever returns "artifact not found" it has been deleted — publish a fresh one
-   and **replace the URL here in the same change**, or the next run hits the same dead end.
-   The previous URL died exactly that way and went unnoticed until a run tried to use it.
+   If the listing does not hold it, publish a fresh one and say so in the handover, so the
+   user knows the link they had is gone rather than wondering why it moved.
 
-   Pass that as `url` (with `action: "read"` first, per the Artifact tool's update flow).
    Publish a *separate* artifact only if the user asks to keep a run for comparison.
 
    Three things about the template that are settled and should not be relitigated:

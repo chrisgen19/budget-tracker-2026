@@ -4,9 +4,10 @@
  * This replaced the `finance-assess` skill's own `assess.sql`, deleted in #227. The two computed
  * the same nine analyses in two languages, and they
  * had already drifted: the SQL listed ten "new recurring charges" where the app listed none, and
- * scoped the unlinked-payment check to all history where the app scoped it to the window. Same
- * question, two answers, nothing to catch it -- so the report and the app's AI Assessment tab now
- * read one implementation, `src/lib/assessment-facts.ts`.
+ * it reported payments made *before* a bill existed as payments that had skipped its schedule,
+ * where the app bounds that check to the bill's own lifetime. Same question, two answers, nothing
+ * to catch it -- so the report and the app's AI Assessment tab now read one implementation,
+ * `src/lib/assessment-facts.ts`.
  *
  *   pnpm exec tsx --env-file=.env scripts/assess.ts
  *   EMAIL=you@example.com MONTHS=12 pnpm exec tsx --env-file=.env scripts/assess.ts
