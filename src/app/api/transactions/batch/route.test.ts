@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => {
   const categoryFindFirst = vi.fn();
   const labelFindMany = vi.fn();
   const transactionLabelFindMany = vi.fn();
-  const transactionLabelCreateMany = vi.fn();
+  const transactionLabelCreateManyAndReturn = vi.fn();
   const transactionLabelDeleteMany = vi.fn();
   return {
     transactionFindMany,
@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => {
     categoryFindFirst,
     labelFindMany,
     transactionLabelFindMany,
-    transactionLabelCreateMany,
+    transactionLabelCreateManyAndReturn,
     transactionLabelDeleteMany,
     getAuthUserId: vi.fn(),
     databaseTransaction: vi.fn(),
@@ -36,7 +36,7 @@ const mocks = vi.hoisted(() => {
       label: { findMany: labelFindMany },
       transactionLabel: {
         findMany: transactionLabelFindMany,
-        createMany: transactionLabelCreateMany,
+        createManyAndReturn: transactionLabelCreateManyAndReturn,
         deleteMany: transactionLabelDeleteMany,
       },
     },
@@ -234,14 +234,17 @@ describe("PATCH /api/transactions/batch", () => {
     mocks.getAuthUserId.mockResolvedValue("user-1");
     mocks.databaseTransaction.mockImplementation((callback) => callback(mocks.tx));
     mocks.transactionFindMany.mockResolvedValue([
-      { id: "tx-1", type: "EXPENSE" },
-      { id: "tx-2", type: "EXPENSE" },
+      { id: "tx-1", type: "EXPENSE", categoryId: "cat-old" },
+      { id: "tx-2", type: "EXPENSE", categoryId: "cat-old" },
     ]);
     mocks.transactionUpdateMany.mockResolvedValue({ count: 2 });
     mocks.categoryFindFirst.mockResolvedValue({ id: "cat-1", type: "EXPENSE" });
     mocks.labelFindMany.mockResolvedValue([{ id: "label-1", applicableTo: "BOTH" }]);
     mocks.transactionLabelFindMany.mockResolvedValue([]);
-    mocks.transactionLabelCreateMany.mockResolvedValue({ count: 2 });
+    mocks.transactionLabelCreateManyAndReturn.mockResolvedValue([
+      { transactionId: "tx-1" },
+      { transactionId: "tx-2" },
+    ]);
     mocks.transactionLabelDeleteMany.mockResolvedValue({ count: 2 });
   });
 
@@ -282,7 +285,7 @@ describe("PATCH /api/transactions/batch", () => {
       }),
     );
     expect(response.status).toBe(409);
-    expect(mocks.transactionLabelCreateMany).not.toHaveBeenCalled();
+    expect(mocks.transactionLabelCreateManyAndReturn).not.toHaveBeenCalled();
   });
 
   it("deduplicates IDs and returns authoritative matched counts", async () => {
@@ -304,7 +307,7 @@ describe("PATCH /api/transactions/batch", () => {
     mocks.transactionLabelFindMany.mockResolvedValue([
       { transactionId: "tx-1", labelId: "label-1" },
     ]);
-    mocks.transactionLabelCreateMany.mockResolvedValue({ count: 1 });
+    mocks.transactionLabelCreateManyAndReturn.mockResolvedValue([{ transactionId: "tx-2" }]);
 
     const response = await PATCH(
       patchRequest({
@@ -321,9 +324,10 @@ describe("PATCH /api/transactions/batch", () => {
       changedLinks: 1,
       ids: ["tx-2"],
     });
-    expect(mocks.transactionLabelCreateMany).toHaveBeenCalledWith({
+    expect(mocks.transactionLabelCreateManyAndReturn).toHaveBeenCalledWith({
       data: [{ transactionId: "tx-2", labelId: "label-1" }],
       skipDuplicates: true,
+      select: { transactionId: true },
     });
   });
 
@@ -348,6 +352,130 @@ describe("PATCH /api/transactions/batch", () => {
       changedLinks: 1,
       ids: ["tx-2"],
     });
+  });
+
+  // #232: a bulk change is an edit, and leaving these columns alone left a row corrected over MCP
+  // naming the token as its last editor long after the app had changed it.
+  it("stamps APP and clears the token id on a bulk recategorise", async () => {
+    await PATCH(patchRequest({ action: "category", ids: ["tx-1", "tx-2"], categoryId: "cat-1" }));
+
+    expect(mocks.transactionUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { categoryId: "cat-1", updatedVia: "APP", updatedByMcpTokenId: null },
+      }),
+    );
+  });
+
+  // The other half of the rule: stamping the rows that did not move would replace an accurate MCP
+  // trail with a fabricated APP one for an edit that never happened.
+  it("skips rows already in the target category rather than recording an edit on them", async () => {
+    mocks.transactionFindMany.mockResolvedValue([
+      { id: "tx-1", type: "EXPENSE", categoryId: "cat-old" },
+      { id: "tx-2", type: "EXPENSE", categoryId: "cat-1" },
+    ]);
+    mocks.transactionUpdateMany.mockResolvedValue({ count: 1 });
+
+    const response = await PATCH(
+      patchRequest({ action: "category", ids: ["tx-1", "tx-2"], categoryId: "cat-1" }),
+    );
+
+    // `matched` still names the whole selection; `updated` names only what moved.
+    expect(await response.json()).toMatchObject({ matched: 2, updated: 1 });
+    expect(mocks.transactionUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: { in: ["tx-1"] } }) }),
+    );
+  });
+
+  // The label branches touch no column on `transactions`, so the stamp cannot ride along on an
+  // existing update the way the category branch's does -- it needs its own.
+  it("stamps only the rows that actually gained a label link", async () => {
+    mocks.transactionLabelFindMany.mockResolvedValue([
+      { transactionId: "tx-1", labelId: "label-1" },
+    ]);
+    mocks.transactionLabelCreateManyAndReturn.mockResolvedValue([{ transactionId: "tx-2" }]);
+
+    await PATCH(
+      patchRequest({
+        action: "labels",
+        operation: "add",
+        ids: ["tx-1", "tx-2"],
+        labelIds: ["label-1"],
+      }),
+    );
+
+    expect(mocks.transactionUpdateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["tx-2"] }, userId: "user-1" },
+      data: { updatedVia: "APP", updatedByMcpTokenId: null },
+    });
+  });
+
+  // `existingLinks` is read before the insert, so a concurrent MCP edit adding the same link
+  // makes `skipDuplicates` write nothing. Stamping from the plan rather than the result would
+  // record an `APP` edit over an accurate MCP trail -- review #5136231115.
+  it("stamps nothing for a row whose link a concurrent writer inserted first", async () => {
+    mocks.transactionLabelFindMany.mockResolvedValue([]);
+    mocks.transactionLabelCreateManyAndReturn.mockResolvedValue([]);
+
+    const response = await PATCH(
+      patchRequest({
+        action: "labels",
+        operation: "add",
+        ids: ["tx-1", "tx-2"],
+        labelIds: ["label-1"],
+      }),
+    );
+
+    expect(await response.json()).toMatchObject({ matched: 2, updated: 0, changedLinks: 0 });
+    expect(mocks.transactionUpdateMany).not.toHaveBeenCalled();
+  });
+
+  // Same race on the category branch: a concurrent MCP edit can move the row into the target
+  // category first, and the snapshot would still have it in `movingIds`. The `not` predicate is
+  // re-evaluated against the committed row, so such a row is skipped rather than stamped.
+  it("refuses to move a row whose category already matches at write time", async () => {
+    await PATCH(patchRequest({ action: "category", ids: ["tx-1", "tx-2"], categoryId: "cat-1" }));
+
+    expect(mocks.transactionUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ categoryId: { not: "cat-1" } }),
+      }),
+    );
+  });
+
+  it("stamps only the rows that actually lost a label link", async () => {
+    mocks.transactionLabelFindMany.mockResolvedValue([
+      { transactionId: "tx-2", labelId: "label-1" },
+    ]);
+    mocks.transactionLabelDeleteMany.mockResolvedValue({ count: 1 });
+
+    await PATCH(
+      patchRequest({
+        action: "labels",
+        operation: "remove",
+        ids: ["tx-1", "tx-2"],
+        labelIds: ["label-1"],
+      }),
+    );
+
+    expect(mocks.transactionUpdateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["tx-2"] }, userId: "user-1" },
+      data: { updatedVia: "APP", updatedByMcpTokenId: null },
+    });
+  });
+
+  it("writes no stamp when a label operation changes nothing", async () => {
+    mocks.transactionLabelFindMany.mockResolvedValue([]);
+
+    await PATCH(
+      patchRequest({
+        action: "labels",
+        operation: "remove",
+        ids: ["tx-1", "tx-2"],
+        labelIds: ["label-1"],
+      }),
+    );
+
+    expect(mocks.transactionUpdateMany).not.toHaveBeenCalled();
   });
 
   it("refuses an oversized body before opening a database transaction", async () => {

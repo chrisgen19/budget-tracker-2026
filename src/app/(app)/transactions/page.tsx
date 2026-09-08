@@ -518,7 +518,14 @@ export default function TransactionsPage() {
       });
       setShowBulkCategory(false);
       clearSelection(true);
-      showToast(`${result.updated} transaction${result.updated === 1 ? "" : "s"} updated`);
+      // `updated` counts the rows whose category actually moved, not the rows selected, so
+      // recategorising a selection that is already in that category reports nothing rather than
+      // claiming an edit the server deliberately did not record. Same shape as the label branch.
+      if (result.updated === 0) {
+        showToast("No categories changed");
+      } else {
+        showToast(`${result.updated} transaction${result.updated === 1 ? "" : "s"} updated`);
+      }
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Failed to change category", "error");
     }

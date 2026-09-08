@@ -82,19 +82,65 @@ export async function POST(_request: Request, { params }: RouteParams) {
       }
     }
 
-    if (toInsert.length > 0) {
-      const result = await prisma.transactionLabel.createMany({
-        data: toInsert,
-        skipDuplicates: true,
-      });
-      applied += result.count;
-    }
+    // Every transaction this pass actually changes, collected before the writes so a removal can
+    // still be attributed once its link row is gone.
+    const touchedIds = new Set<string>();
 
-    if (toRemoveIds.length > 0) {
-      const result = await prisma.transactionLabel.deleteMany({
-        where: { id: { in: toRemoveIds } },
+    // One transaction per batch, because the stamp is not repairable on a retry. If the audit
+    // update failed after an independently committed association write, the association would
+    // stand while the row went on naming its previous MCP editor -- and a rerun sees the
+    // associations already in their desired state, leaves `touchedIds` empty and skips the stamp
+    // again, so the wrong provenance is permanent. The pass was never atomic *across* batches and
+    // still is not; this makes each batch all-or-nothing, which is what the retry needs.
+    //
+    // Opened only when there is something to write. A re-run over a settled label walks every
+    // page finding nothing to do, and an empty transaction per page is a round trip bought for
+    // no reason.
+    if (toInsert.length > 0 || toRemoveIds.length > 0) {
+      await prisma.$transaction(async (db) => {
+        if (toInsert.length > 0) {
+          // Derived from what the insert actually created, not from the page read that planned
+          // it. That read happens outside this transaction, so a concurrent MCP edit adding the
+          // same label first makes `skipDuplicates` insert nothing while the row is still in
+          // `toInsert` -- stamping it would overwrite an accurate MCP trail with `APP` for a
+          // change this pass did not make. `createManyAndReturn` returns only the rows inserted.
+          const created = await db.transactionLabel.createManyAndReturn({
+            data: toInsert,
+            skipDuplicates: true,
+            select: { transactionId: true },
+          });
+          applied += created.length;
+          for (const link of created) touchedIds.add(link.transactionId);
+        }
+
+        if (toRemoveIds.length > 0) {
+          const removingIds = new Set(toRemoveIds);
+          const removedFrom = transactions.filter((tx) =>
+            tx.labels.some((tl) => removingIds.has(tl.id))
+          );
+          const result = await db.transactionLabel.deleteMany({
+            where: { id: { in: toRemoveIds } },
+          });
+          removed += result.count;
+          for (const tx of removedFrom) touchedIds.add(tx.id);
+        }
+
+        // Retroactive apply is a user-initiated edit of these transactions' labels, so it stamps
+        // the audit columns exactly as `PUT /api/transactions/[id]` and the bulk PATCH do (#232).
+        // Without it a row edited over MCP and then retro-labelled here would go on naming the
+        // MCP token as its last editor.
+        //
+        // Deliberately scoped to *this* route. Associations also disappear when a label's type is
+        // narrowed or the label is deleted, and those are edits to the **label**, not to the
+        // transactions that happen to reference it; stamping there would record an edit on every
+        // row a user touched by renaming one thing.
+        if (touchedIds.size > 0) {
+          await db.transaction.updateMany({
+            where: { id: { in: [...touchedIds] }, userId },
+            data: { updatedVia: "APP", updatedByMcpTokenId: null },
+          });
+        }
       });
-      removed += result.count;
     }
 
     cursor = transactions[transactions.length - 1].id;
