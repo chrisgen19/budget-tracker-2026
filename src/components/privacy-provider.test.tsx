@@ -66,6 +66,59 @@ describe("the starting value", () => {
   });
 });
 
+/**
+ * The mount read and a press can overlap, and the press has to win.
+ *
+ * The control sits in the app chrome now, on screen from the first paint, so pressing it while
+ * the mount GET is still in flight is an ordinary thing to do rather than a contrived one. The
+ * PATCH stores the new value, then the older GET resolves carrying the old one and puts it back.
+ * Re-hiding is merely confusing; the other direction puts amounts the user just hid back on
+ * screen, which is the one thing this setting exists to stop.
+ */
+describe("a toggle racing the mount read", () => {
+  /** Resolves the mount GET by hand, so the toggle lands while it is still in flight. */
+  const deferredMountRead = () => {
+    let settle: (value: Response) => void = () => {};
+    vi.mocked(fetch).mockImplementationOnce(
+      () => new Promise<Response>((resolve) => (settle = resolve))
+    );
+    return (hideAmounts: boolean) =>
+      settle({ ok: true, json: async () => ({ hideAmounts }) } as Response);
+  };
+
+  it("keeps the amounts hidden when a stale read says to show them", async () => {
+    const landMountRead = deferredMountRead();
+    const { result } = renderHook(() => usePrivacy(), { wrapper });
+
+    await act(async () => {
+      await result.current.toggleHideAmounts();
+    });
+    expect(result.current.hideAmounts).toBe(true);
+
+    await act(async () => landMountRead(false));
+
+    expect(result.current.hideAmounts).toBe(true);
+  });
+
+  it("keeps the amounts shown when a stale read says to hide them", async () => {
+    const landMountRead = deferredMountRead();
+    const { result } = renderHook(() => usePrivacy(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <PrivacyProvider initialHideAmounts>{children}</PrivacyProvider>
+      ),
+    });
+
+    await act(async () => {
+      await result.current.toggleHideAmounts();
+    });
+    expect(result.current.hideAmounts).toBe(false);
+
+    await act(async () => landMountRead(true));
+
+    expect(result.current.hideAmounts).toBe(false);
+  });
+});
+
 describe("toggling hidden amounts", () => {
   it("applies the new value and keeps it when the save lands", async () => {
     const { result } = await mountedHook();

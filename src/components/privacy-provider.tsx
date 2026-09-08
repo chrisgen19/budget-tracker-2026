@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
 
 import { useToast } from "@/components/ui/toast";
 interface PrivacyContextValue {
@@ -32,15 +32,47 @@ export function PrivacyProvider({
   const [hideAmounts, setHideAmounts] = useState(initialHideAmounts);
   const { showToast } = useToast();
 
-  // Still fetched, as the reconciliation path: the preference can have been changed on another
-  // device since this page was rendered, and the seed is only as fresh as the last navigation.
+  /**
+   * Set the moment the user presses the control, so the mount read below can stand down.
+   *
+   * A ref rather than state: nothing renders from it, and it has to be readable by a promise
+   * that was created before the press, which a state value captured in that closure would not be.
+   */
+  const toggledLocally = useRef(false);
+
+  /**
+   * Reconcile with the stored value once on mount - unless the user has already spoken.
+   *
+   * The seed is only as fresh as the server render, so this catches a change made on another
+   * device in between. But the control now sits in the app chrome, on screen from the first
+   * paint, so pressing it while this request is still in flight is ordinary rather than
+   * contrived: the PATCH stores the new value, then this resolves carrying the old one and puts
+   * it back, leaving the UI disagreeing with the database until the next reload. Re-hiding is
+   * merely confusing. The other direction puts amounts the user just deliberately hid back on
+   * screen, which is the one thing this setting exists to stop.
+   *
+   * A failed read leaves the seeded value alone, which is the right answer now that there is
+   * one: the server rendered this page with the stored preference moments ago.
+   */
   useEffect(() => {
+    let abandoned = false;
+
     const fetchPreference = async () => {
-      const res = await fetch("/api/preferences");
-      const data = await res.json();
-      setHideAmounts(data.hideAmounts);
+      try {
+        const res = await fetch("/api/preferences");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (abandoned || toggledLocally.current) return;
+        setHideAmounts(data.hideAmounts);
+      } catch {
+        // Keep what the server gave us.
+      }
     };
+
     fetchPreference();
+    return () => {
+      abandoned = true;
+    };
   }, []);
 
   /**
@@ -57,6 +89,7 @@ export function PrivacyProvider({
    */
   const toggleHideAmounts = useCallback(async () => {
     const newValue = !hideAmounts;
+    toggledLocally.current = true;
     setHideAmounts(newValue);
 
     try {
