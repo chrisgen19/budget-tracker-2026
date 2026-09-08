@@ -5,17 +5,23 @@ const mocks = vi.hoisted(() => ({
   transactionFindFirst: vi.fn(),
   transactionUpdateMany: vi.fn(),
   transactionLabelDeleteMany: vi.fn(),
+  databaseTransaction: vi.fn(),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
+vi.mock("@/lib/prisma", () => {
+  const client = {
     transaction: {
       findFirst: mocks.transactionFindFirst,
       updateMany: mocks.transactionUpdateMany,
     },
     transactionLabel: { deleteMany: mocks.transactionLabelDeleteMany },
-  },
-}));
+    $transaction: mocks.databaseTransaction,
+  };
+  // A spy rather than a plain passthrough, so a test can assert the writes were issued inside a
+  // transaction at all -- reverting to two independent awaits never calls this.
+  mocks.databaseTransaction.mockImplementation((run: (tx: unknown) => unknown) => run(client));
+  return { prisma: client };
+});
 vi.mock("@/lib/session", () => ({ getAuthUserId: mocks.getAuthUserId }));
 
 import { DELETE } from "@/app/api/transactions/[id]/labels/[labelId]/route";
@@ -61,6 +67,19 @@ describe("DELETE /api/transactions/[id]/labels/[labelId]", () => {
 
     expect(response.status).toBe(404);
     expect(mocks.transactionUpdateMany).not.toHaveBeenCalled();
+  });
+
+  // The stamp is not repairable on a retry: a failed update after an independently committed
+  // delete leaves the link gone, and the retry 404s before reaching the stamp again. So both
+  // writes have to commit together -- review #5136117235 / #5136133314.
+  it("issues the delete and the stamp inside one database transaction", async () => {
+    await del();
+
+    expect(mocks.databaseTransaction).toHaveBeenCalledTimes(1);
+    // Both writes ran after the transaction opened, so neither can commit without the other.
+    const opened = mocks.databaseTransaction.mock.invocationCallOrder[0];
+    expect(mocks.transactionLabelDeleteMany.mock.invocationCallOrder[0]).toBeGreaterThan(opened);
+    expect(mocks.transactionUpdateMany.mock.invocationCallOrder[0]).toBeGreaterThan(opened);
   });
 
   it("stamps nothing on a transaction that is not the caller's", async () => {
