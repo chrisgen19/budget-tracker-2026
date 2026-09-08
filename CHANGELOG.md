@@ -2,6 +2,34 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-08 - The MCP endpoint has a body-size ceiling too (#245)
+
+#138 gave `POST /api/transactions/batch` a ceiling. `POST /api/mcp` was the one remaining ingress
+without one, and the gap was simpler and wider than the follow-up issue claimed. The SDK's
+`WebStandardStreamableHTTPServerTransport` reads the body with a bare `await req.json()` and caps
+nothing, and the route handed it the `Request` untouched, so any authenticated caller could post a
+body of any size. Because the body is materialised *before* any tool schema is consulted, scope
+narrowed nothing: a read-only token reached the same unbounded read.
+
+Two things the issue got wrong, corrected while validating it rather than after shipping. It
+claimed the MCP path carried the batch route's payload shape and so its ~8.6 MB worst case:
+`create_transactions` declares no `receiptBreakdown` in its `inputSchema`, and zod strips the key
+before the handler sees it, so that arithmetic never applied. And it suggested reusing
+`MAX_BATCH_BODY_BYTES` (5 MB), which would have broken every receipt scan over MCP -- `scan_receipt`
+legitimately carries a base64 image bounded by `MAX_BASE64_LENGTH`, which is 5.33 MB.
+
+`MAX_MCP_BODY_BYTES` is therefore **derived**, as `MAX_BASE64_LENGTH + 2 MB`, so a change to
+`MAX_FILE_SIZE` carries the ceiling with it instead of silently refusing scans. Metering reuses
+`readJsonWithinLimit` from #138 and hands the result to the transport's own documented `parsedBody`
+option, so nothing reconstructs a `Request` and nothing parses twice. A malformed body still comes
+back as the transport's `-32700` parse error rather than this route's generic 500, and `DELETE` is
+left alone because a session termination carries no body.
+
+One deliberate consequence: the size check now runs *ahead* of the transport's `Accept` (406) and
+`Content-Type` (415) validation, which it does before touching the body. A ceiling is only a
+ceiling if nothing is buffered before it, so refusing on size first is the right order; the cost is
+that a request with a bad `Accept` header has its body read, bounded, before the 406.
+
 ## 2026-09-08 - The batch save has a body-size ceiling (#138)
 
 `checkBodySize` existed and exactly one route called it. `POST /api/transactions/batch` bounded
