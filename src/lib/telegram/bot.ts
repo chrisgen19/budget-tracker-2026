@@ -37,6 +37,7 @@ import { menuRegistrations, resolveCommand, type BotCommand } from "@/lib/telegr
 import {
   menuButtonRegistrations,
   miniAppKeyboard,
+  miniAppOffer,
   miniAppUrl,
 } from "@/lib/telegram/mini-app";
 import { EXAMPLES_MESSAGE } from "@/lib/telegram/examples";
@@ -1494,14 +1495,22 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
   }
 
   if (command === "QUICK") {
-    if (!MINI_APP_URL) {
-      // Said plainly rather than answered with a dead button. The cause is always the same one
-      // thing -- no HTTPS address to open -- and naming it is the difference between a bug report
-      // and a one-line fix.
+    const offer = miniAppOffer(ALLOWED_IDS, chatId, MINI_APP_URL);
+
+    if (!offer.offer) {
+      // Named rather than answered with a dead button or an opaque failure. Each cause is one
+      // concrete thing to change, and saying which is the difference between a bug report and a
+      // one-line fix. Both fall back to what still works rather than ending on the refusal.
+      const cause =
+        offer.reason === "not-allowlisted-by-id"
+          ? "The quick-log grid needs your numeric Telegram id in `TELEGRAM_ALLOWED_IDS`; a " +
+            `username is not enough for it. Yours is \`${chatId}\`.`
+          : "The quick-log grid needs an HTTPS address to open, and this deployment has none " +
+            "configured (`TELEGRAM_APP_URL`, or `NEXTAUTH_URL`).";
+
       await sendMessage(
         chatId,
-        "The quick-log grid needs an HTTPS address to open, and this deployment has none " +
-          "configured (`TELEGRAM_APP_URL`, or `NEXTAUTH_URL`).\n\n" +
+        `${cause}\n\n` +
           "`/keyboard` still pins your fares above the message box, and typing `250 grab` " +
           "always works."
       );
@@ -1513,7 +1522,7 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       "\u26a1 *Quick log*\n\nTap a button to log it. Anything with no fixed amount opens a pad " +
         "to type one, and *Frequent* is built from what you actually log.",
       "Markdown",
-      miniAppKeyboard(MINI_APP_URL, "\u26a1 Open quick log")
+      miniAppKeyboard(offer.url, "\u26a1 Open quick log")
     );
     return;
   }

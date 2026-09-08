@@ -4,6 +4,7 @@ import {
   MENU_BUTTON_TEXT,
   menuButtonRegistrations,
   miniAppButtonRow,
+  miniAppOffer,
   miniAppKeyboard,
   miniAppUrl,
 } from "@/lib/telegram/mini-app";
@@ -122,5 +123,54 @@ describe("miniAppButtonRow", () => {
   // The evening prompt's own requirement: losing the grid must not cost it "Nothing today".
   it("is an empty list with no URL, leaving one fewer row rather than a hole", () => {
     expect(miniAppButtonRow(null, "Open")).toEqual([]);
+  });
+});
+
+/**
+ * The Mini App's gate is stricter than the bot's, by exactly one case, and `/quick` is the only
+ * surface that can reach that case. Both other doors iterate numeric ids and skip everything else,
+ * so a username-only allowlist gets neither; only a typed command can arrive from someone the id
+ * list has never heard of.
+ */
+describe("miniAppOffer", () => {
+  const URL_ = "https://budget.test/tg";
+  const ids = (...v: string[]) => new Set(v);
+
+  it("offers the grid to an allowlisted id", () => {
+    expect(miniAppOffer(ids("7117005308"), 7117005308, URL_)).toEqual({
+      offer: true,
+      url: URL_,
+    });
+  });
+
+  // The finding this covers: a sender allowlisted only by TELEGRAM_ALLOWED_USERNAMES passes
+  // `messageIsAllowed` and would have been handed a working-looking button, which opens a page
+  // `getTelegramUserId` then answers with an opaque 401. A door that resolves to nothing.
+  it("refuses a sender the id list has never heard of", () => {
+    expect(miniAppOffer(ids(), 7117005308, URL_)).toEqual({
+      offer: false,
+      reason: "not-allowlisted-by-id",
+    });
+    expect(miniAppOffer(ids("999"), 7117005308, URL_)).toEqual({
+      offer: false,
+      reason: "not-allowlisted-by-id",
+    });
+  });
+
+  it("compares as text, matching how the allowlist and the link column both hold an id", () => {
+    expect(miniAppOffer(ids("7117005308"), "7117005308", URL_).offer).toBe(true);
+  });
+
+  it("reports a missing URL separately, since it is a different thing to fix", () => {
+    expect(miniAppOffer(ids("111"), 111, null)).toEqual({ offer: false, reason: "no-url" });
+  });
+
+  // Both wrong at once is a real state on a fresh deployment. The allowlist is reported, because
+  // it is the one that would still block them after the other was fixed.
+  it("names the allowlist first when both are wrong", () => {
+    expect(miniAppOffer(ids(), 111, null)).toEqual({
+      offer: false,
+      reason: "not-allowlisted-by-id",
+    });
   });
 });

@@ -143,3 +143,45 @@ export const miniAppButtonRow = (
   text: string
 ): { text: string; web_app: { url: string } }[][] =>
   url ? [[{ text, web_app: { url } }]] : [];
+
+/**
+ * Whether `/quick` may offer the grid to this chat, and why not when it may not.
+ *
+ * A decision rather than a message, extracted for the reason `menuRegistrations` and
+ * `menuButtonRegistrations` are: `bot.ts` has no test of its own, so anything decided inline there
+ * is decided where nothing can check it.
+ *
+ * Two refusals, and they are not the same refusal. `no-url` is a deployment with no HTTPS address.
+ * `not-allowlisted-by-id` is the narrower one and is easy to miss: **the Mini App's gate is
+ * stricter than the bot's, by exactly one case.** `messageIsAllowed` accepts a username as a
+ * bootstrapping convenience -- a person has to be able to get started -- while `getTelegramUserId`
+ * refuses one outright, since a released @handle claimed by someone else must never reach a write
+ * path. So a sender allowlisted *only* by username can talk to this bot, and handing them a button
+ * would open a page that 401s: a door that resolves to nothing, which is the failure
+ * `commands.test.ts` already refuses to let a menu entry have.
+ *
+ * `/quick` is the only surface that can hit it. `menuButtonRegistrations` and the evening prompt
+ * both iterate numeric ids and skip everything that is not one, so a username-only allowlist
+ * simply gets neither -- only a *typed* command can arrive from someone the id list has never
+ * heard of.
+ *
+ * @param chatId the chat the command arrived in. In a private chat this is the sender's own id,
+ *   which is what the allowlist holds -- the equivalence `menuRegistrations` already relies on --
+ *   and `messageIsAllowed` requires a private chat before anything reaches here.
+ */
+export type MiniAppOffer =
+  | { offer: true; url: string }
+  | { offer: false; reason: "not-allowlisted-by-id" | "no-url" };
+
+export const miniAppOffer = (
+  allowedIds: ReadonlySet<string>,
+  chatId: number | string,
+  url: string | null
+): MiniAppOffer => {
+  // Checked before the URL, so the more specific cause is the one reported. A username-only
+  // allowlist on a deployment that also lacks a base URL has two problems, and being told about
+  // the one that would still block them after fixing the other is not help.
+  if (!allowedIds.has(String(chatId))) return { offer: false, reason: "not-allowlisted-by-id" };
+  if (!url) return { offer: false, reason: "no-url" };
+  return { offer: true, url };
+};
