@@ -178,6 +178,70 @@ describe("two presses inside one round trip", () => {
   });
 });
 
+/**
+ * A rollback has to land on a value the server actually confirmed.
+ *
+ * Rolling back to "whatever this press flipped away from" is only correct while that value was
+ * itself confirmed. Queue two presses and fail both, and the second rolls back to the *first*
+ * press's optimistic value - one the database never accepted - so the screen ends up inverted
+ * against storage.
+ */
+describe("two queued writes that both fail", () => {
+  /** Fails the first write on demand, so the second press lands while it is still in flight. */
+  const deferredFailure = () => {
+    let fail: () => void = () => {};
+    vi.mocked(fetch).mockImplementationOnce(
+      () => new Promise<Response>((_, reject) => (fail = () => reject(new Error("offline"))))
+    );
+    vi.mocked(fetch).mockRejectedValue(new Error("offline"));
+    // Wrapped rather than returned directly: the executor that assigns `fail` does not run until
+    // `fetch` is first called, so returning it here would hand back the placeholder.
+    return () => fail();
+  };
+
+  const pressTwiceAndFailBoth = async (result: { current: ReturnType<typeof usePrivacy> }) => {
+    const failFirstWrite = deferredFailure();
+
+    await act(async () => {
+      result.current.toggleHideAmounts();
+    });
+    await act(async () => {
+      result.current.toggleHideAmounts();
+    });
+
+    await act(async () => failFirstWrite());
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  };
+
+  it("settles on the stored value rather than the first press's guess", async () => {
+    const { result } = await mountedHook();
+
+    await pressTwiceAndFailBoth(result);
+
+    expect(result.current.hideAmounts).toBe(false);
+  });
+
+  /** The direction that matters: nothing was saved, so the amounts must stay hidden. */
+  it("does not end up showing amounts the database still hides", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({ hideAmounts: true }),
+    } as Response);
+
+    const { result } = renderHook(() => usePrivacy(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <PrivacyProvider initialHideAmounts>{children}</PrivacyProvider>
+      ),
+    });
+    await waitFor(() => expect(result.current.hideAmounts).toBe(true));
+    vi.mocked(fetch).mockClear();
+
+    await pressTwiceAndFailBoth(result);
+
+    expect(result.current.hideAmounts).toBe(true);
+  });
+});
+
 describe("toggling hidden amounts", () => {
   it("applies the new value and keeps it when the save lands", async () => {
     const { result } = await mountedHook();

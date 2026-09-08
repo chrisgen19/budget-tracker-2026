@@ -49,10 +49,24 @@ export function PrivacyProvider({
    * holding the value the user pressed *away* from while the screen shows the one they chose.
    * It survives until the next load, and then the load resolves it the wrong way.
    *
-   * Chaining also keeps the rollback honest: writes no longer overlap, so a failure always puts
-   * back the value that preceded the press that failed, rather than one a later press replaced.
+   * Ordering the writes is not on its own enough to make the rollback correct - see
+   * `confirmedValue` below.
    */
   const writeQueue = useRef<Promise<void>>(Promise.resolve());
+
+  /**
+   * The last value the server is known to hold, and the only safe thing to roll back to.
+   *
+   * Rolling back to "whatever this press flipped away from" is right only while that value was
+   * itself confirmed. Queue two presses and fail both, and the second restores the *first*
+   * press's optimistic value - one the database never accepted - leaving the screen inverted
+   * against storage. From hidden, pressing show then hide ends with the amounts on screen while
+   * the stored preference still says hide, which is the failure this whole setting exists to
+   * prevent.
+   *
+   * Seeded from the server-rendered value, then moved only by a read or a write that landed.
+   */
+  const confirmedValue = useRef(initialHideAmounts);
 
   /**
    * Reconcile with the stored value once on mount - unless the user has already spoken.
@@ -77,6 +91,7 @@ export function PrivacyProvider({
         if (!res.ok) return;
         const data = await res.json();
         if (abandoned || toggledLocally.current) return;
+        confirmedValue.current = data.hideAmounts;
         setHideAmounts(data.hideAmounts);
       } catch {
         // Keep what the server gave us.
@@ -114,12 +129,14 @@ export function PrivacyProvider({
           body: JSON.stringify({ hideAmounts: newValue }),
         });
 
-        if (!res.ok) {
-          setHideAmounts(!newValue);
+        if (res.ok) {
+          confirmedValue.current = newValue;
+        } else {
+          setHideAmounts(confirmedValue.current);
           showToast("Could not save that. Please try again.", "error");
         }
       } catch {
-        setHideAmounts(!newValue);
+        setHideAmounts(confirmedValue.current);
         showToast("Could not save that. Check your connection.", "error");
       }
     });
