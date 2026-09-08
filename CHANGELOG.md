@@ -2,6 +2,62 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-08 - updateTransactions reads under a row lock (#233)
+
+`updateTransactions` read the rows it was about to edit, checked category ownership and resolved
+labels on `prisma`, and only then opened `$transaction`. Everything the write decided came from
+that snapshot.
+
+Two reviewers on #228 read this as misreporting: `previous` and `changed` describing a value a
+concurrent edit had already replaced. That much is cosmetic, since the writes use partial `data`
+and clobber no field they were not given. The third case is not. A patch that flips `type` and
+omits `labelIds` preserves the row's labels from the snapshot; `labelsMoved` is then true, because
+the type change dropped an incompatible one; and the path runs `deleteMany` + `createMany` with
+the stale set. A label added concurrently is deleted, and nothing reports it. That is the kind
+nobody notices until a breakdown looks wrong months later.
+
+Moving the read inside the transaction is not sufficient on its own -- under READ COMMITTED a
+concurrent transaction can still commit between the read and the write -- so it takes
+`SELECT ... FOR UPDATE` as the transaction's first statement, and the read, the category check and
+the label resolution all run under it on `tx`.
+
+The part worth writing down is why **no other writer had to change**. There are six others that
+write `transaction_labels` -- `PUT /api/transactions/[id]`, the batch `PATCH`,
+`POST /api/labels/[id]/apply` and the label routes -- and none of them takes this lock. A lock
+nobody else respects protects nothing, and touching all six (one of them a bulk apply over
+thousands of rows) would have been a much larger change. They do not need to: inserting a child
+row takes a `FOR KEY SHARE` lock on the referenced parent through the foreign key, and `FOR UPDATE`
+conflicts with it, so a concurrent label insert blocks on this statement with no cooperation at
+all. Measured before relying on it, and it is the same FK interaction `settleBill` documents from
+the other side, where taking the row lock *after* an insert deadlocks. Two consequences: the lock
+runs first and never after, and it may not be weakened to `FOR NO KEY UPDATE`, which does **not**
+conflict with `FOR KEY SHARE` and would silently reopen all of this.
+
+`ORDER BY id` is load-bearing rather than tidy: two concurrent batches naming overlapping ids in
+different orders would each hold what the other waits for.
+
+The issue's own fix sketch said `categoriesAreUsable` needed no signature change because it already
+takes an injected client. It is typed `PrismaClient`, and `Prisma.TransactionClient` is
+`Omit<PrismaClient, ITXClientDenyList>` -- missing `$transaction` and `$connect`, so not assignable.
+It now takes either.
+
+The two pure checks (`DUPLICATE_ID`, `NO_FIELDS`) stay outside the transaction: taking a row lock
+to reject an argument error buys nothing. The `WRITE_REJECTED` / `WRITE_FAILED` split survives but
+its stated cause narrowed -- the check-to-write gap it described is gone, though a `Restrict`
+foreign key still refuses at write time.
+
+Verification is the real point here. The unit tests gained an ordered call log, so they pin that
+the lock is issued *first*, before the read and before any label insert; four of them fail if the
+lock is removed. But a stub cannot make anybody wait, so `scripts/verify-transaction-update.ts`
+covers the rest against a real database with two connections: that a label insert from a path
+taking no lock still waits, and that a label added during an edit survives it. The second was
+written twice. The first version asserted the edit *waited*, which passed with the fix reverted --
+`transaction.update` takes its own row lock, so a build reading before the transaction waits at the
+write and looks identical from outside. Timing was never the observable difference; which snapshot
+the preserved-label set is computed from is. The rewritten check forces the delete-then-create path
+(an EXPENSE-only label, flipped to INCOME, no `labelIds`) and lands a concurrent insert inside the
+window. It reports the label deleted against the pre-fix code and present with the fix.
+
 ## 2026-09-08 - The MCP endpoint has a body-size ceiling too (#245)
 
 #138 gave `POST /api/transactions/batch` a ceiling. `POST /api/mcp` was the one remaining ingress

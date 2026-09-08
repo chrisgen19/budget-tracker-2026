@@ -58,12 +58,16 @@ const makePrisma = ({
     deleted: [],
     created: [],
   };
+  // Every statement the path issues, in order. The lock is only a lock if nothing the write
+  // depends on ran before it, and that is a claim about ordering rather than about any one call.
+  const calls: string[] = [];
 
   const client = {
     transaction: {
-      findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
-        where.id.in.map((id) => store.get(id)).filter(Boolean)
-      ),
+      findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) => {
+        calls.push("read");
+        return where.id.in.map((id) => store.get(id)).filter(Boolean);
+      }),
       update: vi.fn(async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
         const current = store.get(where.id)!;
         const next = { ...current, ...data };
@@ -82,6 +86,7 @@ const makePrisma = ({
         return { count: 1 };
       }),
       createMany: vi.fn(async ({ data }: { data: { transactionId: string; labelId: string }[] }) => {
+        calls.push("labelInsert");
         labelWrites.created.push(...data);
         return { count: data.length };
       }),
@@ -99,7 +104,15 @@ const makePrisma = ({
         labels.filter((l) => where.id.in.includes(l.id))
       ),
     },
+    // `SELECT ... FOR UPDATE`. A stub cannot take a real row lock, so what these tests pin is
+    // that the statement is issued and issued *first*; that it actually blocks a concurrent
+    // writer is a property of Postgres and is covered by `scripts/verify-transaction-update.ts`.
+    $queryRaw: vi.fn(async () => {
+      calls.push("lock");
+      return [];
+    }),
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => {
+      calls.push("begin");
       if (throwOnWrite) throw throwOnWrite;
       return fn(client);
     }),
@@ -109,6 +122,7 @@ const makePrisma = ({
     prisma: client as unknown as PrismaClient,
     store,
     labelWrites,
+    calls,
     permitted,
   };
 };
@@ -601,5 +615,65 @@ describe("updateTransactions", () => {
     const after = stub.store.get("tx_1")! as unknown as Record<string, unknown>;
     expect(after.updatedVia).toBe("MCP");
     expect(after.updatedByMcpTokenId).toBe("tok_1");
+  });
+});
+
+describe("the read the write depends on is taken under a lock (#233)", () => {
+  it("locks the rows before reading them, inside the transaction", async () => {
+    const { stub, result } = run([{ id: "tx_1", amount: 320 }]);
+    await result;
+
+    // The whole defect was that the read happened before `$transaction` opened at all, so a
+    // concurrent edit could commit in between and be overwritten. Asserting the *order* is what
+    // catches a revert: a lock issued after the read protects nothing it decides.
+    expect(stub.calls.slice(0, 3)).toEqual(["begin", "lock", "read"]);
+  });
+
+  it("takes the lock before any label insert, not after", async () => {
+    // Inserting into `transaction_labels` takes a FOR KEY SHARE lock on the parent row through
+    // the foreign key. Taking FOR UPDATE afterwards is a lock upgrade, which deadlocks -- the
+    // same trap `settleBill` documents. Ordering is the fix and it has to stay ordered.
+    const { stub, result } = run([{ id: "tx_1", labelIds: ["lab_work"] }], {
+      labels: [{ id: "lab_work", applicableTo: "BOTH", name: "Work" }],
+    });
+    await result;
+
+    // `indexOf` returns -1 for a missing entry, which would satisfy a bare `toBeLessThan` and
+    // make this pass with no lock at all. Assert it is actually there before comparing positions.
+    expect(stub.calls).toContain("lock");
+    expect(stub.calls).toContain("labelInsert");
+    expect(stub.calls.indexOf("lock")).toBeLessThan(stub.calls.indexOf("labelInsert"));
+  });
+
+  it("checks category ownership inside the transaction, not before it", async () => {
+    // A refusal that happens outside the transaction leaves the window this issue is about. The
+    // check has to run under the lock, so the refusal now comes from inside it.
+    const { stub, result } = run([{ id: "tx_1", categoryId: "cat_unknown" }]);
+    const r = await result;
+
+    expect(r).toEqual({ ok: false, reason: "CATEGORIES_NOT_OWNED" });
+    expect(stub.calls[0]).toBe("begin");
+    expect(stub.calls).toContain("lock");
+  });
+
+  it("refuses an unknown id from inside the transaction, having written nothing", async () => {
+    const { stub, result } = run([{ id: "tx_missing", amount: 10 }]);
+    const r = await result;
+
+    expect(r).toEqual({ ok: false, reason: "NOT_FOUND" });
+    expect(updateSpy(stub)).not.toHaveBeenCalled();
+    expect(stub.calls).toEqual(["begin", "lock", "read"]);
+  });
+
+  it("still refuses a malformed batch before opening a transaction at all", async () => {
+    // The two pure checks stay outside: they read nothing, so taking a lock to reject them would
+    // be a row lock bought for an argument error.
+    const { stub, result } = run([
+      { id: "tx_1", amount: 10 },
+      { id: "tx_1", amount: 20 },
+    ]);
+
+    expect(await result).toEqual({ ok: false, reason: "DUPLICATE_ID" });
+    expect(stub.calls).toEqual([]);
   });
 });

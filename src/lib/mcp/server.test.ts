@@ -527,6 +527,10 @@ describe("update_transactions warnings", () => {
       user: {
         findUnique: vi.fn(async () => ({ mcpWritesEnabledUntil: new Date(Date.now() + 60_000) })),
       },
+      // `updateTransactions` locks the rows it is about to edit with `SELECT ... FOR UPDATE`
+      // (#233). Nothing here reads the result; the ordering it enforces is asserted in
+      // `transaction-updates.test.ts` and exercised for real in `verify-transaction-update.ts`.
+      $queryRaw: vi.fn(async () => []),
       $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(client)),
     };
 
@@ -609,6 +613,10 @@ describe("update_transactions date rendering", () => {
       user: {
         findUnique: vi.fn(async () => ({ mcpWritesEnabledUntil: new Date(Date.now() + 60_000) })),
       },
+      // `updateTransactions` locks the rows it is about to edit with `SELECT ... FOR UPDATE`
+      // (#233). Nothing here reads the result; the ordering it enforces is asserted in
+      // `transaction-updates.test.ts` and exercised for real in `verify-transaction-update.ts`.
+      $queryRaw: vi.fn(async () => []),
       $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(client)),
     };
 
