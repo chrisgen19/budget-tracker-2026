@@ -33,7 +33,8 @@ src/
 │   │   ├── bills/          # Recurring bills management
 │   │   ├── profile/        # User profile + feature settings
 │   │   └── admin/          # Admin panel (settings)
-│   └── api/                # REST API routes
+│   ├── tg/                 # Telegram Mini App (outside (app): no session, initData instead)
+│   └── api/                # REST API routes (including api/tg/ for the Mini App)
 ├── components/
 │   ├── ui/                 # Shared UI: Modal, EmptyState, IconMap, ActionFab, ConfirmModal, Toast, DropdownButton
 │   ├── analytics/          # Analytics charts (IncomeExpenses, CashFlow, CategoryBreakdown, LabelBreakdown)
@@ -43,6 +44,7 @@ src/
 │   ├── categories/         # Category form
 │   ├── bills/              # BillForm, BillReminderBanner, BillReminderProvider
 │   ├── pwa/                # InstallPromptBanner, OfflineBanner, InstallBannerContext
+│   ├── telegram/           # Mini App: TelegramApp shell, TileGrid, AmountSheet, TileEditor
 │   ├── scan-receipt-sheet.tsx   # Single receipt capture modal
 │   ├── multi-scan-review.tsx    # Multi-receipt review + itemize
 │   ├── scan-provider.tsx        # Receipt scan state context
@@ -64,6 +66,8 @@ src/
 │   ├── budget-queries.ts   # Shared read-only Prisma query functions (used by app + MCP)
 │   ├── budget-query-types.ts  # TypeScript types for budget queries
 │   ├── mcp/                # Shared MCP tool definitions, scopes, and bearer token auth
+│   ├── telegram/           # Bot, classifier, shorthand, Mini App gate, quick tiles
+│   ├── protected-paths.ts  # Page prefixes the service worker must never cache
 │   ├── schedule-matching.ts   # Pure schedule-matching utility (shared client/server)
 │   ├── schedule-server.ts     # Server-side schedule helpers (Prisma queries + matching)
 │   ├── query-client.ts     # TanStack Query client factory
@@ -104,10 +108,10 @@ src/
 - `CRON_SECRET` — Shared secret required by `/api/cron/bill-reminders`. Set in the production (Coolify) environment; a Coolify Scheduled Task reuses the same env var to call the endpoint daily (see **Cron Jobs** below).
 - `TELEGRAM_BOT_ENABLED`: starts the bot from `src/instrumentation.ts` on server boot. Set it **only** in the deployed environment: Telegram answers a second concurrent `getUpdates` for one bot token with 409 Conflict, so enabling it locally while production runs the bot makes the two fight. Use `pnpm telegram:bot` to run it locally instead, and not at the same time
 - `TELEGRAM_BOT_TOKEN`: from @BotFather
-- `TELEGRAM_ALLOWED_IDS` / `TELEGRAM_ALLOWED_USERNAMES`: who may message the bot. With neither set it serves nobody. Prefer numeric ids: usernames are weaker, since a released handle can be claimed by someone else
+- `TELEGRAM_ALLOWED_IDS` / `TELEGRAM_ALLOWED_USERNAMES`: who may message the bot. With neither set it serves nobody. Prefer numeric ids: usernames are weaker, since a released handle can be claimed by someone else. `TELEGRAM_ALLOWED_IDS` also gates the **Mini App** and the chat Menu button, and there **ids only** — a username is a bootstrapping convenience for a chat message and must never reach a write path, and a chat scope needs a chat id in any case. Both parse the list through one `parseAllowlist`, so revoking access in one place revokes it everywhere
 - `TELEGRAM_MCP_URL` / `TELEGRAM_MCP_TOKEN`: where the bot writes. The URL is **required and has no default**: it used to fall back to this project's production domain, which is correct for its owner and a trap for a fork or a staging deploy that forgets it, since a write-capable token would then be sent to a host the deployer does not control. The port differs by how it runs: `http://localhost:3111/api/mcp` for `pnpm dev` plus `pnpm telegram:bot`, `http://localhost:3000/api/mcp` inside the deployed container (`next start`), or the public URL when the bot runs on a different machine from the app. Mint the token in Profile > MCP Access with all seven scopes the handlers need: `budget:read`, `transactions:read`, `labels:read`, `bills:read`, `receipts:read`, `receipts:scan` and `transactions:write`. A write-only token fails on every message, since each one reads the category list first, and the probe names anything missing at startup. Give the bot its own token so revoking it does not break another client
 - `TELEGRAM_TZ_OFFSET`: **required, no default**. Minutes, `getTimezoneOffset()` convention, and it must match the account's own timezone. It used to fall back to the host's offset, which is UTC in the app container, so "yesterday" silently resolved to the wrong day. Used to resolve relative dates for Gemini and to render the day in `/recent`; every query and write is still resolved server-side against `users.timezone_offset`, so a wrong value cannot move a stored row, only mislabel one before it is written. That it duplicates `users.timezone_offset` at all is the real defect and can drift: see issue #132
-- `TELEGRAM_APP_URL`: optional; base URL for the "Edit in app" button on a logged transaction. Falls back to `NEXTAUTH_URL`, which every deployment already sets. With neither usable the button is simply omitted
+- `TELEGRAM_APP_URL`: optional; base URL for the "Edit in app" button on a logged transaction **and** for the Mini App at `/tg`. Falls back to `NEXTAUTH_URL`, which every deployment already sets. With neither usable the button is simply omitted. The two readings differ in one way and it is not cosmetic: `appBaseUrl` accepts `http:`, which a plain URL button takes, while `miniAppUrl` requires **https**, because Telegram frames a Mini App inside the client and refuses an insecure origin. So a local `http://localhost:3000` yields an "Edit in app" button and no Mini App — locally that needs an HTTPS tunnel, there is no way around it
 - `TELEGRAM_CURRENCY_SYMBOL`: display only, defaults to the peso sign
 - `TELEGRAM_API_IP`: only for a network whose DNS sinkholes Telegram, an address to use for `api.telegram.org` instead of the resolver. Unset everywhere else: Telegram rotates these, so a stale pin breaks all bot traffic even where DNS works
 - Blank counts as unset for every `TELEGRAM_` variable, so an empty Coolify field is treated as absent rather than as an empty string. `??` alone did not do that: `TELEGRAM_CURRENCY_SYMBOL=""` rendered every amount with no symbol, and `TELEGRAM_TZ_OFFSET=""` meant UTC, since `Number("")` is a finite 0. For the required variables (`TELEGRAM_MCP_URL`, `TELEGRAM_TZ_OFFSET`) blank now fails startup with a named cause rather than falling back
@@ -126,7 +130,9 @@ balance" to exactly the people the bot answers with silence. The default scope i
 unconditionally, and a username-only allowlist gets no menu at all, since a chat scope needs a
 chat id. Every feature is discoverable by typing `/` rather than by remembering a
 phrasing, and `/examples` prints working messages to copy. A menu entry that resolves to nothing
-is worse than none, so a test asserts every listed command is one the bot handles. Obvious phrasings
+is worse than none, so a test asserts every listed command is one the bot handles. The chat
+**Menu button** is registered the same way and for the same reason (`setChatMenuButton`, scoped per
+chat, default cleared), and opens the Mini App; `/quick` is the typed door to the same grid. Obvious phrasings
 (`summary`, `my bills please`) are resolved locally in `src/lib/telegram/commands.ts` before
 Gemini is consulted at all: paying a model call to recognise the word "summary" is slow, costs a
 request, and fails outright when `GEMINI_API_KEY` is unset, where the slash command still works.
@@ -190,7 +196,9 @@ for edge as well (middleware exists), the bot uses `node:https` and `node:dns`, 
 `NEXT_RUNTIME` guard stops it *running* there without stopping webpack tracing it.
 
 ## Telegram quick logging
-Two things, aimed at two different reasons a routine expense never gets logged.
+Two things, aimed at two different reasons a routine expense never gets logged. A third, the Mini
+App grid, is its own section below; both of these survive it unchanged, because both work with no
+webview at all.
 
 **The keyboard** (`src/lib/telegram/quick-keyboard.ts`) — `/keyboard` pins a `ReplyKeyboardMarkup` above the message box, `/keyboard off` removes it, and `/help` brings it along. The trick it rests on: a reply-keyboard button **sends its own label as an ordinary message**, so a button reading `38 fare to office` sends exactly that text, which the shorthand path already parses, categorises and logs. There is no new write path, no callback and no state — the button *is* the message. That is also the constraint, and `quick-keyboard.test.ts` enforces it: every label must be valid shorthand (`<amount> <description>`) and must resolve through the real `matchCategory` to Transportation. One case is pinned separately, because `matchCategory` checks category *names* before keyword hints and both Housing and Home Supplies exist: `fare home (UV)` must not be pulled into either. Only fixed fares get buttons — Grab, TNVS and taxi vary per trip, and a button that then has to ask "how much?" is no faster than typing `250 grab`, which is why `input_field_placeholder` says so and the keyboard never reads as the only way in. The amounts are hardcoded on purpose; making them per-user means a column, an editor and a settings page, which is most of the work this approach exists to avoid.
 
@@ -203,6 +211,251 @@ Two things, aimed at two different reasons a routine expense never gets logged.
 **Several transactions in one message** (`src/lib/telegram/multi-shorthand.ts`) — `250 grab, 180 lunch` writes two rows. The shorthand path used one greedy regex (an amount, then "everything after it is the description"), so the second amount was not rejected but *swallowed* into the first row's description, and the reply reported a clean success (#204). Splitting needs a deliberate separator — a comma, semicolon, newline, or the word "and" *followed by an amount* — never bare whitespace before a number, because a wrongly split row invents a transaction where an unsplit one merely mis-describes it: `1500 internet bill 2026` and `250 grab 2 way` must stay whole. A clause with no amount of its own is not a new entry, which is what keeps `1500 groceries, milk and eggs` together and keeps a trailing `label it work` attached to the entry it follows. Label directives are read **per entry** rather than applied to all of them: a wrong label moves money in `getLabelBreakdown`, so it is not a guess worth making. Parsing is all-or-nothing — one unusable clause sends the whole message to the classifier — since logging half of it would recreate the very failure being fixed. That is why the pattern matches a **bare amount**, not an amount followed by a description: a clause has to be *recognised* before it can be rejected, and while a description was required the `180` in `250 grab, 180` was never seen as a clause at all and fell back into the previous one. For a multi-entry message an uncategorised row falls back to `Other Expense` instead of stepping aside for Gemini, because the classifier returns a *single* transaction and stepping aside would silently discard the rest; `formatCreated` names the category on every row, so it is visible and correctable.
 
 **Scoped to one account.** The prompt belongs to whoever owns `TELEGRAM_MCP_TOKEN` (`src/lib/telegram/prompt-owner.ts` resolves it through `hashMcpToken`), because the bot writes into exactly one budget. Everyone else never sees the toggle in Profile > Features and is never selected by the cron. Derived rather than configured as a `TELEGRAM_PROMPT_USER_ID`, so there is no second value to update when the token is re-minted and no way to point the prompt at one account while the bot writes to another; rotating the token is safe, since the lookup hashes whatever the environment currently holds. A revoked **or expired** token counts as no owner, matching `authenticateMcpRequest`'s own conditions: the bot could not record the reply either way, and expiry is certain rather than hypothetical, since a token carrying `transactions:write` may not choose "Never" and is capped at `MAX_WRITE_TOKEN_EXPIRY_DAYS`. The prompt goes to **one** chat, and refuses with 409 when `TELEGRAM_ALLOWED_IDS` holds more than one numeric id: the allowlist answers who may *talk* to the bot, never whose budget it is, so a second id is somebody else who would be told whether the owner logged a fare today.
+
+## Telegram Mini App
+
+`/tg` is a tile grid inside Telegram: one tap logs a routine expense, a tap on an "ask" tile opens
+a numeric pad, and a **Frequent** section offers whatever is actually being logged. Tiles are
+per-user rows, edited from inside the app. It supersedes #208 and #209, both specified and then
+closed undone, and it exists because `quick-keyboard.ts` stated its own ceiling and every part of
+that ceiling became the thing in the way: a reply-keyboard button label must be complete shorthand,
+so it can never ask "how much?" -- which is Grab, taxi, and a lunch that is 150 one day and 220 the
+next, most of what actually gets spent. **The reply keyboard stays.** It is zero latency and needs
+no webview, so nothing regresses when the Mini App is slow or unreachable.
+
+**Identity is `users.telegram_user_id`, not the MCP token's owner.** The bot needs no such link
+because it writes through a token already bound to a user; a Mini App cannot use that token,
+because the page runs in a browser and a credential shipped to a client is a leaked credential.
+Deriving identity from `TELEGRAM_MCP_TOKEN` would couple the Mini App to the bot's write
+credential, so rotating the token would silently break it and `mcp_tokens.revoked_at` would come
+to mean two things. The column is set by hand (`scripts/link-telegram-user.ts`), which is a
+one-off for a deployment with one person; a restored database loses it, so `getTelegramUserId`
+writes a server-side line naming that script when an allowlisted id resolves to no account -- the
+one denial nobody can otherwise diagnose, since the 401 is deliberately opaque.
+
+**The gate is three independent conditions** (`src/lib/telegram/require-telegram-user.ts`), all
+required: the payload is signed by *this* bot and is fresh, the Telegram id is in
+`TELEGRAM_ALLOWED_IDS`, and it resolves to a linked account. The allowlist is the operational
+switch and the column is the identity; either alone answers half the question, and a link left
+behind after an allowlist entry is removed would keep working if only the column were consulted.
+Ids only -- `messageIsAllowed` accepts a username as a bootstrapping convenience and there is no
+such problem here, so a released @handle claimed by someone else never reaches a write path.
+`parseAllowlist` is shared with the bot rather than copied, because a Mini App parsing the list
+slightly more loosely would serve somebody the bot refuses to talk to. It returns the app user id
+or a `NextResponse`, the exact shape `getAuthUserId` has, so a route body reads identically either
+way -- a second calling convention is a second chance to forget the check.
+
+`verifyInitData` (`src/lib/telegram/init-data.ts`) is the whole security boundary and is a pure
+function with no Prisma and no environment reads, pinned to a fixed vector. Note the key/message
+order Telegram specifies is the reverse of the intuitive reading -- the *constant* `"WebAppData"`
+is the HMAC key and the *token* is the message -- and getting it the other way round produces a
+stable, plausible digest that never matches anything. The check string is built from **every**
+field including ones nothing here reads, since Telegram adds fields over time and signing only the
+known ones leaves the rest unauthenticated. `MAX_INIT_DATA_AGE_MS` is 24h rather than the hour
+that reads as safer: Telegram does **not** refresh `initData` while the app stays open, so a
+window shorter than a plausible session produces 401s the page cannot recover from. It bounds
+replay; what bounds *use* is the allowlist and the link, both revocable in a second. A payload
+from the future is refused too, with a minute of slack -- it means a clock is wrong somewhere, and
+the age check then cannot be trusted.
+
+**No cookie, no second session system.** Telegram re-supplies `initData` on every launch and
+revalidating it is two HMACs. A cookie would be a second auth system beside NextAuth with its own
+expiry, refresh and revocation questions, and would not survive the third-party iframe anyway,
+since NextAuth's cookie is not `SameSite=None`. That is also why `/tg` and `/api/tg` are **absent**
+from the middleware matcher: redirecting Telegram's webview to `/login` would strand it.
+`src/middleware.test.ts` pins the list so the absence cannot be tidied away as an oversight.
+
+**Writes go through `createTransactionBatch` with `createdVia: TELEGRAM` and no `mcpTokenId`.**
+Not through `/api/mcp`: that would mean either a token in browser code or a loopback proxy holding
+`TELEGRAM_MCP_TOKEN`, and the proxy would put the Mini App behind `users.mcp_writes_enabled_until`
+-- a lease designed to lapse, so tapping a tile would fail whenever it did. The consequence is
+that `created_via: TELEGRAM` is ambiguous between the bot and the Mini App, distinguishable only
+by `mcp_token_id IS NULL`. **Nobody should later "fix" that null.**
+
+`labelIds` is deliberately absent from the write rather than `[]`, so auto-apply schedules run: a
+Mini App tap happens *now*, so a schedule's premise of a real clock holds, which a backdated
+receipt's does not. Per-tile pinned labels are an additive `TelegramQuickTileLabel` table later.
+The date is the **server's** clock, never the webview's.
+
+### Tiles as data
+
+`TelegramQuickTile` is a table, not a Json column or a `String[]` of ids. Editing means create,
+rename, reorder and delete one at a time, and a JSON array makes each of those a read-modify-write
+of the whole list where two edits in flight lose one. A table also gets a real foreign key --
+`onDelete: SetNull`, so deleting a category leaves the button working. The `String[]` shape is
+what `quickPickIdsSchema` exists to paper over and `scripts/prune-quick-category-ids.ts` exists to
+clean up after.
+
+A tile carries `label` and `description` **separately**: the grid is three columns on a phone and
+the ledger is read a year later, and "Office" is a good button and a useless description. `amount`
+is nullable and NULL *is* the "ask" state -- a separate `kind` enum states the same fact twice and
+two statements of one fact can disagree. Nullable rather than 0, because a zero-amount transaction
+is a real thing to write by accident and nothing downstream would flag it.
+
+`resolveTileCategory` (`src/lib/telegram/quick-tiles.ts`) is the runtime successor to a
+compile-time guarantee: `quick-keyboard.test.ts` could assert a fare resolves to Transportation
+because `QUICK_FARES` is an `as const` list, and once tiles are user data the same property has to
+be answered at three runtime moments instead -- when a tile is **saved** (so the editor can say
+"this will file under Other Expense" first), when the grid is **read** (so a tile whose category
+was deleted is visibly degraded rather than degraded on the next tap), and when a tap is
+**logged**. One function answers all three, which is what stops the editor's promise and the
+write's behaviour drifting apart. The ladder is the shorthand path's: the stored `categoryId` if
+it still exists **and** its type still matches, then `matchCategory`, then `findOtherCategory`,
+then `null`. The re-check is not padding -- `PUT /api/categories/[id]` lets a custom category's
+type be flipped underneath its transactions. Returning `null` rather than `categories[0]` must
+stay: the list is defaults-first then alphabetical, which is how every unresolved expense once
+landed under **Education**.
+
+`sortOrder` is sparse (`SORT_ORDER_GAP`), so a tile can be moved between two others by picking a
+number in between; a full reorder still rewrites them all, which keeps the gaps from closing up.
+
+### Frequent
+
+Configured tiles answer "what do I spend on every day", which someone has to sit down and decide.
+`frequent-tiles.ts` answers it from the ledger and keeps answering it as habits change -- the part
+of the grid that needs no maintenance. Pure over injected rows, with the loader in
+`frequent-tiles-query.ts`, the split `assessment-facts.ts` uses for the same reason.
+
+- **A derived tile never logs an inferred amount on one tap unless it is stable.** The user may
+  assert a fixed amount; the system may never infer one. `amountIsStable` means the modal amount
+  covers at least `FREQUENT_STABLE_SHARE` (60%) of its occurrences; below that the tile still
+  appears -- the description is still worth not typing -- but the pad opens and asks.
+- **The representative amount is the mode**, not the mean or the median. One 3,000 outlier drags a
+  60-peso fare; a bimodal commute logged as one description at 38 out and 80 home has a median of
+  59, a figure never paid. The mode is literally what the thing usually costs and is always a real
+  amount from a real row. Rounded to 2dp before grouping, since `amount` is a `Float` and two rows
+  both entered as 38.00 can differ in the last bits and collapse the share.
+- **Grouped by `foldDescription`**, imported from `assessment-facts.ts` and never re-implemented:
+  a second folding rule is drift, and this needs exactly the property that rule exists for -- iOS
+  substitutes U+2019, so one merchant written two ways would fall below the threshold twice.
+- **Bill payments and receipt-split rows are excluded** in SQL. A "Meralco" tile writing a plain
+  transaction with no `bill_id` settles no occurrence, does not advance the cursor, and
+  manufactures exactly the finding `findUnlinkedBillPayments` exists to report. Three rows from one
+  split receipt are one purchase, and their descriptions are category names nobody re-buys.
+- Income is excluded outright: repeating income is salary, and a mis-tap writes a wrong figure
+  worth a hundred fares.
+- The window is bounded at **both** ends. A lower bound alone is "the last 60 days, plus all of the
+  future", and nothing stops a row landing there -- `transactionSchema.date` is
+  `z.string().min(1)` with no ceiling. Such a row never ages out of a window whose premise is
+  recency, and sorts first under `date: desc` so it eats the row cap ahead of real history.
+- `timezoneOffset` comes from `users.timezone_offset`, never `TELEGRAM_TZ_OFFSET`, which describes
+  the bot's prompt clock and would be a second source of truth for the same fact.
+
+### The API
+
+`GET /api/tg/bootstrap` is one round trip rather than four, because a webview cold start is the
+slow moment: Telegram opens a browser, fetches the page and the SDK, and only then can the app ask
+for anything. `POST /api/tg/log` loads the named tile **server-side** rather than trusting the
+payload, so a stale or hostile client cannot log a figure that disagrees with the button it came
+from -- the rule `settleBill` applies to a fixed bill. It also checks the `clientBatchId` replay
+**before** resolving the tile: a replay creates nothing, so it must not be judged on references it
+will never use, and a 4xx would make the client drop its idempotency pin and duplicate a committed
+row. The reorder route takes the **whole** set of ids rather than a moved id and a position, so
+the request is self-describing and two drags in flight cannot be interpreted differently.
+
+### Launch surfaces
+
+Three doors, all built from `src/lib/telegram/mini-app.ts`, because all three fail the same way:
+Telegram rejects the **whole** `sendMessage` when a keyboard carries a URL it will not accept, so
+every function there returns *nothing* rather than something Telegram might refuse. `miniAppUrl`
+is stricter than `appBaseUrl` in exactly one way -- **https only** -- because a `web_app` URL is
+framed inside the client and an insecure origin is refused outright, where a plain URL button
+accepts one.
+
+- **The chat Menu button** (`setChatMenuButton`, at bot startup) is scoped per allowlisted chat
+  with the default scope cleared, the same reasoning `menuRegistrations` applies to the "/" menu:
+  the default is what every stranger who finds the bot sees, and a button there opens a page that
+  401s them -- worse than the silent denial, since it confirms the bot is live and hands them a
+  URL. A null URL **clears** the button rather than leaving it, so a deployment that loses
+  `TELEGRAM_APP_URL` cannot keep one pointing at a host it no longer controls.
+- **The evening prompt's `web_app` button** is the riskiest thing here. A rejected send makes
+  `/api/cron/telegram-prompts` release its claimed `telegram_prompt_logs` row, so the next tick
+  fails identically and the prompt disappears **permanently**. `miniAppButtonRow` returns an empty
+  list on an unusable URL, leaving one fewer row rather than a hole, so "Nothing today" survives.
+  `sendOne`'s plain-text retry is a backstop and not the guard: it drops `reply_markup` entirely,
+  so a bad button would cost that button too, and the Markdown with it.
+- **`/quick`** sends a `web_app` inline button, and names the cause rather than answering with a
+  dead button when it cannot. `miniAppOffer` owns that decision, because `bot.ts` has no test of
+  its own and anything decided inline there is decided where nothing can check it. Two refusals,
+  and the second is easy to miss: **the Mini App's gate is stricter than the bot's by exactly one
+  case.** `messageIsAllowed` accepts a username as a bootstrapping convenience; `getTelegramUserId`
+  refuses one outright. So a sender allowlisted only through `TELEGRAM_ALLOWED_USERNAMES` can talk
+  to the bot, and handing them a button would open a page that 401s -- a door that resolves to
+  nothing, the failure `commands.test.ts` already refuses to let a menu entry have. `/quick` is the
+  only surface that can reach it, since the other two iterate numeric ids and skip everything else.
+  The allowlist is checked before the URL, so on a deployment where both are wrong the cause
+  reported is the one that would still block them after the other was fixed. Its bare phrasing is
+  deliberately tight (`quick`, `quick log`): a bare amount still belongs to the shorthand logger,
+  and `quick lunch` still reaches the model.
+
+A `web_app` button is only valid in a **private** chat, which holds unconditionally here --
+`messageIsAllowed` requires one, and the prompt addresses a numeric id, which in a private chat is
+the user's own.
+
+### The page
+
+`/tg` sits **outside** the `(app)` group: that layout redirects to `/login` without a NextAuth
+session, and there never is one here. Nothing user-specific is rendered on the server -- there is
+no session at that layer, so anything reading the database would be reading it as nobody; every
+figure arrives over `/api/tg/*` after the SDK hands the page its credential. Three screens rather
+than routes, because Telegram's back button is a single handler and a webview that navigates loses
+the SDK's state.
+
+- **The Light and Warm palette is forced; `themeParams` is not mapped.** `tailwind.config.ts` has
+  no dark mode and the palette has no dark counterpart, so mapping means inventing a second design
+  system for one page, and the realistic outcome is a half-themed page -- the exact failure #209
+  warned about. Instead `setHeaderColor`, `setBackgroundColor` and a `MainButton` colour reach the
+  chrome CSS cannot, in three calls.
+- The amount pad is a **custom keypad**, not `<input type="number">`. No OS keyboard means the
+  viewport never resizes mid-entry, which removes the whole class of problems `modal.tsx` solves
+  for iOS Safari, and three taps beat a keyboard animation on a screen whose premise is speed.
+  Entry is held as the *string* typed, since `"0."` and `"38.0"` are states a number cannot hold.
+- Layout uses `viewportStableHeight`, not `viewportHeight`: the latter shrinks when the keyboard
+  opens, so a layout pinned to it jumps on every focus.
+- `disableVerticalSwipes` matters more than it looks: without it a downward swipe on a grid of
+  buttons dismisses the whole app mid-tap.
+- SDK handlers (`MainButton`, `BackButton`) are held in refs and registered once. Telegram holds
+  the listener by identity and fires it from outside React, so a stale closure reaching the button
+  is exactly how a save writes the previous amount.
+- `resolved` is reported separately from `inTelegram`, because `telegram-web-app.js` loads on any
+  page and installs a `WebApp` whose `initData` is `""`. Gated on the object rather than on
+  `resolved`, a plain browser sits on a spinner that never resolves.
+- The pending idempotency key outlives the page in `sessionStorage` (there is no `update_id` to
+  derive one from, and Telegram can reload the webview at any moment) and a restored one is
+  **offered**, never auto-replayed -- auto-replaying writes a row for someone who backed out
+  deliberately. It carries a `scope` naming the Telegram account, because `sessionStorage` is
+  per-origin and Telegram Desktop and Web let one browser profile hold several accounts.
+
+### Things that bite
+
+- **The service worker.** `/tg` is in `PROTECTED_PAGE_PATHS` (`src/lib/protected-paths.ts`), or it
+  falls through to `defaultCache`, which is `NetworkFirst`, and writes a page of someone's
+  spending to disk. That list lives outside `sw.ts` because `sw.ts` cannot be imported under jsdom,
+  so an omission was previously invisible -- and the list is a **denylist**, the shape that fails
+  open. `protected-paths.test.ts` is what makes an omission loud.
+- **`frame-ancestors`.** Telegram Desktop and Web iframe a Mini App, and that worked only because
+  nothing set a framing header at all. `next.config.ts` now writes the requirement down: `DENY`
+  everywhere except `/tg`, which names Telegram's origins via CSP (`X-Frame-Options` has no
+  allowlist form). A future global CSP must keep this ordering and must not fold `/tg` into it.
+- **Local development needs two things**: an HTTPS tunnel, since Telegram rejects `http://` for a
+  `web_app` URL, and a **second BotFather bot**, since only one poller may exist per token. The
+  second is also the right isolation -- an `initData` signed by a dev token will not validate
+  against production.
+- **No new environment variables.** It reuses `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_IDS` and
+  `TELEGRAM_APP_URL`.
+
+### What this does not change
+
+The bot keeps writing through `TELEGRAM_MCP_TOKEN` as an MCP client, and `telegramPromptOwnerId`
+keeps deriving the evening prompt's owner from that token's hash. Converging the two, and with it
+closing the 409 in `/api/cron/telegram-prompts` that exists because nothing maps a Telegram account
+to an app user, becomes possible after this and is deliberately left as its own change (#132).
+
+Deliberately out of scope: the **full transaction form** from #209 (the grid answers the routine
+case, the form answers the detailed one and is its own change with its own risks), **receipt
+capture** (`scan_receipt` is not idempotent and needs the care the bot's path already has), and
+**editing or deleting transactions** -- #209 is explicit that the Mini App must not quietly become
+the delete surface, and there is still no delete tool for anyone.
 
 ## Cron Jobs
 Production runs on Coolify. Schedules are configured in the Coolify dashboard under **Application > Scheduled Tasks** (not in the repo). Each task runs its command inside the running container, so it can hit the app at `http://localhost:3000` and reuse the container's env vars.
@@ -238,9 +491,10 @@ Active tasks:
   keeps `isDefault: true`, and `DELETE /api/categories/[id]` filters on `isDefault: false`, so it
   cannot be removed through the app. The seed reports these (`findOrphanedDefaults`) rather than
   repairing them: renaming one preserves its id and its transactions, but also relabels real spending
+- `scripts/seed-telegram-quick-tiles.ts` gives one named account the Mini App's starting grid: the three fixed fares `QUICK_FARES` already pins to the reply keyboard, plus three ask-for-an-amount tiles a reply keyboard could never offer. Dry run by default, and like the merge script it is **not** part of `pnpm db:seed` or any build — it writes rows for one named user. It seeds an **empty** grid and does nothing else: per-label deduplication is the obvious alternative and is quietly wrong, since a label is the one field the editor exists to change, so renaming "To office" to "Office" frees the original label and the next run recreates it beside the renamed one
 - Users can create custom categories on top of defaults
-- Key models: `User`, `Category`, `Transaction`, `ScheduledTransaction` (recurring bills; `@@map("scheduled_transactions")` — there is no `Bill` model), `ScheduledTransactionLog` (per-occurrence PAID/SKIPPED/SNOOZED), `BillEmailLog`, `Label`, `LabelSchedule`, `TransactionLabel`, `BillLabel`, `VerificationToken`, `ScanLog`, `AiAssessment`, `AiUsageLog`, `McpToken`, `AppSettings`
-- Notable columns: `users.hide_amounts`, `users.timezone_offset`, `users.email_verified`, `users.default_label_type`, `transactions.receipt_group_id`, `transactions.receipt_breakdown`, `transactions.bill_id`, `transactions.client_batch_id`, `transactions.created_via`, `transactions.mcp_token_id`, `transactions.updated_via`, `transactions.updated_by_mcp_token_id`, `users.mcp_writes_enabled_until`, `mcp_tokens.source`
+- Key models: `User`, `Category`, `Transaction`, `ScheduledTransaction` (recurring bills; `@@map("scheduled_transactions")` — there is no `Bill` model), `ScheduledTransactionLog` (per-occurrence PAID/SKIPPED/SNOOZED), `BillEmailLog`, `Label`, `LabelSchedule`, `TransactionLabel`, `BillLabel`, `VerificationToken`, `ScanLog`, `AiAssessment`, `AiUsageLog`, `McpToken`, `AppSettings`, `TelegramPromptLog`, `TelegramQuickTile`
+- Notable columns: `users.hide_amounts`, `users.timezone_offset`, `users.telegram_user_id` (the Mini App's identity half; set by hand with `scripts/link-telegram-user.ts`, so a restored database loses it), `users.email_verified`, `users.default_label_type`, `transactions.receipt_group_id`, `transactions.receipt_breakdown`, `transactions.bill_id`, `transactions.client_batch_id`, `transactions.created_via`, `transactions.mcp_token_id`, `transactions.updated_via`, `transactions.updated_by_mcp_token_id`, `users.mcp_writes_enabled_until`, `mcp_tokens.source`
 - `Label.applicable_to` restricts labels to "EXPENSE", "INCOME", or "BOTH" (default); filters LabelPicker, schedule auto-labeling, and retroactive apply
 - `LabelSchedule` stores per-label auto-apply rules: `days` (int[]), `startTime`/`endTime` (HH:mm), linked to `Label` via `labelId`
 
@@ -261,6 +515,8 @@ Active tasks:
 - `scripts/verify-transaction-update.ts` drives `update_transactions` over the real `/api/mcp` route against a real database, and checks the half no stubbed test can: that `updated_via` and `updated_by_mcp_token_id` land on the row while `created_via` survives, that an edit moving nothing leaves the existing trail alone, that `transaction_labels` rows are *replaced* rather than appended, that a refused batch left every row untouched, and that a create-only token cannot see the tool at all. It also covers the concurrency half of #233, which needs two connections: that a `transaction_labels` insert from a path taking **no** lock still waits on the row lock (the FK's `FOR KEY SHARE` conflicting with `FOR UPDATE`, which is what makes weakening it to `FOR NO KEY UPDATE` a silent regression), and that a label added *during* an edit survives it. That last one is the issue's own scenario and is deliberately shaped to be failable: timing alone proves nothing, since `transaction.update` takes its own row lock and a build reading before the transaction waits at the write and looks identical from outside. What separates them is which snapshot the preserved-label set comes from, so the row carries an EXPENSE-only label and the edit flips it to INCOME with no `labelIds` -- which forces the delete-then-create path, the only one that can lose somebody else's label. Confirmed to fail against the pre-fix code. Needs a dev server: `pnpm dev -p 3111` then `BASE_URL=http://localhost:3111 pnpm exec tsx --env-file=.env scripts/verify-transaction-update.ts`
 - `scripts/verify-mcp-bill-writes.ts` drives `pay_bill`, `create_bill`, `update_bill` and `create_label` over the real `/api/mcp` route against a real database. Unit tests stub Prisma, so they prove the rules and nothing about the storage: this checks that a payment lands carrying `bill_id` (the failure that made a bill paid over MCP worse than one not logged at all), that `next_due_date` actually moves on the row and a second call against the same occurrence is refused rather than paying the month twice, that a `SKIPPED` month can be corrected by `pay_existing` and cannot by `pay`, that a claimed payment carries `updated_via`/`updated_by_mcp_token_id` naming the token while its `created_via` survives (#256), that a schedule running past its `end_date` deactivates the bill, and that neither a `bills:read` nor a `transactions:write` token can see any of the write tools. Needs a dev server: `pnpm dev -p 3111` then `BASE_URL=http://localhost:3111 pnpm exec tsx --env-file=.env scripts/verify-mcp-bill-writes.ts`
 - `scripts/verify-label-removal-stamps.ts` proves the audit stamp on the two label-**removal** branches follows what the delete really removed (#251). A stubbed Prisma can assert the route reads its own result, and `route.test.ts` does; what it cannot show is that the result *differs* from the plan under a real concurrent commit, which is the whole claim. It reproduces the race through the real HTTP route rather than around it: another connection holds `FOR UPDATE` on the link row, the route's `DELETE ... RETURNING` blocks on it, the link is deleted and committed underneath, and the route must then report `updated: 0` and leave the MCP trail alone. Deterministic rather than timing-lucky -- the release waits until the route is provably blocked (`pg_locks`, `NOT granted`), the shape `verify-batch-idempotency.ts` uses, because sleeping instead lets the delete win the race and the check passes against the pre-fix code too. Confirmed to fail against it: pre-fix the route answers `updated: 1` with `changedLinks: 0` in the same response and stamps `APP` over `MCP`. Also covers the owner join, and that a row losing two labels is one edited row. Needs a dev server: `pnpm dev -p 3111` then `BASE_URL=http://localhost:3111 pnpm exec tsx --env-file=.env scripts/verify-label-removal-stamps.ts`
+- `scripts/verify-telegram-miniapp.ts` drives the real `/api/tg/*` routes over HTTP against a real database. Unit tests stub Prisma, so they prove the rules and nothing about the storage or the gate: this checks that a signed `initData` authenticates over a real request, that a tap writes a row carrying `created_via = TELEGRAM` with `mcp_token_id` NULL, that a replayed `clientBatchId` returns the original and writes nothing, and that the label schedules a stubbed `createTransactionBatch` can never exercise really do run. It creates and deletes its own throwaway user. Like the other verify scripts pointed at a `BASE_URL`, it refuses to send a credential over cleartext to anything but this machine — what travels here is a valid `initData`, replayable for its whole freshness window. Needs a dev server: `pnpm dev -p 3111` then `BASE_URL=http://localhost:3111 pnpm exec tsx --env-file=.env scripts/verify-telegram-miniapp.ts`
+- `e2e/telegram-mini-app.spec.ts` (Playwright, `pnpm test:e2e`) drives the Mini App as a real page in a real browser. A Telegram webview cannot be automated but the page in it can: `window.Telegram` is stubbed with a **genuinely signed** `initData` and everything below it is real. It signs from Telegram's published algorithm rather than by calling `verifyInitData`, so a green run means the server agrees with the spec rather than with itself. The allowlist is read by the process serving the request, so the test id has to be in the **server's** environment: `TELEGRAM_ALLOWED_IDS="<yours>,999000999" pnpm dev -p 3311` then `E2E_BASE_URL=http://localhost:3311 pnpm exec playwright test e2e/telegram-mini-app.spec.ts`
 - `scripts/verify-mcp-endpoint.ts` drives the real `/api/mcp` route with the SDK's own HTTP client against a dev server: `pnpm dev -p 3111` then `BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-mcp-endpoint.ts`
 
 ## Key Patterns
@@ -365,6 +621,11 @@ Active tasks:
 - `POST /api/email/forgot-password` — send password reset email
 - `POST /api/email/reset-password` — validate token + update password
 - `POST /api/resend-verification` — resend verification email
+- `GET /api/tg/bootstrap` — everything the Mini App grid needs in one round trip: the user's currency and offset, the configured tiles with their *resolved* categories, the derived Frequent tiles, the category list for the editor, and the tile cap. Authenticated by `Authorization: tma <initData>`, never a session
+- `GET/POST /api/tg/tiles` — list + create quick-log tiles (409 over `MAX_QUICK_TILES`, 409 on a duplicate label, 400 on a category the user does not own or whose type disagrees)
+- `PATCH/DELETE /api/tg/tiles/[id]` — edit or remove one tile. 404 rather than 403 on somebody else's, since a 403 confirms it exists
+- `POST /api/tg/tiles/reorder` — rewrite the grid order. Takes the **whole** set of the user's ids, refusing anything more or fewer, so a half-applied reorder cannot leave a grid nobody arranged; 409 when a tile was deleted mid-drag
+- `POST /api/tg/log` — one tap. Writes through `createTransactionBatch` with `created_via: TELEGRAM` and no `mcp_token_id`, omitting `labelIds` so schedules run; accepts a `clientBatchId` and replays it ahead of every other 4xx branch
 - `GET /api/cron/bill-reminders` — sends email reminders for pending bills (secured with `CRON_SECRET`); triggered daily by a Coolify Scheduled Task on production
 - `GET /api/cron/telegram-prompts` — sends the Telegram evening prompt to users with `telegram_daily_prompt` on (secured with `CRON_SECRET`). Claims the day in `telegram_prompt_logs` *before* sending and releases it if the send throws, so a crash retries and a success cannot repeat. Returns **409** when more than one user has the prompt enabled, since nothing maps a Telegram account to an app user and the wrong guess reads one person's day and messages another about it
 - `POST|DELETE /api/mcp`: remote MCP endpoint over Streamable HTTP, authenticated by a static bearer token. Runs the transport stateless (a route handler has no process to pin a session to) and builds a per-request server narrowed to the token's scopes. `GET` deliberately returns **405**: serving the standalone SSE stream from a stateless route would pin an open request and a keep-alive timer per client on a transport nothing writes to, and the SDK client reads 405 as "no stream offered" and carries on over POST. `POST` refuses a body over `MAX_MCP_BODY_BYTES` with **413** in a JSON-RPC envelope (#245)
