@@ -35,6 +35,41 @@ const nextConfig: NextConfig = {
     }
     return config;
   },
+  /**
+   * Framing rules, and the whole reason they exist now is `/tg`.
+   *
+   * Telegram Desktop and Telegram Web render a Mini App in a real iframe. That works today only
+   * because nothing in this repo sets a framing header at all -- the requirement is met by
+   * accident. The day someone adds a blanket `X-Frame-Options: DENY`, which is the first thing any
+   * security-headers pass recommends, the Mini App breaks on Desktop and Web while continuing to
+   * work on mobile. That is close to the worst failure shape available: it looks like a Telegram
+   * bug rather than ours.
+   *
+   * So the requirement is written down as code. Everything is `DENY` except `/tg`, which names
+   * Telegram's origins. `frame-ancestors` rather than `X-Frame-Options` for the Mini App, because
+   * `X-Frame-Options` has no allowlist form -- and where both are sent, browsers prefer CSP.
+   *
+   * A future global CSP must keep this ordering and must not fold `/tg` into it.
+   */
+  async headers() {
+    return [
+      {
+        source: "/tg/:path*",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org",
+          },
+        ],
+      },
+      {
+        // `:path*` matches the bare `/tg` as well, so it has to be excluded here too or the two
+        // rules both apply and the DENY wins.
+        source: "/((?!tg$|tg/).*)",
+        headers: [{ key: "X-Frame-Options", value: "DENY" }],
+      },
+    ];
+  },
 };
 
 export default withSerwist(nextConfig);

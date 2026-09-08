@@ -99,6 +99,20 @@ model User {
   /// UTC, so 20:00 Asia/Manila is 12:00 UTC and a weekday there is not reliably a weekday here.
   /// Encoding that in a dashboard field puts the schedule somewhere no test can reach.
   telegramDailyPromptTime    String     @default("20:00") @map("telegram_daily_prompt_time")
+  /// The Telegram account permitted to act as this user through the Mini App.
+  ///
+  /// The bot needs no such link: it writes through an MCP token already bound to a user. A Mini
+  /// App cannot use that token, because the page runs in a browser and a credential shipped to a
+  /// client is a leaked credential, so identity has to come from the signed `initData` instead --
+  /// and that carries a Telegram id, which nothing here previously resolved to an account.
+  ///
+  /// Unique so two app users cannot claim one Telegram account. Nullable and set by hand
+  /// (`scripts/link-telegram-user.ts`): a linking UI is a whole flow for a one-off, and leaving it
+  /// null is the correct state for every account that does not use Telegram.
+  ///
+  /// Note this is *not* sufficient on its own. `getTelegramUserId` also requires the id to be in
+  /// `TELEGRAM_ALLOWED_IDS`, so revoking access there revokes it for the Mini App too.
+  telegramUserId          String?       @unique @map("telegram_user_id")
   timezoneOffset          Int           @default(-480) @map("timezone_offset")
   /// Lease, not a flag: MCP writes are permitted only while this is in the future. A boolean
   /// would depend on remembering to switch it back off, and the failure that matters is leaving
