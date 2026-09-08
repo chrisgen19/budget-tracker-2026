@@ -86,8 +86,8 @@ export const frequentKey = (description: string): string =>
 /**
  * The words of an already-folded description. Split on `&` as well as whitespace.
  *
- * Takes folded input rather than folding again, so `frequentKey` can test the folded string for a
- * conjunction and hand the same string on -- one fold, and no chance of the two disagreeing.
+ * Takes folded input rather than folding again, so the fold happens once at the one call site that
+ * owns it and there is no chance of two folds disagreeing.
  *
  * A token carrying no letter or digit is dropped, which is what keeps a dash from counting as a
  * word: `UV Express - Office to House` is a real tile description here, and a bare `-` in its set
@@ -174,13 +174,17 @@ export interface FrequentOptions {
  * merchant is written two ways by the same person on the same phone, and unfolded they would each
  * fall below the threshold and neither would appear.
  *
- * Two further rules keep one habit from taking several slots (#268), because a grid meant to
- * surface six things was surfacing two:
+ * One further rule keeps one habit from taking several slots (#268), because a grid meant to
+ * surface six things was surfacing two: after ranking, a tile whose words are contained by -- or
+ * contain -- a **higher-ranked** tile's loses its slot.
  *
- *  - grouping ignores **word order**, so `uv & jeep` and `jeep & uv` are one group
- *  - after ranking, a tile whose words are contained by a **higher-ranked** tile's loses its slot
+ * **Word order is not part of that rule, and must not become part of it.** Sorting the tokens is
+ * the obvious way to collapse `uv & jeep` and `jeep & uv`; `frequentKey` records why both attempts
+ * merged a *direction* instead and were reverted, and why a third guess at commutativity would fare
+ * no better. Nothing was lost by dropping it: containment already suppresses that pair under the
+ * `uv express & jeep fare` that contains both.
  *
- * The second is suppression and deliberately not merging. Merging is the obvious reading of
+ * Suppression is deliberately not merging. Merging is the obvious reading of
  * "deduplicate" and is wrong here: `gsm green` and `gsm green ride` carry modes of 231.5 and 247,
  * so a merge has to pick between two real amounts, and `description` is deliberately the most
  * recent spelling, so a plain trip could end up captioned with the longer variant. The two
