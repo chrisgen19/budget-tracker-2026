@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   userFindUnique: vi.fn(),
   tileFindMany: vi.fn(),
   tileCreate: vi.fn(),
   tileUpdate: vi.fn(),
+  tileUpdateMany: vi.fn(),
   tileDeleteMany: vi.fn(),
   tileFindFirst: vi.fn(),
+  tileFindFirstOrThrow: vi.fn(),
   categoryFindMany: vi.fn(),
   transaction: vi.fn(),
 }));
@@ -18,8 +21,10 @@ vi.mock("@/lib/prisma", () => ({
     telegramQuickTile: {
       findMany: mocks.tileFindMany,
       findFirst: mocks.tileFindFirst,
+      findFirstOrThrow: mocks.tileFindFirstOrThrow,
       create: mocks.tileCreate,
       update: mocks.tileUpdate,
+      updateMany: mocks.tileUpdateMany,
       deleteMany: mocks.tileDeleteMany,
     },
     $transaction: mocks.transaction,
@@ -88,6 +93,8 @@ beforeEach(() => {
   mocks.tileUpdate.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
     Promise.resolve(tileRow({ ...data }))
   );
+  mocks.tileUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.tileFindFirstOrThrow.mockResolvedValue(tileRow());
   mocks.tileDeleteMany.mockResolvedValue({ count: 1 });
   mocks.transaction.mockResolvedValue([]);
 });
@@ -186,7 +193,7 @@ describe("PATCH /api/tg/tiles/[id]", () => {
     );
 
     expect(res.status).toBe(404);
-    expect(mocks.tileUpdate).not.toHaveBeenCalled();
+    expect(mocks.tileUpdateMany).not.toHaveBeenCalled();
   });
 
   it("clears a fixed amount when sent an explicit null", async () => {
@@ -194,13 +201,40 @@ describe("PATCH /api/tg/tiles/[id]", () => {
     // impossible to express, which is why the schema is nullable rather than optional.
     await PATCH(req("https://x.test/api/tg/tiles/tile_1", "PATCH", { amount: null }), params("tile_1"));
 
-    expect(mocks.tileUpdate.mock.calls.at(-1)![0].data).toEqual({ amount: null });
+    expect(mocks.tileUpdateMany.mock.calls.at(-1)![0].data).toEqual({ amount: null });
   });
 
   it("writes only the keys actually sent", async () => {
     await PATCH(req("https://x.test/api/tg/tiles/tile_1", "PATCH", { label: "Office" }), params("tile_1"));
 
-    expect(mocks.tileUpdate.mock.calls.at(-1)![0].data).toEqual({ label: "Office" });
+    expect(mocks.tileUpdateMany.mock.calls.at(-1)![0].data).toEqual({ label: "Office" });
+  });
+
+  it("writes against the pair it validated, not the id alone", async () => {
+    // The check runs on the effective row built from a read taken outside any transaction. Two
+    // edits in flight can each be valid alone and combine into a pair neither asked for, so the
+    // write names the values it judged and lands only while they still hold.
+    mocks.tileFindFirst.mockResolvedValue(tileRow({ type: "EXPENSE", categoryId: "transportation" }));
+
+    await PATCH(req("https://x.test/api/tg/tiles/tile_1", "PATCH", { label: "Office" }), params("tile_1"));
+
+    expect(mocks.tileUpdateMany.mock.calls.at(-1)![0].where).toEqual({
+      id: "tile_1",
+      userId: "user_1",
+      type: "EXPENSE",
+      categoryId: "transportation",
+    });
+  });
+
+  it("409s when the tile moved under the edit", async () => {
+    mocks.tileUpdateMany.mockResolvedValue({ count: 0 });
+
+    const res = await PATCH(
+      req("https://x.test/api/tg/tiles/tile_1", "PATCH", { label: "Office" }),
+      params("tile_1")
+    );
+
+    expect(res.status).toBe(409);
   });
 
   it("checks the effective row, catching a bare type flip", async () => {
@@ -215,7 +249,7 @@ describe("PATCH /api/tg/tiles/[id]", () => {
     );
 
     expect(res.status).toBe(400);
-    expect(mocks.tileUpdate).not.toHaveBeenCalled();
+    expect(mocks.tileUpdateMany).not.toHaveBeenCalled();
   });
 
   it("allows a type flip that moves the category with it", async () => {
@@ -291,5 +325,22 @@ describe("POST /api/tg/tiles/reorder", () => {
     );
 
     expect(res.status).toBe(400);
+  });
+
+  it("409s rather than crashing when a tile was deleted mid-reorder", async () => {
+    // The set is read before the transaction opens, so a tile deleted in between is named in the
+    // write and no longer exists. Prisma raises P2025 and the transaction rolls back, which is
+    // correct; letting it surface as an unhandled 500 with no JSON body was not.
+    mocks.transaction.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("Record to update not found", {
+        code: "P2025",
+        clientVersion: "6.19.2",
+      })
+    );
+
+    const res = await REORDER(req("https://x.test/api/tg/tiles/reorder", "POST", { ids: ["b", "a"] }));
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toHaveProperty("error");
   });
 });

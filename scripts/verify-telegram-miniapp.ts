@@ -22,6 +22,25 @@ const prisma = new PrismaClient();
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:3111";
 const TELEGRAM_ID = "999000999";
 const EMAIL = `tg-miniapp-verify-${Date.now()}@example.test`;
+const STRANGER_EMAIL = `tg-miniapp-stranger-${Date.now()}@example.test`;
+
+/**
+ * Refuse to send signed init data over cleartext to anything but this machine.
+ *
+ * Same helper `verify-transaction-update.ts`, `verify-mcp-bill-writes.ts` and
+ * `verify-label-removal-stamps.ts` all carry, and for the same reason: `BASE_URL` is an
+ * environment variable, so pointing it at a staging host over plain `http:` is one paste away.
+ * What travels here is a valid `initData` credential, and anything that captures one can replay it
+ * against that host for the whole freshness window.
+ */
+const requireSafeBaseUrl = (raw: string): void => {
+  const url = new URL(raw);
+  const loopback = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
+  if (url.protocol === "https:" || (url.protocol === "http:" && loopback)) return;
+  throw new Error(
+    `BASE_URL must use https outside this machine; got ${url.protocol}//${url.hostname}`
+  );
+};
 
 let failures = 0;
 
@@ -47,6 +66,8 @@ const signInitData = (botToken: string, fields: Record<string, string>): string 
 };
 
 async function main() {
+  requireSafeBaseUrl(BASE_URL);
+
   const botToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
   if (!botToken) throw new Error("TELEGRAM_BOT_TOKEN is required to sign init data");
 
@@ -90,6 +111,16 @@ async function main() {
       telegramUserId: TELEGRAM_ID,
       timezoneOffset: -480,
     },
+    select: { id: true },
+  });
+
+  // A second throwaway, purely to own the tile the ownership checks try to reach.
+  //
+  // This used to pick an arbitrary existing account with `findFirstOrThrow`, which broke the
+  // promise three lines of docstring make: it wrote a tile into a real user's grid, left it there
+  // if anything threw before the cleanup, and failed outright on a database holding no other user.
+  const stranger = await prisma.user.create({
+    data: { email: STRANGER_EMAIL, name: "Mini App Stranger", password: "x" },
     select: { id: true },
   });
 
@@ -178,7 +209,7 @@ async function main() {
     // --- ownership -----------------------------------------------------------------------
     const foreign = await prisma.telegramQuickTile.create({
       data: {
-        userId: (await prisma.user.findFirstOrThrow({ where: { NOT: { id: user.id } } })).id,
+        userId: stranger.id,
         label: `Foreign ${Date.now()}`,
         description: "x",
         type: "EXPENSE",
@@ -201,7 +232,24 @@ async function main() {
     );
     const stillThere = await prisma.telegramQuickTile.findUnique({ where: { id: foreign.id } });
     check("and it is untouched", stillThere?.label.startsWith("Foreign") === true);
-    await prisma.telegramQuickTile.delete({ where: { id: foreign.id } });
+
+    // --- editing --------------------------------------------------------------------------
+    // The write is conditional on the type/categoryId pair it validated, so the ordinary success
+    // path runs through `updateMany` plus a re-read. A stub can assert the shape of that call; only
+    // a real database shows the row actually moved and the response reflects it.
+    const edited = await call(`/api/tg/tiles/${tile.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ label: "Verify fare renamed", amount: null }),
+    });
+    const editedTile = (await edited.json()).tile;
+    check("an edit applies", edited.status === 200 && editedTile?.label === "Verify fare renamed");
+    check("and clearing the amount makes the tile ask", editedTile?.amount === null);
+
+    const stored = await prisma.telegramQuickTile.findUniqueOrThrow({
+      where: { id: tile.id },
+      select: { label: true, amount: true },
+    });
+    check("the row really moved", stored.label === "Verify fare renamed" && stored.amount === null);
 
     // --- reorder -------------------------------------------------------------------------
     const second = await (
@@ -224,6 +272,15 @@ async function main() {
     const order = (await reordered.json()).tiles.map((t: { id: string }) => t.id);
     check("a reorder rewrites the grid order", order[0] === second.tile.id && order[1] === tile.id);
 
+    // P2002 has to survive the move from `update` to `updateMany`, or a duplicate label would
+    // surface as an unhandled 500 rather than the named 409. Checked here, after a second tile
+    // exists to collide with.
+    const clash = await call(`/api/tg/tiles/${tile.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ label: "Verify lunch" }),
+    });
+    check("a duplicate label is still a 409 on edit", clash.status === 409, String(clash.status));
+
     check(
       "a partial reorder is refused",
       (
@@ -237,8 +294,10 @@ async function main() {
     console.log(`\n${failures === 0 ? "All checks passed." : `${failures} check(s) FAILED.`}`);
     if (failures > 0) process.exitCode = 1;
   } finally {
-    // Cascades through tiles and transactions, so the throwaway account leaves nothing behind.
-    await prisma.user.delete({ where: { id: user.id } });
+    // Cascades through tiles and transactions, so both throwaway accounts leave nothing behind --
+    // including the foreign tile, whose owner is deleted here rather than by a line the failure
+    // path might never reach.
+    await prisma.user.deleteMany({ where: { id: { in: [user.id, stranger.id] } } });
   }
 }
 

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { telegramQuickTileOrderSchema } from "@/lib/validations";
 import { getTelegramUserId } from "@/lib/telegram/require-telegram-user";
@@ -60,14 +61,29 @@ export async function POST(request: Request) {
 
   // One transaction, so a failure partway leaves the previous order intact rather than a grid
   // half in the old arrangement and half in the new one.
-  await prisma.$transaction(
-    ids.map((id, i) =>
-      prisma.telegramQuickTile.update({
-        where: { id },
-        data: { sortOrder: (i + 1) * SORT_ORDER_GAP },
-      })
-    )
-  );
+  try {
+    await prisma.$transaction(
+      ids.map((id, i) =>
+        prisma.telegramQuickTile.update({
+          where: { id },
+          data: { sortOrder: (i + 1) * SORT_ORDER_GAP },
+        })
+      )
+    );
+  } catch (error) {
+    // The set was read before the transaction opened, so a tile deleted in between is named here
+    // and no longer exists. `update` raises P2025 and the whole transaction rolls back, which is
+    // the right outcome -- the wrong one was letting it surface as an unhandled 500 with no JSON
+    // body. The order the client sent describes a grid that no longer exists, so the honest answer
+    // is to say so and let it refetch, not to guess which position the missing tile freed up.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") {
+      return NextResponse.json(
+        { error: "Your buttons changed while you were reordering them. Reload and try again." },
+        { status: 409 }
+      );
+    }
+    throw error;
+  }
 
   const [categories, rows] = await Promise.all([
     listTileCategories(prisma, userId),

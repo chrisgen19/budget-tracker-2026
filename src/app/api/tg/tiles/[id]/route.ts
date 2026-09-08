@@ -72,8 +72,21 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   }
 
   try {
-    const updated = await prisma.telegramQuickTile.update({
-      where: { id },
+    // Written against the pair that was *validated*, not against the id alone.
+    //
+    // The check above runs on the effective row built from `stored`, which was read outside any
+    // transaction. Two edits in flight can each read the same row and each be valid on their own:
+    // one moves `type` and `categoryId` to an income pair, the other moves only `categoryId` to an
+    // expense one. Applied by id, the second lands on a row the first already changed and stores a
+    // combination neither request asked for and no constraint forbids.
+    //
+    // Naming `type` and `categoryId` in the `where` makes the write conditional on the world still
+    // looking the way it did when it was judged, which is why this is `updateMany` -- `update`
+    // takes only unique fields. A lock would also work and costs more: `telegram_quick_tiles` has
+    // no children, so there is no FK interaction to reason about, but there is also nothing here
+    // worth a transaction when one predicate says the same thing.
+    const written = await prisma.telegramQuickTile.updateMany({
+      where: { id, userId, type: stored.type, categoryId: stored.categoryId },
       // Only the keys actually sent. `amount` is spread explicitly because `null` is a real value
       // here -- it means "make this button ask" -- and dropping it as falsy would make that
       // edit impossible.
@@ -84,6 +97,17 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         ...(patch.type !== undefined && { type: patch.type }),
         ...(patch.categoryId !== undefined && { categoryId: patch.categoryId }),
       },
+    });
+
+    if (written.count === 0) {
+      return NextResponse.json(
+        { error: "That button changed while you were editing it. Reload and try again." },
+        { status: 409 }
+      );
+    }
+
+    const updated = await prisma.telegramQuickTile.findFirstOrThrow({
+      where: { id, userId },
       select: TILE_SELECT,
     });
 
