@@ -58,18 +58,58 @@ export const FREQUENT_STABLE_SHARE = 0.6;
  * Sorting the tokens is what collapses `uv & jeep` and `jeep & uv` -- three variants of one
  * commute held three of six slots on real data (#268), and those two are not even different
  * words. Still nothing fuzzy: no edit distance and no similarity score, for the reason
- * `caption-labels.ts` refuses them. Two descriptions collide here only when they contain the same
- * words, which means they are the same thing.
+ * `caption-labels.ts` refuses them.
+ *
+ * **But order is only noise in a conjunction; in a direction it is the whole meaning.** Sorting
+ * every description made `Office to House` and `House to Office` one group, and that is not a
+ * cosmetic merge -- it is a wrong fare written with no confirmation. Six 38 trips one way and three
+ * 80 trips back merge to nine rows whose modal amount is 38 at a 67% share, which clears
+ * `FREQUENT_STABLE_SHARE`, while `description` is the most recent spelling. The tile then reads
+ * `House to Office` and one-taps 38. That is exactly the silent wrongness `deriveFrequentTiles`
+ * argues against for merging, committed by the grouping step instead.
+ *
+ * So sorting is gated on positive evidence of commutativity -- an explicit conjunction -- and
+ * withheld whenever a directional preposition appears. Presence-based rather than absence-based on
+ * purpose: a rule that sorts unless it recognises a preposition fails open on every preposition
+ * nobody thought of, where this one fails closed and merely leaves two variants unmerged, which is
+ * the cost `#268` set out to reduce rather than a wrong row. Both conditions are required, so
+ * `uv and jeep to office` is left alone.
  *
  * `&` is a separator rather than a token because it is punctuation people type inconsistently in
- * exactly the descriptions this exists for ("UV & Jeep", "UV and Jeep" is a different problem, but
- * "UV&Jeep" is not).
+ * exactly the descriptions this exists for. `UV & Jeep` and `UV and Jeep` therefore still do not
+ * merge -- `&` is gone from the tokens while `and` survives as one -- which is a real gap and
+ * deliberately not closed here: dropping `and` as a stopword would also cut `S&R` down to two
+ * one-letter tokens.
  */
-export const frequentKey = (description: string): string =>
-  tokensOf(description).sort().join(" ");
+export const frequentKey = (description: string): string => {
+  const folded = foldDescription(description);
+  const tokens = tokensOf(folded);
+
+  return (isCommutative(folded) ? [...tokens].sort() : tokens).join(" ");
+};
 
 /**
- * The words of a description, folded. Split on `&` as well as whitespace.
+ * Whether word order in this description carries no meaning.
+ *
+ * An explicit conjunction and no directional preposition. Deliberately narrow, the way the receipt
+ * year repair is narrow: it answers yes only for the shape that motivated it.
+ *
+ * `to`/`from` are matched as whole words, so `Tokyo` and `Fromage` are not prepositions. The list
+ * is English-only, which matches every description observed here; a Tagalog `papunta` would want
+ * adding rather than guessing at now, and failing closed means an unrecognised one leaves a group
+ * unmerged instead of merging two directions.
+ */
+const COMMUTATIVE_CONJUNCTION = /(?:&|\band\b)/;
+const DIRECTIONAL_PREPOSITION = /\b(?:to|from)\b/;
+
+const isCommutative = (folded: string): boolean =>
+  COMMUTATIVE_CONJUNCTION.test(folded) && !DIRECTIONAL_PREPOSITION.test(folded);
+
+/**
+ * The words of an already-folded description. Split on `&` as well as whitespace.
+ *
+ * Takes folded input rather than folding again, so `frequentKey` can test the folded string for a
+ * conjunction and hand the same string on -- one fold, and no chance of the two disagreeing.
  *
  * A token carrying no letter or digit is dropped, which is what keeps a dash from counting as a
  * word: `UV Express - Office to House` is a real tile description here, and a bare `-` in its set
@@ -77,10 +117,8 @@ export const frequentKey = (description: string): string =>
  * because descriptions here are not ASCII-only -- splitting on non-ASCII would cut `Piñata` in
  * half, and hyphenated words must survive whole for the same reason.
  */
-const tokensOf = (description: string): string[] =>
-  foldDescription(description)
-    .split(/[\s&]+/)
-    .filter((token) => /[\p{L}\p{N}]/u.test(token));
+const tokensOf = (folded: string): string[] =>
+  folded.split(/[\s&]+/).filter((token) => /[\p{L}\p{N}]/u.test(token));
 
 /**
  * Whether one key's words are a subset of the other's, in either direction.
@@ -90,13 +128,23 @@ const tokensOf = (description: string): string[] =>
  * contains nothing but is contained by `gsm green ride`. Both directions matter because ranking is
  * by count, not by length: the survivor is whichever is logged more, which is sometimes the shorter
  * description and sometimes the longer.
+ *
+ * **Equal-sized token sets are never a duplicate.** Gating the sort in `frequentKey` is not enough
+ * on its own, because this compares *sets* and `{office, to, house}` equals `{house, to, office}`:
+ * two directions would survive grouping and then be collapsed here instead, suppressing one real
+ * trip in favour of the other. Given the keys differ, equal sizes mean either the same words in a
+ * different order -- a direction pair -- or two sets neither of which can contain the other, and
+ * the answer is `false` for both.
  */
 const containsEitherWay = (a: string, b: string): boolean => {
+  if (a === b) return true;
+
   const ta = new Set(a.split(" ").filter(Boolean));
   const tb = new Set(b.split(" ").filter(Boolean));
   if (ta.size === 0 || tb.size === 0) return false;
+  if (ta.size === tb.size) return false;
 
-  const [small, large] = ta.size <= tb.size ? [ta, tb] : [tb, ta];
+  const [small, large] = ta.size < tb.size ? [ta, tb] : [tb, ta];
   for (const token of small) if (!large.has(token)) return false;
   return true;
 };

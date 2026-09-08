@@ -328,11 +328,31 @@ of the grid that needs no maintenance. Pure over injected rows, with the loader 
 - **Grouped by `frequentKey`**, which is `foldDescription` — imported from `assessment-facts.ts`
   and never re-implemented, since a second copy of that rule is drift and this needs exactly the
   property it exists for: iOS substitutes U+2019, so one merchant written two ways would fall below
-  the threshold twice — **plus sorted word order**. `uv & jeep` and `jeep & uv` are not different
-  words, only a different order, and unsorted they held two of six slots on real data (#268). A
-  token carrying no letter or digit is dropped, so the dash in `UV Express - Office to House` is
-  not a word; tested with `\p{L}`/`\p{N}` rather than `a-z0-9`, or `Piñata` would be cut in half
-  and `e-load` would become two words a bare `load` then contains.
+  the threshold twice — **plus word order sorted, but only across a conjunction**. `uv & jeep` and
+  `jeep & uv` are not different words, only a different order, and unsorted they held two of six
+  slots on real data (#268). A token carrying no letter or digit is dropped, so the dash in
+  `UV Express - Office to House` is not a word; tested with `\p{L}`/`\p{N}` rather than `a-z0-9`,
+  or `Piñata` would be cut in half and `e-load` would become two words a bare `load` then contains.
+- **Order is noise in a conjunction and the whole meaning in a direction.** Sorting every
+  description made `Office to House` and `House to Office` one group, which is not a cosmetic merge
+  but a wrong fare written with no confirmation: six 38 trips out and three 80 trips back become
+  nine rows whose modal amount is 38 at a 67% share, clearing `FREQUENT_STABLE_SHARE`, while
+  `description` is the most recent spelling — so the tile read `House to Office` and one-tapped 38.
+  Sorting is therefore gated on **positive evidence of commutativity** (an explicit `&`/`and`) and
+  withheld whenever a directional preposition (`to`/`from`, whole-word) appears; both conditions are
+  required, so `uv and jeep to office` is left alone. Presence-based rather than absence-based on
+  purpose: a rule that sorts unless it recognises a preposition fails open on every preposition
+  nobody thought of, where this one fails closed and merely leaves two variants unmerged. The
+  preposition list is English-only, matching every description observed here; a Tagalog `papunta`
+  wants adding rather than guessing at.
+- **`containsEitherWay` needs the same guard**, because gating the sort alone is not enough: it
+  compares token *sets*, and `{office, to, house}` equals `{house, to, office}`, so two directions
+  would survive grouping and be collapsed at suppression instead. Equal-sized sets are therefore
+  never a duplicate — given the keys differ, equal sizes mean either the same words in a different
+  order or two sets neither of which can contain the other.
+- `UV & Jeep` and `UV and Jeep` still do not merge, since `&` is a separator and `and` survives as
+  a token. A real gap, deliberately not closed: dropping `and` as a stopword would also cut `S&R`
+  down to two one-letter tokens.
 - **`foldDescription` itself must never learn this.** It also drives duplicate detection,
   recurring-charge creep and income concentration, so sorting its tokens would make `Mirea Rent`
   and `Rent Mirea` one charge in the assessment and silently move a financial finding. AGENTS.md

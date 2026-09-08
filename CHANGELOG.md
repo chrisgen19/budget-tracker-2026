@@ -32,11 +32,30 @@ recurring-charge creep and income concentration, so sorting its tokens would mak
 `Rent Mirea` one charge in the assessment and silently move a financial finding. The stronger key
 is `frequentKey`, in `frequent-tiles.ts`, built on top of that rule rather than beside it.
 
-**Sorted word order** collapses `uv & jeep` and `jeep & uv`. Two descriptions collide only when
-they contain the same words, which means they are the same thing. A token with no letter or digit
-is dropped, so the dash in `UV Express - Office to House` is not a word -- tested with
-`\p{L}`/`\p{N}` and not `a-z0-9`, or `Piñata` loses half of itself and `e-load` becomes two words
-a bare `load` then contains.
+**Sorted word order** collapses `uv & jeep` and `jeep & uv`. A token with no letter or digit is
+dropped, so the dash in `UV Express - Office to House` is not a word -- tested with `\p{L}`/`\p{N}`
+and not `a-z0-9`, or `Piñata` loses half of itself and `e-load` becomes two words a bare `load`
+then contains.
+
+Sorting is **gated**, and the first attempt here was wrong in a way worth recording. Order is noise
+in a conjunction and the whole meaning in a direction, and sorting every description made
+`Office to House` and `House to Office` one group. That is not a cosmetic merge: six 38 trips out
+and three 80 trips back become nine rows whose modal amount is 38 at a 67% share, which clears
+`FREQUENT_STABLE_SHARE`, while `description` is the most recent spelling -- so the tile read
+`House to Office` and one-tapped 38. A wrong fare, written with no confirmation, by the grouping
+step, in the same change whose whole argument was that a wrong merge must never reach a write.
+
+So sorting now needs **positive evidence of commutativity** -- an explicit `&`/`and` -- and is
+withheld whenever a whole-word `to`/`from` appears; both conditions are required, so
+`uv and jeep to office` is left alone. Presence-based rather than absence-based, because a rule
+that sorts unless it recognises a preposition fails open on every preposition nobody thought of,
+where this one fails closed and merely leaves two variants unmerged -- the cost this change set out
+to reduce, not a wrong row.
+
+`containsEitherWay` needed the same guard. Gating the sort alone was not enough, because
+suppression compares token *sets* and `{office, to, house}` equals `{house, to, office}`: the two
+directions survived grouping and were collapsed there instead. Equal-sized sets are therefore never
+a duplicate.
 
 **Containment suppression** after ranking, and **before** the cap, so a suppressed variant hands
 its slot to the next real habit instead of leaving a hole. Both directions, because ranking is by
@@ -63,8 +82,20 @@ than pre-folded keys, so a caller cannot pass one folded by a rule that has sinc
 the layer that makes the grid self-heal: tapping a tile writes one fixed description, so the
 variants stop accumulating and age out of the 60-day window on their own.
 
-On the real ledger the same rows now yield four distinct habits instead of two-plus-variants, and
-`Astra to Mirea` (4x) -- a genuine habit that never had a slot -- appears for the first time.
+On the real ledger the same rows now yield three distinct habits instead of five entries for two
+things:
+
+```
+13x GSM Green              231.5  asks
+ 9x UV Express & Jeep fare     38  ONE-TAP
+ 3x Pandesal                   40  ONE-TAP
+```
+
+An interim version of this change reported a fourth, `Astra to Mirea` at 4x, and it is worth saying
+why it is gone: it was two trips each way over two days in July, merged by the very direction bug
+above. Four trips between two places, five weeks ago, is not a current habit, and the honest answer
+is that it does not earn a button. That figure is the reason to distrust a merge that looks like a
+discovery.
 
 ## 2026-09-08 - A quick-log grid inside Telegram (#259)
 

@@ -389,6 +389,59 @@ describe("deriveFrequentTiles: one habit, one slot (#268)", () => {
     expect(tiles.map((t) => t.description).sort()).toEqual(["Piñata", "e-load"]);
   });
 
+  it("never merges two directions of one trip", () => {
+    // The P1 raised on #269, and the reason sorting is gated. Six 38 trips out and three 80 trips
+    // back merge to nine rows whose modal amount is 38 at a 67% share -- over
+    // `FREQUENT_STABLE_SHARE` -- while `description` is the most recent spelling. The tile read
+    // "House to Office" and one-tapped 38: a wrong fare written with no confirmation, which is the
+    // exact failure this module argues against for merging, committed by the grouping step.
+    const tiles = deriveFrequentTiles([
+      ...[1, 2, 3, 4, 5, 6].map((d) =>
+        row({ description: "UV Express - Office to House", amount: 38, date: day(d) })
+      ),
+      ...[7, 8, 9].map((d) =>
+        row({ description: "UV Express - House to Office", amount: 80, date: day(d) })
+      ),
+    ]);
+
+    expect(tiles).toEqual([
+      expect.objectContaining({
+        description: "UV Express - Office to House",
+        amount: 38,
+        count: 6,
+      }),
+      expect.objectContaining({
+        description: "UV Express - House to Office",
+        amount: 80,
+        count: 3,
+      }),
+    ]);
+  });
+
+  it("keeps two directions apart at the suppression step too", () => {
+    // Gating the sort is not sufficient on its own: suppression compares token *sets*, and
+    // `{office, to, house}` equals `{house, to, office}`, so the two would survive grouping and be
+    // collapsed here instead -- suppressing one real trip in favour of the other.
+    const tiles = deriveFrequentTiles([
+      ...repeat(4, { description: "Astra to Mirea", amount: 213 }),
+      ...repeat(3, { description: "Mirea to Astra", amount: 390 }),
+    ]);
+
+    expect(tiles.map((t) => t.description)).toEqual(["Astra to Mirea", "Mirea to Astra"]);
+  });
+
+  it("needs a conjunction and no preposition before it will sort", () => {
+    // Both conditions, so a description carrying each is left alone. Presence-based rather than
+    // absence-based: a rule that sorts unless it recognises a preposition fails open on every
+    // preposition nobody thought of.
+    const tiles = deriveFrequentTiles([
+      ...repeat(3, { description: "uv and jeep to office", amount: 38 }),
+      ...repeat(3, { description: "office to jeep and uv", amount: 95 }),
+    ]);
+
+    expect(tiles).toHaveLength(2);
+  });
+
   it("leaves two habits that merely share a word alone", () => {
     // Containment, not overlap. `lunch` is in both, but neither word set contains the other, so
     // both keep their slot -- the rule is a set relation and not a similarity score.
