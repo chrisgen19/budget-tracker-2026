@@ -126,6 +126,33 @@ describe("getTelegramUserId", () => {
     expect(status(await getTelegramUserId(request(`tma ${INIT_DATA}`)))).toBe(401);
   });
 
+  it("names the fix in the log when the only thing missing is the link", async () => {
+    // The one denial nobody can diagnose from outside: the right person, from the right bot, with
+    // an allowlisted id, and a column a restored database silently dropped. The 401 stays opaque,
+    // so the clue has to be server-side or it does not exist at all.
+    mocks.userFindUnique.mockResolvedValue(null);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await getTelegramUserId(request(`tma ${INIT_DATA}`));
+
+    expect(warn).toHaveBeenCalled();
+    const line = warn.mock.calls[0].join(" ");
+    expect(line).toContain("link-telegram-user.ts");
+    expect(warn.mock.calls[0]).toContain("42424242");
+    warn.mockRestore();
+  });
+
+  it("says nothing about a caller it merely refused", async () => {
+    // Only the unlinked branch earns a line. A bad signature or a stranger's id is a refusal the
+    // caller earned, and logging those is noise that hides the one entry worth reading.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await getTelegramUserId(request(`tma ${INIT_DATA.replace("42424242", "99999999")}`));
+
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it("reports the same failure for every cause", async () => {
     // A caller who is refused must not learn which half of the gate to work on.
     process.env.TELEGRAM_ALLOWED_IDS = "777";

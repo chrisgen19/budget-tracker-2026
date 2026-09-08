@@ -39,6 +39,8 @@ beforeEach(() => {
   process.env.CRON_SECRET = "test-secret";
   process.env.TELEGRAM_ALLOWED_IDS = "123456";
   process.env.TELEGRAM_MCP_TOKEN = "bot-token";
+  process.env.TELEGRAM_APP_URL = "https://budget.test";
+  delete process.env.NEXTAUTH_URL;
   vi.useFakeTimers();
   vi.setSystemTime(DUE);
 
@@ -224,5 +226,60 @@ describe("scoping to the bot's owner", () => {
   it("treats a revoked token as no owner", async () => {
     await call();
     expect(mocks.mcpTokenFindFirst.mock.calls[0][0].where).toMatchObject({ revokedAt: null });
+  });
+});
+
+/**
+ * The riskiest button in the Mini App work, and the reason it is built by a helper that can
+ * refuse.
+ *
+ * Telegram rejects the *whole* message when a keyboard carries a URL it will not accept. This
+ * route releases its claimed `telegram_prompt_logs` row when the send fails, so the next tick
+ * would fail identically: the evening prompt would disappear permanently rather than merely lose
+ * a button.
+ */
+describe("the quick-log button", () => {
+  const keyboardOf = () => mocks.sendMessage.mock.calls[0][3] as {
+    inline_keyboard: { text: string; web_app?: { url: string }; callback_data?: string }[][];
+  };
+
+  it("opens the Mini App at /tg", async () => {
+    await call();
+    const rows = keyboardOf().inline_keyboard;
+    expect(rows[0][0].web_app).toEqual({ url: "https://budget.test/tg" });
+  });
+
+  it("still sends the prompt when there is no usable URL", async () => {
+    delete process.env.TELEGRAM_APP_URL;
+
+    const res = await call();
+
+    expect(await res.json()).toMatchObject({ promptsSent: 1 });
+    expect(mocks.promptLogDeleteMany).not.toHaveBeenCalled();
+    const rows = keyboardOf().inline_keyboard;
+    // One fewer row, not a row with a hole in it -- and "Nothing today" survives, which is the
+    // button the prompt cannot do without.
+    expect(rows).toHaveLength(1);
+    expect(rows[0][0].text).toBe("Nothing today");
+  });
+
+  // http:// is the realistic way to get this wrong: it is what a local NEXTAUTH_URL holds, and a
+  // plain URL button would have accepted it. Telegram frames a Mini App and refuses an insecure
+  // origin, so the button must simply not be built.
+  it("offers nothing over http, which Telegram would reject", async () => {
+    delete process.env.TELEGRAM_APP_URL;
+    process.env.NEXTAUTH_URL = "http://localhost:3000";
+
+    await call();
+
+    const rows = keyboardOf().inline_keyboard;
+    expect(rows).toHaveLength(1);
+    expect(rows[0][0].web_app).toBeUndefined();
+  });
+
+  it("keeps the day claimed exactly once either way", async () => {
+    delete process.env.TELEGRAM_APP_URL;
+    await call();
+    expect(mocks.promptLogCreateMany).toHaveBeenCalledTimes(1);
   });
 });

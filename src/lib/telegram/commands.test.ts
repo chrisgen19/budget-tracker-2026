@@ -12,6 +12,21 @@ describe("resolveCommand", () => {
     expect(resolveCommand("/start")).toBe("HELP");
   });
 
+  it("resolves /quick, the Mini App's typed door", () => {
+    expect(resolveCommand("/quick")).toBe("QUICK");
+    expect(resolveCommand("quick")).toBe("QUICK");
+    expect(resolveCommand("quick log")).toBe("QUICK");
+  });
+
+  // The pattern is deliberately tight. Anything with real words beyond it belongs to the model,
+  // and a bare amount still belongs to the shorthand logger -- a wrong local guess answers a
+  // question nobody asked, with nothing to say it misread them.
+  it("leaves anything beyond the bare phrasing alone", () => {
+    expect(resolveCommand("quick lunch")).toBeNull();
+    expect(resolveCommand("150 quick lunch")).toBeNull();
+    expect(resolveCommand("that was quick")).toBeNull();
+  });
+
   it("tolerates the @botname Telegram appends in shared chats", () => {
     expect(resolveCommand("/summary@budget0719_bot")).toBe("SUMMARY");
   });

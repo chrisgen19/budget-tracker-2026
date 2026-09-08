@@ -11,7 +11,8 @@ export type BotCommand =
   | "LABELS"
   | "ITEMS"
   | "EXAMPLES"
-  | "KEYBOARD";
+  | "KEYBOARD"
+  | "QUICK";
 
 /**
  * Wraps a subject in the optional politeness around it: an asking verb, an article, a trailing
@@ -38,6 +39,10 @@ const phrasing = (subject: string) =>
 const PATTERNS: { command: BotCommand; pattern: RegExp }[] = [
   { command: "HELP", pattern: /^(help|commands?|what can you do)$/ },
   { command: "EXAMPLES", pattern: /^(examples?|show examples?|what can i ask)$/ },
+  // Kept deliberately tight. A bare "quick" is not shorthand -- the logger needs an amount
+  // first -- so nothing downstream loses a message to this, but "quick lunch" must still reach
+  // the model rather than being forced into a command.
+  { command: "QUICK", pattern: /^(quick|quick log)$/ },
   { command: "SUMMARY", pattern: phrasing("summary|balance|overview|totals?") },
   {
     command: "RECENT",
@@ -63,6 +68,7 @@ const SLASH: Record<string, BotCommand> = {
   "/items": "ITEMS",
   "/examples": "EXAMPLES",
   "/keyboard": "KEYBOARD",
+  "/quick": "QUICK",
 };
 
 /**
@@ -85,6 +91,7 @@ export const COMMAND_MENU: { command: string; description: string }[] = [
   { command: "labels", description: "Spending split across your labels" },
   { command: "items", description: "Line items from your last receipt" },
   { command: "categories", description: "List your categories" },
+  { command: "quick", description: "Open the quick-log grid" },
   { command: "keyboard", description: "Pin the fare buttons above the message box" },
   { command: "examples", description: "Things you can type, ready to copy" },
   { command: "help", description: "Everything you can ask, including plain English" },
