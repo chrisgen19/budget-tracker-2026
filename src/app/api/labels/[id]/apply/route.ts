@@ -99,12 +99,18 @@ export async function POST(_request: Request, { params }: RouteParams) {
     if (toInsert.length > 0 || toRemoveIds.length > 0) {
       await prisma.$transaction(async (db) => {
         if (toInsert.length > 0) {
-          const result = await db.transactionLabel.createMany({
+          // Derived from what the insert actually created, not from the page read that planned
+          // it. That read happens outside this transaction, so a concurrent MCP edit adding the
+          // same label first makes `skipDuplicates` insert nothing while the row is still in
+          // `toInsert` -- stamping it would overwrite an accurate MCP trail with `APP` for a
+          // change this pass did not make. `createManyAndReturn` returns only the rows inserted.
+          const created = await db.transactionLabel.createManyAndReturn({
             data: toInsert,
             skipDuplicates: true,
+            select: { transactionId: true },
           });
-          applied += result.count;
-          for (const link of toInsert) touchedIds.add(link.transactionId);
+          applied += created.length;
+          for (const link of created) touchedIds.add(link.transactionId);
         }
 
         if (toRemoveIds.length > 0) {

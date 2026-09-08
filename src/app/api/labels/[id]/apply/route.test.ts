@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   labelFindFirst: vi.fn(),
   transactionFindMany: vi.fn(),
   transactionUpdateMany: vi.fn(),
-  transactionLabelCreateMany: vi.fn(),
+  transactionLabelCreateManyAndReturn: vi.fn(),
   transactionLabelDeleteMany: vi.fn(),
   getScheduleContext: vi.fn(),
   matchScheduledLabel: vi.fn(),
@@ -20,7 +20,7 @@ vi.mock("@/lib/prisma", () => {
       updateMany: mocks.transactionUpdateMany,
     },
     transactionLabel: {
-      createMany: mocks.transactionLabelCreateMany,
+      createManyAndReturn: mocks.transactionLabelCreateManyAndReturn,
       deleteMany: mocks.transactionLabelDeleteMany,
     },
     $transaction: mocks.databaseTransaction,
@@ -60,7 +60,7 @@ describe("POST /api/labels/[id]/apply", () => {
       schedules: [{ id: "sched-1" }],
     });
     mocks.getScheduleContext.mockResolvedValue({ labels: [], timezoneOffset: -480 });
-    mocks.transactionLabelCreateMany.mockResolvedValue({ count: 1 });
+    mocks.transactionLabelCreateManyAndReturn.mockResolvedValue([{ transactionId: "tx-1" }]);
     mocks.transactionLabelDeleteMany.mockResolvedValue({ count: 1 });
     mocks.transactionUpdateMany.mockResolvedValue({ count: 1 });
   });
@@ -121,8 +121,26 @@ describe("POST /api/labels/[id]/apply", () => {
 
     expect(mocks.databaseTransaction).toHaveBeenCalledTimes(1);
     const opened = mocks.databaseTransaction.mock.invocationCallOrder[0];
-    expect(mocks.transactionLabelCreateMany.mock.invocationCallOrder[0]).toBeGreaterThan(opened);
+    expect(mocks.transactionLabelCreateManyAndReturn.mock.invocationCallOrder[0]).toBeGreaterThan(
+      opened,
+    );
     expect(mocks.transactionUpdateMany.mock.invocationCallOrder[0]).toBeGreaterThan(opened);
+  });
+
+  // The page read happens outside the transaction, so a concurrent MCP edit can add the label
+  // between the read and the insert. `skipDuplicates` then writes nothing, and stamping the row
+  // from the *plan* rather than the result would overwrite an accurate MCP trail with `APP` for a
+  // change this pass did not make -- review #5136231115.
+  it("stamps nothing for a row whose link a concurrent writer inserted first", async () => {
+    mocks.transactionFindMany.mockResolvedValueOnce([row("tx-1")]);
+    mocks.matchScheduledLabel.mockReturnValue("label-1");
+    // The insert was planned, but the link already existed by the time it ran.
+    mocks.transactionLabelCreateManyAndReturn.mockResolvedValue([]);
+
+    const response = await apply();
+
+    expect(await response.json()).toMatchObject({ applied: 0 });
+    expect(mocks.transactionUpdateMany).not.toHaveBeenCalled();
   });
 
   // A pass over a settled label walks every page finding nothing to do; a transaction per page

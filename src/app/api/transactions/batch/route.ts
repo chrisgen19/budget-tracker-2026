@@ -276,8 +276,13 @@ export async function PATCH(request: NextRequest) {
           .filter((transaction) => transaction.categoryId !== category.id)
           .map((transaction) => transaction.id);
 
+        // `movingIds` narrows what is touched; the `not` is what makes it *correct*. The snapshot
+        // above is read before the write, so a concurrent MCP edit that moves a row into the
+        // target category first would leave it in `movingIds` and get stamped `APP` for a change
+        // this request did not make. Postgres re-evaluates the predicate against the committed
+        // row version, so such a row is skipped here and `count` names what really moved.
         const updated = await tx.transaction.updateMany({
-          where: { id: { in: movingIds }, userId },
+          where: { id: { in: movingIds }, userId, categoryId: { not: category.id } },
           data: { categoryId: category.id, updatedVia: "APP", updatedByMcpTokenId: null },
         });
         return { matched: matchedIds.length, updated: updated.count, ids: matchedIds };
@@ -321,18 +326,27 @@ export async function PATCH(request: NextRequest) {
             existingKeys.has(`${transactionId}:${labelId}`) ? [] : [{ transactionId, labelId }],
           ),
         );
-        const affectedIds = [...new Set(linksToAdd.map(({ transactionId }) => transactionId))];
-        const added =
+        // Derived from what the insert actually created, not from the snapshot that planned it.
+        // `existingLinks` is read before the write, so a concurrent MCP edit that adds the same
+        // link first makes `skipDuplicates` insert nothing while the row is still in `linksToAdd`
+        // -- stamping it would record an `APP` edit for a change this request did not make, over
+        // an accurate MCP trail. `createManyAndReturn` returns only the rows really inserted.
+        const created =
           linksToAdd.length > 0
-            ? await tx.transactionLabel.createMany({ data: linksToAdd, skipDuplicates: true })
-            : { count: 0 };
+            ? await tx.transactionLabel.createManyAndReturn({
+                data: linksToAdd,
+                skipDuplicates: true,
+                select: { transactionId: true },
+              })
+            : [];
         // Only the rows that actually gained a link. Stamping every matched id would record an
         // edit on transactions that already carried the label and did not change.
+        const affectedIds = [...new Set(created.map(({ transactionId }) => transactionId))];
         await stampEdited(tx, userId, affectedIds);
         return {
           matched: matchedIds.length,
           updated: affectedIds.length,
-          changedLinks: added.count,
+          changedLinks: created.length,
           ids: affectedIds,
         };
       }
