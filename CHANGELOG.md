@@ -32,30 +32,38 @@ recurring-charge creep and income concentration, so sorting its tokens would mak
 `Rent Mirea` one charge in the assessment and silently move a financial finding. The stronger key
 is `frequentKey`, in `frequent-tiles.ts`, built on top of that rule rather than beside it.
 
-**Sorted word order** collapses `uv & jeep` and `jeep & uv`. A token with no letter or digit is
-dropped, so the dash in `UV Express - Office to House` is not a word -- tested with `\p{L}`/`\p{N}`
-and not `a-z0-9`, or `Piñata` loses half of itself and `e-load` becomes two words a bare `load`
-then contains.
+**Tokenised in the order written.** A token with no letter or digit is dropped, so the dash in
+`UV Express - Office to House` is not a word -- tested with `\p{L}`/`\p{N}` and not `a-z0-9`, or
+`Piñata` loses half of itself and `e-load` becomes two words a bare `load` then contains.
 
-Sorting is **gated**, and the first attempt here was wrong in a way worth recording. Order is noise
-in a conjunction and the whole meaning in a direction, and sorting every description made
-`Office to House` and `House to Office` one group. That is not a cosmetic merge: six 38 trips out
-and three 80 trips back become nine rows whose modal amount is 38 at a 67% share, which clears
-`FREQUENT_STABLE_SHARE`, while `description` is the most recent spelling -- so the tile read
-`House to Office` and one-tapped 38. A wrong fare, written with no confirmation, by the grouping
-step, in the same change whose whole argument was that a wrong merge must never reach a write.
+**Word order is not sorted away, and the two attempts to sort it are the part worth recording.**
+Sorting is the obvious way to collapse `uv & jeep` and `jeep & uv`. It was tried twice and merged a
+*direction* both times: unconditionally it merged `Office to House` with `House to Office`, and
+gated on a conjunction it merged `Office & House fare` with `House & Office fare`, which carries no
+preposition to notice.
 
-So sorting now needs **positive evidence of commutativity** -- an explicit `&`/`and` -- and is
-withheld whenever a whole-word `to`/`from` appears; both conditions are required, so
-`uv and jeep to office` is left alone. Presence-based rather than absence-based, because a rule
-that sorts unless it recognises a preposition fails open on every preposition nobody thought of,
-where this one fails closed and merely leaves two variants unmerged -- the cost this change set out
-to reduce, not a wrong row.
+Neither is cosmetic. Six 38 trips out and three 80 trips back become nine rows whose modal amount is
+38 at a 67% share, which clears `FREQUENT_STABLE_SHARE`, while `description` is the most recent
+spelling -- so the tile reads as the *return* trip and one-taps the *outbound* fare. A wrong fare,
+written with no confirmation, by the grouping step, in the very change whose argument was that a
+wrong merge must never reach a write. The suppression rule was reasoned about carefully and the
+grouping rule was not.
 
-`containsEitherWay` needed the same guard. Gating the sort alone was not enough, because
-suppression compares token *sets* and `{office, to, house}` equals `{house, to, office}`: the two
-directions survived grouping and were collapsed there instead. Equal-sized sets are therefore never
-a duplicate.
+The lesson is that **commutativity cannot be read off the text**. `&` joins two things; whether
+their order carries meaning is semantics no token test can see, and each guess was breached by a
+phrasing the previous one had not considered. A third heuristic would have been a third guess, so
+sorting is gone instead.
+
+Nothing was lost by removing it: on the real ledger the output is identical either way, because
+`containsEitherWay` already suppresses both variants under the `uv express & jeep fare` that
+contains them -- containment does the work without ever deciding whether order carries meaning. The
+residual gap is that two *bare* order-variants with no containing superset each keep a slot. That
+costs a slot on a grid, where the merge cost a fare in the ledger, and this module already prefers
+the visible mistake to the silent one.
+
+`containsEitherWay` needs its own guard for the same reason: it compares token *sets*, and
+`{office, to, house}` equals `{house, to, office}`, so two directions would be collapsed at
+suppression even with grouping order-aware. Equal-sized sets are therefore never a duplicate.
 
 **Containment suppression** after ranking, and **before** the cap, so a suppressed variant hands
 its slot to the next real habit instead of leaving a hole. Both directions, because ranking is by

@@ -259,17 +259,31 @@ describe("deriveFrequentTiles: selection", () => {
 });
 
 describe("deriveFrequentTiles: one habit, one slot (#268)", () => {
-  it("groups the same words written in a different order", () => {
-    // The tell on real data: `uv & jeep` and `jeep & uv` are not different words, only a different
-    // order, and unsorted they held two of six slots. Neither spelling clears the threshold alone.
+  it("deduplicates order variants through the superset that contains them", () => {
+    // How the real ledger's three spellings of one commute collapse, now that sorting is gone.
+    // `uv & jeep` and `jeep & uv` are each contained by `uv express & jeep fare`, so containment
+    // does the work the sorted key was added for -- and does it without ever having to decide
+    // whether word order carries meaning.
     const tiles = deriveFrequentTiles([
-      row({ description: "UV & Jeep", date: day(1), amount: 38 }),
-      row({ description: "Jeep & UV", date: day(2), amount: 38 }),
-      row({ description: "uv & jeep", date: day(3), amount: 38 }),
+      ...repeat(9, { description: "UV Express & Jeep fare", amount: 38 }),
+      ...repeat(6, { description: "UV & Jeep", amount: 38 }),
+      ...repeat(3, { description: "Jeep & UV", amount: 38 }),
     ]);
 
-    expect(tiles).toHaveLength(1);
-    expect(tiles[0].count).toBe(3);
+    expect(tiles.map((t) => t.description)).toEqual(["UV Express & Jeep fare"]);
+  });
+
+  it("leaves two bare order variants each holding a slot", () => {
+    // The accepted residual, pinned so it is a recorded limit rather than a surprise. With no
+    // containing superset there is nothing to suppress them under, and the alternative -- deciding
+    // they are the same by sorting -- is what merged two fares twice. A duplicate button costs a
+    // slot on the grid; that merge cost a wrong fare in the ledger.
+    const tiles = deriveFrequentTiles([
+      ...repeat(4, { description: "UV & Jeep", amount: 38 }),
+      ...repeat(3, { description: "Jeep & UV", amount: 38 }),
+    ]);
+
+    expect(tiles.map((t) => t.description)).toEqual(["UV & Jeep", "Jeep & UV"]);
   });
 
   it("gives the slot to whichever variant is logged more, and keeps its count honest", () => {
@@ -430,16 +444,25 @@ describe("deriveFrequentTiles: one habit, one slot (#268)", () => {
     expect(tiles.map((t) => t.description)).toEqual(["Astra to Mirea", "Mirea to Astra"]);
   });
 
-  it("needs a conjunction and no preposition before it will sort", () => {
-    // Both conditions, so a description carrying each is left alone. Presence-based rather than
-    // absence-based: a rule that sorts unless it recognises a preposition fails open on every
-    // preposition nobody thought of.
+  it("never merges a direction written with a conjunction instead of a preposition", () => {
+    // The second review round's P1, and the reason sorting was removed rather than gated harder.
+    // `Office & House fare` carries no `to`/`from`, so a rule that sorted "across a conjunction"
+    // treated it as commutative and merged it with `House & Office fare` -- nine rows, modal 38 at
+    // a 67% share, captioned as the return trip and one-tapping the outbound fare. Commutativity
+    // is not readable from the text, so it is no longer guessed at.
     const tiles = deriveFrequentTiles([
-      ...repeat(3, { description: "uv and jeep to office", amount: 38 }),
-      ...repeat(3, { description: "office to jeep and uv", amount: 95 }),
+      ...[1, 2, 3, 4, 5, 6].map((d) =>
+        row({ description: "Office & House fare", amount: 38, date: day(d) })
+      ),
+      ...[7, 8, 9].map((d) =>
+        row({ description: "House & Office fare", amount: 80, date: day(d) })
+      ),
     ]);
 
-    expect(tiles).toHaveLength(2);
+    expect(tiles).toEqual([
+      expect.objectContaining({ description: "Office & House fare", amount: 38, count: 6 }),
+      expect.objectContaining({ description: "House & Office fare", amount: 80, count: 3 }),
+    ]);
   });
 
   it("leaves two habits that merely share a word alone", () => {

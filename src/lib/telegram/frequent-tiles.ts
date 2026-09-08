@@ -41,69 +41,47 @@ export const FREQUENT_LIMIT = 6;
 export const FREQUENT_STABLE_SHARE = 0.6;
 
 /**
- * The grouping key: `foldDescription` plus word order.
+ * The grouping key: `foldDescription`, tokenised, **in the order written**.
  *
  * `foldDescription` is an exact match once case, typographic apostrophes and repeated whitespace
  * are normalised, and that is all it is meant to be -- #250 and #252 stretched it to apostrophes
  * and deliberately stopped there. It is also imported by `assessment-facts.ts`, where it drives
- * duplicate detection, recurring-charge creep and income concentration, so it **must not** learn
- * this rule: sorting its tokens would make `Mirea Rent` and `Rent Mirea` one charge in the
- * assessment and silently move a financial finding.
+ * duplicate detection, recurring-charge creep and income concentration, so it must not learn
+ * anything about this surface. The key lives here, under its own name, built on top of that rule
+ * rather than beside it: AGENTS.md warns against a second copy of the *same* folding rule, and this
+ * is a different one.
  *
- * So the stronger key lives here, under its own name, for a surface where a false merge costs a
- * button rather than a number in a report. AGENTS.md warns against a second copy of the *same*
- * folding rule; this is a deliberately different one, built on top of that one rather than beside
- * it.
+ * **Word order is preserved, and two review rounds are the reason.** Sorting the tokens is the
+ * obvious way to collapse `uv & jeep` and `jeep & uv`, and it was tried twice:
  *
- * Sorting the tokens is what collapses `uv & jeep` and `jeep & uv` -- three variants of one
- * commute held three of six slots on real data (#268), and those two are not even different
- * words. Still nothing fuzzy: no edit distance and no similarity score, for the reason
- * `caption-labels.ts` refuses them.
+ *  1. Sorting unconditionally merged `Office to House` with `House to Office`.
+ *  2. Sorting only across a conjunction merged `Office & House fare` with `House & Office fare`.
  *
- * **But order is only noise in a conjunction; in a direction it is the whole meaning.** Sorting
- * every description made `Office to House` and `House to Office` one group, and that is not a
- * cosmetic merge -- it is a wrong fare written with no confirmation. Six 38 trips one way and three
- * 80 trips back merge to nine rows whose modal amount is 38 at a 67% share, which clears
- * `FREQUENT_STABLE_SHARE`, while `description` is the most recent spelling. The tile then reads
- * `House to Office` and one-taps 38. That is exactly the silent wrongness `deriveFrequentTiles`
- * argues against for merging, committed by the grouping step instead.
+ * Neither is a cosmetic merge. Six 38 trips out and three 80 trips back become nine rows whose
+ * modal amount is 38 at a 67% share, which clears `FREQUENT_STABLE_SHARE`, while `description` is
+ * the most recent spelling -- so the tile reads as the *return* trip and one-taps the *outbound*
+ * fare. A wrong fare, written with no confirmation, which is precisely what
+ * `deriveFrequentTiles` refuses to let a merge do.
  *
- * So sorting is gated on positive evidence of commutativity -- an explicit conjunction -- and
- * withheld whenever a directional preposition appears. Presence-based rather than absence-based on
- * purpose: a rule that sorts unless it recognises a preposition fails open on every preposition
- * nobody thought of, where this one fails closed and merely leaves two variants unmerged, which is
- * the cost `#268` set out to reduce rather than a wrong row. Both conditions are required, so
- * `uv and jeep to office` is left alone.
+ * The lesson is that **commutativity cannot be read off the text**. `&` joins two things; whether
+ * their order carries meaning is semantics no token test can see, and each attempt to guess it was
+ * breached by a phrasing the previous one had not considered. A third heuristic would be a third
+ * guess.
+ *
+ * So sorting is gone, and nothing is lost that was actually being gained: on the real ledger the
+ * output is identical either way, because `containsEitherWay` already suppresses `uv & jeep` and
+ * `jeep & uv` under the `uv express & jeep fare` that contains both. What remains is a narrower
+ * gap -- two bare order-variants with no containing superset each keep a slot -- and that costs a
+ * slot on a grid, where the merge cost a fare in the ledger. Those are not comparable, and this
+ * module already picks the visible mistake over the silent one.
  *
  * `&` is a separator rather than a token because it is punctuation people type inconsistently in
- * exactly the descriptions this exists for. `UV & Jeep` and `UV and Jeep` therefore still do not
- * merge -- `&` is gone from the tokens while `and` survives as one -- which is a real gap and
- * deliberately not closed here: dropping `and` as a stopword would also cut `S&R` down to two
- * one-letter tokens.
+ * exactly the descriptions this exists for. `UV & Jeep` and `UV and Jeep` therefore do not merge --
+ * `&` is gone from the tokens while `and` survives as one -- a real gap and deliberately not closed:
+ * dropping `and` as a stopword would also cut `S&R` down to two one-letter tokens.
  */
-export const frequentKey = (description: string): string => {
-  const folded = foldDescription(description);
-  const tokens = tokensOf(folded);
-
-  return (isCommutative(folded) ? [...tokens].sort() : tokens).join(" ");
-};
-
-/**
- * Whether word order in this description carries no meaning.
- *
- * An explicit conjunction and no directional preposition. Deliberately narrow, the way the receipt
- * year repair is narrow: it answers yes only for the shape that motivated it.
- *
- * `to`/`from` are matched as whole words, so `Tokyo` and `Fromage` are not prepositions. The list
- * is English-only, which matches every description observed here; a Tagalog `papunta` would want
- * adding rather than guessing at now, and failing closed means an unrecognised one leaves a group
- * unmerged instead of merging two directions.
- */
-const COMMUTATIVE_CONJUNCTION = /(?:&|\band\b)/;
-const DIRECTIONAL_PREPOSITION = /\b(?:to|from)\b/;
-
-const isCommutative = (folded: string): boolean =>
-  COMMUTATIVE_CONJUNCTION.test(folded) && !DIRECTIONAL_PREPOSITION.test(folded);
+export const frequentKey = (description: string): string =>
+  tokensOf(foldDescription(description)).join(" ");
 
 /**
  * The words of an already-folded description. Split on `&` as well as whitespace.
