@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowDown, ArrowUp, Loader2, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   deleteTile,
   patchTile,
@@ -45,7 +45,8 @@ export function TileEditor({
 }: TileEditorProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<TileInput | null>(null);
+  /** `id` present means this is an edit of an existing tile; absent means a new one. */
+  const [draft, setDraft] = useState<(TileInput & { id?: string }) | null>(null);
 
   useMainButton(webApp, {
     text: "Done",
@@ -54,15 +55,24 @@ export function TileEditor({
     onClick: onDone,
   });
 
-  /** Every mutation goes through here, so the failure and refresh handling cannot drift. */
-  const run = async (action: () => Promise<unknown>) => {
+  /**
+   * Every mutation goes through here, so the failure and refresh handling cannot drift.
+   *
+   * Returns whether it worked. Callers need that: closing a form unconditionally after `await`
+   * throws the user's typed values away on a failure that is often theirs to correct -- a
+   * duplicate label, most obviously -- leaving an error message about a form that is no longer
+   * on screen.
+   */
+  const run = async (action: () => Promise<unknown>): Promise<boolean> => {
     setBusy(true);
     setError(null);
     try {
       await action();
       onChanged();
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "That did not work.");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -80,17 +90,29 @@ export function TileEditor({
   };
 
   if (draft) {
+    const { id, ...values } = draft;
     return (
       <TileForm
+        // Keyed so opening a different tile remounts the form rather than carrying the previous
+        // entry's raw amount string across.
+        key={id ?? "new"}
         categories={categories}
-        draft={draft}
+        draft={values}
+        editing={id !== undefined}
         busy={busy}
         error={error}
-        onChange={setDraft}
-        onCancel={() => setDraft(null)}
-        onSave={async () => {
-          await run(() => postTile(initData, draft));
+        onChange={(next) => setDraft({ ...next, ...(id ? { id } : {}) })}
+        onCancel={() => {
+          setError(null);
           setDraft(null);
+        }}
+        onSave={async () => {
+          const ok = await run(() =>
+            id ? patchTile(initData, id, values) : postTile(initData, values)
+          );
+          // Closed only on success. A duplicate label is the common failure here and it is the
+          // user's to correct, so the form and everything typed into it stays put.
+          if (ok) setDraft(null);
         }}
       />
     );
@@ -142,6 +164,24 @@ export function TileEditor({
             </button>
             <button
               type="button"
+              aria-label={`Edit ${tile.label}`}
+              disabled={busy}
+              onClick={() =>
+                setDraft({
+                  id: tile.id,
+                  label: tile.label,
+                  description: tile.description,
+                  amount: tile.amount,
+                  type: tile.type,
+                  categoryId: tile.categoryId,
+                })
+              }
+              className="flex h-11 w-11 items-center justify-center rounded-xl text-warm-500 active:bg-cream-200 disabled:opacity-30"
+            >
+              <Pencil className="h-4 w-4" aria-hidden />
+            </button>
+            <button
+              type="button"
               aria-label={`Delete ${tile.label}`}
               disabled={busy}
               onClick={() => void run(() => deleteTile(initData, tile.id))}
@@ -188,6 +228,7 @@ export function TileEditor({
 interface TileFormProps {
   categories: TgCategory[];
   draft: TileInput;
+  editing: boolean;
   busy: boolean;
   error: string | null;
   onChange: (draft: TileInput) => void;
@@ -195,13 +236,18 @@ interface TileFormProps {
   onSave: () => void;
 }
 
-function TileForm({ categories, draft, busy, error, onChange, onCancel, onSave }: TileFormProps) {
+function TileForm({ categories, draft, editing, busy, error, onChange, onCancel, onSave }: TileFormProps) {
   const usable = categories.filter((c) => c.type === draft.type);
   const ready = draft.label.trim().length > 0 && draft.description.trim().length > 0;
+  // Seeded once from the draft, then owned by the field. Keyed by the form's identity upstream, so
+  // opening a different tile remounts rather than carrying the previous entry over.
+  const [rawAmount, setRawAmount] = useState(draft.amount === null ? "" : String(draft.amount));
 
   return (
     <div className="space-y-3 p-4">
-      <h1 className="font-display text-lg font-semibold text-warm-800">New button</h1>
+      <h1 className="font-display text-lg font-semibold text-warm-800">
+        {editing ? "Edit button" : "New button"}
+      </h1>
 
       {error ? (
         <p className="rounded-xl border border-expense-light bg-expense-light/40 p-3 text-sm text-expense-dark">
@@ -229,16 +275,21 @@ function TileForm({ categories, draft, busy, error, onChange, onCancel, onSave }
 
       <Field label="Amount" hint="Leave empty to ask each time.">
         <input
-          value={draft.amount ?? ""}
+          // The *typed* string, not a re-derivation of the parsed number. Rendering
+          // `draft.amount` here ate the decimal point as it was typed: "38." parses to 38, which
+          // renders as "38", and the separator could never be entered at all. Same reason the
+          // numeric pad holds its entry as a string.
+          value={rawAmount}
           inputMode="decimal"
           onChange={(e) => {
-            const raw = e.target.value.trim();
-            const parsed = Number(raw);
+            const raw = e.target.value;
+            setRawAmount(raw);
+            const parsed = Number(raw.trim());
             // Empty is a real value here: it means the button opens the pad. `Number("")` is 0,
             // which would be a fixed zero-amount button instead.
             onChange({
               ...draft,
-              amount: raw === "" || !Number.isFinite(parsed) || parsed <= 0 ? null : parsed,
+              amount: raw.trim() === "" || !Number.isFinite(parsed) || parsed <= 0 ? null : parsed,
             });
           }}
           className="w-full rounded-xl border border-warm-200 px-3 py-2 text-sm"

@@ -16,6 +16,7 @@ import {
   clearPendingLog,
   newBatchId,
   readPendingLog,
+  scopeOf,
   writePendingLog,
   type PendingLog,
 } from "@/components/telegram/pending-log";
@@ -74,7 +75,7 @@ export function TelegramApp() {
 
   useEffect(() => {
     if (!initData) return;
-    setPending(readPendingLog());
+    setPending(readPendingLog(scopeOf(initData)));
     load(initData);
   }, [initData, load]);
 
@@ -95,12 +96,20 @@ export function TelegramApp() {
     async (input: Omit<LogInput, "clientBatchId">, replayKey?: string) => {
       if (!initData) return;
 
+      // A new tap is refused while an earlier one is unresolved, because there is one pin and a
+      // second write would take it. Losing it means the first entry can never be replayed: if it
+      // did commit, nothing says so; if it did not, the entry is gone and the user was last told
+      // it "may not have saved". Settling one at a time is the only honest order, and the grid is
+      // disabled to match so the refusal is never something the user has to discover.
+      if (pending && !replayKey) return;
+
       const clientBatchId = replayKey ?? newBatchId();
       const record: PendingLog = {
         clientBatchId,
         description: input.description,
         amount: input.amount,
         type: input.type ?? "EXPENSE",
+        scope: scopeOf(initData),
         ...(input.tileId ? { tileId: input.tileId } : {}),
         ...(input.categoryId ? { categoryId: input.categoryId } : {}),
       };
@@ -138,7 +147,7 @@ export function TelegramApp() {
         setBusy(false);
       }
     },
-    [initData, load, settled]
+    [initData, load, settled, pending]
   );
 
   const openTile = (tile: TileView) => {
@@ -227,6 +236,9 @@ export function TelegramApp() {
         currency={data.user.currency}
         initial={screen.initial}
         busy={busy}
+        // A submit from the pad that fails leaves the pad on screen, so the message has to be
+        // rendered here too. Without it the button simply re-enabled and nothing said why.
+        failure={failure}
         onSubmit={(amount) => void submit({ ...screen.input, amount })}
       />
     );
@@ -259,7 +271,7 @@ export function TelegramApp() {
         tiles={data.tiles}
         frequent={data.frequent}
         currency={data.user.currency}
-        busy={busy}
+        busy={busy || pending !== null}
         onTile={openTile}
         onFrequent={openFrequent}
         onEdit={() => setScreen({ name: "editor" })}

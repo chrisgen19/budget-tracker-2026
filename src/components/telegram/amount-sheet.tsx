@@ -23,6 +23,8 @@ interface AmountSheetProps {
   /** Prefilled for a Frequent entry whose amount is not stable enough to log on one tap. */
   initial?: number | null;
   busy: boolean;
+  /** A failed submit keeps the pad on screen, so the reason has to be visible here. */
+  failure?: string | null;
   onSubmit: (amount: number) => void;
 }
 
@@ -32,6 +34,7 @@ export function AmountSheet({
   currency,
   initial,
   busy,
+  failure,
   onSubmit,
 }: AmountSheetProps) {
   const [entry, setEntry] = useState(initial != null ? String(initial) : "");
@@ -58,6 +61,12 @@ export function AmountSheet({
   return (
     <div className="flex min-h-[var(--tg-vh,100dvh)] flex-col p-4">
       <p className="text-sm text-warm-600">{title}</p>
+
+      {failure ? (
+        <p className="mt-2 rounded-xl border border-expense-light bg-expense-light/40 p-3 text-sm text-expense-dark">
+          {failure}
+        </p>
+      ) : null}
 
       <div className="flex flex-1 items-center justify-center py-6">
         <p className="font-display text-5xl font-semibold tabular-nums text-warm-800">

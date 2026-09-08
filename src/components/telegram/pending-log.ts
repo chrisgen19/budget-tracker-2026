@@ -20,7 +20,39 @@ export interface PendingLog {
   tileId?: string;
   categoryId?: string;
   type: "EXPENSE" | "INCOME";
+  /**
+   * Which Telegram account this record belongs to.
+   *
+   * `sessionStorage` is per-origin, not per-person, and Telegram Desktop and Web both let one
+   * browser profile hold several accounts. Without this, a record left by one account is restored
+   * for the next: the retry sends *their* key with *this* account's credential, `findSavedBatch`
+   * scopes to the wrong user and finds nothing, and the batch is written fresh -- so the second
+   * account gets a transaction carrying the first one's description and amount.
+   *
+   * Not a security control; the server decides who anybody is. This only answers "is the person
+   * looking at this the person who left it", which is exactly what a local draft needs to know.
+   */
+  scope: string;
 }
+
+/**
+ * A stable tag for the account a credential belongs to.
+ *
+ * Read out of the raw `initData` query string rather than a parsed SDK object, because the raw
+ * string is what the page holds. Untrusted by construction and that is fine: it is compared only
+ * against another value from the same source, never believed about identity.
+ */
+export const scopeOf = (initData: string): string => {
+  try {
+    const user = new URLSearchParams(initData).get("user");
+    if (!user) return "anonymous";
+    const parsed: unknown = JSON.parse(user);
+    const id = (parsed as { id?: unknown })?.id;
+    return typeof id === "number" || typeof id === "string" ? String(id) : "anonymous";
+  } catch {
+    return "anonymous";
+  }
+};
 
 /**
  * Every access is wrapped: `sessionStorage` throws outright in some contexts (a webview with site
@@ -35,7 +67,7 @@ const safely = <T>(fn: () => T, fallback: T): T => {
   }
 };
 
-export const readPendingLog = (): PendingLog | null =>
+export const readPendingLog = (scope: string): PendingLog | null =>
   safely(() => {
     const raw = window.sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
@@ -56,11 +88,17 @@ export const readPendingLog = (): PendingLog | null =>
       return null;
     }
 
+    // Somebody else's draft, or one written before records carried a scope. Ignored rather than
+    // offered: retrying it would send their key with this account's credential, which writes their
+    // amount and description into this ledger.
+    if (candidate.scope !== scope) return null;
+
     return {
       clientBatchId: candidate.clientBatchId,
       description: candidate.description,
       amount: candidate.amount,
       type: candidate.type === "INCOME" ? "INCOME" : "EXPENSE",
+      scope,
       ...(typeof candidate.tileId === "string" ? { tileId: candidate.tileId } : {}),
       ...(typeof candidate.categoryId === "string" ? { categoryId: candidate.categoryId } : {}),
     };

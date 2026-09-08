@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 /**
  * The Telegram WebApp SDK, feature-detected and made safe to call.
@@ -128,7 +128,12 @@ export const useMainButton = (
 ): void => {
   const { text, visible, enabled, onClick } = options;
   const handler = useRef(onClick);
-  handler.current = onClick;
+  // Updated after commit, never during render. Telegram holds the listener and fires it from
+  // outside React, so a handler swapped in by a render React then abandons would still be the one
+  // invoked -- submitting an amount, or a busy state, that is not on screen.
+  useLayoutEffect(() => {
+    handler.current = onClick;
+  });
 
   useEffect(() => {
     const button = webApp?.MainButton;
@@ -173,7 +178,9 @@ export const useBackButton = (
 ): void => {
   const { visible, onClick } = options;
   const handler = useRef(onClick);
-  handler.current = onClick;
+  useLayoutEffect(() => {
+    handler.current = onClick;
+  });
 
   useEffect(() => {
     const button = webApp?.BackButton;

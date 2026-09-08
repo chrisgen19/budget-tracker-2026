@@ -72,6 +72,12 @@ const BOOTSTRAP = {
   limits: { maxTiles: 12 },
 };
 
+/** A credential shaped like a real one, so `scopeOf` resolves an account rather than "anonymous". */
+const STUB_USER_ID = "42424242";
+const STUB_INIT_DATA = `auth_date=1&user=${encodeURIComponent(
+  JSON.stringify({ id: Number(STUB_USER_ID) })
+)}&hash=x`;
+
 const logResult = (over: Record<string, unknown> = {}) => ({
   id: "tx_1",
   amount: 38,
@@ -104,7 +110,7 @@ const stubTelegram = () => {
 
   window.Telegram = {
     WebApp: {
-      initData: "auth_date=1&hash=x",
+      initData: STUB_INIT_DATA,
       version: "7.0",
       colorScheme: "light",
       viewportHeight: 600,
@@ -303,6 +309,7 @@ describe("TelegramApp: an unsettled write", () => {
         description: "fare to office",
         amount: 38,
         type: "EXPENSE",
+        scope: STUB_USER_ID,
       })
     );
     stubTelegram();
@@ -310,6 +317,30 @@ describe("TelegramApp: an unsettled write", () => {
 
     expect(await screen.findByText("That last one may not have saved")).toBeTruthy();
     expect(mocks.postLog).not.toHaveBeenCalled();
+  });
+
+  it("refuses a new tap while one is unresolved, rather than taking the pin", async () => {
+    // There is one pin. A second write would overwrite it, and losing it means the first entry can
+    // never be replayed: if it committed, nothing says so; if it did not, it is gone and the user
+    // was last told it "may not have saved".
+    stubTelegram();
+    mocks.postLog.mockRejectedValue(new TgRequestError("Server error", 500));
+    render(<TelegramApp />);
+
+    fireEvent.click(await screen.findByText("To office"));
+    await screen.findByText("That last one may not have saved");
+
+    // Two mechanisms hold this and each one holds it alone: the grid is disabled while a pin is
+    // outstanding, and `submit` refuses a non-replay anyway. Confirmed by removing them one at a
+    // time -- this still passes -- and both together, which fails. Defence in depth rather than
+    // redundancy, because the grid is not the only caller of `submit`.
+    const pinnedKey = mocks.postLog.mock.calls.at(-1)![1].clientBatchId;
+    fireEvent.click(screen.getByText("grab"));
+
+    // Still one attempt, and the stored record is still the first one's.
+    expect(mocks.postLog).toHaveBeenCalledTimes(1);
+    const stored = JSON.parse(window.sessionStorage.getItem("tg:pending-log")!);
+    expect(stored.clientBatchId).toBe(pinnedKey);
   });
 
   it("clears the pin once a write lands", async () => {
