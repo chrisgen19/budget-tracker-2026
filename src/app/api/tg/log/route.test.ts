@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   tileFindFirst: vi.fn(),
   categoryFindMany: vi.fn(),
   createTransactionBatch: vi.fn(),
+  findSavedBatch: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -17,6 +18,7 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/transaction-writes", () => ({
   createTransactionBatch: mocks.createTransactionBatch,
+  findSavedBatch: mocks.findSavedBatch,
 }));
 
 import { POST } from "@/app/api/tg/log/route";
@@ -70,6 +72,7 @@ beforeEach(() => {
   mocks.userFindUnique.mockResolvedValue({ id: "user_1" });
   mocks.categoryFindMany.mockResolvedValue(CATEGORIES);
   mocks.tileFindFirst.mockResolvedValue(null);
+  mocks.findSavedBatch.mockResolvedValue([]);
   mocks.createTransactionBatch.mockResolvedValue({
     ok: true,
     replayed: false,
@@ -175,6 +178,72 @@ describe("POST /api/tg/log: the write", () => {
     });
 
     expect((await post(validBody())).status).toBe(500);
+  });
+});
+
+describe("POST /api/tg/log: a replay is not judged on references it never uses", () => {
+  /** What `findSavedBatch` returns for a batch that already committed. */
+  const saved = [
+    {
+      id: "tx_original",
+      amount: 38,
+      description: "fare to office",
+      category: { name: "Transportation" },
+      labels: [{ label: { name: "Work" } }],
+    },
+  ];
+
+  it("returns the saved batch even when the tile it names is gone", async () => {
+    // The failure this prevents: the first write commits, its response is lost, and the tile is
+    // deleted before the retry. Resolving the tile first would 404 a batch that is already saved,
+    // the client would read that 4xx as proof nothing was written, drop its idempotency pin, and
+    // a corrected resubmit under a fresh key would duplicate a real transaction.
+    mocks.findSavedBatch.mockResolvedValue(saved);
+    mocks.tileFindFirst.mockResolvedValue(null);
+
+    const res = await post(validBody({ tileId: "since_deleted" }));
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).id).toBe("tx_original");
+    expect(mocks.createTransactionBatch).not.toHaveBeenCalled();
+  });
+
+  it("returns the saved batch even when no category can be resolved", async () => {
+    // Same rule, the other 4xx this route can raise before writing.
+    mocks.findSavedBatch.mockResolvedValue(saved);
+    mocks.categoryFindMany.mockResolvedValue([]);
+
+    const res = await post(validBody({ description: "misc thing" }));
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).replayed).toBe(true);
+  });
+
+  it("reports the category the row actually carries, and admits it cannot say how", async () => {
+    // `categoryVia` describes a decision made on the original request, which this one did not
+    // make. Re-deriving it could disagree with what was really written, so the stored name is
+    // reported and the inference is left null rather than guessed at.
+    mocks.findSavedBatch.mockResolvedValue(saved);
+
+    const body = await (await post(validBody())).json();
+
+    expect(body.categoryName).toBe("Transportation");
+    expect(body.categoryVia).toBeNull();
+  });
+
+  it("looks the key up before touching anything mutable", async () => {
+    mocks.findSavedBatch.mockResolvedValue(saved);
+
+    await post(validBody({ tileId: "tile_1" }));
+
+    expect(mocks.tileFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("falls through to a normal write when the key matches nothing", async () => {
+    mocks.findSavedBatch.mockResolvedValue([]);
+
+    expect((await post(validBody())).status).toBe(201);
+    expect(mocks.createTransactionBatch).toHaveBeenCalled();
   });
 });
 

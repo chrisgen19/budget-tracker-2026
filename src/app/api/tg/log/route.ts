@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { createTransactionBatch } from "@/lib/transaction-writes";
-import { telegramQuickLogSchema } from "@/lib/validations";
+import {
+  createTransactionBatch,
+  findSavedBatch,
+  type TransactionWithRelations,
+} from "@/lib/transaction-writes";
+import { clientBatchIdSchema, telegramQuickLogSchema } from "@/lib/validations";
 import { getTelegramUserId } from "@/lib/telegram/require-telegram-user";
 import { resolveTileCategory } from "@/lib/telegram/quick-tiles";
 import { listTileCategories } from "@/lib/telegram/tile-queries";
@@ -20,6 +24,24 @@ import { listTileCategories } from "@/lib/telegram/tile-queries";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/**
+ * What a confirmation says about a row that was already written.
+ *
+ * `categoryVia` is null rather than re-derived. It describes a decision the *original* request
+ * made, and this one did not make it: resolving again could disagree with what was actually
+ * stored, which would be a confident answer about an inference that never happened. The category
+ * *name* comes off the row and is the truth either way, which is what the confirmation is for.
+ */
+const replayResponse = (transaction: TransactionWithRelations) => ({
+  id: transaction.id,
+  amount: transaction.amount,
+  description: transaction.description,
+  categoryName: transaction.category.name,
+  categoryVia: null,
+  labels: transaction.labels.map((l) => l.label.name),
+  replayed: true,
+});
+
 export async function POST(request: Request) {
   const userId = await getTelegramUserId(request);
   if (userId instanceof NextResponse) return userId;
@@ -29,6 +51,31 @@ export async function POST(request: Request) {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  // A replay creates nothing, so it must not be judged on references it will never use.
+  //
+  // Tiles and categories are mutable. If the first write committed but its response was lost, and
+  // the tile was deleted before the retry, resolving it first would 404 a batch that is already
+  // saved -- and the client reads a 4xx as proof nothing was written, drops its idempotency pin,
+  // and a corrected resubmit under a fresh key duplicates a real transaction. `transaction-writes`
+  // states the rule and `POST /api/transactions/batch` guards it the same way; this route has the
+  // same two 4xx branches ahead of its write, so it needs the same guard.
+  //
+  // Read off the raw body ahead of `safeParse` for the same reason the batch route does: any later
+  // tightening of the payload schema would otherwise reject a replay of a batch accepted under the
+  // previous one, which is the identical failure a step further out. A key that is absent or
+  // malformed cannot match anything and simply falls through to normal validation. The
+  // authoritative dedupe still happens under the advisory lock inside `createTransactionBatch`;
+  // this is that check without the preconditions, not a replacement for it.
+  const providedKey = clientBatchIdSchema.safeParse(
+    (body as { clientBatchId?: unknown } | null)?.clientBatchId
+  );
+  if (providedKey.success) {
+    const alreadySaved = await findSavedBatch(prisma, userId, providedKey.data);
+    if (alreadySaved.length > 0) {
+      return NextResponse.json(replayResponse(alreadySaved[0]), { status: 200 });
+    }
   }
 
   const parsed = telegramQuickLogSchema.safeParse(body);
@@ -113,6 +160,14 @@ export async function POST(request: Request) {
 
   const [transaction] = result.transactions;
 
+  // The pre-check above can miss a replay that the advisory-locked check inside
+  // `createTransactionBatch` then catches, which is what a genuine double submit looks like. That
+  // row was written by the other request, so this one's `resolved.via` describes a decision it
+  // made and did not apply -- reported through the same shape, and equally null.
+  if (result.replayed) {
+    return NextResponse.json(replayResponse(transaction), { status: 200 });
+  }
+
   return NextResponse.json(
     {
       id: transaction.id,
@@ -123,8 +178,8 @@ export async function POST(request: Request) {
       // where the row landed, and the confirmation is the only place the user sees the difference.
       categoryVia: resolved.via,
       labels: transaction.labels.map((l) => l.label.name),
-      replayed: result.replayed,
+      replayed: false,
     },
-    { status: result.replayed ? 200 : 201 }
+    { status: 201 }
   );
 }

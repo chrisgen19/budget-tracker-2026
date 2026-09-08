@@ -206,6 +206,56 @@ async function main() {
     check("it returns the original row", replayed.id === first.id);
     check("and writes nothing", count === 1, `${count} rows`);
 
+    // --- a replay survives the tile disappearing -----------------------------------------
+    // The scenario the idempotency key exists for, with the one twist that used to break it: the
+    // write commits, its response is lost, and the tile is deleted before the retry. Resolving the
+    // tile first would 404 a batch that is already saved, the client would read that 4xx as proof
+    // nothing was written and drop its pin, and the next submission would duplicate a real
+    // transaction. Needs a real database, since it turns on what is actually stored.
+    const doomed = await (
+      await call("/api/tg/tiles", {
+        method: "POST",
+        body: JSON.stringify({
+          label: "Verify doomed",
+          description: "fare to office",
+          amount: 55,
+          type: "EXPENSE",
+          categoryId: category.id,
+        }),
+      })
+    ).json();
+
+    const doomedKey = randomUUID();
+    const firstWrite = await call("/api/tg/log", {
+      method: "POST",
+      body: JSON.stringify({
+        tileId: doomed.tile.id,
+        description: "x",
+        amount: 55,
+        clientBatchId: doomedKey,
+      }),
+    });
+    const doomedRow = await firstWrite.json();
+    check("a tap on the doomed tile writes", firstWrite.status === 201);
+
+    await call(`/api/tg/tiles/${doomed.tile.id}`, { method: "DELETE" });
+
+    const afterDelete = await call("/api/tg/log", {
+      method: "POST",
+      body: JSON.stringify({
+        tileId: doomed.tile.id,
+        description: "x",
+        amount: 55,
+        clientBatchId: doomedKey,
+      }),
+    });
+    const replayedRow = await afterDelete.json();
+    const total = await prisma.transaction.count({ where: { userId: user.id } });
+
+    check("a replay naming a deleted tile is not a 404", afterDelete.status === 200, String(afterDelete.status));
+    check("it returns the original row", replayedRow.id === doomedRow.id);
+    check("and writes no second transaction", total === 2, `${total} rows`);
+
     // --- ownership -----------------------------------------------------------------------
     const foreign = await prisma.telegramQuickTile.create({
       data: {
