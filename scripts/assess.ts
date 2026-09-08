@@ -53,14 +53,19 @@ const resolveUser = async () => {
   return busiest;
 };
 
-const printConfidence = (f: AssessmentFacts) => {
+const printConfidence = (f: AssessmentFacts, currency: string) => {
   h1("1. DATA CONFIDENCE");
   console.log("    Months below 60% coverage are excluded from every rate, average and trend.");
   console.log("    A month with no rows at all still appears, at 0%.\n");
-  console.log("  month     txns  logged  coverage  status");
+  // Income and expenses per month are carried here rather than only in the headline
+  // total: the skill's report page draws a month-by-month cash-flow chart, and without
+  // them step 5 has to improvise the one aggregate query the skill tells it not to write.
+  console.log("  month     txns  logged  coverage  status                    income      expenses");
   for (const m of f.confidence.months) {
     const status = m.status === "ok" ? "ok" : m.status === "partial" ? "PARTIAL - current month" : "EXCLUDED - low coverage";
-    console.log(`  ${m.month}  ${String(m.transactionCount).padStart(4)}   ${String(m.daysLogged).padStart(2)}/${m.daysInMonth}    ${String(m.coveragePct).padStart(3)}%    ${status}`);
+    console.log(
+      `  ${m.month}  ${String(m.transactionCount).padStart(4)}   ${String(m.daysLogged).padStart(2)}/${m.daysInMonth}    ${String(m.coveragePct).padStart(3)}%    ${status.padEnd(23)} ${money(m.income, currency).padStart(12)}  ${money(m.expenses, currency).padStart(12)}`,
+    );
   }
   h2("gaps of 4+ days with nothing logged");
   if (f.confidence.gaps.length === 0) none();
@@ -191,7 +196,7 @@ async function main() {
   // stale snapshot answers "this month" with a confident number that is out of date.
   console.log(`  newest row written ${newest._max.createdAt ? newest._max.createdAt.toISOString().slice(0, 10) : "never"}`);
 
-  printConfidence(facts);
+  printConfidence(facts, user.currency);
   printHeadline(facts, user.currency);
   printBills(facts, user.currency);
   printTrends(facts, user.currency);

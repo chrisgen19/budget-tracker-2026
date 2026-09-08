@@ -114,9 +114,13 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
    and edit two things:
 
    - **The `REPORT` block** at the top of the `<script>` — the bill series with its
-     budgeted amount, and the cash-flow months with their coverage. That is the *only*
+     budgeted amount (section 3's second table), and the cash-flow months with their
+     income, expenses and coverage (section 1, which prints all four). That is the *only*
      numeric edit: the renderer below it computes every bar, gridline, tick and label
      from those figures. Never hand-write chart geometry, and never edit the renderer.
+     Every figure it needs is in the script's output — if you find yourself writing a
+     query to fill this block, that is a gap in `scripts/assess.ts` to close, not a query
+     to write.
    - **The prose** — headline, ledger figures, the row stacks, the spellings, the action
      block, the scope row in the masthead. This is the judgement half and gets rewritten
      each run.
@@ -125,8 +129,12 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
    assessment rather than a new artifact each month:
 
    ```
-   https://claude.ai/code/artifact/b0780155-aeab-44e9-8d84-88b5ac03f854
+   https://claude.ai/code/artifact/085dbb62-e66f-4a2e-84f9-0e5b370aabaa
    ```
+
+   If that URL ever returns "artifact not found" it has been deleted — publish a fresh one
+   and **replace the URL here in the same change**, or the next run hits the same dead end.
+   The previous URL died exactly that way and went unnoticed until a run tried to use it.
 
    Pass that as `url` (with `action: "read"` first, per the Artifact tool's update flow).
    Publish a *separate* artifact only if the user asks to keep a run for comparison.
