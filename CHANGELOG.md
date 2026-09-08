@@ -2,6 +2,51 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-08 - The app's own edits sign the audit trail (#232)
+
+#228 added `transactions.updated_via` and `updated_by_mcp_token_id` to record which surface last
+changed a row, and then only the MCP `update_transactions` tool ever wrote them. Every app path
+that edits a transaction left them exactly as they were, which makes the trail worse than missing:
+correct an amount over MCP, then fix the description in the browser, and the row still names a
+token as its last editor. That is a confidently wrong answer, and the kind you would act on during
+an incident. `updateTransactions`' own parameter doc warned against it -- "pass `null` explicitly
+from the app" -- except no app caller existed to do so.
+
+Four routes now stamp `updated_via: APP` and clear `updated_by_mcp_token_id`:
+`PUT /api/transactions/[id]`, both branches of `PATCH /api/transactions/batch`,
+`POST /api/labels/[id]/apply`, and `DELETE /api/transactions/[id]/labels/[labelId]`.
+
+Writing the columns is the easy half. The part worth the words is that each route stamps **only
+rows that actually moved**, compared against what is stored rather than against which keys the
+request carried -- the same `scalarsMoved` / `labelsMoved` rule `updateTransactions` already
+follows, for the same reason.
+
+The edit form posts all five fields on every save, so "the request named it" is true of every field
+on every edit. Opening the modal and pressing Update with nothing changed would have rewritten an
+accurate MCP trail to `APP` for an edit that never happened -- and `updatedAt` carries `@updatedAt`,
+so Prisma would bump that too and the row would go on looking freshly edited in the one column left
+that still says when. That save now writes nothing at all. Its label sync used to delete and
+recreate the same link rows on every save regardless; that is gated on the set actually differing.
+
+A bulk recategorise of forty rows where ten are already in the target category must not record an
+edit on those ten, so it stamps only the movers. The consequence is visible: `updated` on that
+response now counts rows that moved rather than rows selected, matching what the two label branches
+already reported, and the page gains the "No categories changed" toast the label branch has had.
+The label branches touch no column on `transactions` at all, so folding the stamp into an existing
+update would have missed them entirely -- they get their own `updateMany`.
+
+Where this deliberately stops: narrowing a label's type or deleting a label also removes
+associations, and those are edits to the **label**. Recording an edit on every transaction that
+referenced it would make renaming one thing look like touching hundreds.
+
+All of this shipped once inside #228 and was reverted with the rest of that PR's app-side work when
+it was scoped back to the MCP tool. Lifted from that history rather than rewritten, with the
+`PUT` left on its own implementation -- routing it through the shared service is what dragged the
+transaction form in and caused every regression there, and it is still its own change.
+
+14 tests across four files, two of which had none. Each was confirmed to fail with the fix
+reverted, the moved-check gates as well as the stamp itself.
+
 ## 2026-09-08 - updateTransactions reads under a row lock (#233)
 
 `updateTransactions` read the rows it was about to edit, checked category ownership and resolved
