@@ -89,6 +89,14 @@ const openDateTimeEditor = () => {
   fireEvent.click(screen.getByRole("button", { name: /^Date and time,/ }));
 };
 
+/**
+ * The submit button, found by type rather than by accessible name.
+ *
+ * While `isSubmitting` is true its label is a bare spinner with no text, so a name query cannot
+ * see it in precisely the state a test may need to wait out.
+ */
+const submitButton = () => document.querySelector('button[type="submit"]') as HTMLButtonElement;
+
 describe("TransactionForm account-local dates", () => {
   it("passes an absolute instant to schedule matching instead of account wall time", () => {
     render(
@@ -265,6 +273,14 @@ describe("TransactionForm account-local dates", () => {
     // error string does not change on the next submit, so only the submit count can reopen it.
     fireEvent.click(screen.getByRole("button", { name: "Add Transaction" }));
     await screen.findByText("Choose a time.");
+    // Let the submit settle completely before collapsing. react-hook-form delivers `errors` while
+    // it validates, but `submitCount` only in its final formState batch, alongside
+    // `isSubmitting: false` -- so the `findByText` above can resolve *between* those two renders.
+    // The field re-expands itself from an effect keyed on `submitCount`, so a collapse landing in
+    // that window is undone by the second render and the assertion below then burns its whole
+    // timeout. Locally the two renders batch into one flush, which is why this only ever failed
+    // on a loaded CI runner.
+    await waitFor(() => expect(submitButton().disabled).toBe(false));
     fireEvent.click(trigger);
     // Awaited, like the identical assertion below. fireEvent does not flush a
     // React state update synchronously, so asserting the class immediately is a
