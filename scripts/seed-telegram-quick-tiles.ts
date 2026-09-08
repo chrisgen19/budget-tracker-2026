@@ -33,7 +33,7 @@
  * a devDependency and may be absent from the standalone image, in which case run it locally
  * against the production DATABASE_URL.
  */
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { MAX_QUICK_TILES, resolveTileCategory, SORT_ORDER_GAP } from "../src/lib/telegram/quick-tiles";
 import type { BotCategory } from "../src/lib/telegram/category-match";
 
@@ -113,13 +113,9 @@ async function main() {
     return;
   }
 
-  let order = SORT_ORDER_GAP;
-  let created = 0;
-
-  for (const tile of TILES) {
-    // Resolved and printed rather than assumed. These descriptions are chosen to land on
-    // Transportation and Food & Dining through the real matcher, and if one ever stops doing so
-    // the run says which before writing anything.
+  // Every row is resolved and printed *before* anything is written, so a surprise is visible while
+  // it is still cancellable, and so the write below has nothing left to decide.
+  const rows = TILES.map((tile, i) => {
     const resolved = resolveTileCategory(
       { description: tile.description, type: "EXPENSE", categoryId: null },
       categories
@@ -135,33 +131,47 @@ async function main() {
     const money = tile.amount === null ? "asks" : String(tile.amount);
     console.log(`  create ${tile.label} (${money}) -> ${resolved.categoryName}`);
 
-    if (apply) {
-      await prisma.telegramQuickTile.create({
-        data: {
-          userId: user.id,
-          label: tile.label,
-          description: tile.description,
-          amount: tile.amount,
-          type: "EXPENSE",
-          // Stored explicitly rather than left null. The tile is the user's own choice from here
-          // on, and leaving it to be re-derived on every tap would let a later change to the
-          // keyword hints silently move where an existing button files.
-          categoryId: resolved.categoryId,
-          sortOrder: order,
-        },
-      });
-      created += 1;
-    }
-
-    order += SORT_ORDER_GAP;
-  }
+    return {
+      userId: user.id,
+      label: tile.label,
+      description: tile.description,
+      amount: tile.amount,
+      type: "EXPENSE" as const,
+      // Stored explicitly rather than left null. The tile is the user's own choice from here on,
+      // and leaving it to be re-derived on every tap would let a later change to the keyword hints
+      // silently move where an existing button files.
+      categoryId: resolved.categoryId,
+      sortOrder: (i + 1) * SORT_ORDER_GAP,
+    };
+  });
 
   if (!apply) {
     console.log("Dry run -- nothing written. Re-run with --apply.");
     return;
   }
 
-  console.log(`Created ${created} tile(s).`);
+  try {
+    // One statement, so it is all or nothing. This matters *because* of the empty-grid guard
+    // above, and the two only work as a pair: six separate creates could leave three rows behind
+    // when the fourth failed, and the guard would then read that half-grid as "already seeded" and
+    // refuse to finish the job. Neither half is wrong on its own; together they were a dead end.
+    //
+    // `createMany` rather than a `$transaction` of six creates, because it is one round trip and
+    // needs no wrapper to be atomic. Deliberately without `skipDuplicates`, which would insert
+    // what it could and skip the rest -- reintroducing exactly the partial write being avoided.
+    const result = await prisma.telegramQuickTile.createMany({ data: rows });
+    console.log(`Created ${result.count} tile(s).`);
+  } catch (error) {
+    // The count above and this insert are two statements, so a second run can slip between them.
+    // The unique index is what actually decides it, and losing that race means the grid is seeded
+    // -- which is the outcome this run wanted. Nothing partial can survive it, since the whole
+    // statement is rejected.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      console.log("  Another run seeded this account first. Nothing written.");
+      return;
+    }
+    throw error;
+  }
 }
 
 main()
