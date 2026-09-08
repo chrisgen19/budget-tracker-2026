@@ -194,12 +194,29 @@ const pct = (part: number, whole: number): number | null =>
   whole === 0 ? null : Math.round((part / whole) * 100);
 
 /**
- * Descriptions are compared folded: "Netflix " and "netflix" are one thing.
+ * Descriptions are compared folded: "Netflix " and "netflix" are one thing, and
+ * so are "Yosh\u2019s Salary" and "Yosh's Salary".
+ *
+ * The apostrophe is folded because iOS substitutes U+2019 as you type, so one
+ * source ends up written both ways by the same person on the same phone. Six
+ * analyses key on this, and each splits a group it should merge: an income source
+ * counted twice, a recurring charge that reaches `RECURRING_MIN_MONTHS` in total
+ * and never in either spelling, a double-submit typed once each way. The worst is
+ * `findUnlinkedBillPayments`, which matches payments against bill *names* -- there
+ * the split is a false negative on a stalled schedule, and silence reads exactly
+ * like a clean result.
+ *
+ * Deliberately narrower than `findFragmentation`, which strips every
+ * non-alphanumeric. Folding that far would merge "7:11 Hot Choco" with "711 Hot
+ * Choco", changing duplicate and recurrence detection, and would hide those
+ * spellings from the one report meant to surface them. An apostrophe is a keyboard
+ * artifact; a colon was typed on purpose.
  *
  * Exported because the loader keys its whole-history lookup the same way, and two
  * folding rules would silently stop the two maps meeting.
  */
-export const foldDescription = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, " ");
+export const foldDescription = (s: string): string =>
+  s.trim().toLowerCase().replace(/[\u2018\u2019\u02BC]/g, "'").replace(/\s+/g, " ");
 
 /**
  * The most selective whitespace-free token of a name.

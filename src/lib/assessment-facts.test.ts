@@ -10,6 +10,8 @@ import {
   assessBillAccuracy,
   findUnlinkedBillPayments,
   computeHeadline,
+  computeHygiene,
+  foldDescription,
   longestToken,
   monthRange,
   resolveFactsWindow,
@@ -322,6 +324,71 @@ describe("findUnlinkedBillPayments", () => {
     const b = bill({ description: "Mirea Rent", startDate: new Date(Date.UTC(2026, 2, 17)) });
     const rows = [tx({ localDate: "2026-04-18", amount: 22_000, description: "Mirea  Rent" })];
     expect(findUnlinkedBillPayments([b], rows)[0].count).toBe(1);
+  });
+});
+
+describe("foldDescription", () => {
+  /**
+   * iOS substitutes U+2019 for the apostrophe as you type, so one source ends up
+   * written both ways by the same person on the same phone. Six analyses key on
+   * this fold, and each of them splits a group it should merge -- the worst being
+   * `findUnlinkedBillPayments`, where the split is a false negative on a stalled
+   * schedule and reads exactly like a clean result.
+   */
+  it("folds a typographic apostrophe onto the straight one", () => {
+    expect(foldDescription("Yosh\u2019s Salary")).toBe(foldDescription("Yosh's Salary"));
+  });
+
+  it("still folds case and runs of whitespace", () => {
+    expect(foldDescription("  Mirea   RENT ")).toBe("mirea rent");
+  });
+
+  /**
+   * Deliberately narrow. `findFragmentation` strips every non-alphanumeric, and
+   * widening the fold to match would merge these two -- changing duplicate and
+   * recurrence detection, and hiding the spellings from the report whose whole
+   * job is to surface them. An apostrophe is a keyboard artifact; a colon was
+   * typed on purpose.
+   */
+  it("does not merge punctuation the user actually typed", () => {
+    expect(foldDescription("7:11 Hot Choco")).not.toBe(foldDescription("711 Hot Choco"));
+  });
+});
+
+describe("computeHygiene income sources", () => {
+  const trustworthy = ["2026-04"];
+  const period = { from: "2026-04-01", to: "2026-04-30" };
+
+  /**
+   * Seen on real data: "Yosh's Salary" was reported as two income sources at 16%
+   * and 10% while section 6 listed the same pair as one thing stored two ways --
+   * the report contradicting itself in a single run.
+   */
+  it("counts one source written two ways as one source", () => {
+    const rows = [
+      tx({ localDate: "2026-04-05", amount: 90000, type: "INCOME", description: "Yosh's Salary", categoryName: "Salary" }),
+      tx({ localDate: "2026-04-20", amount: 60000, type: "INCOME", description: "Yosh\u2019s Salary", categoryName: "Salary" }),
+    ];
+    const { incomeSources } = computeHygiene(rows, trustworthy, period);
+    expect(incomeSources).toHaveLength(1);
+    expect(incomeSources[0].total).toBe(150000);
+    expect(incomeSources[0].count).toBe(2);
+    expect(incomeSources[0].pct).toBe(100);
+  });
+});
+
+describe("findUnlinkedBillPayments apostrophes", () => {
+  /**
+   * The fold is what matches a payment description against a bill *name*, so a
+   * bill written one way and paid the other reports nothing -- silence that is
+   * indistinguishable from a schedule with no problem.
+   */
+  it("matches a payment whose apostrophe differs from the bill name", () => {
+    const bills = [bill({ description: "Angel\u2019s Rent", startDate: new Date(Date.UTC(2026, 0, 1)) })];
+    const payment = tx({ localDate: "2026-04-05", amount: 22000, description: "Angel's Rent", billId: null });
+    const found = findUnlinkedBillPayments(bills, [payment]);
+    expect(found).toHaveLength(1);
+    expect(found[0].total).toBe(22000);
   });
 });
 
