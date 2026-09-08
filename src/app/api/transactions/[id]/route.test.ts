@@ -5,7 +5,8 @@ const mocks = vi.hoisted(() => ({
   getAuthUserId: vi.fn(),
   categoryFindMany: vi.fn(),
   labelFindMany: vi.fn(),
-  transactionLabelFindMany: vi.fn(),
+  transactionLabelDeleteMany: vi.fn(),
+  transactionLabelCreateMany: vi.fn(),
   update: vi.fn(),
   findUniqueOrThrow: vi.fn(),
 }));
@@ -23,9 +24,8 @@ vi.mock("@/lib/prisma", () => {
     category: { findMany: mocks.categoryFindMany },
     label: { findMany: mocks.labelFindMany },
     transactionLabel: {
-      findMany: mocks.transactionLabelFindMany,
-      deleteMany: vi.fn(),
-      createMany: vi.fn(),
+      deleteMany: mocks.transactionLabelDeleteMany,
+      createMany: mocks.transactionLabelCreateMany,
     },
     $transaction: vi.fn((run: (tx: unknown) => unknown) => run(client)),
   };
@@ -92,11 +92,12 @@ describe("PUT /api/transactions/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getAuthUserId.mockResolvedValue("user-1");
-    mocks.findFirst.mockResolvedValue({ id: "tx-1", userId: "user-1" });
+    mocks.findFirst.mockResolvedValue({ id: "tx-1", userId: "user-1", labels: [] });
     // The caller's own EXPENSE category, so the happy path is the default.
     mocks.categoryFindMany.mockResolvedValue([{ id: "cat-1", type: "EXPENSE" }]);
     mocks.labelFindMany.mockResolvedValue([]);
-    mocks.transactionLabelFindMany.mockResolvedValue([]);
+    mocks.transactionLabelDeleteMany.mockResolvedValue({ count: 0 });
+    mocks.transactionLabelCreateMany.mockResolvedValue({ count: 0 });
     mocks.update.mockResolvedValue({ id: "tx-1" });
     mocks.findUniqueOrThrow.mockResolvedValue({ id: "tx-1", categoryId: "cat-1" });
   });
@@ -189,6 +190,7 @@ describe("PUT /api/transactions/[id]", () => {
       userId: "user-1",
       categoryId: "cat-flipped",
       type: "EXPENSE",
+      labels: [],
     });
     // The stored category's type has since been flipped, so the pair no longer agrees.
     mocks.categoryFindMany.mockResolvedValue([{ id: "cat-flipped", type: "INCOME" }]);
@@ -209,6 +211,7 @@ describe("PUT /api/transactions/[id]", () => {
       userId: "user-1",
       categoryId: "cat-flipped",
       type: "EXPENSE",
+      labels: [],
     });
     mocks.categoryFindMany.mockResolvedValue([{ id: "cat-salary", type: "INCOME" }]);
 
@@ -216,6 +219,110 @@ describe("PUT /api/transactions/[id]", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  // #232: the columns existed but only the MCP tool wrote them, so a row corrected over MCP and
+  // then fixed in the app went on naming the token as its last editor -- a trail that is not
+  // merely missing but wrong.
+  it("stamps APP and clears the token id when the edit changes something", async () => {
+    mocks.findFirst.mockResolvedValue({
+      id: "tx-1",
+      userId: "user-1",
+      amount: 250,
+      description: "Grocries",
+      type: "EXPENSE",
+      date: new Date("2026-09-07T02:00:00.000Z"),
+      categoryId: "cat-1",
+      labels: [],
+    });
+
+    const response = await put(
+      body({ description: "Groceries", date: "2026-09-07T02:00:00.000Z" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ updatedVia: "APP", updatedByMcpTokenId: null }),
+      }),
+    );
+  });
+
+  // The form posts all five fields on every save, so "the request named it" is true of every
+  // field on every edit. Stamping on that would rewrite a genuine MCP trail to APP for pressing
+  // Update with nothing changed.
+  it("writes nothing at all when the save moves neither a scalar nor a label", async () => {
+    mocks.findFirst.mockResolvedValue({
+      id: "tx-1",
+      userId: "user-1",
+      amount: 250,
+      description: "Groceries",
+      type: "EXPENSE",
+      date: new Date("2026-09-07T02:00:00.000Z"),
+      categoryId: "cat-1",
+      labels: [],
+    });
+
+    const response = await put(body({ date: "2026-09-07T02:00:00.000Z" }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.update).not.toHaveBeenCalled();
+    // The label sync used to delete and recreate the same links on every save regardless.
+    expect(mocks.transactionLabelDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("stamps when only the labels move, since no scalar carries that edit", async () => {
+    mocks.findFirst.mockResolvedValue({
+      id: "tx-1",
+      userId: "user-1",
+      amount: 250,
+      description: "Groceries",
+      type: "EXPENSE",
+      date: new Date("2026-09-07T02:00:00.000Z"),
+      categoryId: "cat-1",
+      labels: [{ labelId: "label-1", label: { applicableTo: "BOTH" } }],
+    });
+    mocks.labelFindMany.mockResolvedValue([{ id: "label-2", applicableTo: "BOTH" }]);
+
+    const response = await put(
+      body({ date: "2026-09-07T02:00:00.000Z", labelIds: ["label-2"] }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.transactionLabelDeleteMany).toHaveBeenCalled();
+    expect(mocks.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ updatedVia: "APP", updatedByMcpTokenId: null }),
+      }),
+    );
+  });
+
+  it("treats a re-sent label set as unmoved, whatever order it arrives in", async () => {
+    mocks.findFirst.mockResolvedValue({
+      id: "tx-1",
+      userId: "user-1",
+      amount: 250,
+      description: "Groceries",
+      type: "EXPENSE",
+      date: new Date("2026-09-07T02:00:00.000Z"),
+      categoryId: "cat-1",
+      labels: [
+        { labelId: "label-1", label: { applicableTo: "BOTH" } },
+        { labelId: "label-2", label: { applicableTo: "BOTH" } },
+      ],
+    });
+    mocks.labelFindMany.mockResolvedValue([
+      { id: "label-2", applicableTo: "BOTH" },
+      { id: "label-1", applicableTo: "BOTH" },
+    ]);
+
+    const response = await put(
+      body({ date: "2026-09-07T02:00:00.000Z", labelIds: ["label-2", "label-1"] }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.transactionLabelDeleteMany).not.toHaveBeenCalled();
   });
 
   it("404s a transaction that is not the caller's before reading the body", async () => {

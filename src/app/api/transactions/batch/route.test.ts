@@ -234,8 +234,8 @@ describe("PATCH /api/transactions/batch", () => {
     mocks.getAuthUserId.mockResolvedValue("user-1");
     mocks.databaseTransaction.mockImplementation((callback) => callback(mocks.tx));
     mocks.transactionFindMany.mockResolvedValue([
-      { id: "tx-1", type: "EXPENSE" },
-      { id: "tx-2", type: "EXPENSE" },
+      { id: "tx-1", type: "EXPENSE", categoryId: "cat-old" },
+      { id: "tx-2", type: "EXPENSE", categoryId: "cat-old" },
     ]);
     mocks.transactionUpdateMany.mockResolvedValue({ count: 2 });
     mocks.categoryFindFirst.mockResolvedValue({ id: "cat-1", type: "EXPENSE" });
@@ -348,6 +348,97 @@ describe("PATCH /api/transactions/batch", () => {
       changedLinks: 1,
       ids: ["tx-2"],
     });
+  });
+
+  // #232: a bulk change is an edit, and leaving these columns alone left a row corrected over MCP
+  // naming the token as its last editor long after the app had changed it.
+  it("stamps APP and clears the token id on a bulk recategorise", async () => {
+    await PATCH(patchRequest({ action: "category", ids: ["tx-1", "tx-2"], categoryId: "cat-1" }));
+
+    expect(mocks.transactionUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { categoryId: "cat-1", updatedVia: "APP", updatedByMcpTokenId: null },
+      }),
+    );
+  });
+
+  // The other half of the rule: stamping the rows that did not move would replace an accurate MCP
+  // trail with a fabricated APP one for an edit that never happened.
+  it("skips rows already in the target category rather than recording an edit on them", async () => {
+    mocks.transactionFindMany.mockResolvedValue([
+      { id: "tx-1", type: "EXPENSE", categoryId: "cat-old" },
+      { id: "tx-2", type: "EXPENSE", categoryId: "cat-1" },
+    ]);
+    mocks.transactionUpdateMany.mockResolvedValue({ count: 1 });
+
+    const response = await PATCH(
+      patchRequest({ action: "category", ids: ["tx-1", "tx-2"], categoryId: "cat-1" }),
+    );
+
+    // `matched` still names the whole selection; `updated` names only what moved.
+    expect(await response.json()).toMatchObject({ matched: 2, updated: 1 });
+    expect(mocks.transactionUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: { in: ["tx-1"] } }) }),
+    );
+  });
+
+  // The label branches touch no column on `transactions`, so the stamp cannot ride along on an
+  // existing update the way the category branch's does -- it needs its own.
+  it("stamps only the rows that actually gained a label link", async () => {
+    mocks.transactionLabelFindMany.mockResolvedValue([
+      { transactionId: "tx-1", labelId: "label-1" },
+    ]);
+    mocks.transactionLabelCreateMany.mockResolvedValue({ count: 1 });
+
+    await PATCH(
+      patchRequest({
+        action: "labels",
+        operation: "add",
+        ids: ["tx-1", "tx-2"],
+        labelIds: ["label-1"],
+      }),
+    );
+
+    expect(mocks.transactionUpdateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["tx-2"] }, userId: "user-1" },
+      data: { updatedVia: "APP", updatedByMcpTokenId: null },
+    });
+  });
+
+  it("stamps only the rows that actually lost a label link", async () => {
+    mocks.transactionLabelFindMany.mockResolvedValue([
+      { transactionId: "tx-2", labelId: "label-1" },
+    ]);
+    mocks.transactionLabelDeleteMany.mockResolvedValue({ count: 1 });
+
+    await PATCH(
+      patchRequest({
+        action: "labels",
+        operation: "remove",
+        ids: ["tx-1", "tx-2"],
+        labelIds: ["label-1"],
+      }),
+    );
+
+    expect(mocks.transactionUpdateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["tx-2"] }, userId: "user-1" },
+      data: { updatedVia: "APP", updatedByMcpTokenId: null },
+    });
+  });
+
+  it("writes no stamp when a label operation changes nothing", async () => {
+    mocks.transactionLabelFindMany.mockResolvedValue([]);
+
+    await PATCH(
+      patchRequest({
+        action: "labels",
+        operation: "remove",
+        ids: ["tx-1", "tx-2"],
+        labelIds: ["label-1"],
+      }),
+    );
+
+    expect(mocks.transactionUpdateMany).not.toHaveBeenCalled();
   });
 
   it("refuses an oversized body before opening a database transaction", async () => {

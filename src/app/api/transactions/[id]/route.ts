@@ -42,9 +42,13 @@ export async function PUT(request: Request, { params }: RouteParams) {
   const { id } = await params;
 
   try {
-    // Verify ownership
+    // Verify ownership. The labels come along because both branches below need them: the
+    // reconciliation branch to preserve them, and the moved-check to decide whether this edit
+    // changed anything at all. Reading them here rather than in the branch replaces a query
+    // rather than adding one.
     const existing = await prisma.transaction.findFirst({
       where: { id, userId },
+      include: { labels: { include: { label: { select: { applicableTo: true } } } } },
     });
 
     if (!existing) {
@@ -79,7 +83,6 @@ export async function PUT(request: Request, { params }: RouteParams) {
     // Validate label ownership before writing (only when labelIds is explicitly provided)
     const hasLabelIds = validated.labelIds !== undefined;
     const verifiedLabelIds: string[] = [];
-    let shouldSyncLabels = hasLabelIds;
 
     if (hasLabelIds && validated.labelIds!.length > 0) {
       const ownedLabels = await prisma.label.findMany({
@@ -102,35 +105,60 @@ export async function PUT(request: Request, { params }: RouteParams) {
     // Server-side label reconciliation when labelIds not provided (cold-cache edits, hidden-label flows).
     // Always runs to enforce type compatibility, even for users without schedules.
     if (!hasLabelIds) {
-      const existingLabels = await prisma.transactionLabel.findMany({
-        where: { transactionId: id },
-        include: { label: { select: { applicableTo: true } } },
-      });
-
       // Preserve existing labels, only dropping those incompatible with the
       // (possibly changed) transaction type. We never re-apply scheduled labels
       // on edit — preserving as-is respects prior user overrides.
-      for (const el of existingLabels) {
+      for (const el of existing.labels) {
         if (el.label.applicableTo !== "BOTH" && el.label.applicableTo !== validated.type) continue;
         verifiedLabelIds.push(el.labelId);
       }
-      shouldSyncLabels = true;
     }
 
-    const result = await prisma.$transaction(async (tx) => {
-      await tx.transaction.update({
-        where: { id },
-        data: {
-          amount: validated.amount,
-          description: validated.description,
-          type: validated.type,
-          date: new Date(validated.date),
-          categoryId: validated.categoryId,
-        },
-      });
+    const scalars = {
+      amount: validated.amount,
+      description: validated.description,
+      type: validated.type,
+      date: new Date(validated.date),
+      categoryId: validated.categoryId,
+    };
 
-      // Sync labels when labelIds was explicitly provided or computed server-side
-      if (shouldSyncLabels) {
+    // Whether this save actually changes the row, compared against what is stored rather than
+    // against which keys the request carried. The distinction is the whole point here: the form
+    // posts all five fields on every save, so "the request named it" is true of every field on
+    // every edit and would report a change on a save that made none.
+    const scalarsMoved =
+      scalars.amount !== existing.amount ||
+      scalars.description !== existing.description ||
+      scalars.type !== existing.type ||
+      scalars.date.getTime() !== existing.date.getTime() ||
+      scalars.categoryId !== existing.categoryId;
+
+    const labelIdsBefore = existing.labels.map((l) => l.labelId).sort();
+    const labelsMoved = [...verifiedLabelIds].sort().join(" ") !== labelIdsBefore.join(" ");
+
+    const moved = scalarsMoved || labelsMoved;
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Only a save that moves something writes anything. An unchanged save must leave the row
+      // exactly as it is: opening the edit modal and pressing Update with no edits would
+      // otherwise rewrite `updated_via` to APP and null the token id, erasing a genuine MCP trail
+      // for an edit that never happened -- and `updatedAt` carries `@updatedAt`, so Prisma would
+      // bump that too and the row would go on looking freshly edited.
+      //
+      // `updatedByMcpTokenId` is cleared rather than left alone. This column names the row's
+      // *last* editor, so a row corrected over MCP and then fixed here has to stop naming the
+      // token: a stale id is not a gap in the trail, it is a confidently wrong answer (#232).
+      if (moved) {
+        await tx.transaction.update({
+          where: { id },
+          data: { ...scalars, updatedVia: "APP", updatedByMcpTokenId: null },
+        });
+      }
+
+      // Replaced wholesale rather than diffed, as before -- `transaction_labels` holds nothing
+      // but the pairing -- but only when the set actually differs. The delete-then-recreate used
+      // to run on every save, churning link rows to land on the same set.
+      if (labelsMoved) {
         await tx.transactionLabel.deleteMany({ where: { transactionId: id } });
 
         if (verifiedLabelIds.length > 0) {
