@@ -618,3 +618,55 @@ export const quickPickIdsSchema = (max: number) =>
     .refine((ids) => new Set(ids).size === ids.length, {
       message: "must not contain duplicate ids",
     });
+
+/**
+ * A quick-log tile, as the Telegram Mini App's editor posts it.
+ *
+ * `amount` is `.nullable()` rather than `.optional()`, and the difference is load-bearing: `null`
+ * is a real state meaning "ask on the numeric pad". Were it optional, an absent field and a null
+ * one would be the same request and a patch could never turn a fixed tile back into an asking one.
+ *
+ * `label` is short because the grid is three columns on a phone. `description` is what reaches
+ * `transactions.description`, so it takes the same 255 bound `transactionSchema` uses.
+ */
+export const telegramQuickTileSchema = z.object({
+  label: z.string().trim().min(1, "Label is required").max(40),
+  description: z.string().trim().min(1, "Description is required").max(255),
+  amount: z.number().positive("Amount must be greater than 0").nullable(),
+  type: z.enum(["INCOME", "EXPENSE"]).default("EXPENSE"),
+  /** Null lets `matchCategory` decide from the description at log time. */
+  categoryId: z.string().min(1).nullable().default(null),
+});
+
+/** Editing one tile. Every field optional, but `amount: null` still means "make it ask". */
+export const telegramQuickTilePatchSchema = telegramQuickTileSchema.partial();
+
+/**
+ * A tap, as the grid posts it.
+ *
+ * `tileId` is optional because a Frequent tile is derived and has no row to name.
+ *
+ * There is deliberately no `date`. The server stamps `new Date()`: a tap happens now, the webview
+ * clock is not ours to trust, and a real clock is what lets the user's label schedules run.
+ */
+export const telegramQuickLogSchema = z.object({
+  tileId: z.string().min(1).optional(),
+  description: z.string().trim().min(1).max(255),
+  amount: z.number().positive("Amount must be greater than 0"),
+  type: z.enum(["INCOME", "EXPENSE"]).default("EXPENSE"),
+  categoryId: z.string().min(1).optional(),
+  clientBatchId: clientBatchIdSchema,
+});
+
+/** Reordering: this user's tile ids, in the order they should appear. */
+export const telegramQuickTileOrderSchema = z.object({
+  ids: z
+    .array(z.string().min(1))
+    .min(1)
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: "must not contain duplicate ids",
+    }),
+});
+
+export type TelegramQuickTileInput = z.infer<typeof telegramQuickTileSchema>;
+export type TelegramQuickLogInput = z.infer<typeof telegramQuickLogSchema>;
