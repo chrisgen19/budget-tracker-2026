@@ -210,7 +210,14 @@ export function AppShell({ children }: AppShellProps) {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-3 py-4 space-y-1">
+        {/* `min-h-0` + `overflow-y-auto`, or the footer walks off the bottom of a short window.
+            The aside is `inset-y-0`, so it is exactly viewport-tall and nothing inside it
+            scrolls; `flex-1` alone is `flex: 1 1 0%` with `min-height: auto`, which refuses to
+            shrink below the nav's content. Logo + seven nav rows + a footer already came to
+            ~580px, and the privacy row adds ~48px, so on anything under ~630px tall - a 1024x600
+            laptop, a half-height window, devtools docked at the bottom - the profile and log-out
+            control was pushed out of reach with no way to scroll to it. */}
+        <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4 space-y-1">
           {NAV_ITEMS.map((item) => {
             const isActive = pathname === item.href;
             return (

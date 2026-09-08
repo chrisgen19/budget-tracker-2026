@@ -119,6 +119,65 @@ describe("a toggle racing the mount read", () => {
   });
 });
 
+/**
+ * Two presses inside one round trip must reach the server in the order they were made.
+ *
+ * `PATCH /api/preferences` ends in an unconditional `prisma.user.update`, so unordered writes
+ * commit in whatever order they arrive: the database can be left holding the value the user
+ * pressed away from, and the next load resolves the disagreement the wrong way.
+ */
+describe("two presses inside one round trip", () => {
+  const bodyOf = (call: number) =>
+    JSON.parse(String((vi.mocked(fetch).mock.calls[call][1] as RequestInit).body));
+
+  it("holds the second write until the first has settled, then sends the later value", async () => {
+    const { result } = await mountedHook();
+
+    let settleFirstWrite: () => void = () => {};
+    vi.mocked(fetch).mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          settleFirstWrite = () => resolve({ ok: true } as Response);
+        })
+    );
+
+    // Awaited so each queued write reaches its microtask. The presses are fire-and-forget: the
+    // context types the toggle as `() => void`, and neither call settles until the first
+    // response lands anyway.
+    await act(async () => {
+      result.current.toggleHideAmounts();
+    });
+    await act(async () => {
+      result.current.toggleHideAmounts();
+    });
+
+    // The second press applied on screen, but its write is queued rather than racing.
+    expect(result.current.hideAmounts).toBe(false);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(bodyOf(0)).toEqual({ hideAmounts: true });
+
+    await act(async () => settleFirstWrite());
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(bodyOf(1)).toEqual({ hideAmounts: false });
+    expect(result.current.hideAmounts).toBe(false);
+  });
+
+  it("does not strand a later press behind a failed one", async () => {
+    const { result } = await mountedHook();
+    vi.mocked(fetch).mockRejectedValueOnce(new Error("offline"));
+
+    await act(async () => {
+      await result.current.toggleHideAmounts();
+    });
+    await act(async () => {
+      await result.current.toggleHideAmounts();
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("toggling hidden amounts", () => {
   it("applies the new value and keeps it when the save lands", async () => {
     const { result } = await mountedHook();

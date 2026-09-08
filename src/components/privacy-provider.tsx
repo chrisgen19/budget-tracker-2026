@@ -41,6 +41,20 @@ export function PrivacyProvider({
   const toggledLocally = useRef(false);
 
   /**
+   * The tail of the write queue, so two quick presses cannot commit out of order.
+   *
+   * Each press fired its own PATCH with nothing sequencing them, and `PATCH /api/preferences`
+   * ends in an unconditional `prisma.user.update` - so a double press could land as
+   * `{true}` then `{false}` on the wire and commit the other way round, leaving the database
+   * holding the value the user pressed *away* from while the screen shows the one they chose.
+   * It survives until the next load, and then the load resolves it the wrong way.
+   *
+   * Chaining also keeps the rollback honest: writes no longer overlap, so a failure always puts
+   * back the value that preceded the press that failed, rather than one a later press replaced.
+   */
+  const writeQueue = useRef<Promise<void>>(Promise.resolve());
+
+  /**
    * Reconcile with the stored value once on mount - unless the user has already spoken.
    *
    * The seed is only as fresh as the server render, so this catches a change made on another
@@ -92,21 +106,28 @@ export function PrivacyProvider({
     toggledLocally.current = true;
     setHideAmounts(newValue);
 
-    try {
-      const res = await fetch("/api/preferences", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hideAmounts: newValue }),
-      });
+    const write = writeQueue.current.then(async () => {
+      try {
+        const res = await fetch("/api/preferences", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hideAmounts: newValue }),
+        });
 
-      if (!res.ok) {
+        if (!res.ok) {
+          setHideAmounts(!newValue);
+          showToast("Could not save that. Please try again.", "error");
+        }
+      } catch {
         setHideAmounts(!newValue);
-        showToast("Could not save that. Please try again.", "error");
+        showToast("Could not save that. Check your connection.", "error");
       }
-    } catch {
-      setHideAmounts(!newValue);
-      showToast("Could not save that. Check your connection.", "error");
-    }
+    });
+
+    // The queue must survive a rejection, or one failure strands every later press behind a
+    // promise that never settles. Every failure mode above is already handled inside `write`.
+    writeQueue.current = write.catch(() => {});
+    await write;
   }, [hideAmounts, showToast]);
 
   return (
