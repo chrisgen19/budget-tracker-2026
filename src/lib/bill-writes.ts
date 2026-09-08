@@ -152,7 +152,13 @@ export interface SettleBillParams {
   snoozeDays?: number;
   /** Minutes, `getTimezoneOffset()` convention. Decides which calendar day a snooze starts from. */
   timezoneOffset: number;
-  /** Provenance for a transaction this creates. Follows the credential, never the endpoint. */
+  /**
+   * The surface acting. Follows the credential, never the endpoint.
+   *
+   * Stamped as `created_via` on the transaction `pay` creates, and as `updated_via` on the one
+   * `pay_existing` claims -- attaching a payment writes `billId` onto a row that already exists,
+   * which is an edit and has to name its author (#256). Omitting it means the app.
+   */
   createdVia?: TransactionSource;
   mcpTokenId?: string;
   /**
@@ -240,6 +246,13 @@ export const settleBill = async ({
   mcpTokenId,
   assertStillPermitted,
 }: SettleBillParams): Promise<BillActionResult> => {
+  // The surface performing this action. `createdVia` names the caller rather than the verb, so it
+  // stamps `created_via` on the row `pay` creates and `updated_via` on the row `pay_existing`
+  // claims. Falling back to APP mirrors the column's own default, which the create path already
+  // relies on: a caller that names no source is the app, since every remote one derives its source
+  // from the credential and always passes it.
+  const actingVia: TransactionSource = createdVia ?? "APP";
+
   const bill = await prisma.scheduledTransaction.findUnique({
     where: { id: billId },
     include: { category: true, labels: { include: { label: true } } },
@@ -503,9 +516,24 @@ export const settleBill = async ({
       // elsewhere -- and an unconditional update would silently re-point a payment that already
       // belongs to another bill, leaving that bill's log referencing a transaction it no longer
       // owns. Returning early here commits nothing, since only reads and a row lock have happened.
+      //
+      // Attaching a payment writes `billId` onto a row that already exists, so it is an edit and
+      // names the surface that made it (#256). Without this a row corrected over MCP and then
+      // linked from the app went on naming the token as its last editor -- the confidently wrong
+      // trail #232 exists to prevent, and worse here than on an ordinary edit: this settles an
+      // occurrence, advances the schedule cursor, and nothing in the app can unlink it afterwards.
+      //
+      // The `billId: null` predicate already restricts this to the row actually claimed, so the
+      // "stamp only what moved" rule the app's edit paths had to engineer comes free. The token id
+      // is cleared rather than left when the caller is not a token, for the same reason it is
+      // everywhere else: a stale id is not a gap in the trail but a wrong answer.
       const claim = await tx.transaction.updateMany({
         where: { id: existingTx.id, userId, billId: null },
-        data: { billId: bill.id },
+        data: {
+          billId: bill.id,
+          updatedVia: actingVia,
+          updatedByMcpTokenId: mcpTokenId ?? null,
+        },
       });
       if (claim.count === 0) return "taken" as const;
 

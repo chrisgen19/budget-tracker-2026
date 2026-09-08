@@ -271,6 +271,14 @@ async function main() {
   const relinked = await prisma.transaction.findUniqueOrThrow({ where: { id: loose.id } });
   check("the existing payment is now linked", relinked.billId, skipped.id);
 
+  // #256: the claim writes `billId` onto a row that already existed, so it is an edit and names
+  // its author. This is the case a unit test cannot reach -- `loose` was written straight to the
+  // database, exactly as a row typed into the app is, and then linked over MCP. It is both, which
+  // is the whole reason the creation pair and the edit pair are separate columns.
+  check("the claim names MCP as the row's last editor", relinked.updatedVia, "MCP");
+  check("and names the credential that did it", relinked.updatedByMcpTokenId, billToken.record.id);
+  check("while created_via survives the edit", relinked.createdVia, "APP");
+
   const logs = await prisma.scheduledTransactionLog.findMany({
     where: { scheduledTransactionId: skipped.id, dueDate: day("2026-09-05") },
     select: { status: true },
