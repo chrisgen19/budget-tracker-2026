@@ -118,9 +118,21 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
      income, expenses and coverage (section 1, which prints all four). That is the *only*
      numeric edit: the renderer below it computes every bar, gridline, tick and label
      from those figures. Never hand-write chart geometry, and never edit the renderer.
-     Every figure it needs is in the script's output — if you find yourself writing a
-     query to fill this block, that is a gap in `scripts/assess.ts` to close, not a query
-     to write.
+
+     **`bill` is only fillable when a bill is `seasonal`, and that is deliberate.**
+     `assessment-facts.ts` computes `monthlySeries` for seasonal bills alone, because for a
+     fixed bill the series is seven copies of one number — noise in a payload a model has
+     to read. So when section 3 lists no seasonal bill there is nothing to chart: **drop
+     the bill figure from the page** and make the point in prose. Do not chart a flat line,
+     do not carry the previous run's series over, and do not query for one. The chart
+     exists for a bill whose *shape* is the finding; with no such bill, the finding is that
+     the bills are accurate.
+
+     The `note: "unlinked"` marker comes from section 3's unlinked-payments list, whose
+     `recentDates` give the month. An unlinked payment is not in `monthlySeries` at all —
+     it carries no `bill_id`, so it is not one of the bill's payments — so add it as its own
+     month only when that bill's count is 1 and the total is therefore its amount. With more
+     than one, name them in prose instead of splitting a total you were not given.
    - **The prose** — headline, ledger figures, the row stacks, the spellings, the action
      block, the scope row in the masthead. This is the judgement half and gets rewritten
      each run.
