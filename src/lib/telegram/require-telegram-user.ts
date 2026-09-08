@@ -83,7 +83,28 @@ export const getTelegramUserId = async (request: Request): Promise<string | Next
     where: { telegramUserId: verified.telegramUserId },
     select: { id: true },
   });
-  if (!user) return denied();
+  if (!user) {
+    // The one denial worth a server-side line, because it is the one nobody can diagnose.
+    //
+    // Everything else here is a refusal the caller earned: a bad signature, a stale payload, an id
+    // that is not on the allowlist. This branch means the *right* person, from the *right* bot,
+    // holding an allowlisted id -- and the only thing missing is a column set by hand. A restored
+    // database loses `users.telegram_user_id` and the Mini App then 401s with no clue anywhere,
+    // which reads as the app being broken rather than as one script not yet run.
+    //
+    // Logged rather than reported in the response: the 401 stays opaque, since a caller who is not
+    // allowed in should not be told which half of the gate to work on. Reaching here already
+    // required a valid signature from this bot *and* an allowlisted id, so it is not a line an
+    // anonymous caller can flood.
+    console.warn(
+      "[telegram] Telegram id %s is allowlisted but linked to no account, so the Mini App cannot " +
+        "act as anyone. Link it: EMAIL=you@example.com TELEGRAM_ID=%s pnpm exec tsx " +
+        "--env-file=.env scripts/link-telegram-user.ts --apply",
+      verified.telegramUserId,
+      verified.telegramUserId
+    );
+    return denied();
+  }
 
   return user.id;
 };

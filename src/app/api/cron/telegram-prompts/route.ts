@@ -6,6 +6,7 @@ import { encodePromptCallback } from "@/lib/telegram/callback-data";
 import { sendMessage } from "@/lib/telegram/send";
 import { env } from "@/lib/telegram/env";
 import { telegramPromptOwnerId } from "@/lib/telegram/prompt-owner";
+import { miniAppButtonRow, miniAppUrl } from "@/lib/telegram/mini-app";
 
 /** The categories the prompt asks about, by their seeded names. */
 const FARE_CATEGORY = "Transportation";
@@ -139,8 +140,19 @@ export async function GET(request: Request) {
       if (claimed.count === 0) continue;
 
       try {
+        // The Mini App row is built by a helper that yields *nothing* when there is no usable
+        // HTTPS URL, and that is load-bearing here rather than tidy. Telegram rejects the whole
+        // `sendMessage` when a button carries a URL it will not accept; this route then releases
+        // its claimed `telegram_prompt_logs` row, the next tick fails identically, and the evening
+        // prompt disappears permanently. `sendOne`'s plain-text retry would technically get the
+        // text through, but it drops `reply_markup` entirely, so a bad Mini App button would also
+        // cost "Nothing today" and the formatting. Refusing to build one is the actual guard.
+        //
+        // A `web_app` button is only valid in a private chat. `chatId` is a numeric id from the
+        // allowlist, which in a private chat is the user's own, so that holds unconditionally.
         const keyboard = {
           inline_keyboard: [
+            ...miniAppButtonRow(miniAppUrl(process.env), "\u26a1 Quick log"),
             [
               {
                 text: "Nothing today",

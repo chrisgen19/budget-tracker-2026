@@ -34,6 +34,11 @@ import { MAX_IMAGE_BYTES, pickReceiptImage } from "@/lib/telegram/photo";
 import { readPhotoTakenAt } from "@/lib/exif-date";
 import { receiptDateLooksOff } from "@/lib/telegram/date-sanity";
 import { menuRegistrations, resolveCommand, type BotCommand } from "@/lib/telegram/commands";
+import {
+  menuButtonRegistrations,
+  miniAppKeyboard,
+  miniAppUrl,
+} from "@/lib/telegram/mini-app";
 import { EXAMPLES_MESSAGE } from "@/lib/telegram/examples";
 import { findByName, parseSearchIntent } from "@/lib/telegram/search-intent";
 import { parseReportIntent } from "@/lib/telegram/report-intent";
@@ -109,6 +114,15 @@ const MCP_TOKEN = env("TELEGRAM_MCP_TOKEN");
  * confirmation itself.
  */
 const APP_URL = appBaseUrl(process.env);
+
+/**
+ * Where the quick-log grid lives, for /quick and for the Menu button.
+ *
+ * A separate constant from `APP_URL` and not a suffix on it, because the two answer different
+ * questions: a plain URL button accepts `http://` and a `web_app` button does not. Null here
+ * means the grid is simply not offered -- never that a button is sent Telegram would refuse.
+ */
+const MINI_APP_URL = miniAppUrl(process.env);
 
 /** Only used for display; the server owns every amount and every date boundary. */
 const SYMBOL = env("TELEGRAM_CURRENCY_SYMBOL") ?? "\u20B1";
@@ -1450,6 +1464,10 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       `\u2022 \`did I pay meralco this month\`\n` +
       `\u2022 \`how much on transportation in work budget\`\n` +
       `\u2022 \`did I pay the water bill\`\n\n` +
+      `\u26a1 *Quick log:*\n` +
+      `/quick opens a grid of buttons - one tap logs a routine expense, and anything without a ` +
+      `fixed amount opens a pad to type one. It is also behind the Menu button beside the ` +
+      `message box.\n\n` +
       `\u2328\ufe0f *Fare buttons:*\n` +
       `/keyboard pins your usual fares above the message box, one tap each. ` +
       `/keyboard off takes them away.\n\n` +
@@ -1475,13 +1493,41 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     return;
   }
 
+  if (command === "QUICK") {
+    if (!MINI_APP_URL) {
+      // Said plainly rather than answered with a dead button. The cause is always the same one
+      // thing -- no HTTPS address to open -- and naming it is the difference between a bug report
+      // and a one-line fix.
+      await sendMessage(
+        chatId,
+        "The quick-log grid needs an HTTPS address to open, and this deployment has none " +
+          "configured (`TELEGRAM_APP_URL`, or `NEXTAUTH_URL`).\n\n" +
+          "`/keyboard` still pins your fares above the message box, and typing `250 grab` " +
+          "always works."
+      );
+      return;
+    }
+
+    await sendMessage(
+      chatId,
+      "\u26a1 *Quick log*\n\nTap a button to log it. Anything with no fixed amount opens a pad " +
+        "to type one, and *Frequent* is built from what you actually log.",
+      "Markdown",
+      miniAppKeyboard(MINI_APP_URL, "\u26a1 Open quick log")
+    );
+    return;
+  }
+
   if (command === "EXAMPLES") {
     await sendMessage(chatId, EXAMPLES_MESSAGE);
     return;
   }
 
   if (command) {
-    const handlers: Record<Exclude<BotCommand, "HELP" | "EXAMPLES" | "KEYBOARD">, (chatId: number) => Promise<void>> = {
+    const handlers: Record<
+      Exclude<BotCommand, "HELP" | "EXAMPLES" | "KEYBOARD" | "QUICK">,
+      (chatId: number) => Promise<void>
+    > = {
       SUMMARY: handleSummary,
       RECENT: handleRecent,
       BILLS: handleBills,
@@ -1870,6 +1916,51 @@ async function registerCommandMenu(): Promise<void> {
 }
 
 /**
+ * Put a "Quick Log" button beside the message box, for the allowlisted chats only.
+ *
+ * The Menu button is the surface a Mini App is normally reached through, and it is the only one
+ * that needs no message and no remembering: it sits next to the text field permanently.
+ *
+ * Scoped per chat and the default cleared, exactly as `registerCommandMenu` scopes the "/" menu.
+ * The default scope is what every stranger who finds this bot sees, and a Menu button there opens
+ * a page that answers them with 401 -- worse than the silent denial, since it confirms the bot is
+ * live and hands them a URL.
+ *
+ * Run on every boot including when there is no URL, because `menuButtonRegistrations` then
+ * *clears* the button. A deployment that had a working `TELEGRAM_APP_URL` and lost it would
+ * otherwise keep a button pointing at a host it no longer controls.
+ */
+async function registerMenuButton(): Promise<void> {
+  try {
+    if (!MINI_APP_URL) {
+      console.warn(
+        "[telegram] no HTTPS base URL (TELEGRAM_APP_URL or NEXTAUTH_URL), so the Mini App is not " +
+          "offered. Clearing the Menu button rather than leaving a stale one."
+      );
+    }
+
+    // Settled one at a time, the lesson `registerCommandMenu` already learned: one bad chat id --
+    // someone who has blocked the bot, say -- must not cost every later id its button.
+    for (const call of menuButtonRegistrations(ALLOWED_IDS, MINI_APP_URL)) {
+      try {
+        await telegramApi(call.method, call.params);
+      } catch (err) {
+        console.warn(
+          `[telegram] ${call.method} failed:`,
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
+  } catch (err) {
+    // A door into the Mini App is worth having and worth nothing next to the bot running.
+    console.warn(
+      "[telegram] could not register the Menu button:",
+      err instanceof Error ? err.message : err
+    );
+  }
+}
+
+/**
  * Tell Telegram everything below `offset` is done, so no other container is handed it again.
  *
  * Advancing the local `offset` settles nothing: an update is confirmed only when a *later*
@@ -1943,6 +2034,7 @@ export async function startTelegramBot(): Promise<void> {
   // a token that is genuinely wrong then reports itself in the reply to the first message.
   await probeMcp();
   await registerCommandMenu();
+  await registerMenuButton();
 
   if (ALLOWED_IDS.size === 0 && ALLOWED_USERNAMES.size === 0) {
     // It keeps polling on purpose, and the wording has to say so: every sender is denied, but
