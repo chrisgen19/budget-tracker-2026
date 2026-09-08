@@ -10,6 +10,8 @@
  *     distinguish from a delete that silently matched nothing
  *   - a refused batch leaves every row byte-identical, which needs a real transaction to roll back
  *   - a read-only token cannot see the tool at all
+ *   - the read the write depends on is taken under a row lock, and that lock actually blocks a
+ *     concurrent label insert made by a path that never takes it (#233)
  *
  * It mints its own throwaway user, token and category, and deletes them afterwards, so it never
  * touches yours. Everything it drives goes through `/api/mcp`: this PR deliberately leaves the
@@ -378,6 +380,122 @@ async function main() {
   check("another user's transaction is refused", trespass.isError, true);
   const strangerAfter = await prisma.transaction.findUniqueOrThrow({ where: { id: strangerTx.id } });
   check("and is untouched", strangerAfter.amount, 500);
+
+  // --- The read is taken under a lock, and the lock actually blocks (#233) ---
+  //
+  // Two separate claims, and both need a real database: a stub can record that a statement was
+  // issued but not that Postgres made anybody wait for it.
+
+  // (a) The mechanism. None of the six other writers of `transaction_labels` takes this lock --
+  //     `PUT /api/transactions/[id]`, the batch PATCH, `POST /api/labels/[id]/apply` and the label
+  //     routes all just insert. They do not need to: inserting a child row takes a FOR KEY SHARE
+  //     lock on the referenced parent, and FOR UPDATE conflicts with it, so the insert blocks
+  //     without cooperating. That is the entire reason this fix does not have to touch them, and
+  //     it is silently undone by weakening the lock to FOR NO KEY UPDATE, which does *not*
+  //     conflict with FOR KEY SHARE. This check is what would catch that.
+  const lockProbeLabel = await prisma.label.create({
+    data: { name: "Probe Lock", color: "#123456", userId: user.id, applicableTo: "BOTH" },
+  });
+  const lockProbeTx = await seed({ description: "Lock probe" });
+
+  const other = new PrismaClient();
+  try {
+    let releasedAt = 0;
+    let insertedAt = 0;
+    const HOLD_MS = 1500;
+
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM transactions WHERE id = ${lockProbeTx.id} FOR UPDATE`;
+        await new Promise((r) => setTimeout(r, HOLD_MS));
+        releasedAt = Date.now();
+      },
+      { maxWait: 10_000, timeout: 30_000 },
+    );
+
+    await new Promise((r) => setTimeout(r, 250)); // let the lock be taken first
+    const insert = other.transactionLabel
+      .create({ data: { transactionId: lockProbeTx.id, labelId: lockProbeLabel.id } })
+      .then(() => {
+        insertedAt = Date.now();
+      });
+
+    await Promise.all([holder, insert]);
+    check("a concurrent label insert waits for the row lock", insertedAt >= releasedAt - 50, true);
+
+    // (b) The property that actually differs. Timing alone proves nothing here: `transaction.update`
+    //     takes its own row lock, so a build that reads *before* the transaction still waits at the
+    //     write and looks identical from outside. What separates the two is which snapshot the
+    //     preserved-label set is computed from, so this reproduces the issue's scenario exactly.
+    //
+    //     The row carries an EXPENSE-only label and the edit flips it to INCOME with no `labelIds`.
+    //     That makes the preserved set differ from the set on the row, so the delete-then-create
+    //     path runs -- which is the only path that can lose somebody else's label. A concurrent
+    //     insert is then landed inside the window:
+    //
+    //       reading before the lock: snapshot is [expenseOnly], so the write deletes every label
+    //                                row and recreates none. The concurrent label is gone.
+    //       reading under the lock:  snapshot is [expenseOnly, concurrent], so the write recreates
+    //                                the concurrent one. It survives.
+    const expenseOnly = await prisma.label.create({
+      data: { name: "Probe Raced Expense", color: "#654321", userId: user.id, applicableTo: "EXPENSE" },
+    });
+    const concurrentLabel = await prisma.label.create({
+      data: { name: "Probe Concurrent", color: "#abcdef", userId: user.id, applicableTo: "BOTH" },
+    });
+    const raced = await prisma.transaction.create({
+      data: {
+        amount: 250,
+        description: "Raced",
+        type: "EXPENSE",
+        date: new Date("2026-08-25T09:00:00.000Z"),
+        categoryId: expenseCat.id,
+        userId: user.id,
+        createdVia: "APP",
+        labels: { create: [{ labelId: expenseOnly.id }] },
+      },
+    });
+
+    // Holds the row, lets the edit start and take its snapshot, then adds a label and commits.
+    // Inserting from inside the holder needs no extra lock: it already holds the stronger one.
+    const racer = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM transactions WHERE id = ${raced.id} FOR UPDATE`;
+        await new Promise((r) => setTimeout(r, 1000));
+        await tx.transactionLabel.create({
+          data: { transactionId: raced.id, labelId: concurrentLabel.id },
+        });
+      },
+      { maxWait: 10_000, timeout: 30_000 },
+    );
+
+    await new Promise((r) => setTimeout(r, 250)); // the holder gets the lock first
+    const [racedResult] = await Promise.all([
+      callUpdate(client, [{ id: raced.id, type: "INCOME", categoryId: incomeCat.id }]),
+      racer,
+    ]);
+
+    check("the racing edit succeeded", racedResult.isError, undefined);
+    const racedAfter = await prisma.transaction.findUniqueOrThrow({ where: { id: raced.id } });
+    check("and applied the type flip", racedAfter.type, "INCOME");
+
+    const racedLabels = await prisma.transactionLabel.findMany({
+      where: { transactionId: raced.id },
+      select: { labelId: true },
+    });
+    check(
+      "a label added during the edit is not deleted by it",
+      racedLabels.some((l) => l.labelId === concurrentLabel.id),
+      true,
+    );
+    check(
+      "and the label the type change excludes is still gone",
+      racedLabels.some((l) => l.labelId === expenseOnly.id),
+      false,
+    );
+  } finally {
+    await other.$disconnect();
+  }
 
   // --- The lease is a kill switch over editing too ---
 

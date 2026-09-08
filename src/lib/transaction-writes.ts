@@ -116,9 +116,14 @@ export const findSavedBatchUnderLock = async (
  * twice is one that disagrees with itself the first time either copy is touched. Note the route
  * passes its *validated body*, not a merge, because `transactionSchema` requires `categoryId` and
  * `type` on every PUT -- it is a full replace, so the body already is the effective row.
+ *
+ * Takes either client. `updateTransactions` runs this *inside* its write transaction (#233), and
+ * `Prisma.TransactionClient` is `Omit<PrismaClient, ITXClientDenyList>` -- it lacks `$transaction`
+ * and `$connect`, so it is not assignable to `PrismaClient` and a narrower parameter would not
+ * compile there. Only `category.findMany` is used, which both clients have.
  */
 export const categoriesAreUsable = async (
-  prisma: PrismaClient,
+  prisma: PrismaClient | Prisma.TransactionClient,
   userId: string,
   items: readonly { categoryId: string; type: TransactionType }[]
 ): Promise<boolean> => {
@@ -452,6 +457,48 @@ const resolvePatchDate = (value: string, stored: Date, timezoneOffset: number): 
 };
 
 /**
+ * Lock the rows a batch is about to edit, as the write transaction's *first* statement.
+ *
+ * Everything `updateTransactions` decides -- the effective type/category pair, which labels to
+ * keep, what `previous` reports -- used to be computed from a read taken before the transaction
+ * opened (#233). Under READ COMMITTED a concurrent edit could commit inside that window, and the
+ * label path made it silent data loss rather than mere misreporting: a patch that changes `type`
+ * and omits `labelIds` preserves labels from the snapshot, then runs `deleteMany` +
+ * `createMany` with that stale set, so a label added concurrently is deleted and never reported.
+ *
+ * Locking the parent row is enough on its own, and that is the part worth not relearning. There
+ * are six other writers of `transaction_labels` -- `PUT /api/transactions/[id]`, the batch
+ * PATCH, `POST /api/labels/[id]/apply` and the label routes -- and *none* of them takes this
+ * lock. They do not need to: inserting a child row takes a `FOR KEY SHARE` lock on the referenced
+ * parent to keep the key alive, and `FOR UPDATE` conflicts with it, so a concurrent label insert
+ * blocks on this statement with no cooperation from the path doing it. That is the same FK
+ * interaction `settleBill` documents from the other side, where taking the row lock *after* an
+ * insert deadlocks -- which is why this runs first and never after.
+ *
+ * `ORDER BY id` is load-bearing rather than tidy: two concurrent batches naming overlapping ids
+ * in different orders would each hold what the other waits for. A deterministic acquisition order
+ * is what makes that a wait instead of a deadlock.
+ *
+ * Scoped to `userId` like the read it precedes, so another user's id locks nothing and the row
+ * count check that follows still reports it as `NOT_FOUND`.
+ */
+const lockTransactionRows = async (
+  tx: Prisma.TransactionClient,
+  userId: string,
+  ids: string[]
+): Promise<void> => {
+  // `id` is `String @default(cuid())`, so the column is `text` and the array binds as `text[]`
+  // with no cast. (The `timestamptz` trap `consumeRateLimit` documents is specific to `Date`
+  // parameters and does not apply here.)
+  await tx.$queryRaw`
+    SELECT id FROM transactions
+    WHERE id = ANY(${ids}) AND user_id = ${userId}
+    ORDER BY id
+    FOR UPDATE
+  `;
+};
+
+/**
  * Apply partial edits to existing transactions, atomically.
  *
  * The edit path behind the MCP `update_transactions` tool, and currently its only caller.
@@ -487,91 +534,106 @@ export const updateTransactions = async ({
     return { ok: false, reason: "NO_FIELDS" };
   }
 
-  // Scoped to `userId`, so another user's id is simply not found. Deliberately indistinguishable
-  // from a nonexistent one: telling them apart would let a token probe for ids it does not own.
-  const rows = await prisma.transaction.findMany({
-    where: { id: { in: ids }, userId },
-    include: TX_INCLUDE,
-  });
-  if (rows.length !== ids.length) return { ok: false, reason: "NOT_FOUND" };
-  const rowById = new Map(rows.map((r) => [r.id, r]));
-
-  // Every check below runs against the row as it *will be*, never against the patch alone. The
-  // case that makes the difference is a patch that flips `type` and sends no `categoryId`: the
-  // stored category is untouched by the patch and is exactly what has to be re-examined, or an
-  // EXPENSE turned INCOME keeps a food category and distorts every breakdown that groups by one.
-  const effective = patches.map((patch) => {
-    const row = rowById.get(patch.id)!;
-    return {
-      patch,
-      row,
-      type: patch.type ?? row.type,
-      categoryId: patch.categoryId ?? row.categoryId,
-    };
-  });
-
-  // Only the rows whose pair actually *moves*. Testing whether the patch mentioned the fields is
-  // not the same thing and does not work: `transactionSchema` requires `categoryId`, and the app's
-  // edit form posts the whole object, so every edit from the browser names it and would be judged
-  // regardless.
-  //
-  // The state this must not punish is reachable with no MCP involvement. `PUT /api/categories/[id]`
-  // lets a custom category's `type` be flipped while its transactions keep pointing at it, leaving
-  // rows whose stored pair no longer agrees. Re-sending that pair unchanged writes exactly what is
-  // already there, so rejecting it prevents nothing and merely locks the row out of being edited
-  // at all -- down to fixing a typo in its description. Comparing against the stored row skips
-  // those and still catches every genuine reclassification, the bare `type` flip included.
-  const reclassified = effective.filter(
-    (e) => e.categoryId !== e.row.categoryId || e.type !== e.row.type
-  );
-  if (!(await categoriesAreUsable(prisma, userId, reclassified))) {
-    return { ok: false, reason: "CATEGORIES_NOT_OWNED" };
-  }
-
-  // One ownership query for every explicitly named label across the batch, as on the create path.
-  const explicitLabelIds = [...new Set(patches.flatMap((p) => p.labelIds ?? []))];
-  let ownedLabelMap = new Map<string, { applicableTo: string; name: string }>();
-  if (explicitLabelIds.length > 0) {
-    const owned = await prisma.label.findMany({
-      where: { id: { in: explicitLabelIds }, userId },
-      // `name` is selected so a label the type filter removes can be named back. An id would be
-      // useless to the person being told about it.
-      select: { id: true, applicableTo: true, name: true },
-    });
-    if (owned.length !== explicitLabelIds.length) return { ok: false, reason: "LABELS_NOT_OWNED" };
-    ownedLabelMap = new Map(owned.map((l) => [l.id, { applicableTo: l.applicableTo, name: l.name }]));
-  }
-
-  const resolved = effective.map((e) => {
-    // The same three-way rule as the create path, minus its schedule branch: explicit ids are
-    // deduped and type-filtered, `[]` clears them, and omitting the field preserves what is there.
-    const requested = e.patch.labelIds === undefined ? null : [...new Set(e.patch.labelIds)];
-    const fits = (id: string) => {
-      const owned = ownedLabelMap.get(id);
-      return owned?.applicableTo === "BOTH" || owned?.applicableTo === e.type;
-    };
-
-    const labelIds = requested === null ? preservedLabelIds(e.row.labels, e.type) : requested.filter(fits);
-
-    // A label the caller asked for and did not get, from either direction: named by id and
-    // filtered out, or already on the row and excluded by a changed type. Silently dropping the
-    // first is the exact failure AGENTS.md records on the create path -- a review promising a
-    // label it then did not write -- and it is worse on an edit, where the reply otherwise reads
-    // as an unqualified success. The second was reported only as an unexplained disappearance
-    // from `previous.labels`, which is the same problem wearing different clothes.
-    const droppedLabels =
-      requested === null
-        ? typeExcludedLabels(e.row.labels, e.type)
-        : requested.filter((id) => !fits(id)).map((id) => ownedLabelMap.get(id)!.name);
-
-    return { ...e, labelIds, droppedLabels };
-  });
-
   try {
     return await prisma.$transaction(async (tx) => {
+      // The transaction's *first* statement, before any read the decisions below rest on and
+      // before any insert that would take its own FK lock on these rows. Both orderings matter;
+      // `lockTransactionRows` explains why.
+      await lockTransactionRows(tx, userId, ids);
+
       if (assertStillPermitted && !(await assertStillPermitted(tx))) {
         return { ok: false as const, reason: "NO_LONGER_PERMITTED" as const };
       }
+
+      // Everything from here to the write loop reads through `tx`, under the lock taken above.
+      // Read on `prisma` it was a snapshot the write could not trust: a concurrent edit committing
+      // in that window was not merely misreported, it was overwritten (#233).
+      //
+      // Each refusal below returns from inside the transaction, which commits it. Nothing has been
+      // written at that point, so the commit is empty and only releases the locks -- the same shape
+      // the `NO_LONGER_PERMITTED` branch above has always had.
+      //
+      // Scoped to `userId`, so another user's id is simply not found. Deliberately indistinguishable
+      // from a nonexistent one: telling them apart would let a token probe for ids it does not own.
+      const rows = await tx.transaction.findMany({
+        where: { id: { in: ids }, userId },
+        include: TX_INCLUDE,
+      });
+      if (rows.length !== ids.length) return { ok: false as const, reason: "NOT_FOUND" as const };
+      const rowById = new Map(rows.map((r) => [r.id, r]));
+
+      // Every check below runs against the row as it *will be*, never against the patch alone. The
+      // case that makes the difference is a patch that flips `type` and sends no `categoryId`: the
+      // stored category is untouched by the patch and is exactly what has to be re-examined, or an
+      // EXPENSE turned INCOME keeps a food category and distorts every breakdown that groups by one.
+      const effective = patches.map((patch) => {
+        const row = rowById.get(patch.id)!;
+        return {
+          patch,
+          row,
+          type: patch.type ?? row.type,
+          categoryId: patch.categoryId ?? row.categoryId,
+        };
+      });
+
+      // Only the rows whose pair actually *moves*. Testing whether the patch mentioned the fields is
+      // not the same thing and does not work: `transactionSchema` requires `categoryId`, and the app's
+      // edit form posts the whole object, so every edit from the browser names it and would be judged
+      // regardless.
+      //
+      // The state this must not punish is reachable with no MCP involvement. `PUT /api/categories/[id]`
+      // lets a custom category's `type` be flipped while its transactions keep pointing at it, leaving
+      // rows whose stored pair no longer agrees. Re-sending that pair unchanged writes exactly what is
+      // already there, so rejecting it prevents nothing and merely locks the row out of being edited
+      // at all -- down to fixing a typo in its description. Comparing against the stored row skips
+      // those and still catches every genuine reclassification, the bare `type` flip included.
+      const reclassified = effective.filter(
+        (e) => e.categoryId !== e.row.categoryId || e.type !== e.row.type
+      );
+      if (!(await categoriesAreUsable(tx, userId, reclassified))) {
+        return { ok: false as const, reason: "CATEGORIES_NOT_OWNED" as const };
+      }
+
+      // One ownership query for every explicitly named label across the batch, as on the create path.
+      const explicitLabelIds = [...new Set(patches.flatMap((p) => p.labelIds ?? []))];
+      let ownedLabelMap = new Map<string, { applicableTo: string; name: string }>();
+      if (explicitLabelIds.length > 0) {
+        const owned = await tx.label.findMany({
+          where: { id: { in: explicitLabelIds }, userId },
+          // `name` is selected so a label the type filter removes can be named back. An id would be
+          // useless to the person being told about it.
+          select: { id: true, applicableTo: true, name: true },
+        });
+        if (owned.length !== explicitLabelIds.length) {
+          return { ok: false as const, reason: "LABELS_NOT_OWNED" as const };
+        }
+        ownedLabelMap = new Map(owned.map((l) => [l.id, { applicableTo: l.applicableTo, name: l.name }]));
+      }
+
+      const resolved = effective.map((e) => {
+        // The same three-way rule as the create path, minus its schedule branch: explicit ids are
+        // deduped and type-filtered, `[]` clears them, and omitting the field preserves what is there.
+        const requested = e.patch.labelIds === undefined ? null : [...new Set(e.patch.labelIds)];
+        const fits = (id: string) => {
+          const owned = ownedLabelMap.get(id);
+          return owned?.applicableTo === "BOTH" || owned?.applicableTo === e.type;
+        };
+
+        const labelIds = requested === null ? preservedLabelIds(e.row.labels, e.type) : requested.filter(fits);
+
+        // A label the caller asked for and did not get, from either direction: named by id and
+        // filtered out, or already on the row and excluded by a changed type. Silently dropping the
+        // first is the exact failure AGENTS.md records on the create path -- a review promising a
+        // label it then did not write -- and it is worse on an edit, where the reply otherwise reads
+        // as an unqualified success. The second was reported only as an unexplained disappearance
+        // from `previous.labels`, which is the same problem wearing different clothes.
+        const droppedLabels =
+          requested === null
+            ? typeExcludedLabels(e.row.labels, e.type)
+            : requested.filter((id) => !fits(id)).map((id) => ownedLabelMap.get(id)!.name);
+
+        return { ...e, labelIds, droppedLabels };
+      });
 
       const updated: UpdatedTransaction[] = [];
 
@@ -678,10 +740,13 @@ export const updateTransactions = async ({
     // as it was. What the caller should *do* about it still splits two ways, though, and telling
     // it to retry unconditionally is how an agent ends up looping.
     //
-    // The ownership checks above run on `prisma`, outside this transaction, so a category or label
-    // deleted in the window between them and the write surfaces here as a constraint violation.
-    // Retrying replays the same doomed request forever. A deadlock or a lost connection is the
-    // opposite and is worth another attempt, so the two get different reasons and different advice.
+    // The split narrowed when the ownership checks moved inside the transaction (#233): a category
+    // or label deleted between the check and the write can no longer slip through the gap, because
+    // there is no longer a gap. `P2003`/`P2025` remains reachable -- a `Restrict` foreign key still
+    // refuses at write time, and a row can vanish under a concurrent delete that this lock does not
+    // cover -- and it still means the request names something that is no longer there, so retrying
+    // replays a doomed request forever. A deadlock or a lost connection is the opposite and is worth
+    // another attempt, so the two keep different reasons and different advice.
     const permanent =
       error instanceof Prisma.PrismaClientKnownRequestError &&
       // P2003 foreign key, P2025 required record missing: both mean the request refers to
