@@ -6,7 +6,10 @@ const mocks = vi.hoisted(() => ({
   transactionFindMany: vi.fn(),
   transactionUpdateMany: vi.fn(),
   transactionLabelCreateManyAndReturn: vi.fn(),
-  transactionLabelDeleteMany: vi.fn(),
+  // The removal branch goes through the real `removeTransactionLabels`, so what it issues is a
+  // `DELETE ... RETURNING`. Left unmocked on purpose: the property under test is that the stamp
+  // follows the delete's returned rows rather than the page read that planned it.
+  queryRaw: vi.fn(),
   getScheduleContext: vi.fn(),
   matchScheduledLabel: vi.fn(),
   databaseTransaction: vi.fn(),
@@ -21,8 +24,8 @@ vi.mock("@/lib/prisma", () => {
     },
     transactionLabel: {
       createManyAndReturn: mocks.transactionLabelCreateManyAndReturn,
-      deleteMany: mocks.transactionLabelDeleteMany,
     },
+    $queryRaw: mocks.queryRaw,
     $transaction: mocks.databaseTransaction,
   };
   // A spy rather than a plain passthrough, so a test can assert the batch's writes were issued
@@ -61,7 +64,8 @@ describe("POST /api/labels/[id]/apply", () => {
     });
     mocks.getScheduleContext.mockResolvedValue({ labels: [], timezoneOffset: -480 });
     mocks.transactionLabelCreateManyAndReturn.mockResolvedValue([{ transactionId: "tx-1" }]);
-    mocks.transactionLabelDeleteMany.mockResolvedValue({ count: 1 });
+    // `DELETE ... RETURNING transaction_id` — raw rows, so snake_case.
+    mocks.queryRaw.mockResolvedValue([{ transaction_id: "tx-1" }]);
     mocks.transactionUpdateMany.mockResolvedValue({ count: 1 });
   });
 
@@ -141,6 +145,37 @@ describe("POST /api/labels/[id]/apply", () => {
 
     expect(await response.json()).toMatchObject({ applied: 0 });
     expect(mocks.transactionUpdateMany).not.toHaveBeenCalled();
+  });
+
+  // #251, the removal counterpart. `removedFrom` used to be filtered out of `transactions` -- the
+  // page read, taken outside the transaction -- so a concurrent MCP edit that removed the same
+  // link first made `deleteMany` a no-op while the row was stamped `APP` anyway, over an accurate
+  // MCP trail, and `removed` counted a deletion that never happened. The delete now reports its
+  // own rows, and here it removed none.
+  it("stamps nothing for a row whose link a concurrent writer removed first", async () => {
+    mocks.transactionFindMany.mockResolvedValueOnce([row("tx-1", [{ id: "link-1" }])]);
+    mocks.matchScheduledLabel.mockReturnValue(null);
+    // The removal was planned, but the link was already gone by the time it ran.
+    mocks.queryRaw.mockResolvedValue([]);
+
+    const response = await apply();
+
+    expect(await response.json()).toMatchObject({ removed: 0 });
+    expect(mocks.transactionUpdateMany).not.toHaveBeenCalled();
+  });
+
+  // The delete is matched on `(transaction_id, label_id)`, never on the link-row ids the page read
+  // happened to see -- that is what lets one helper serve this route and the bulk PATCH, and it
+  // survives a concurrent writer removing and re-adding the pair under a new link id.
+  it("deletes by transaction and label, not by the link ids it read", async () => {
+    mocks.transactionFindMany.mockResolvedValueOnce([row("tx-1", [{ id: "link-1" }])]);
+    mocks.matchScheduledLabel.mockReturnValue(null);
+
+    await apply();
+
+    const values = mocks.queryRaw.mock.calls[0].slice(1);
+    expect(values).toEqual(["user-1", ["tx-1"], ["label-1"]]);
+    expect(values).not.toContainEqual(["link-1"]);
   });
 
   // A pass over a settled label walks every page finding nothing to do; a transaction per page

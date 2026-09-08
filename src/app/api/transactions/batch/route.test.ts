@@ -11,7 +11,10 @@ const mocks = vi.hoisted(() => {
   const labelFindMany = vi.fn();
   const transactionLabelFindMany = vi.fn();
   const transactionLabelCreateManyAndReturn = vi.fn();
-  const transactionLabelDeleteMany = vi.fn();
+  // The removal branch goes through `removeTransactionLabels`, which is deliberately left real
+  // here: what is under test is that the stamp follows the delete's own `RETURNING` rows rather
+  // than a pre-write snapshot, and mocking the helper away would assert only that it was called.
+  const queryRaw = vi.fn();
   return {
     transactionFindMany,
     transactionUpdateMany,
@@ -20,7 +23,7 @@ const mocks = vi.hoisted(() => {
     labelFindMany,
     transactionLabelFindMany,
     transactionLabelCreateManyAndReturn,
-    transactionLabelDeleteMany,
+    queryRaw,
     getAuthUserId: vi.fn(),
     databaseTransaction: vi.fn(),
     createTransactionBatch: vi.fn(),
@@ -37,8 +40,8 @@ const mocks = vi.hoisted(() => {
       transactionLabel: {
         findMany: transactionLabelFindMany,
         createManyAndReturn: transactionLabelCreateManyAndReturn,
-        deleteMany: transactionLabelDeleteMany,
       },
+      $queryRaw: queryRaw,
     },
   };
 });
@@ -245,7 +248,8 @@ describe("PATCH /api/transactions/batch", () => {
       { transactionId: "tx-1" },
       { transactionId: "tx-2" },
     ]);
-    mocks.transactionLabelDeleteMany.mockResolvedValue({ count: 2 });
+    // `DELETE ... RETURNING transaction_id` — raw rows, so snake_case.
+    mocks.queryRaw.mockResolvedValue([{ transaction_id: "tx-1" }, { transaction_id: "tx-2" }]);
   });
 
   it("changes category atomically and scopes both reads and writes by user", async () => {
@@ -332,10 +336,7 @@ describe("PATCH /api/transactions/batch", () => {
   });
 
   it("reports only transactions from which a label link is removed", async () => {
-    mocks.transactionLabelFindMany.mockResolvedValue([
-      { transactionId: "tx-2", labelId: "label-1" },
-    ]);
-    mocks.transactionLabelDeleteMany.mockResolvedValue({ count: 1 });
+    mocks.queryRaw.mockResolvedValue([{ transaction_id: "tx-2" }]);
 
     const response = await PATCH(
       patchRequest({
@@ -443,10 +444,7 @@ describe("PATCH /api/transactions/batch", () => {
   });
 
   it("stamps only the rows that actually lost a label link", async () => {
-    mocks.transactionLabelFindMany.mockResolvedValue([
-      { transactionId: "tx-2", labelId: "label-1" },
-    ]);
-    mocks.transactionLabelDeleteMany.mockResolvedValue({ count: 1 });
+    mocks.queryRaw.mockResolvedValue([{ transaction_id: "tx-2" }]);
 
     await PATCH(
       patchRequest({
@@ -463,8 +461,65 @@ describe("PATCH /api/transactions/batch", () => {
     });
   });
 
+  // #251, the removal counterpart of the insert race above. The old code derived the stamp from
+  // an `existingLinks` snapshot read before the delete, so a concurrent MCP edit that removed the
+  // same link first left the row in the plan and stamped `APP` over an accurate MCP trail, while
+  // `updated` / `ids` over-reported by the same amount. The delete's own `RETURNING` rows are the
+  // only honest source, and here they come back empty.
+  it("stamps nothing for a row whose link a concurrent writer removed first", async () => {
+    mocks.transactionLabelFindMany.mockResolvedValue([
+      { transactionId: "tx-2", labelId: "label-1" },
+    ]);
+    mocks.queryRaw.mockResolvedValue([]);
+
+    const response = await PATCH(
+      patchRequest({
+        action: "labels",
+        operation: "remove",
+        ids: ["tx-1", "tx-2"],
+        labelIds: ["label-1"],
+      }),
+    );
+
+    expect(await response.json()).toMatchObject({
+      matched: 2,
+      updated: 0,
+      changedLinks: 0,
+      ids: [],
+    });
+    expect(mocks.transactionUpdateMany).not.toHaveBeenCalled();
+  });
+
+  // One transaction losing two labels is one edited row, not two.
+  it("counts a transaction once when it loses several labels at once", async () => {
+    mocks.labelFindMany.mockResolvedValue([
+      { id: "label-1", applicableTo: "BOTH" },
+      { id: "label-2", applicableTo: "BOTH" },
+    ]);
+    mocks.queryRaw.mockResolvedValue([
+      { transaction_id: "tx-2" },
+      { transaction_id: "tx-2" },
+    ]);
+
+    const response = await PATCH(
+      patchRequest({
+        action: "labels",
+        operation: "remove",
+        ids: ["tx-1", "tx-2"],
+        labelIds: ["label-1", "label-2"],
+      }),
+    );
+
+    expect(await response.json()).toMatchObject({
+      updated: 1,
+      changedLinks: 2,
+      ids: ["tx-2"],
+    });
+  });
+
   it("writes no stamp when a label operation changes nothing", async () => {
     mocks.transactionLabelFindMany.mockResolvedValue([]);
+    mocks.queryRaw.mockResolvedValue([]);
 
     await PATCH(
       patchRequest({

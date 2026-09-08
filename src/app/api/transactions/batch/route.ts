@@ -17,6 +17,7 @@ import {
   boundedTransactionIdsSchema,
   bulkTransactionMutationSchema,
 } from "@/lib/transaction-bulk";
+import { removeTransactionLabels } from "@/lib/label-writes";
 import { bodyTooLargeResponse, readJsonWithinLimit } from "@/lib/request-size";
 
 /**
@@ -312,12 +313,15 @@ export async function PATCH(request: NextRequest) {
       }
 
       const labelIds = labels.map((label) => label.id);
-      const existingLinks = await tx.transactionLabel.findMany({
-        where: { transactionId: { in: matchedIds }, labelId: { in: labelIds } },
-        select: { transactionId: true, labelId: true },
-      });
 
       if (input.operation === "add") {
+        // Only the insert branch needs the current links, to decide what to offer the insert.
+        // The removal branch below derives everything from what the delete really removed, so
+        // reading them for it would be a round trip bought to plan a write that re-plans itself.
+        const existingLinks = await tx.transactionLabel.findMany({
+          where: { transactionId: { in: matchedIds }, labelId: { in: labelIds } },
+          select: { transactionId: true, labelId: true },
+        });
         const existingKeys = new Set(
           existingLinks.map(({ transactionId, labelId }) => `${transactionId}:${labelId}`),
         );
@@ -351,21 +355,19 @@ export async function PATCH(request: NextRequest) {
         };
       }
 
-      const affectedIds = [
-        ...new Set(existingLinks.map(({ transactionId }) => transactionId)),
-      ];
-      const removed =
-        existingLinks.length > 0
-          ? await tx.transactionLabel.deleteMany({
-              where: { transactionId: { in: matchedIds }, labelId: { in: labelIds } },
-            })
-          : { count: 0 };
-      await stampEdited(tx, userId, affectedIds);
+      // Derived from what the delete actually removed, on the same rule as the insert branch
+      // above. Planning this from a pre-write snapshot let a concurrent MCP edit that removed the
+      // same link first turn the delete into a partial no-op while every planned row was stamped
+      // `APP` anyway -- over an accurate MCP trail, for a change this request did not make (#251).
+      // `deleteManyAndReturn` does not exist in Prisma, so `removeTransactionLabels` drops to
+      // `DELETE ... RETURNING`; see its note.
+      const removed = await removeTransactionLabels(tx, userId, matchedIds, labelIds);
+      await stampEdited(tx, userId, removed.transactionIds);
       return {
         matched: matchedIds.length,
-        updated: affectedIds.length,
-        changedLinks: removed.count,
-        ids: affectedIds,
+        updated: removed.transactionIds.length,
+        changedLinks: removed.linkCount,
+        ids: removed.transactionIds,
       };
     });
 
