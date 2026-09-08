@@ -54,6 +54,43 @@ describe("loadFrequentTiles", () => {
     });
   });
 
+  it("bounds the window at both ends", () => {
+    // The lower bound alone makes the window "the last 60 days, plus all of the future". Nothing
+    // in the app bounds a transaction date -- `transactionSchema.date` is `z.string().min(1)`, and
+    // neither the batch route nor the MCP tool adds a ceiling -- so a row dated next year is
+    // reachable, and it would satisfy `gte` for as long as it takes reality to catch up. It would
+    // also sort first under `date: desc` and consume the row cap ahead of genuine recent history.
+    findMany.mockResolvedValue([]);
+    const now = new Date("2026-09-01T01:00:00Z");
+
+    return loadFrequentTiles(prisma, "user_1", -480, { now }).then(() => {
+      const { where } = findMany.mock.calls.at(-1)![0];
+
+      expect(where.date.lte).toBeInstanceOf(Date);
+      expect(where.date.lte.getTime()).toBeGreaterThan(where.date.gte.getTime());
+    });
+  });
+
+  it("includes the whole of the user's today, not just up to this instant", () => {
+    // Both bounds are local day boundaries, which is the same rule `resolvePeriod` follows and
+    // AGENTS.md states: an end resolved to midnight silently drops the last day of the window.
+    //
+    // `lte: now` would be the obvious upper bound and is subtly worse. A row entered this morning
+    // for dinner tonight would be excluded until the evening and then appear, so a tile would come
+    // and go during the day, which is harder to trust than either answer consistently.
+    //
+    // At 01:00Z on 1 September a UTC+8 user is on the 1st at 09:00, so their day ends at
+    // 2026-09-01T15:59:59.999Z.
+    findMany.mockResolvedValue([]);
+    const now = new Date("2026-09-01T01:00:00Z");
+
+    return loadFrequentTiles(prisma, "user_1", -480, { now }).then(() => {
+      const { where } = findMany.mock.calls.at(-1)![0];
+
+      expect(where.date.lte.toISOString()).toBe("2026-09-01T15:59:59.999Z");
+    });
+  });
+
   it("takes the newest rows when the cap bites", () => {
     // The cap drops the oldest rows, which are the ones least likely to describe a current habit.
     findMany.mockResolvedValue([]);

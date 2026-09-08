@@ -51,7 +51,16 @@ export const loadFrequentTiles = async (
       // Income that repeats is salary: monthly, large, and a mis-tap on it writes a wrong figure
       // worth a hundred fares. Nothing about this grid is for logging income.
       type: "EXPENSE",
-      date: { gte: windowStart(now, timezoneOffset, windowDays) },
+      // Bounded at both ends. A lower bound alone makes this "the last 60 days, plus all of the
+      // future", and nothing in the app stops a row landing there: `transactionSchema.date` is
+      // `z.string().min(1)`, and neither the batch route nor `create_transactions` adds a ceiling.
+      // Such a row would satisfy `gte` for as long as it takes reality to catch up, never ageing
+      // out of a window whose whole premise is recency -- and it would sort first under
+      // `date: desc` and eat the row cap ahead of genuine history.
+      date: {
+        gte: localDayStart(now, timezoneOffset, windowDays),
+        lte: localDayEnd(now, timezoneOffset),
+      },
       // A tile writing a plain transaction with no `bill_id` settles no occurrence and does not
       // advance the schedule cursor, so a "Meralco" button would manufacture exactly the finding
       // `findUnlinkedBillPayments` exists to report. Bills are settled through `settleBill`.
@@ -85,16 +94,36 @@ export const loadFrequentTiles = async (
 };
 
 /**
- * Midnight, `windowDays` ago, in the user's own calendar.
+ * The user's calendar day, as UTC components.
  *
- * The app-wide formula, `Date.UTC(y, m, d) + tzOffset * 60000`. Not `toISOString().slice(0, 10)`
- * and not `setDate(getDate() - n)`: the first is UTC's day rather than the account's, and the
- * second works in the *process* zone, which is UTC in the container and is nobody's calendar.
+ * The app-wide approach: shift the instant by the offset and then read UTC parts, so the result is
+ * the account's day rather than the container's. Not `toISOString().slice(0, 10)`, which is UTC's
+ * day, and not `setDate(getDate() - n)`, which works in the *process* zone -- UTC in the
+ * container, and nobody's calendar.
  */
-const windowStart = (now: Date, timezoneOffset: number, windowDays: number): Date => {
+const localParts = (now: Date, timezoneOffset: number) => {
   const local = new Date(now.getTime() - timezoneOffset * 60_000);
-  return new Date(
-    Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate() - windowDays) +
-      timezoneOffset * 60_000
-  );
+  return { y: local.getUTCFullYear(), m: local.getUTCMonth(), d: local.getUTCDate() };
+};
+
+/** Midnight, `daysAgo` days back, in the user's own calendar. */
+const localDayStart = (now: Date, timezoneOffset: number, daysAgo: number): Date => {
+  const { y, m, d } = localParts(now, timezoneOffset);
+  return new Date(Date.UTC(y, m, d - daysAgo) + timezoneOffset * 60_000);
+};
+
+/**
+ * The last instant of the user's today.
+ *
+ * `23:59:59.999` rather than `now`, matching `resolvePeriod`'s rule that both bounds are inclusive
+ * local days -- AGENTS.md puts it as an end resolved to midnight silently dropping the last day of
+ * every window. The lower bound here is a day boundary, so the upper one has to be as well.
+ *
+ * The practical difference from `lte: now`: a row entered this morning for something later today
+ * would be excluded until the evening and then appear, so a tile would come and go during the day.
+ * That is harder to trust than either answer given consistently.
+ */
+const localDayEnd = (now: Date, timezoneOffset: number): Date => {
+  const { y, m, d } = localParts(now, timezoneOffset);
+  return new Date(Date.UTC(y, m, d, 23, 59, 59, 999) + timezoneOffset * 60_000);
 };
