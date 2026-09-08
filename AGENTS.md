@@ -325,9 +325,40 @@ of the grid that needs no maintenance. Pure over injected rows, with the loader 
   59, a figure never paid. The mode is literally what the thing usually costs and is always a real
   amount from a real row. Rounded to 2dp before grouping, since `amount` is a `Float` and two rows
   both entered as 38.00 can differ in the last bits and collapse the share.
-- **Grouped by `foldDescription`**, imported from `assessment-facts.ts` and never re-implemented:
-  a second folding rule is drift, and this needs exactly the property that rule exists for -- iOS
-  substitutes U+2019, so one merchant written two ways would fall below the threshold twice.
+- **Grouped by `frequentKey`**, which is `foldDescription` — imported from `assessment-facts.ts`
+  and never re-implemented, since a second copy of that rule is drift and this needs exactly the
+  property it exists for: iOS substitutes U+2019, so one merchant written two ways would fall below
+  the threshold twice — **plus sorted word order**. `uv & jeep` and `jeep & uv` are not different
+  words, only a different order, and unsorted they held two of six slots on real data (#268). A
+  token carrying no letter or digit is dropped, so the dash in `UV Express - Office to House` is
+  not a word; tested with `\p{L}`/`\p{N}` rather than `a-z0-9`, or `Piñata` would be cut in half
+  and `e-load` would become two words a bare `load` then contains.
+- **`foldDescription` itself must never learn this.** It also drives duplicate detection,
+  recurring-charge creep and income concentration, so sorting its tokens would make `Mirea Rent`
+  and `Rent Mirea` one charge in the assessment and silently move a financial finding. AGENTS.md
+  warns against a second copy of the *same* rule; `frequentKey` is a deliberately different one
+  built on top of it, for a surface where a false merge costs a button rather than a number in a
+  report.
+- **One habit gets one slot, by suppression and never by merging** (#268). After ranking, a tile
+  whose word set contains — or is contained by — a higher-ranked tile's loses its slot. Five of six
+  slots went to two things before this, and `Pandesal` was pushed off the bottom by a second
+  spelling of a button already on the grid, which is why suppression runs *before* the cap: a
+  suppressed variant hands its slot to the next real habit instead of leaving a hole. Merging is
+  the obvious reading of "deduplicate" and is wrong here — `gsm green` and `gsm green ride` carry
+  modes of 231.5 and 247, so a merge must pick between two real amounts, and `description` is
+  deliberately the most recent spelling, so a plain trip could end up captioned with the longer
+  variant. The mistakes do not cost the same: a wrong suppression loses a button, which is visible
+  on the grid and recoverable in the editor, where a wrong merge offers a wrong amount under a
+  wrong description and one tap writes it. Suppression also keeps every `count` honest, since an
+  absorbed group's occurrences never move to the survivor. Still nothing fuzzy — a set relation,
+  no edit distance, no similarity score, no threshold to tune. The accepted cost is that a
+  genuinely distinct trip sharing every word is suppressed (`Grab` takes the slot from `Grab to
+  airport`), pinned by a test so it is recorded rather than discovered on someone's grid.
+- **`excludeKeys` is matched by containment too**, and takes raw descriptions that are folded here
+  rather than pre-folded keys. Exact-matching it left a variant sitting in Frequent underneath the
+  very tile configured to replace it, so the redundancy survived the one action a user would take
+  to fix it. This is the layer that makes the grid self-heal: tapping a tile writes one fixed
+  description, so the variants stop accumulating and age out of the 60-day window on their own.
 - **Bill payments and receipt-split rows are excluded** in SQL. A "Meralco" tile writing a plain
   transaction with no `bill_id` settles no occurrence, does not advance the cursor, and
   manufactures exactly the finding `findUnlinkedBillPayments` exists to report. Three rows from one

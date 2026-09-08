@@ -246,3 +246,129 @@ describe("deriveFrequentTiles: selection", () => {
     expect(deriveFrequentTiles(rows)[0].lastLoggedAt).toEqual(day(3));
   });
 });
+
+describe("deriveFrequentTiles: one habit, one slot (#268)", () => {
+  it("groups the same words written in a different order", () => {
+    // The tell on real data: `uv & jeep` and `jeep & uv` are not different words, only a different
+    // order, and unsorted they held two of six slots. Neither spelling clears the threshold alone.
+    const tiles = deriveFrequentTiles([
+      row({ description: "UV & Jeep", date: day(1), amount: 38 }),
+      row({ description: "Jeep & UV", date: day(2), amount: 38 }),
+      row({ description: "uv & jeep", date: day(3), amount: 38 }),
+    ]);
+
+    expect(tiles).toHaveLength(1);
+    expect(tiles[0].count).toBe(3);
+  });
+
+  it("gives the slot to whichever variant is logged more, and keeps its count honest", () => {
+    // `uv express & jeep fare` (4x) outranks `uv & jeep` (3x), so it survives. The suppressed
+    // group's occurrences stay where they were -- they were never the survivor's, and reporting 7x
+    // would be a figure nothing paid.
+    const tiles = deriveFrequentTiles([
+      ...repeat(4, { description: "UV Express & Jeep fare", amount: 38 }),
+      ...repeat(3, { description: "UV & Jeep", amount: 38 }),
+    ]);
+
+    expect(tiles).toHaveLength(1);
+    expect(tiles[0]).toMatchObject({ description: "UV Express & Jeep fare", count: 4 });
+  });
+
+  it("suppresses the longer variant when the shorter one is logged more", () => {
+    // Both directions, because ranking is by count and not by length. On real data `gsm green`
+    // (13x) outranked `gsm green ride` (4x), so the survivor was the shorter description.
+    const tiles = deriveFrequentTiles([
+      ...repeat(5, { description: "GSM Green", amount: 231.5 }),
+      ...repeat(3, { description: "GSM Green ride", amount: 247 }),
+    ]);
+
+    expect(tiles).toHaveLength(1);
+    expect(tiles[0]).toMatchObject({ description: "GSM Green", count: 5, amount: 231.5 });
+  });
+
+  it("hands a suppressed slot to the next real habit rather than leaving a hole", () => {
+    // The bug this closes. Suppression runs before the cap, so a variant of a button already on
+    // the grid cannot push a genuine sixth habit off the bottom -- which is how `Pandesal` was
+    // lost.
+    const tiles = deriveFrequentTiles([
+      ...repeat(9, { description: "UV Express & Jeep fare", amount: 38 }),
+      ...repeat(6, { description: "UV & Jeep", amount: 38 }),
+      ...repeat(5, { description: "Jeep & UV fare", amount: 38 }),
+      ...repeat(4, { description: "a", amount: 10 }),
+      ...repeat(4, { description: "b", amount: 10 }),
+      ...repeat(4, { description: "c", amount: 10 }),
+      ...repeat(4, { description: "d", amount: 10 }),
+      ...repeat(3, { description: "pandesal", amount: 40 }),
+    ]);
+
+    expect(tiles.map((t) => t.description)).toEqual([
+      "UV Express & Jeep fare",
+      "a",
+      "b",
+      "c",
+      "d",
+      "pandesal",
+    ]);
+  });
+
+  it("clears a configured tile's variants, not just its exact spelling", () => {
+    // The layer that makes the grid self-heal. Exact-matching the exclusion list left a variant
+    // sitting in Frequent underneath the very tile configured to replace it, so the redundancy
+    // survived the one action a user would take to fix it.
+    const tiles = deriveFrequentTiles(
+      [
+        ...repeat(4, { description: "UV & Jeep", amount: 38 }),
+        ...repeat(3, { description: "pandesal", amount: 40 }),
+      ],
+      { excludeKeys: ["UV Express & Jeep fare"] }
+    );
+
+    expect(tiles.map((t) => t.description)).toEqual(["pandesal"]);
+  });
+
+  it("suppresses a genuinely distinct trip that happens to share every word", () => {
+    // The accepted cost, pinned so it is recorded here rather than discovered on someone's grid.
+    // An airport run is not a `Grab` to the office, but its words contain the shorter one's, so it
+    // loses the slot. Deliberate: a lost button is visible and configurable, where a merge would
+    // have offered 250 under "Grab to airport" and written it on one tap.
+    const tiles = deriveFrequentTiles([
+      ...repeat(5, { description: "Grab", amount: 250 }),
+      ...repeat(3, { description: "Grab to airport", amount: 3000 }),
+    ]);
+
+    expect(tiles).toHaveLength(1);
+    expect(tiles[0]).toMatchObject({ description: "Grab", amount: 250 });
+  });
+
+  it("does not let a dash count as a word", () => {
+    // `UV Express - Office to House` is a real configured tile description. A bare "-" in its token
+    // set would stop it containing the variant it should.
+    const tiles = deriveFrequentTiles(repeat(3, { description: "Office - To House" }), {
+      excludeKeys: ["Office To House"],
+    });
+
+    expect(tiles).toHaveLength(0);
+  });
+
+  it("keeps a hyphenated word and a non-ASCII one whole", () => {
+    // Splitting on punctuation generally would cut `Piñata` in half on a non-ASCII-blind rule, and
+    // would make `e-load` two words that a bare `load` then contains.
+    const tiles = deriveFrequentTiles([
+      ...repeat(3, { description: "e-load", amount: 100 }),
+      ...repeat(3, { description: "Piñata", amount: 500 }),
+    ]);
+
+    expect(tiles.map((t) => t.description).sort()).toEqual(["Piñata", "e-load"]);
+  });
+
+  it("leaves two habits that merely share a word alone", () => {
+    // Containment, not overlap. `lunch` is in both, but neither word set contains the other, so
+    // both keep their slot -- the rule is a set relation and not a similarity score.
+    const tiles = deriveFrequentTiles([
+      ...repeat(4, { description: "lunch at work", amount: 150 }),
+      ...repeat(3, { description: "lunch with mom", amount: 400 }),
+    ]);
+
+    expect(tiles.map((t) => t.description)).toEqual(["lunch at work", "lunch with mom"]);
+  });
+});

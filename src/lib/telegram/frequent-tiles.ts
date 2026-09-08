@@ -40,6 +40,67 @@ export const FREQUENT_LIMIT = 6;
  */
 export const FREQUENT_STABLE_SHARE = 0.6;
 
+/**
+ * The grouping key: `foldDescription` plus word order.
+ *
+ * `foldDescription` is an exact match once case, typographic apostrophes and repeated whitespace
+ * are normalised, and that is all it is meant to be -- #250 and #252 stretched it to apostrophes
+ * and deliberately stopped there. It is also imported by `assessment-facts.ts`, where it drives
+ * duplicate detection, recurring-charge creep and income concentration, so it **must not** learn
+ * this rule: sorting its tokens would make `Mirea Rent` and `Rent Mirea` one charge in the
+ * assessment and silently move a financial finding.
+ *
+ * So the stronger key lives here, under its own name, for a surface where a false merge costs a
+ * button rather than a number in a report. AGENTS.md warns against a second copy of the *same*
+ * folding rule; this is a deliberately different one, built on top of that one rather than beside
+ * it.
+ *
+ * Sorting the tokens is what collapses `uv & jeep` and `jeep & uv` -- three variants of one
+ * commute held three of six slots on real data (#268), and those two are not even different
+ * words. Still nothing fuzzy: no edit distance and no similarity score, for the reason
+ * `caption-labels.ts` refuses them. Two descriptions collide here only when they contain the same
+ * words, which means they are the same thing.
+ *
+ * `&` is a separator rather than a token because it is punctuation people type inconsistently in
+ * exactly the descriptions this exists for ("UV & Jeep", "UV and Jeep" is a different problem, but
+ * "UV&Jeep" is not).
+ */
+export const frequentKey = (description: string): string =>
+  tokensOf(description).sort().join(" ");
+
+/**
+ * The words of a description, folded. Split on `&` as well as whitespace.
+ *
+ * A token carrying no letter or digit is dropped, which is what keeps a dash from counting as a
+ * word: `UV Express - Office to House` is a real tile description here, and a bare `-` in its set
+ * would stop it containing anything it should. Tested with `\p{L}`/`\p{N}` rather than `a-z0-9`
+ * because descriptions here are not ASCII-only -- splitting on non-ASCII would cut `Piñata` in
+ * half, and hyphenated words must survive whole for the same reason.
+ */
+const tokensOf = (description: string): string[] =>
+  foldDescription(description)
+    .split(/[\s&]+/)
+    .filter((token) => /[\p{L}\p{N}]/u.test(token));
+
+/**
+ * Whether one key's words are a subset of the other's, in either direction.
+ *
+ * The suppression rule, and a set relation rather than a score -- there is no threshold to tune and
+ * no pair it answers "maybe" for. `uv & jeep` is contained by `uv express & jeep fare`; `gsm green`
+ * contains nothing but is contained by `gsm green ride`. Both directions matter because ranking is
+ * by count, not by length: the survivor is whichever is logged more, which is sometimes the shorter
+ * description and sometimes the longer.
+ */
+const containsEitherWay = (a: string, b: string): boolean => {
+  const ta = new Set(a.split(" ").filter(Boolean));
+  const tb = new Set(b.split(" ").filter(Boolean));
+  if (ta.size === 0 || tb.size === 0) return false;
+
+  const [small, large] = ta.size <= tb.size ? [ta, tb] : [tb, ta];
+  for (const token of small) if (!large.has(token)) return false;
+  return true;
+};
+
 /** One transaction, as the loader supplies it. */
 export interface FrequentSource {
   description: string;
@@ -50,7 +111,7 @@ export interface FrequentSource {
 }
 
 export interface FrequentTile {
-  /** `foldDescription(description)`. The React key, and the key deduped against configured tiles. */
+  /** `frequentKey(description)`. The React key, and the key deduped against configured tiles. */
   key: string;
   /** The most recent spelling the user actually wrote, which is the one they currently use. */
   description: string;
@@ -66,7 +127,13 @@ export interface FrequentTile {
 }
 
 export interface FrequentOptions {
-  /** Folded descriptions of the user's configured tiles, which must not appear twice in the grid. */
+  /**
+   * Descriptions of the user's configured tiles, which must not appear twice in the grid.
+   *
+   * Raw descriptions rather than pre-folded keys: they are folded here, so a caller cannot pass
+   * one folded by a rule that has since moved on. Matched by containment as well as equality, so
+   * configuring `UV Express & Jeep fare` also clears `uv & jeep`.
+   */
   excludeKeys?: string[];
   limit?: number;
   minCount?: number;
@@ -75,11 +142,26 @@ export interface FrequentOptions {
 /**
  * Rank the user's recent spending into quick-log tiles.
  *
- * Rows are grouped by `foldDescription`, which is imported rather than re-implemented: AGENTS.md
- * is explicit that a second folding rule is drift, and this needs exactly the property that rule
- * exists for. iOS substitutes U+2019 for a typed apostrophe, so one merchant is written two ways
- * by the same person on the same phone, and unfolded they would each fall below the threshold and
- * neither would appear.
+ * Rows are grouped by `frequentKey`, which builds on `foldDescription` rather than
+ * re-implementing it: AGENTS.md is explicit that a second copy of that rule is drift, and this
+ * needs exactly the property it exists for. iOS substitutes U+2019 for a typed apostrophe, so one
+ * merchant is written two ways by the same person on the same phone, and unfolded they would each
+ * fall below the threshold and neither would appear.
+ *
+ * Two further rules keep one habit from taking several slots (#268), because a grid meant to
+ * surface six things was surfacing two:
+ *
+ *  - grouping ignores **word order**, so `uv & jeep` and `jeep & uv` are one group
+ *  - after ranking, a tile whose words are contained by a **higher-ranked** tile's loses its slot
+ *
+ * The second is suppression and deliberately not merging. Merging is the obvious reading of
+ * "deduplicate" and is wrong here: `gsm green` and `gsm green ride` carry modes of 231.5 and 247,
+ * so a merge has to pick between two real amounts, and `description` is deliberately the most
+ * recent spelling, so a plain trip could end up captioned with the longer variant. The two
+ * mistakes do not cost the same -- a wrong suppression loses a button, which is visible on the grid
+ * and recoverable in the editor, where a wrong merge offers a wrong amount under a wrong
+ * description and one tap writes it. Suppression also keeps every `count` honest, since an absorbed
+ * group's occurrences never move to the survivor.
  *
  * The caller is responsible for the window and for excluding bill payments and receipt splits --
  * those are predicates the database can apply, and applying them here would mean loading rows only
@@ -89,7 +171,10 @@ export const deriveFrequentTiles = (
   rows: FrequentSource[],
   { excludeKeys = [], limit = FREQUENT_LIMIT, minCount = FREQUENT_MIN_COUNT }: FrequentOptions = {}
 ): FrequentTile[] => {
-  const excluded = new Set(excludeKeys.map(foldDescription));
+  // Folded the same way the rows are, and then matched by containment too. Exact-matching the
+  // exclusion list is what let a variant sit in Frequent underneath the very tile a user had
+  // configured to replace it -- the redundancy surviving the one action taken to fix it.
+  const excluded = excludeKeys.map(frequentKey).filter(Boolean);
 
   const groups = new Map<
     string,
@@ -97,8 +182,8 @@ export const deriveFrequentTiles = (
   >();
 
   for (const row of rows) {
-    const key = foldDescription(row.description);
-    if (!key || excluded.has(key)) continue;
+    const key = frequentKey(row.description);
+    if (!key || excluded.some((e) => containsEitherWay(e, key))) continue;
 
     const group = groups.get(key);
     if (!group) {
@@ -133,9 +218,22 @@ export const deriveFrequentTiles = (
     });
   }
 
-  return tiles
-    .sort((a, b) => b.count - a.count || b.lastLoggedAt.getTime() - a.lastLoggedAt.getTime())
-    .slice(0, limit);
+  const ranked = tiles.sort(
+    (a, b) => b.count - a.count || b.lastLoggedAt.getTime() - a.lastLoggedAt.getTime()
+  );
+
+  // Suppression runs on the *ranked* list and before the limit, so the survivor is whichever is
+  // logged more and a suppressed variant hands its slot to the next real habit rather than leaving
+  // a hole. Applying the cap first would have kept the variant and dropped the habit, which is the
+  // bug: `Pandesal` was pushed off the bottom by a second spelling of a button already on the grid.
+  const kept: FrequentTile[] = [];
+  for (const tile of ranked) {
+    if (kept.some((k) => containsEitherWay(k.key, tile.key))) continue;
+    kept.push(tile);
+    if (kept.length === limit) break;
+  }
+
+  return kept;
 };
 
 /**
