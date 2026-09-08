@@ -39,6 +39,7 @@ export default async function AppLayout({
       telegramDailyPromptTime: true,
       emailVerified: true,
       timezoneOffset: true,
+      hideAmounts: true,
       role: true,
     },
   });
@@ -104,7 +105,7 @@ export default async function AppLayout({
             which is the precise failure this whole change is about. ToastProvider depends on
             nothing below it, so the order is free to be this way round. */}
         <ToastProvider>
-          <PrivacyProvider>
+          <PrivacyProvider initialHideAmounts={dbUser?.hideAmounts ?? false}>
             <AssessmentProvider>
               <BillReminderProvider>
                 <AppShell>{children}</AppShell>

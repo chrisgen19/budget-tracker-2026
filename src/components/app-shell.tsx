@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { useUser } from "@/components/user-provider";
 import { ProfileMenu } from "@/components/profile-menu";
+import { PrivacyToggle } from "@/components/privacy-toggle";
 import { MobileTabBar } from "@/components/mobile-tab-bar";
 import { ScanProvider } from "@/components/scan-provider";
 import { ScanReceiptSheet } from "@/components/scan-receipt-sheet";
@@ -209,7 +210,14 @@ export function AppShell({ children }: AppShellProps) {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-3 py-4 space-y-1">
+        {/* `min-h-0` + `overflow-y-auto`, or the footer walks off the bottom of a short window.
+            The aside is `inset-y-0`, so it is exactly viewport-tall and nothing inside it
+            scrolls; `flex-1` alone is `flex: 1 1 0%` with `min-height: auto`, which refuses to
+            shrink below the nav's content. Logo + seven nav rows + a footer already came to
+            ~580px, and the privacy row adds ~48px, so on anything under ~630px tall - a 1024x600
+            laptop, a half-height window, devtools docked at the bottom - the profile and log-out
+            control was pushed out of reach with no way to scroll to it. */}
+        <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4 space-y-1">
           {NAV_ITEMS.map((item) => {
             const isActive = pathname === item.href;
             return (
@@ -275,6 +283,10 @@ export function AppShell({ children }: AppShellProps) {
               </span>
             </div>
           )}
+          {/* Above the profile block rather than inside its menu: hiding amounts is a thing
+              you reach for at a moment (someone walks past), not a setting you go looking
+              for, and two taps behind a menu is not that. */}
+          <PrivacyToggle variant="row" className="mb-2" />
           <ProfileMenu
             variant="desktop"
             name={user.name}
@@ -285,12 +297,19 @@ export function AppShell({ children }: AppShellProps) {
       </aside>
 
       {/* Mobile Header */}
-      <header className="lg:hidden fixed top-0 inset-x-0 bg-white/90 backdrop-blur-md border-b border-cream-300/60 z-30 px-4 py-3">
-        <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-xl bg-amber text-white flex items-center justify-center shadow-soft">
-            <Wallet className="w-4 h-4" />
+      {/* py-2, not py-3: the privacy toggle is a 44px target (AGENTS.md), which is taller than
+          the 36px logo mark that used to set this bar's height. At py-3 the header grows to
+          69px and pokes through the `pt-16` (64px) clearance `<main>` reserves for it, tucking
+          the top of every page underneath. py-2 lands it at 61px and looks unchanged. */}
+      <header className="lg:hidden fixed top-0 inset-x-0 bg-white/90 backdrop-blur-md border-b border-cream-300/60 z-30 px-4 py-2">
+        <div className="flex items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-amber text-white flex items-center justify-center shadow-soft">
+              <Wallet className="w-4 h-4" />
+            </div>
+            <h1 className="font-serif text-lg text-warm-700 truncate">Budget Tracker</h1>
           </div>
-          <h1 className="font-serif text-lg text-warm-700">Budget Tracker</h1>
+          <PrivacyToggle variant="icon" className="-mr-2 shrink-0" />
         </div>
       </header>
 
