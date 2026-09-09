@@ -31,6 +31,7 @@ src/
 │   │   ├── transactions/   # Transaction list + CRUD
 │   │   ├── categories/     # Category management
 │   │   ├── bills/          # Recurring bills management
+│   │   ├── quick-log/      # Quick Log: CRUD + one-tap logging for the quick-log buttons
 │   │   ├── profile/        # User profile + feature settings
 │   │   └── admin/          # Admin panel (settings)
 │   ├── tg/                 # Telegram Mini App (outside (app): no session, initData instead)
@@ -45,6 +46,7 @@ src/
 │   ├── bills/              # BillForm, BillReminderBanner, BillReminderProvider
 │   ├── pwa/                # InstallPromptBanner, OfflineBanner, InstallBannerContext
 │   ├── telegram/           # Mini App: TelegramApp shell, TileGrid, AmountSheet, TileEditor
+│   ├── quick-log/          # Web editor for the same tiles: QuickTileCard, QuickTileForm, AmountPrompt
 │   ├── scan-receipt-sheet.tsx   # Single receipt capture modal
 │   ├── multi-scan-review.tsx    # Multi-receipt review + itemize
 │   ├── scan-provider.tsx        # Receipt scan state context
@@ -61,6 +63,7 @@ src/
 │   ├── tokens.ts           # Verification/reset token helpers
 │   ├── session.ts          # Session utilities
 │   ├── bill-utils.ts       # Bill due-date advancement logic
+│   ├── quick-tile-writes.ts   # Quick-log button rules, shared by /api/tg/* and /api/quick-tiles/*
 │   ├── scan-quota.ts       # Receipt scan credit reservation, refund, and rate limit
 │   ├── receipt-guard.ts    # Shared upload validation + permission gate for receipt routes
 │   ├── budget-queries.ts   # Shared read-only Prisma query functions (used by app + MCP)
@@ -272,9 +275,10 @@ Not through `/api/mcp`: that would mean either a token in browser code or a loop
 that `created_via: TELEGRAM` is ambiguous between the bot and the Mini App, distinguishable only
 by `mcp_token_id IS NULL`. **Nobody should later "fix" that null.**
 
-`labelIds` is deliberately absent from the write rather than `[]`, so auto-apply schedules run: a
-Mini App tap happens *now*, so a schedule's premise of a real clock holds, which a backdated
-receipt's does not. Per-tile pinned labels are an additive `TelegramQuickTileLabel` table later.
+`labelIds` is absent from the write rather than `[]` **when the tile carries no pins**, so
+auto-apply schedules run: a tap happens *now*, so a schedule's premise of a real clock holds, which
+a backdated receipt's does not. Per-tile pinned labels landed as `TelegramQuickTileLabel` and are
+edited from the web app's Quick Log page, not from inside Telegram -- see **Pinned labels** below.
 The date is the **server's** clock, never the webview's.
 
 ### Tiles as data
@@ -308,6 +312,71 @@ landed under **Education**.
 
 `sortOrder` is sparse (`SORT_ORDER_GAP`), so a tile can be moved between two others by picking a
 number in between; a full reorder still rewrites them all, which keeps the gaps from closing up.
+
+### Pinned labels
+
+`TelegramQuickTileLabel` pins labels to a button, and a pinned label **wins over the user's
+auto-apply schedules** for that tap. That falls straight out of `createTransactionBatch`'s existing
+tri-state: `labelIds: undefined` lets schedules run, `[]` is an explicit opt-out, and an explicit
+list is both an instruction and an opt-out. A tile with pins sends the list; a tile without one
+omits the key entirely -- **never `[]`** -- which is the behaviour every button had before pins
+existed. The user named these labels on this button, and a schedule guessing over a named one moves
+money in `getLabelBreakdown`, which splits one amount across whatever labels a row carries.
+
+**A label whose `applicableTo` excludes the tile's type is refused at the edit, not filtered at the
+write.** `createTransactionBatch` type-filters explicit ids *silently*, so accepting one would show
+the label in the editor and then quietly not write it -- the same failure `caption-labels.ts`
+reports back as `incompatible` rather than dropping. The refusal runs against the **effective**
+row, so a bare `type` flip that leaves an incompatible pin behind is caught even though the patch
+names no labels at all.
+
+**But it judges only pins that actually move** -- a named `labelIds`, or a `type` flip that
+invalidates the stored set. Judging an unchanged, unnamed set prevents nothing and locks the caller
+out of a button that was *already* mismatched, which needs no edit to reach: `PUT /api/labels/[id]`
+narrows a label's type underneath every button pinning it. The Mini App's editor sends no
+`labelIds` and has no picker, so re-judging there made such a button unrenamable from inside
+Telegram with no way to fix it there. Same rule `updateTransactions` and `updateBill` already apply
+to their own category/type pair, and for the same reason.
+
+A pin can still stop applying *after* it was saved: `PUT /api/labels/[id]` narrows a label's type
+and knows nothing about buttons. So `applies` is recomputed on **every** read in `viewTiles`, the
+same rule `resolveTileCategory` follows for the category, and the tap filters on it too rather than
+leaving it to the silent filter downstream. The web page renders such a pin struck through; the
+Mini App grid omits it from its colour dots. When filtering leaves *no* pins, `labelIds` goes back
+to being absent and schedules run again -- which is the honest reading of "this button pins
+nothing", not an empty opt-out nobody asked for.
+
+Edited only from the web app. The Mini App's editor deliberately has no label picker: three taps is
+its whole premise, and a picker is a screen it does not need.
+
+### The web page
+
+`/quick-log` is the CRUD surface for the same `telegram_quick_tiles` rows the Mini App renders --
+one set of buttons, two editors, so one made on a laptop is on the phone's grid on its next launch.
+It also logs: the card body is a tap and an overflow menu carries edit, delete and reorder. That
+split is what makes it worth visiting rather than a settings screen.
+
+**The rules live in `src/lib/quick-tile-writes.ts`, not in either route.** There are two doors onto
+these rows and there always will be -- `/api/tg/*` authenticates a signed `initData` payload,
+`/api/quick-tiles/*` a NextAuth session -- and what they may do once inside is identical and not a
+short list: the tile cap, the duplicate-label refusal, the effective-row category check, the
+conditional write that makes an edit depend on the world it was judged against, the
+replay-before-resolve ordering on a tap, and the label rules above. Written twice those drift,
+which is exactly what `assess.sql` and `assessment-facts.ts` did to each other within days. Each
+function returns a discriminated result and `quickTileStatus` is the one place a `reason` becomes a
+status code, so the two clients cannot come to disagree about whether a full grid is a 409 -- which
+matters, because both read a 4xx as proof nothing was written.
+
+`createdVia` is **passed** to `logQuickTile` rather than derived: `TELEGRAM` from the Mini App,
+`APP` from the web page. Provenance follows the surface the user tapped, not the code path, and a
+row written from a laptop must not claim Telegram wrote it. Neither carries an `mcpTokenId`.
+
+The amount prompt is a plain `inputMode="decimal"` field, not the Mini App's custom keypad: that
+keypad exists because an OS keyboard resizes Telegram's webview mid-entry, which is not a problem a
+browser has, and a second keypad is a second thing to maintain.
+
+`/quick-log` is in `PROTECTED_PAGE_PATHS`. The list is a denylist that fails open, and this page
+renders the same buttons, amounts and pinned labels `/tg` does.
 
 ### Frequent
 
@@ -547,7 +616,7 @@ Active tasks:
   repairing them: renaming one preserves its id and its transactions, but also relabels real spending
 - `scripts/seed-telegram-quick-tiles.ts` gives one named account the Mini App's starting grid: the three fixed fares `QUICK_FARES` already pins to the reply keyboard, plus three ask-for-an-amount tiles a reply keyboard could never offer. Dry run by default, and like the merge script it is **not** part of `pnpm db:seed` or any build — it writes rows for one named user. It seeds an **empty** grid and does nothing else: per-label deduplication is the obvious alternative and is quietly wrong, since a label is the one field the editor exists to change, so renaming "To office" to "Office" frees the original label and the next run recreates it beside the renamed one
 - Users can create custom categories on top of defaults
-- Key models: `User`, `Category`, `Transaction`, `ScheduledTransaction` (recurring bills; `@@map("scheduled_transactions")` — there is no `Bill` model), `ScheduledTransactionLog` (per-occurrence PAID/SKIPPED/SNOOZED), `BillEmailLog`, `Label`, `LabelSchedule`, `TransactionLabel`, `BillLabel`, `VerificationToken`, `ScanLog`, `AiAssessment`, `AiUsageLog`, `McpToken`, `AppSettings`, `TelegramPromptLog`, `TelegramQuickTile`
+- Key models: `User`, `Category`, `Transaction`, `ScheduledTransaction` (recurring bills; `@@map("scheduled_transactions")` — there is no `Bill` model), `ScheduledTransactionLog` (per-occurrence PAID/SKIPPED/SNOOZED), `BillEmailLog`, `Label`, `LabelSchedule`, `TransactionLabel`, `BillLabel`, `VerificationToken`, `ScanLog`, `AiAssessment`, `AiUsageLog`, `McpToken`, `AppSettings`, `TelegramPromptLog`, `TelegramQuickTile`, `TelegramQuickTileLabel`
 - Notable columns: `users.hide_amounts`, `users.timezone_offset`, `users.telegram_user_id` (the Mini App's identity half; set by hand with `scripts/link-telegram-user.ts`, so a restored database loses it), `users.email_verified`, `users.default_label_type`, `transactions.receipt_group_id`, `transactions.receipt_breakdown`, `transactions.bill_id`, `transactions.client_batch_id`, `transactions.created_via`, `transactions.mcp_token_id`, `transactions.updated_via`, `transactions.updated_by_mcp_token_id`, `users.mcp_writes_enabled_until`, `mcp_tokens.source`
 - `Label.applicable_to` restricts labels to "EXPENSE", "INCOME", or "BOTH" (default); filters LabelPicker, schedule auto-labeling, and retroactive apply
 - `LabelSchedule` stores per-label auto-apply rules: `days` (int[]), `startTime`/`endTime` (HH:mm), linked to `Label` via `labelId`
@@ -569,7 +638,8 @@ Active tasks:
 - `scripts/verify-transaction-update.ts` drives `update_transactions` over the real `/api/mcp` route against a real database, and checks the half no stubbed test can: that `updated_via` and `updated_by_mcp_token_id` land on the row while `created_via` survives, that an edit moving nothing leaves the existing trail alone, that `transaction_labels` rows are *replaced* rather than appended, that a refused batch left every row untouched, and that a create-only token cannot see the tool at all. It also covers the concurrency half of #233, which needs two connections: that a `transaction_labels` insert from a path taking **no** lock still waits on the row lock (the FK's `FOR KEY SHARE` conflicting with `FOR UPDATE`, which is what makes weakening it to `FOR NO KEY UPDATE` a silent regression), and that a label added *during* an edit survives it. That last one is the issue's own scenario and is deliberately shaped to be failable: timing alone proves nothing, since `transaction.update` takes its own row lock and a build reading before the transaction waits at the write and looks identical from outside. What separates them is which snapshot the preserved-label set comes from, so the row carries an EXPENSE-only label and the edit flips it to INCOME with no `labelIds` -- which forces the delete-then-create path, the only one that can lose somebody else's label. Confirmed to fail against the pre-fix code. Needs a dev server: `pnpm dev -p 3111` then `BASE_URL=http://localhost:3111 pnpm exec tsx --env-file=.env scripts/verify-transaction-update.ts`
 - `scripts/verify-mcp-bill-writes.ts` drives `pay_bill`, `create_bill`, `update_bill` and `create_label` over the real `/api/mcp` route against a real database. Unit tests stub Prisma, so they prove the rules and nothing about the storage: this checks that a payment lands carrying `bill_id` (the failure that made a bill paid over MCP worse than one not logged at all), that `next_due_date` actually moves on the row and a second call against the same occurrence is refused rather than paying the month twice, that a `SKIPPED` month can be corrected by `pay_existing` and cannot by `pay`, that a claimed payment carries `updated_via`/`updated_by_mcp_token_id` naming the token while its `created_via` survives (#256), that a schedule running past its `end_date` deactivates the bill, and that neither a `bills:read` nor a `transactions:write` token can see any of the write tools. Needs a dev server: `pnpm dev -p 3111` then `BASE_URL=http://localhost:3111 pnpm exec tsx --env-file=.env scripts/verify-mcp-bill-writes.ts`
 - `scripts/verify-label-removal-stamps.ts` proves the audit stamp on the two label-**removal** branches follows what the delete really removed (#251). A stubbed Prisma can assert the route reads its own result, and `route.test.ts` does; what it cannot show is that the result *differs* from the plan under a real concurrent commit, which is the whole claim. It reproduces the race through the real HTTP route rather than around it: another connection holds `FOR UPDATE` on the link row, the route's `DELETE ... RETURNING` blocks on it, the link is deleted and committed underneath, and the route must then report `updated: 0` and leave the MCP trail alone. Deterministic rather than timing-lucky -- the release waits until the route is provably blocked (`pg_locks`, `NOT granted`), the shape `verify-batch-idempotency.ts` uses, because sleeping instead lets the delete win the race and the check passes against the pre-fix code too. Confirmed to fail against it: pre-fix the route answers `updated: 1` with `changedLinks: 0` in the same response and stamps `APP` over `MCP`. Also covers the owner join, and that a row losing two labels is one edited row. Needs a dev server: `pnpm dev -p 3111` then `BASE_URL=http://localhost:3111 pnpm exec tsx --env-file=.env scripts/verify-label-removal-stamps.ts`
-- `scripts/verify-telegram-miniapp.ts` drives the real `/api/tg/*` routes over HTTP against a real database. Unit tests stub Prisma, so they prove the rules and nothing about the storage or the gate: this checks that a signed `initData` authenticates over a real request, that a tap writes a row carrying `created_via = TELEGRAM` with `mcp_token_id` NULL, that a replayed `clientBatchId` returns the original and writes nothing, and that the label schedules a stubbed `createTransactionBatch` can never exercise really do run. It creates and deletes its own throwaway user. Like the other verify scripts pointed at a `BASE_URL`, it refuses to send a credential over cleartext to anything but this machine — what travels here is a valid `initData`, replayable for its whole freshness window. Needs a dev server: `pnpm dev -p 3111` then `BASE_URL=http://localhost:3111 pnpm exec tsx --env-file=.env scripts/verify-telegram-miniapp.ts`
+- `src/lib/quick-tile-writes.test.ts` covers the shared quick-log button rules with Prisma and `createTransactionBatch` both stubbed, which is the only way to assert the *argument* a tap makes: that a pinned tile sends `labelIds` and an unpinned one omits the key **entirely**. An `[]` there would silently disable schedules and look identical in every response, so the assertion is `not.toHaveProperty("labelIds")` rather than a value check. `src/app/api/quick-tiles/route.test.ts` covers only what the route layer owns — the session gate, the reason-to-status mapping, and that a replay is answered before the tile is resolved
+- `scripts/verify-telegram-miniapp.ts` drives the real `/api/tg/*` routes over HTTP against a real database. Unit tests stub Prisma, so they prove the rules and nothing about the storage or the gate: this checks that a signed `initData` authenticates over a real request, that a tap writes a row carrying `created_via = TELEGRAM` with `mcp_token_id` NULL, that a replayed `clientBatchId` returns the original and writes nothing, and that the label schedules a stubbed `createTransactionBatch` can never exercise really do run. That last part is where the pinned-label rules are actually proved: `labelIds: undefined` versus an explicit list is a distinction that lives *inside* the function every unit test stubs, so only a real write can show that a pin suppresses a schedule, that a pin narrowed after it was saved is dropped, and that with no pins left the schedule runs again. It creates and deletes its own throwaway user. Like the other verify scripts pointed at a `BASE_URL`, it refuses to send a credential over cleartext to anything but this machine — what travels here is a valid `initData`, replayable for its whole freshness window. Needs a dev server, and the test id `999000999` in **both** environments — the server reads the allowlist to answer the request and the script reads it to refuse early with a useful message: `TELEGRAM_ALLOWED_IDS="<yours>,999000999" pnpm dev -p 3111` then `BASE_URL=http://localhost:3111 TELEGRAM_ALLOWED_IDS="<yours>,999000999" pnpm exec tsx --env-file=.env scripts/verify-telegram-miniapp.ts`
 - `e2e/telegram-mini-app.spec.ts` (Playwright, `pnpm test:e2e`) drives the Mini App as a real page in a real browser. A Telegram webview cannot be automated but the page in it can: `window.Telegram` is stubbed with a **genuinely signed** `initData` and everything below it is real. It signs from Telegram's published algorithm rather than by calling `verifyInitData`, so a green run means the server agrees with the spec rather than with itself. The allowlist is read by the process serving the request, so the test id has to be in the **server's** environment: `TELEGRAM_ALLOWED_IDS="<yours>,999000999" pnpm dev -p 3311` then `E2E_BASE_URL=http://localhost:3311 pnpm exec playwright test e2e/telegram-mini-app.spec.ts`
 - `scripts/verify-mcp-endpoint.ts` drives the real `/api/mcp` route with the SDK's own HTTP client against a dev server: `pnpm dev -p 3111` then `BASE_URL=http://localhost:3111 pnpm exec tsx scripts/verify-mcp-endpoint.ts`
 
@@ -675,6 +745,11 @@ Active tasks:
 - `POST /api/email/forgot-password` — send password reset email
 - `POST /api/email/reset-password` — validate token + update password
 - `POST /api/resend-verification` — resend verification email
+- `GET/POST /api/quick-tiles` — list + create quick-log buttons from the web app (NextAuth session). Same rows and same rules as `/api/tg/tiles`, both thin wrappers over `src/lib/quick-tile-writes.ts`
+- `PATCH/DELETE /api/quick-tiles/[id]` — edit or remove one. 404 rather than 403 on somebody else's
+- `POST /api/quick-tiles/reorder` — the **whole** id set, as the Mini App's route takes it
+- `POST /api/quick-tiles/log` — one tap. `created_via: APP`, no `mcp_token_id`; accepts a `clientBatchId` and replays it ahead of every other 4xx branch
+- `GET /api/quick-tiles/frequent` — the derived Frequent list, its own route because it reads up to 1,000 rows and the grid must not wait on it. `excludeKeys` is the tiles' raw descriptions, exactly as `/api/tg/bootstrap` passes them
 - `GET /api/tg/bootstrap` — everything the Mini App grid needs in one round trip: the user's currency and offset, the configured tiles with their *resolved* categories, the derived Frequent tiles, the category list for the editor, and the tile cap. Authenticated by `Authorization: tma <initData>`, never a session
 - `GET/POST /api/tg/tiles` — list + create quick-log tiles (409 over `MAX_QUICK_TILES`, 409 on a duplicate label, 400 on a category the user does not own or whose type disagrees)
 - `PATCH/DELETE /api/tg/tiles/[id]` — edit or remove one tile. 404 rather than 403 on somebody else's, since a 403 confirms it exists

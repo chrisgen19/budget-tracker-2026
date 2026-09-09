@@ -10,14 +10,26 @@ const mocks = vi.hoisted(() => ({
   tileDeleteMany: vi.fn(),
   tileFindFirst: vi.fn(),
   tileFindFirstOrThrow: vi.fn(),
+  tileLabelFindMany: vi.fn(),
+  tileLabelDeleteMany: vi.fn(),
+  tileLabelCreateMany: vi.fn(),
   categoryFindMany: vi.fn(),
+  labelFindMany: vi.fn(),
   transaction: vi.fn(),
+  queryRaw: vi.fn(),
+  executeRaw: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     user: { findUnique: mocks.userFindUnique },
     category: { findMany: mocks.categoryFindMany },
+    label: { findMany: mocks.labelFindMany },
+    telegramQuickTileLabel: {
+      findMany: mocks.tileLabelFindMany,
+      deleteMany: mocks.tileLabelDeleteMany,
+      createMany: mocks.tileLabelCreateMany,
+    },
     telegramQuickTile: {
       findMany: mocks.tileFindMany,
       findFirst: mocks.tileFindFirst,
@@ -27,6 +39,8 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: mocks.tileUpdateMany,
       deleteMany: mocks.tileDeleteMany,
     },
+    $queryRaw: mocks.queryRaw,
+    $executeRaw: mocks.executeRaw,
     $transaction: mocks.transaction,
   },
 }));
@@ -49,6 +63,12 @@ const INIT_DATA =
 
 const AUTH = `tma ${INIT_DATA}`;
 
+const LABELS = [
+  { id: "label_work", name: "Work", color: "#111111", applicableTo: "BOTH" },
+  { id: "label_commute", name: "Commute", color: "#222222", applicableTo: "EXPENSE" },
+  { id: "label_payday", name: "Payday", color: "#333333", applicableTo: "INCOME" },
+];
+
 const CATEGORIES = [
   { id: "transportation", name: "Transportation", type: "EXPENSE", icon: "Car", color: "#000", isDefault: true },
   { id: "other", name: "Other Expense", type: "EXPENSE", icon: "Tag", color: "#000", isDefault: true },
@@ -63,6 +83,7 @@ const tileRow = (over: Record<string, unknown> = {}) => ({
   type: "EXPENSE",
   categoryId: "transportation",
   sortOrder: 10,
+  labels: [] as { labelId: string }[],
   ...over,
 });
 
@@ -85,18 +106,47 @@ beforeEach(() => {
 
   mocks.userFindUnique.mockResolvedValue({ id: "user_1" });
   mocks.categoryFindMany.mockResolvedValue(CATEGORIES);
+  mocks.labelFindMany.mockResolvedValue(LABELS);
   mocks.tileFindMany.mockResolvedValue([tileRow()]);
   mocks.tileFindFirst.mockResolvedValue(tileRow());
-  mocks.tileCreate.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
-    Promise.resolve(tileRow({ id: "tile_new", ...data }))
-  );
+  // `labels` is dropped from the echoed row rather than spread: Prisma's nested `create` takes
+  // `{ create: [...] }` on the way in and returns link rows on the way out, so echoing the input
+  // shape would hand `viewTiles` something no read ever produces.
+  mocks.tileCreate.mockImplementation(({ data }: { data: Record<string, unknown> }) => {
+    const { labels, ...scalars } = data as { labels?: unknown };
+    return Promise.resolve(
+      tileRow({
+        id: "tile_new",
+        ...scalars,
+        labels: ((labels as { create?: { labelId: string }[] } | undefined)?.create ?? []),
+      })
+    );
+  });
   mocks.tileUpdate.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
     Promise.resolve(tileRow({ ...data }))
   );
   mocks.tileUpdateMany.mockResolvedValue({ count: 1 });
   mocks.tileFindFirstOrThrow.mockResolvedValue(tileRow());
   mocks.tileDeleteMany.mockResolvedValue({ count: 1 });
-  mocks.transaction.mockResolvedValue([]);
+  mocks.tileLabelFindMany.mockImplementation(async () => {
+    const row = await mocks.tileFindFirst();
+    return row?.labels ?? [];
+  });
+  mocks.tileLabelDeleteMany.mockResolvedValue({ count: 0 });
+  mocks.tileLabelCreateMany.mockResolvedValue({ count: 0 });
+  // `updateQuickTile` uses the interactive form and `reorderQuickTiles` the array form, so the
+  // mock serves both. The callback is handed the same mocked delegates.
+  mocks.transaction.mockImplementation(async (arg: unknown) => {
+    if (typeof arg !== "function") return [];
+    const { prisma } = await import("@/lib/prisma");
+    return (arg as (tx: unknown) => unknown)(prisma);
+  });
+  // The `SELECT ... FOR UPDATE` that opens an edit, derived from the stored row under test.
+  mocks.executeRaw.mockResolvedValue(1);
+  mocks.queryRaw.mockImplementation(async () => {
+    const row = await mocks.tileFindFirst();
+    return row ? [{ type: row.type, category_id: row.categoryId }] : [];
+  });
 });
 
 afterEach(() => {
@@ -193,7 +243,7 @@ describe("PATCH /api/tg/tiles/[id]", () => {
     );
 
     expect(res.status).toBe(404);
-    expect(mocks.tileUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.tileUpdate).not.toHaveBeenCalled();
   });
 
   it("clears a fixed amount when sent an explicit null", async () => {
@@ -201,33 +251,37 @@ describe("PATCH /api/tg/tiles/[id]", () => {
     // impossible to express, which is why the schema is nullable rather than optional.
     await PATCH(req("https://x.test/api/tg/tiles/tile_1", "PATCH", { amount: null }), params("tile_1"));
 
-    expect(mocks.tileUpdateMany.mock.calls.at(-1)![0].data).toEqual({ amount: null });
+    expect(mocks.tileUpdate.mock.calls.at(-1)![0].data).toEqual({ amount: null });
   });
 
   it("writes only the keys actually sent", async () => {
     await PATCH(req("https://x.test/api/tg/tiles/tile_1", "PATCH", { label: "Office" }), params("tile_1"));
 
-    expect(mocks.tileUpdateMany.mock.calls.at(-1)![0].data).toEqual({ label: "Office" });
+    expect(mocks.tileUpdate.mock.calls.at(-1)![0].data).toEqual({ label: "Office" });
   });
 
   it("writes against the pair it validated, not the id alone", async () => {
-    // The check runs on the effective row built from a read taken outside any transaction. Two
+    // The checks run on the effective row built from a read taken outside any transaction. Two
     // edits in flight can each be valid alone and combine into a pair neither asked for, so the
-    // write names the values it judged and lands only while they still hold.
+    // write re-reads the pair it judged under a row lock and lands only while it still holds.
     mocks.tileFindFirst.mockResolvedValue(tileRow({ type: "EXPENSE", categoryId: "transportation" }));
 
     await PATCH(req("https://x.test/api/tg/tiles/tile_1", "PATCH", { label: "Office" }), params("tile_1"));
 
-    expect(mocks.tileUpdateMany.mock.calls.at(-1)![0].where).toEqual({
-      id: "tile_1",
-      userId: "user_1",
-      type: "EXPENSE",
-      categoryId: "transportation",
-    });
+    // The lock is the check now that the write is a plain `update` by id, so this asserts the
+    // statement really is a `FOR UPDATE` naming this row and this owner. Asserting only that
+    // *some* query ran would pass against a lock that read the wrong row, or none.
+    const [sql, ...values] = mocks.queryRaw.mock.calls.at(-1)!;
+    const text = String(sql.join("?"));
+    expect(text).toContain("FOR UPDATE");
+    expect(text).toContain("telegram_quick_tiles");
+    expect(values).toEqual(["tile_1", "user_1"]);
+    expect(mocks.tileUpdate).toHaveBeenCalled();
   });
 
   it("409s when the tile moved under the edit", async () => {
-    mocks.tileUpdateMany.mockResolvedValue({ count: 0 });
+    // The locked row disagrees with the one the checks were judged against.
+    mocks.queryRaw.mockResolvedValue([{ type: "INCOME", category_id: null }]);
 
     const res = await PATCH(
       req("https://x.test/api/tg/tiles/tile_1", "PATCH", { label: "Office" }),
@@ -249,7 +303,7 @@ describe("PATCH /api/tg/tiles/[id]", () => {
     );
 
     expect(res.status).toBe(400);
-    expect(mocks.tileUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.tileUpdate).not.toHaveBeenCalled();
   });
 
   it("allows a type flip that moves the category with it", async () => {
@@ -278,6 +332,20 @@ describe("DELETE /api/tg/tiles/[id]", () => {
     const res = await DELETE(req("https://x.test/api/tg/tiles/x", "DELETE"), params("x"));
 
     expect(res.status).toBe(404);
+  });
+});
+
+describe("unexpected failures", () => {
+  it("answers the JSON 500 contract rather than a framework error page", async () => {
+    // `tg-api.ts` reads `body.error` for its message and the status for its retry decision, so an
+    // unguarded throw costs the Mini App the cause. The web routes answer this shape; the two
+    // doors onto the same helpers must not disagree about it.
+    mocks.tileFindMany.mockRejectedValue(new Error("connection reset"));
+
+    const res = await GET(req("https://x.test/api/tg/tiles", "GET"));
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Internal server error" });
   });
 });
 

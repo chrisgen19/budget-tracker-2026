@@ -25,11 +25,26 @@ interface TileButtonProps {
   currency: string;
   note?: string;
   warn?: boolean;
+  /** Pinned labels, rendered as their colours. Names would not survive a three-column grid. */
+  labels?: TileView["labels"];
   disabled?: boolean;
   onPress: () => void;
 }
 
-function TileButton({ label, amount, currency, note, warn, disabled, onPress }: TileButtonProps) {
+function TileButton({
+  label,
+  amount,
+  currency,
+  note,
+  warn,
+  labels,
+  disabled,
+  onPress,
+}: TileButtonProps) {
+  // Only the pins that will actually be written. One whose label was narrowed to the other
+  // transaction type is silently absent here rather than shown and then not applied, which is the
+  // same rule the write itself follows -- and the web page, where they are edited, says why.
+  const applied = (labels ?? []).filter((l) => l.applies);
   return (
     <button
       type="button"
@@ -40,6 +55,19 @@ function TileButton({ label, amount, currency, note, warn, disabled, onPress }: 
       className="relative flex min-h-24 flex-col items-start justify-between rounded-2xl border border-warm-200 bg-white p-3 text-left shadow-soft transition active:scale-[0.97] disabled:opacity-50"
     >
       <span className="line-clamp-2 text-sm font-medium leading-tight text-warm-800">{label}</span>
+      {applied.length > 0 ? (
+        <span className="flex flex-wrap gap-1" aria-label={`Labels: ${applied.map((l) => l.name).join(", ")}`}>
+          {applied.map((l) => (
+            <span
+              key={l.id}
+              title={l.name}
+              aria-hidden
+              className="h-1.5 w-1.5 rounded-full"
+              style={{ backgroundColor: l.color }}
+            />
+          ))}
+        </span>
+      ) : null}
       <span className="flex w-full items-baseline justify-between gap-1">
         <span className="font-display text-lg font-semibold text-amber">
           {amount === null ? "Ask" : money(currency, amount)}
@@ -97,6 +125,7 @@ export function TileGrid({
               // the app was closed is visible in the grid rather than discovered on the next tap.
               note={tile.fallsBack ? (tile.resolvedCategoryName ?? "no category") : undefined}
               warn={tile.fallsBack}
+              labels={tile.labels}
               disabled={busy}
               onPress={() => onTile(tile)}
             />
@@ -114,6 +143,7 @@ export function TileGrid({
               currency={currency}
               note={tile.fallsBack ? (tile.resolvedCategoryName ?? "no category") : undefined}
               warn={tile.fallsBack}
+              labels={tile.labels}
               disabled={busy}
               onPress={() => onTile(tile)}
             />

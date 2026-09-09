@@ -2,6 +2,83 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-09 - Quick Log: a web editor for the quick-log buttons, and pinned labels
+
+`TelegramQuickTile` already stored the thing a "custom frequent transaction" is -- a named button
+carrying a note, an optional amount, a type and a category, which one tap turns into a transaction.
+It had no editor outside Telegram. The only ways to change one were `/tg` inside a Telegram webview
+and `scripts/seed-telegram-quick-tiles.ts`, which is why the table is named after a client rather
+than after what it holds.
+
+`/quick-log` is the missing surface: list, create, edit, reorder, delete, and tap to log. **The same
+rows**, not a second table -- a button made on a laptop is on the phone's grid on its next launch,
+with nothing to sync and no second set of rules to keep honest. It sits above Bills in the desktop
+sidebar and in the mobile More sheet.
+
+### The rules moved down, and that is most of the change
+
+The `/api/tg/*` routes held the rules inline in their bodies: the twelve-tile cap, the duplicate
+label refusal, the effective-row category check, the conditional `updateMany` that makes an edit
+depend on the world it was judged against, the replay-before-resolve ordering on a tap, the tile
+being the authority on its own amount. A session-authenticated door onto the same rows needs every
+one of them, and writing them twice is precisely what `assess.sql` and `assessment-facts.ts` did to
+each other -- same nine questions, two answers, nothing to catch it, and the gap widening while it
+sat.
+
+So `src/lib/quick-tile-writes.ts` owns them, injected with `prisma` and a `userId`, and both route
+layers are mappings from a `reason` to a status code through one shared `quickTileStatus`. That
+mapping is shared rather than restated because both clients read a 4xx as proof nothing was written
+and act on it. The existing `/api/tg` tests were the guard for the extraction and pass with no
+assertion changed -- only their Prisma mocks grew the delegates the shared module reads.
+
+### Pinned labels, and why they beat schedules
+
+`TelegramQuickTileLabel` is the additive table the Mini App notes said was coming. A pin **wins over
+auto-apply schedules** for that tap, which falls straight out of `createTransactionBatch`'s existing
+tri-state: `undefined` runs schedules, `[]` opts out, an explicit list is both an instruction and an
+opt-out. The user named these labels on this button, and a schedule guessing over a named one moves
+money in `getLabelBreakdown`, which splits one amount across whatever a row carries.
+
+A tile with no pins omits the key **entirely** -- never `[]` -- which is the behaviour every button
+had before this existed. That distinction is invisible in every response and lives inside the
+function every unit test stubs, so it is asserted on the call arguments in
+`quick-tile-writes.test.ts` and proved for real in `verify-telegram-miniapp.ts`.
+
+Three things about a pin that could otherwise go wrong quietly:
+
+- **A label whose type excludes the button's is refused at the edit, not filtered at the write.**
+  `createTransactionBatch` type-filters explicit ids silently, so accepting one would show the label
+  in the editor and then not write it -- the failure `caption-labels.ts` reports as `incompatible`
+  rather than dropping. The check runs against the *effective* row, so a bare `type` flip that
+  leaves an incompatible pin behind is caught even though the patch names no labels -- but only
+  where the pins actually **move**. Judging an unchanged, unnamed set locks the caller out of a
+  button that was already mismatched, which the Mini App's picker-less editor could then never
+  rename. That is the rule `updateTransactions` and `updateBill` already follow.
+- **A pin can stop applying after it was saved.** `PUT /api/labels/[id]` narrows a label's type and
+  knows nothing about buttons. So `applies` is recomputed on every read, the rule
+  `resolveTileCategory` already follows for the category, and the tap filters on it rather than
+  leaving it to the silent filter downstream. The card renders such a pin struck through.
+- **Filtering every pin away returns the button to schedules**, rather than sending an empty
+  opt-out nobody asked for.
+
+Pins are edited only from the web page. The Mini App editor gets no label picker: three taps is its
+whole premise.
+
+### The rest
+
+- `created_via` names the surface, not the code path -- `TELEGRAM` from the Mini App, `APP` from the
+  web page -- and neither carries an `mcp_token_id`. It is passed into `logQuickTile` explicitly.
+- The amount prompt is a plain decimal field. The Mini App's custom keypad exists because an OS
+  keyboard resizes Telegram's webview mid-entry; a browser has no such problem and a second keypad
+  would be a second thing to maintain.
+- The Frequent list is offered here too, read-only, with one action: make a button. Tapping it makes
+  the entry disappear by itself, since the server excludes a configured tile's description by token
+  containment and every spelling goes with it.
+- `/quick-log` is in `PROTECTED_PAGE_PATHS`. The list is a denylist that fails open and this page
+  renders the same amounts `/tg` does.
+- `verify-telegram-miniapp.ts` gained the label checks its own docstring had been claiming, and its
+  reorder check now sends the whole id set rather than two ids of a larger grid.
+
 ## 2026-09-08 - One habit, one slot in the Frequent grid (#268)
 
 The Frequent section shipped with #259 and spent five of its six slots on two things. Real data,

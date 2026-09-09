@@ -21,6 +21,14 @@ export interface TileView {
   resolvedCategoryName: string | null;
   /** True when a tap will not file where the tile says. Rendered as a warning. */
   fallsBack: boolean;
+  /**
+   * Labels pinned to this button, applied to every transaction it logs.
+   *
+   * Pinned here means *instead of* the user's auto-apply schedules, not as well as them. Edited
+   * from the web app's Quick Log page rather than here: the Mini App's whole premise is that a
+   * routine expense costs one tap, and a label picker is a screen this grid does not need.
+   */
+  labels: { id: string; name: string; color: string; applies: boolean }[];
   sortOrder: number;
 }
 

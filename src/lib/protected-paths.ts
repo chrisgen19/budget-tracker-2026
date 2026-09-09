@@ -18,6 +18,7 @@
  */
 export const PROTECTED_PAGE_PATHS = [
   "/dashboard",
+  "/quick-log",
   "/transactions",
   "/bills",
   "/categories",

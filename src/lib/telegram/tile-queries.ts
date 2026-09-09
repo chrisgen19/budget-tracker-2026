@@ -32,7 +32,27 @@ export interface QuickTileView {
   resolvedCategoryName: string | null;
   /** True when the tap will not file where the tile says. Rendered as a warning. */
   fallsBack: boolean;
+  /**
+   * Labels pinned to this button.
+   *
+   * `applies` is recomputed on **every** read rather than trusted from the edit that saved it,
+   * for the same reason `resolveTileCategory` re-checks the category on every read:
+   * `PUT /api/labels/[id]` can narrow a label's `applicableTo` underneath a button that was valid
+   * when it was pinned -- it runs a 409 confirmation for the *transactions* an incompatible label
+   * is on, and knows nothing about buttons. A pin that will no longer be written shows as
+   * degraded in the grid instead of going missing on the next tap.
+   */
+  labels: QuickTileLabelView[];
   sortOrder: number;
+}
+
+/** One pinned label, as the grid and the editor render it. */
+export interface QuickTileLabelView {
+  id: string;
+  name: string;
+  color: string;
+  /** False when this label's type no longer allows it on this button, so it will not be written. */
+  applies: boolean;
 }
 
 /** The row shape this module needs, so a caller can pass rows it already has. */
@@ -44,6 +64,16 @@ export interface QuickTileRow {
   type: string;
   categoryId: string | null;
   sortOrder: number;
+  /** The pinned label ids. Resolved against the user's real list by `viewTiles`. */
+  labels: { labelId: string }[];
+}
+
+/** A user's label, in the shape the tile view needs to render and judge a pin. */
+export interface TileLabel {
+  id: string;
+  name: string;
+  color: string;
+  applicableTo: string;
 }
 
 /**
@@ -53,8 +83,14 @@ export interface QuickTileRow {
  * fetched because every caller already needs the list for its own response, and fetching it twice
  * would let the two copies disagree within one request.
  */
-export const viewTiles = (rows: QuickTileRow[], categories: BotCategory[]): QuickTileView[] =>
-  rows.map((row) => {
+export const viewTiles = (
+  rows: QuickTileRow[],
+  categories: BotCategory[],
+  labels: TileLabel[] = []
+): QuickTileView[] => {
+  const labelsById = new Map(labels.map((l) => [l.id, l]));
+
+  return rows.map((row) => {
     const type = row.type === "INCOME" ? "INCOME" : "EXPENSE";
     const resolved = resolveTileCategory(
       { description: row.description, type, categoryId: row.categoryId },
@@ -71,9 +107,26 @@ export const viewTiles = (rows: QuickTileRow[], categories: BotCategory[]): Quic
       resolvedCategoryId: resolved?.categoryId ?? null,
       resolvedCategoryName: resolved?.categoryName ?? null,
       fallsBack: tileFallsBack(resolved),
+      // A pin naming a label that is no longer in the list is dropped rather than rendered as a
+      // stranger: the FK is `Cascade`, so the only way to get here is a list read that did not
+      // include it, and inventing a name for it would be worse than the button showing one pin
+      // fewer.
+      labels: row.labels.flatMap((pin) => {
+        const label = labelsById.get(pin.labelId);
+        if (!label) return [];
+        return [
+          {
+            id: label.id,
+            name: label.name,
+            color: label.color,
+            applies: label.applicableTo === "BOTH" || label.applicableTo === type,
+          },
+        ];
+      }),
       sortOrder: row.sortOrder,
     };
   });
+};
 
 /** The user's tiles, in grid order. */
 export const listTileRows = async (
@@ -91,6 +144,7 @@ export const listTileRows = async (
       type: true,
       categoryId: true,
       sortOrder: true,
+      labels: { select: { labelId: true } },
     },
   });
 

@@ -13,7 +13,7 @@ const MOBILE_TABS = [
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
 ];
 
-const MORE_DESTINATIONS = ["/profile", "/bills", "/categories", "/labels", "/admin"];
+const MORE_DESTINATIONS = ["/profile", "/quick-log", "/bills", "/categories", "/labels", "/admin"];
 const TOP_SCROLL_BOUNDARY = 32;
 const SCROLL_TRANSITION_DISTANCE = 8;
 

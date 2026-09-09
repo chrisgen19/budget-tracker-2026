@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   userFindUnique: vi.fn(),
   tileFindMany: vi.fn(),
   categoryFindMany: vi.fn(),
+  labelFindMany: vi.fn(),
   transactionFindMany: vi.fn(),
 }));
 
@@ -11,6 +12,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     user: { findUnique: mocks.userFindUnique },
     category: { findMany: mocks.categoryFindMany },
+    label: { findMany: mocks.labelFindMany },
     telegramQuickTile: { findMany: mocks.tileFindMany },
     transaction: { findMany: mocks.transactionFindMany },
   },
@@ -65,8 +67,10 @@ beforeEach(() => {
       type: "EXPENSE",
       categoryId: "transportation",
       sortOrder: 10,
+      labels: [],
     },
   ]);
+  mocks.labelFindMany.mockResolvedValue([]);
   mocks.transactionFindMany.mockResolvedValue([]);
 });
 

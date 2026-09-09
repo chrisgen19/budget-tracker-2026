@@ -1,33 +1,40 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getAuthUserId } from "@/lib/session";
 import { telegramQuickTileSchema } from "@/lib/validations";
-import { getTelegramUserId } from "@/lib/telegram/require-telegram-user";
+import { MAX_QUICK_TILES } from "@/lib/telegram/quick-tiles";
 import { createQuickTile, listQuickTiles, quickTileStatus } from "@/lib/quick-tile-writes";
 
 /**
- * Listing and creating quick-log tiles, from the Mini App's editor.
+ * The web app's door onto the quick-log buttons.
  *
- * A thin wrapper. Every rule -- the tile cap, the duplicate-label refusal, the category and label
- * checks -- lives in `src/lib/quick-tile-writes.ts`, shared with the session-authenticated
- * `/api/quick-tiles` routes the web page uses. Two doors onto the same rows, one set of rules; a
- * second copy would drift the moment either side changed.
+ * The same rows the Telegram Mini App edits through `/api/tg/tiles`, and deliberately so: a button
+ * made on a laptop is on the phone's grid on the next launch, with nothing to sync. What differs
+ * between the two routes is only which credential is accepted -- a NextAuth session here, a signed
+ * `initData` payload there. Every rule lives in `src/lib/quick-tile-writes.ts` and neither route
+ * restates one, because a rule stated twice is a rule that will eventually be stated differently.
+ *
+ * Categories and labels are not returned here. The web page already has `useCategoriesQuery` and
+ * `useLabelsQuery` in cache; the Mini App gets them in its bootstrap payload because a webview
+ * cold start cannot afford the extra round trips, and that is a constraint this page does not have.
  */
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
-  const userId = await getTelegramUserId(request);
+export async function GET() {
+  const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
 
   try {
-    return NextResponse.json(await listQuickTiles(prisma, userId));
+    const { tiles } = await listQuickTiles(prisma, userId);
+    return NextResponse.json({ tiles, limits: { maxTiles: MAX_QUICK_TILES } });
   } catch {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
 export async function POST(request: Request) {
-  const userId = await getTelegramUserId(request);
+  const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
 
   let body: unknown;

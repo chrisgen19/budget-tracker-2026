@@ -34,6 +34,23 @@ describe("getNextCompactScrollState", () => {
 });
 
 describe("mobile More destinations", () => {
+  it("includes a Quick Log action that is hidden from the desktop dropdown", () => {
+    // The desktop sidebar already carries Quick Log, so without `mobileOnly` it would appear
+    // twice there -- the same reason Bills, Categories and Labels carry it.
+    const router = { push: vi.fn() };
+    const items = buildMenuItems({
+      isAdmin: false,
+      hideAmounts: false,
+      router: router as unknown as Parameters<typeof buildMenuItems>[0]["router"],
+      toggleHideAmounts: () => {},
+    });
+
+    const quickLog = items.find((item) => item.key === "quick-log");
+    expect(quickLog?.mobileOnly).toBe(true);
+    quickLog?.onSelect();
+    expect(router.push).toHaveBeenCalledWith("/quick-log");
+  });
+
   it("includes a Labels action", () => {
     const push = vi.fn();
     const items = buildMenuItems({
