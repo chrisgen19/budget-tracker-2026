@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   labelFindMany: vi.fn(),
   transaction: vi.fn(),
   queryRaw: vi.fn(),
+  executeRaw: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -37,6 +38,7 @@ vi.mock("@/lib/prisma", () => ({
       deleteMany: mocks.tileDeleteMany,
     },
     $queryRaw: mocks.queryRaw,
+    $executeRaw: mocks.executeRaw,
     $transaction: mocks.transaction,
   },
 }));
@@ -134,6 +136,7 @@ beforeEach(() => {
     return (arg as (tx: unknown) => unknown)(prisma);
   });
   // The `SELECT ... FOR UPDATE` that opens an edit, derived from the stored row under test.
+  mocks.executeRaw.mockResolvedValue(1);
   mocks.queryRaw.mockImplementation(async () => {
     const row = await mocks.tileFindFirst();
     return row ? [{ type: row.type, category_id: row.categoryId }] : [];

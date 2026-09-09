@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   tileLabelCreateMany: vi.fn(),
   transaction: vi.fn(),
   queryRaw: vi.fn(),
+  executeRaw: vi.fn(),
 }));
 
 vi.mock("@/lib/transaction-writes", () => ({
@@ -90,6 +91,7 @@ const prisma = {
     createMany: mocks.tileLabelCreateMany,
   },
   $queryRaw: mocks.queryRaw,
+    $executeRaw: mocks.executeRaw,
   $transaction: mocks.transaction,
 } as unknown as PrismaClient;
 
@@ -131,6 +133,7 @@ beforeEach(() => {
   );
   // The `SELECT ... FOR UPDATE` that opens the edit. Derived from whatever `findFirst` is
   // returning, so a test that changes the stored row does not have to restate it here.
+  mocks.executeRaw.mockResolvedValue(1);
   mocks.queryRaw.mockImplementation(async () => {
     const row = await mocks.tileFindFirst();
     return row ? [{ type: row.type, category_id: row.categoryId }] : [];
@@ -163,6 +166,21 @@ describe("pinning labels to a button", () => {
     expect(result.reason).toBe("LABELS_UNUSABLE");
     expect(result.message).toContain("Payday");
     expect(mocks.tileCreate).not.toHaveBeenCalled();
+  });
+
+  it("reads the cap and the sort order under a per-user advisory lock", async () => {
+    // A bare count-then-insert cannot enforce a limit under READ COMMITTED. Measured against a
+    // real database: four concurrent creates against eleven existing tiles all read eleven, all
+    // passed a cap of twelve, and left fifteen -- three sharing one sortOrder, since the index on
+    // (userId, sortOrder) is not unique.
+    await createQuickTile(prisma, "user_1", input());
+
+    expect(mocks.transaction).toHaveBeenCalled();
+    const [sql, key] = mocks.executeRaw.mock.calls.at(-1)!;
+    expect(String(sql.join(""))).toContain("pg_advisory_xact_lock");
+    // Namespaced, so creating a button does not queue behind a scan-credit reservation for the
+    // same user: `scan-quota.ts` locks on the bare id and the two bound different resources.
+    expect(key).toBe("quick-tile:user_1");
   });
 
   it("refuses a label that is not the caller's", async () => {

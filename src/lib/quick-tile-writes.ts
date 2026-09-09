@@ -201,18 +201,10 @@ export const createQuickTile = async (
   userId: string,
   input: TelegramQuickTileInput
 ): Promise<QuickTileResult<{ tile: QuickTileView }>> => {
-  const [categories, labels, existing] = await Promise.all([
+  const [categories, labels] = await Promise.all([
     listTileCategories(prisma, userId),
     listOwnedLabels(prisma, userId),
-    listTileRows(prisma, userId),
   ]);
-
-  if (existing.length >= MAX_QUICK_TILES) {
-    return fail(
-      "TILE_LIMIT",
-      `You can have at most ${MAX_QUICK_TILES} buttons. Delete one first.`
-    );
-  }
 
   // A category the user does not own, or one whose type disagrees with the tile's, would be
   // rejected later by `categoriesAreUsable` inside the write -- but only when a tap is logged,
@@ -231,19 +223,58 @@ export const createQuickTile = async (
   if (!pinned.ok) return pinned;
 
   try {
-    const created = await prisma.telegramQuickTile.create({
-      data: {
-        userId,
-        label: input.label,
-        description: input.description,
-        amount: input.amount,
-        type: input.type,
-        categoryId: input.categoryId,
-        sortOrder: nextSortOrder(existing),
-        labels: { create: pinned.ids.map((labelId) => ({ labelId })) },
-      },
-      select: TILE_SELECT,
+    // The cap and the sort order are read **under a per-user advisory lock**, in the same
+    // transaction as the insert.
+    //
+    // A bare count-then-insert cannot enforce a limit under READ COMMITTED, which is the rule
+    // `scan-quota.ts` already states for scan credits. Measured here rather than assumed: four
+    // concurrent creates against eleven existing tiles all read eleven, all passed a cap of
+    // twelve, and left fifteen -- three of them sharing one `sortOrder`, since
+    // `@@index([userId, sortOrder])` is not unique and every one of them computed the same
+    // maximum plus a gap.
+    //
+    // Neither consequence is severe -- an oversized grid and an unstable order between two
+    // buttons, both fixed by deleting one -- but the guard is the pattern this codebase already
+    // uses and costs one statement.
+    //
+    // Keyed on `quick-tile:<userId>` rather than the bare `userId` that `scan-quota.ts` locks on,
+    // so creating a button and reserving a scan credit do not queue behind each other. They bound
+    // different resources and have no reason to contend.
+    //
+    // Only the tile list moves inside. `categories` and `labels` are reference data for checks
+    // the caller has already failed or passed; re-reading them under the lock would widen it for
+    // nothing.
+    const created = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`quick-tile:${userId}`}))`;
+
+      const existing = await tx.telegramQuickTile.findMany({
+        where: { userId },
+        select: { sortOrder: true },
+      });
+
+      if (existing.length >= MAX_QUICK_TILES) return "TILE_LIMIT" as const;
+
+      return tx.telegramQuickTile.create({
+        data: {
+          userId,
+          label: input.label,
+          description: input.description,
+          amount: input.amount,
+          type: input.type,
+          categoryId: input.categoryId,
+          sortOrder: nextSortOrder(existing),
+          labels: { create: pinned.ids.map((labelId) => ({ labelId })) },
+        },
+        select: TILE_SELECT,
+      });
     });
+
+    if (created === "TILE_LIMIT") {
+      return fail(
+        "TILE_LIMIT",
+        `You can have at most ${MAX_QUICK_TILES} buttons. Delete one first.`
+      );
+    }
 
     // Returned through the same view as the list, so the editor is told immediately where this
     // button will actually file -- including when that is not what was asked for.
