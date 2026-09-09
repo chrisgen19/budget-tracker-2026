@@ -10,6 +10,7 @@ paths:
   - src/lib/budget-query-types.ts
   - src/lib/pending-bills.ts
   - src/app/(app)/bills
+  - src/app/api/cron/bill-reminders
 ---
 
 # Bills

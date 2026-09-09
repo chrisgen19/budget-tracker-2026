@@ -8,6 +8,9 @@ paths:
   - src/lib/schedule-matching.ts
   - src/lib/schedule-server.ts
   - src/hooks/use-scheduled-label.ts
+  - src/hooks/use-transactions.ts
+  - src/hooks/use-multi-scan.ts
+  - src/lib/receipt-limits.ts
   - src/app/api/mcp
 ---
 

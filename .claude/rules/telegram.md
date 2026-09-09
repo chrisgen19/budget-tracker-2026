@@ -7,6 +7,7 @@ paths:
   - src/app/(app)/quick-log
   - src/components/quick-log
   - src/lib/quick-tile-writes.ts
+  - src/hooks/use-quick-tiles.ts
   - src/app/api/quick-tiles
   - src/app/api/cron/telegram-prompts
   - src/instrumentation.ts

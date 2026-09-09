@@ -6,6 +6,7 @@ paths:
   - src/app/api/assessment
   - scripts/assess.ts
   - scripts/refresh-local-mirror.ts
+  - src/lib/validations.ts
 ---
 
 # AI Assessment
