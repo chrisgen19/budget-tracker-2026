@@ -10,6 +10,8 @@ paths:
   - src/app/api/preferences
   - src/app/api/transactions
   - src/app/api/labels
+  - prisma/schema.prisma
+  - prisma/migrations
   - src/lib/gemini.ts
 ---
 

@@ -13,6 +13,8 @@ paths:
   - src/lib/receipt-limits.ts
   - src/components/transactions
   - src/lib/mcp/server.ts
+  - src/lib/telegram/confirm-scan.ts
+  - src/lib/telegram/bot.ts
   - src/app/api/mcp
 ---
 

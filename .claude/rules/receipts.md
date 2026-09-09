@@ -11,6 +11,7 @@ paths:
   - src/components/scan-provider.tsx
   - src/components/profile/features-form.tsx
   - src/app/api/preferences
+  - src/lib/telegram/bot.ts
 ---
 
 # Receipts
