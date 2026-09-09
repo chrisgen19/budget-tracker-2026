@@ -51,27 +51,36 @@ export async function POST(request: Request) {
   const providedKey = clientBatchIdSchema.safeParse(
     (body as { clientBatchId?: unknown } | null)?.clientBatchId
   );
-  if (providedKey.success) {
-    const replayed = await findReplayedQuickLog(prisma, userId, providedKey.data);
-    if (replayed) return NextResponse.json(replayed, { status: 200 });
-  }
 
-  const parsed = telegramQuickLogSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid request", details: parsed.error.flatten().fieldErrors },
-      { status: 400 }
-    );
-  }
+  // The guard covers the replay lookup as well as the write, and answers **500**. `tg-api.ts`
+  // reads `body.error` for its message and the *status* for its retry decision, so an unguarded
+  // throw costs the cause without changing the safety: 500 keeps the pending key pinned, which is
+  // what an unknown outcome requires.
+  try {
+    if (providedKey.success) {
+      const replayed = await findReplayedQuickLog(prisma, userId, providedKey.data);
+      if (replayed) return NextResponse.json(replayed, { status: 200 });
+    }
 
-  const result = await logQuickTile(prisma, userId, parsed.data, "TELEGRAM");
-  if (!result.ok) {
-    return NextResponse.json(
-      { error: result.message, reason: result.reason },
-      { status: quickTileStatus(result.reason) }
-    );
-  }
+    const parsed = telegramQuickLogSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid request", details: parsed.error.flatten().fieldErrors },
+        { status: 400 }
+      );
+    }
 
-  const { ok: _ok, ...payload } = result;
-  return NextResponse.json(payload, { status: payload.replayed ? 200 : 201 });
+    const result = await logQuickTile(prisma, userId, parsed.data, "TELEGRAM");
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: result.message, reason: result.reason },
+        { status: quickTileStatus(result.reason) }
+      );
+    }
+
+    const { ok: _ok, ...payload } = result;
+    return NextResponse.json(payload, { status: payload.replayed ? 200 : 201 });
+  } catch {
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 }

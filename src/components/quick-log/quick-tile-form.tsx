@@ -4,7 +4,11 @@ import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { AlertTriangle, Loader2 } from "lucide-react";
-import { telegramQuickTileSchema, type TelegramQuickTileInput } from "@/lib/validations";
+import {
+  MAX_TILE_LABELS,
+  telegramQuickTileSchema,
+  type TelegramQuickTileInput,
+} from "@/lib/validations";
 import { resolveTileCategory } from "@/lib/telegram/quick-tiles";
 import { LabelPicker } from "@/components/transactions/label-picker";
 import { useCategoriesQuery } from "@/hooks/use-categories";
@@ -43,9 +47,9 @@ export function QuickTileForm({
 
   // Held as the string typed rather than the parsed number: "0." and "38.0" are states a number
   // cannot hold, and rendering the parsed value back eats the decimal point mid-entry.
-  const [rawAmount, setRawAmount] = useState(
-    defaults?.amount === undefined || defaults?.amount === null ? "" : String(defaults.amount)
-  );
+  const seededAmount =
+    defaults?.amount === undefined || defaults?.amount === null ? "" : String(defaults.amount);
+  const [rawAmount, setRawAmount] = useState(seededAmount);
 
   const {
     register,
@@ -89,9 +93,15 @@ export function QuickTileForm({
   const submit = handleSubmit(async (values) => {
     await onSubmit({
       ...values,
-      // Empty, unparseable or non-positive all mean the same thing: ask on the way in. Parsed here
-      // rather than in the input's onChange so the raw string survives every intermediate state.
-      amount: parseAmount(rawAmount),
+      // The two-decimal bound applies to what the user **typed**, never to a figure they did not
+      // touch. A stored amount can carry more precision than this field accepts -- the Mini App's
+      // editor has no such bound -- and running it through the parser turned it into `null`, which
+      // is the "ask each time" state. Renaming a button would silently have changed what it does.
+      //
+      // Otherwise: empty, unparseable or non-positive all mean the same thing, ask on the way in.
+      // Parsed here rather than in the input's `onChange` so the raw string survives every
+      // intermediate state.
+      amount: rawAmount === seededAmount ? (defaults?.amount ?? null) : parseAmount(rawAmount),
     });
   });
 
@@ -165,6 +175,11 @@ export function QuickTileForm({
               key={option}
               type="button"
               onClick={() => {
+                // Guarded on the type actually changing. Clicking the already-selected option is a
+                // no-op the user reads as one, and clearing on it silently dropped an existing
+                // tile's category and every pinned label -- a save then recategorised the button
+                // and unpinned it, for a click that changed nothing.
+                if (option === type) return;
                 setValue("type", option);
                 // A category and a label chosen for the other type would be refused by the server,
                 // so they are cleared here rather than left to fail on save. The refusal exists
@@ -225,6 +240,14 @@ export function QuickTileForm({
           onChange={(ids) => setValue("labelIds", ids)}
           transactionType={type}
         />
+        {/* Rendered, or pressing Save past the cap does nothing at all: the resolver refuses the
+            form before `onSubmit` runs, and `LabelPicker` has no cap of its own to stop at. */}
+        {errors.labelIds && (
+          <p className="mt-1 text-sm text-expense">
+            A button can pin at most {MAX_TILE_LABELS} labels. Remove{" "}
+            {labelIds.length - MAX_TILE_LABELS} to save.
+          </p>
+        )}
         <p className="mt-2 text-xs text-warm-400">
           {labelIds.length > 0
             ? "These are applied instead of your scheduled labels when this button is tapped."
@@ -259,8 +282,15 @@ export function QuickTileForm({
  * Anchored at both ends, which is the whole point: this is an unrestricted text input
  * (`inputMode="decimal"` is a keyboard hint, not a constraint), so it receives pasted and typed
  * text that is not a number.
+ *
+ * The two-decimal bound is enforced rather than merely described. `amount` is a `Float` and every
+ * currency formatter here renders two places, so `38.999` was stored and logged exactly while the
+ * card, the toast and the ledger all showed 39.00 -- the button disagreeing with the row it wrote.
+ * Excess precision is refused rather than rounded: rounding decides for the user, and on the tile
+ * form a refusal is visible (the hint switches to "will ask for an amount") where a silent 39.00
+ * is not.
  */
-const AMOUNT_PATTERN = /^\d{1,3}(?:,\d{3})*(?:\.\d+)?$|^\d+(?:\.\d+)?$/;
+const AMOUNT_PATTERN = /^\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?$|^\d+(?:\.\d{1,2})?$/;
 
 /**
  * The typed string as an amount, or null for "ask each time".

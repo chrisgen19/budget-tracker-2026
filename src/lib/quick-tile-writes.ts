@@ -201,18 +201,10 @@ export const createQuickTile = async (
   userId: string,
   input: TelegramQuickTileInput
 ): Promise<QuickTileResult<{ tile: QuickTileView }>> => {
-  const [categories, labels, existing] = await Promise.all([
+  const [categories, labels] = await Promise.all([
     listTileCategories(prisma, userId),
     listOwnedLabels(prisma, userId),
-    listTileRows(prisma, userId),
   ]);
-
-  if (existing.length >= MAX_QUICK_TILES) {
-    return fail(
-      "TILE_LIMIT",
-      `You can have at most ${MAX_QUICK_TILES} buttons. Delete one first.`
-    );
-  }
 
   // A category the user does not own, or one whose type disagrees with the tile's, would be
   // rejected later by `categoriesAreUsable` inside the write -- but only when a tap is logged,
@@ -231,19 +223,58 @@ export const createQuickTile = async (
   if (!pinned.ok) return pinned;
 
   try {
-    const created = await prisma.telegramQuickTile.create({
-      data: {
-        userId,
-        label: input.label,
-        description: input.description,
-        amount: input.amount,
-        type: input.type,
-        categoryId: input.categoryId,
-        sortOrder: nextSortOrder(existing),
-        labels: { create: pinned.ids.map((labelId) => ({ labelId })) },
-      },
-      select: TILE_SELECT,
+    // The cap and the sort order are read **under a per-user advisory lock**, in the same
+    // transaction as the insert.
+    //
+    // A bare count-then-insert cannot enforce a limit under READ COMMITTED, which is the rule
+    // `scan-quota.ts` already states for scan credits. Measured here rather than assumed: four
+    // concurrent creates against eleven existing tiles all read eleven, all passed a cap of
+    // twelve, and left fifteen -- three of them sharing one `sortOrder`, since
+    // `@@index([userId, sortOrder])` is not unique and every one of them computed the same
+    // maximum plus a gap.
+    //
+    // Neither consequence is severe -- an oversized grid and an unstable order between two
+    // buttons, both fixed by deleting one -- but the guard is the pattern this codebase already
+    // uses and costs one statement.
+    //
+    // Keyed on `quick-tile:<userId>` rather than the bare `userId` that `scan-quota.ts` locks on,
+    // so creating a button and reserving a scan credit do not queue behind each other. They bound
+    // different resources and have no reason to contend.
+    //
+    // Only the tile list moves inside. `categories` and `labels` are reference data for checks
+    // the caller has already failed or passed; re-reading them under the lock would widen it for
+    // nothing.
+    const created = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`quick-tile:${userId}`}))`;
+
+      const existing = await tx.telegramQuickTile.findMany({
+        where: { userId },
+        select: { sortOrder: true },
+      });
+
+      if (existing.length >= MAX_QUICK_TILES) return "TILE_LIMIT" as const;
+
+      return tx.telegramQuickTile.create({
+        data: {
+          userId,
+          label: input.label,
+          description: input.description,
+          amount: input.amount,
+          type: input.type,
+          categoryId: input.categoryId,
+          sortOrder: nextSortOrder(existing),
+          labels: { create: pinned.ids.map((labelId) => ({ labelId })) },
+        },
+        select: TILE_SELECT,
+      });
     });
+
+    if (created === "TILE_LIMIT") {
+      return fail(
+        "TILE_LIMIT",
+        `You can have at most ${MAX_QUICK_TILES} buttons. Delete one first.`
+      );
+    }
 
     // Returned through the same view as the list, so the editor is told immediately where this
     // button will actually file -- including when that is not what was asked for.
@@ -291,7 +322,21 @@ export const updateQuickTile = async (
     labelIds: patch.labelIds ?? storedLabelIds,
   };
 
-  if (effective.categoryId) {
+  // What actually **moved**, compared against the stored row rather than merely present in the
+  // patch. The difference is the whole rule, and presence is not a proxy for it: the Mini App's
+  // editor submits its complete draft, so `type` and `categoryId` are always present and always
+  // equal to what is stored. A presence test therefore fires on every edit it makes.
+  const typeMoved = patch.type !== undefined && patch.type !== storedType;
+  const categoryMoved =
+    patch.categoryId !== undefined && patch.categoryId !== stored.categoryId;
+
+  // Judged only where the pair moves. Judging an unchanged pair prevents nothing -- re-sending it
+  // writes what is already there -- and locks the caller out of a button that was *already*
+  // mismatched, which needs no edit to reach: `PUT /api/categories/[id]` lets a custom category's
+  // type be flipped underneath the buttons filing into it. `resolveTileCategory` and `viewTiles`
+  // are built to tolerate exactly that state, so refusing to let it be edited is the one response
+  // that leaves the user stuck. Same rule `updateTransactions` and `updateBill` both apply.
+  if (effective.categoryId && (categoryMoved || typeMoved)) {
     const usable = categories.some(
       (c) => c.id === effective.categoryId && c.type === effective.type
     );
@@ -303,17 +348,15 @@ export const updateQuickTile = async (
     }
   }
 
-  // Judged only when the pins actually **move** -- the caller named a set, or a `type` flip
-  // invalidated the one that is there. Judging an unchanged, unnamed set prevents nothing and
-  // locks the caller out of a button that was *already* mismatched, which is reachable with no
-  // edit at all: `PUT /api/labels/[id]` narrows a label's type underneath the buttons that pin
-  // it. The Mini App's editor sends no `labelIds` and has no picker, so re-judging there made
-  // renaming such a button impossible from inside Telegram with no way to fix it. Same rule
-  // `updateTransactions` and `updateBill` both apply to their own category/type pair.
+  // Pins are judged when the caller names a set, or when a `type` flip invalidates the one that
+  // is there -- and `typeMoved`, not the mere presence of `type`, is what says so. The Mini App
+  // sends no `labelIds` and has no picker, so a presence test blocked every edit it made to a
+  // button carrying a pin that a later `PUT /api/labels/[id]` had narrowed, with no way to clear
+  // the pin from inside Telegram.
   //
   // A pin left behind is not lost: `viewTiles` reports it as not applying and the tap filters it
   // out, so the button keeps working and the web page shows why.
-  const pinsMoved = patch.labelIds !== undefined || patch.type !== undefined;
+  const pinsMoved = patch.labelIds !== undefined || typeMoved;
   const pinned = pinsMoved
     ? checkPinnedLabels(effective.labelIds, effective.type, labels)
     : ({ ok: true, ids: effective.labelIds } as const);
@@ -364,8 +407,30 @@ export const updateQuickTile = async (
         FOR UPDATE
       `;
 
+      // The pins are part of what was judged, so they are part of what is re-checked. Read after
+      // the lock, so it sees whatever committed in the gap.
+      //
+      // Without this the conditional write was only half conditional. Two overlapping edits:
+      // one swaps a BOTH pin for an EXPENSE-only pin, the other flips the tile to INCOME having
+      // been validated against the *original* pin. The second passed a check that looked only at
+      // type and category, and `labelsMoved` was false because it compared the pre-lock set with
+      // itself -- so the flip landed and left an EXPENSE-only pin on an INCOME button, the exact
+      // combination `checkPinnedLabels` refuses from any caller. Reproduced deterministically.
+      const lockedPins = await tx.telegramQuickTileLabel.findMany({
+        where: { tileId: id },
+        select: { labelId: true },
+      });
+
       const current = locked[0];
-      if (!current || current.type !== stored.type || current.category_id !== stored.categoryId) {
+      if (
+        !current ||
+        current.type !== stored.type ||
+        current.category_id !== stored.categoryId ||
+        !sameIdSet(
+          lockedPins.map((l) => l.labelId),
+          storedLabelIds
+        )
+      ) {
         return "STALE" as const;
       }
 

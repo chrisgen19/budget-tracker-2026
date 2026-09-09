@@ -22,10 +22,12 @@ const mocks = vi.hoisted(() => ({
   tileUpdateMany: vi.fn(),
   tileDeleteMany: vi.fn(),
   tileUpdate: vi.fn(),
+  tileLabelFindMany: vi.fn(),
   tileLabelDeleteMany: vi.fn(),
   tileLabelCreateMany: vi.fn(),
   transaction: vi.fn(),
   queryRaw: vi.fn(),
+  executeRaw: vi.fn(),
   createTransactionBatch: vi.fn(),
   findSavedBatch: vi.fn(),
 }));
@@ -46,10 +48,12 @@ vi.mock("@/lib/prisma", () => ({
       deleteMany: mocks.tileDeleteMany,
     },
     telegramQuickTileLabel: {
+      findMany: mocks.tileLabelFindMany,
       deleteMany: mocks.tileLabelDeleteMany,
       createMany: mocks.tileLabelCreateMany,
     },
     $queryRaw: mocks.queryRaw,
+    $executeRaw: mocks.executeRaw,
     $transaction: mocks.transaction,
   },
 }));
@@ -119,6 +123,10 @@ beforeEach(() => {
   });
   mocks.tileUpdateMany.mockResolvedValue({ count: 1 });
   mocks.tileDeleteMany.mockResolvedValue({ count: 1 });
+  mocks.tileLabelFindMany.mockImplementation(async () => {
+    const row = await mocks.tileFindFirst();
+    return row?.labels ?? [];
+  });
   mocks.tileLabelDeleteMany.mockResolvedValue({ count: 0 });
   mocks.tileLabelCreateMany.mockResolvedValue({ count: 0 });
   // `updateQuickTile` uses the interactive form and `reorderQuickTiles` the array form, so the
@@ -129,6 +137,7 @@ beforeEach(() => {
     return (arg as (tx: unknown) => unknown)(prisma);
   });
   // The `SELECT ... FOR UPDATE` that opens an edit, derived from the stored row under test.
+  mocks.executeRaw.mockResolvedValue(1);
   mocks.queryRaw.mockImplementation(async () => {
     const row = await mocks.tileFindFirst();
     return row ? [{ type: row.type, category_id: row.categoryId }] : [];

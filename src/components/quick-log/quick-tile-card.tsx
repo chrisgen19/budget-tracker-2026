@@ -19,6 +19,8 @@ interface QuickTileCardProps {
   busy: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
+  /** True while a reorder is in flight, so a second move cannot be built from a stale grid. */
+  reordering: boolean;
   onLog: (tile: QuickTileView) => void;
   onEdit: (tile: QuickTileView) => void;
   onDelete: (tile: QuickTileView) => void;
@@ -39,6 +41,7 @@ export function QuickTileCard({
   busy,
   canMoveUp,
   canMoveDown,
+  reordering,
   onLog,
   onEdit,
   onDelete,
@@ -57,12 +60,31 @@ export function QuickTileCard({
 
   // Move up/down are omitted at the ends rather than disabled: a menu of four where two are dead
   // reads as broken, and the card's position already tells the user why they are gone.
+  //
+  // They are *disabled* while a reorder is in flight, which is a different thing and needs to
+  // stay visible. The grid only updates when a reorder succeeds, so a second move started before
+  // the first lands is built from the same stale order and sends an identical request -- the
+  // user's second gesture silently discarded. Measured: two "Move down" presses inside one slow
+  // response moved the tile once.
+  const moveItems: DropdownItem[] = [
+    ...(canMoveUp
+      ? [{ label: "Move up", icon: ArrowUp, disabled: reordering, onClick: () => onMove(tile, -1) }]
+      : []),
+    ...(canMoveDown
+      ? [
+          {
+            label: "Move down",
+            icon: ArrowDown,
+            disabled: reordering,
+            onClick: () => onMove(tile, 1),
+          },
+        ]
+      : []),
+  ];
+
   const menuItems: DropdownItem[] = [
     { label: "Edit", icon: Pencil, onClick: () => onEdit(tile) },
-    ...(canMoveUp ? [{ label: "Move up", icon: ArrowUp, onClick: () => onMove(tile, -1) }] : []),
-    ...(canMoveDown
-      ? [{ label: "Move down", icon: ArrowDown, onClick: () => onMove(tile, 1) }]
-      : []),
+    ...moveItems,
     { label: "Delete", icon: Trash2, onClick: () => onDelete(tile) },
   ];
 

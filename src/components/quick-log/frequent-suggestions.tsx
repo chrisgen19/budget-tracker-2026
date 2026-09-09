@@ -9,6 +9,8 @@ interface FrequentSuggestionsProps {
   entries: FrequentTile[];
   currency: string;
   loading: boolean;
+  /** True when the grid is full, so making a button from here could only be refused. */
+  atLimit: boolean;
   onMakeButton: (entry: FrequentTile) => void;
 }
 
@@ -29,6 +31,7 @@ export function FrequentSuggestions({
   entries,
   currency,
   loading,
+  atLimit,
   onMakeButton,
 }: FrequentSuggestionsProps) {
   const { hideAmounts } = usePrivacy();
@@ -54,8 +57,9 @@ export function FrequentSuggestions({
         From what you log
       </h2>
       <p className="mb-3 text-sm text-warm-400">
-        Things you have logged repeatedly in the last two months. Turn one into a button and it
-        stops needing to be typed.
+        {atLimit
+          ? "Things you have logged repeatedly in the last two months. Your grid is full, so delete a button before adding one of these."
+          : "Things you have logged repeatedly in the last two months. Turn one into a button and it stops needing to be typed."}
       </p>
 
       <ul className="grid gap-2 sm:grid-cols-2">
@@ -79,8 +83,12 @@ export function FrequentSuggestions({
             <button
               type="button"
               onClick={() => onMakeButton(entry)}
+              // Disabled rather than left to fail: the grid is full, so this opens a form that can
+              // only be refused once it has been filled in. The cap is checked at the edit
+              // everywhere else here for the same reason.
+              disabled={atLimit}
               aria-label={`Make a button for ${entry.description}`}
-              className="flex min-h-11 shrink-0 items-center gap-1 rounded-xl border border-cream-300 px-3 text-sm font-medium text-warm-600 transition hover:border-amber hover:text-amber-dark"
+              className="flex min-h-11 shrink-0 items-center gap-1 rounded-xl border border-cream-300 px-3 text-sm font-medium text-warm-600 transition hover:border-amber hover:text-amber-dark disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-cream-300 disabled:hover:text-warm-600"
             >
               <Plus className="h-4 w-4" aria-hidden />
               Button

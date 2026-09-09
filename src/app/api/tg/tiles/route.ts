@@ -19,7 +19,11 @@ export async function GET(request: Request) {
   const userId = await getTelegramUserId(request);
   if (userId instanceof NextResponse) return userId;
 
-  return NextResponse.json(await listQuickTiles(prisma, userId));
+  try {
+    return NextResponse.json(await listQuickTiles(prisma, userId));
+  } catch {
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 }
 
 export async function POST(request: Request) {
@@ -41,10 +45,17 @@ export async function POST(request: Request) {
     );
   }
 
-  const result = await createQuickTile(prisma, userId, parsed.data);
-  if (!result.ok) {
-    return NextResponse.json({ error: result.message }, { status: quickTileStatus(result.reason) });
-  }
+  try {
+    const result = await createQuickTile(prisma, userId, parsed.data);
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: result.message },
+        { status: quickTileStatus(result.reason) }
+      );
+    }
 
-  return NextResponse.json({ tile: result.tile }, { status: 201 });
+    return NextResponse.json({ tile: result.tile }, { status: 201 });
+  } catch {
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 }

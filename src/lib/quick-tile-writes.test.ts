@@ -21,10 +21,12 @@ const mocks = vi.hoisted(() => ({
   tileCreate: vi.fn(),
   tileUpdate: vi.fn(),
   tileUpdateMany: vi.fn(),
+  tileLabelFindMany: vi.fn(),
   tileLabelDeleteMany: vi.fn(),
   tileLabelCreateMany: vi.fn(),
   transaction: vi.fn(),
   queryRaw: vi.fn(),
+  executeRaw: vi.fn(),
 }));
 
 vi.mock("@/lib/transaction-writes", () => ({
@@ -86,10 +88,12 @@ const prisma = {
     updateMany: mocks.tileUpdateMany,
   },
   telegramQuickTileLabel: {
+    findMany: mocks.tileLabelFindMany,
     deleteMany: mocks.tileLabelDeleteMany,
     createMany: mocks.tileLabelCreateMany,
   },
   $queryRaw: mocks.queryRaw,
+    $executeRaw: mocks.executeRaw,
   $transaction: mocks.transaction,
 } as unknown as PrismaClient;
 
@@ -122,6 +126,10 @@ beforeEach(() => {
   mocks.tileUpdateMany.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
     Promise.resolve({ count: Object.keys(data).length === 0 ? 0 : 1 })
   );
+  mocks.tileLabelFindMany.mockImplementation(async () => {
+    const row = await mocks.tileFindFirst();
+    return row?.labels ?? [];
+  });
   mocks.tileLabelDeleteMany.mockResolvedValue({ count: 0 });
   mocks.tileLabelCreateMany.mockResolvedValue({ count: 0 });
   // `updateQuickTile` runs the interactive form and hands the callback a transaction client;
@@ -131,6 +139,7 @@ beforeEach(() => {
   );
   // The `SELECT ... FOR UPDATE` that opens the edit. Derived from whatever `findFirst` is
   // returning, so a test that changes the stored row does not have to restate it here.
+  mocks.executeRaw.mockResolvedValue(1);
   mocks.queryRaw.mockImplementation(async () => {
     const row = await mocks.tileFindFirst();
     return row ? [{ type: row.type, category_id: row.categoryId }] : [];
@@ -163,6 +172,21 @@ describe("pinning labels to a button", () => {
     expect(result.reason).toBe("LABELS_UNUSABLE");
     expect(result.message).toContain("Payday");
     expect(mocks.tileCreate).not.toHaveBeenCalled();
+  });
+
+  it("reads the cap and the sort order under a per-user advisory lock", async () => {
+    // A bare count-then-insert cannot enforce a limit under READ COMMITTED. Measured against a
+    // real database: four concurrent creates against eleven existing tiles all read eleven, all
+    // passed a cap of twelve, and left fifteen -- three sharing one sortOrder, since the index on
+    // (userId, sortOrder) is not unique.
+    await createQuickTile(prisma, "user_1", input());
+
+    expect(mocks.transaction).toHaveBeenCalled();
+    const [sql, key] = mocks.executeRaw.mock.calls.at(-1)!;
+    expect(String(sql.join(""))).toContain("pg_advisory_xact_lock");
+    // Namespaced, so creating a button does not queue behind a scan-credit reservation for the
+    // same user: `scan-quota.ts` locks on the bare id and the two bound different resources.
+    expect(key).toBe("quick-tile:user_1");
   });
 
   it("refuses a label that is not the caller's", async () => {
@@ -215,7 +239,17 @@ describe("pinning labels to a button", () => {
     mocks.tileFindFirst.mockResolvedValue(tileRow({ labels: [{ labelId: "l_stale" }] }));
     mocks.tileFindFirstOrThrow.mockResolvedValue(tileRow({ labels: [{ labelId: "l_stale" }] }));
 
-    const result = await updateQuickTile(prisma, "user_1", "tile_1", { label: "Renamed" });
+    // The Mini App's real payload: its editor submits the complete draft, so `type` and
+    // `categoryId` are always present and always equal to what is stored. Gating on their
+    // *presence* rather than their movement therefore fired on every edit it made, which is how
+    // the previous version of this fix failed for the one client it was written for.
+    const result = await updateQuickTile(prisma, "user_1", "tile_1", {
+      label: "Renamed",
+      description: "fare to office",
+      amount: 38,
+      type: "EXPENSE",
+      categoryId: "transportation",
+    });
 
     expect(result.ok).toBe(true);
     // And the pin is left in place rather than quietly dropped: the grid reports it as not
@@ -249,6 +283,54 @@ describe("pinning labels to a button", () => {
     expect(mocks.tileLabelCreateMany).toHaveBeenCalledWith({
       data: [{ tileId: "tile_1", labelId: "l_commute" }],
     });
+  });
+
+  it("lets that editor rename a button whose category type was flipped underneath it", async () => {
+    // The same dead end one check earlier, and reachable the same way with no edit at all:
+    // `PUT /api/categories/[id]` lets a custom category's type be flipped under its buttons.
+    // `resolveTileCategory` is built to tolerate that state, so refusing the edit strands it.
+    mocks.categoryFindMany.mockResolvedValue([
+      { id: "transportation", name: "Transportation", type: "INCOME", icon: "Car", color: "#000", isDefault: true },
+      { id: "other", name: "Other Expense", type: "EXPENSE", icon: "Tag", color: "#000", isDefault: true },
+    ]);
+
+    const result = await updateQuickTile(prisma, "user_1", "tile_1", {
+      label: "Renamed",
+      description: "fare to office",
+      amount: 38,
+      type: "EXPENSE",
+      categoryId: "transportation",
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("still refuses a category the patch actually moves to", async () => {
+    const result = await updateQuickTile(prisma, "user_1", "tile_1", { categoryId: "salary" });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("CATEGORY_UNUSABLE");
+  });
+
+  it("refuses when the pins moved under the edit, not only the type or category", async () => {
+    // The pins are part of what the checks judged, so they are part of what the locked read
+    // re-checks. Without this: one edit swaps a BOTH pin for an EXPENSE-only one while another,
+    // validated against the original pin, flips the tile to INCOME -- and the flip landed,
+    // leaving a pin that cannot apply on the button it cannot apply to.
+    // No category, so the flip is not refused earlier for an unrelated reason.
+    mocks.tileFindFirst.mockResolvedValue(
+      tileRow({ categoryId: null, labels: [{ labelId: "l_work" }] })
+    );
+    // What another edit committed in the gap: the BOTH pin swapped for an EXPENSE-only one.
+    mocks.tileLabelFindMany.mockResolvedValue([{ labelId: "l_commute" }]);
+
+    const result = await updateQuickTile(prisma, "user_1", "tile_1", { type: "INCOME" });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("STALE");
+    expect(mocks.tileUpdate).not.toHaveBeenCalled();
   });
 
   it("saves a patch that changes only the labels", async () => {

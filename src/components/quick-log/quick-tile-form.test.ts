@@ -32,6 +32,18 @@ describe("parseAmount", () => {
     expect(parseAmount("1,00")).toBeNull();
   });
 
+  it("refuses more precision than a currency amount can hold", () => {
+    // `amount` is a Float and every formatter here renders two places, so 38.999 was stored and
+    // logged exactly while the card, the toast and the ledger all showed 39.00. Refused rather
+    // than rounded: rounding decides for the user, and the refusal is visible on the form.
+    expect(parseAmount("38.999")).toBeNull();
+    expect(parseAmount("1,000.12345")).toBeNull();
+    expect(parseAmount("1.999")).toBeNull();
+    // Two places and fewer still read normally.
+    expect(parseAmount("38.99")).toBe(38.99);
+    expect(parseAmount("38.9")).toBe(38.9);
+  });
+
   it("treats empty and non-positive as the asking state", () => {
     expect(parseAmount("")).toBeNull();
     expect(parseAmount("0")).toBeNull();

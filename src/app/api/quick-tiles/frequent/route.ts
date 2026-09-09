@@ -27,13 +27,16 @@ export async function GET() {
   const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
 
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { timezoneOffset: true },
-  });
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   try {
+    // Inside the guard, not above it. A throw from this lookup escaped the only catch that
+    // returns the JSON shape, so the client fell back to its generic message with nothing to
+    // read -- which is the whole failure the guard was added for.
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { timezoneOffset: true },
+    });
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     const tiles = await listTileRows(prisma, userId);
 
     const frequent = await loadFrequentTiles(prisma, userId, user.timezoneOffset, {
