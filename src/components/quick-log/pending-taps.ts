@@ -65,12 +65,23 @@ export const isReusable = (tap: PendingTap, now: number): boolean =>
  * accumulating: a tap whose fate is never resolved would otherwise sit there for the life of the
  * tab.
  */
-export const readPendingTaps = (now = Date.now()): Record<string, PendingTap> => {
+/**
+ * The stored record, **and whether storage answered at all**.
+ *
+ * The second half is the whole reason this is separate from `readPendingTaps`. An empty record and
+ * a browser that refuses storage are the same `{}` to a caller, and they call for opposite
+ * behaviour: an empty answer from working storage is authoritative and means every slot really is
+ * settled, while a refusal means we know nothing and a caller's own copy is all there is. Reading
+ * them as one value is what let a settled tap be resurrected (#276).
+ */
+const readStore = (
+  now: number
+): { taps: Record<string, PendingTap>; available: boolean } => {
   try {
     const raw = sessionStorage.getItem(PENDING_TAPS_KEY);
-    if (!raw) return {};
+    if (!raw) return { taps: {}, available: true };
     const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== "object" || parsed === null) return {};
+    if (typeof parsed !== "object" || parsed === null) return { taps: {}, available: true };
 
     const live: Record<string, PendingTap> = {};
     for (const [slot, value] of Object.entries(parsed as Record<string, unknown>)) {
@@ -81,11 +92,14 @@ export const readPendingTaps = (now = Date.now()): Record<string, PendingTap> =>
       if (!isReusable({ key, at }, now)) continue;
       live[slot] = { key, at };
     }
-    return live;
+    return { taps: live, available: true };
   } catch {
-    return {};
+    return { taps: {}, available: false };
   }
 };
+
+export const readPendingTaps = (now = Date.now()): Record<string, PendingTap> =>
+  readStore(now).taps;
 
 export const writePendingTaps = (taps: Record<string, PendingTap>) => {
   try {
@@ -96,7 +110,12 @@ export const writePendingTaps = (taps: Record<string, PendingTap>) => {
   }
 };
 
-/** Drop anything a caller has held past the window, so a stale slot cannot be written back. */
+/**
+ * Drop anything a caller has held past the window, so a stale slot cannot be written back.
+ *
+ * Only reachable when storage is unavailable, which is also the only time nothing else applies the
+ * TTL: `readStore` filters on the way out, a held copy has been filtered by nobody.
+ */
 const stillLive = (
   taps: Record<string, PendingTap>,
   now: number
@@ -104,18 +123,27 @@ const stillLive = (
   Object.fromEntries(Object.entries(taps).filter(([, tap]) => isReusable(tap, now)));
 
 /**
- * The shared record, as it stands right now, with a caller's own copy behind it.
+ * The shared record, as it stands right now.
  *
- * Storage is the authority because it is what every surface can see. `held` is consulted only for
- * slots storage does not report, which is the case where storage is *unavailable* -- a private
- * window, or blocked site data, where `readPendingTaps` answers `{}` and every read of it would
- * otherwise look like "nothing is pending". Losing reload-safety there is the documented cost;
- * losing the retry within one page as well is not, and would turn a failed tap into a duplicate.
+ * When storage answers it is the **whole** record and a caller's copy is ignored outright, not
+ * merged behind it. Merging looked equivalent and is not: a mirror copied at mount keeps slots
+ * that storage has since *settled*, and writing one of those back resurrects a completed
+ * idempotency key. The next genuine press of that tile then replays the finished transaction and
+ * is answered "Already logged" -- a purchase silently lost, which is the failure this file trades
+ * against a visible duplicate everywhere else (#276).
+ *
+ * `held` stands in only when storage **refuses to answer** -- a private window, or blocked site
+ * data -- where there is no shared record to be authoritative and the caller's copy is the only
+ * thing keeping a retry from minting a second key. Losing reload-safety there is the documented
+ * cost; losing the retry within one page as well is not.
  */
 const currentTaps = (
   held: Record<string, PendingTap>,
   now: number
-): Record<string, PendingTap> => ({ ...stillLive(held, now), ...readPendingTaps(now) });
+): Record<string, PendingTap> => {
+  const { taps, available } = readStore(now);
+  return available ? taps : stillLive(held, now);
+};
 
 /**
  * Claim the key for one tap, against the record as it stands rather than a caller's snapshot.

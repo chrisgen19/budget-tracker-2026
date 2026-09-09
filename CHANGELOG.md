@@ -75,6 +75,16 @@ test was confirmed to fail against the snapshot version. The ref left in the hoo
 still earns its place in a browser that refuses storage: there the shared read answers `{}`, and a
 retry would otherwise have no key at all.
 
+A second round caught the fix itself. Merging the hook's mirror *behind* storage looked equivalent
+to ignoring it and was not: storage wins every slot it reports, but says nothing about a slot it has
+deliberately settled, and a mirror copied at mount still holds that slot. A later claim on any other
+tile wrote it back, so the next genuine press of the original tile replayed a finished transaction
+and was answered "Already logged" -- a purchase silently lost, which is precisely the side of the
+trade this file exists to stay off, and worse than the duplicate the first fix removed. The cause
+was that `{}` meant both "nothing is pending" and "storage refused to answer". `readStore` now
+reports `available` alongside the record, and the mirror is consulted only on a refusal. Both new
+tests were confirmed to fail against the merge version.
+
 The other three: the tile query is now started at the top of `dashboard/page.tsx` so it runs
 alongside the dashboard read instead of after it -- the strip mounts inside the `stats` branch, so
 the parallelism its own comment claimed was not actually happening, and the strip dropped in late

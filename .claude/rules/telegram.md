@@ -378,6 +378,17 @@ Whoever touches it next should assume the obvious simplification has already bee
   is a **mirror**, and the one thing it is still good for is a browser that refuses storage, where
   the shared read answers `{}` and a retry would have no key at all.
 
+  The correction that took, one round later: **an empty answer from working storage is
+  authoritative, and merging the mirror behind it is not equivalent to ignoring it.** The first fix
+  merged, on the reasoning that storage would win every slot it reported. It wins every slot it
+  *reports*; it says nothing about a slot it has deliberately **settled**. A mirror copied at mount
+  keeps that slot, so a later claim on any *other* tile wrote it back, and the next genuine press of
+  the original tile replayed a finished transaction and was answered "Already logged" -- a purchase
+  silently lost, which is the side of the trade this file exists to stay off. `readStore` therefore
+  reports `available` alongside the record, and `held` is consulted **only** when storage refuses to
+  answer, never when it answers `{}`. Distinguishing those two is the whole fix; they are the same
+  value and opposite facts.
+
 ### Deliberately not done
 
 Three things automated review keeps raising. They are real mechanisms and settled decisions, not

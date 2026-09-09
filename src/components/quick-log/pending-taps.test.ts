@@ -140,10 +140,22 @@ describe("claiming and releasing across surfaces", () => {
     expect(later.key).not.toBe(first.key);
   });
 
-  it("does not write a caller's aged-out slot back into the record", () => {
-    // A held copy is not TTL-filtered by anything else, so merging one in unchecked would
-    // resurrect a key past its window -- and a press inside *that* window would be answered
-    // "Already logged" for a purchase that was never recorded.
+  it("treats an empty answer from working storage as authoritative", () => {
+    // The rule the resurrection bug came from getting wrong. Storage answering `{}` means every
+    // slot really is settled, and is nothing like storage refusing to answer -- a caller's copy
+    // does not get to override it.
+    const held = { "X:38": { key: "batch-held", at: NOW } };
+
+    expect(claimPendingTap(held, "X:38", NOW).key).not.toBe("batch-held");
+  });
+
+  it("does not carry a caller's aged-out slot forward when storage is unavailable", () => {
+    // The only path where `held` is consulted at all, and so the only path where anything has to
+    // apply the TTL to it: `readStore` filters what it returns, a held copy has been filtered by
+    // nobody.
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
     const stale = { old: { key: "batch-old", at: NOW } };
 
     const after = claimPendingTap(stale, "new", NOW + PENDING_TAP_TTL_MS + 1).taps;
@@ -169,5 +181,24 @@ describe("claiming and releasing across surfaces", () => {
     });
 
     expect(claimPendingTap(held, "A", NOW).key).toBe("batch-held");
+  });
+});
+
+describe("a settled slot must not come back", () => {
+  it("does not resurrect a tap that storage has already settled", () => {
+    // Reported on #276 against the first fix. /quick-log mounts while a dashboard tap is in
+    // flight, so its mirror copies that slot; the dashboard's request then settles and storage
+    // drops it. A later claim on a *different* tile merged the mirror back in and rewrote the
+    // settled slot, so the next genuine press of the original tile reused a completed key and was
+    // answered "Already logged" -- the invisible failure this file is written to avoid.
+    const settled = claimPendingTap({}, "X:38", NOW);
+    const mirror = settled.taps; // what the second surface copied at mount
+    releasePendingTap(settled.taps, "X:38", NOW); // the first tap finishes
+
+    claimPendingTap(mirror, "Y:120", NOW); // a tap on another tile, holding the stale mirror
+
+    expect(readPendingTaps(NOW)).not.toHaveProperty("X:38");
+    // And the consequence, stated directly: pressing the original tile again is a new purchase.
+    expect(claimPendingTap(mirror, "X:38", NOW).key).not.toBe(settled.key);
   });
 });
