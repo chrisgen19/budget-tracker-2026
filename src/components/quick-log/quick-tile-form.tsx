@@ -4,7 +4,11 @@ import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { AlertTriangle, Loader2 } from "lucide-react";
-import { telegramQuickTileSchema, type TelegramQuickTileInput } from "@/lib/validations";
+import {
+  MAX_TILE_LABELS,
+  telegramQuickTileSchema,
+  type TelegramQuickTileInput,
+} from "@/lib/validations";
 import { resolveTileCategory } from "@/lib/telegram/quick-tiles";
 import { LabelPicker } from "@/components/transactions/label-picker";
 import { useCategoriesQuery } from "@/hooks/use-categories";
@@ -230,6 +234,14 @@ export function QuickTileForm({
           onChange={(ids) => setValue("labelIds", ids)}
           transactionType={type}
         />
+        {/* Rendered, or pressing Save past the cap does nothing at all: the resolver refuses the
+            form before `onSubmit` runs, and `LabelPicker` has no cap of its own to stop at. */}
+        {errors.labelIds && (
+          <p className="mt-1 text-sm text-expense">
+            A button can pin at most {MAX_TILE_LABELS} labels. Remove{" "}
+            {labelIds.length - MAX_TILE_LABELS} to save.
+          </p>
+        )}
         <p className="mt-2 text-xs text-warm-400">
           {labelIds.length > 0
             ? "These are applied instead of your scheduled labels when this button is tapped."

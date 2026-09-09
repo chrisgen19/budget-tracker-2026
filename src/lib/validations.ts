@@ -620,6 +620,14 @@ export const quickPickIdsSchema = (max: number) =>
     });
 
 /**
+ * How many labels one button may pin.
+ *
+ * Named rather than inline so the editor can say so: the form has to render the same figure the
+ * schema refuses on, or pressing Save past the cap does nothing with no explanation.
+ */
+export const MAX_TILE_LABELS = 10;
+
+/**
  * A quick-log tile, as the Telegram Mini App's editor posts it.
  *
  * `amount` is `.nullable()` rather than `.optional()`, and the difference is load-bearing: `null`
@@ -648,7 +656,7 @@ export const telegramQuickTileSchema = z.object({
    * is not pinning a label, it is filing a transaction under everything at once, and
    * `getLabelBreakdown` splits one amount across every label a row carries.
    */
-  labelIds: quickPickIdsSchema(10).optional(),
+  labelIds: quickPickIdsSchema(MAX_TILE_LABELS).optional(),
 });
 
 /** Editing one tile. Every field optional, but `amount: null` still means "make it ask". */
