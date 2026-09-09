@@ -254,13 +254,35 @@ export function QuickTileForm({
 }
 
 /**
+ * Digits with optional thousands separators and at most two decimal places, and nothing else.
+ *
+ * Anchored at both ends, which is the whole point: this is an unrestricted text input
+ * (`inputMode="decimal"` is a keyboard hint, not a constraint), so it receives pasted and typed
+ * text that is not a number.
+ */
+const AMOUNT_PATTERN = /^\d{1,3}(?:,\d{3})*(?:\.\d+)?$|^\d+(?:\.\d+)?$/;
+
+/**
  * The typed string as an amount, or null for "ask each time".
  *
  * Empty, unparseable and non-positive all collapse to null on purpose. A zero-amount transaction
  * is a real thing to write by accident and nothing downstream would flag it, so the only two
  * outcomes here are a positive figure or the asking state.
+ *
+ * The **whole** string has to be a number, which `Number.parseFloat` alone does not give: it
+ * accepts a numeric prefix and discards the rest, so a pasted `1,000` came back as 1 and `12abc`
+ * as 12. The typed text stayed on screen while the wrong figure was written, which on the amount
+ * prompt is one tap from a logged transaction off by a factor of a thousand.
+ *
+ * Thousands separators are stripped rather than refused, because rejecting `1,000` here would
+ * return null -- and on the tile form null is a *meaningful* state, "ask each time", so the paste
+ * would silently change what the button does instead of silently changing its amount. Neither
+ * silent outcome is acceptable; accepting the figure the user plainly meant is.
  */
 export const parseAmount = (raw: string): number | null => {
-  const parsed = Number.parseFloat(raw);
-  return raw.trim() === "" || !Number.isFinite(parsed) || parsed <= 0 ? null : parsed;
+  const trimmed = raw.trim();
+  if (!AMOUNT_PATTERN.test(trimmed)) return null;
+
+  const parsed = Number.parseFloat(trimmed.replace(/,/g, ""));
+  return !Number.isFinite(parsed) || parsed <= 0 ? null : parsed;
 };
