@@ -342,9 +342,9 @@ oversights; the answer is here so they are not relitigated each round.
 - **An orphaned tap key after an amount edit.** Closed by the TTL rather than by tracking the
   payload: the unreachable entry now expires in minutes instead of living as long as the tab. The
   alternative -- persisting the original payload and *offering* it, the shape `pending-log.ts` uses
-  -- is a feature (an "unsent tap: retry or discard?" affordance), and AGENTS.md is already
-  explicit that a restored intent must be offered rather than auto-replayed. Worth building only
-  if the retry affordance is wanted for its own sake.
+  -- is a feature (an "unsent tap: retry or discard?" affordance), and **The page** below is
+  already explicit that a restored intent must be offered rather than auto-replayed. Worth
+  building only if the retry affordance is wanted for its own sake.
 
 ### Frequent
 
@@ -395,8 +395,9 @@ of the grid that needs no maintenance. Pure over injected rows, with the loader 
   down to two one-letter tokens.
 - **`foldDescription` itself must never learn this.** It also drives duplicate detection,
   recurring-charge creep and income concentration, so sorting its tokens would make `Mirea Rent`
-  and `Rent Mirea` one charge in the assessment and silently move a financial finding. AGENTS.md
-  warns against a second copy of the *same* rule; `frequentKey` is a deliberately different one
+  and `Rent Mirea` one charge in the assessment and silently move a financial finding.
+  `assessment.md` warns against a second copy of the *same* rule; `frequentKey` is a deliberately
+  different one
   built on top of it, for a surface where a false merge costs a button rather than a number in a
   report.
 - **One habit gets one slot, by suppression and never by merging** (#268). After ranking, a tile
