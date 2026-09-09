@@ -85,14 +85,26 @@ const globToRegExp = (pattern: string): RegExp => {
 };
 
 /**
- * A literal pattern is checked with `existsSync` rather than against the walk, because it is
- * usually a directory and because that check does not depend on the walk's skip list being right.
- * Only a wildcard needs the file list.
+ * A bare directory matches everything beneath it, so `src/app/api` is a live trigger for
+ * `src/app/api/health/route.ts` and a trailing `/**` adds nothing to it. That decides whether
+ * most of these rules load at all, since 31 of the patterns are bare directories,
+ * `src/lib/telegram` and `src/lib/mcp` among them, so it was checked against the running binary
+ * rather than assumed: with `api-routes.md` scoped to `src/app/api` and nothing else, a session
+ * that read the health route quoted a route description appearing nowhere under `src/`, and a
+ * session that read nothing answered that it was not present. The explicit `src/app/api` plus
+ * globstar form injects too, so the two are interchangeable and the shorter one is kept.
+ *
+ * Worth knowing before "fixing" a bare entry into a glob: the documented examples are all
+ * explicit globs, which is why review read the short form as dead.
+ *
+ * Requiring a real file underneath, rather than only that the path exists, is what makes this
+ * stricter than the `existsSync` check it replaced: a pattern aimed at an empty tree matches
+ * nothing at runtime and should fail here rather than look healthy.
  */
 const matchesSomething = (pattern: string): boolean =>
   pattern.includes("*")
     ? allFiles.some((file) => globToRegExp(pattern).test(file))
-    : existsSync(join(ROOT, pattern));
+    : allFiles.some((file) => file === pattern || file.startsWith(`${pattern}/`));
 
 describe("rule file frontmatter", () => {
   it("finds the rule files", () => {

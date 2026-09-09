@@ -15,6 +15,16 @@ anything, and the part worth writing down is the trap next to it: a rule file **
 loads eagerly, exactly like CLAUDE.md. Splitting content there without the key saves nothing at
 all and looks identical from the inside.
 
+**A bare directory entry matches every file beneath it**, so `src/app/api` is a live trigger for
+`src/app/api/health/route.ts` and a trailing `/**` adds nothing. That decides whether most of this
+works at all, since 31 of the 100 patterns are bare directories, `src/lib/telegram` and
+`src/lib/mcp` among them. Review disputed it, reading the documented examples, which are all
+explicit globs, as the only form that matches. So it was checked against the running binary rather
+than argued: with `api-routes.md` scoped to `src/app/api` and nothing else, a session that read the
+health route quoted back a route description appearing nowhere under `src/`, and a session that
+read nothing reported it absent. The explicit `src/app/api/**` form was then checked the same way
+and also injects, so the two are interchangeable here and the shorter one is kept.
+
 Nine rule files, 100 patterns. Eager load falls from 25,279 words to 3,346, an 87% cut. Across the
 repo the mean file now pulls 3,502 words of rules and 37% pull none.
 
