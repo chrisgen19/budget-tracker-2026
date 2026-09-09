@@ -328,6 +328,7 @@ export default function QuickLogPage() {
                     busy={busy}
                     canMoveUp={index > 0}
                     canMoveDown={index < tiles.length - 1}
+                    reordering={reorderTiles.isPending}
                     onLog={handleTap}
                     onEdit={openEdit}
                     onDelete={setDeleting}
