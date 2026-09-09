@@ -46,6 +46,21 @@ of #192, because no path triggers a build. Cron Jobs, which is Coolify dashboard
 the orientation sections, the UI providers, and the app-wide `timezoneOffset` rule, which belongs
 nowhere narrower.
 
+### It also un-truncated the file for Codex
+
+Codex concatenates AGENTS.md from the repository root down and stops once the combined size
+reaches `project_doc_max_bytes`, 32 KiB by default. It does not warn, it just stops. This file was
+159.8 KiB, so Codex had been reading its first 289 lines of 803 and nothing after: Cron Jobs,
+Database, Testing, the whole of Key Patterns, the API route reference, Design, Code Style, Rule
+Strictness and the PR checklist never reached it, and the cut landed mid-sentence inside a
+paragraph about quick tiles. At 26.0 KiB the file now fits, so Codex reads all of it for the first
+time. There is 6.2 KiB of headroom and a test pins it, since the property reverts silently the
+moment the file grows back.
+
+Nested AGENTS.md files were considered as the Codex-native alternative to the index and do not fit:
+Codex walks root to *current directory*, so a nested file under `src/` is only read when Codex is
+launched inside `src/`, and a rule like the Telegram one spans nine directories anyway.
+
 A new **Detailed Rules** index names each file, what it covers and what triggers it. Codex reads
 AGENTS.md and cannot discover `.claude/rules/` on its own, so for every reader but Claude Code the
 index is the only route in, and its "Loads on" list is the only statement of when to open a rule.

@@ -174,6 +174,29 @@ describe("the AGENTS.md index", () => {
 });
 
 /**
+ * Codex reads AGENTS.md and stops once the combined instruction files reach
+ * `project_doc_max_bytes`, 32 KiB by default. It does not warn; it simply stops, mid-sentence.
+ *
+ * Before the split this file was 159.8 KiB, so Codex was reading its first 289 lines and no more:
+ * Code Style, Rule Strictness, the PR checklist, Design and the whole of Key Patterns were never
+ * reaching it at all. Moving the area material out brought the file under the limit, which is a
+ * second reason for the split and a property that silently reverts the moment the file grows back.
+ */
+const CODEX_PROJECT_DOC_MAX_BYTES = 32 * 1024;
+
+describe("AGENTS.md stays readable by agents other than Claude Code", () => {
+  it("fits inside Codex's default project_doc_max_bytes", () => {
+    const bytes = readFileSync(join(ROOT, "AGENTS.md")).byteLength;
+    expect(
+      bytes,
+      `AGENTS.md is ${bytes} bytes; Codex reads only the first ${CODEX_PROJECT_DOC_MAX_BYTES} ` +
+        "and drops the rest without saying so. Move a section into .claude/rules/, or raise " +
+        "project_doc_max_bytes in .codex/config.toml."
+    ).toBeLessThan(CODEX_PROJECT_DOC_MAX_BYTES);
+  });
+});
+
+/**
  * Several rule files can be injected at once, one after another. A file opening at `##` presents
  * as a subsection of whichever rule came before it, which is how the whole API route reference
  * once read as bill-scoped material.
