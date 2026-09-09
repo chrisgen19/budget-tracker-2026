@@ -2,6 +2,128 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-09 - AGENTS.md split into path-scoped rule files (#271)
+
+`.claude/CLAUDE.md` imports `AGENTS.md`, so all 803 lines and 25,279 words of it were injected
+before the first prompt of every session. Most of it is area-specific: the Telegram Mini App alone
+is 4,589 words and Key Patterns is 12,083. A session fixing a Tailwind class paid for the
+receipt-scan quota rules, the MCP rate limiter and the bill-date arithmetic.
+
+A file under `.claude/rules/` carrying a `paths:` frontmatter key is held back and injected only
+when a file matching one of its patterns is touched. That is the only mechanism that saves
+anything, and the part worth writing down is the trap next to it: a rule file **without** `paths:`
+loads eagerly, exactly like CLAUDE.md. Splitting content there without the key saves nothing at
+all and looks identical from the inside.
+
+**A bare directory entry matches every file beneath it**, so `src/app/api` is a live trigger for
+`src/app/api/health/route.ts` and a trailing `/**` adds nothing. That decides whether most of this
+works at all, since 31 of the 100 patterns are bare directories, `src/lib/telegram` and
+`src/lib/mcp` among them. Review disputed it, reading the documented examples, which are all
+explicit globs, as the only form that matches. So it was checked against the running binary rather
+than argued: with `api-routes.md` scoped to `src/app/api` and nothing else, a session that read the
+health route quoted back a route description appearing nowhere under `src/`, and a session that
+read nothing reported it absent. The explicit `src/app/api/**` form was then checked the same way
+and also injects, so the two are interchangeable here and the shorter one is kept.
+
+Nine rule files, 100 patterns. Eager load falls from 25,279 words to 3,346, an 87% cut. Across the
+repo the mean file now pulls 3,502 words of rules and 37% pull none.
+
+### Every word moved verbatim, and that is checked rather than claimed
+
+Text was cut by line range out of the committed blob with `sed`, never retyped. This file records
+decisions and the reasons behind them, and the reasons are the value; a paraphrase would have
+destroyed the work while looking like a tidy-up.
+
+The proof is a sorted line-set comparison against the base: zero original lines lost, zero
+duplicated, and every line the comparison reports as new is frontmatter, a heading, or an index
+entry. It was re-run after each of the seven commits.
+
+### What stays eager
+
+Anything no file path could ever trigger. `pnpm build` versus `pnpm build:deploy` and the account
+of #192, because no path triggers a build. Cron Jobs, which is Coolify dashboard configuration.
+`ALLOW_REMOTE_DB`, which guards `db:migrate` and `db:push`. The Database seeding operations. Plus
+the orientation sections, the UI providers, and the app-wide `timezoneOffset` rule, which belongs
+nowhere narrower.
+
+### It also un-truncated the file for Codex
+
+Codex concatenates AGENTS.md from the repository root down and stops once the combined size
+reaches `project_doc_max_bytes`, 32 KiB by default. It does not warn, it just stops. This file was
+159.8 KiB, so Codex had been reading its first 289 lines of 803 and nothing after: Cron Jobs,
+Database, Testing, the whole of Key Patterns, the API route reference, Design, Code Style, Rule
+Strictness and the PR checklist never reached it, and the cut landed mid-sentence inside a
+paragraph about quick tiles. At 26.0 KiB the file now fits, so Codex reads all of it for the first
+time. There is 6.2 KiB of headroom and a test pins it, since the property reverts silently the
+moment the file grows back.
+
+Nested AGENTS.md files were considered as the Codex-native alternative to the index and do not fit:
+Codex walks root to *current directory*, so a nested file under `src/` is only read when Codex is
+launched inside `src/`, and a rule like the Telegram one spans nine directories anyway.
+
+A new **Detailed Rules** index names each file, what it covers and what triggers it. Codex reads
+AGENTS.md and cannot discover `.claude/rules/` on its own, so for every reader but Claude Code the
+index is the only route in, and its "Loads on" list is the only statement of when to open a rule.
+That list is therefore literal and exhaustive rather than a summary, and asserted equal to the
+frontmatter it describes: one edit here managed to disagree in both directions at once, adding
+`validations.ts` to telegram.md's `paths:` while listing it under mcp.md, so the file that loads it
+went unmentioned and a file that does not claimed to.
+
+### The defect this kept producing, five review rounds running
+
+Rules were filed by the feature that motivated them rather than by the file they constrain. Every
+round found more of it, each reaching a layer further out than the last: filenames, then symbols,
+then client surfaces, then tool mappings and manifests, then the app routes an MCP rule governs.
+Twenty-one instances in total, all real.
+
+Three are worth keeping:
+
+- `budget-queries.ts:810` carries the comment "`dayKey(utcDayStart(...))`, never `formatLocalDate`"
+  and matched nothing that explained it.
+- `mcp/server.ts:1233` **is** the expression `transactions.md` quotes verbatim, and did not load it.
+- "Bill dates are calendar days, not instants" and "Local calendar days on read rows" were adjacent
+  in AGENTS.md, a rule and its exception, and went to different files. Routing the second to
+  `transactions.md` was the error; its own neighbours said so, since it sat between the bills bullet
+  and one that went to `mcp.md`. Moved there, verbatim, back beside the bullet that followed it.
+
+The remaining 22 broken adjacencies were audited by looking for pairs sharing a distinctive
+identifier. Only that one is a rule and its exception; the rest state the same thing on both sides
+or already co-load.
+
+### The test, because none of this fails loudly
+
+`scripts/rule-paths.test.ts` pins what review had been catching by hand. Both ways a rule file
+stops working are silent: no `paths:` key and it loads eagerly with correct content and no error,
+and a pattern naming a renamed file matches nothing, so the rule stops arriving where it applies,
+which from the inside is indistinguishable from there never having been one.
+
+It also asserts that each rule file's index entry lists exactly the paths its frontmatter
+declares, and that each opens at `#` rather than `##` -- several are injected one after another,
+and a file opening at `##` presents as a subsection of whichever rule came before it, which is how
+the whole API route reference once read as bill-scoped material. Every assertion was confirmed to
+fail against a deliberate break, the index one against a replay of the real mismatch.
+
+### The rest
+
+- Deliberate path overlaps, because the coupling is real rather than sloppy: `assessment-facts.ts`
+  is claimed by telegram, assessment and mcp, and `preferences/route.ts` by mcp, telegram and
+  receipts. Those two are the most expensive files in the repo at 13,750 and 14,160 words, still
+  roughly half what every session used to pay unconditionally.
+- `validations.ts` is named by six rule files and only two claims were taken, `assessmentReportSchema`
+  and `HH_MM`, both of which fail silently at the definition rather than at a caller. Taking all six
+  would load about 17,000 words on any of its 47 schemas and undo the change.
+- Cross-references are not paths. A rule citing `settleBill` or `prisma` as context does not claim
+  the file, or `telegram.md` would claim half of `src/lib`.
+- `REVIEW.md` is the repo's other instruction file and the split had left it unreconciled. It sent
+  reviewers to `src/app/sw.ts` for the `NetworkOnly` list, which has not been there since the list
+  moved to `PROTECTED_PAGE_PATHS` in `src/lib/protected-paths.ts` so a test could reach it, `sw.ts`
+  not being importable under jsdom. Both mentions corrected; `sw.ts` still applies the strategy, so
+  that half of the claim stayed. Every other path it names was checked and is real.
+- Its skip list, which tells reviewers to ignore changes only to `CHANGELOG.md`, `README.md` or
+  `AGENTS.md`, deliberately does **not** gain `.claude/rules/`. Five review rounds on this PR found
+  twenty-one real defects in those files, so exempting them is the opposite of what the evidence
+  supports.
+
 ## 2026-09-09 - Quick Log: a web editor for the quick-log buttons, and pinned labels
 
 `TelegramQuickTile` already stored the thing a "custom frequent transaction" is -- a named button
