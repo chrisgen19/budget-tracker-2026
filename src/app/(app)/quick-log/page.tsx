@@ -37,7 +37,7 @@ export default function QuickLogPage() {
   const { user } = useUser();
   const { showToast } = useToast();
 
-  const { data, isLoading } = useQuickTilesQuery();
+  const { data, isLoading, isError, refetch } = useQuickTilesQuery();
   const { data: frequent = [], isLoading: frequentLoading } = useFrequentTilesQuery();
 
   const createTile = useCreateQuickTile();
@@ -209,7 +209,7 @@ export default function QuickLogPage() {
         <button
           type="button"
           onClick={() => openNew()}
-          disabled={atLimit}
+          disabled={atLimit || isError}
           className="hidden min-h-11 shrink-0 items-center gap-2 rounded-xl bg-amber px-4 text-sm font-medium text-white transition hover:bg-amber-dark disabled:opacity-50 sm:inline-flex"
         >
           <Plus className="h-4 w-4" aria-hidden />
@@ -222,6 +222,20 @@ export default function QuickLogPage() {
           {[0, 1, 2, 3, 4, 5].map((i) => (
             <div key={i} className="h-28 animate-shimmer rounded-2xl bg-cream-200" />
           ))}
+        </div>
+      ) : isError ? (
+        // Distinct from the empty state on purpose. A failed load leaves `tiles` empty, so without
+        // this the page reads as "you have no buttons" and offers to create one -- which then
+        // fails on a duplicate label, because the buttons are there and were simply never fetched.
+        <div className="rounded-2xl border border-cream-300/70 bg-white p-8 text-center shadow-warm">
+          <p className="text-sm text-warm-500">We could not load your buttons.</p>
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            className="mt-4 inline-flex min-h-11 items-center rounded-xl bg-amber px-4 text-sm font-medium text-white transition hover:bg-amber-dark"
+          >
+            Try again
+          </button>
         </div>
       ) : tiles.length === 0 ? (
         <EmptyState
@@ -345,7 +359,7 @@ export default function QuickLogPage() {
         label="Button"
         icon={Plus}
         onClick={() => openNew()}
-        suppressed={atLimit || formOpen || asking !== null || deleting !== null}
+        suppressed={atLimit || isError || formOpen || asking !== null || deleting !== null}
       />
     </div>
   );
