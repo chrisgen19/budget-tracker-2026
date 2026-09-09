@@ -389,6 +389,21 @@ Whoever touches it next should assume the obvious simplification has already bee
   answer, never when it answers `{}`. Distinguishing those two is the whole fix; they are the same
   value and opposite facts.
 
+  And a third round, because "storage answered" still is not "storage works": a browser can hand
+  back a good `getItem` and refuse every `setItem` -- legacy Safari private mode does exactly this,
+  and shield extensions do too. Judged on the read alone that store looks *available and empty*, so
+  a caller's own unsettled claim was thrown away and the retry minted a second key, duplicating a
+  row that may already have committed. `main` never had this hole; it claimed from its mirror and
+  never consulted storage. So `writePendingTaps` records whether the write landed, and the mirror
+  stands in whenever storage cannot be *written* as well as when it cannot be read. That does not
+  reopen the resurrection above, and the reason is worth keeping: **a release is a write**, so while
+  writes are failing storage cannot have settled anything the mirror has not seen -- it cannot have
+  settled anything at all. The flag is self-healing because a write is the *whole* record and not a
+  patch, so one that lands resynchronises storage completely.
+
+  Three rounds, three ways to get one fallback wrong, and all three are pinned: revert any of the
+  three conditions in `currentTaps` and `pending-taps.test.ts` names which one you broke.
+
 ### Deliberately not done
 
 Three things automated review keeps raising. They are real mechanisms and settled decisions, not

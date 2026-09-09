@@ -85,6 +85,19 @@ was that `{}` meant both "nothing is pending" and "storage refused to answer". `
 reports `available` alongside the record, and the mirror is consulted only on a refusal. Both new
 tests were confirmed to fail against the merge version.
 
+A third round found that "storage answered" is still not "storage works". A browser can return a
+good `getItem` and refuse every `setItem` -- legacy Safari private mode does, and shields do -- and
+judged on the read that store looks available and empty, so the caller's own unsettled claim was
+discarded and a retry minted a second key. `main` never had this hole: it claimed from its mirror
+and never consulted storage, so this was a regression the rewrite introduced. `writePendingTaps` now
+records whether the write landed and the mirror stands in whenever storage cannot be written either.
+It does not reopen the resurrection, because a release is a write: while writes are failing storage
+cannot have settled anything the mirror has not seen. Self-healing, since a write is the whole
+record rather than a patch.
+
+Three rounds, three ways to get one fallback wrong, and each is now pinned by its own test: revert
+any of the three conditions and the suite names which one.
+
 The other three: the tile query is now started at the top of `dashboard/page.tsx` so it runs
 alongside the dashboard read instead of after it -- the strip mounts inside the `stats` branch, so
 the parallelism its own comment claimed was not actually happening, and the strip dropped in late

@@ -17,6 +17,10 @@ const NOW = 1_760_000_000_000;
 
 beforeEach(() => {
   sessionStorage.clear();
+  // Clears the module's record of whether writing works, which outlives a single test. Done
+  // through the real API rather than a test-only export: a write that lands is exactly what tells
+  // it storage is usable again.
+  writePendingTaps({});
 });
 
 describe("tapSlot", () => {
@@ -200,5 +204,37 @@ describe("a settled slot must not come back", () => {
     expect(readPendingTaps(NOW)).not.toHaveProperty("X:38");
     // And the consequence, stated directly: pressing the original tile again is a new purchase.
     expect(claimPendingTap(mirror, "X:38", NOW).key).not.toBe(settled.key);
+  });
+});
+
+describe("storage that can be read but not written", () => {
+  it("keeps reusing this caller's own key", () => {
+    // Legacy Safari private mode is the documented case: `getItem` works and `setItem` throws.
+    // Judging availability on the read alone ignored the mirror here, so a retry after an unknown
+    // outcome minted a second key and duplicated a row that may already have committed. `main`
+    // did not have this hole -- it claimed from the mirror and never consulted storage.
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota exceeded");
+    });
+
+    const first = claimPendingTap({}, "X:38", NOW);
+    const retry = claimPendingTap(first.taps, "X:38", NOW);
+
+    expect(retry.key).toBe(first.key);
+  });
+
+  it("goes back to trusting the shared record once a write lands", () => {
+    // Self-healing, and it works because a write is the *whole* record rather than a patch: one
+    // that succeeds resynchronises storage completely, so the mirror is redundant again.
+    const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota exceeded");
+    });
+    const stranded = claimPendingTap({}, "X:38", NOW);
+
+    spy.mockRestore();
+    releasePendingTap(stranded.taps, "X:38", NOW);
+
+    // Settled, and the mirror must not bring it back.
+    expect(claimPendingTap(stranded.taps, "X:38", NOW).key).not.toBe(stranded.key);
   });
 });

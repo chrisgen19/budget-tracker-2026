@@ -101,12 +101,32 @@ const readStore = (
 export const readPendingTaps = (now = Date.now()): Record<string, PendingTap> =>
   readStore(now).taps;
 
+/**
+ * Whether the last write landed, which is not answerable by reading.
+ *
+ * A browser can hand back a perfectly good `getItem` and refuse every `setItem` -- legacy Safari
+ * private mode is the documented case, and shield extensions do it too. Judged on the read alone
+ * that store looks *available and empty*, so a caller's own unsettled claim was discarded and the
+ * retry after an unknown outcome minted a second key, duplicating a row that may already have
+ * committed. Reported on #276; `main` never had the hole, because it claimed from its mirror and
+ * never consulted storage at all.
+ *
+ * Module scope is the right scope: it describes this tab's `sessionStorage`, which is exactly what
+ * a module in this tab lasts as long as.
+ */
+let storeWritable = true;
+
 export const writePendingTaps = (taps: Record<string, PendingTap>) => {
   try {
     if (Object.keys(taps).length === 0) sessionStorage.removeItem(PENDING_TAPS_KEY);
     else sessionStorage.setItem(PENDING_TAPS_KEY, JSON.stringify(taps));
+    // Self-healing, and it is a write being the **whole** record rather than a patch that makes it
+    // so: one that succeeds resynchronises storage completely, so nothing stays stranded in a
+    // mirror after the quota clears.
+    storeWritable = true;
   } catch {
     // Storage being unavailable costs the reload-safety, not the tap.
+    storeWritable = false;
   }
 };
 
@@ -132,17 +152,24 @@ const stillLive = (
  * is answered "Already logged" -- a purchase silently lost, which is the failure this file trades
  * against a visible duplicate everywhere else (#276).
  *
- * `held` stands in only when storage **refuses to answer** -- a private window, or blocked site
- * data -- where there is no shared record to be authoritative and the caller's copy is the only
- * thing keeping a retry from minting a second key. Losing reload-safety there is the documented
- * cost; losing the retry within one page as well is not.
+ * `held` stands in only when storage cannot be a record at all: it refuses to answer -- a private
+ * window, or blocked site data -- or it refuses to be written, where what can still be read is
+ * frozen at whatever landed last. In both cases the caller's copy is the only thing keeping a
+ * retry from minting a second key. Losing reload-safety there is the documented cost; losing the
+ * retry within one page as well is not.
+ *
+ * That second condition is also what keeps this from reopening the resurrection bug above. The
+ * mirror is only consulted while writes are failing, and a *release* is a write: storage cannot
+ * have settled anything the mirror has not seen, because it cannot have settled anything at all.
+ * The moment a write lands, storage holds the whole record again and the mirror goes back to being
+ * ignored.
  */
 const currentTaps = (
   held: Record<string, PendingTap>,
   now: number
 ): Record<string, PendingTap> => {
   const { taps, available } = readStore(now);
-  return available ? taps : stillLive(held, now);
+  return available && storeWritable ? taps : stillLive(held, now);
 };
 
 /**
