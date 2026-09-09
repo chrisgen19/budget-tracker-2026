@@ -54,15 +54,26 @@ export default function QuickLogPage() {
   const [asking, setAsking] = useState<QuickTileView | null>(null);
 
   /**
-   * The idempotency key for the tap in flight.
+   * The idempotency key for the tap in flight, and **the tap it belongs to**.
    *
    * Held across a failure and replayed rather than regenerated, because a 5xx or a lost response
    * means the write may have committed: posting again under a fresh key would write a second row.
    * A 4xx clears it, since the route raises those before it opens a transaction, so nothing was
    * written and the next attempt is a genuinely new intent. This is the rule the multi-scan
    * review already follows for a batch save.
+   *
+   * The tile and amount travel *with* the key, and a retained key is reused only when both match.
+   * A page-scoped key is worse than none: after an unknown failure the grid becomes tappable
+   * again, so tapping a **different** button would reuse the first tap's key under a different
+   * payload. If that first write had committed, the server replays it and answers with the
+   * original row -- the user gets a success toast naming the previous purchase while the button
+   * they just pressed is never logged.
    */
-  const [pendingKey, setPendingKey] = useState<string | null>(null);
+  const [pending, setPending] = useState<{
+    key: string;
+    tileId: string;
+    amount: number;
+  } | null>(null);
 
   const tiles = data?.tiles ?? [];
   const maxTiles = data?.limits.maxTiles ?? 0;
@@ -108,8 +119,11 @@ export default function QuickLogPage() {
   };
 
   const runLog = async (tile: QuickTileView, amount: number) => {
-    const clientBatchId = pendingKey ?? crypto.randomUUID();
-    setPendingKey(clientBatchId);
+    // Reused only for a retry of the *same* tap. Anything else is a new intent and gets a new key.
+    const replayable =
+      pending && pending.tileId === tile.id && pending.amount === amount ? pending.key : null;
+    const clientBatchId = replayable ?? crypto.randomUUID();
+    setPending({ key: clientBatchId, tileId: tile.id, amount });
 
     try {
       const result = await logTile.mutateAsync({
@@ -120,7 +134,7 @@ export default function QuickLogPage() {
         clientBatchId,
       });
 
-      setPendingKey(null);
+      setPending(null);
       setAsking(null);
 
       const labels = result.labels.length > 0 ? `, ${result.labels.join(", ")}` : "";
@@ -132,15 +146,17 @@ export default function QuickLogPage() {
     } catch (error) {
       // A 4xx wrote nothing, so the pin is dropped and a corrected retry is a new intent. Anything
       // else may have committed, so the pin is kept and the next attempt replays it.
-      if (error instanceof QuickLogError && error.wrote === "no") setPendingKey(null);
+      if (error instanceof QuickLogError && error.wrote === "no") setPending(null);
       showToast(error instanceof Error ? error.message : "Could not log that");
     }
   };
 
   const handleTap = (tile: QuickTileView) => {
-    // A tile with no amount asks for one; the pad is the only place that figure exists.
+    // A tile with no amount asks for one; the pad is the only place that figure exists. A key
+    // retained from an earlier tap is deliberately *not* cleared here: it now names the tap it
+    // belongs to, so it cannot be picked up by this one, and dropping it would lose the replay
+    // for a write whose fate is still unknown.
     if (tile.amount === null) {
-      setPendingKey(null);
       setAsking(tile);
       return;
     }
