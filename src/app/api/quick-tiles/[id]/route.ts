@@ -34,12 +34,19 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     );
   }
 
-  const result = await updateQuickTile(prisma, userId, id, parsed.data);
-  if (!result.ok) {
-    return NextResponse.json({ error: result.message }, { status: quickTileStatus(result.reason) });
-  }
+  try {
+    const result = await updateQuickTile(prisma, userId, id, parsed.data);
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: result.message },
+        { status: quickTileStatus(result.reason) }
+      );
+    }
 
-  return NextResponse.json({ tile: result.tile });
+    return NextResponse.json({ tile: result.tile });
+  } catch {
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 }
 
 export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -48,10 +55,17 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
 
   const { id } = await context.params;
 
-  const result = await deleteQuickTile(prisma, userId, id);
-  if (!result.ok) {
-    return NextResponse.json({ error: result.message }, { status: quickTileStatus(result.reason) });
-  }
+  try {
+    const result = await deleteQuickTile(prisma, userId, id);
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: result.message },
+        { status: quickTileStatus(result.reason) }
+      );
+    }
 
-  return NextResponse.json({ deleted: true });
+    return NextResponse.json({ deleted: true });
+  } catch {
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 }

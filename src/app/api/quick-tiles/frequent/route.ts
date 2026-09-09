@@ -33,11 +33,15 @@ export async function GET() {
   });
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const tiles = await listTileRows(prisma, userId);
+  try {
+    const tiles = await listTileRows(prisma, userId);
 
-  const frequent = await loadFrequentTiles(prisma, userId, user.timezoneOffset, {
-    excludeKeys: tiles.map((t) => t.description),
-  });
+    const frequent = await loadFrequentTiles(prisma, userId, user.timezoneOffset, {
+      excludeKeys: tiles.map((t) => t.description),
+    });
 
-  return NextResponse.json({ frequent });
+    return NextResponse.json({ frequent });
+  } catch {
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 }

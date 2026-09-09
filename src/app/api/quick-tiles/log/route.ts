@@ -37,27 +37,36 @@ export async function POST(request: Request) {
   const providedKey = clientBatchIdSchema.safeParse(
     (body as { clientBatchId?: unknown } | null)?.clientBatchId
   );
-  if (providedKey.success) {
-    const replayed = await findReplayedQuickLog(prisma, userId, providedKey.data);
-    if (replayed) return NextResponse.json(replayed, { status: 200 });
-  }
 
-  const parsed = telegramQuickLogSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid request", details: parsed.error.flatten().fieldErrors },
-      { status: 400 }
-    );
-  }
+  // The guard covers the replay lookup as well as the write, and it answers **500**, which is the
+  // load-bearing part: the client reads a 4xx as proof nothing was written and drops its
+  // idempotency pin. An unexpected throw here is precisely the case where whether the row
+  // committed is unknown, so it must keep the pin and replay rather than post again.
+  try {
+    if (providedKey.success) {
+      const replayed = await findReplayedQuickLog(prisma, userId, providedKey.data);
+      if (replayed) return NextResponse.json(replayed, { status: 200 });
+    }
 
-  const result = await logQuickTile(prisma, userId, parsed.data, "APP");
-  if (!result.ok) {
-    return NextResponse.json(
-      { error: result.message, reason: result.reason },
-      { status: quickTileStatus(result.reason) }
-    );
-  }
+    const parsed = telegramQuickLogSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid request", details: parsed.error.flatten().fieldErrors },
+        { status: 400 }
+      );
+    }
 
-  const { ok: _ok, ...payload } = result;
-  return NextResponse.json(payload, { status: payload.replayed ? 200 : 201 });
+    const result = await logQuickTile(prisma, userId, parsed.data, "APP");
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: result.message, reason: result.reason },
+        { status: quickTileStatus(result.reason) }
+      );
+    }
+
+    const { ok: _ok, ...payload } = result;
+    return NextResponse.json(payload, { status: payload.replayed ? 200 : 201 });
+  } catch {
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 }

@@ -309,6 +309,35 @@ describe("POST /api/quick-tiles/log", () => {
     expect(mocks.createTransactionBatch).not.toHaveBeenCalled();
   });
 
+  it("answers the JSON 500 contract when a helper throws unexpectedly", async () => {
+    // The shared helpers handle one Prisma error code each and rethrow the rest. Uncaught, that
+    // returns a framework error page rather than `{ error }`, and the status matters more here
+    // than anywhere else: the client reads a 4xx as proof nothing was written and drops its
+    // idempotency pin, so an unexpected throw has to be a 500 and keep the pin.
+    mocks.createTransactionBatch.mockRejectedValue(new Error("connection reset"));
+
+    const res = await LOG(
+      req("https://x.test/api/quick-tiles/log", "POST", {
+        tileId: "tile_1",
+        description: "fare to office",
+        amount: 38,
+        clientBatchId: KEY,
+      })
+    );
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Internal server error" });
+  });
+
+  it("answers the JSON 500 contract when the list read throws", async () => {
+    mocks.tileFindMany.mockRejectedValue(new Error("connection reset"));
+
+    const res = await GET();
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Internal server error" });
+  });
+
   it("answers 500 when whether the write landed is unknown", async () => {
     // A 4xx here would tell the client nothing was written, and its retry under a fresh key would
     // write a second row.

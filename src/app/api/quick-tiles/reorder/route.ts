@@ -33,10 +33,17 @@ export async function POST(request: Request) {
     );
   }
 
-  const result = await reorderQuickTiles(prisma, userId, parsed.data.ids);
-  if (!result.ok) {
-    return NextResponse.json({ error: result.message }, { status: quickTileStatus(result.reason) });
-  }
+  try {
+    const result = await reorderQuickTiles(prisma, userId, parsed.data.ids);
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: result.message },
+        { status: quickTileStatus(result.reason) }
+      );
+    }
 
-  return NextResponse.json({ tiles: result.tiles });
+    return NextResponse.json({ tiles: result.tiles });
+  } catch {
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 }
