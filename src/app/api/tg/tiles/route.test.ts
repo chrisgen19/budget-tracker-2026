@@ -319,6 +319,20 @@ describe("DELETE /api/tg/tiles/[id]", () => {
   });
 });
 
+describe("unexpected failures", () => {
+  it("answers the JSON 500 contract rather than a framework error page", async () => {
+    // `tg-api.ts` reads `body.error` for its message and the status for its retry decision, so an
+    // unguarded throw costs the Mini App the cause. The web routes answer this shape; the two
+    // doors onto the same helpers must not disagree about it.
+    mocks.tileFindMany.mockRejectedValue(new Error("connection reset"));
+
+    const res = await GET(req("https://x.test/api/tg/tiles", "GET"));
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Internal server error" });
+  });
+});
+
 describe("POST /api/tg/tiles/reorder", () => {
   beforeEach(() => {
     mocks.tileFindMany.mockResolvedValue([
