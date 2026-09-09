@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, Zap } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Modal } from "@/components/ui/modal";
@@ -114,7 +114,7 @@ export default function QuickLogPage() {
    * They accumulate only for the page's lifetime, and only for taps whose fate is genuinely
    * unknown -- at most a handful, each reusable by nothing but an identical re-press.
    */
-  const [pending, setPending] = useState<Record<string, string>>({});
+  const pending = useRef<Record<string, string>>({});
 
   // Restored after a reload, because React state is not where an unresolved write can live.
   // A tap whose outcome is unknown keeps its key precisely so a re-press replays instead of
@@ -125,18 +125,41 @@ export default function QuickLogPage() {
   // same button for the same figure again, which is a deliberate act. That is the difference from
   // the Mini App's `pending-log.ts`, which restores a whole draft on launch and so has to offer it.
   useEffect(() => {
-    setPending(readPendingTaps());
+    pending.current = readPendingTaps();
   }, []);
 
-  useEffect(() => {
-    writePendingTaps(pending);
-  }, [pending]);
+  /**
+   * Claim and release, both **synchronous** and both independent of this component's lifetime.
+   *
+   * A ref and a direct write, not state and a passive effect, and the release half is what forces
+   * it. `releaseTap` runs when the request settles, which can be *after the page has unmounted* --
+   * tapping a button and immediately going to Transactions to look at it is an ordinary thing to
+   * do. A `setPending` there is discarded, the effect never runs, and the settled key stays in
+   * storage. Coming back and buying the same thing again then replays the **old** transaction:
+   * measured end to end, two real purchases wrote one row and the confirmation read "Already
+   * logged". A duplicate at least shows up in the ledger; a missing row does not.
+   *
+   * Claiming is written before the request goes out for the mirror-image reason, so the durable
+   * record never lags the thing it exists to describe.
+   *
+   * Nothing renders from this, so state was buying a re-render and two lifetime hazards for
+   * nothing.
+   */
+  const claimTap = (slot: string): string => {
+    const existing = pending.current[slot];
+    if (existing) return existing;
 
-  const releaseTap = (slot: string) =>
-    setPending((held) => {
-      const { [slot]: _settled, ...rest } = held;
-      return rest;
-    });
+    const key = crypto.randomUUID();
+    pending.current = { ...pending.current, [slot]: key };
+    writePendingTaps(pending.current);
+    return key;
+  };
+
+  const releaseTap = (slot: string) => {
+    const { [slot]: _settled, ...rest } = pending.current;
+    pending.current = rest;
+    writePendingTaps(rest);
+  };
 
   const tiles = data?.tiles ?? [];
   const maxTiles = data?.limits.maxTiles ?? 0;
@@ -183,10 +206,10 @@ export default function QuickLogPage() {
 
   const runLog = async (tile: QuickTileView, amount: number) => {
     // Reused only for a re-press of the *same* tap. Anything else is a new intent, gets a new key,
-    // and leaves whatever other taps are still unresolved exactly where they are.
+    // and leaves whatever other taps are still unresolved exactly where they are. Claimed -- and
+    // written to storage -- before the request goes out, never after.
     const slot = tapSlot(tile.id, amount);
-    const clientBatchId = pending[slot] ?? crypto.randomUUID();
-    setPending((held) => ({ ...held, [slot]: clientBatchId }));
+    const clientBatchId = claimTap(slot);
 
     try {
       const result = await logTile.mutateAsync({
