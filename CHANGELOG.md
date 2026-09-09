@@ -2,6 +2,66 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-09 - Quick Log on the dashboard (#275, phase 1)
+
+`/quick-log` had CRUD, one-tap logging, pinned labels and the idempotency machinery, and was a page
+you had to go and find. Counting the actions before a thumb reaches a tile: two in the Telegram
+Mini App, two on desktop via the sidebar, and **three** on a phone -- land on `/dashboard`, open the
+tab bar's More menu, then Quick Log. The web app was slower than Telegram at the one thing the
+feature exists for.
+
+`QuickLogStrip` puts the first six buttons on `/dashboard`, which is the manifest `start_url`, so a
+tile is one tap from a cold launch of the installed app. Nothing changed server-side: no migration,
+no API change, no new dependency. `quick-tile-writes.ts` already accepted `createdVia: "APP"`.
+
+### The extraction came first, and that ordering is the point
+
+The tap logic lived inline in a 426-line page component. The strip could have copied it; every rule
+in `pending-taps.ts` was a bug first, so a second hand-written copy of claim/release/replay is a
+second chance to reintroduce one. `useQuickTap` (`src/hooks/use-quick-tap.ts`) holds it once and
+both surfaces consume it -- the same argument `quick-tile-writes.ts` makes about the server, applied
+to the client half. The page drops to 302 lines.
+
+The two surfaces share the one `sessionStorage` store rather than being scoped per page, which is
+the correct reading of an unresolved tap: it belongs to the tab, not to whichever page started it,
+so a tap begun on the dashboard stays replayable from `/quick-log`.
+
+Because the extraction is meant to change no behaviour, `pending-taps.test.ts` and
+`quick-tiles/route.test.ts` were required to pass **untouched**, and did.
+
+### The chrome logs, `/quick-log` manages
+
+The rule any further surface follows. No edit, delete, reorder or overflow menu outside
+`/quick-log`: a third caller that can *edit* is a third place the tile cap, the duplicate-label
+refusal and the label rules can come to disagree, while one that can only tap adds none of that. It
+also bounds a mis-tap on the app's landing screen to a transaction -- visible in the ledger and
+deletable -- rather than a deleted button.
+
+Which six show is not a decision the strip makes. Tiles arrive in `sortOrder`, so reorder on
+`/quick-log` is already the control over what appears on the dashboard, and no second setting was
+built for it.
+
+`QuickTileChip` is a second component rather than a `variant` on `QuickTileCard`. The card carries
+category text, label pills, struck-through stale pins and a menu, which is right where you edit and
+wrong where you glance; they share `QuickTileView` and nothing else. The `fallsBack` warning
+survives the trim even though the category name does not, since a tile whose category was deleted
+files somewhere its label does not say.
+
+The strip renders **nothing** when the query errors, which is the case worth having a test for. A
+failed fetch leaves `tiles` empty exactly as a new account does, and an "add your first button"
+panel would report a network problem as a fact about the account. No shimmer either: the tiles query
+resolves alongside the much heavier dashboard read that already gates the page behind a skeleton, so
+a placeholder would only be a promise the empty case then breaks.
+
+Riding along: a "Quick Log" entry in the dashboard's add menu and FAB, and one `shortcuts` entry in
+the manifest so a long-press on the installed icon lands on the grid. One entry pointing at the page
+rather than one per button -- the manifest is static and cached, so per-tile entries would go stale
+the moment a button was renamed; Chrome on Android renders only the first three regardless, and iOS
+renders none.
+
+Phases 2 (Ctrl/Cmd+K palette, undo in the toast) and 3 (offline tap queue) are described in #275 and
+deliberately not built yet.
+
 ## 2026-09-09 - AGENTS.md split into path-scoped rule files (#271)
 
 `.claude/CLAUDE.md` imports `AGENTS.md`, so all 803 lines and 25,279 words of it were injected

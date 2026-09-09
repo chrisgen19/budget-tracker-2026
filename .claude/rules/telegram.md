@@ -8,6 +8,8 @@ paths:
   - "src/components/quick-log/**"
   - src/lib/quick-tile-writes.ts
   - src/hooks/use-quick-tiles.ts
+  - src/hooks/use-quick-tap.ts
+  - "src/components/dashboard/quick-log-strip*"
   - src/lib/assessment-facts.ts
   - src/lib/gemini.ts
   - src/lib/validations.ts
@@ -286,7 +288,53 @@ keypad exists because an OS keyboard resizes Telegram's webview mid-entry, which
 browser has, and a second keypad is a second thing to maintain.
 
 `/quick-log` is in `PROTECTED_PAGE_PATHS`. The list is a denylist that fails open, and this page
-renders the same buttons, amounts and pinned labels `/tg` does.
+renders the same buttons, amounts and pinned labels `/tg` does. `/dashboard` was already on it,
+which is why the strip below needed no service-worker change.
+
+### The dashboard strip, and the split it rests on
+
+`QuickLogStrip` (`src/components/dashboard/quick-log-strip.tsx`) puts the first six buttons on
+`/dashboard`, which is the manifest `start_url`: one tap from a cold launch of the installed app.
+Before it the same buttons were **three** actions deep on a phone -- land on the dashboard, open the
+tab bar's More menu, then Quick Log -- so the web app was slower than the Mini App at the one thing
+quick logging exists for. Desktop was two, via the sidebar.
+
+**The chrome logs and `/quick-log` manages**, and that is the rule any further surface follows. No
+edit, no delete, no reorder, no overflow menu outside `/quick-log`. `quick-tile-writes.ts` keeps one
+rule set behind two auth doors and a third caller that can *edit* is a third place the tile cap, the
+duplicate-label refusal and the label rules can come to disagree; a caller that can only tap adds
+none of that. It also bounds the cost of a mis-tap on the app's landing screen to a transaction,
+which is visible in the ledger and deletable, rather than a deleted button.
+
+Which six is not a decision the strip makes: tiles arrive in `sortOrder`, so **reorder on
+`/quick-log` is already the control over what appears on the dashboard**, and there is deliberately
+no second setting for it.
+
+The strip renders **nothing** when the query errors, and that is the case worth keeping. A failed
+fetch leaves `tiles` empty exactly as a new account does, and an "add your first button" panel on
+the dashboard would report a network problem as a fact about the account -- while the buttons sit
+on `/quick-log`, which distinguishes those two states carefully. It shows no shimmer either: the
+tiles query resolves alongside the much heavier dashboard read that gates the whole page behind its
+skeleton, so a placeholder would only be a promise the empty case then breaks.
+
+`QuickTileChip` is a second component rather than a `variant` on `QuickTileCard`. The card carries
+category text, label pills, struck-through stale pins and a menu, which is right where you edit and
+wrong where you glance; they share `QuickTileView` and nothing else, and the one thing they must not
+share is the menu. The `fallsBack` warning survives the trim even though the category name does not
+-- a tile whose category was deleted files somewhere its label does not say, and `resolvedCategoryName`
+is carried on every read precisely so that is visible before the tap.
+
+`useQuickTap` (`src/hooks/use-quick-tap.ts`) is where the tap now lives, and the extraction came
+before the strip rather than after it. Every rule in `pending-taps.ts` was a bug first, so a second
+hand-written copy of claim/release/replay is a second chance to reintroduce one -- the same argument
+`quick-tile-writes.ts` makes about the server, applied to the client half. Both surfaces share the
+one `sessionStorage` store, which is the correct reading of an unresolved tap: it belongs to the
+tab, not to whichever page started it, so a tap begun on the dashboard stays replayable from
+`/quick-log`.
+
+The manifest carries **one** `shortcuts` entry pointing at the page, not one per button. The
+manifest is static and cached, so per-tile entries would go stale the moment a button was renamed;
+Chrome on Android renders only the first three regardless, and iOS renders none.
 
 ### The tap key, and the five bugs it took to get right
 

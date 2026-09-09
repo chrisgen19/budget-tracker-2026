@@ -13,9 +13,11 @@ import {
   ScanLine,
   CalendarClock,
   Receipt,
+  Zap,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { formatCurrency, getCurrencySymbol, cn } from "@/lib/utils";
 import { groupByDate, formatTime } from "@/lib/transaction-helpers";
 import { CategoryIcon } from "@/components/ui/icon-map";
@@ -31,6 +33,7 @@ import { useScan } from "@/components/scan-provider";
 import { useDashboardQuery, useCreateTransaction, useUpdateTransaction, useDeleteTransaction, useRemoveTransactionLabel } from "@/hooks/use-transactions";
 import { useUpcomingBillsQuery } from "@/hooks/use-bills";
 import { UpcomingBillRow } from "@/components/dashboard/upcoming-bill-row";
+import { QuickLogStrip } from "@/components/dashboard/quick-log-strip";
 import { TransactionLabelPills } from "@/components/transactions/transaction-label-pills";
 import { ActionFab } from "@/components/ui/action-fab";
 import type { TransactionInput } from "@/lib/validations";
@@ -38,6 +41,7 @@ import type { TransactionWithCategory } from "@/types";
 import { accountMonthKey } from "@/lib/account-time";
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [showForm, setShowForm] = useState(false);
   const [shouldScrollToRecent, setShouldScrollToRecent] = useState(false);
   const recentTransactionsRef = useRef<HTMLDivElement>(null);
@@ -142,6 +146,11 @@ export default function DashboardPage() {
       label: "Add Transaction",
       icon: Plus,
       onClick: () => setShowForm(true),
+    },
+    {
+      label: "Quick Log",
+      icon: Zap,
+      onClick: () => router.push("/quick-log"),
     },
     {
       label: "Scan Receipt",
@@ -261,6 +270,14 @@ export default function DashboardPage() {
               {displayAmount(stats.totalIncome, "text-income")}
             </motion.div>
           </div>
+
+          {/* Quick log — after the summary cards, before the bills. The cards answer "how am I
+              doing"; this answers "log the thing I opened the app for", and /dashboard is the
+              manifest start_url, so it is one tap from a cold launch. Renders nothing when there
+              are no buttons or the fetch failed. */}
+          <motion.div variants={fadeUp}>
+            <QuickLogStrip />
+          </motion.div>
 
           {/* Upcoming Bills */}
           {upcomingData && upcomingData.count > 0 && (
