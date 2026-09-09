@@ -9,6 +9,8 @@ paths:
   - src/components/scan-receipt-sheet.tsx
   - src/components/multi-scan-review.tsx
   - src/components/scan-provider.tsx
+  - src/components/profile/features-form.tsx
+  - src/app/api/preferences
 ---
 
 # Receipts

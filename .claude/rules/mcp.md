@@ -8,6 +8,8 @@ paths:
   - src/lib/assessment-facts.ts
   - src/components/profile/mcp-*
   - src/app/api/preferences
+  - src/app/api/transactions
+  - src/app/api/labels
   - src/lib/gemini.ts
 ---
 
