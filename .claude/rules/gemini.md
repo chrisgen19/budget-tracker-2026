@@ -4,7 +4,7 @@ paths:
   - src/lib/receipt-scan.ts
   - src/lib/ai-assessment.ts
   - src/lib/gemini-limits.ts
-  - src/app/api/receipts
+  - "src/app/api/receipts/**"
   - src/lib/telegram/classify.ts
 ---
 

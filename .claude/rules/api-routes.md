@@ -1,6 +1,6 @@
 ---
 paths:
-  - src/app/api
+  - "src/app/api/**"
 ---
 
 # API Routes
