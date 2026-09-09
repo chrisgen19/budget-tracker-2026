@@ -22,7 +22,7 @@
 ### State management (blocking)
 - All server data must use TanStack Query — no `useEffect` + `fetch` patterns
 - Mutations must invalidate the correct query keys after success (check `src/hooks/use-*.ts` for existing key conventions)
-- Never cache user-specific data in the service worker — API routes and protected pages must use `NetworkOnly` strategy in `src/app/sw.ts`
+- Never cache user-specific data in the service worker. `src/app/sw.ts` applies `NetworkOnly` to every `/api/*` route and to every path `isProtectedPagePath` matches; the page list itself is `PROTECTED_PAGE_PATHS` in `src/lib/protected-paths.ts`
 
 ## Always check
 
@@ -64,5 +64,5 @@
 - **Timezone bugs**: Most common source of subtle issues — any query filtering by date/month without `timezoneOffset` will produce wrong results
 - **Stale query cache**: Adding a new mutation without invalidating related queries causes the UI to show stale data
 - **Role gate bypass**: Feature gated in the UI but the API route doesn't enforce the same restriction
-- **PWA cache poisoning**: Adding a new protected route without adding it to the `NetworkOnly` list in `src/app/sw.ts`
+- **PWA cache poisoning**: Adding a new protected route without adding it to `PROTECTED_PAGE_PATHS` in `src/lib/protected-paths.ts`. The list is a denylist that fails open, so an omission caches the page rather than erroring
 - **Missing ownership check**: API route that reads/writes data without verifying `userId` — allows users to access other users' data

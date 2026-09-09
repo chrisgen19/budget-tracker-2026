@@ -84,9 +84,15 @@ bill-scoped material. Each of the four assertions was confirmed to fail against 
   would load about 17,000 words on any of its 47 schemas and undo the change.
 - Cross-references are not paths. A rule citing `settleBill` or `prisma` as context does not claim
   the file, or `telegram.md` would claim half of `src/lib`.
-- `REVIEW.md` was left alone. Its stale pointer to a `NetworkOnly` list in `sw.ts`, which now lives
-  in `protected-paths.ts`, is real but predates this branch, and its skip list telling reviewers to
-  ignore docs-only changes is a policy call rather than a bug.
+- `REVIEW.md` is the repo's other instruction file and the split had left it unreconciled. It sent
+  reviewers to `src/app/sw.ts` for the `NetworkOnly` list, which has not been there since the list
+  moved to `PROTECTED_PAGE_PATHS` in `src/lib/protected-paths.ts` so a test could reach it, `sw.ts`
+  not being importable under jsdom. Both mentions corrected; `sw.ts` still applies the strategy, so
+  that half of the claim stayed. Every other path it names was checked and is real.
+- Its skip list, which tells reviewers to ignore changes only to `CHANGELOG.md`, `README.md` or
+  `AGENTS.md`, deliberately does **not** gain `.claude/rules/`. Five review rounds on this PR found
+  twenty-one real defects in those files, so exempting them is the opposite of what the evidence
+  supports.
 
 ## 2026-09-09 - Quick Log: a web editor for the quick-log buttons, and pinned labels
 
