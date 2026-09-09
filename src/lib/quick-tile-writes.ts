@@ -407,8 +407,30 @@ export const updateQuickTile = async (
         FOR UPDATE
       `;
 
+      // The pins are part of what was judged, so they are part of what is re-checked. Read after
+      // the lock, so it sees whatever committed in the gap.
+      //
+      // Without this the conditional write was only half conditional. Two overlapping edits:
+      // one swaps a BOTH pin for an EXPENSE-only pin, the other flips the tile to INCOME having
+      // been validated against the *original* pin. The second passed a check that looked only at
+      // type and category, and `labelsMoved` was false because it compared the pre-lock set with
+      // itself -- so the flip landed and left an EXPENSE-only pin on an INCOME button, the exact
+      // combination `checkPinnedLabels` refuses from any caller. Reproduced deterministically.
+      const lockedPins = await tx.telegramQuickTileLabel.findMany({
+        where: { tileId: id },
+        select: { labelId: true },
+      });
+
       const current = locked[0];
-      if (!current || current.type !== stored.type || current.category_id !== stored.categoryId) {
+      if (
+        !current ||
+        current.type !== stored.type ||
+        current.category_id !== stored.categoryId ||
+        !sameIdSet(
+          lockedPins.map((l) => l.labelId),
+          storedLabelIds
+        )
+      ) {
         return "STALE" as const;
       }
 

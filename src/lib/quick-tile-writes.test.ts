@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   tileCreate: vi.fn(),
   tileUpdate: vi.fn(),
   tileUpdateMany: vi.fn(),
+  tileLabelFindMany: vi.fn(),
   tileLabelDeleteMany: vi.fn(),
   tileLabelCreateMany: vi.fn(),
   transaction: vi.fn(),
@@ -87,6 +88,7 @@ const prisma = {
     updateMany: mocks.tileUpdateMany,
   },
   telegramQuickTileLabel: {
+    findMany: mocks.tileLabelFindMany,
     deleteMany: mocks.tileLabelDeleteMany,
     createMany: mocks.tileLabelCreateMany,
   },
@@ -124,6 +126,10 @@ beforeEach(() => {
   mocks.tileUpdateMany.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
     Promise.resolve({ count: Object.keys(data).length === 0 ? 0 : 1 })
   );
+  mocks.tileLabelFindMany.mockImplementation(async () => {
+    const row = await mocks.tileFindFirst();
+    return row?.labels ?? [];
+  });
   mocks.tileLabelDeleteMany.mockResolvedValue({ count: 0 });
   mocks.tileLabelCreateMany.mockResolvedValue({ count: 0 });
   // `updateQuickTile` runs the interactive form and hands the callback a transaction client;
@@ -305,6 +311,26 @@ describe("pinning labels to a button", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe("CATEGORY_UNUSABLE");
+  });
+
+  it("refuses when the pins moved under the edit, not only the type or category", async () => {
+    // The pins are part of what the checks judged, so they are part of what the locked read
+    // re-checks. Without this: one edit swaps a BOTH pin for an EXPENSE-only one while another,
+    // validated against the original pin, flips the tile to INCOME -- and the flip landed,
+    // leaving a pin that cannot apply on the button it cannot apply to.
+    // No category, so the flip is not refused earlier for an unrelated reason.
+    mocks.tileFindFirst.mockResolvedValue(
+      tileRow({ categoryId: null, labels: [{ labelId: "l_work" }] })
+    );
+    // What another edit committed in the gap: the BOTH pin swapped for an EXPENSE-only one.
+    mocks.tileLabelFindMany.mockResolvedValue([{ labelId: "l_commute" }]);
+
+    const result = await updateQuickTile(prisma, "user_1", "tile_1", { type: "INCOME" });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("STALE");
+    expect(mocks.tileUpdate).not.toHaveBeenCalled();
   });
 
   it("saves a patch that changes only the labels", async () => {

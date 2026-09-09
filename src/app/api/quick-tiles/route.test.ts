@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   tileUpdateMany: vi.fn(),
   tileDeleteMany: vi.fn(),
   tileUpdate: vi.fn(),
+  tileLabelFindMany: vi.fn(),
   tileLabelDeleteMany: vi.fn(),
   tileLabelCreateMany: vi.fn(),
   transaction: vi.fn(),
@@ -47,6 +48,7 @@ vi.mock("@/lib/prisma", () => ({
       deleteMany: mocks.tileDeleteMany,
     },
     telegramQuickTileLabel: {
+      findMany: mocks.tileLabelFindMany,
       deleteMany: mocks.tileLabelDeleteMany,
       createMany: mocks.tileLabelCreateMany,
     },
@@ -121,6 +123,10 @@ beforeEach(() => {
   });
   mocks.tileUpdateMany.mockResolvedValue({ count: 1 });
   mocks.tileDeleteMany.mockResolvedValue({ count: 1 });
+  mocks.tileLabelFindMany.mockImplementation(async () => {
+    const row = await mocks.tileFindFirst();
+    return row?.labels ?? [];
+  });
   mocks.tileLabelDeleteMany.mockResolvedValue({ count: 0 });
   mocks.tileLabelCreateMany.mockResolvedValue({ count: 0 });
   // `updateQuickTile` uses the interactive form and `reorderQuickTiles` the array form, so the
