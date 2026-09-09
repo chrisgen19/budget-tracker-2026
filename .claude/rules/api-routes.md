@@ -3,6 +3,8 @@ paths:
   - src/app/api
 ---
 
+# API Routes
+
 ## API Routes Reference
 - `POST /api/register` — registration with bcrypt + sends verification email
 - `GET/POST /api/transactions` — list (filters/pagination/timezone) + create
