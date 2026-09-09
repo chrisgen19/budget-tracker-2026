@@ -184,6 +184,25 @@ describe("pinning labels to a button", () => {
     expect(mocks.tileUpdateMany).not.toHaveBeenCalled();
   });
 
+  it("lets an editor with no label picker rename a button carrying a pin that no longer applies", async () => {
+    // The Mini App's editor sends no `labelIds` and has no picker, so re-judging the kept pins on
+    // every patch made this button uneditable from inside Telegram with no way to fix it there.
+    // Reachable with no edit at all: `PUT /api/labels/[id]` narrows a label's type underneath the
+    // buttons that pin it. Judging only what moves is the rule `updateBill` already follows.
+    mocks.labelFindMany.mockResolvedValue([
+      { id: "l_stale", name: "Payday", color: "#333333", applicableTo: "INCOME" },
+    ]);
+    mocks.tileFindFirst.mockResolvedValue(tileRow({ labels: [{ labelId: "l_stale" }] }));
+    mocks.tileFindFirstOrThrow.mockResolvedValue(tileRow({ labels: [{ labelId: "l_stale" }] }));
+
+    const result = await updateQuickTile(prisma, "user_1", "tile_1", { label: "Renamed" });
+
+    expect(result.ok).toBe(true);
+    // And the pin is left in place rather than quietly dropped: the grid reports it as not
+    // applying and the tap filters it out, so nothing is lost and nothing is written wrongly.
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
   it("leaves the pins alone when the patch does not name them", async () => {
     mocks.tileFindFirst.mockResolvedValue(tileRow({ labels: [{ labelId: "l_work" }] }));
     mocks.tileFindFirstOrThrow.mockResolvedValue(tileRow({ labels: [{ labelId: "l_work" }] }));

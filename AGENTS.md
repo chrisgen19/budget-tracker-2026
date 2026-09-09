@@ -330,6 +330,14 @@ reports back as `incompatible` rather than dropping. The refusal runs against th
 row, so a bare `type` flip that leaves an incompatible pin behind is caught even though the patch
 names no labels at all.
 
+**But it judges only pins that actually move** -- a named `labelIds`, or a `type` flip that
+invalidates the stored set. Judging an unchanged, unnamed set prevents nothing and locks the caller
+out of a button that was *already* mismatched, which needs no edit to reach: `PUT /api/labels/[id]`
+narrows a label's type underneath every button pinning it. The Mini App's editor sends no
+`labelIds` and has no picker, so re-judging there made such a button unrenamable from inside
+Telegram with no way to fix it there. Same rule `updateTransactions` and `updateBill` already apply
+to their own category/type pair, and for the same reason.
+
 A pin can still stop applying *after* it was saved: `PUT /api/labels/[id]` narrows a label's type
 and knows nothing about buttons. So `applies` is recomputed on **every** read in `viewTiles`, the
 same rule `resolveTileCategory` follows for the category, and the tap filters on it too rather than

@@ -283,13 +283,12 @@ export const updateQuickTile = async (
   if (!stored) return fail("NOT_FOUND", "Tile not found");
 
   const storedType = stored.type === "INCOME" ? "INCOME" : "EXPENSE";
+  const storedLabelIds = stored.labels.map((l) => l.labelId);
   const effective = {
     type: patch.type ?? storedType,
     categoryId: patch.categoryId !== undefined ? patch.categoryId : stored.categoryId,
-    // An absent `labelIds` preserves the pins, and the *existing* set is then re-judged against
-    // the effective type. A `type` flip that leaves an incompatible pin behind is a refusal with
-    // a named cause, not a silent drop at the next tap.
-    labelIds: patch.labelIds ?? stored.labels.map((l) => l.labelId),
+    // An absent `labelIds` preserves the pins.
+    labelIds: patch.labelIds ?? storedLabelIds,
   };
 
   if (effective.categoryId) {
@@ -304,13 +303,23 @@ export const updateQuickTile = async (
     }
   }
 
-  const pinned = checkPinnedLabels(effective.labelIds, effective.type, labels);
+  // Judged only when the pins actually **move** -- the caller named a set, or a `type` flip
+  // invalidated the one that is there. Judging an unchanged, unnamed set prevents nothing and
+  // locks the caller out of a button that was *already* mismatched, which is reachable with no
+  // edit at all: `PUT /api/labels/[id]` narrows a label's type underneath the buttons that pin
+  // it. The Mini App's editor sends no `labelIds` and has no picker, so re-judging there made
+  // renaming such a button impossible from inside Telegram with no way to fix it. Same rule
+  // `updateTransactions` and `updateBill` both apply to their own category/type pair.
+  //
+  // A pin left behind is not lost: `viewTiles` reports it as not applying and the tap filters it
+  // out, so the button keeps working and the web page shows why.
+  const pinsMoved = patch.labelIds !== undefined || patch.type !== undefined;
+  const pinned = pinsMoved
+    ? checkPinnedLabels(effective.labelIds, effective.type, labels)
+    : ({ ok: true, ids: effective.labelIds } as const);
   if (!pinned.ok) return pinned;
 
-  const labelsMoved = !sameIdSet(
-    pinned.ids,
-    stored.labels.map((l) => l.labelId)
-  );
+  const labelsMoved = !sameIdSet(pinned.ids, storedLabelIds);
 
   try {
     // Written against the pair that was *validated*, not against the id alone.

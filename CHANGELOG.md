@@ -50,7 +50,10 @@ Three things about a pin that could otherwise go wrong quietly:
   `createTransactionBatch` type-filters explicit ids silently, so accepting one would show the label
   in the editor and then not write it -- the failure `caption-labels.ts` reports as `incompatible`
   rather than dropping. The check runs against the *effective* row, so a bare `type` flip that
-  leaves an incompatible pin behind is caught even though the patch names no labels.
+  leaves an incompatible pin behind is caught even though the patch names no labels -- but only
+  where the pins actually **move**. Judging an unchanged, unnamed set locks the caller out of a
+  button that was already mismatched, which the Mini App's picker-less editor could then never
+  rename. That is the rule `updateTransactions` and `updateBill` already follow.
 - **A pin can stop applying after it was saved.** `PUT /api/labels/[id]` narrows a label's type and
   knows nothing about buttons. So `applies` is recomputed on every read, the rule
   `resolveTileCategory` already follows for the category, and the tap filters on it rather than
