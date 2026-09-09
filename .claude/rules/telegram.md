@@ -8,6 +8,9 @@ paths:
   - src/components/quick-log
   - src/lib/quick-tile-writes.ts
   - src/hooks/use-quick-tiles.ts
+  - src/components/profile/features-form.tsx
+  - src/app/(app)/layout.tsx
+  - src/app/api/preferences
   - src/app/api/quick-tiles
   - src/app/api/cron/telegram-prompts
   - src/instrumentation.ts

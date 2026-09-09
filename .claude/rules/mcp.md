@@ -6,6 +6,8 @@ paths:
   - src/lib/budget-queries.ts
   - src/lib/budget-query-types.ts
   - src/lib/assessment-facts.ts
+  - src/components/profile/mcp-*
+  - src/app/api/preferences
 ---
 
 # MCP

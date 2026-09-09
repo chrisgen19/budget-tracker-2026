@@ -11,6 +11,7 @@ paths:
   - src/hooks/use-transactions.ts
   - src/hooks/use-multi-scan.ts
   - src/lib/receipt-limits.ts
+  - src/components/transactions
   - src/app/api/mcp
 ---
 

@@ -11,6 +11,8 @@ paths:
   - src/lib/pending-bills.ts
   - src/app/(app)/bills
   - src/app/api/cron/bill-reminders
+  - src/hooks/use-bills.ts
+  - src/components/dashboard/upcoming-bill-row.tsx
 ---
 
 # Bills
