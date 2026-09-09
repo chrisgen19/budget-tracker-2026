@@ -301,6 +301,131 @@ async function main() {
     });
     check("the row really moved", stored.label === "Verify fare renamed" && stored.amount === null);
 
+    // --- labels: schedules, pins, and which of the two wins -------------------------------
+    //
+    // The half no stubbed test can reach. `createTransactionBatch` is mocked everywhere in the
+    // unit tests, so what they prove is which argument it was *called* with -- and the whole
+    // question here is what that argument makes the real write do. `labelIds: undefined` lets
+    // auto-apply schedules run and `labelIds: [...]` is an explicit opt-out from them, a
+    // distinction that exists only inside the function being stubbed.
+    const scheduled = await prisma.label.create({
+      data: {
+        userId: user.id,
+        name: `Verify Scheduled ${Date.now()}`,
+        color: "#445566",
+        applicableTo: "BOTH",
+        // Every day, all day, so the match does not depend on when this script is run.
+        schedules: { create: [{ days: [0, 1, 2, 3, 4, 5, 6], startTime: "00:00", endTime: "23:59" }] },
+      },
+      select: { id: true, name: true },
+    });
+
+    const pinned = await prisma.label.create({
+      data: {
+        userId: user.id,
+        name: `Verify Pinned ${Date.now()}`,
+        color: "#667788",
+        applicableTo: "BOTH",
+      },
+      select: { id: true, name: true },
+    });
+
+    const unpinnedTap = await (
+      await call("/api/tg/log", {
+        method: "POST",
+        body: JSON.stringify({
+          tileId: tile.id,
+          description: "x",
+          amount: 12,
+          clientBatchId: randomUUID(),
+        }),
+      })
+    ).json();
+    check(
+      "a button with no pins lets the label schedule run",
+      unpinnedTap.labels?.includes(scheduled.name) === true,
+      JSON.stringify(unpinnedTap.labels)
+    );
+
+    const pinnedTile = await (
+      await call("/api/tg/tiles", {
+        method: "POST",
+        body: JSON.stringify({
+          label: `Verify pinned tile ${Date.now()}`,
+          description: "pinned fare",
+          amount: 44,
+          type: "EXPENSE",
+          categoryId: category.id,
+          labelIds: [pinned.id],
+        }),
+      })
+    ).json();
+    check("a tile can be created carrying a pinned label", pinnedTile.tile?.labels?.length === 1);
+
+    const pinnedTap = await (
+      await call("/api/tg/log", {
+        method: "POST",
+        body: JSON.stringify({
+          tileId: pinnedTile.tile.id,
+          description: "x",
+          amount: 44,
+          clientBatchId: randomUUID(),
+        }),
+      })
+    ).json();
+    check(
+      "a pinned label is written",
+      pinnedTap.labels?.includes(pinned.name) === true,
+      JSON.stringify(pinnedTap.labels)
+    );
+    check(
+      "and the schedule does NOT also run",
+      pinnedTap.labels?.includes(scheduled.name) === false,
+      JSON.stringify(pinnedTap.labels)
+    );
+
+    // A label narrowed after it was pinned. `createTransactionBatch` would drop it silently, so
+    // the tap filters it out first -- which leaves no pins at all, and schedules run again.
+    await prisma.label.update({ where: { id: pinned.id }, data: { applicableTo: "INCOME" } });
+
+    const staleGrid = await (await call("/api/tg/tiles")).json();
+    const stalePin = staleGrid.tiles.find(
+      (t: { id: string }) => t.id === pinnedTile.tile.id
+    )?.labels?.[0];
+    check("the grid reports a pin that no longer applies", stalePin?.applies === false);
+
+    const narrowedTap = await (
+      await call("/api/tg/log", {
+        method: "POST",
+        body: JSON.stringify({
+          tileId: pinnedTile.tile.id,
+          description: "x",
+          amount: 44,
+          clientBatchId: randomUUID(),
+        }),
+      })
+    ).json();
+    check(
+      "a narrowed pin is not written",
+      narrowedTap.labels?.includes(pinned.name) === false,
+      JSON.stringify(narrowedTap.labels)
+    );
+    check(
+      "and with no pins left the schedule runs again",
+      narrowedTap.labels?.includes(scheduled.name) === true,
+      JSON.stringify(narrowedTap.labels)
+    );
+
+    check(
+      "a pin that cannot apply is refused at the edit",
+      (
+        await call(`/api/tg/tiles/${pinnedTile.tile.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ labelIds: [pinned.id] }),
+        })
+      ).status === 400
+    );
+
     // --- reorder -------------------------------------------------------------------------
     const second = await (
       await call("/api/tg/tiles", {
@@ -315,9 +440,16 @@ async function main() {
       })
     ).json();
 
+    // The whole set, since a reorder naming fewer than every tile is refused -- and by now the
+    // grid holds more than the two this check is about.
+    const currentIds: string[] = (await (await call("/api/tg/tiles")).json()).tiles.map(
+      (t: { id: string }) => t.id
+    );
+    const rest = currentIds.filter((id) => id !== second.tile.id && id !== tile.id);
+
     const reordered = await call("/api/tg/tiles/reorder", {
       method: "POST",
-      body: JSON.stringify({ ids: [second.tile.id, tile.id] }),
+      body: JSON.stringify({ ids: [second.tile.id, tile.id, ...rest] }),
     });
     const order = (await reordered.json()).tiles.map((t: { id: string }) => t.id);
     check("a reorder rewrites the grid order", order[0] === second.tile.id && order[1] === tile.id);

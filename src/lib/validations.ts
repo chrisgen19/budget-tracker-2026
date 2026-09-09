@@ -636,6 +636,19 @@ export const telegramQuickTileSchema = z.object({
   type: z.enum(["INCOME", "EXPENSE"]).default("EXPENSE"),
   /** Null lets `matchCategory` decide from the description at log time. */
   categoryId: z.string().min(1).nullable().default(null),
+  /**
+   * Labels pinned to this button, applied to every transaction it logs.
+   *
+   * `.optional()` and *not* `.nullable()`, which is the opposite choice from `amount` directly
+   * above, and the difference is the same one `createTransactionBatch` already turns on: an
+   * absent list means "leave the pins alone" on a patch, and an empty one means "remove them".
+   * There is no third state worth a `null`.
+   *
+   * Capped at the same 10 `labelSchema.schedules` uses. A button carrying more labels than that
+   * is not pinning a label, it is filing a transaction under everything at once, and
+   * `getLabelBreakdown` splits one amount across every label a row carries.
+   */
+  labelIds: quickPickIdsSchema(10).optional(),
 });
 
 /** Editing one tile. Every field optional, but `amount: null` still means "make it ask". */
@@ -669,4 +682,6 @@ export const telegramQuickTileOrderSchema = z.object({
 });
 
 export type TelegramQuickTileInput = z.infer<typeof telegramQuickTileSchema>;
+export type TelegramQuickTilePatchInput = z.infer<typeof telegramQuickTilePatchSchema>;
 export type TelegramQuickLogInput = z.infer<typeof telegramQuickLogSchema>;
+export type TelegramQuickTileOrderInput = z.infer<typeof telegramQuickTileOrderSchema>;

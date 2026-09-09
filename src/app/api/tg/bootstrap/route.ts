@@ -32,12 +32,19 @@ export async function GET(request: Request) {
   // account was deleted mid-request. Nothing useful to say, and nothing to serve.
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const [categories, tileRows] = await Promise.all([
+  const [categories, labels, tileRows] = await Promise.all([
     listTileCategories(prisma, userId),
+    // Read for the same reason `categories` is: a tile carries pinned label *ids*, and whether a
+    // pin still applies depends on the label's current `applicableTo`, which can be narrowed
+    // underneath a button that was valid when it was saved.
+    prisma.label.findMany({
+      where: { userId },
+      select: { id: true, name: true, color: true, applicableTo: true },
+    }),
     listTileRows(prisma, userId),
   ]);
 
-  const tiles = viewTiles(tileRows, categories);
+  const tiles = viewTiles(tileRows, categories, labels);
 
   // Derived after the tiles, because it needs their descriptions to avoid offering the same
   // button twice. Sequential on purpose: the exclusion is the point, and running it in parallel

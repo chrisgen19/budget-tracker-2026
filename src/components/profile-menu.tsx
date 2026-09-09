@@ -24,6 +24,7 @@ import {
   Eye,
   EyeOff,
   Ellipsis,
+  Zap,
   type LucideProps,
 } from "lucide-react";
 import { usePrivacy } from "@/components/privacy-provider";
@@ -76,6 +77,13 @@ export const buildMenuItems = ({
   toggleHideAmounts,
 }: BuildMenuItemsArgs): MenuItem[] => [
   { key: "profile", label: "My Profile", icon: User, onSelect: () => router.push("/profile") },
+  {
+    key: "quick-log",
+    label: "Quick Log",
+    icon: Zap,
+    onSelect: () => router.push("/quick-log"),
+    mobileOnly: true,
+  },
   {
     key: "bills",
     label: "Bills",

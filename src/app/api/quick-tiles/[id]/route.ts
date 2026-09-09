@@ -1,20 +1,20 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getAuthUserId } from "@/lib/session";
 import { telegramQuickTilePatchSchema } from "@/lib/validations";
-import { getTelegramUserId } from "@/lib/telegram/require-telegram-user";
 import { deleteQuickTile, quickTileStatus, updateQuickTile } from "@/lib/quick-tile-writes";
 
 /**
- * Editing and deleting one quick-log tile.
+ * Editing and deleting one quick-log button from the web app.
  *
- * A thin wrapper over `src/lib/quick-tile-writes.ts`, shared with `/api/quick-tiles/[id]`. The
- * effective-row checks and the conditional write live there.
+ * A missing button answers **404 rather than 403**, matching the Mini App's route: a 403 confirms
+ * that somebody else's button exists, which is itself an answer.
  */
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
-  const userId = await getTelegramUserId(request);
+  const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
 
   const { id } = await context.params;
@@ -42,8 +42,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   return NextResponse.json({ tile: result.tile });
 }
 
-export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
-  const userId = await getTelegramUserId(request);
+export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
+  const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
 
   const { id } = await context.params;

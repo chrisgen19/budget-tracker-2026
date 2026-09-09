@@ -1,24 +1,21 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getAuthUserId } from "@/lib/session";
 import { telegramQuickTileOrderSchema } from "@/lib/validations";
-import { getTelegramUserId } from "@/lib/telegram/require-telegram-user";
 import { quickTileStatus, reorderQuickTiles } from "@/lib/quick-tile-writes";
 
 /**
- * Rewriting the grid order.
+ * Rewriting the grid order from the web app.
  *
- * Takes the **whole** set of ids rather than a moved id and a position. A partial reorder has to
- * be interpreted against whatever the server currently holds, and two drags in flight from a
- * webview that Telegram can reload at any moment would interpret it differently. Sending the full
- * intended order makes the request self-describing: whatever arrives last is what the user last
- * saw. The rule itself lives in `src/lib/quick-tile-writes.ts`, shared with the web page's own
- * reorder route.
+ * Takes the **whole** set of ids rather than a moved id and a position, so the request is
+ * self-describing and two moves in flight cannot be interpreted differently. Whatever arrives last
+ * is what the user last saw.
  */
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  const userId = await getTelegramUserId(request);
+  const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
 
   let body: unknown;

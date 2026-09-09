@@ -9,6 +9,7 @@ describe("PROTECTED_PAGE_PATHS", () => {
     // imported under jsdom. Adding a route here should be a deliberate act that updates a test.
     expect([...PROTECTED_PAGE_PATHS]).toEqual([
       "/dashboard",
+      "/quick-log",
       "/transactions",
       "/bills",
       "/categories",
@@ -16,6 +17,12 @@ describe("PROTECTED_PAGE_PATHS", () => {
       "/admin",
       "/tg",
     ]);
+  });
+
+  it("covers the web app's quick-log grid", () => {
+    // The same buttons, amounts and pinned labels `/tg` renders, on the surface that has a
+    // NextAuth session -- which is exactly the reason it is easy to assume it is already handled.
+    expect(isProtectedPagePath("/quick-log")).toBe(true);
   });
 
   it("covers the Telegram Mini App and everything under it", () => {

@@ -387,6 +387,7 @@ model Label {
   user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions TransactionLabel[]
   bills        BillLabel[]
+  quickTiles   TelegramQuickTileLabel[]
   schedules    LabelSchedule[]
   createdAt    DateTime           @default(now()) @map("created_at")
 
@@ -505,6 +506,14 @@ model TelegramQuickTile {
   /// is what the shorthand path has always done.
   categoryId  String?  @map("category_id")
   category    Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  /// Labels pinned to this button, applied to every transaction it logs.
+  ///
+  /// A pin **overrides** auto-apply schedules for that tap: `createTransactionBatch` reads an
+  /// explicit `labelIds` as an opt-out from schedule matching, and that is the wanted reading
+  /// here. The user named these labels on this button; a schedule guessing over a named label
+  /// moves money in `getLabelBreakdown`, which splits an amount across whatever a row carries.
+  /// A tile with no pins omits the field entirely - never `[]` - so schedules run as before.
+  labels      TelegramQuickTileLabel[]
   /// Sparse (10, 20, 30...) so one tile can be moved without rewriting every other row.
   sortOrder   Int      @map("sort_order")
   createdAt   DateTime @default(now()) @map("created_at")
@@ -515,4 +524,27 @@ model TelegramQuickTile {
   @@unique([userId, label])
   @@index([userId, sortOrder])
   @@map("telegram_quick_tiles")
+}
+
+/// A label pinned to a quick-log button.
+///
+/// `Cascade` on both sides, matching `TransactionLabel` and `BillLabel`, and deliberately *not*
+/// the `SetNull` the tile's own `categoryId` uses. The two are not the same case: a deleted
+/// category must leave the button working, because the log path has a documented fallback ladder
+/// (`resolveTileCategory`) to land it somewhere sensible. A deleted label has no fallback and
+/// nothing to fall back *to* - the pin simply stops existing and the button reverts to whatever
+/// the user's schedules would have done anyway, which is the behaviour it had before it was
+/// pinned.
+model TelegramQuickTileLabel {
+  id        String            @id @default(cuid())
+  tileId    String            @map("tile_id")
+  tile      TelegramQuickTile @relation(fields: [tileId], references: [id], onDelete: Cascade)
+  labelId   String            @map("label_id")
+  label     Label             @relation(fields: [labelId], references: [id], onDelete: Cascade)
+  createdAt DateTime          @default(now()) @map("created_at")
+
+  @@unique([tileId, labelId])
+  @@index([tileId])
+  @@index([labelId])
+  @@map("telegram_quick_tile_labels")
 }

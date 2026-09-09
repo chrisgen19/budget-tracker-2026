@@ -10,7 +10,10 @@ const mocks = vi.hoisted(() => ({
   tileDeleteMany: vi.fn(),
   tileFindFirst: vi.fn(),
   tileFindFirstOrThrow: vi.fn(),
+  tileLabelDeleteMany: vi.fn(),
+  tileLabelCreateMany: vi.fn(),
   categoryFindMany: vi.fn(),
+  labelFindMany: vi.fn(),
   transaction: vi.fn(),
 }));
 
@@ -18,6 +21,11 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     user: { findUnique: mocks.userFindUnique },
     category: { findMany: mocks.categoryFindMany },
+    label: { findMany: mocks.labelFindMany },
+    telegramQuickTileLabel: {
+      deleteMany: mocks.tileLabelDeleteMany,
+      createMany: mocks.tileLabelCreateMany,
+    },
     telegramQuickTile: {
       findMany: mocks.tileFindMany,
       findFirst: mocks.tileFindFirst,
@@ -49,6 +57,12 @@ const INIT_DATA =
 
 const AUTH = `tma ${INIT_DATA}`;
 
+const LABELS = [
+  { id: "label_work", name: "Work", color: "#111111", applicableTo: "BOTH" },
+  { id: "label_commute", name: "Commute", color: "#222222", applicableTo: "EXPENSE" },
+  { id: "label_payday", name: "Payday", color: "#333333", applicableTo: "INCOME" },
+];
+
 const CATEGORIES = [
   { id: "transportation", name: "Transportation", type: "EXPENSE", icon: "Car", color: "#000", isDefault: true },
   { id: "other", name: "Other Expense", type: "EXPENSE", icon: "Tag", color: "#000", isDefault: true },
@@ -63,6 +77,7 @@ const tileRow = (over: Record<string, unknown> = {}) => ({
   type: "EXPENSE",
   categoryId: "transportation",
   sortOrder: 10,
+  labels: [] as { labelId: string }[],
   ...over,
 });
 
@@ -85,17 +100,30 @@ beforeEach(() => {
 
   mocks.userFindUnique.mockResolvedValue({ id: "user_1" });
   mocks.categoryFindMany.mockResolvedValue(CATEGORIES);
+  mocks.labelFindMany.mockResolvedValue(LABELS);
   mocks.tileFindMany.mockResolvedValue([tileRow()]);
   mocks.tileFindFirst.mockResolvedValue(tileRow());
-  mocks.tileCreate.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
-    Promise.resolve(tileRow({ id: "tile_new", ...data }))
-  );
+  // `labels` is dropped from the echoed row rather than spread: Prisma's nested `create` takes
+  // `{ create: [...] }` on the way in and returns link rows on the way out, so echoing the input
+  // shape would hand `viewTiles` something no read ever produces.
+  mocks.tileCreate.mockImplementation(({ data }: { data: Record<string, unknown> }) => {
+    const { labels, ...scalars } = data as { labels?: unknown };
+    return Promise.resolve(
+      tileRow({
+        id: "tile_new",
+        ...scalars,
+        labels: ((labels as { create?: { labelId: string }[] } | undefined)?.create ?? []),
+      })
+    );
+  });
   mocks.tileUpdate.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
     Promise.resolve(tileRow({ ...data }))
   );
   mocks.tileUpdateMany.mockResolvedValue({ count: 1 });
   mocks.tileFindFirstOrThrow.mockResolvedValue(tileRow());
   mocks.tileDeleteMany.mockResolvedValue({ count: 1 });
+  mocks.tileLabelDeleteMany.mockResolvedValue({ count: 0 });
+  mocks.tileLabelCreateMany.mockResolvedValue({ count: 0 });
   mocks.transaction.mockResolvedValue([]);
 });
 

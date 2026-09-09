@@ -11,6 +11,7 @@ import {
   Tags,
   Tag,
   Wallet,
+  Zap,
   Shield,
   AlertTriangle,
 } from "lucide-react";
@@ -50,6 +51,7 @@ const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/quick-log", label: "Quick Log", icon: Zap },
   { href: "/bills", label: "Bills", icon: CalendarClock },
   { href: "/categories", label: "Categories", icon: Tags },
   { href: "/labels", label: "Labels", icon: Tag },
