@@ -288,6 +288,64 @@ browser has, and a second keypad is a second thing to maintain.
 `/quick-log` is in `PROTECTED_PAGE_PATHS`. The list is a denylist that fails open, and this page
 renders the same buttons, amounts and pinned labels `/tg` does.
 
+### The tap key, and the five bugs it took to get right
+
+`pending-taps.ts` holds one idempotency key per unresolved tap. Every rule in it was a bug first,
+and they are recorded because the mechanism reads as trivial and is not -- it is exactly-once
+semantics over an unreliable network with the state held on a client that can vanish mid-request.
+Whoever touches it next should assume the obvious simplification has already been tried:
+
+- **Keyed by tap, not one key per page.** A page-scoped key was picked up by a tap on a *different*
+  button and replayed that row: a success toast naming the previous purchase while the button just
+  pressed went unlogged.
+- **One entry per unresolved tap, not one at a time.** With a single slot, tapping a second button
+  overwrote the first tap's key and settling the second discarded it, so re-pressing the first
+  wrote a duplicate of a row that had already committed.
+- **The amount is part of the slot.** An "ask" tile logs a different purchase each time, so
+  replaying one figure's key under another would write the wrong amount. The consequence is that
+  editing a fixed tile's amount orphans its key, which is correct: changing the figure changes the
+  intent, and replaying would write a figure the user no longer wants.
+- **Claim and release are synchronous and outside React.** Held in state, release ran through
+  `setPending` -- and a request can settle *after the page has unmounted*, which tapping a button
+  and going straight to Transactions does. The update was discarded, the effect never ran, and the
+  settled key stayed in storage; coming back and buying the same thing again replayed the old
+  transaction. Two real purchases, one row, "Already logged". A duplicate shows up in the ledger;
+  a missing row does not.
+- **Reuse is bounded by `PENDING_TAP_TTL_MS`, and the bound is short.** `sessionStorage` is a
+  ceiling, not a boundary: a tab lives for days, so without a TTL every future identical press was
+  a retry of a long-dead failure and swallowed a real purchase. Five minutes is the span in which
+  pressing again is a reaction to an error message. Short on purpose -- past the window a genuine
+  retry writes a duplicate, which is visible and deletable, where inside it a genuine purchase is
+  silently lost.
+
+### Deliberately not done
+
+Three things automated review keeps raising. They are real mechanisms and settled decisions, not
+oversights; the answer is here so they are not relitigated each round.
+
+- **The form PATCHes every field, so a stale modal can overwrite a concurrent edit.** True, and it
+  is how *every* form in this app behaves -- `PUT /api/transactions/[id]` posts all five fields on
+  every save, and the bills form does the same. What it can lose is a button's configuration:
+  visible on the grid, re-editable, no money moved. A fix means an `updatedAt` precondition, which
+  is a new field in the patch schema, a new refusal, a 409 story in the UI, and the Mini App
+  sending it too or the two editors diverging. Worth doing as one change across transactions,
+  bills and tiles when this serves more than one person; not worth doing here alone. Note the
+  locked staleness check does **not** cover this: it compares the row against *this request's* own
+  read, so it catches concurrent requests, not a stale client.
+- **A pinned label can be narrowed between the tap's read and `createTransactionBatch`'s label
+  lookup.** True, and the same race exists for every transaction created anywhere in the app and
+  always has -- `createTransactionBatch` type-filters explicit ids silently by design. Closing it
+  means locking label rows inside the single create path used by the batch route, MCP and the bot:
+  a large blast radius for a millisecond window whose worst outcome is one label wrong or missing
+  on one transaction, visible and correctable. If it is ever worth doing it is a change to
+  `transaction-writes.ts` in its own PR, not a special case for tile taps.
+- **An orphaned tap key after an amount edit.** Closed by the TTL rather than by tracking the
+  payload: the unreachable entry now expires in minutes instead of living as long as the tab. The
+  alternative -- persisting the original payload and *offering* it, the shape `pending-log.ts` uses
+  -- is a feature (an "unsent tap: retry or discard?" affordance), and **The page** below is
+  already explicit that a restored intent must be offered rather than auto-replayed. Worth
+  building only if the retry affordance is wanted for its own sake.
+
 ### Frequent
 
 Configured tiles answer "what do I spend on every day", which someone has to sit down and decide.
@@ -337,8 +395,9 @@ of the grid that needs no maintenance. Pure over injected rows, with the loader 
   down to two one-letter tokens.
 - **`foldDescription` itself must never learn this.** It also drives duplicate detection,
   recurring-charge creep and income concentration, so sorting its tokens would make `Mirea Rent`
-  and `Rent Mirea` one charge in the assessment and silently move a financial finding. AGENTS.md
-  warns against a second copy of the *same* rule; `frequentKey` is a deliberately different one
+  and `Rent Mirea` one charge in the assessment and silently move a financial finding.
+  `assessment.md` warns against a second copy of the *same* rule; `frequentKey` is a deliberately
+  different one
   built on top of it, for a surface where a false merge costs a button rather than a number in a
   report.
 - **One habit gets one slot, by suppression and never by merging** (#268). After ranking, a tile
