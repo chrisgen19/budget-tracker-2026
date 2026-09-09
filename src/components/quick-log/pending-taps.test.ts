@@ -110,131 +110,133 @@ describe("storage", () => {
 
 /**
  * Two surfaces log now -- the dashboard strip and /quick-log -- and an in-flight request outlives
- * the page that started it. These cover the rule that follows from that: a claim or a release
- * settles against the record as it stands, never against the snapshot the caller was holding.
+ * the page that started it. Everything below covers the record they share.
+ *
+ * There is no per-caller copy to pass in any more, and that is the point rather than a tidy-up:
+ * three separate bugs on #276 all came from one, and the shapes they took are pinned here so the
+ * next attempt to reintroduce it is caught by the failure it causes rather than by review.
  */
-describe("claiming and releasing across surfaces", () => {
-  it("keeps a key that another surface claimed after this caller's snapshot", () => {
-    // The reported bug. The dashboard claims A and the user follows the Manage link; /quick-log
-    // claims B; the dashboard's request then settles holding a snapshot that predates B.
-    const dashboardHeld = claimPendingTap({}, "A", NOW).taps;
-    claimPendingTap(dashboardHeld, "B", NOW);
+describe("the shared record", () => {
+  it("keeps a slot another surface claimed while this tap was in flight", () => {
+    // Round one. The dashboard claims A and the user follows the Manage link; /quick-log claims B;
+    // the dashboard's request then settles. Computed from the snapshot it was holding, that
+    // release wrote {A} back as {} and B's key was gone -- so the next press of B posted a fresh
+    // key for a write that may already have committed.
+    claimPendingTap("A", NOW);
+    const b = claimPendingTap("B", NOW);
 
-    const after = releasePendingTap(dashboardHeld, "A", NOW);
+    const after = releasePendingTap("A", NOW);
 
     expect(after).not.toHaveProperty("A");
-    // Before the fix this wrote the stale {A} back as {}, and B's key was gone. The next press of
-    // B then posted a fresh key for a write that may already have committed.
-    expect(after.B).toBeDefined();
+    expect(after.B).toEqual(b.taps.B);
     expect(readPendingTaps(NOW).B).toEqual(after.B);
   });
 
-  it("reuses a key claimed by the other surface rather than minting a second one", () => {
-    const first = claimPendingTap({}, "A", NOW);
-    // A caller that has never seen this slot: a freshly mounted page, holding nothing.
-    const second = claimPendingTap({}, "A", NOW);
+  it("never brings back a slot that has been settled", () => {
+    // Round two. A copy taken before the settle still held X, and a later claim on a *different*
+    // tile merged it back in; the next genuine press of X then reused a completed key, replayed
+    // the finished transaction and was answered "Already logged" -- the invisible failure this
+    // file is written to avoid. Nothing holds a copy to merge now, and that is what closed it.
+    const settled = claimPendingTap("X:38", NOW);
+    releasePendingTap("X:38", NOW);
+
+    claimPendingTap("Y:120", NOW);
+
+    expect(readPendingTaps(NOW)).not.toHaveProperty("X:38");
+    expect(claimPendingTap("X:38", NOW).key).not.toBe(settled.key);
+  });
+
+  it("hands a second surface the key the first one claimed", () => {
+    const first = claimPendingTap("A", NOW);
+    // A freshly mounted page. It carries nothing, and needs to carry nothing.
+    const second = claimPendingTap("A", NOW);
 
     expect(second.key).toBe(first.key);
   });
 
   it("mints a new key once the window has passed, since that press is a new purchase", () => {
-    const first = claimPendingTap({}, "A", NOW);
-    const later = claimPendingTap({}, "A", NOW + PENDING_TAP_TTL_MS + 1);
+    const first = claimPendingTap("A", NOW);
+    const later = claimPendingTap("A", NOW + PENDING_TAP_TTL_MS + 1);
 
     expect(later.key).not.toBe(first.key);
   });
 
-  it("treats an empty answer from working storage as authoritative", () => {
-    // The rule the resurrection bug came from getting wrong. Storage answering `{}` means every
-    // slot really is settled, and is nothing like storage refusing to answer -- a caller's copy
-    // does not get to override it.
-    const held = { "X:38": { key: "batch-held", at: NOW } };
-
-    expect(claimPendingTap(held, "X:38", NOW).key).not.toBe("batch-held");
-  });
-
-  it("does not carry a caller's aged-out slot forward when storage is unavailable", () => {
-    // The only path where `held` is consulted at all, and so the only path where anything has to
-    // apply the TTL to it: `readStore` filters what it returns, a held copy has been filtered by
-    // nobody.
-    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-      throw new Error("blocked");
-    });
-    const stale = { old: { key: "batch-old", at: NOW } };
-
-    const after = claimPendingTap(stale, "new", NOW + PENDING_TAP_TTL_MS + 1).taps;
-
-    expect(after).not.toHaveProperty("old");
-  });
-
-  it("returns the record it wrote, so a caller's mirror cannot lag it", () => {
-    const claimed = claimPendingTap({}, "A", NOW);
+  it("returns the record it wrote", () => {
+    const claimed = claimPendingTap("A", NOW);
     expect(claimed.taps).toEqual(readPendingTaps(NOW));
 
-    const released = releasePendingTap(claimed.taps, "A", NOW);
+    const released = releasePendingTap("A", NOW);
     expect(released).toEqual(readPendingTaps(NOW));
   });
+});
 
-  it("still hands back a reusable key when storage refuses to answer", () => {
-    // A private window or blocked site data. Reload-safety is the documented cost there; losing
-    // the retry within one page as well would turn a failed tap into a duplicate, so the caller's
-    // own copy stands in.
-    const held = { A: { key: "batch-held", at: NOW } };
+/**
+ * A browser that will not store anything still has to not duplicate anything. Reload-safety is the
+ * documented cost of these; the retry is not.
+ */
+describe("when storage is not a record", () => {
+  const blockReads = () =>
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("blocked");
     });
-
-    expect(claimPendingTap(held, "A", NOW).key).toBe("batch-held");
-  });
-});
-
-describe("a settled slot must not come back", () => {
-  it("does not resurrect a tap that storage has already settled", () => {
-    // Reported on #276 against the first fix. /quick-log mounts while a dashboard tap is in
-    // flight, so its mirror copies that slot; the dashboard's request then settles and storage
-    // drops it. A later claim on a *different* tile merged the mirror back in and rewrote the
-    // settled slot, so the next genuine press of the original tile reused a completed key and was
-    // answered "Already logged" -- the invisible failure this file is written to avoid.
-    const settled = claimPendingTap({}, "X:38", NOW);
-    const mirror = settled.taps; // what the second surface copied at mount
-    releasePendingTap(settled.taps, "X:38", NOW); // the first tap finishes
-
-    claimPendingTap(mirror, "Y:120", NOW); // a tap on another tile, holding the stale mirror
-
-    expect(readPendingTaps(NOW)).not.toHaveProperty("X:38");
-    // And the consequence, stated directly: pressing the original tile again is a new purchase.
-    expect(claimPendingTap(mirror, "X:38", NOW).key).not.toBe(settled.key);
-  });
-});
-
-describe("storage that can be read but not written", () => {
-  it("keeps reusing this caller's own key", () => {
-    // Legacy Safari private mode is the documented case: `getItem` works and `setItem` throws.
-    // Judging availability on the read alone ignored the mirror here, so a retry after an unknown
-    // outcome minted a second key and duplicated a row that may already have committed. `main`
-    // did not have this hole -- it claimed from the mirror and never consulted storage.
+  const blockWrites = () =>
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new Error("quota exceeded");
     });
 
-    const first = claimPendingTap({}, "X:38", NOW);
-    const retry = claimPendingTap(first.taps, "X:38", NOW);
+  it("still reuses a key when storage refuses to answer", () => {
+    // A private window, or blocked site data.
+    const first = claimPendingTap("A", NOW);
+    blockReads();
+
+    expect(claimPendingTap("A", NOW).key).toBe(first.key);
+  });
+
+  it("still reuses a key when storage can be read but not written", () => {
+    // Round three, and the one shape `main` never had: legacy Safari private mode answers
+    // `getItem` and throws on `setItem`, so on a read-only judgement the store looks *available
+    // and empty* and the claim was thrown away.
+    blockWrites();
+
+    const first = claimPendingTap("X:38", NOW);
+    const retry = claimPendingTap("X:38", NOW);
 
     expect(retry.key).toBe(first.key);
   });
 
-  it("goes back to trusting the shared record once a write lands", () => {
+  it("hands an unwritten claim to the other surface too", () => {
+    // Round four. With the record held per component, a surface mounting after the failed write
+    // read the still-empty store, started with nothing, and minted a second key for a tap that may
+    // already have committed. Module scope is what fixed it: there is one record per tab, and a
+    // surface does not have to be handed it.
+    blockWrites();
+    const dashboard = claimPendingTap("X:38", NOW);
+
+    // /quick-log, mounting fresh with no state of its own.
+    expect(claimPendingTap("X:38", NOW).key).toBe(dashboard.key);
+  });
+
+  it("does not carry an aged-out slot forward", () => {
+    // The only path where the in-memory record is read, and so the only path where anything has to
+    // apply the TTL to it: `readStore` filters what it returns, the in-memory copy is filtered by
+    // nobody.
+    claimPendingTap("old", NOW);
+    blockReads();
+
+    const after = claimPendingTap("new", NOW + PENDING_TAP_TTL_MS + 1).taps;
+
+    expect(after).not.toHaveProperty("old");
+  });
+
+  it("goes back to the durable record once a write lands", () => {
     // Self-healing, and it works because a write is the *whole* record rather than a patch: one
-    // that succeeds resynchronises storage completely, so the mirror is redundant again.
-    const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new Error("quota exceeded");
-    });
-    const stranded = claimPendingTap({}, "X:38", NOW);
+    // that succeeds resynchronises storage completely.
+    const spy = blockWrites();
+    const stranded = claimPendingTap("X:38", NOW);
 
     spy.mockRestore();
-    releasePendingTap(stranded.taps, "X:38", NOW);
+    releasePendingTap("X:38", NOW);
 
-    // Settled, and the mirror must not bring it back.
-    expect(claimPendingTap(stranded.taps, "X:38", NOW).key).not.toBe(stranded.key);
+    expect(claimPendingTap("X:38", NOW).key).not.toBe(stranded.key);
   });
 });

@@ -102,27 +102,37 @@ export const readPendingTaps = (now = Date.now()): Record<string, PendingTap> =>
   readStore(now).taps;
 
 /**
- * Whether the last write landed, which is not answerable by reading.
+ * The record as this tab last wrote it, and whether that write reached storage.
  *
- * A browser can hand back a perfectly good `getItem` and refuse every `setItem` -- legacy Safari
- * private mode is the documented case, and shield extensions do it too. Judged on the read alone
- * that store looks *available and empty*, so a caller's own unsettled claim was discarded and the
- * retry after an unknown outcome minted a second key, duplicating a row that may already have
- * committed. Reported on #276; `main` never had the hole, because it claimed from its mirror and
- * never consulted storage at all.
+ * Both are module-scoped, and that scope is the fix rather than an implementation detail. These
+ * describe this tab's `sessionStorage`, which is precisely as long-lived as a module in this tab:
+ * shared by every surface, gone on a reload, never crossing to another tab. A per-component copy
+ * had none of those properties, and three review rounds on #276 were the same root cause each
+ * time -- a per-instance copy of state that is not per-instance:
  *
- * Module scope is the right scope: it describes this tab's `sessionStorage`, which is exactly what
- * a module in this tab lasts as long as.
+ * 1. A release computed from a snapshot deleted another surface's claim.
+ * 2. Merging a snapshot behind storage resurrected a slot storage had settled.
+ * 3. A surface mounted after a failed write started empty and lost the claim entirely.
+ *
+ * None of them is reachable now, because `mirrored` is written by the same call that writes
+ * storage. The two copies are updated together or not at all, so they cannot disagree, and there
+ * is nothing left to merge, seed or reconcile.
+ *
+ * Never mutated during render -- both are only reached from a tap handler or a settling request --
+ * so SSR evaluating this module holds an empty record it never writes to.
  */
+let mirrored: Record<string, PendingTap> = {};
 let storeWritable = true;
 
 export const writePendingTaps = (taps: Record<string, PendingTap>) => {
+  // First, and unconditionally: this is the record, whether or not the durable copy accepts it.
+  mirrored = taps;
+
   try {
     if (Object.keys(taps).length === 0) sessionStorage.removeItem(PENDING_TAPS_KEY);
     else sessionStorage.setItem(PENDING_TAPS_KEY, JSON.stringify(taps));
     // Self-healing, and it is a write being the **whole** record rather than a patch that makes it
-    // so: one that succeeds resynchronises storage completely, so nothing stays stranded in a
-    // mirror after the quota clears.
+    // so: one that succeeds resynchronises storage completely.
     storeWritable = true;
   } catch {
     // Storage being unavailable costs the reload-safety, not the tap.
@@ -131,10 +141,10 @@ export const writePendingTaps = (taps: Record<string, PendingTap>) => {
 };
 
 /**
- * Drop anything a caller has held past the window, so a stale slot cannot be written back.
+ * Drop anything past the window before it is used or written back.
  *
- * Only reachable when storage is unavailable, which is also the only time nothing else applies the
- * TTL: `readStore` filters on the way out, a held copy has been filtered by nobody.
+ * Only reachable when storage cannot answer, which is also the only time nothing else applies the
+ * TTL: `readStore` filters on the way out, `mirrored` is filtered by nobody.
  */
 const stillLive = (
   taps: Record<string, PendingTap>,
@@ -143,33 +153,23 @@ const stillLive = (
   Object.fromEntries(Object.entries(taps).filter(([, tap]) => isReusable(tap, now)));
 
 /**
- * The shared record, as it stands right now.
+ * The record as it stands right now.
  *
- * When storage answers it is the **whole** record and a caller's copy is ignored outright, not
- * merged behind it. Merging looked equivalent and is not: a mirror copied at mount keeps slots
- * that storage has since *settled*, and writing one of those back resurrects a completed
- * idempotency key. The next genuine press of that tile then replays the finished transaction and
- * is answered "Already logged" -- a purchase silently lost, which is the failure this file trades
- * against a visible duplicate everywhere else (#276).
+ * Storage when storage is a record: it survives a reload, which the in-memory copy does not, and
+ * it is what a freshly loaded page has to read to find an unresolved tap.
  *
- * `held` stands in only when storage cannot be a record at all: it refuses to answer -- a private
- * window, or blocked site data -- or it refuses to be written, where what can still be read is
- * frozen at whatever landed last. In both cases the caller's copy is the only thing keeping a
- * retry from minting a second key. Losing reload-safety there is the documented cost; losing the
- * retry within one page as well is not.
+ * `mirrored` when storage is not: it refuses to answer -- a private window, or blocked site data
+ * -- or it refuses to be written, where what can still be read is frozen at whatever landed last
+ * and describes the past rather than the present. Losing reload-safety there is the documented
+ * cost of a browser that will not store anything; losing the retry as well is not, and would turn
+ * every failed tap into a duplicate.
  *
- * That second condition is also what keeps this from reopening the resurrection bug above. The
- * mirror is only consulted while writes are failing, and a *release* is a write: storage cannot
- * have settled anything the mirror has not seen, because it cannot have settled anything at all.
- * The moment a write lands, storage holds the whole record again and the mirror goes back to being
- * ignored.
+ * The two can never disagree about a *settled* slot, which is what the earlier attempts here got
+ * wrong: they are written together by `writePendingTaps`, so a release removes a slot from both.
  */
-const currentTaps = (
-  held: Record<string, PendingTap>,
-  now: number
-): Record<string, PendingTap> => {
+const currentTaps = (now: number): Record<string, PendingTap> => {
   const { taps, available } = readStore(now);
-  return available && storeWritable ? taps : stillLive(held, now);
+  return available && storeWritable ? taps : stillLive(mirrored, now);
 };
 
 /**
@@ -183,14 +183,14 @@ const currentTaps = (
  * key for a write that may already have committed, which is the duplicate this file exists to
  * prevent. Reported on #276.
  *
- * Returns the record it wrote, so the caller's mirror never lags what is durable.
+ * Returns the record it wrote, for tests and for a caller that wants to see it. Nothing has to
+ * hold it: the next call reads it back for itself.
  */
 export const claimPendingTap = (
-  held: Record<string, PendingTap>,
   slot: string,
   now = Date.now()
 ): { key: string; taps: Record<string, PendingTap> } => {
-  const taps = currentTaps(held, now);
+  const taps = currentTaps(now);
 
   // Everything in `taps` is inside the window already, so a hit here is by definition still
   // plausibly a retry rather than a new purchase.
@@ -210,11 +210,10 @@ export const claimPendingTap = (
  * slot it meant to *and* silently drops every slot claimed since that snapshot was taken.
  */
 export const releasePendingTap = (
-  held: Record<string, PendingTap>,
   slot: string,
   now = Date.now()
 ): Record<string, PendingTap> => {
-  const { [slot]: _settled, ...rest } = currentTaps(held, now);
+  const { [slot]: _settled, ...rest } = currentTaps(now);
   writePendingTaps(rest);
   return rest;
 };

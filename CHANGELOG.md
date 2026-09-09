@@ -75,28 +75,28 @@ test was confirmed to fail against the snapshot version. The ref left in the hoo
 still earns its place in a browser that refuses storage: there the shared read answers `{}`, and a
 retry would otherwise have no key at all.
 
-A second round caught the fix itself. Merging the hook's mirror *behind* storage looked equivalent
-to ignoring it and was not: storage wins every slot it reports, but says nothing about a slot it has
-deliberately settled, and a mirror copied at mount still holds that slot. A later claim on any other
-tile wrote it back, so the next genuine press of the original tile replayed a finished transaction
-and was answered "Already logged" -- a purchase silently lost, which is precisely the side of the
-trade this file exists to stay off, and worse than the duplicate the first fix removed. The cause
-was that `{}` meant both "nothing is pending" and "storage refused to answer". `readStore` now
-reports `available` alongside the record, and the mirror is consulted only on a refusal. Both new
-tests were confirmed to fail against the merge version.
+Three further rounds of review each found a different hole in the *same* fallback, and the fourth
+made the shape of the mistake plain rather than the mistake itself:
 
-A third round found that "storage answered" is still not "storage works". A browser can return a
-good `getItem` and refuse every `setItem` -- legacy Safari private mode does, and shields do -- and
-judged on the read that store looks available and empty, so the caller's own unsettled claim was
-discarded and a retry minted a second key. `main` never had this hole: it claimed from its mirror
-and never consulted storage, so this was a regression the rewrite introduced. `writePendingTaps` now
-records whether the write landed and the mirror stands in whenever storage cannot be written either.
-It does not reopen the resurrection, because a release is a write: while writes are failing storage
-cannot have settled anything the mirror has not seen. Self-healing, since a write is the whole
-record rather than a patch.
+1. A release computed from a snapshot deleted a slot another surface had claimed since.
+2. Merging that snapshot behind storage resurrected a slot storage had **settled** -- a completed
+   key reused, the finished transaction replayed, "Already logged" for a purchase never recorded.
+   Storage wins every slot it reports; it says nothing about one it has settled.
+3. Judging availability on the read alone missed that a store can answer `getItem` and refuse every
+   `setItem`. Available-and-empty and cannot-be-written are the same value and opposite facts.
+4. A surface mounting after such a failed write started empty and lost the claim outright.
 
-Three rounds, three ways to get one fallback wrong, and each is now pinned by its own test: revert
-any of the three conditions and the suite names which one.
+Only the third was a regression against `main`; the rest were new surface area. But four rounds on
+six lines is the signal, and all four are one mistake: **a per-instance copy of state that is not
+per-instance.** So the record moved to module scope in `pending-taps.ts` and the hook now holds none
+of it -- the ref, the mount effect and the parameter all go, and `useQuickTap` gets shorter. Module
+scope is the accurate scope rather than a convenience: shared by every surface in the tab, gone on a
+reload, never crossing tabs, which is `sessionStorage`'s scope exactly. `writePendingTaps` writes
+both copies in one call so they cannot disagree, and neither is ever merged into the other.
+
+The measure of it: bug 2 is now **unrepresentable**. Reinstate the merge and the suite still passes,
+because with both copies written together the merge is a no-op. Bugs 1, 3 and 4 are pinned and name
+themselves on revert.
 
 The other three: the tile query is now started at the top of `dashboard/page.tsx` so it runs
 alongside the dashboard read instead of after it -- the strip mounts inside the `stats` branch, so

@@ -1,14 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useToast } from "@/components/ui/toast";
 import { QuickLogError, useLogQuickTile } from "@/hooks/use-quick-tiles";
 import {
   claimPendingTap,
-  readPendingTaps,
   releasePendingTap,
   tapSlot,
-  type PendingTap,
 } from "@/components/quick-log/pending-taps";
 import type { QuickTileView } from "@/lib/telegram/tile-queries";
 
@@ -32,87 +30,32 @@ export function useQuickTap() {
   const [asking, setAsking] = useState<QuickTileView | null>(null);
 
   /**
-   * An idempotency key per unresolved tap, held until that tap is settled.
+   * One tap: claim a key, post, settle it.
    *
-   * A key is kept across a failure and replayed rather than regenerated, because a 5xx or a lost
-   * response means the write may have committed: posting again under a fresh key would write a
-   * second row. A 4xx releases it, since the route raises those before it opens a transaction, so
-   * nothing was written and the next attempt is a genuinely new intent. This is the rule the
-   * multi-scan review already follows for a batch save.
+   * `claimPendingTap` and `releasePendingTap` are called directly and this hook keeps **no** copy
+   * of the record between them. It used to hold a ref seeded from storage on mount, and that ref
+   * was the root cause of three separate bugs found in review on #276 -- a release computed from
+   * it deleted another surface's claim, merging it back in resurrected a slot storage had settled,
+   * and a surface mounted after a failed write started empty and lost the claim outright. All
+   * three are one mistake: a per-instance copy of state that is not per-instance. The record lives
+   * in `pending-taps.ts` at module scope, which is the scope it actually has -- shared by every
+   * surface in the tab, gone on a reload -- and it is testable there without a DOM harness.
    *
-   * Keyed by the tap rather than held as one value, and both halves of that are load-bearing.
-   * *Keyed*, because a single page-scoped key would be picked up by a tap on a different button
-   * and replay the wrong row. *One per tap rather than one at a time*, because the grid stays
-   * usable after a failure: with a single slot, tapping a second button overwrites the first
-   * tap's key and settling that second tap discards it, so re-pressing the first button posts a
-   * fresh key and writes a duplicate of a row that had already committed.
+   * Both calls are synchronous and independent of this component's lifetime, which is what forced
+   * the question in the first place: the release runs when the request settles, and that can be
+   * *after the page has unmounted*, since tapping a button and going straight to Transactions is
+   * an ordinary thing to do. Held in React state the update was discarded, the effect never ran,
+   * and the settled key stayed behind; coming back and buying the same thing again replayed the
+   * old transaction. Two real purchases, one row, "Already logged".
    *
-   * Reuse is bounded by `PENDING_TAP_TTL_MS`. Without a boundary, an identical press hours later
-   * is treated as a retry of the failed one: the server replays the original transaction and the
-   * new purchase is never recorded.
-   *
-   * The store behind it is one `sessionStorage` key, so every surface in the tab shares it. That
-   * is the correct reading of an unresolved tap: it belongs to the tab, not to whichever page
-   * happened to start it, and a tap begun on the dashboard must stay replayable from `/quick-log`.
-   *
-   * Which is exactly why this ref is a **mirror and not the record**. Claim and release both
-   * read-modify-write the shared store (`claimPendingTap` / `releasePendingTap`), because an
-   * in-flight `runLog` outlives the page that started it: a dashboard tap settling after the user
-   * has followed the Manage link would otherwise write this stale copy back and delete a key
-   * `/quick-log` claimed in between. What the ref is still good for is a browser that refuses
-   * storage outright, where the shared read answers `{}` and a retry would have no key at all.
+   * Nothing renders from any of this, which is also why there is no state here to render from.
    */
-  const pending = useRef<Record<string, PendingTap>>({});
-
-  // Restored after a reload, because React state is not where an unresolved write can live.
-  // A tap whose outcome is unknown keeps its key precisely so a re-press replays instead of
-  // writing a second row -- and "the request failed, let me refresh" is the most natural thing a
-  // user does next, which discarded the only copy of that key.
-  //
-  // Restored keys are *reused*, never auto-replayed: nothing is posted until the user presses the
-  // same button for the same figure again, which is a deliberate act. That is the difference from
-  // the Mini App's `pending-log.ts`, which restores a whole draft on launch and so has to offer it.
-  useEffect(() => {
-    pending.current = readPendingTaps();
-  }, []);
-
-  /**
-   * Claim and release, both **synchronous** and both independent of the caller's lifetime.
-   *
-   * A ref and a direct write, not state and a passive effect, and the release half is what forces
-   * it. `releaseTap` runs when the request settles, which can be *after the page has unmounted* --
-   * tapping a button and immediately going to Transactions to look at it is an ordinary thing to
-   * do. A `setPending` there is discarded, the effect never runs, and the settled key stays in
-   * storage. Coming back and buying the same thing again then replays the **old** transaction:
-   * measured end to end, two real purchases wrote one row and the confirmation read "Already
-   * logged". A duplicate at least shows up in the ledger; a missing row does not.
-   *
-   * Claiming is written before the request goes out for the mirror-image reason, so the durable
-   * record never lags the thing it exists to describe.
-   *
-   * Nothing renders from this, so state was buying a re-render and two lifetime hazards for
-   * nothing.
-   *
-   * Both delegate to `pending-taps.ts` rather than editing the record here. The rules they enforce
-   * -- reuse only inside the window, and never clobber another surface's claims -- are testable
-   * there and are not testable in a hook.
-   */
-  const claimTap = (slot: string): string => {
-    const { key, taps } = claimPendingTap(pending.current, slot);
-    pending.current = taps;
-    return key;
-  };
-
-  const releaseTap = (slot: string) => {
-    pending.current = releasePendingTap(pending.current, slot);
-  };
-
   const runLog = async (tile: QuickTileView, amount: number) => {
     // Reused only for a re-press of the *same* tap. Anything else is a new intent, gets a new key,
     // and leaves whatever other taps are still unresolved exactly where they are. Claimed -- and
     // written to storage -- before the request goes out, never after.
     const slot = tapSlot(tile.id, amount);
-    const clientBatchId = claimTap(slot);
+    const { key: clientBatchId } = claimPendingTap(slot);
 
     try {
       const result = await logTile.mutateAsync({
@@ -123,7 +66,7 @@ export function useQuickTap() {
         clientBatchId,
       });
 
-      releaseTap(slot);
+      releasePendingTap(slot);
       setAsking(null);
 
       const labels = result.labels.length > 0 ? `, ${result.labels.join(", ")}` : "";
@@ -135,7 +78,7 @@ export function useQuickTap() {
     } catch (error) {
       // A 4xx wrote nothing, so the pin is dropped and a corrected retry is a new intent. Anything
       // else may have committed, so the pin is kept and the next attempt replays it.
-      if (error instanceof QuickLogError && error.wrote === "no") releaseTap(slot);
+      if (error instanceof QuickLogError && error.wrote === "no") releasePendingTap(slot);
       showToast(error instanceof Error ? error.message : "Could not log that");
     }
   };

@@ -378,31 +378,32 @@ Whoever touches it next should assume the obvious simplification has already bee
   is a **mirror**, and the one thing it is still good for is a browser that refuses storage, where
   the shared read answers `{}` and a retry would have no key at all.
 
-  The correction that took, one round later: **an empty answer from working storage is
-  authoritative, and merging the mirror behind it is not equivalent to ignoring it.** The first fix
-  merged, on the reasoning that storage would win every slot it reported. It wins every slot it
-  *reports*; it says nothing about a slot it has deliberately **settled**. A mirror copied at mount
-  keeps that slot, so a later claim on any *other* tile wrote it back, and the next genuine press of
-  the original tile replayed a finished transaction and was answered "Already logged" -- a purchase
-  silently lost, which is the side of the trade this file exists to stay off. `readStore` therefore
-  reports `available` alongside the record, and `held` is consulted **only** when storage refuses to
-  answer, never when it answers `{}`. Distinguishing those two is the whole fix; they are the same
-  value and opposite facts.
+  Then three more rounds of review, each finding a different hole in the *same* fallback, and the
+  fourth is what made the shape of the mistake obvious. They were:
 
-  And a third round, because "storage answered" still is not "storage works": a browser can hand
-  back a good `getItem` and refuse every `setItem` -- legacy Safari private mode does exactly this,
-  and shield extensions do too. Judged on the read alone that store looks *available and empty*, so
-  a caller's own unsettled claim was thrown away and the retry minted a second key, duplicating a
-  row that may already have committed. `main` never had this hole; it claimed from its mirror and
-  never consulted storage. So `writePendingTaps` records whether the write landed, and the mirror
-  stands in whenever storage cannot be *written* as well as when it cannot be read. That does not
-  reopen the resurrection above, and the reason is worth keeping: **a release is a write**, so while
-  writes are failing storage cannot have settled anything the mirror has not seen -- it cannot have
-  settled anything at all. The flag is self-healing because a write is the *whole* record and not a
-  patch, so one that lands resynchronises storage completely.
+  1. A release computed from a snapshot deleted a slot another surface had claimed since.
+  2. Merging that snapshot behind storage resurrected a slot storage had **settled** -- a completed
+     key reused, the finished transaction replayed, "Already logged" for a purchase never recorded.
+     Storage wins every slot it *reports*; it says nothing about one it has settled.
+  3. Judging on the read alone missed that a store can answer `getItem` and refuse every `setItem`
+     (legacy Safari private mode, shield extensions). Available-and-empty and cannot-be-written are
+     the same value and opposite facts.
+  4. A surface mounting after such a failed write started empty and lost the claim outright.
 
-  Three rounds, three ways to get one fallback wrong, and all three are pinned: revert any of the
-  three conditions in `currentTaps` and `pending-taps.test.ts` names which one you broke.
+  All four are one mistake: **a per-instance copy of state that is not per-instance.** So the record
+  is module-scoped in `pending-taps.ts` and the hook holds none of it. Module scope is not a
+  convenience here, it is the accurate scope -- shared by every surface in the tab, gone on a
+  reload, never crossing tabs, which is `sessionStorage`'s scope exactly. `writePendingTaps` writes
+  both copies in one call, so they cannot disagree, and `currentTaps` reads storage when storage is
+  a record and the in-memory copy when it is not (unreadable, or unwritable and therefore frozen in
+  the past). Neither is ever merged into the other, and there is nothing left to seed or reconcile.
+
+  Worth knowing when reading the tests: bug 2 is no longer *representable*. Reinstate the merge and
+  the suite still passes, because with both copies written together the merge is a no-op. Bugs 1, 3
+  and 4 are pinned and name themselves on revert. If a fifth hole ever appears here, delete the
+  in-memory copy rather than condition it further: storage as the sole record is provably correct,
+  and its one degradation is a duplicate, which is the visible side of the trade this file already
+  prefers.
 
 ### Deliberately not done
 
