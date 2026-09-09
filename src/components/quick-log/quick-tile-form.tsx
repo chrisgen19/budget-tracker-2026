@@ -259,8 +259,15 @@ export function QuickTileForm({
  * Anchored at both ends, which is the whole point: this is an unrestricted text input
  * (`inputMode="decimal"` is a keyboard hint, not a constraint), so it receives pasted and typed
  * text that is not a number.
+ *
+ * The two-decimal bound is enforced rather than merely described. `amount` is a `Float` and every
+ * currency formatter here renders two places, so `38.999` was stored and logged exactly while the
+ * card, the toast and the ledger all showed 39.00 -- the button disagreeing with the row it wrote.
+ * Excess precision is refused rather than rounded: rounding decides for the user, and on the tile
+ * form a refusal is visible (the hint switches to "will ask for an amount") where a silent 39.00
+ * is not.
  */
-const AMOUNT_PATTERN = /^\d{1,3}(?:,\d{3})*(?:\.\d+)?$|^\d+(?:\.\d+)?$/;
+const AMOUNT_PATTERN = /^\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?$|^\d+(?:\.\d{1,2})?$/;
 
 /**
  * The typed string as an amount, or null for "ask each time".
