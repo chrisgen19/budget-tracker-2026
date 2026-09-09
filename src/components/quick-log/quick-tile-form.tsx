@@ -165,6 +165,11 @@ export function QuickTileForm({
               key={option}
               type="button"
               onClick={() => {
+                // Guarded on the type actually changing. Clicking the already-selected option is a
+                // no-op the user reads as one, and clearing on it silently dropped an existing
+                // tile's category and every pinned label -- a save then recategorised the button
+                // and unpinned it, for a click that changed nothing.
+                if (option === type) return;
                 setValue("type", option);
                 // A category and a label chosen for the other type would be refused by the server,
                 // so they are cleared here rather than left to fail on save. The refusal exists
