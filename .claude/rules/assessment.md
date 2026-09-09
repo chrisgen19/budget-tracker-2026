@@ -7,6 +7,8 @@ paths:
   - scripts/assess.ts
   - scripts/refresh-local-mirror.ts
   - src/lib/validations.ts
+  - src/components/analytics/assessment
+  - src/components/analytics/ai-assessment-report.tsx
 ---
 
 # AI Assessment

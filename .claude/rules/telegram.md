@@ -8,6 +8,7 @@ paths:
   - src/components/quick-log
   - src/lib/quick-tile-writes.ts
   - src/hooks/use-quick-tiles.ts
+  - src/lib/assessment-facts.ts
   - src/components/profile/features-form.tsx
   - src/app/(app)/layout.tsx
   - src/app/api/preferences

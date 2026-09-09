@@ -13,6 +13,7 @@ paths:
   - src/app/api/cron/bill-reminders
   - src/hooks/use-bills.ts
   - src/components/dashboard/upcoming-bill-row.tsx
+  - src/lib/mcp/server.ts
 ---
 
 # Bills

@@ -6,6 +6,8 @@ paths:
   - e2e
   - vitest.config.mts
   - vitest.setup.ts
+  - package.json
+  - pnpm-lock.yaml
 ---
 
 ## Testing
