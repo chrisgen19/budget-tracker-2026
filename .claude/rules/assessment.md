@@ -3,11 +3,11 @@ paths:
   - src/lib/assessment-facts.ts
   - src/lib/assessment-facts-query.ts
   - src/lib/ai-assessment.ts
-  - src/app/api/assessment
+  - "src/app/api/assessment/**"
   - scripts/assess.ts
   - scripts/refresh-local-mirror.ts
   - src/lib/validations.ts
-  - src/components/analytics/assessment
+  - "src/components/analytics/assessment/**"
   - src/components/analytics/ai-assessment-report.tsx
 ---
 

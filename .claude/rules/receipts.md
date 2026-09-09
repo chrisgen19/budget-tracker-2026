@@ -5,12 +5,13 @@ paths:
   - src/lib/receipt-guard.ts
   - src/lib/scan-quota.ts
   - src/lib/exif-date.ts
-  - src/app/api/receipts
+  - "src/app/api/receipts/**"
   - src/components/scan-receipt-sheet.tsx
   - src/components/multi-scan-review.tsx
   - src/components/scan-provider.tsx
   - src/components/profile/features-form.tsx
-  - src/app/api/preferences
+  - "src/app/api/preferences/**"
+  - src/lib/telegram/bot.ts
 ---
 
 # Receipts

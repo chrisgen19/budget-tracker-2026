@@ -1,15 +1,17 @@
 ---
 paths:
-  - src/lib/mcp
-  - mcp-server
-  - src/app/api/mcp
+  - "src/lib/mcp/**"
+  - "mcp-server/**"
+  - "src/app/api/mcp/**"
   - src/lib/budget-queries.ts
   - src/lib/budget-query-types.ts
   - src/lib/assessment-facts.ts
   - src/components/profile/mcp-*
-  - src/app/api/preferences
-  - src/app/api/transactions
-  - src/app/api/labels
+  - "src/app/api/preferences/**"
+  - "src/app/api/transactions/**"
+  - "src/app/api/labels/**"
+  - prisma/schema.prisma
+  - "prisma/migrations/**"
   - src/lib/gemini.ts
 ---
 

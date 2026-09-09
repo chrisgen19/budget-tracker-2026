@@ -1,9 +1,9 @@
 ---
 paths:
-  - scripts
+  - "scripts/**"
   - "**/*.test.ts"
   - "**/*.test.tsx"
-  - e2e
+  - "e2e/**"
   - vitest.config.mts
   - vitest.setup.ts
   - package.json

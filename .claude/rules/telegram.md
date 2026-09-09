@@ -1,11 +1,11 @@
 ---
 paths:
-  - src/lib/telegram
-  - src/app/tg
-  - src/app/api/tg
-  - src/components/telegram
-  - src/app/(app)/quick-log
-  - src/components/quick-log
+  - "src/lib/telegram/**"
+  - "src/app/tg/**"
+  - "src/app/api/tg/**"
+  - "src/components/telegram/**"
+  - "src/app/(app)/quick-log/**"
+  - "src/components/quick-log/**"
   - src/lib/quick-tile-writes.ts
   - src/hooks/use-quick-tiles.ts
   - src/lib/assessment-facts.ts
@@ -13,9 +13,9 @@ paths:
   - src/lib/validations.ts
   - src/components/profile/features-form.tsx
   - src/app/(app)/layout.tsx
-  - src/app/api/preferences
-  - src/app/api/quick-tiles
-  - src/app/api/cron/telegram-prompts
+  - "src/app/api/preferences/**"
+  - "src/app/api/quick-tiles/**"
+  - "src/app/api/cron/telegram-prompts/**"
   - src/instrumentation.ts
   - src/middleware.ts
   - src/middleware.test.ts

@@ -3,17 +3,19 @@ paths:
   - src/lib/transaction-writes.ts
   - src/lib/label-writes.ts
   - src/lib/request-size.ts
-  - src/app/api/transactions
-  - src/app/api/labels
+  - "src/app/api/transactions/**"
+  - "src/app/api/labels/**"
   - src/lib/schedule-matching.ts
   - src/lib/schedule-server.ts
   - src/hooks/use-scheduled-label.ts
   - src/hooks/use-transactions.ts
   - src/hooks/use-multi-scan.ts
   - src/lib/receipt-limits.ts
-  - src/components/transactions
+  - "src/components/transactions/**"
   - src/lib/mcp/server.ts
-  - src/app/api/mcp
+  - src/lib/telegram/confirm-scan.ts
+  - src/lib/telegram/bot.ts
+  - "src/app/api/mcp/**"
 ---
 
 # Transactions and labels

@@ -4,13 +4,13 @@ paths:
   - src/lib/bill-writes.ts
   - src/lib/bill-utils.ts
   - src/lib/bill-estimate.ts
-  - src/app/api/bills
-  - src/components/bills
+  - "src/app/api/bills/**"
+  - "src/components/bills/**"
   - src/lib/budget-queries.ts
   - src/lib/budget-query-types.ts
   - src/lib/pending-bills.ts
-  - src/app/(app)/bills
-  - src/app/api/cron/bill-reminders
+  - "src/app/(app)/bills/**"
+  - "src/app/api/cron/bill-reminders/**"
   - src/hooks/use-bills.ts
   - src/components/dashboard/upcoming-bill-row.tsx
   - src/lib/mcp/server.ts

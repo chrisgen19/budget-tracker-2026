@@ -74,13 +74,23 @@ const walk = (dir: string, out: string[] = []): string[] => {
 
 const allFiles = walk(ROOT);
 
-/** A `**` segment crosses directory boundaries; a lone `*` stays inside one segment. */
+/**
+ * A `**` segment crosses directory boundaries; a lone `*` stays inside one segment.
+ *
+ * Only the three shapes this repo uses are handled, and separating them keeps the translation
+ * readable: a leading `**` matches any number of parent directories, a trailing one matches
+ * everything underneath, and anything else stays within its own segment.
+ */
 const globToRegExp = (pattern: string): RegExp => {
-  const source = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .split("**/")
-    .map((part) => part.replace(/\*/g, "[^/]*"))
-    .join("(?:.*/)?");
+  const escape = (part: string) =>
+    part.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*");
+
+  const source = pattern.startsWith("**/")
+    ? `(?:.*/)?${escape(pattern.slice(3))}`
+    : pattern.endsWith("/**")
+      ? `${escape(pattern.slice(0, -3))}/.*`
+      : escape(pattern);
+
   return new RegExp(`^${source}$`);
 };
 
