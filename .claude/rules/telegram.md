@@ -8,6 +8,16 @@ paths:
   - src/components/quick-log
   - src/lib/quick-tile-writes.ts
   - src/app/api/quick-tiles
+  - src/app/api/cron/telegram-prompts
+  - src/instrumentation.ts
+  - src/middleware.ts
+  - src/middleware.test.ts
+  - src/lib/protected-paths.ts
+  - src/lib/protected-paths.test.ts
+  - next.config.ts
+  - scripts/telegram-bot.ts
+  - scripts/link-telegram-user.ts
+  - scripts/seed-telegram-quick-tiles.ts
   - e2e/telegram-mini-app.spec.ts
 ---
 

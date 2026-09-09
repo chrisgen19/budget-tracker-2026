@@ -5,6 +5,9 @@ paths:
   - src/lib/request-size.ts
   - src/app/api/transactions
   - src/app/api/labels
+  - src/lib/schedule-matching.ts
+  - src/lib/schedule-server.ts
+  - src/hooks/use-scheduled-label.ts
   - src/app/api/mcp
 ---
 

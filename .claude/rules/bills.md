@@ -6,6 +6,10 @@ paths:
   - src/lib/bill-estimate.ts
   - src/app/api/bills
   - src/components/bills
+  - src/lib/budget-queries.ts
+  - src/lib/budget-query-types.ts
+  - src/lib/pending-bills.ts
+  - src/app/(app)/bills
 ---
 
 # Bills
