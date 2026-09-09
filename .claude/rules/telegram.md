@@ -330,13 +330,13 @@ hand-written copy of claim/release/replay is a second chance to reintroduce one 
 `quick-tile-writes.ts` makes about the server, applied to the client half. Both surfaces share the
 one `sessionStorage` store, which is the correct reading of an unresolved tap: it belongs to the
 tab, not to whichever page started it, so a tap begun on the dashboard stays replayable from
-`/quick-log`.
+`/quick-log` -- and that sharing is what forces the sixth rule in the list below.
 
 The manifest carries **one** `shortcuts` entry pointing at the page, not one per button. The
 manifest is static and cached, so per-tile entries would go stale the moment a button was renamed;
 Chrome on Android renders only the first three regardless, and iOS renders none.
 
-### The tap key, and the five bugs it took to get right
+### The tap key, and the six bugs it took to get right
 
 `pending-taps.ts` holds one idempotency key per unresolved tap. Every rule in it was a bug first,
 and they are recorded because the mechanism reads as trivial and is not -- it is exactly-once
@@ -365,6 +365,18 @@ Whoever touches it next should assume the obvious simplification has already bee
   pressing again is a reaction to an error message. Short on purpose -- past the window a genuine
   retry writes a duplicate, which is visible and deletable, where inside it a genuine purchase is
   silently lost.
+- **Claim and release read-modify-write the store, never a snapshot.** The sixth, found in review
+  on #276 once a second surface started tapping. `useQuickTap` is mounted per surface but an
+  in-flight `runLog` outlives the page that started it, so a dashboard tap settling *after* the user
+  followed the Manage link wrote its own stale copy back over storage and deleted a key
+  `/quick-log` had claimed in between. The press after a failure was then a **new** key for a write
+  that may already have committed. Note this is the previous bullet's twin and not a repeat of it:
+  that one is about *when* release runs, this one about *what it computes from*, and fixing the
+  first is what made the second reachable. The read-modify-write lives in
+  `claimPendingTap`/`releasePendingTap` rather than in the hook, because a hook cannot be tested
+  without a DOM harness and this is the file that exists to be testable. The ref left in the hook
+  is a **mirror**, and the one thing it is still good for is a browser that refuses storage, where
+  the shared read answers `{}` and a retry would have no key at all.
 
 ### Deliberately not done
 

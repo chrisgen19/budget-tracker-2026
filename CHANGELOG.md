@@ -59,6 +59,35 @@ rather than one per button -- the manifest is static and cached, so per-tile ent
 the moment a button was renamed; Chrome on Android renders only the first three regardless, and iOS
 renders none.
 
+### Four fixes out of review, and a sixth tap-key bug
+
+The one that mattered: **claim and release now read-modify-write the shared store rather than a
+snapshot.** `useQuickTap` is mounted per surface, but an in-flight `runLog` outlives the page that
+started it, so a dashboard tap settling after the user followed the Manage link wrote its own stale
+copy back over storage and deleted a key `/quick-log` had claimed in between. The next press of that
+button posted a *new* key for a write that may already have committed -- a duplicate, which is the
+exact failure `pending-taps.ts` exists to prevent, reached through the very behaviour its comments
+already anticipate ("the request failed, let me refresh"). It is the twin of the fourth bug in that
+file's list rather than a repeat: that one is about *when* release runs, this about *what it
+computes from*, and it only became reachable once a second surface could tap. The read-modify-write
+went into `claimPendingTap`/`releasePendingTap` rather than the hook so it could be tested, and the
+test was confirmed to fail against the snapshot version. The ref left in the hook is a mirror, which
+still earns its place in a browser that refuses storage: there the shared read answers `{}`, and a
+retry would otherwise have no key at all.
+
+The other three: the tile query is now started at the top of `dashboard/page.tsx` so it runs
+alongside the dashboard read instead of after it -- the strip mounts inside the `stats` branch, so
+the parallelism its own comment claimed was not actually happening, and the strip dropped in late
+shoving Upcoming Bills down. Quick Log no longer disappears for accounts with receipt scanning off,
+which happened because it joined a menu `canScan` gated wholesale; scan is now the only entry that
+gating removes, and the header always renders the dropdown. And the strip's manage link gets the
+44px hit area AGENTS.md requires, via the documented pseudo-element rather than by growing the row.
+
+The chip still does not print the fallback category, which was also raised. The warning triangle
+stays and the destination is now in the `aria-label` as well as `title`, since a touch user cannot
+hover; printing the category name is the density this component deliberately exists without, and the
+full picture is one tap away.
+
 Phases 2 (Ctrl/Cmd+K palette, undo in the toast) and 3 (offline tap queue) are described in #275 and
 deliberately not built yet.
 

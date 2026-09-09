@@ -45,11 +45,20 @@ export function QuickTileChip({ tile, currency, busy, onLog }: QuickTileChipProp
           ? `Files to ${tile.resolvedCategoryName ?? "no category"}, not where this button says`
           : undefined
       }
-      aria-label={
+      // The destination is spoken as well as shown, because the warning triangle beside the label
+      // is the only visual sign of it and `title` needs a pointer to hover. What the chip does not
+      // do is print the category: that is the density this component exists without, and the full
+      // picture is one tap away on /quick-log.
+      aria-label={[
         amountText === null
           ? `${tile.label}, ask for an amount`
-          : `${tile.label}, log ${amountText}`
-      }
+          : `${tile.label}, log ${amountText}`,
+        tile.fallsBack
+          ? `files to ${tile.resolvedCategoryName ?? "no category"}, not where this button says`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(", ")}
       // w-[7.5rem] rather than a flex ratio: the parent scrolls horizontally on mobile, and a
       // shrinking chip would squeeze the last one into a sliver instead of letting it run off the
       // edge, which is the affordance that says there are more.

@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PENDING_TAP_TTL_MS,
+  claimPendingTap,
   isReusable,
   readPendingTaps,
+  releasePendingTap,
   tapSlot,
   writePendingTaps,
 } from "@/components/quick-log/pending-taps";
@@ -99,5 +101,73 @@ describe("storage", () => {
     writePendingTaps({ "tile_1:38": { key: "batch-1", at: NOW } });
     writePendingTaps({});
     expect(sessionStorage.getItem("quick-log:pending-taps")).toBeNull();
+  });
+});
+
+/**
+ * Two surfaces log now -- the dashboard strip and /quick-log -- and an in-flight request outlives
+ * the page that started it. These cover the rule that follows from that: a claim or a release
+ * settles against the record as it stands, never against the snapshot the caller was holding.
+ */
+describe("claiming and releasing across surfaces", () => {
+  it("keeps a key that another surface claimed after this caller's snapshot", () => {
+    // The reported bug. The dashboard claims A and the user follows the Manage link; /quick-log
+    // claims B; the dashboard's request then settles holding a snapshot that predates B.
+    const dashboardHeld = claimPendingTap({}, "A", NOW).taps;
+    claimPendingTap(dashboardHeld, "B", NOW);
+
+    const after = releasePendingTap(dashboardHeld, "A", NOW);
+
+    expect(after).not.toHaveProperty("A");
+    // Before the fix this wrote the stale {A} back as {}, and B's key was gone. The next press of
+    // B then posted a fresh key for a write that may already have committed.
+    expect(after.B).toBeDefined();
+    expect(readPendingTaps(NOW).B).toEqual(after.B);
+  });
+
+  it("reuses a key claimed by the other surface rather than minting a second one", () => {
+    const first = claimPendingTap({}, "A", NOW);
+    // A caller that has never seen this slot: a freshly mounted page, holding nothing.
+    const second = claimPendingTap({}, "A", NOW);
+
+    expect(second.key).toBe(first.key);
+  });
+
+  it("mints a new key once the window has passed, since that press is a new purchase", () => {
+    const first = claimPendingTap({}, "A", NOW);
+    const later = claimPendingTap({}, "A", NOW + PENDING_TAP_TTL_MS + 1);
+
+    expect(later.key).not.toBe(first.key);
+  });
+
+  it("does not write a caller's aged-out slot back into the record", () => {
+    // A held copy is not TTL-filtered by anything else, so merging one in unchecked would
+    // resurrect a key past its window -- and a press inside *that* window would be answered
+    // "Already logged" for a purchase that was never recorded.
+    const stale = { old: { key: "batch-old", at: NOW } };
+
+    const after = claimPendingTap(stale, "new", NOW + PENDING_TAP_TTL_MS + 1).taps;
+
+    expect(after).not.toHaveProperty("old");
+  });
+
+  it("returns the record it wrote, so a caller's mirror cannot lag it", () => {
+    const claimed = claimPendingTap({}, "A", NOW);
+    expect(claimed.taps).toEqual(readPendingTaps(NOW));
+
+    const released = releasePendingTap(claimed.taps, "A", NOW);
+    expect(released).toEqual(readPendingTaps(NOW));
+  });
+
+  it("still hands back a reusable key when storage refuses to answer", () => {
+    // A private window or blocked site data. Reload-safety is the documented cost there; losing
+    // the retry within one page as well would turn a failed tap into a duplicate, so the caller's
+    // own copy stands in.
+    const held = { A: { key: "batch-held", at: NOW } };
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+
+    expect(claimPendingTap(held, "A", NOW).key).toBe("batch-held");
   });
 });

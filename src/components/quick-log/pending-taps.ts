@@ -95,3 +95,71 @@ export const writePendingTaps = (taps: Record<string, PendingTap>) => {
     // Storage being unavailable costs the reload-safety, not the tap.
   }
 };
+
+/** Drop anything a caller has held past the window, so a stale slot cannot be written back. */
+const stillLive = (
+  taps: Record<string, PendingTap>,
+  now: number
+): Record<string, PendingTap> =>
+  Object.fromEntries(Object.entries(taps).filter(([, tap]) => isReusable(tap, now)));
+
+/**
+ * The shared record, as it stands right now, with a caller's own copy behind it.
+ *
+ * Storage is the authority because it is what every surface can see. `held` is consulted only for
+ * slots storage does not report, which is the case where storage is *unavailable* -- a private
+ * window, or blocked site data, where `readPendingTaps` answers `{}` and every read of it would
+ * otherwise look like "nothing is pending". Losing reload-safety there is the documented cost;
+ * losing the retry within one page as well is not, and would turn a failed tap into a duplicate.
+ */
+const currentTaps = (
+  held: Record<string, PendingTap>,
+  now: number
+): Record<string, PendingTap> => ({ ...stillLive(held, now), ...readPendingTaps(now) });
+
+/**
+ * Claim the key for one tap, against the record as it stands rather than a caller's snapshot.
+ *
+ * The read-modify-write is the whole point, and it is here rather than in the hook because the
+ * hook cannot hold the record: `useQuickTap` is mounted per surface, and an in-flight `runLog`
+ * outlives the page that started it. A dashboard tap that settles after the user has followed the
+ * Manage link would otherwise write its own stale copy back over storage and delete a key
+ * `/quick-log` had claimed in between -- and the press that comes after a failure is then a *new*
+ * key for a write that may already have committed, which is the duplicate this file exists to
+ * prevent. Reported on #276.
+ *
+ * Returns the record it wrote, so the caller's mirror never lags what is durable.
+ */
+export const claimPendingTap = (
+  held: Record<string, PendingTap>,
+  slot: string,
+  now = Date.now()
+): { key: string; taps: Record<string, PendingTap> } => {
+  const taps = currentTaps(held, now);
+
+  // Everything in `taps` is inside the window already, so a hit here is by definition still
+  // plausibly a retry rather than a new purchase.
+  const existing = taps[slot];
+  if (existing) return { key: existing.key, taps };
+
+  const claimed: PendingTap = { key: crypto.randomUUID(), at: now };
+  const next = { ...taps, [slot]: claimed };
+  writePendingTaps(next);
+  return { key: claimed.key, taps: next };
+};
+
+/**
+ * Settle one tap, leaving every other surface's claims where they are.
+ *
+ * The half that was actually losing writes: a release computed from a stale snapshot removes the
+ * slot it meant to *and* silently drops every slot claimed since that snapshot was taken.
+ */
+export const releasePendingTap = (
+  held: Record<string, PendingTap>,
+  slot: string,
+  now = Date.now()
+): Record<string, PendingTap> => {
+  const { [slot]: _settled, ...rest } = currentTaps(held, now);
+  writePendingTaps(rest);
+  return rest;
+};

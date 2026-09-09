@@ -52,9 +52,12 @@ export function QuickLogStrip() {
   // problem as a fact about the account -- while the buttons sit on `/quick-log` where the same
   // page distinguishes those two states carefully. Nothing beats a wrong answer here.
   //
-  // No shimmer either. This query resolves alongside the much heavier dashboard read that gates
-  // the whole page behind its skeleton, so by the time anything renders the tiles are already
-  // here; a placeholder would only be a promise the empty case then breaks.
+  // No shimmer either, and that rests on something outside this file: `dashboard/page.tsx` starts
+  // this same query at the top of the page so it runs alongside the much heavier dashboard read
+  // that gates everything behind a skeleton. This component mounts *inside* that gate, so without
+  // the head start it could not even begin until the dashboard read had finished, and would then
+  // drop in late shoving Upcoming Bills down. Given the head start the tiles are already here, and
+  // a placeholder would only be a promise the empty case then breaks.
   if (isError || tiles.length === 0) return null;
 
   return (
@@ -69,9 +72,13 @@ export function QuickLogStrip() {
           </h2>
         </div>
 
+        {/* The visible control is a line of text; the pseudo-element carries it to the 44px
+            target AGENTS.md requires, rather than growing the row to a finger's height. Same
+            trick the profile switches and the card's overflow button use, and `relative` is
+            load-bearing: without it `inset-x-0` resolves against the header row instead. */}
         <Link
           href="/quick-log"
-          className="shrink-0 text-xs font-medium text-amber transition-colors hover:text-amber-dark"
+          className="relative shrink-0 text-xs font-medium text-amber transition-colors hover:text-amber-dark before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']"
         >
           {tiles.length > STRIP_LIMIT ? `All ${tiles.length}` : "Manage"} &rarr;
         </Link>

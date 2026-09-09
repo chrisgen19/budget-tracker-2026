@@ -4,10 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/ui/toast";
 import { QuickLogError, useLogQuickTile } from "@/hooks/use-quick-tiles";
 import {
-  isReusable,
+  claimPendingTap,
   readPendingTaps,
+  releasePendingTap,
   tapSlot,
-  writePendingTaps,
   type PendingTap,
 } from "@/components/quick-log/pending-taps";
 import type { QuickTileView } from "@/lib/telegram/tile-queries";
@@ -51,10 +51,16 @@ export function useQuickTap() {
    * is treated as a retry of the failed one: the server replays the original transaction and the
    * new purchase is never recorded.
    *
-   * The store behind it is one `sessionStorage` key, so two surfaces mounted in the same tab share
-   * it. That is the correct reading of an unresolved tap: it belongs to the tab, not to whichever
-   * page happened to start it, and a tap begun on the dashboard must stay replayable from
-   * `/quick-log`.
+   * The store behind it is one `sessionStorage` key, so every surface in the tab shares it. That
+   * is the correct reading of an unresolved tap: it belongs to the tab, not to whichever page
+   * happened to start it, and a tap begun on the dashboard must stay replayable from `/quick-log`.
+   *
+   * Which is exactly why this ref is a **mirror and not the record**. Claim and release both
+   * read-modify-write the shared store (`claimPendingTap` / `releasePendingTap`), because an
+   * in-flight `runLog` outlives the page that started it: a dashboard tap settling after the user
+   * has followed the Manage link would otherwise write this stale copy back and delete a key
+   * `/quick-log` claimed in between. What the ref is still good for is a browser that refuses
+   * storage outright, where the shared read answers `{}` and a retry would have no key at all.
    */
   const pending = useRef<Record<string, PendingTap>>({});
 
@@ -86,24 +92,19 @@ export function useQuickTap() {
    *
    * Nothing renders from this, so state was buying a re-render and two lifetime hazards for
    * nothing.
+   *
+   * Both delegate to `pending-taps.ts` rather than editing the record here. The rules they enforce
+   * -- reuse only inside the window, and never clobber another surface's claims -- are testable
+   * there and are not testable in a hook.
    */
   const claimTap = (slot: string): string => {
-    const now = Date.now();
-    const existing = pending.current[slot];
-    // Reused only while it is still plausibly a retry. An expired entry is replaced rather than
-    // kept: past the window this press is a new purchase, and replaying would swallow it.
-    if (existing && isReusable(existing, now)) return existing.key;
-
-    const claimed: PendingTap = { key: crypto.randomUUID(), at: now };
-    pending.current = { ...pending.current, [slot]: claimed };
-    writePendingTaps(pending.current);
-    return claimed.key;
+    const { key, taps } = claimPendingTap(pending.current, slot);
+    pending.current = taps;
+    return key;
   };
 
   const releaseTap = (slot: string) => {
-    const { [slot]: _settled, ...rest } = pending.current;
-    pending.current = rest;
-    writePendingTaps(rest);
+    pending.current = releasePendingTap(pending.current, slot);
   };
 
   const runLog = async (tile: QuickTileView, amount: number) => {
