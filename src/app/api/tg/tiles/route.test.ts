@@ -268,7 +268,14 @@ describe("PATCH /api/tg/tiles/[id]", () => {
 
     await PATCH(req("https://x.test/api/tg/tiles/tile_1", "PATCH", { label: "Office" }), params("tile_1"));
 
-    expect(mocks.queryRaw).toHaveBeenCalled();
+    // The lock is the check now that the write is a plain `update` by id, so this asserts the
+    // statement really is a `FOR UPDATE` naming this row and this owner. Asserting only that
+    // *some* query ran would pass against a lock that read the wrong row, or none.
+    const [sql, ...values] = mocks.queryRaw.mock.calls.at(-1)!;
+    const text = String(sql.join("?"));
+    expect(text).toContain("FOR UPDATE");
+    expect(text).toContain("telegram_quick_tiles");
+    expect(values).toEqual(["tile_1", "user_1"]);
     expect(mocks.tileUpdate).toHaveBeenCalled();
   });
 
