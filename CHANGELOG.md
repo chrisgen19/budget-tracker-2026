@@ -15,7 +15,7 @@ anything, and the part worth writing down is the trap next to it: a rule file **
 loads eagerly, exactly like CLAUDE.md. Splitting content there without the key saves nothing at
 all and looks identical from the inside.
 
-Nine rule files, 111 patterns. Eager load falls from 25,279 words to 3,373, a 87% cut. Across the
+Nine rule files, 100 patterns. Eager load falls from 25,279 words to 3,346, an 87% cut. Across the
 repo the mean file now pulls 3,502 words of rules and 37% pull none.
 
 ### Every word moved verbatim, and that is checked rather than claimed
@@ -38,7 +38,11 @@ nowhere narrower.
 
 A new **Detailed Rules** index names each file, what it covers and what triggers it. Codex reads
 AGENTS.md and cannot discover `.claude/rules/` on its own, so for every reader but Claude Code the
-index is the only route in.
+index is the only route in, and its "Loads on" list is the only statement of when to open a rule.
+That list is therefore literal and exhaustive rather than a summary, and asserted equal to the
+frontmatter it describes: one edit here managed to disagree in both directions at once, adding
+`validations.ts` to telegram.md's `paths:` while listing it under mcp.md, so the file that loads it
+went unmentioned and a file that does not claimed to.
 
 ### The defect this kept producing, five review rounds running
 
@@ -68,10 +72,11 @@ stops working are silent: no `paths:` key and it loads eagerly with correct cont
 and a pattern naming a renamed file matches nothing, so the rule stops arriving where it applies,
 which from the inside is indistinguishable from there never having been one.
 
-It also asserts every rule file is linked from the index, and that each opens at `#` rather than
-`##` -- several are injected one after another, and a file opening at `##` presents as a subsection
-of whichever rule came before it, which is how the whole API route reference once read as
-bill-scoped material. Each of the four assertions was confirmed to fail against a deliberate break.
+It also asserts that each rule file's index entry lists exactly the paths its frontmatter
+declares, and that each opens at `#` rather than `##` -- several are injected one after another,
+and a file opening at `##` presents as a subsection of whichever rule came before it, which is how
+the whole API route reference once read as bill-scoped material. Every assertion was confirmed to
+fail against a deliberate break, the index one against a replay of the real mismatch.
 
 ### The rest
 
