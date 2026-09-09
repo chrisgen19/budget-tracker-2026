@@ -25,48 +25,13 @@ import {
 } from "@/hooks/use-quick-tiles";
 import type { QuickTileView } from "@/lib/telegram/tile-queries";
 import type { TelegramQuickTileInput } from "@/lib/validations";
-
-/**
- * Where unresolved taps are held across a reload.
- *
- * `sessionStorage` rather than `localStorage`: an unresolved write belongs to this sitting, and a
- * key surviving until tomorrow would replay against a row the user has long since forgotten.
- *
- * Unscoped by user on purpose. A slot is keyed by tile id, tile ids are globally unique, and they
- * are never shared between accounts -- so a leftover entry from a previous login can match
- * nothing, and the worst it can do is sit there until the tab closes.
- */
-const PENDING_TAPS_KEY = "quick-log:pending-taps";
-
-/** Identity of a tap: the same button for the same figure is the same intent. */
-const tapSlot = (tileId: string, amount: number) => `${tileId}:${amount}`;
-
-/** Every read and write is guarded: a private window or blocked site data throws on access. */
-const readPendingTaps = (): Record<string, string> => {
-  try {
-    const raw = sessionStorage.getItem(PENDING_TAPS_KEY);
-    if (!raw) return {};
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== "object" || parsed === null) return {};
-    // Only string values survive: a malformed entry must not become a clientBatchId.
-    return Object.fromEntries(
-      Object.entries(parsed as Record<string, unknown>).filter(
-        ([, value]) => typeof value === "string"
-      )
-    ) as Record<string, string>;
-  } catch {
-    return {};
-  }
-};
-
-const writePendingTaps = (taps: Record<string, string>) => {
-  try {
-    if (Object.keys(taps).length === 0) sessionStorage.removeItem(PENDING_TAPS_KEY);
-    else sessionStorage.setItem(PENDING_TAPS_KEY, JSON.stringify(taps));
-  } catch {
-    // Storage being unavailable costs the reload-safety, not the tap.
-  }
-};
+import {
+  isReusable,
+  readPendingTaps,
+  tapSlot,
+  writePendingTaps,
+  type PendingTap,
+} from "@/components/quick-log/pending-taps";
 
 /**
  * Quick Log - the buttons that turn a routine expense into one tap.
@@ -111,10 +76,11 @@ export default function QuickLogPage() {
    * tap's key and settling that second tap discards it, so re-pressing the first button posts a
    * fresh key and writes a duplicate of a row that had already committed.
    *
-   * They accumulate only for the page's lifetime, and only for taps whose fate is genuinely
-   * unknown -- at most a handful, each reusable by nothing but an identical re-press.
+   * Reuse is bounded by `PENDING_TAP_TTL_MS`. Without a boundary, an identical press hours later
+   * is treated as a retry of the failed one: the server replays the original transaction and the
+   * new purchase is never recorded.
    */
-  const pending = useRef<Record<string, string>>({});
+  const pending = useRef<Record<string, PendingTap>>({});
 
   // Restored after a reload, because React state is not where an unresolved write can live.
   // A tap whose outcome is unknown keeps its key precisely so a re-press replays instead of
@@ -146,13 +112,16 @@ export default function QuickLogPage() {
    * nothing.
    */
   const claimTap = (slot: string): string => {
+    const now = Date.now();
     const existing = pending.current[slot];
-    if (existing) return existing;
+    // Reused only while it is still plausibly a retry. An expired entry is replaced rather than
+    // kept: past the window this press is a new purchase, and replaying would swallow it.
+    if (existing && isReusable(existing, now)) return existing.key;
 
-    const key = crypto.randomUUID();
-    pending.current = { ...pending.current, [slot]: key };
+    const claimed: PendingTap = { key: crypto.randomUUID(), at: now };
+    pending.current = { ...pending.current, [slot]: claimed };
     writePendingTaps(pending.current);
-    return key;
+    return claimed.key;
   };
 
   const releaseTap = (slot: string) => {
@@ -373,7 +342,10 @@ export default function QuickLogPage() {
         entries={frequent}
         currency={user.currency}
         loading={frequentLoading}
-        atLimit={atLimit}
+        // `isError` too: with the tile list unknown, `atLimit` cannot be computed, so a
+        // suggestion would open a form that may be refused for a cap the page cannot see. The
+        // header button and the FAB are gated the same way.
+        atLimit={atLimit || isError}
         onMakeButton={(entry) =>
           openNew({
             // The description is the most recent spelling the user actually wrote, so it makes a
