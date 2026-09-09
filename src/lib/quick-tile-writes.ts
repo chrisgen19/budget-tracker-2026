@@ -291,7 +291,21 @@ export const updateQuickTile = async (
     labelIds: patch.labelIds ?? storedLabelIds,
   };
 
-  if (effective.categoryId) {
+  // What actually **moved**, compared against the stored row rather than merely present in the
+  // patch. The difference is the whole rule, and presence is not a proxy for it: the Mini App's
+  // editor submits its complete draft, so `type` and `categoryId` are always present and always
+  // equal to what is stored. A presence test therefore fires on every edit it makes.
+  const typeMoved = patch.type !== undefined && patch.type !== storedType;
+  const categoryMoved =
+    patch.categoryId !== undefined && patch.categoryId !== stored.categoryId;
+
+  // Judged only where the pair moves. Judging an unchanged pair prevents nothing -- re-sending it
+  // writes what is already there -- and locks the caller out of a button that was *already*
+  // mismatched, which needs no edit to reach: `PUT /api/categories/[id]` lets a custom category's
+  // type be flipped underneath the buttons filing into it. `resolveTileCategory` and `viewTiles`
+  // are built to tolerate exactly that state, so refusing to let it be edited is the one response
+  // that leaves the user stuck. Same rule `updateTransactions` and `updateBill` both apply.
+  if (effective.categoryId && (categoryMoved || typeMoved)) {
     const usable = categories.some(
       (c) => c.id === effective.categoryId && c.type === effective.type
     );
@@ -303,17 +317,15 @@ export const updateQuickTile = async (
     }
   }
 
-  // Judged only when the pins actually **move** -- the caller named a set, or a `type` flip
-  // invalidated the one that is there. Judging an unchanged, unnamed set prevents nothing and
-  // locks the caller out of a button that was *already* mismatched, which is reachable with no
-  // edit at all: `PUT /api/labels/[id]` narrows a label's type underneath the buttons that pin
-  // it. The Mini App's editor sends no `labelIds` and has no picker, so re-judging there made
-  // renaming such a button impossible from inside Telegram with no way to fix it. Same rule
-  // `updateTransactions` and `updateBill` both apply to their own category/type pair.
+  // Pins are judged when the caller names a set, or when a `type` flip invalidates the one that
+  // is there -- and `typeMoved`, not the mere presence of `type`, is what says so. The Mini App
+  // sends no `labelIds` and has no picker, so a presence test blocked every edit it made to a
+  // button carrying a pin that a later `PUT /api/labels/[id]` had narrowed, with no way to clear
+  // the pin from inside Telegram.
   //
   // A pin left behind is not lost: `viewTiles` reports it as not applying and the tap filters it
   // out, so the button keeps working and the web page shows why.
-  const pinsMoved = patch.labelIds !== undefined || patch.type !== undefined;
+  const pinsMoved = patch.labelIds !== undefined || typeMoved;
   const pinned = pinsMoved
     ? checkPinnedLabels(effective.labelIds, effective.type, labels)
     : ({ ok: true, ids: effective.labelIds } as const);

@@ -215,7 +215,17 @@ describe("pinning labels to a button", () => {
     mocks.tileFindFirst.mockResolvedValue(tileRow({ labels: [{ labelId: "l_stale" }] }));
     mocks.tileFindFirstOrThrow.mockResolvedValue(tileRow({ labels: [{ labelId: "l_stale" }] }));
 
-    const result = await updateQuickTile(prisma, "user_1", "tile_1", { label: "Renamed" });
+    // The Mini App's real payload: its editor submits the complete draft, so `type` and
+    // `categoryId` are always present and always equal to what is stored. Gating on their
+    // *presence* rather than their movement therefore fired on every edit it made, which is how
+    // the previous version of this fix failed for the one client it was written for.
+    const result = await updateQuickTile(prisma, "user_1", "tile_1", {
+      label: "Renamed",
+      description: "fare to office",
+      amount: 38,
+      type: "EXPENSE",
+      categoryId: "transportation",
+    });
 
     expect(result.ok).toBe(true);
     // And the pin is left in place rather than quietly dropped: the grid reports it as not
@@ -249,6 +259,34 @@ describe("pinning labels to a button", () => {
     expect(mocks.tileLabelCreateMany).toHaveBeenCalledWith({
       data: [{ tileId: "tile_1", labelId: "l_commute" }],
     });
+  });
+
+  it("lets that editor rename a button whose category type was flipped underneath it", async () => {
+    // The same dead end one check earlier, and reachable the same way with no edit at all:
+    // `PUT /api/categories/[id]` lets a custom category's type be flipped under its buttons.
+    // `resolveTileCategory` is built to tolerate that state, so refusing the edit strands it.
+    mocks.categoryFindMany.mockResolvedValue([
+      { id: "transportation", name: "Transportation", type: "INCOME", icon: "Car", color: "#000", isDefault: true },
+      { id: "other", name: "Other Expense", type: "EXPENSE", icon: "Tag", color: "#000", isDefault: true },
+    ]);
+
+    const result = await updateQuickTile(prisma, "user_1", "tile_1", {
+      label: "Renamed",
+      description: "fare to office",
+      amount: 38,
+      type: "EXPENSE",
+      categoryId: "transportation",
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("still refuses a category the patch actually moves to", async () => {
+    const result = await updateQuickTile(prisma, "user_1", "tile_1", { categoryId: "salary" });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("CATEGORY_UNUSABLE");
   });
 
   it("saves a patch that changes only the labels", async () => {
