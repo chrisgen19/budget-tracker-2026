@@ -47,9 +47,9 @@ export function QuickTileForm({
 
   // Held as the string typed rather than the parsed number: "0." and "38.0" are states a number
   // cannot hold, and rendering the parsed value back eats the decimal point mid-entry.
-  const [rawAmount, setRawAmount] = useState(
-    defaults?.amount === undefined || defaults?.amount === null ? "" : String(defaults.amount)
-  );
+  const seededAmount =
+    defaults?.amount === undefined || defaults?.amount === null ? "" : String(defaults.amount);
+  const [rawAmount, setRawAmount] = useState(seededAmount);
 
   const {
     register,
@@ -93,9 +93,15 @@ export function QuickTileForm({
   const submit = handleSubmit(async (values) => {
     await onSubmit({
       ...values,
-      // Empty, unparseable or non-positive all mean the same thing: ask on the way in. Parsed here
-      // rather than in the input's onChange so the raw string survives every intermediate state.
-      amount: parseAmount(rawAmount),
+      // The two-decimal bound applies to what the user **typed**, never to a figure they did not
+      // touch. A stored amount can carry more precision than this field accepts -- the Mini App's
+      // editor has no such bound -- and running it through the parser turned it into `null`, which
+      // is the "ask each time" state. Renaming a button would silently have changed what it does.
+      //
+      // Otherwise: empty, unparseable or non-positive all mean the same thing, ask on the way in.
+      // Parsed here rather than in the input's `onChange` so the raw string survives every
+      // intermediate state.
+      amount: rawAmount === seededAmount ? (defaults?.amount ?? null) : parseAmount(rawAmount),
     });
   });
 
