@@ -294,6 +294,7 @@ export default function QuickLogPage() {
         entries={frequent}
         currency={user.currency}
         loading={frequentLoading}
+        atLimit={atLimit}
         onMakeButton={(entry) =>
           openNew({
             // The description is the most recent spelling the user actually wrote, so it makes a
