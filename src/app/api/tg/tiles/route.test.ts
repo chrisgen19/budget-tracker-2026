@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   categoryFindMany: vi.fn(),
   labelFindMany: vi.fn(),
   transaction: vi.fn(),
+  queryRaw: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -35,6 +36,7 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: mocks.tileUpdateMany,
       deleteMany: mocks.tileDeleteMany,
     },
+    $queryRaw: mocks.queryRaw,
     $transaction: mocks.transaction,
   },
 }));
@@ -124,7 +126,18 @@ beforeEach(() => {
   mocks.tileDeleteMany.mockResolvedValue({ count: 1 });
   mocks.tileLabelDeleteMany.mockResolvedValue({ count: 0 });
   mocks.tileLabelCreateMany.mockResolvedValue({ count: 0 });
-  mocks.transaction.mockResolvedValue([]);
+  // `updateQuickTile` uses the interactive form and `reorderQuickTiles` the array form, so the
+  // mock serves both. The callback is handed the same mocked delegates.
+  mocks.transaction.mockImplementation(async (arg: unknown) => {
+    if (typeof arg !== "function") return [];
+    const { prisma } = await import("@/lib/prisma");
+    return (arg as (tx: unknown) => unknown)(prisma);
+  });
+  // The `SELECT ... FOR UPDATE` that opens an edit, derived from the stored row under test.
+  mocks.queryRaw.mockImplementation(async () => {
+    const row = await mocks.tileFindFirst();
+    return row ? [{ type: row.type, category_id: row.categoryId }] : [];
+  });
 });
 
 afterEach(() => {
@@ -221,7 +234,7 @@ describe("PATCH /api/tg/tiles/[id]", () => {
     );
 
     expect(res.status).toBe(404);
-    expect(mocks.tileUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.tileUpdate).not.toHaveBeenCalled();
   });
 
   it("clears a fixed amount when sent an explicit null", async () => {
@@ -229,33 +242,30 @@ describe("PATCH /api/tg/tiles/[id]", () => {
     // impossible to express, which is why the schema is nullable rather than optional.
     await PATCH(req("https://x.test/api/tg/tiles/tile_1", "PATCH", { amount: null }), params("tile_1"));
 
-    expect(mocks.tileUpdateMany.mock.calls.at(-1)![0].data).toEqual({ amount: null });
+    expect(mocks.tileUpdate.mock.calls.at(-1)![0].data).toEqual({ amount: null });
   });
 
   it("writes only the keys actually sent", async () => {
     await PATCH(req("https://x.test/api/tg/tiles/tile_1", "PATCH", { label: "Office" }), params("tile_1"));
 
-    expect(mocks.tileUpdateMany.mock.calls.at(-1)![0].data).toEqual({ label: "Office" });
+    expect(mocks.tileUpdate.mock.calls.at(-1)![0].data).toEqual({ label: "Office" });
   });
 
   it("writes against the pair it validated, not the id alone", async () => {
-    // The check runs on the effective row built from a read taken outside any transaction. Two
+    // The checks run on the effective row built from a read taken outside any transaction. Two
     // edits in flight can each be valid alone and combine into a pair neither asked for, so the
-    // write names the values it judged and lands only while they still hold.
+    // write re-reads the pair it judged under a row lock and lands only while it still holds.
     mocks.tileFindFirst.mockResolvedValue(tileRow({ type: "EXPENSE", categoryId: "transportation" }));
 
     await PATCH(req("https://x.test/api/tg/tiles/tile_1", "PATCH", { label: "Office" }), params("tile_1"));
 
-    expect(mocks.tileUpdateMany.mock.calls.at(-1)![0].where).toEqual({
-      id: "tile_1",
-      userId: "user_1",
-      type: "EXPENSE",
-      categoryId: "transportation",
-    });
+    expect(mocks.queryRaw).toHaveBeenCalled();
+    expect(mocks.tileUpdate).toHaveBeenCalled();
   });
 
   it("409s when the tile moved under the edit", async () => {
-    mocks.tileUpdateMany.mockResolvedValue({ count: 0 });
+    // The locked row disagrees with the one the checks were judged against.
+    mocks.queryRaw.mockResolvedValue([{ type: "INCOME", category_id: null }]);
 
     const res = await PATCH(
       req("https://x.test/api/tg/tiles/tile_1", "PATCH", { label: "Office" }),
@@ -277,7 +287,7 @@ describe("PATCH /api/tg/tiles/[id]", () => {
     );
 
     expect(res.status).toBe(400);
-    expect(mocks.tileUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.tileUpdate).not.toHaveBeenCalled();
   });
 
   it("allows a type flip that moves the category with it", async () => {

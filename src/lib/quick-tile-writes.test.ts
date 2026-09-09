@@ -19,10 +19,12 @@ const mocks = vi.hoisted(() => ({
   tileFindFirst: vi.fn(),
   tileFindFirstOrThrow: vi.fn(),
   tileCreate: vi.fn(),
+  tileUpdate: vi.fn(),
   tileUpdateMany: vi.fn(),
   tileLabelDeleteMany: vi.fn(),
   tileLabelCreateMany: vi.fn(),
   transaction: vi.fn(),
+  queryRaw: vi.fn(),
 }));
 
 vi.mock("@/lib/transaction-writes", () => ({
@@ -80,12 +82,14 @@ const prisma = {
     findFirst: mocks.tileFindFirst,
     findFirstOrThrow: mocks.tileFindFirstOrThrow,
     create: mocks.tileCreate,
+    update: mocks.tileUpdate,
     updateMany: mocks.tileUpdateMany,
   },
   telegramQuickTileLabel: {
     deleteMany: mocks.tileLabelDeleteMany,
     createMany: mocks.tileLabelCreateMany,
   },
+  $queryRaw: mocks.queryRaw,
   $transaction: mocks.transaction,
 } as unknown as PrismaClient;
 
@@ -111,10 +115,26 @@ beforeEach(() => {
     const { labels, ...scalars } = data as { labels?: { create?: { labelId: string }[] } };
     return Promise.resolve(tileRow({ id: "tile_new", ...scalars, labels: labels?.create ?? [] }));
   });
-  mocks.tileUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.tileUpdate.mockImplementation(() => Promise.resolve(tileRow()));
+  // Faithful to Prisma, which emits **no statement at all** for an empty `data` and reports
+  // `count: 0`. A mock that answered 1 here would hide the bug this models: an edit that moves
+  // only `labelIds` has no scalar fields, so a staleness check reading that count refused it.
+  mocks.tileUpdateMany.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+    Promise.resolve({ count: Object.keys(data).length === 0 ? 0 : 1 })
+  );
   mocks.tileLabelDeleteMany.mockResolvedValue({ count: 0 });
   mocks.tileLabelCreateMany.mockResolvedValue({ count: 0 });
-  mocks.transaction.mockResolvedValue([]);
+  // `updateQuickTile` runs the interactive form and hands the callback a transaction client;
+  // `reorderQuickTiles` still uses the array form. The mock has to serve both.
+  mocks.transaction.mockImplementation((arg: unknown) =>
+    typeof arg === "function" ? (arg as (tx: unknown) => unknown)(prisma) : Promise.resolve([])
+  );
+  // The `SELECT ... FOR UPDATE` that opens the edit. Derived from whatever `findFirst` is
+  // returning, so a test that changes the stored row does not have to restate it here.
+  mocks.queryRaw.mockImplementation(async () => {
+    const row = await mocks.tileFindFirst();
+    return row ? [{ type: row.type, category_id: row.categoryId }] : [];
+  });
   mocks.findSavedBatch.mockResolvedValue([]);
   mocks.createTransactionBatch.mockResolvedValue({
     ok: true,
@@ -181,7 +201,7 @@ describe("pinning labels to a button", () => {
     if (result.ok) return;
     expect(result.reason).toBe("LABELS_UNUSABLE");
     expect(result.message).toContain("Commute");
-    expect(mocks.tileUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.tileUpdate).not.toHaveBeenCalled();
   });
 
   it("lets an editor with no label picker rename a button carrying a pin that no longer applies", async () => {
@@ -200,7 +220,8 @@ describe("pinning labels to a button", () => {
     expect(result.ok).toBe(true);
     // And the pin is left in place rather than quietly dropped: the grid reports it as not
     // applying and the tap filters it out, so nothing is lost and nothing is written wrongly.
-    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.tileLabelDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.tileLabelCreateMany).not.toHaveBeenCalled();
   });
 
   it("leaves the pins alone when the patch does not name them", async () => {
@@ -212,7 +233,8 @@ describe("pinning labels to a button", () => {
     expect(result.ok).toBe(true);
     // Restating an unchanged set must not rewrite the link rows: a delete-then-create that changes
     // nothing is a write with no change behind it, the same thing the app's edit paths refuse.
-    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.tileLabelDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.tileLabelCreateMany).not.toHaveBeenCalled();
   });
 
   it("replaces the pins when the patch moves them", async () => {
@@ -227,6 +249,33 @@ describe("pinning labels to a button", () => {
     expect(mocks.tileLabelCreateMany).toHaveBeenCalledWith({
       data: [{ tileId: "tile_1", labelId: "l_commute" }],
     });
+  });
+
+  it("saves a patch that changes only the labels", async () => {
+    // An edit that moves only `labelIds` has no scalar fields to write, and Prisma emits no
+    // statement at all for an empty `data` -- it reports `count: 0`, which the staleness branch
+    // read as "the row moved underneath you". Changing only a button's labels answered a spurious
+    // 409 and wrote nothing. Staleness is now judged by the locking SELECT, which always runs.
+    mocks.tileFindFirst.mockResolvedValue(tileRow({ labels: [] }));
+
+    const result = await updateQuickTile(prisma, "user_1", "tile_1", { labelIds: ["l_work"] });
+
+    expect(result.ok).toBe(true);
+    expect(mocks.tileLabelCreateMany).toHaveBeenCalledWith({
+      data: [{ tileId: "tile_1", labelId: "l_work" }],
+    });
+  });
+
+  it("refuses when the row moved under the edit", async () => {
+    // The locked row disagrees with the one the checks were run against.
+    mocks.queryRaw.mockResolvedValue([{ type: "INCOME", category_id: null }]);
+
+    const result = await updateQuickTile(prisma, "user_1", "tile_1", { label: "Renamed" });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("STALE");
+    expect(mocks.tileLabelCreateMany).not.toHaveBeenCalled();
   });
 
   it("clears the pins on an explicit empty list", async () => {

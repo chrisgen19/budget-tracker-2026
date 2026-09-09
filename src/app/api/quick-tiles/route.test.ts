@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   tileLabelDeleteMany: vi.fn(),
   tileLabelCreateMany: vi.fn(),
   transaction: vi.fn(),
+  queryRaw: vi.fn(),
   createTransactionBatch: vi.fn(),
   findSavedBatch: vi.fn(),
 }));
@@ -48,6 +49,7 @@ vi.mock("@/lib/prisma", () => ({
       deleteMany: mocks.tileLabelDeleteMany,
       createMany: mocks.tileLabelCreateMany,
     },
+    $queryRaw: mocks.queryRaw,
     $transaction: mocks.transaction,
   },
 }));
@@ -119,7 +121,18 @@ beforeEach(() => {
   mocks.tileDeleteMany.mockResolvedValue({ count: 1 });
   mocks.tileLabelDeleteMany.mockResolvedValue({ count: 0 });
   mocks.tileLabelCreateMany.mockResolvedValue({ count: 0 });
-  mocks.transaction.mockResolvedValue([]);
+  // `updateQuickTile` uses the interactive form and `reorderQuickTiles` the array form, so the
+  // mock serves both. The callback is handed the same mocked delegates.
+  mocks.transaction.mockImplementation(async (arg: unknown) => {
+    if (typeof arg !== "function") return [];
+    const { prisma } = await import("@/lib/prisma");
+    return (arg as (tx: unknown) => unknown)(prisma);
+  });
+  // The `SELECT ... FOR UPDATE` that opens an edit, derived from the stored row under test.
+  mocks.queryRaw.mockImplementation(async () => {
+    const row = await mocks.tileFindFirst();
+    return row ? [{ type: row.type, category_id: row.categoryId }] : [];
+  });
   mocks.findSavedBatch.mockResolvedValue([]);
   mocks.createTransactionBatch.mockResolvedValue({
     ok: true,
@@ -225,7 +238,8 @@ describe("PATCH and DELETE /api/quick-tiles/[id]", () => {
   });
 
   it("maps a row that moved under the edit to 409", async () => {
-    mocks.tileUpdateMany.mockResolvedValue({ count: 0 });
+    // The locked row disagrees with the one the checks were judged against.
+    mocks.queryRaw.mockResolvedValue([{ type: "INCOME", category_id: null }]);
 
     const res = await PATCH(
       req("https://x.test/api/quick-tiles/tile_1", "PATCH", { label: "Renamed" }),

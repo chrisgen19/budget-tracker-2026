@@ -321,58 +321,79 @@ export const updateQuickTile = async (
 
   const labelsMoved = !sameIdSet(pinned.ids, storedLabelIds);
 
+  const scalars = {
+    // Only the keys actually sent. `amount` is spread explicitly because `null` is a real value
+    // here -- it means "make this button ask" -- and dropping it as falsy would make that
+    // edit impossible.
+    ...(patch.label !== undefined && { label: patch.label }),
+    ...(patch.description !== undefined && { description: patch.description }),
+    ...(patch.amount !== undefined && { amount: patch.amount }),
+    ...(patch.type !== undefined && { type: patch.type }),
+    ...(patch.categoryId !== undefined && { categoryId: patch.categoryId }),
+  };
+
   try {
-    // Written against the pair that was *validated*, not against the id alone.
+    // One transaction for the whole edit, and the row lock is its **first** statement.
     //
-    // The check above runs on the effective row built from `stored`, which was read outside any
-    // transaction. Two edits in flight can each read the same row and each be valid on their own:
-    // one moves `type` and `categoryId` to an income pair, the other moves only `categoryId` to an
-    // expense one. Applied by id, the second lands on a row the first already changed and stores a
-    // combination neither request asked for and no constraint forbids.
+    // Two things go wrong when the scalar write and the pin replacement commit separately. A
+    // failure in between leaves the new `type` beside the old pins -- exactly the combination the
+    // check above refuses to accept from a caller. And two concurrent edits that move only
+    // `labelIds` can interleave their delete and create, leaving the union of both sets: a pin
+    // configuration neither request submitted.
     //
-    // Naming `type` and `categoryId` in the `where` makes the write conditional on the world still
-    // looking the way it did when it was judged, which is why this is `updateMany` -- `update`
-    // takes only unique fields.
-    const written = await prisma.telegramQuickTile.updateMany({
-      where: { id, userId, type: stored.type, categoryId: stored.categoryId },
-      // Only the keys actually sent. `amount` is spread explicitly because `null` is a real value
-      // here -- it means "make this button ask" -- and dropping it as falsy would make that
-      // edit impossible.
-      data: {
-        ...(patch.label !== undefined && { label: patch.label }),
-        ...(patch.description !== undefined && { description: patch.description }),
-        ...(patch.amount !== undefined && { amount: patch.amount }),
-        ...(patch.type !== undefined && { type: patch.type }),
-        ...(patch.categoryId !== undefined && { categoryId: patch.categoryId }),
-      },
+    // The lock goes first because of the foreign key, not despite it. Inserting a
+    // `telegram_quick_tile_labels` row takes a `FOR KEY SHARE` lock on the parent tile, and
+    // `FOR UPDATE` conflicts with it, so taking the lock *after* the insert deadlocks. Same
+    // ordering `settleBill` and `updateTransactions` both document, and for the same reason.
+    const outcome = await prisma.$transaction(async (tx) => {
+      // Judged under the lock, against the pair that was *validated* rather than against the id
+      // alone. The checks above ran on `stored`, read outside any transaction: two edits in
+      // flight can each be valid on their own -- one moving `type` and `categoryId` to an income
+      // pair, the other moving only `categoryId` to an expense one -- and applied blindly the
+      // second lands on a row the first already changed, storing a combination neither asked for
+      // and no constraint forbids.
+      //
+      // This is a `SELECT` and not the old `updateMany` predicate because an edit that moves only
+      // `labelIds` has no scalar fields to write: Prisma emits no statement at all for an empty
+      // `data` and reports `count: 0`, which the staleness branch then read as "the row moved".
+      // Changing only a button's labels was refused with a spurious 409 and wrote nothing.
+      const locked = await tx.$queryRaw<{ type: string; category_id: string | null }[]>`
+        SELECT "type"::text, "category_id"
+        FROM "telegram_quick_tiles"
+        WHERE "id" = ${id} AND "user_id" = ${userId}
+        FOR UPDATE
+      `;
+
+      const current = locked[0];
+      if (!current || current.type !== stored.type || current.category_id !== stored.categoryId) {
+        return "STALE" as const;
+      }
+
+      if (Object.keys(scalars).length > 0) {
+        await tx.telegramQuickTile.update({ where: { id }, data: scalars });
+      }
+
+      // Replaced wholesale rather than diffed, and only when the set actually moved. A patch
+      // restating the same pins writes nothing, which keeps `created_at` on the link rows honest
+      // -- the same "stamp only what moved" rule the app's transaction edit paths follow.
+      if (labelsMoved) {
+        await tx.telegramQuickTileLabel.deleteMany({ where: { tileId: id } });
+        await tx.telegramQuickTileLabel.createMany({
+          data: pinned.ids.map((labelId) => ({ tileId: id, labelId })),
+        });
+      }
+
+      return tx.telegramQuickTile.findFirstOrThrow({ where: { id, userId }, select: TILE_SELECT });
     });
 
-    if (written.count === 0) {
+    if (outcome === "STALE") {
       return fail(
         "STALE",
         "That button changed while you were editing it. Reload and try again."
       );
     }
 
-    // Replaced wholesale rather than diffed, and only when the set actually moved. A patch
-    // restating the same pins writes nothing, which keeps `created_at` on the link rows honest --
-    // the same "stamp only what moved" rule the app's transaction edit paths follow. Scoped by
-    // `tileId`, which the `updateMany` above has already established belongs to this user.
-    if (labelsMoved) {
-      await prisma.$transaction([
-        prisma.telegramQuickTileLabel.deleteMany({ where: { tileId: id } }),
-        prisma.telegramQuickTileLabel.createMany({
-          data: pinned.ids.map((labelId) => ({ tileId: id, labelId })),
-        }),
-      ]);
-    }
-
-    const updated = await prisma.telegramQuickTile.findFirstOrThrow({
-      where: { id, userId },
-      select: TILE_SELECT,
-    });
-
-    return { ok: true, tile: viewTiles([updated], categories, labels)[0] };
+    return { ok: true, tile: viewTiles([outcome], categories, labels)[0] };
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       return fail("DUPLICATE_LABEL", "You already have a button with that label.");
