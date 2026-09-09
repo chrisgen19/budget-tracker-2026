@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus, Zap } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Modal } from "@/components/ui/modal";
@@ -25,6 +25,48 @@ import {
 } from "@/hooks/use-quick-tiles";
 import type { QuickTileView } from "@/lib/telegram/tile-queries";
 import type { TelegramQuickTileInput } from "@/lib/validations";
+
+/**
+ * Where unresolved taps are held across a reload.
+ *
+ * `sessionStorage` rather than `localStorage`: an unresolved write belongs to this sitting, and a
+ * key surviving until tomorrow would replay against a row the user has long since forgotten.
+ *
+ * Unscoped by user on purpose. A slot is keyed by tile id, tile ids are globally unique, and they
+ * are never shared between accounts -- so a leftover entry from a previous login can match
+ * nothing, and the worst it can do is sit there until the tab closes.
+ */
+const PENDING_TAPS_KEY = "quick-log:pending-taps";
+
+/** Identity of a tap: the same button for the same figure is the same intent. */
+const tapSlot = (tileId: string, amount: number) => `${tileId}:${amount}`;
+
+/** Every read and write is guarded: a private window or blocked site data throws on access. */
+const readPendingTaps = (): Record<string, string> => {
+  try {
+    const raw = sessionStorage.getItem(PENDING_TAPS_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return {};
+    // Only string values survive: a malformed entry must not become a clientBatchId.
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).filter(
+        ([, value]) => typeof value === "string"
+      )
+    ) as Record<string, string>;
+  } catch {
+    return {};
+  }
+};
+
+const writePendingTaps = (taps: Record<string, string>) => {
+  try {
+    if (Object.keys(taps).length === 0) sessionStorage.removeItem(PENDING_TAPS_KEY);
+    else sessionStorage.setItem(PENDING_TAPS_KEY, JSON.stringify(taps));
+  } catch {
+    // Storage being unavailable costs the reload-safety, not the tap.
+  }
+};
 
 /**
  * Quick Log - the buttons that turn a routine expense into one tap.
@@ -74,8 +116,21 @@ export default function QuickLogPage() {
    */
   const [pending, setPending] = useState<Record<string, string>>({});
 
-  /** Identity of a tap: the same button for the same figure is the same intent. */
-  const tapSlot = (tileId: string, amount: number) => `${tileId}:${amount}`;
+  // Restored after a reload, because React state is not where an unresolved write can live.
+  // A tap whose outcome is unknown keeps its key precisely so a re-press replays instead of
+  // writing a second row -- and "the request failed, let me refresh" is the most natural thing a
+  // user does next, which discarded the only copy of that key.
+  //
+  // Restored keys are *reused*, never auto-replayed: nothing is posted until the user presses the
+  // same button for the same figure again, which is a deliberate act. That is the difference from
+  // the Mini App's `pending-log.ts`, which restores a whole draft on launch and so has to offer it.
+  useEffect(() => {
+    setPending(readPendingTaps());
+  }, []);
+
+  useEffect(() => {
+    writePendingTaps(pending);
+  }, [pending]);
 
   const releaseTap = (slot: string) =>
     setPending((held) => {
