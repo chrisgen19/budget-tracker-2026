@@ -26,7 +26,7 @@ src/
 ├── app/
 │   ├── (auth)/             # Login, Register, Forgot/Reset Password, Email Verify
 │   ├── (app)/              # Protected pages:
-│   │   ├── dashboard/      # Dashboard with charts + upcoming bills widget
+│   │   ├── dashboard/      # Dashboard with charts, upcoming bills + quick-log strip
 │   │   ├── analytics/      # Analytics page with reports + time range controls
 │   │   ├── transactions/   # Transaction list + CRUD
 │   │   ├── categories/     # Category management
@@ -39,14 +39,14 @@ src/
 ├── components/
 │   ├── ui/                 # Shared UI: Modal, EmptyState, IconMap, ActionFab, ConfirmModal, Toast, DropdownButton
 │   ├── analytics/          # Analytics charts (IncomeExpenses, CashFlow, CategoryBreakdown, LabelBreakdown)
-│   ├── dashboard/          # Chart components
+│   ├── dashboard/          # Chart components + QuickLogStrip (one-tap grid on the landing screen)
 │   ├── transactions/       # Transaction form, LabelPicker, ReceiptBreakdown
 │   ├── labels/             # LabelForm (with schedule config)
 │   ├── categories/         # Category form
 │   ├── bills/              # BillForm, BillReminderBanner, BillReminderProvider
 │   ├── pwa/                # InstallPromptBanner, OfflineBanner, InstallBannerContext
 │   ├── telegram/           # Mini App: TelegramApp shell, TileGrid, AmountSheet, TileEditor
-│   ├── quick-log/          # Web editor for the same tiles: QuickTileCard, QuickTileForm, AmountPrompt
+│   ├── quick-log/          # Web editor for the same tiles: QuickTileCard, QuickTileChip, QuickTileForm, AmountPrompt
 │   ├── scan-receipt-sheet.tsx   # Single receipt capture modal
 │   ├── multi-scan-review.tsx    # Multi-receipt review + itemize
 │   ├── scan-provider.tsx        # Receipt scan state context
@@ -88,7 +88,7 @@ The area-specific material below lives in `.claude/rules/`, moved out of this fi
 Claude Code injects a rule file automatically when you touch a file matching its `paths:`;
 other agent tools do not load them, so open the file directly when you need the detail.
 
-- **[.claude/rules/telegram.md](.claude/rules/telegram.md)**: the bot, the reply keyboard, the evening prompt, multi-shorthand, the Mini App grid, quick-log tiles and pinned labels, the tap idempotency key, Frequent, and the `TELEGRAM_*` variables. Loads on `src/lib/telegram/**`, `src/app/tg/**`, `src/app/api/tg/**`, `src/components/telegram/**`, `src/app/(app)/quick-log/**`, `src/components/quick-log/**`, `src/lib/quick-tile-writes.ts`, `src/hooks/use-quick-tiles.ts`, `src/lib/assessment-facts.ts`, `src/lib/gemini.ts`, `src/lib/validations.ts`, `src/components/profile/features-form.tsx`, `src/app/(app)/layout.tsx`, `src/app/api/preferences/**`, `src/app/api/quick-tiles/**`, `src/app/api/cron/telegram-prompts/**`, `src/instrumentation.ts`, `src/middleware.ts`, `src/middleware.test.ts`, `src/lib/protected-paths.ts`, `src/lib/protected-paths.test.ts`, `next.config.ts`, `scripts/telegram-bot.ts`, `scripts/link-telegram-user.ts`, `scripts/seed-telegram-quick-tiles.ts`, `e2e/telegram-mini-app.spec.ts`.
+- **[.claude/rules/telegram.md](.claude/rules/telegram.md)**: the bot, the reply keyboard, the evening prompt, multi-shorthand, the Mini App grid, quick-log tiles and pinned labels, the dashboard strip and the log/manage split, the tap idempotency key, Frequent, and the `TELEGRAM_*` variables. Loads on `src/lib/telegram/**`, `src/app/tg/**`, `src/app/api/tg/**`, `src/components/telegram/**`, `src/app/(app)/quick-log/**`, `src/components/quick-log/**`, `src/lib/quick-tile-writes.ts`, `src/hooks/use-quick-tiles.ts`, `src/hooks/use-quick-tap.ts`, `src/components/dashboard/quick-log-strip*`, `src/lib/assessment-facts.ts`, `src/lib/gemini.ts`, `src/lib/validations.ts`, `src/components/profile/features-form.tsx`, `src/app/(app)/layout.tsx`, `src/app/api/preferences/**`, `src/app/api/quick-tiles/**`, `src/app/api/cron/telegram-prompts/**`, `src/instrumentation.ts`, `src/middleware.ts`, `src/middleware.test.ts`, `src/lib/protected-paths.ts`, `src/lib/protected-paths.test.ts`, `next.config.ts`, `scripts/telegram-bot.ts`, `scripts/link-telegram-user.ts`, `scripts/seed-telegram-quick-tiles.ts`, `e2e/telegram-mini-app.spec.ts`.
 - **[.claude/rules/mcp.md](.claude/rules/mcp.md)**: the tool set and its two transports, scopes and the write lease, provenance columns, bearer-token auth, rate limiting, date windows and partial periods, and local calendar days on read rows. Loads on `src/lib/mcp/**`, `mcp-server/**`, `src/app/api/mcp/**`, `src/lib/budget-queries.ts`, `src/lib/budget-query-types.ts`, `src/lib/assessment-facts.ts`, `src/components/profile/mcp-*`, `src/app/api/preferences/**`, `src/app/api/transactions/**`, `src/app/api/labels/**`, `prisma/schema.prisma`, `prisma/migrations/**`, `src/lib/gemini.ts`.
 - **[.claude/rules/transactions.md](.claude/rules/transactions.md)**: the shared create and update paths, the shared label-removal path, request body ceilings, idempotent batch saves, and label schedules and type restrictions. Loads on `src/lib/transaction-writes.ts`, `src/lib/label-writes.ts`, `src/lib/request-size.ts`, `src/app/api/transactions/**`, `src/app/api/labels/**`, `src/lib/schedule-matching.ts`, `src/lib/schedule-server.ts`, `src/hooks/use-scheduled-label.ts`, `src/hooks/use-transactions.ts`, `src/hooks/use-multi-scan.ts`, `src/lib/receipt-limits.ts`, `src/components/transactions/**`, `src/lib/mcp/server.ts`, `src/lib/telegram/confirm-scan.ts`, `src/lib/telegram/bot.ts`, `src/app/api/mcp/**`.
 - **[.claude/rules/bills.md](.claude/rules/bills.md)**: `settleBill` and the occurrence guard, `createBill`/`updateBill`, variable-amount forecasting, and why every bill date is UTC calendar-day arithmetic. Loads on `src/lib/bill-dates.ts`, `src/lib/bill-writes.ts`, `src/lib/bill-utils.ts`, `src/lib/bill-estimate.ts`, `src/app/api/bills/**`, `src/components/bills/**`, `src/lib/budget-queries.ts`, `src/lib/budget-query-types.ts`, `src/lib/pending-bills.ts`, `src/app/(app)/bills/**`, `src/app/api/cron/bill-reminders/**`, `src/hooks/use-bills.ts`, `src/components/dashboard/upcoming-bill-row.tsx`, `src/lib/mcp/server.ts`.

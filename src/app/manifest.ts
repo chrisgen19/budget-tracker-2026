@@ -14,6 +14,19 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: "#C8702A",
     orientation: "portrait-primary",
     categories: ["finance", "productivity"],
+    // Long-press the installed icon (Android, or right-click on desktop) to land straight on the
+    // grid. Deliberately one entry pointing at the page rather than one per button: the manifest
+    // is static and cached, so per-tile entries would go stale the moment a button was renamed,
+    // and Chrome on Android renders only the first three anyway. iOS renders none, so this is an
+    // Android and desktop affordance only.
+    shortcuts: [
+      {
+        name: "Quick Log",
+        short_name: "Quick Log",
+        description: "Log a routine expense in one tap",
+        url: "/quick-log?source=shortcut",
+      },
+    ],
     icons: [
       { src: "/icon-192x192.png", sizes: "192x192", type: "image/png" },
       { src: "/icon-512x512.png", sizes: "512x512", type: "image/png" },

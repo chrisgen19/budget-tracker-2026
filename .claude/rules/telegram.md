@@ -8,6 +8,8 @@ paths:
   - "src/components/quick-log/**"
   - src/lib/quick-tile-writes.ts
   - src/hooks/use-quick-tiles.ts
+  - src/hooks/use-quick-tap.ts
+  - "src/components/dashboard/quick-log-strip*"
   - src/lib/assessment-facts.ts
   - src/lib/gemini.ts
   - src/lib/validations.ts
@@ -286,9 +288,55 @@ keypad exists because an OS keyboard resizes Telegram's webview mid-entry, which
 browser has, and a second keypad is a second thing to maintain.
 
 `/quick-log` is in `PROTECTED_PAGE_PATHS`. The list is a denylist that fails open, and this page
-renders the same buttons, amounts and pinned labels `/tg` does.
+renders the same buttons, amounts and pinned labels `/tg` does. `/dashboard` was already on it,
+which is why the strip below needed no service-worker change.
 
-### The tap key, and the five bugs it took to get right
+### The dashboard strip, and the split it rests on
+
+`QuickLogStrip` (`src/components/dashboard/quick-log-strip.tsx`) puts the first six buttons on
+`/dashboard`, which is the manifest `start_url`: one tap from a cold launch of the installed app.
+Before it the same buttons were **three** actions deep on a phone -- land on the dashboard, open the
+tab bar's More menu, then Quick Log -- so the web app was slower than the Mini App at the one thing
+quick logging exists for. Desktop was two, via the sidebar.
+
+**The chrome logs and `/quick-log` manages**, and that is the rule any further surface follows. No
+edit, no delete, no reorder, no overflow menu outside `/quick-log`. `quick-tile-writes.ts` keeps one
+rule set behind two auth doors and a third caller that can *edit* is a third place the tile cap, the
+duplicate-label refusal and the label rules can come to disagree; a caller that can only tap adds
+none of that. It also bounds the cost of a mis-tap on the app's landing screen to a transaction,
+which is visible in the ledger and deletable, rather than a deleted button.
+
+Which six is not a decision the strip makes: tiles arrive in `sortOrder`, so **reorder on
+`/quick-log` is already the control over what appears on the dashboard**, and there is deliberately
+no second setting for it.
+
+The strip renders **nothing** when the query errors, and that is the case worth keeping. A failed
+fetch leaves `tiles` empty exactly as a new account does, and an "add your first button" panel on
+the dashboard would report a network problem as a fact about the account -- while the buttons sit
+on `/quick-log`, which distinguishes those two states carefully. It shows no shimmer either: the
+tiles query resolves alongside the much heavier dashboard read that gates the whole page behind its
+skeleton, so a placeholder would only be a promise the empty case then breaks.
+
+`QuickTileChip` is a second component rather than a `variant` on `QuickTileCard`. The card carries
+category text, label pills, struck-through stale pins and a menu, which is right where you edit and
+wrong where you glance; they share `QuickTileView` and nothing else, and the one thing they must not
+share is the menu. The `fallsBack` warning survives the trim even though the category name does not
+-- a tile whose category was deleted files somewhere its label does not say, and `resolvedCategoryName`
+is carried on every read precisely so that is visible before the tap.
+
+`useQuickTap` (`src/hooks/use-quick-tap.ts`) is where the tap now lives, and the extraction came
+before the strip rather than after it. Every rule in `pending-taps.ts` was a bug first, so a second
+hand-written copy of claim/release/replay is a second chance to reintroduce one -- the same argument
+`quick-tile-writes.ts` makes about the server, applied to the client half. Both surfaces share the
+one `sessionStorage` store, which is the correct reading of an unresolved tap: it belongs to the
+tab, not to whichever page started it, so a tap begun on the dashboard stays replayable from
+`/quick-log` -- and that sharing is what forces the sixth rule in the list below.
+
+The manifest carries **one** `shortcuts` entry pointing at the page, not one per button. The
+manifest is static and cached, so per-tile entries would go stale the moment a button was renamed;
+Chrome on Android renders only the first three regardless, and iOS renders none.
+
+### The tap key, and the six bugs it took to get right
 
 `pending-taps.ts` holds one idempotency key per unresolved tap. Every rule in it was a bug first,
 and they are recorded because the mechanism reads as trivial and is not -- it is exactly-once
@@ -317,6 +365,45 @@ Whoever touches it next should assume the obvious simplification has already bee
   pressing again is a reaction to an error message. Short on purpose -- past the window a genuine
   retry writes a duplicate, which is visible and deletable, where inside it a genuine purchase is
   silently lost.
+- **Claim and release read-modify-write the store, never a snapshot.** The sixth, found in review
+  on #276 once a second surface started tapping. `useQuickTap` is mounted per surface but an
+  in-flight `runLog` outlives the page that started it, so a dashboard tap settling *after* the user
+  followed the Manage link wrote its own stale copy back over storage and deleted a key
+  `/quick-log` had claimed in between. The press after a failure was then a **new** key for a write
+  that may already have committed. Note this is the previous bullet's twin and not a repeat of it:
+  that one is about *when* release runs, this one about *what it computes from*, and fixing the
+  first is what made the second reachable. The read-modify-write lives in
+  `claimPendingTap`/`releasePendingTap` rather than in the hook, because a hook cannot be tested
+  without a DOM harness and this is the file that exists to be testable. The ref left in the hook
+  is a **mirror**, and the one thing it is still good for is a browser that refuses storage, where
+  the shared read answers `{}` and a retry would have no key at all.
+
+  Then three more rounds of review, each finding a different hole in the *same* fallback, and the
+  fourth is what made the shape of the mistake obvious. They were:
+
+  1. A release computed from a snapshot deleted a slot another surface had claimed since.
+  2. Merging that snapshot behind storage resurrected a slot storage had **settled** -- a completed
+     key reused, the finished transaction replayed, "Already logged" for a purchase never recorded.
+     Storage wins every slot it *reports*; it says nothing about one it has settled.
+  3. Judging on the read alone missed that a store can answer `getItem` and refuse every `setItem`
+     (legacy Safari private mode, shield extensions). Available-and-empty and cannot-be-written are
+     the same value and opposite facts.
+  4. A surface mounting after such a failed write started empty and lost the claim outright.
+
+  All four are one mistake: **a per-instance copy of state that is not per-instance.** So the record
+  is module-scoped in `pending-taps.ts` and the hook holds none of it. Module scope is not a
+  convenience here, it is the accurate scope -- shared by every surface in the tab, gone on a
+  reload, never crossing tabs, which is `sessionStorage`'s scope exactly. `writePendingTaps` writes
+  both copies in one call, so they cannot disagree, and `currentTaps` reads storage when storage is
+  a record and the in-memory copy when it is not (unreadable, or unwritable and therefore frozen in
+  the past). Neither is ever merged into the other, and there is nothing left to seed or reconcile.
+
+  Worth knowing when reading the tests: bug 2 is no longer *representable*. Reinstate the merge and
+  the suite still passes, because with both copies written together the merge is a no-op. Bugs 1, 3
+  and 4 are pinned and name themselves on revert. If a fifth hole ever appears here, delete the
+  in-memory copy rather than condition it further: storage as the sole record is provably correct,
+  and its one degradation is a duplicate, which is the visible side of the trade this file already
+  prefers.
 
 ### Deliberately not done
 

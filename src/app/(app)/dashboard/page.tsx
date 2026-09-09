@@ -13,9 +13,11 @@ import {
   ScanLine,
   CalendarClock,
   Receipt,
+  Zap,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { formatCurrency, getCurrencySymbol, cn } from "@/lib/utils";
 import { groupByDate, formatTime } from "@/lib/transaction-helpers";
 import { CategoryIcon } from "@/components/ui/icon-map";
@@ -31,6 +33,8 @@ import { useScan } from "@/components/scan-provider";
 import { useDashboardQuery, useCreateTransaction, useUpdateTransaction, useDeleteTransaction, useRemoveTransactionLabel } from "@/hooks/use-transactions";
 import { useUpcomingBillsQuery } from "@/hooks/use-bills";
 import { UpcomingBillRow } from "@/components/dashboard/upcoming-bill-row";
+import { QuickLogStrip } from "@/components/dashboard/quick-log-strip";
+import { useQuickTilesQuery } from "@/hooks/use-quick-tiles";
 import { TransactionLabelPills } from "@/components/transactions/transaction-label-pills";
 import { ActionFab } from "@/components/ui/action-fab";
 import type { TransactionInput } from "@/lib/validations";
@@ -38,6 +42,7 @@ import type { TransactionWithCategory } from "@/types";
 import { accountMonthKey } from "@/lib/account-time";
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [showForm, setShowForm] = useState(false);
   const [shouldScrollToRecent, setShouldScrollToRecent] = useState(false);
   const recentTransactionsRef = useRef<HTMLDivElement>(null);
@@ -54,6 +59,11 @@ export default function DashboardPage() {
   const [expandedBillId, setExpandedBillId] = useState<string | null>(null);
 
   const { data: stats, isLoading: loading } = useDashboardQuery(currentMonth, user.timezoneOffset);
+  // Started here, and the result deliberately unused: `QuickLogStrip` mounts inside the `stats`
+  // branch below, so left to itself its query could not begin until the dashboard read had already
+  // finished, and the strip would drop in afterwards shoving Upcoming Bills down the page. React
+  // Query dedupes on the key, so this is the same request the strip then reads from cache.
+  useQuickTilesQuery();
   const { data: upcomingData } = useUpcomingBillsQuery(user.timezoneOffset);
   const createMutation = useCreateTransaction();
   const updateMutation = useUpdateTransaction();
@@ -137,6 +147,11 @@ export default function DashboardPage() {
 
   // Shared by the header dropdown and the FAB that replaces it once the header
   // scrolls away, so the two menus cannot drift apart.
+  //
+  // Scan is the only entry `canScan` may remove. It used to gate the whole menu, which was fine
+  // while every entry was about receipts and wrong the moment Quick Log joined them: an account
+  // with scanning switched off got the plain button and `items={undefined}`, so a feature with no
+  // bearing on receipt permissions vanished from both menus at once.
   const addTransactionItems: DropdownItem[] = [
     {
       label: "Add Transaction",
@@ -144,16 +159,25 @@ export default function DashboardPage() {
       onClick: () => setShowForm(true),
     },
     {
-      label: "Scan Receipt",
-      icon: ScanLine,
-      onClick: openScan,
-      disabled: scanLimitReached,
-      sublabel: scanLimitReached
-        ? "Monthly limit reached"
-        : hasLimit
-          ? `${scansRemaining} scan${scansRemaining === 1 ? "" : "s"} left`
-          : undefined,
+      label: "Quick Log",
+      icon: Zap,
+      onClick: () => router.push("/quick-log"),
     },
+    ...(canScan
+      ? [
+          {
+            label: "Scan Receipt",
+            icon: ScanLine,
+            onClick: openScan,
+            disabled: scanLimitReached,
+            sublabel: scanLimitReached
+              ? "Monthly limit reached"
+              : hasLimit
+                ? `${scansRemaining} scan${scansRemaining === 1 ? "" : "s"} left`
+                : undefined,
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -170,23 +194,15 @@ export default function DashboardPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Add Transaction Button — desktop only */}
-          {canScan ? (
-            <DropdownButton
-              label="Add Transaction"
-              icon={Plus}
-              className="hidden sm:inline-flex"
-              items={addTransactionItems}
-            />
-          ) : (
-            <button
-              onClick={() => setShowForm(true)}
-              className="hidden sm:inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-4 py-2 rounded-xl transition-colors shadow-soft hover:shadow-soft-md"
-            >
-              <Plus className="w-4 h-4" />
-              Add Transaction
-            </button>
-          )}
+          {/* Add Transaction Button — desktop only. Always the dropdown: the menu carries Quick
+              Log whether or not this account can scan, and the plain-button branch it replaces
+              was the reason a non-scanning account could not reach it. */}
+          <DropdownButton
+            label="Add Transaction"
+            icon={Plus}
+            className="hidden sm:inline-flex"
+            items={addTransactionItems}
+          />
 
           {/* Month Navigator */}
           <div className="flex items-center gap-2 bg-white rounded-xl border border-cream-300/60 shadow-warm px-2 py-1.5">
@@ -261,6 +277,14 @@ export default function DashboardPage() {
               {displayAmount(stats.totalIncome, "text-income")}
             </motion.div>
           </div>
+
+          {/* Quick log — after the summary cards, before the bills. The cards answer "how am I
+              doing"; this answers "log the thing I opened the app for", and /dashboard is the
+              manifest start_url, so it is one tap from a cold launch. Renders nothing when there
+              are no buttons or the fetch failed. */}
+          <motion.div variants={fadeUp}>
+            <QuickLogStrip />
+          </motion.div>
 
           {/* Upcoming Bills */}
           {upcomingData && upcomingData.count > 0 && (
@@ -506,7 +530,7 @@ export default function DashboardPage() {
         label="Transaction"
         icon={Plus}
         onClick={() => setShowForm(true)}
-        items={canScan ? addTransactionItems : undefined}
+        items={addTransactionItems}
       />
 
       {/* Add Transaction Modal */}
