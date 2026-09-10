@@ -47,6 +47,15 @@ describe("buildTransactionsHref", () => {
     );
   });
 
+  it("drops a well-formed day that does not exist, matching what the API accepts", () => {
+    expect(buildTransactionsHref({ labelId: "l1", dateFrom: "2026-02-31" })).toBe(
+      "/transactions?labelId=l1",
+    );
+    expect(
+      readTransactionFilters(new URLSearchParams({ dateFrom: "2026-02-31" }), MANILA).dateFrom,
+    ).toBeNull();
+  });
+
   it("round-trips through the reader", () => {
     const drillDown = {
       type: "INCOME" as const,

@@ -34,6 +34,16 @@ describe("date range filtering", () => {
     expect(transactionFilterSchema.safeParse({ dateFrom: "2026-09-01" }).success).toBe(true);
   });
 
+  it("rejects a well-formed day that does not exist", () => {
+    // Date.UTC rolls 2026-02-31 forward to March 3, so accepting it would query a
+    // different range than the caller asked for and never say so.
+    expect(transactionFilterSchema.safeParse({ dateFrom: "2026-02-31" }).success).toBe(false);
+    expect(transactionFilterSchema.safeParse({ dateTo: "2026-04-31" }).success).toBe(false);
+    expect(transactionFilterSchema.safeParse({ dateFrom: "2026-02-29" }).success).toBe(false);
+    // 2028 is a leap year, so the same date is fine there.
+    expect(transactionFilterSchema.safeParse({ dateFrom: "2028-02-29" }).success).toBe(true);
+  });
+
   it("ends at the start of the day after dateTo, so the last day is included", () => {
     // A transaction at 23:59 on the 3rd must be inside a Jan 1–3 range.
     expect(whereDate({ dateFrom: "2026-01-01", dateTo: "2026-01-03" })).toEqual({

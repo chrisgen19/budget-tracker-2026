@@ -1,8 +1,13 @@
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
+import { isCalendarDay } from "@/lib/account-time";
 import { MAX_TRANSACTION_SEARCH_LENGTH } from "@/lib/transaction-filter-limits";
 
-const DAY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+const daySchema = z
+  .string()
+  .refine(isCalendarDay, "Expected an existing calendar day, YYYY-MM-DD")
+  .nullable()
+  .default(null);
 
 export const transactionFilterSchema = z.object({
   search: z.string().max(MAX_TRANSACTION_SEARCH_LENGTH).default(""),
@@ -14,8 +19,8 @@ export const transactionFilterSchema = z.object({
    * express, so a drill-down carries the range instead. Either end may stand
    * alone: `dateFrom` with no `dateTo` is everything since that day.
    */
-  dateFrom: z.string().regex(DAY_PATTERN).nullable().default(null),
-  dateTo: z.string().regex(DAY_PATTERN).nullable().default(null),
+  dateFrom: daySchema,
+  dateTo: daySchema,
   categoryId: z.string().min(1).max(100).nullable().default(null),
   labelId: z.string().min(1).max(100).nullable().default(null),
   createdVia: z.enum(["ALL", "APP", "MCP", "TELEGRAM"]).default("ALL"),

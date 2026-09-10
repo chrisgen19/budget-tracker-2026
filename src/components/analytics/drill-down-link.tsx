@@ -27,6 +27,12 @@ export function DrillDownLink({ href, label, className, children }: DrillDownLin
     <Link
       href={href}
       aria-label={label}
+      // One analytics page carries ~19 of these, each a distinct query string and
+      // so a distinct prefetch cache key, all pointing at a dynamic authenticated
+      // route. Prefetching would put that many RSC requests through middleware and
+      // a session check for a shell the target discards anyway — /transactions
+      // fetches its rows client-side through React Query.
+      prefetch={false}
       className={cn(
         "block rounded-lg transition-colors hover:bg-cream-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/40",
         className,

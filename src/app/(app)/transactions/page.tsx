@@ -165,18 +165,19 @@ export default function TransactionsPage() {
   // and edits made here afterwards stay in local state, so typing in the search box
   // does not rewrite history on every keystroke.
   //
-  // A query string that carries no filters is deliberately ignored rather than
-  // treated as "clear everything": the highlight flow below finishes by replacing
-  // the URL with a bare /transactions, and honouring that as a filter change would
-  // undo the month it just moved to.
+  // Losing the query is a change like any other. The nav item for this page is a
+  // plain link to /transactions and renders as *active* while a drill-down is on
+  // screen, so clicking it is how someone asks for the unfiltered list back — and
+  // because the route does not change, this page is never unmounted to reset
+  // itself. Ignoring the empty URL left it showing a drill-down the address bar no
+  // longer described. The one navigation that must not reset anything is the
+  // highlight cleanup below, which marks itself applied before it replaces the URL.
   const queryString = searchParams.toString();
   const appliedQueryRef = useRef(queryString);
   useEffect(() => {
     if (appliedQueryRef.current === queryString) return;
     appliedQueryRef.current = queryString;
-    const params = new URLSearchParams(queryString);
-    if (!hasTransactionFilterParams(params)) return;
-    setFilters(filtersFromParams(params, user.timezoneOffset));
+    setFilters(filtersFromParams(new URLSearchParams(queryString), user.timezoneOffset));
   }, [queryString, user.timezoneOffset]);
 
   useEffect(() => {
@@ -295,7 +296,9 @@ export default function TransactionsPage() {
           ? current
           : { ...current, month: transactionMonth }
       );
-      // Clean up URL
+      // Clean up URL. Claim the bare query first: this is the one navigation that
+      // must not reach the sync effect, or it would reset the month just set above.
+      appliedQueryRef.current = "";
       router.replace("/transactions", { scroll: false });
     }
   }, [highlightId, router, user.timezoneOffset]);

@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { PieChart as PieChartIcon } from "lucide-react";
 import type { AnalyticsCategoryItem } from "@/types";
@@ -38,8 +37,6 @@ interface CategoryBreakdownChartProps {
 }
 
 export function CategoryBreakdownChart({ data, currency, hideAmounts, range }: CategoryBreakdownChartProps) {
-  const router = useRouter();
-
   // The type travels with the category: in ALL mode the same category can appear
   // as two rows, one income and one expense, and a drill-down that dropped the
   // type would merge them back together and contradict the number just tapped.
@@ -72,15 +69,14 @@ export function CategoryBreakdownChart({ data, currency, hideAmounts, range }: C
               paddingAngle={2}
               stroke="#FFFFFF"
               strokeWidth={1.5}
-              // The index, not the sector payload: recharts spreads its own props
-              // over the datum, and the index is the one field that cannot drift.
-              onClick={(_: unknown, index: number) => {
-                const item = data[index];
-                if (item) router.push(hrefFor(item));
-              }}
             >
+              {/* Deliberately not clickable. The ring is 27px thick and a 1%
+                  category is a sliver of arc, well under the 44px minimum, and a
+                  tap on a slice is how the tooltip is read on touch — navigating
+                  away would take the chart's only touch interaction to reach a
+                  destination the row beside it already offers. */}
               {data.map((entry) => (
-                <Cell key={entry.id} fill={entry.color} className="cursor-pointer outline-none" />
+                <Cell key={entry.id} fill={entry.color} />
               ))}
             </Pie>
             <Tooltip

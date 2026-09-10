@@ -1,5 +1,5 @@
 import type { TransactionFilters } from "@/components/transactions/transaction-filters";
-import { accountMonthKey } from "@/lib/account-time";
+import { accountMonthKey, isCalendarDay } from "@/lib/account-time";
 import { MAX_TRANSACTION_SEARCH_LENGTH } from "@/lib/transaction-filter-limits";
 
 /**
@@ -17,12 +17,15 @@ export interface TransactionDrillDown {
   dateTo?: string | null;
 }
 
-const DAY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 
-/** Only the params the transactions list is willing to be steered by. */
+/**
+ * Only the params the transactions list is willing to be steered by. The same
+ * predicate the API validates with, so a day this lets through cannot be one the
+ * request is then rejected for.
+ */
 const asDay = (value: string | null | undefined) =>
-  value && DAY_PATTERN.test(value) ? value : null;
+  value && isCalendarDay(value) ? value : null;
 
 /**
  * Build the `/transactions` href behind a breakdown row.
