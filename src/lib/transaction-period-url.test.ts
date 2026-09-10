@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  filterSearchParams,
+  parseFilterParams,
   parsePeriodParams,
-  periodSearchParams,
   type PeriodParams,
 } from "@/lib/transaction-period-url";
 
@@ -68,15 +69,15 @@ describe("parsePeriodParams", () => {
   });
 });
 
-describe("periodSearchParams", () => {
+describe("filterSearchParams", () => {
   it("writes a bounded period", () => {
-    expect(periodSearchParams({ period: "monthly", from: "2026-09-01", to: "2026-09-30" })).toBe(
+    expect(filterSearchParams({ period: "monthly", from: "2026-09-01", to: "2026-09-30" })).toBe(
       "period=monthly&from=2026-09-01&to=2026-09-30",
     );
   });
 
   it("writes All time with no bounds", () => {
-    expect(periodSearchParams({ period: "all", from: null, to: null })).toBe("period=all");
+    expect(filterSearchParams({ period: "all", from: null, to: null })).toBe("period=all");
   });
 
   it.each<PeriodParams>([
@@ -87,6 +88,58 @@ describe("periodSearchParams", () => {
     { period: "all", from: null, to: null },
   ])("round-trips $period", (period) => {
     atSeptember();
-    expect(parse(periodSearchParams(period))).toEqual(period);
+    expect(parse(filterSearchParams(period))).toEqual(period);
+  });
+});
+
+describe("the narrowings the address bar carries", () => {
+  const parseAll = (query: string) => parseFilterParams(new URLSearchParams(query), MANILA);
+
+  it("keeps a drill-down's narrowings through a write and a read", () => {
+    // The page mirrors its filters to the URL on every change. A mirror that
+    // wrote back only the period would drop the category, and the reader — seeing
+    // the URL change — would take it off the filters too, widening the list the
+    // user had just narrowed by tapping a breakdown row.
+    atSeptember();
+    const arrived = parseAll("type=EXPENSE&categoryId=c1&period=custom&from=2026-09-01&to=2026-09-30");
+    expect(arrived).toMatchObject({
+      type: "EXPENSE",
+      categoryId: "c1",
+      period: "custom",
+      from: "2026-09-01",
+      to: "2026-09-30",
+    });
+    expect(parseAll(filterSearchParams(arrived))).toEqual(arrived);
+  });
+
+  it("defaults each narrowing rather than trusting the link", () => {
+    atSeptember();
+    expect(parseAll("type=TRANSFER")).toMatchObject({ type: "ALL" });
+    expect(parseAll("")).toMatchObject({
+      type: "ALL",
+      categoryId: null,
+      labelId: null,
+      search: "",
+    });
+  });
+
+  it("drops an id longer than the API accepts", () => {
+    // Holding it would leave every request failing with a 400 and no way out but
+    // editing the address bar.
+    atSeptember();
+    expect(parseAll(`categoryId=${"c".repeat(101)}`).categoryId).toBeNull();
+    expect(parseAll(`labelId=${"l".repeat(101)}`).labelId).toBeNull();
+    expect(parseAll(`categoryId=${"c".repeat(100)}`).categoryId).toBe("c".repeat(100));
+  });
+
+  it("truncates an oversized search rather than failing the API's ceiling", () => {
+    atSeptember();
+    expect(parseAll(`search=${"x".repeat(500)}`).search.length).toBe(255);
+  });
+
+  it("omits defaults rather than spelling them out", () => {
+    expect(
+      filterSearchParams({ period: "all", from: null, to: null, type: "ALL", categoryId: null, search: "" }),
+    ).toBe("period=all");
   });
 });

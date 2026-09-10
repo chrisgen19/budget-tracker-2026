@@ -39,3 +39,4 @@ describe("transaction display time", () => {
     expect(formatTime(rows[1].date, 420)).toBe("5:30 PM");
   });
 });
+

@@ -52,7 +52,9 @@ export function buildFilterChips({
       ? {
           id: "type",
           label: filters.type === "INCOME" ? "Income" : "Expenses",
-          onRemove: () => update({ type: "ALL" }),
+          // Same rule as the type toggle: the category list is scoped to the
+          // type, so widening the type drops a category chosen under it.
+          onRemove: () => update({ type: "ALL", categoryId: null }),
         }
       : null,
     categoryName

@@ -45,6 +45,15 @@ export interface TransactionFiltersBarProps {
   filters: TransactionFilters;
   onChange: Dispatch<SetStateAction<TransactionFilters>>;
   totalCount: number | null;
+  /**
+   * Bumped by the page whenever the URL rewrites the filters from outside.
+   *
+   * The search box needs to hear about that even when the committed search is
+   * unchanged either side of it — typing on a drill-down that had no search and
+   * then navigating leaves `filters.search` at "" throughout, so nothing the
+   * field itself watches would tell it that its pending commit is now obsolete.
+   */
+  filtersRevision?: number;
 }
 
 /** The picker speaks PeriodSelection; the filters mirror the wire format. */
@@ -90,6 +99,7 @@ export function TransactionFiltersBar({
   filters,
   onChange,
   totalCount,
+  filtersRevision,
 }: TransactionFiltersBarProps) {
   const { user } = useUser();
   const currencySymbol = getCurrencySymbol(user.currency);
@@ -107,15 +117,8 @@ export function TransactionFiltersBar({
   );
 
   const commitSearch = useCallback((search: string) => update({ search }), [update]);
-  const search = useDebouncedSearch(filters.search, commitSearch);
+  const search = useDebouncedSearch(filters.search, commitSearch, filtersRevision);
   const { reset: resetSearchInput } = search;
-
-  const previousTypeRef = useRef(filters.type);
-  useEffect(() => {
-    if (previousTypeRef.current === filters.type) return;
-    previousTypeRef.current = filters.type;
-    if (filters.categoryId) update({ categoryId: null });
-  }, [filters.categoryId, filters.type, update]);
 
   const clearAll = () => {
     resetSearchInput();
@@ -275,7 +278,21 @@ function TypeToggle({
   return (
     <div aria-label="Transaction type" className={cn("shrink-0 items-center gap-0.5 rounded-xl bg-cream-100 p-1", className)}>
       {(["ALL", "INCOME", "EXPENSE"] as const).map((type) => (
-        <button key={type} type="button" onClick={() => onChange({ type })} aria-label={compact ? type === "ALL" ? "All transactions" : type.toLowerCase() : undefined} aria-pressed={filters.type === type} className={cn("min-h-11 min-w-11 rounded-lg text-xs font-semibold transition-colors", compact ? "px-2" : "px-3", filters.type === type ? type === "INCOME" ? "bg-white text-income shadow-warm" : type === "EXPENSE" ? "bg-white text-expense shadow-warm" : "bg-white text-warm-700 shadow-warm" : "text-warm-400 hover:text-warm-600")}>
+        // Dropping the category belongs here, on the control the user actually
+        // pressed, rather than in an effect watching `filters.type`. An effect
+        // cannot tell a press apart from the same field arriving with a restored
+        // URL, and would strip the category out of a drill-down being navigated
+        // back to. The category list is scoped to the type, so a category chosen
+        // under one type either matches nothing under another or shows a chip
+        // that cannot resolve to a name — but only an actual *switch* invalidates
+        // it.
+        //
+        // Re-pressing the type already showing returns without calling onChange
+        // at all. Passing the same value is not the same as doing nothing: the
+        // update builds a fresh filters object, and the page watches that object
+        // by identity to reset the page number, drop the selection and announce
+        // "cleared because the filters changed" — all of it untrue here.
+        <button key={type} type="button" onClick={() => { if (type !== filters.type) onChange({ type, categoryId: null }); }} aria-label={compact ? type === "ALL" ? "All transactions" : type.toLowerCase() : undefined} aria-pressed={filters.type === type} className={cn("min-h-11 min-w-11 rounded-lg text-xs font-semibold transition-colors", compact ? "px-2" : "px-3", filters.type === type ? type === "INCOME" ? "bg-white text-income shadow-warm" : type === "EXPENSE" ? "bg-white text-expense shadow-warm" : "bg-white text-warm-700 shadow-warm" : "text-warm-400 hover:text-warm-600")}>
           {compact ? type === "ALL" ? "All" : type === "INCOME" ? "+" : "−" : type === "ALL" ? "All" : type === "INCOME" ? "Income" : "Expenses"}
         </button>
       ))}
