@@ -174,10 +174,15 @@ export default function TransactionsPage() {
   // highlight cleanup below, which marks itself applied before it replaces the URL.
   const queryString = searchParams.toString();
   const appliedQueryRef = useRef(queryString);
+  // Counts the rewrites, so the toolbar can tell one from an ordinary render. A
+  // URL with no search still has to clear a half-typed one, and "" before and ""
+  // after is invisible to anything watching the committed value.
+  const [filtersRevision, setFiltersRevision] = useState(0);
   useEffect(() => {
     if (appliedQueryRef.current === queryString) return;
     appliedQueryRef.current = queryString;
     setFilters(filtersFromParams(new URLSearchParams(queryString), user.timezoneOffset));
+    setFiltersRevision((revision) => revision + 1);
   }, [queryString, user.timezoneOffset]);
 
   useEffect(() => {
@@ -672,6 +677,7 @@ export default function TransactionsPage() {
         filters={filters}
         onChange={setFilters}
         totalCount={totalCount}
+        filtersRevision={filtersRevision}
       />
 
       {/* Transaction List — date-grouped */}

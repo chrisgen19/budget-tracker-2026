@@ -7,9 +7,11 @@ afterEach(() => vi.useRealTimers());
 
 const setup = (initial = "") => {
   const onCommit = vi.fn();
-  const view = renderHook(({ value }) => useDebouncedSearch(value, onCommit), {
-    initialProps: { value: initial },
-  });
+  const view = renderHook(
+    ({ value, resetKey }: { value: string; resetKey?: number }) =>
+      useDebouncedSearch(value, onCommit, resetKey),
+    { initialProps: { value: initial, resetKey: 0 } },
+  );
   return { ...view, onCommit };
 };
 
@@ -61,5 +63,30 @@ describe("useDebouncedSearch", () => {
 
     expect(onCommit).not.toHaveBeenCalled();
     expect(result.current.input).toBe("");
+  });
+});
+
+describe("the external reset key", () => {
+  it("drops a pending commit even when the committed value never changed", () => {
+    // Typing on a drill-down that had no search, then navigating: filters.search
+    // is "" before and after, so `value` alone cannot reveal that the pending
+    // commit now belongs to a page the user has left.
+    const { result, rerender, onCommit } = setup("");
+
+    act(() => result.current.change("grab"));
+    rerender({ value: "", resetKey: 1 });
+
+    act(() => vi.advanceTimersByTime(300));
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(result.current.input).toBe("");
+  });
+
+  it("shows the search the new URL asked for rather than blanking the field", () => {
+    const { result, rerender } = setup("");
+
+    act(() => result.current.change("grab"));
+    rerender({ value: "mango", resetKey: 1 });
+
+    expect(result.current.input).toBe("mango");
   });
 });

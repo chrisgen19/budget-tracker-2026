@@ -602,6 +602,17 @@ describe("changing the transaction type", () => {
     expect(currentFilters).toMatchObject({ type: "ALL", categoryId: null });
   });
 
+  it("keeps the category when the type showing is pressed again", () => {
+    // aria-pressed says the button is already on. Pressing an on toggle should do
+    // nothing, not quietly widen the list to every expense.
+    filterOptionState.value.categories = [{ id: "c1", name: "Groceries" }];
+    renderFilters({ ...baseFilters, type: "EXPENSE", categoryId: "c1" });
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Expenses" })[0]);
+
+    expect(currentFilters).toMatchObject({ type: "EXPENSE", categoryId: "c1" });
+  });
+
   it("keeps the category when the type arrives from outside rather than a press", () => {
     // Restoring a drill-down by Back re-supplies type and category together. An
     // effect watching filters.type cannot tell that from a press and used to strip
