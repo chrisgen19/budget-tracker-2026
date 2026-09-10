@@ -1,5 +1,5 @@
 import type { TransactionFilters } from "@/components/transactions/transaction-filters";
-import { accountMonthKey } from "@/lib/account-time";
+import { getCurrentMonth, monthRange } from "@/lib/analytics-period";
 import { MAX_TRANSACTION_SEARCH_LENGTH } from "@/lib/transaction-filter-limits";
 import { validDateString } from "@/lib/validations";
 
@@ -99,44 +99,49 @@ const asType = (value: string | null): TransactionFilters["type"] =>
   value === "INCOME" || value === "EXPENSE" ? value : "ALL";
 
 /**
+ * Resolve the window a URL asks for, in the three fields the filters carry.
+ *
+ * Precedence follows the server's own: an explicit window first, then All time,
+ * then the legacy `month` the client no longer stores but old links may still
+ * carry, then the ordinary current month. Bounds alongside All time are a
+ * contradiction the schema refuses, so such a URL is read as the window it
+ * actually describes.
+ */
+const readPeriod = (
+  params: URLSearchParams,
+  timezoneOffset: number,
+): Pick<TransactionFilters, "period" | "from" | "to"> => {
+  const window = asWindow(params.get("from"), params.get("to"));
+  if (window) return { period: "custom", ...window };
+
+  const period = params.get("period");
+  if (period === "all") return { period: "all", from: null, to: null };
+
+  const month = params.get("month");
+  if (month === "ALL") return { period: "all", from: null, to: null };
+  if (month && MONTH_PATTERN.test(month)) {
+    return {
+      period: "monthly",
+      ...monthRange(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1),
+    };
+  }
+
+  return { period: "monthly", ...getCurrentMonth(timezoneOffset) };
+};
+
+/**
  * Read a link's params into a full filter set, falling back to the defaults for
  * anything absent or malformed. A URL is user-editable input, so an unparseable
  * value is dropped rather than allowed to reach the API and 400 there.
- *
- * A window and a month cannot both apply — the server resolves the window first
- * and `month` is the legacy path behind it — so an incoming window parks the
- * month at "ALL", and no window leaves `period` null so the month stays
- * authoritative.
- *
- * `period=all` is the API's own way of saying unbounded, and the client already
- * has one: `month: "ALL"`, which sends no period and no window and reaches the
- * same `dateWindow` answer. Mapping it across rather than ignoring it matters
- * because this reader only runs for URLs `hasTransactionFilterParams` accepts —
- * and that includes `period` — so ignoring it would not leave the page alone, it
- * would impose the current month on a link that asked for everything.
  */
 export function readTransactionFilters(
   params: URLSearchParams,
   timezoneOffset: number,
 ): TransactionFilters {
-  const window = asWindow(params.get("from"), params.get("to"));
-  const month = params.get("month");
-  // Bounds alongside All time are a contradiction the schema refuses outright, so
-  // a URL carrying both is read as the window it actually describes.
-  const allTime = params.get("period") === "all" && !window;
-
   return {
     search: (params.get("search") ?? "").slice(0, MAX_TRANSACTION_SEARCH_LENGTH),
     type: asType(params.get("type")),
-    period: window ? "custom" : null,
-    from: window?.from ?? null,
-    to: window?.to ?? null,
-    month:
-      window || allTime
-        ? "ALL"
-        : month === "ALL" || (month && MONTH_PATTERN.test(month))
-          ? month
-          : accountMonthKey(new Date(), timezoneOffset),
+    ...readPeriod(params, timezoneOffset),
     categoryId: asFilterId(params.get("categoryId")),
     labelId: asFilterId(params.get("labelId")),
     createdVia: "ALL",

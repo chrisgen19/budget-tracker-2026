@@ -20,10 +20,9 @@ import type { TransactionFilters } from "@/components/transactions/transaction-f
 const baseFilters: TransactionFilters = {
   search: "",
   type: "ALL",
-  month: "2026-08",
-  period: null,
-  from: null,
-  to: null,
+  period: "monthly",
+  from: "2026-08-01",
+  to: "2026-08-31",
   categoryId: null,
   labelId: null,
   createdVia: "ALL",

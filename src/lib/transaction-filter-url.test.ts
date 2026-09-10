@@ -84,32 +84,38 @@ describe("buildTransactionsHref", () => {
       to: "2026-02-28",
     };
     const filters = readTransactionFilters(queryOf(buildTransactionsHref(drillDown)), MANILA);
-    expect(filters).toMatchObject({ ...drillDown, period: "custom", month: "ALL" });
+    expect(filters).toMatchObject({ ...drillDown, period: "custom" });
   });
 });
 
 describe("readTransactionFilters", () => {
-  it("parks the month at ALL when a window arrives, since the two are alternatives", () => {
+  it("gives an explicit window precedence over a month left in the URL", () => {
     const filters = readTransactionFilters(
       new URLSearchParams({ month: "2026-02", from: "2026-01-15", to: "2026-03-03" }),
       MANILA,
     );
-    expect(filters).toMatchObject({ month: "ALL", period: "custom", from: "2026-01-15" });
+    expect(filters).toMatchObject({ period: "custom", from: "2026-01-15", to: "2026-03-03" });
   });
 
-  it("leaves period null when there is no window, so the month stays authoritative", () => {
-    const filters = readTransactionFilters(new URLSearchParams({ month: "2026-02" }), MANILA);
-    expect(filters).toMatchObject({ month: "2026-02", period: null, from: null, to: null });
+  it("still understands the legacy month param the client no longer stores", () => {
+    // The server accepts it, so an old bookmark should keep working. It resolves
+    // to the same whole-month window the period picker would produce.
+    expect(readTransactionFilters(new URLSearchParams({ month: "2026-02" }), MANILA)).toMatchObject({
+      period: "monthly",
+      from: "2026-02-01",
+      to: "2026-02-28",
+    });
+    expect(readTransactionFilters(new URLSearchParams({ month: "ALL" }), MANILA)).toMatchObject({
+      period: "all",
+      from: null,
+      to: null,
+    });
   });
 
-  it("keeps a well-formed month and honours ALL", () => {
-    expect(readTransactionFilters(new URLSearchParams({ month: "ALL" }), MANILA).month).toBe("ALL");
-  });
-
-  it("falls back to the current account month for a malformed one", () => {
+  it("falls back to the current month for a malformed one", () => {
     const filters = readTransactionFilters(new URLSearchParams({ month: "nonsense" }), MANILA);
-    expect(filters.month).toMatch(/^\d{4}-\d{2}$/);
-    expect(filters.month).not.toBe("nonsense");
+    expect(filters.period).toBe("monthly");
+    expect(filters.from).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
   it("drops a half, backwards or impossible window rather than holding one the API refuses", () => {
@@ -123,11 +129,9 @@ describe("readTransactionFilters", () => {
     ];
     for (const query of queries) {
       const filters = readTransactionFilters(new URLSearchParams(query), MANILA);
-      expect(filters.period).toBeNull();
-      expect(filters.from).toBeNull();
-      expect(filters.to).toBeNull();
-      // No window means the month fallback applies.
-      expect(filters.month).toMatch(/^\d{4}-\d{2}$/);
+      // No usable window means the ordinary current month, not half a window.
+      expect(filters.period).toBe("monthly");
+      expect(filters.from).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     }
   });
 
@@ -203,13 +207,11 @@ describe("the request the client builds is one the API accepts", () => {
     );
 
   it("accepts an ordinary month view", () => {
-    const filters = readTransactionFilters(new URLSearchParams({ month: "2026-09" }), MANILA);
-    expect(parseTransactionSearchParams(buildTransactionParams(filters, 1, MANILA))).toMatchObject({
-      month: "2026-09",
-      period: null,
-      from: null,
-      to: null,
-    });
+    const filters = readTransactionFilters(new URLSearchParams(), MANILA);
+    const parsed = parseTransactionSearchParams(buildTransactionParams(filters, 1, MANILA));
+    expect(parsed.period).toBe("monthly");
+    expect(parsed.from).toBe(filters.from);
+    expect(parsed.to).toBe(filters.to);
     expect(parseAsServer(filters).success).toBe(true);
   });
 
@@ -223,7 +225,6 @@ describe("the request the client builds is one the API accepts", () => {
       period: "custom",
       from: "2026-09-01",
       to: "2026-09-30",
-      month: "ALL",
       categoryId: "c1",
       type: "EXPENSE",
     });
@@ -235,13 +236,13 @@ describe("an all-time URL", () => {
     // period=all is what the API calls unbounded; month "ALL" is the client's
     // name for the same thing, and sends no period and no window.
     const filters = readTransactionFilters(new URLSearchParams({ period: "all" }), MANILA);
-    expect(filters).toMatchObject({ month: "ALL", period: null, from: null, to: null });
+    expect(filters).toMatchObject({ period: "all", from: null, to: null });
   });
 
   it("still reaches the API as an unbounded request", () => {
     const filters = readTransactionFilters(new URLSearchParams({ period: "all" }), MANILA);
     const parsed = parseTransactionSearchParams(buildTransactionParams(filters, 1, MANILA));
-    expect(parsed.month).toBe("ALL");
+    expect(parsed.period).toBe("all");
     expect(buildTransactionWhere("user-1", parsed).date).toBeUndefined();
   });
 
@@ -252,6 +253,6 @@ describe("an all-time URL", () => {
       new URLSearchParams({ period: "all", from: "2026-09-01", to: "2026-09-30" }),
       MANILA,
     );
-    expect(filters).toMatchObject({ period: "custom", from: "2026-09-01", month: "ALL" });
+    expect(filters).toMatchObject({ period: "custom", from: "2026-09-01", to: "2026-09-30" });
   });
 });

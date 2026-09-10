@@ -54,16 +54,12 @@ export const buildTransactionParams = (filters: TransactionFilters, page: number
   const params = new URLSearchParams({
     page: String(page),
     limit: "15",
-    month: filters.month,
+    period: filters.period,
     tz: String(tz),
   });
-  // All three or none: the schema refuses a window missing a bound, and a period
-  // other than "all" that arrives without one.
-  if (filters.period && filters.from && filters.to) {
-    params.set("period", filters.period);
-    params.set("from", filters.from);
-    params.set("to", filters.to);
-  }
+  // Omitted rather than sent empty: the server's date validation rejects "".
+  if (filters.from) params.set("from", filters.from);
+  if (filters.to) params.set("to", filters.to);
   if (filters.type !== "ALL") params.set("type", filters.type);
   if (filters.search) params.set("search", filters.search);
   if (filters.categoryId) params.set("categoryId", filters.categoryId);

@@ -31,44 +31,6 @@ export const formatDayNameShort = (key: string) =>
     new Date(key + "T00:00:00Z")
   );
 
-const shortDay = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  timeZone: "UTC",
-});
-
-const shortDayWithYear = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-  timeZone: "UTC",
-});
-
-const asUtcDay = (key: string) => new Date(key + "T00:00:00Z");
-
-/**
- * Label an inclusive calendar-day range for the filter chip and the month button.
- *
- * The year is printed once when both ends share it ("Jan 15 – Mar 3, 2026") and on
- * both ends when they do not, since a range crossing New Year is exactly where a
- * single trailing year misleads. Either end may be absent: a drill-down can be
- * open at one side.
- */
-export const formatFilterRangeLabel = (
-  from: string | null,
-  to: string | null,
-): string => {
-  if (from && to) {
-    if (from === to) return shortDayWithYear.format(asUtcDay(from));
-    const sameYear = from.slice(0, 4) === to.slice(0, 4);
-    const start = sameYear ? shortDay.format(asUtcDay(from)) : shortDayWithYear.format(asUtcDay(from));
-    return `${start} – ${shortDayWithYear.format(asUtcDay(to))}`;
-  }
-  if (from) return `From ${shortDayWithYear.format(asUtcDay(from))}`;
-  if (to) return `Until ${shortDayWithYear.format(asUtcDay(to))}`;
-  return "";
-};
-
 /** Instant → account-local "3:27 PM" */
 export const formatTime = (date: string | Date, timezoneOffset: number) =>
   new Intl.DateTimeFormat("en-US", {

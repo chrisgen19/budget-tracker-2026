@@ -14,12 +14,14 @@ card exists to explain.
 
 `TransactionFilters` could only say `month`. Analytics works in arbitrary periods -- "last 90 days",
 a custom span, one heatmap day -- so a drill-down would have snapped to the containing month and
-shown a different set of rows than the number the user tapped. #282 landed the window itself
+shown a different set of rows than the number the user tapped. #282 landed the window on the server
 (`period` / `from` / `to`, refusing a half-specified or backwards range because
-`/api/transactions/selection` materialises bulk edits from these same filters); this change is the
-client half that uses it. `transaction-filter-url.ts` owns the param names in both directions, so
-the analytics side and the receiving page cannot drift, and a hand-typed URL behaves like a clicked
-one.
+`/api/transactions/selection` materialises bulk edits from these same filters) and #283 gave the
+ledger its picker; this change is the third caller, the one that arrives with a window already
+chosen. `transaction-filter-url.ts` owns the param names in both directions, so the analytics side
+and the receiving page cannot drift, and a hand-typed URL behaves like a clicked one -- including
+the legacy `month` an old bookmark may still carry, which resolves to the same whole-month window
+the picker would produce.
 
 Filters flow one way: **in**. A URL carrying them imposes them; later edits stay in local state, so
 typing in the search box does not rewrite history per keystroke. Losing the query resets the list,
