@@ -5,12 +5,18 @@ import { useDebouncedSearch } from "@/hooks/use-debounced-search";
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
+interface SearchProps {
+  value: string;
+  /** Optional, so a rerender that only changes `value` still type-checks. */
+  resetKey?: number;
+}
+
 const setup = (initial = "") => {
   const onCommit = vi.fn();
+  const initialProps: SearchProps = { value: initial, resetKey: 0 };
   const view = renderHook(
-    ({ value, resetKey }: { value: string; resetKey?: number }) =>
-      useDebouncedSearch(value, onCommit, resetKey),
-    { initialProps: { value: initial, resetKey: 0 } },
+    ({ value, resetKey }: SearchProps) => useDebouncedSearch(value, onCommit, resetKey),
+    { initialProps },
   );
   return { ...view, onCommit };
 };
