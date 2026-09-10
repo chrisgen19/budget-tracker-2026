@@ -16,7 +16,7 @@ type HighlightAction =
   | { type: "found"; id: string }
   | { type: "fetch"; id: string }
   | { type: "settled"; id: string }
-  | { type: "cleared" };
+  | { type: "released" };
 
 const IDLE: HighlightState = { status: "idle" };
 
@@ -37,14 +37,10 @@ const highlightReducer = (state: HighlightState, action: HighlightAction): Highl
       return state.status === "fetching" && state.id === action.id
         ? { status: "spent", id: action.id }
         : state;
-    case "cleared":
+    case "released":
       return state.status === "idle" ? state : IDLE;
   }
 };
-
-/** Whether this id has already been taken on, so a re-render must not start it again. */
-const isClaimed = (state: HighlightState, id: string) =>
-  state.status !== "idle" && state.id === id;
 
 interface UseHighlightedTransactionOptions {
   /** The `?highlight=` id, or null when the URL carries none. */
@@ -79,9 +75,9 @@ interface UseHighlightedTransactionOptions {
  * - **A lookup is cancelled by its own identity only.** The request lives in an effect keyed on
  *   the id being fetched and nothing else. It used to share an effect with the loaded rows, which
  *   change on their own as pages arrive, and a cleanup there dropped the reply for good.
- * - **Dropping the parameter abandons the lookup.** The nav item for this page is a plain link to
- *   bare `/transactions` that renders as active, so clicking it mid-lookup does not remount; a
- *   late reply must not then open a row the user has just left.
+ * - **Dropping or replacing the parameter abandons the lookup.** The nav item for this page is a
+ *   plain link to bare `/transactions` that renders as active, so clicking it mid-lookup does not
+ *   remount; a late reply must not then open a row the user has just left.
  * - **A failed lookup says so, and is still spent**, so it neither fails silently nor retries on
  *   every render.
  *
@@ -107,11 +103,15 @@ export function useHighlightedTransaction({
   });
 
   useEffect(() => {
-    if (!highlightId) {
-      dispatch({ type: "cleared" });
+    // A claim on any other id, or on none, is released first, and in particular before waiting
+    // for the list. Waiting first left an older lookup in flight while a newer id sat behind a
+    // loading list, so its reply still opened the row that had been replaced.
+    if (state.status !== "idle" && state.id !== highlightId) {
+      dispatch({ type: "released" });
       return;
     }
-    if (loading || isClaimed(state, highlightId)) return;
+    // Anything still claimed here is this id, already taken on, so it must not start again.
+    if (!highlightId || loading || state.status !== "idle") return;
 
     const loaded = loadedRows.find((row) => row.id === highlightId);
     if (loaded) {

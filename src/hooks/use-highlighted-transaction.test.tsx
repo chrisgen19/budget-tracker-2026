@@ -5,7 +5,7 @@ import type { TransactionWithCategory } from "@/types";
 
 const row = (id: string) => ({ id }) as TransactionWithCategory;
 
-function deferred<T>() {
+const deferred = <T,>() => {
   let resolve!: (value: T) => void;
   let reject!: (error: unknown) => void;
   const promise = new Promise<T>((done, fail) => {
@@ -13,7 +13,7 @@ function deferred<T>() {
     reject = fail;
   });
   return { promise, resolve, reject };
-}
+};
 
 interface Props {
   highlightId: string | null;
@@ -25,7 +25,7 @@ interface Props {
  * Render the hook with spies. `loadTransaction` hands out one deferred per call, so a test
  * can settle an earlier request after a later one and see which reply is allowed to land.
  */
-function setup(initialProps: Props, options: { reactStrictMode?: boolean } = {}) {
+const setup = (initialProps: Props, options: { reactStrictMode?: boolean } = {}) => {
   const requests: ReturnType<typeof deferred<TransactionWithCategory>>[] = [];
   const onOpen = vi.fn();
   const onError = vi.fn();
@@ -41,7 +41,7 @@ function setup(initialProps: Props, options: { reactStrictMode?: boolean } = {})
     { initialProps, ...options },
   );
   return { ...hook, requests, onOpen, onError, loadTransaction };
-}
+};
 
 /** Settle a request and let its callbacks and the resulting render run. */
 const settle = async (run: () => void) => {
@@ -195,6 +195,27 @@ describe("useHighlightedTransaction", () => {
 
     await settle(() => requests[1].resolve(row("second")));
     expect(onOpen).toHaveBeenCalledExactlyOnceWith(row("second"));
+    expect(result.current.pending).toBe(false);
+  });
+
+  it("drops a superseded reply that lands while the list is still loading", async () => {
+    // Found in review on #292, and present in #289's code too: the newer id waited for the list
+    // before anything released the older one, so the older reply was still wanted when it landed.
+    const { result, rerender, requests, onOpen, loadTransaction } = setup({
+      highlightId: "first",
+      loadedRows: [],
+      loading: false,
+    });
+
+    rerender({ highlightId: "second", loadedRows: [], loading: true });
+    expect(result.current.pending).toBe(true);
+
+    await settle(() => requests[0].resolve(row("first")));
+    expect(onOpen).not.toHaveBeenCalled();
+
+    rerender({ highlightId: "second", loadedRows: [row("second")], loading: false });
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith(row("second"));
+    expect(loadTransaction).toHaveBeenCalledTimes(1);
     expect(result.current.pending).toBe(false);
   });
 

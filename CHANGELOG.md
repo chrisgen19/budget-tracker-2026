@@ -23,6 +23,12 @@ the first request is still out, which the id comparison let through as if the ol
 one. One visible difference follows: a lookup that fails after the page has unmounted no longer
 shows its error toast on whatever page the user moved to. A dropped parameter already behaved that way.
 
+Review on #292 found one bug the move carried over rather than introduced. A newer id that arrived
+while the list was loading waited for the list before anything released the older one, so the older
+lookup's reply was still wanted and opened the row that had been replaced. #289's code had the same
+early return. Nothing reaches it today, since both producers sit on another route, but any claim on
+a different id is now released before the loading check.
+
 `use-highlighted-transaction.test.tsx` covers the guards `e2e/transaction-highlight.spec.ts` cannot
 reach, and each test was confirmed to fail with its guard removed. The Playwright spec passes
 unchanged.
