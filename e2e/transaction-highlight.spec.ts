@@ -188,6 +188,16 @@ test.describe("navigating away while the lookup is in flight", () => {
       await route.continue();
     });
 
+    // Registered before navigating, so the waiter cannot miss a fast reply. The
+    // assertion below is a negative one — nothing should happen — and a fixed delay
+    // would make it pass whenever the response simply had not arrived yet, which is
+    // the falsely-green shape this branch has been deleting tests for.
+    const lookup = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        response.url().endsWith(`/api/transactions/${fixture!.oldestId}`),
+    );
+
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/transactions?highlight=${fixture!.oldestId}`, {
       waitUntil: "domcontentloaded",
@@ -204,8 +214,12 @@ test.describe("navigating away while the lookup is in flight", () => {
       .click();
     await page.waitForURL((url) => !url.searchParams.has("highlight"));
 
-    // Past the delay, so the reply has definitely landed.
-    await page.waitForTimeout(4000);
+    // The reply has landed and its body has been read, so the stale callback has had
+    // its chance. What remains is the microtask and render after it, which is what the
+    // short settle covers — the sabotage check confirms that is long enough.
+    const response = await lookup;
+    await response.finished();
+    await page.waitForTimeout(500);
     await expect(page.getByRole("dialog")).toBeHidden();
 
     // And the period is the one a fresh view shows, not the old row's month.
