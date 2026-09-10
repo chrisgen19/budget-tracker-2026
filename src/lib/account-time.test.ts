@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  accountDateKey,
-  accountMonthKey,
-  combineAccountDateWithTime,
-  formatAccountDateInput,
-  relativeAccountDateInput,
-} from "@/lib/account-time";
+import { accountDateKey, accountMonthKey, combineAccountDateWithTime, formatAccountDateInput, relativeAccountDateInput } from "@/lib/account-time";
 
 const INSTANT = new Date("2026-08-28T00:30:00.000Z");
 
@@ -38,3 +32,4 @@ describe("account time helpers", () => {
     expect(relativeAccountDateInput(INSTANT, 420, 1)).toBe("2026-08-28T17:30");
   });
 });
+

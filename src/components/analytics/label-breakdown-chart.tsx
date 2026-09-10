@@ -3,9 +3,11 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Tags } from "lucide-react";
-import type { AnalyticsLabelItem } from "@/types";
+import type { AnalyticsLabelItem, AnalyticsTypeFilter } from "@/types";
 import { formatCurrency, getCurrencySymbol } from "@/lib/utils";
 import { ChartEmptyState } from "@/components/analytics/chart-empty-state";
+import { DrillDownLink, drillDownLabel } from "@/components/analytics/drill-down-link";
+import { buildTransactionsHref } from "@/lib/transaction-filter-url";
 
 const VISIBLE_COUNT = 8;
 
@@ -13,9 +15,17 @@ interface LabelBreakdownChartProps {
   data: AnalyticsLabelItem[];
   currency: string;
   hideAmounts: boolean;
+  /** The analytics period, carried into the list so a drill-down shows this number's rows. */
+  range: { from: string; to: string };
+  /**
+   * The card's own type filter. Unlike a category, a label can sit on both income
+   * and expenses, so the bar's amount only matches the list once the type comes
+   * along with it.
+   */
+  type: AnalyticsTypeFilter;
 }
 
-export function LabelBreakdownChart({ data, currency, hideAmounts }: LabelBreakdownChartProps) {
+export function LabelBreakdownChart({ data, currency, hideAmounts, range, type }: LabelBreakdownChartProps) {
   const [showAll, setShowAll] = useState(false);
   const labeled = data.filter((d) => d.id !== "unlabeled");
 
@@ -34,7 +44,17 @@ export function LabelBreakdownChart({ data, currency, hideAmounts }: LabelBreakd
         const barWidth = maxAmount > 0 ? (item.amount / maxAmount) * 100 : 0;
 
         return (
-          <div key={item.id} className="space-y-1.5">
+          <DrillDownLink
+            key={item.id}
+            href={buildTransactionsHref({
+              labelId: item.id,
+              type,
+              from: range.from,
+              to: range.to,
+            })}
+            label={drillDownLabel(item.transactionCount, item.name)}
+            className="-mx-1.5 space-y-1.5 px-1.5 py-1.5"
+          >
             {/* Label name + amount */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 min-w-0">
@@ -67,7 +87,7 @@ export function LabelBreakdownChart({ data, currency, hideAmounts }: LabelBreakd
                 style={{ backgroundColor: item.color }}
               />
             </div>
-          </div>
+          </DrillDownLink>
         );
       })}
 
