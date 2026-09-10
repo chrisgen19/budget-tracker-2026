@@ -65,6 +65,18 @@ const checkPeriod = (filters: PeriodFields, ctx: z.RefinementCtx) => {
     return;
   }
 
+  // Bounds alongside All time are a contradiction: the payload claims to be both
+  // unbounded and bounded. Normalizing it either way would leave the window and the
+  // label the user reads disagreeing, so refuse it the same way a missing bound is.
+  if (period === "all" && from !== null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "an all period must not carry from and to",
+      path: ["from"],
+    });
+    return;
+  }
+
   if (period !== null && period !== "all" && from === null) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -118,9 +130,12 @@ export function parseTransactionSearchParams(searchParams: URLSearchParams) {
 /**
  * Resolve the filters to a date window, or `undefined` for no date clause.
  *
- * Precedence: an explicit day range wins, then the legacy `month`. A caller that
- * says `period: "all"` clears the window even if a stale `month` is still in its
- * payload, so the two can never disagree about what the user is looking at.
+ * All time is checked first and wins outright, so a stale `from`/`to` or `month`
+ * left in the payload can never narrow a window the user is being told is
+ * unbounded. The schema already refuses that combination; this ordering means a
+ * caller that assembles `NormalizedTransactionFilters` by hand, without parsing,
+ * still gets the answer that matches the label. After that an explicit day range
+ * wins over the legacy `month`.
  *
  * Boundaries use the one formula the app uses everywhere — `Date.UTC(y, m, d) +
  * tzOffset * 60000` — so a window matches the calendar days the user sees.
@@ -129,6 +144,8 @@ const dateWindow = (
   filters: NormalizedTransactionFilters,
 ): Prisma.DateTimeFilter | undefined => {
   const timezoneMs = filters.timezoneOffset * 60 * 1000;
+
+  if (filters.period === "all") return undefined;
 
   if (filters.from !== null && filters.to !== null) {
     const [fromYear, fromMonth, fromDay] = filters.from.split("-").map(Number);
@@ -139,8 +156,6 @@ const dateWindow = (
       lt: new Date(Date.UTC(toYear, toMonth - 1, toDay + 1) + timezoneMs),
     };
   }
-
-  if (filters.period === "all") return undefined;
 
   if (filters.month !== "ALL") {
     const [year, month] = filters.month.split("-").map(Number);

@@ -58,6 +58,12 @@ describe("transactionFilterSchema", () => {
     expect(parse({ period: "all" }).success).toBe(true);
   });
 
+  it("refuses All time that still carries the previous range", () => {
+    // A client that switches to All time without clearing from/to would otherwise
+    // keep filtering by the old window while the UI reads "All time".
+    expect(parse({ period: "all", from: "2026-09-01", to: "2026-09-30" }).success).toBe(false);
+  });
+
   it("accepts a legacy month-only caller that sends no period at all", () => {
     const result = parse({ month: "2026-08" });
     expect(result.success).toBe(true);
@@ -137,6 +143,18 @@ describe("buildTransactionWhere date window", () => {
 
   it("lets All time clear a stale month rather than quietly filtering by it", () => {
     expect(where({ period: "all", month: "2026-08", timezoneOffset: MANILA }).date).toBeUndefined();
+  });
+
+  it("keeps All time unbounded even if a range reaches the builder unparsed", () => {
+    // buildTransactionWhere is exported and takes a plain object, so the ordering
+    // has to hold for a caller that assembled the filters without the schema.
+    expect(
+      buildTransactionWhere("user-1", {
+        ...transactionFilterSchema.parse({ period: "all", timezoneOffset: MANILA }),
+        from: "2026-09-01",
+        to: "2026-09-30",
+      }).date,
+    ).toBeUndefined();
   });
 
   it("applies no date clause when nothing narrows the window", () => {

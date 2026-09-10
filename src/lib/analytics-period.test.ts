@@ -130,12 +130,12 @@ describe("formatPeriodLabel", () => {
 
 describe("navigatePeriod", () => {
   it("steps a month across a year boundary in both directions", () => {
-    expect(navigatePeriod("monthly", "2026-12-01", "2026-12-31", "next")).toEqual({
+    expect(navigatePeriod("monthly", "2026-12-01", "2026-12-31", "next", MANILA)).toEqual({
       periodType: "monthly",
       from: "2027-01-01",
       to: "2027-01-31",
     });
-    expect(navigatePeriod("monthly", "2026-01-01", "2026-01-31", "prev")).toEqual({
+    expect(navigatePeriod("monthly", "2026-01-01", "2026-01-31", "prev", MANILA)).toEqual({
       periodType: "monthly",
       from: "2025-12-01",
       to: "2025-12-31",
@@ -143,7 +143,7 @@ describe("navigatePeriod", () => {
   });
 
   it("clamps to the length of the month it lands on", () => {
-    expect(navigatePeriod("monthly", "2026-01-01", "2026-01-31", "next")).toEqual({
+    expect(navigatePeriod("monthly", "2026-01-01", "2026-01-31", "next", MANILA)).toEqual({
       periodType: "monthly",
       from: "2026-02-01",
       to: "2026-02-28",
@@ -151,7 +151,7 @@ describe("navigatePeriod", () => {
   });
 
   it("steps a year", () => {
-    expect(navigatePeriod("yearly", "2026-01-01", "2026-12-31", "prev")).toEqual({
+    expect(navigatePeriod("yearly", "2026-01-01", "2026-12-31", "prev", MANILA)).toEqual({
       periodType: "yearly",
       from: "2025-01-01",
       to: "2025-12-31",
@@ -159,7 +159,7 @@ describe("navigatePeriod", () => {
   });
 
   it("shifts a week by seven days across a month boundary", () => {
-    expect(navigatePeriod("weekly", "2026-08-31", "2026-09-06", "next")).toEqual({
+    expect(navigatePeriod("weekly", "2026-08-31", "2026-09-06", "next", MANILA)).toEqual({
       periodType: "weekly",
       from: "2026-09-07",
       to: "2026-09-13",
@@ -168,7 +168,7 @@ describe("navigatePeriod", () => {
 
   it("navigates a whole-month custom range by the calendar, not by its day span", () => {
     // 31 days shifted arithmetically would land on Jan 31 – Mar 2.
-    expect(navigatePeriod("custom", "2026-01-01", "2026-01-31", "next")).toEqual({
+    expect(navigatePeriod("custom", "2026-01-01", "2026-01-31", "next", MANILA)).toEqual({
       periodType: "custom",
       from: "2026-02-01",
       to: "2026-02-28",
@@ -176,7 +176,7 @@ describe("navigatePeriod", () => {
   });
 
   it("navigates a whole-year custom range by the calendar", () => {
-    expect(navigatePeriod("custom", "2026-01-01", "2026-12-31", "next")).toEqual({
+    expect(navigatePeriod("custom", "2026-01-01", "2026-12-31", "next", MANILA)).toEqual({
       periodType: "custom",
       from: "2027-01-01",
       to: "2027-12-31",
@@ -184,7 +184,7 @@ describe("navigatePeriod", () => {
   });
 
   it("shifts an arbitrary custom range by its own inclusive span", () => {
-    expect(navigatePeriod("custom", "2026-09-01", "2026-09-10", "prev")).toEqual({
+    expect(navigatePeriod("custom", "2026-09-01", "2026-09-10", "prev", MANILA)).toEqual({
       periodType: "custom",
       from: "2026-08-22",
       to: "2026-08-31",

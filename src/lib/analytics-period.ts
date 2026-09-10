@@ -152,7 +152,7 @@ export const navigatePeriod = (
   from: string,
   to: string,
   direction: "prev" | "next",
-  tzOffset = 0,
+  tzOffset: number,
 ): PeriodSelection => {
   // All time has no neighbours. An arrow press moves to the account's current
   // month, which is what the transactions toolbar has always done.
