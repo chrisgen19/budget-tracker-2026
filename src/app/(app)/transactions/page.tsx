@@ -51,7 +51,8 @@ import {
 import { useBulkTransactionEdit } from "@/hooks/use-bulk-transaction-edit";
 import type { TransactionInput } from "@/lib/validations";
 import { groupByDate, formatTime } from "@/lib/transaction-helpers";
-import { accountMonthKey } from "@/lib/account-time";
+import { accountDateKey } from "@/lib/account-time";
+import { getCurrentMonth, monthRange } from "@/lib/analytics-period";
 import {
   emptyTransactionSelection,
   selectionItems,
@@ -66,12 +67,27 @@ import type { TransactionWithCategory } from "@/types";
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
+/** The month key a transaction falls in, on the account's wall clock. */
+const monthOf = (date: Date | string, timezoneOffset: number) => {
+  const day = accountDateKey(date, timezoneOffset);
+  return monthRange(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1);
+};
+
+/** "all", "2026-09" for a whole month, else "2026-09-01_2026-09-14". */
+const exportFileSuffix = (filters: TransactionFilters) => {
+  if (filters.period === "all" || !filters.from || !filters.to) return "all";
+  const month = monthRange(Number(filters.from.slice(0, 4)), Number(filters.from.slice(5, 7)) - 1);
+  if (filters.from === month.from && filters.to === month.to) return filters.from.slice(0, 7);
+  return `${filters.from}_${filters.to}`;
+};
+
 /** Build initial filters with current month */
 const createInitialFilters = (timezoneOffset: number): TransactionFilters => {
   return {
     search: "",
     type: "ALL",
-    month: accountMonthKey(new Date(), timezoneOffset),
+    period: "monthly",
+    ...getCurrentMonth(timezoneOffset),
     categoryId: null,
     labelId: null,
     createdVia: "ALL",
@@ -101,7 +117,7 @@ export default function TransactionsPage() {
   const [filters, setFilters] = useState<TransactionFilters>(() => {
     // If highlighting a transaction, clear the month filter so we search all data
     if (searchParams.get("highlight")) {
-      return { ...createInitialFilters(user.timezoneOffset), month: "ALL" };
+      return { ...createInitialFilters(user.timezoneOffset), period: "all", from: null, to: null };
     }
     return createInitialFilters(user.timezoneOffset);
   });
@@ -247,12 +263,12 @@ export default function TransactionsPage() {
       highlightHandledRef.current = true;
       setEditingTransaction(tx);
       // Leave the all-time lookup on the transaction's own account-local month so the
-      // month arrows keep their normal meaning after the edit modal closes.
-      const transactionMonth = accountMonthKey(tx.date, user.timezoneOffset);
+      // period arrows keep their normal meaning after the edit modal closes.
+      const month = monthOf(tx.date, user.timezoneOffset);
       setFilters((current) =>
-        current.month === transactionMonth
+        current.period === "monthly" && current.from === month.from
           ? current
-          : { ...current, month: transactionMonth }
+          : { ...current, period: "monthly", ...month }
       );
       // Clean up URL
       router.replace("/transactions", { scroll: false });
@@ -500,7 +516,7 @@ export default function TransactionsPage() {
       const url = URL.createObjectURL(result.blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `transactions-${filters.month}.csv`;
+      anchor.download = `transactions-${exportFileSuffix(filters)}.csv`;
       anchor.click();
       URL.revokeObjectURL(url);
       showToast(`${result.count} transaction${result.count === 1 ? "" : "s"} exported`);

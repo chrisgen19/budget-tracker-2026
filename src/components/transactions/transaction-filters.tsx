@@ -1,14 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import {
-  CalendarDays,
-  ChevronLeft,
-  ChevronRight,
-  Search,
-  SlidersHorizontal,
-  X,
-} from "lucide-react";
+import { Search, SlidersHorizontal, X } from "lucide-react";
 import {
   TransactionFilterDialog,
   type AdvancedFilterValues,
@@ -17,19 +10,27 @@ import {
   TransactionFilterChips,
   buildFilterChips,
 } from "@/components/transactions/transaction-filter-chips";
-import { TransactionMonthDialog } from "@/components/transactions/transaction-month-dialog";
+import { PeriodPicker } from "@/components/ui/period-picker";
 import { useUser } from "@/components/user-provider";
 import { useDebouncedSearch } from "@/hooks/use-debounced-search";
 import { useFilterToolbarScroll } from "@/hooks/use-filter-toolbar-scroll";
 import { useTransactionFilterOptions } from "@/hooks/use-transaction-filter-options";
-import { accountMonthKey } from "@/lib/account-time";
+import { getCurrentMonth, type PeriodSelection, type PeriodType } from "@/lib/analytics-period";
 import { MAX_TRANSACTION_SEARCH_LENGTH } from "@/lib/transaction-filter-limits";
 import { cn, getCurrencySymbol } from "@/lib/utils";
 
 export interface TransactionFilters {
   search: string;
   type: "ALL" | "INCOME" | "EXPENSE";
-  month: string;
+  /**
+   * The selected window, mirroring the server filter schema field for field. The
+   * selection endpoint is handed this object verbatim, so the shapes have to
+   * match: `from`/`to` are null rather than "" because `validDateString` would
+   * reject the empty string.
+   */
+  period: PeriodType;
+  from: string | null;
+  to: string | null;
   categoryId: string | null;
   labelId: string | null;
   /** Which surface created the row. "MCP" surfaces what the remote endpoint wrote. */
@@ -46,7 +47,21 @@ export interface TransactionFiltersBarProps {
   totalCount: number | null;
 }
 
-const DEFAULT_FILTERS: Omit<TransactionFilters, "month"> = {
+/** The picker speaks PeriodSelection; the filters mirror the wire format. */
+export const periodOf = (filters: TransactionFilters): PeriodSelection => ({
+  periodType: filters.period,
+  from: filters.from ?? "",
+  to: filters.to ?? "",
+});
+
+/** All time must carry no bounds — the filter schema refuses the combination. */
+export const periodFilters = (selection: PeriodSelection): Pick<TransactionFilters, "period" | "from" | "to"> => ({
+  period: selection.periodType,
+  from: selection.from || null,
+  to: selection.to || null,
+});
+
+const DEFAULT_FILTERS: Omit<TransactionFilters, "period" | "from" | "to"> = {
   search: "",
   type: "ALL",
   categoryId: null,
@@ -56,16 +71,6 @@ const DEFAULT_FILTERS: Omit<TransactionFilters, "month"> = {
   amountMax: null,
   sortBy: "date",
   sortDir: "desc",
-};
-
-const getMonthLabel = (month: string) => {
-  if (month === "ALL") return "All time";
-  const [year, monthNumber] = month.split("-").map(Number);
-  return new Intl.DateTimeFormat("en-US", {
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(new Date(Date.UTC(year, monthNumber - 1)));
 };
 
 const countAdvancedFilters = (filters: TransactionFilters) => {
@@ -91,10 +96,6 @@ export function TransactionFiltersBar({
   const filterOptions = useTransactionFilterOptions(filters.type);
   const { categories, labels } = filterOptions;
   const [filterDialogOpen, setFilterDialogOpen] = useState(false);
-  const [monthDialogOpen, setMonthDialogOpen] = useState(false);
-  const [monthPickerYear, setMonthPickerYear] = useState(() =>
-    Number(filters.month === "ALL" ? accountMonthKey(new Date(), user.timezoneOffset).slice(0, 4) : filters.month.slice(0, 4)),
-  );
   const { toolbarRef, markerRef, isScrolling, isInPlace, handleToolbarFocus } =
     useFilterToolbarScroll();
 
@@ -115,30 +116,6 @@ export function TransactionFiltersBar({
     previousTypeRef.current = filters.type;
     if (filters.categoryId) update({ categoryId: null });
   }, [filters.categoryId, filters.type, update]);
-
-  const navigateMonth = (direction: -1 | 1) => {
-    if (filters.month === "ALL") {
-      update({ month: accountMonthKey(new Date(), user.timezoneOffset) });
-      return;
-    }
-    const [year, monthNumber] = filters.month.split("-").map(Number);
-    const nextMonth = new Date(Date.UTC(year, monthNumber - 1 + direction, 1));
-    update({
-      month: `${nextMonth.getUTCFullYear()}-${String(nextMonth.getUTCMonth() + 1).padStart(2, "0")}`,
-    });
-  };
-
-  const openMonthDialog = () => {
-    const startingMonth =
-      filters.month === "ALL" ? accountMonthKey(new Date(), user.timezoneOffset) : filters.month;
-    setMonthPickerYear(Number(startingMonth.slice(0, 4)));
-    setMonthDialogOpen(true);
-  };
-
-  const selectMonth = (month: string) => {
-    update({ month });
-    setMonthDialogOpen(false);
-  };
 
   const clearAll = () => {
     resetSearchInput();
@@ -196,7 +173,13 @@ export function TransactionFiltersBar({
           <div className="flex items-center gap-2.5">
             <SearchField value={search.input} onChange={search.change} />
 
-            <MonthNavigator filters={filters} onNavigate={navigateMonth} onOpenPicker={openMonthDialog} className="hidden sm:flex" />
+            <PeriodPicker
+              value={periodOf(filters)}
+              onChange={(next) => update(periodFilters(next))}
+              tz={user.timezoneOffset}
+              allowAllTime
+              className="hidden sm:block"
+            />
 
             <TypeToggle filters={filters} onChange={update} className="hidden lg:flex" />
 
@@ -204,7 +187,13 @@ export function TransactionFiltersBar({
           </div>
 
           <div className="mt-2.5 flex items-center gap-2 sm:hidden">
-            <MonthNavigator filters={filters} onNavigate={navigateMonth} onOpenPicker={openMonthDialog} className="flex min-w-0 flex-1" />
+            <PeriodPicker
+              value={periodOf(filters)}
+              onChange={(next) => update(periodFilters(next))}
+              tz={user.timezoneOffset}
+              allowAllTime
+              className="min-w-0 flex-1"
+            />
             <TypeToggle filters={filters} onChange={update} compact className="flex" />
           </div>
 
@@ -220,7 +209,6 @@ export function TransactionFiltersBar({
       </section>
 
       <TransactionFilterDialog open={filterDialogOpen} onClose={() => setFilterDialogOpen(false)} filters={filters} options={filterOptions} currencySymbol={currencySymbol} onApply={applyAdvancedFilters} />
-      <TransactionMonthDialog open={monthDialogOpen} onClose={() => setMonthDialogOpen(false)} year={monthPickerYear} onYearChange={setMonthPickerYear} selectedMonth={filters.month} currentMonth={accountMonthKey(new Date(), user.timezoneOffset)} onSelect={selectMonth} />
     </>
   );
 }
@@ -272,36 +260,6 @@ function FiltersButton({ count, expanded, onClick }: { count: number; expanded: 
     </button>
   );
 }
-
-function MonthNavigator({
-  filters,
-  onNavigate,
-  onOpenPicker,
-  className,
-}: {
-  filters: TransactionFilters;
-  onNavigate: (direction: -1 | 1) => void;
-  onOpenPicker: () => void;
-  className?: string;
-}) {
-  return (
-    <div className={cn("items-center justify-between rounded-xl border border-cream-200 bg-cream-50/60 p-0.5", className)}>
-      <button type="button" onClick={() => onNavigate(-1)} aria-label="Previous month" className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-warm-400 transition-colors hover:bg-white hover:text-warm-700">
-        <ChevronLeft className="h-4 w-4" />
-      </button>
-      <button type="button" onClick={onOpenPicker} aria-label={`Choose month, ${getMonthLabel(filters.month)}`} aria-haspopup="dialog" className="relative flex min-h-11 min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-1 text-sm font-semibold text-warm-600 transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/20 sm:min-w-32">
-        <CalendarDays aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-warm-400" />
-        <span className="min-w-0 select-none truncate text-center">
-          {getMonthLabel(filters.month)}
-        </span>
-      </button>
-      <button type="button" onClick={() => onNavigate(1)} aria-label="Next month" className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-warm-400 transition-colors hover:bg-white hover:text-warm-700">
-        <ChevronRight className="h-4 w-4" />
-      </button>
-    </div>
-  );
-}
-
 
 function TypeToggle({
   filters,
