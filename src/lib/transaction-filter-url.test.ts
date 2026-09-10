@@ -5,7 +5,8 @@ import {
   parseTransactionSearchParams,
 } from "@/lib/transaction-filter-query";
 import { buildTransactionsHref } from "@/lib/transaction-filter-url";
-import { parseFilterParams } from "@/lib/transaction-period-url";
+import { filterSearchParams, parseFilterParams } from "@/lib/transaction-period-url";
+import { analyticsReturnHref } from "@/lib/analytics-url";
 
 /** UTC+8 in `getTimezoneOffset` convention. */
 const MANILA = -480;
@@ -112,5 +113,50 @@ describe("the request the client builds is one the API accepts", () => {
     const parsed = parseTransactionSearchParams(buildTransactionParams(filters, 1, MANILA));
     expect(parsed.period).toBe("all");
     expect(buildTransactionWhere("user-1", parsed).date).toBeUndefined();
+  });
+});
+
+describe("the way back survives the ledger's own mirror", () => {
+  // This is the failure mode the whole `ret` plumbing exists to avoid. The page
+  // rewrites its address bar from filterSearchParams on every filter change, and
+  // that function writes a fixed set and drops the rest — so a return param the
+  // serializer does not know about would survive until the first filter edit and
+  // then vanish while the user is still on the page. #284's mirror erased a
+  // drill-down's categoryId exactly this way.
+  const RET = "period=custom&from=2026-07-01&to=2026-09-30&type=EXPENSE&tab=reports";
+
+  it("arrives, is read back, and is written again", () => {
+    const href = buildTransactionsHref({
+      categoryId: "c1",
+      type: "EXPENSE",
+      from: "2026-09-01",
+      to: "2026-09-30",
+      ret: RET,
+    });
+    const arrived = parseFilterParams(queryOf(href), MANILA);
+    expect(arrived.ret).toBe(RET);
+
+    // What the mirror would write on the next filter edit.
+    const mirrored = parseFilterParams(new URLSearchParams(filterSearchParams(arrived)), MANILA);
+    expect(mirrored.ret).toBe(RET);
+    expect(mirrored.categoryId).toBe("c1");
+  });
+
+  it("resolves to an analytics view, not to the window being filtered by", () => {
+    // A heatmap day filters the ledger to one day while the period to return to is
+    // the whole analytics span, so the two cannot be the same value.
+    const href = buildTransactionsHref({ from: "2026-09-12", to: "2026-09-12", ret: RET });
+    const arrived = parseFilterParams(queryOf(href), MANILA);
+
+    expect(arrived).toMatchObject({ from: "2026-09-12", to: "2026-09-12" });
+    expect(analyticsReturnHref(arrived.ret, MANILA)).toBe(
+      "/analytics?period=custom&from=2026-07-01&to=2026-09-30&type=EXPENSE&tab=reports",
+    );
+  });
+
+  it("offers no way back for a link that carries none", () => {
+    const arrived = parseFilterParams(queryOf(buildTransactionsHref({ categoryId: "c1" })), MANILA);
+    expect(arrived.ret).toBeNull();
+    expect(analyticsReturnHref(arrived.ret, MANILA)).toBeNull();
   });
 });

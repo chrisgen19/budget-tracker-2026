@@ -54,6 +54,9 @@ import { groupByDate, formatTime } from "@/lib/transaction-helpers";
 import { accountDateKey } from "@/lib/account-time";
 import { getCurrentMonth, monthRange } from "@/lib/analytics-period";
 import { filterSearchParams, parseFilterParams } from "@/lib/transaction-period-url";
+import { analyticsReturnHref } from "@/lib/analytics-url";
+import { formatPeriodLabel } from "@/lib/analytics-period";
+import { ReturnBar } from "@/components/transactions/return-bar";
 import {
   emptyTransactionSelection,
   selectionItems,
@@ -121,7 +124,8 @@ export default function TransactionsPage() {
     if (searchParams.get("highlight")) {
       return { ...initial, period: "all", from: null, to: null };
     }
-    return { ...initial, ...parseFilterParams(searchParams, user.timezoneOffset) };
+    const { ret: _ret, ...incoming } = parseFilterParams(searchParams, user.timezoneOffset);
+    return { ...initial, ...incoming };
   });
   const [page, setPage] = useState(1);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -265,7 +269,19 @@ export default function TransactionsPage() {
   // only the period would drop it from the URL — at which point the reader below,
   // seeing the URL change, would take the category off the filters too and widen
   // the list the user had just narrowed.
-  const filterQuery = filterSearchParams(filters);
+  // Deliberately not part of `filters`: it narrows nothing. That object is posted
+  // verbatim to /api/transactions/selection and keys the React Query cache, so a
+  // navigation breadcrumb in it would split the cache per entry point and travel to
+  // an endpoint with no use for it. It is mirrored into the URL alongside the
+  // filters, though, or the first filter edit would drop the way back.
+  const [returnParam, setReturnParam] = useState<string | null>(
+    () => parseFilterParams(new URLSearchParams(searchParams.toString()), user.timezoneOffset).ret,
+  );
+  // The href is built from a literal path, so a crafted `ret` can only produce a
+  // different analytics view, never an off-site link.
+  const returnHref = analyticsReturnHref(returnParam, user.timezoneOffset);
+
+  const filterQuery = filterSearchParams({ ...filters, ret: returnParam });
   const appliedQueryRef = useRef(searchParams.toString());
   useEffect(() => {
     // While a ?highlight= is still being resolved, leave the URL alone. Writing
@@ -297,10 +313,9 @@ export default function TransactionsPage() {
     appliedQueryRef.current = queryString;
     const params = new URLSearchParams(queryString);
     if (params.get("highlight")) return;
-    setFilters((current) => ({
-      ...current,
-      ...parseFilterParams(params, user.timezoneOffset),
-    }));
+    const { ret, ...incoming } = parseFilterParams(params, user.timezoneOffset);
+    setFilters((current) => ({ ...current, ...incoming }));
+    setReturnParam(ret);
     setFiltersRevision((revision) => revision + 1);
   }, [queryString, user.timezoneOffset]);
 
@@ -653,6 +668,22 @@ export default function TransactionsPage() {
       <p className="sr-only" aria-live="polite" aria-atomic="true">
         {selectionAnnouncement}
       </p>
+      {/* The way back, when the URL says where this visit came from. It reads the
+          period out of the filters rather than out of the return blob: for a
+          category row those agree, and for a heatmap day the filtered window is
+          the more useful thing to name — it is what the list below is showing. */}
+      {returnHref && (
+        <ReturnBar
+          href={returnHref}
+          label="Analytics"
+          context={
+            filters.from && filters.to
+              ? formatPeriodLabel(filters.period, filters.from, filters.to)
+              : undefined
+          }
+        />
+      )}
+
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>

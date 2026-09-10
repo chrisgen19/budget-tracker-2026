@@ -24,6 +24,8 @@ interface SpendingHeatmapProps {
   data: AnalyticsDailyItem[];
   currency: string;
   hideAmounts: boolean;
+  /** The analytics view to offer as a way back, as a query string for /analytics. */
+  returnTo: string;
 }
 
 function Legend() {
@@ -38,7 +40,7 @@ function Legend() {
   );
 }
 
-export function SpendingHeatmap({ data, currency, hideAmounts }: SpendingHeatmapProps) {
+export function SpendingHeatmap({ data, currency, hideAmounts, returnTo }: SpendingHeatmapProps) {
   // Store only the date string; derive the item from current data so a stale
   // selection can't outlive a period change (it resolves to null instead)
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -150,7 +152,9 @@ export function SpendingHeatmap({ data, currency, hideAmounts }: SpendingHeatmap
             // narrowing to expenses here would land on fewer rows than the line
             // beside the link just promised.
             <DrillDownLink
-              href={buildTransactionsHref({ from: selected.date, to: selected.date })}
+              // The window is one day; the view to return to is the whole analytics
+              // period, which is why the two travel separately.
+              href={buildTransactionsHref({ from: selected.date, to: selected.date, ret: returnTo })}
               label={drillDownLabel(selected.count, formatDayLabel(selected.date, multiYear))}
               className="-mx-1.5 flex min-h-11 min-w-0 items-center gap-1.5 px-1.5"
             >

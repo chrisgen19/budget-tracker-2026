@@ -1,6 +1,13 @@
 "use client";
 
 import { useState, useCallback, useMemo, useRef, useEffect, type RefObject } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  analyticsSearchParams,
+  parseAnalyticsParams,
+  type AnalyticsTab as AnalyticsTabId,
+  type AnalyticsUrlState,
+} from "@/lib/analytics-url";
 import { motion, useIsomorphicLayoutEffect } from "framer-motion";
 import {
   Activity,
@@ -43,7 +50,7 @@ import { AiAssessmentReport } from "@/components/analytics/ai-assessment-report"
 import { stagger, fadeUp } from "@/components/analytics/motion-variants";
 import type { AnalyticsTypeFilter } from "@/types";
 
-type AnalyticsTab = "reports" | "statistics" | "health" | "ai-assessment";
+type AnalyticsTab = AnalyticsTabId;
 
 const ANALYTICS_TABS = [
   { id: "reports" as const, label: "Reports", shortLabel: "Reports", icon: BarChart3 },
@@ -175,12 +182,38 @@ export default function AnalyticsPage() {
   const currency = user.currency;
   const tz = user.timezoneOffset;
 
-  const [period, setPeriod] = useState<PeriodSelection>(() => ({
-    periodType: "monthly",
-    ...getCurrentMonth(tz),
-  }));
-  const [typeFilter, setTypeFilter] = useState<AnalyticsTypeFilter>("EXPENSE");
-  const [activeTab, setActiveTab] = useState<AnalyticsTab>("reports");
+  // Seeded from the address bar, so returning from a drill-down lands on the view
+  // that was left rather than on this month. Read once: the mirror below keeps the
+  // URL in step afterwards, and re-reading it on every change would fight the user.
+  const searchParams = useSearchParams();
+  const initialUrlState = useRef<AnalyticsUrlState | null>(null);
+  if (initialUrlState.current === null) {
+    initialUrlState.current = parseAnalyticsParams(
+      new URLSearchParams(searchParams.toString()),
+      tz,
+    );
+  }
+  const initial = initialUrlState.current;
+
+  const [period, setPeriod] = useState<PeriodSelection>(initial.period);
+  const [typeFilter, setTypeFilter] = useState<AnalyticsTypeFilter>(initial.type);
+  const [activeTab, setActiveTab] = useState<AnalyticsTab>(initial.tab);
+
+  // Mirror the view into the address bar. This is what makes the round trip work at
+  // all: Next unmounts this page on navigation, so browser back, an Android gesture
+  // and the nav item all remount it from scratch — whatever is not in the URL is
+  // gone. Writing it here means every one of those returns to the view that was
+  // left, and the period becomes linkable as a side effect.
+  const analyticsQuery = analyticsSearchParams({ period, type: typeFilter, tab: activeTab });
+  const router = useRouter();
+  useEffect(() => {
+    router.replace(`/analytics?${analyticsQuery}`, { scroll: false });
+  }, [analyticsQuery, router]);
+
+  // What a drill-down hands the ledger so it can offer a way back. Derived from the
+  // live view rather than from the URL, so a link is correct on the first render —
+  // before the mirror above has run.
+  const returnParam = analyticsQuery;
 
   // Client-side label used for the picker before API data arrives
   // The drill-down links want the days alone, not the period type. Memoized so a
@@ -394,7 +427,7 @@ export default function AnalyticsPage() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <motion.div variants={fadeUp} className="card p-5">
                   <CardHeader icon={PieChart} title="By Category" subtitle="Where is my money going?" />
-                  <CategoryBreakdownChart data={data.categoryBreakdown} currency={currency} hideAmounts={hideAmounts} range={dateRange} />
+                  <CategoryBreakdownChart data={data.categoryBreakdown} currency={currency} hideAmounts={hideAmounts} range={dateRange} returnTo={returnParam} />
                 </motion.div>
 
                 <motion.div variants={fadeUp} className="card p-5">
@@ -404,7 +437,7 @@ export default function AnalyticsPage() {
 
                 <motion.div variants={fadeUp} className="card p-5">
                   <CardHeader icon={CalendarDays} title="Spending Heatmap" subtitle="Which days do you spend most?" />
-                  <SpendingHeatmap data={data.daily} currency={currency} hideAmounts={hideAmounts} />
+                  <SpendingHeatmap data={data.daily} currency={currency} hideAmounts={hideAmounts} returnTo={returnParam} />
                 </motion.div>
 
                 <motion.div variants={fadeUp} className="card p-5">
@@ -416,7 +449,7 @@ export default function AnalyticsPage() {
               {/* Label Breakdown */}
               <motion.div variants={fadeUp} className="card p-5">
                 <CardHeader icon={Tags} title="By Label" subtitle="Spending by label tags" />
-                <LabelBreakdownChart data={data.labelBreakdown} currency={currency} hideAmounts={hideAmounts} range={dateRange} type={typeFilter} />
+                <LabelBreakdownChart data={data.labelBreakdown} currency={currency} hideAmounts={hideAmounts} range={dateRange} type={typeFilter} returnTo={returnParam} />
               </motion.div>
 
               {/* Income & Expenses Report */}
