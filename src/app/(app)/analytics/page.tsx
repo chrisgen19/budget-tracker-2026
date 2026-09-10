@@ -181,7 +181,7 @@ export default function AnalyticsPage() {
     const { from, to } = getCurrentMonth(tz);
     return { from, to };
   });
-  const [typeFilter, setTypeFilter] = useState<AnalyticsTypeFilter>("ALL");
+  const [typeFilter, setTypeFilter] = useState<AnalyticsTypeFilter>("EXPENSE");
   const [activeTab, setActiveTab] = useState<AnalyticsTab>("reports");
 
   // Client-side label used for the picker before API data arrives

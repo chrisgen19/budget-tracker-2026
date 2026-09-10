@@ -8,10 +8,13 @@ interface TypeFilterProps {
   onChange: (type: AnalyticsTypeFilter) => void;
 }
 
+// Expenses first, and the card opens on it: "where is my money going?" is the
+// question these breakdowns exist to answer, and ALL mixes income categories
+// into the same ring. All stays last as the escape hatch, not the default.
 const OPTIONS: { value: AnalyticsTypeFilter; label: string }[] = [
-  { value: "ALL", label: "All" },
   { value: "EXPENSE", label: "Expenses" },
   { value: "INCOME", label: "Income" },
+  { value: "ALL", label: "All" },
 ];
 
 export function TypeFilter({ value, onChange }: TypeFilterProps) {
