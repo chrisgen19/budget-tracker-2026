@@ -17,11 +17,19 @@ a custom span, one heatmap day -- so a drill-down would have snapped to the cont
 shown a different set of rows than the number the user tapped. #282 landed the window on the server
 (`period` / `from` / `to`, refusing a half-specified or backwards range because
 `/api/transactions/selection` materialises bulk edits from these same filters) and #283 gave the
-ledger its picker; this change is the third caller, the one that arrives with a window already
-chosen. `transaction-filter-url.ts` owns the param names in both directions, so the analytics side
-and the receiving page cannot drift, and a hand-typed URL behaves like a clicked one -- including
-the legacy `month` an old bookmark may still carry, which resolves to the same whole-month window
-the picker would produce.
+ledger its picker, and #284 put the selected period in the address bar; this change is the caller
+that arrives with a window already chosen.
+
+That last one had to be reconciled rather than merged around. #284 mirrors the page's period back
+to the URL on every change, and a mirror that writes only the period **removes** the category a
+drill-down arrived with -- at which point the reader, seeing the URL change, takes it off the
+filters too and widens the list the user had just narrowed by tapping a row. So
+`transaction-period-url.ts` now carries the narrowings as well, and `buildTransactionsHref`
+serialises through the same function the page mirrors itself with. One place names these params, in
+both directions, so a link cannot carry one the page would then drop. The page also claims its own
+writes before making them, since a mirror describing the current state is not a navigation asking
+it to change -- without that, the advanced filters, which are deliberately not in the URL, would be
+reset by the page's own mirror on every edit.
 
 Filters flow one way: **in**. A URL carrying them imposes them; later edits stay in local state, so
 typing in the search box does not rewrite history per keystroke. Losing the query resets the list,

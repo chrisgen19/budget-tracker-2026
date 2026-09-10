@@ -51,12 +51,9 @@ import {
 import { useBulkTransactionEdit } from "@/hooks/use-bulk-transaction-edit";
 import type { TransactionInput } from "@/lib/validations";
 import { groupByDate, formatTime } from "@/lib/transaction-helpers";
-import {
-  hasTransactionFilterParams,
-  readTransactionFilters,
-} from "@/lib/transaction-filter-url";
 import { accountDateKey } from "@/lib/account-time";
 import { getCurrentMonth, monthRange } from "@/lib/analytics-period";
+import { filterSearchParams, parseFilterParams } from "@/lib/transaction-period-url";
 import {
   emptyTransactionSelection,
   selectionItems,
@@ -83,26 +80,6 @@ const exportFileSuffix = (filters: TransactionFilters) => {
   const month = monthRange(Number(filters.from.slice(0, 4)), Number(filters.from.slice(5, 7)) - 1);
   if (filters.from === month.from && filters.to === month.to) return filters.from.slice(0, 7);
   return `${filters.from}_${filters.to}`;
-};
-
-/**
- * Resolve the filters a URL asks for.
- *
- * Three shapes arrive here: a highlight link from bill history (which wants an
- * all-time lookup so the row is found whatever period it sits in), a drill-down
- * from an analytics breakdown, and a plain visit.
- */
-const filtersFromParams = (
-  params: URLSearchParams,
-  timezoneOffset: number,
-): TransactionFilters => {
-  if (params.get("highlight")) {
-    return { ...createInitialFilters(timezoneOffset), period: "all", from: null, to: null };
-  }
-  if (hasTransactionFilterParams(params)) {
-    return readTransactionFilters(params, timezoneOffset);
-  }
-  return createInitialFilters(timezoneOffset);
 };
 
 /** Build initial filters with current month */
@@ -138,9 +115,14 @@ export default function TransactionsPage() {
   const { canScan, openScan, scanLimitReached, scansRemaining, hasLimit } = useScan();
   const currency = user.currency;
   const isInfinite = user.transactionLayout === "infinite";
-  const [filters, setFilters] = useState<TransactionFilters>(() =>
-    filtersFromParams(new URLSearchParams(searchParams.toString()), user.timezoneOffset),
-  );
+  const [filters, setFilters] = useState<TransactionFilters>(() => {
+    const initial = createInitialFilters(user.timezoneOffset);
+    // If highlighting a transaction, drop the window so we search all data
+    if (searchParams.get("highlight")) {
+      return { ...initial, period: "all", from: null, to: null };
+    }
+    return { ...initial, ...parseFilterParams(searchParams, user.timezoneOffset) };
+  });
   const [page, setPage] = useState(1);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const pageHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -173,31 +155,6 @@ export default function TransactionsPage() {
   useEffect(() => {
     selectionContextKeyRef.current = selectionContextKey;
   }, [selectionContextKey]);
-
-  // Filters flow one way: in. A URL that carries them imposes them — arriving from
-  // an analytics drill-down, or navigating between two of them without unmounting —
-  // and edits made here afterwards stay in local state, so typing in the search box
-  // does not rewrite history on every keystroke.
-  //
-  // Losing the query is a change like any other. The nav item for this page is a
-  // plain link to /transactions and renders as *active* while a drill-down is on
-  // screen, so clicking it is how someone asks for the unfiltered list back — and
-  // because the route does not change, this page is never unmounted to reset
-  // itself. Ignoring the empty URL left it showing a drill-down the address bar no
-  // longer described. The one navigation that must not reset anything is the
-  // highlight cleanup below, which marks itself applied before it replaces the URL.
-  const queryString = searchParams.toString();
-  const appliedQueryRef = useRef(queryString);
-  // Counts the rewrites, so the toolbar can tell one from an ordinary render. A
-  // URL with no search still has to clear a half-typed one, and "" before and ""
-  // after is invisible to anything watching the committed value.
-  const [filtersRevision, setFiltersRevision] = useState(0);
-  useEffect(() => {
-    if (appliedQueryRef.current === queryString) return;
-    appliedQueryRef.current = queryString;
-    setFilters(filtersFromParams(new URLSearchParams(queryString), user.timezoneOffset));
-    setFiltersRevision((revision) => revision + 1);
-  }, [queryString, user.timezoneOffset]);
 
   useEffect(() => {
     selectedCountRef.current = selectedItems.length;
@@ -299,6 +256,54 @@ export default function TransactionsPage() {
   }, [isInfinite, hasNextPage, isFetchingNextPage, infiniteIsLoading, fetchNextPage]);
 
   // Highlight a transaction from query param (e.g. from bill history link)
+  // The address bar mirrors the filters, so a window or a drill-down survives a
+  // refresh and can be linked to. Deriving the string first keeps the effect keyed
+  // on its value rather than on a fresh filters object every render.
+  //
+  // It mirrors the narrowings, not just the period, and that is load-bearing: an
+  // analytics drill-down arrives carrying a category, and a mirror that wrote back
+  // only the period would drop it from the URL — at which point the reader below,
+  // seeing the URL change, would take the category off the filters too and widen
+  // the list the user had just narrowed.
+  const filterQuery = filterSearchParams(filters);
+  const appliedQueryRef = useRef(searchParams.toString());
+  useEffect(() => {
+    // While a ?highlight= is still being resolved, leave the URL alone. Writing
+    // here would drop the parameter before the row has been found and opened,
+    // and the lookup would silently do nothing. The highlight flow clears it
+    // itself once done, and this effect then runs and restores the period.
+    if (highlightId) return;
+    // Claim it first: this write is the page describing itself, not a navigation
+    // asking it to change, so the reader below must not treat it as one. Without
+    // this the advanced filters — which are deliberately not in the URL — would be
+    // reset by the page's own mirror on every edit.
+    appliedQueryRef.current = filterQuery;
+    router.replace(`/transactions?${filterQuery}`, { scroll: false });
+  }, [highlightId, filterQuery, router]);
+
+  // The other direction: a URL this page did not write imposes its filters. That
+  // is an analytics drill-down, a pasted link, or the back button — including the
+  // nav item for this page, a plain link to /transactions that renders as *active*
+  // while a drill-down is on screen, so clicking it is how someone asks for the
+  // unfiltered list back. The route does not change, so the page is never
+  // unmounted to reset itself.
+  const queryString = searchParams.toString();
+  // Counts the rewrites, so the toolbar can tell one from an ordinary render. A
+  // URL with no search still has to clear a half-typed one, and "" before and ""
+  // after is invisible to anything watching the committed value.
+  const [filtersRevision, setFiltersRevision] = useState(0);
+  useEffect(() => {
+    if (appliedQueryRef.current === queryString) return;
+    appliedQueryRef.current = queryString;
+    const params = new URLSearchParams(queryString);
+    if (params.get("highlight")) return;
+    setFilters((current) => ({
+      ...current,
+      ...parseFilterParams(params, user.timezoneOffset),
+    }));
+    setFiltersRevision((revision) => revision + 1);
+  }, [queryString, user.timezoneOffset]);
+
   const highlightHandledRef = useRef(false);
 
   const handleHighlight = useCallback((transactions: TransactionWithCategory[]) => {
@@ -315,9 +320,7 @@ export default function TransactionsPage() {
           ? current
           : { ...current, period: "monthly", ...month }
       );
-      // Clean up URL. Claim the bare query first: this is the one navigation that
-      // must not reach the sync effect, or it would reset the period just set above.
-      appliedQueryRef.current = "";
+      // Clean up URL
       router.replace("/transactions", { scroll: false });
     }
   }, [highlightId, router, user.timezoneOffset]);
