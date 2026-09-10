@@ -2,6 +2,37 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-11 - One owner for the highlight link (#291)
+
+No behaviour change. `?highlight=<id>` resolution moved out of `transactions/page.tsx` into
+`useHighlightedTransaction` (`src/hooks/use-highlighted-transaction.ts`). It had been two refs, a
+piece of state and two effects in the page, coordinated with the URL mirror, and three review rounds
+on #289 each found a bug in the previous round's fix. No single place answered "what state is this
+link in?", so each fix had to reason about several variables at once and missed one.
+
+The hook holds one reducer with three states (`idle`, `fetching`, `spent`) and reports `pending`, which
+the mirror waits on. It still never writes the URL: the mirror stays the only writer.
+
+The lookup is now cancelled by an effect cleanup, which #289 had ruled out. That rule was about the
+effect's dependencies rather than about cleanups: the request shared an effect with the loaded rows,
+which change on their own as pages arrive, so the cleanup dropped a reply that was still wanted. The
+request now lives in an effect keyed on the id being fetched and nothing else, so a cleanup runs only
+for a newer id, a dropped parameter or an unmount. Those are exactly the replies nobody wants, and
+that makes the separate lookup ref unnecessary. It also covers asking for the same id again while
+the first request is still out, which the id comparison let through as if the old reply were the new
+one. One visible difference follows: a lookup that fails after the page has unmounted no longer
+shows its error toast on whatever page the user moved to. A dropped parameter already behaved that way.
+
+Review on #292 found one bug the move carried over rather than introduced. A newer id that arrived
+while the list was loading waited for the list before anything released the older one, so the older
+lookup's reply was still wanted and opened the row that had been replaced. #289's code had the same
+early return. Nothing reaches it today, since both producers sit on another route, but any claim on
+a different id is now released before the loading check.
+
+`use-highlighted-transaction.test.tsx` covers the guards `e2e/transaction-highlight.spec.ts` cannot
+reach, and each test was confirmed to fail with its guard removed. The Playwright spec passes
+unchanged.
+
 ## 2026-09-10 - Drilling down from a breakdown (#277, #279)
 
 Every breakdown on `/analytics` answered *how much* and none of them answered *on what*. The By
