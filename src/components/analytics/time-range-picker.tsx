@@ -4,9 +4,13 @@ import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, ChevronsUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DatePresets } from "@/components/analytics/date-presets";
-import type { AnalyticsGranularity } from "@/types";
-
-type PeriodType = AnalyticsGranularity | "custom";
+import {
+  monthRange,
+  weekRange,
+  weeksInMonth,
+  yearRange,
+  type PeriodType,
+} from "@/lib/analytics-period";
 
 interface TimeRangePickerProps {
   periodType: PeriodType;
@@ -69,28 +73,8 @@ export function TimeRangePicker({
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  const selectMonth = (month: number) => {
-    const y = displayYear;
-    const lastDay = new Date(y, month + 1, 0).getDate();
-    const f = `${y}-${String(month + 1).padStart(2, "0")}-01`;
-    const t = `${y}-${String(month + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
-    onPeriodSelect("monthly", f, t);
-    setOpen(false);
-  };
-
-  const selectWeek = (mondayStr: string) => {
-    const [y, m, d] = mondayStr.split("-").map(Number);
-    const monday = new Date(y, m - 1, d);
-    const sunday = new Date(monday);
-    sunday.setDate(sunday.getDate() + 6);
-    const f = mondayStr;
-    const t = `${sunday.getFullYear()}-${String(sunday.getMonth() + 1).padStart(2, "0")}-${String(sunday.getDate()).padStart(2, "0")}`;
-    onPeriodSelect("weekly", f, t);
-    setOpen(false);
-  };
-
-  const selectYear = (year: number) => {
-    onPeriodSelect("yearly", `${year}-01-01`, `${year}-12-31`);
+  const selectRange = (type: PeriodType, range: { from: string; to: string }) => {
+    onPeriodSelect(type, range.from, range.to);
     setOpen(false);
   };
 
@@ -100,37 +84,6 @@ export function TimeRangePicker({
       onPeriodSelect("custom", validFrom, validTo);
       setOpen(false);
     }
-  };
-
-  // Generate weeks for the displayed month
-  const getWeeksInMonth = (year: number, month: number) => {
-    const weeks: { monday: string; label: string }[] = [];
-    const firstDay = new Date(year, month, 1);
-    // Find first Monday on or before the 1st
-    const dow = firstDay.getDay();
-    const mondayOffset = dow === 0 ? -6 : 1 - dow;
-    const cursor = new Date(year, month, 1 + mondayOffset);
-
-    for (let i = 0; i < 6; i++) {
-      const monday = new Date(cursor);
-      const sunday = new Date(cursor);
-      sunday.setDate(sunday.getDate() + 6);
-
-      // Only include weeks that overlap with the target month
-      const monthEnd = new Date(year, month + 1, 0); // last day of target month
-      const monthStart = new Date(year, month, 1);
-      if (monday > monthEnd) break;
-      if (sunday < monthStart) {
-        cursor.setDate(cursor.getDate() + 7);
-        continue;
-      }
-
-      const mStr = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(monday.getDate()).padStart(2, "0")}`;
-      const label = `${MONTHS[monday.getMonth()]} ${monday.getDate()} – ${MONTHS[sunday.getMonth()]} ${sunday.getDate()}`;
-      weeks.push({ monday: mStr, label });
-      cursor.setDate(cursor.getDate() + 7);
-    }
-    return weeks;
   };
 
   const currentYear = new Date().getFullYear();
@@ -220,7 +173,7 @@ export function TimeRangePicker({
                     return (
                       <button
                         key={m}
-                        onClick={() => selectMonth(i)}
+                        onClick={() => selectRange("monthly", monthRange(displayYear, i))}
                         className={cn(
                           "py-2.5 rounded-lg text-sm font-medium transition-all",
                           isSelected
@@ -263,12 +216,12 @@ export function TimeRangePicker({
                   </button>
                 </div>
                 <div className="space-y-1">
-                  {getWeeksInMonth(displayYear, displayMonth).map((week) => {
-                    const isSelected = periodType === "weekly" && from === week.monday;
+                  {weeksInMonth(displayYear, displayMonth).map((week) => {
+                    const isSelected = periodType === "weekly" && from === week.from;
                     return (
                       <button
-                        key={week.monday}
-                        onClick={() => selectWeek(week.monday)}
+                        key={week.from}
+                        onClick={() => selectRange("weekly", week)}
                         className={cn(
                           "w-full py-2.5 px-3 rounded-lg text-sm font-medium transition-all text-left",
                           isSelected
@@ -292,7 +245,7 @@ export function TimeRangePicker({
                   return (
                     <button
                       key={year}
-                      onClick={() => selectYear(year)}
+                      onClick={() => selectRange("yearly", yearRange(year))}
                       className={cn(
                         "py-2.5 rounded-lg text-sm font-medium transition-all",
                         isSelected
