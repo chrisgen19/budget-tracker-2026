@@ -268,6 +268,8 @@ export default function TransactionsPage() {
   // parameter would sit in the URL forever.
   const highlightHandledRef = useRef<string | null>(null);
   const [spentHighlightId, setSpentHighlightId] = useState<string | null>(null);
+  /** The id a by-id lookup is in flight for, so a superseded response is ignored. */
+  const highlightLookupRef = useRef<string | null>(null);
 
   // The address bar mirrors the filters, so a window or a drill-down survives a
   // refresh and can be linked to. Deriving the string first keeps the effect keyed
@@ -439,29 +441,39 @@ export default function TransactionsPage() {
       return;
     }
 
-    let cancelled = false;
+    // Deliberately no cleanup function. A cleanup would cancel this lookup whenever
+    // any dependency changed — and `sourceTransactions` changes on its own, as the
+    // infinite layout appends a page or a refetch returns a fresh array. That killed
+    // the response while `highlightHandledRef` still held the id, so the effect would
+    // not retry: no modal, and `?highlight=` stuck in the URL. Exactly the silent
+    // failure this whole change is about, reintroduced one layer in.
+    //
+    // Staleness is tracked by which id is being looked up instead, which is the thing
+    // that actually invalidates a response. A later highlight overwrites the ref and
+    // the earlier reply is dropped; an array growing underneath it is irrelevant.
+    highlightLookupRef.current = highlightId;
+    const isCurrent = () => highlightLookupRef.current === highlightId;
+
     fetchTransactionById(highlightId)
       .then((tx) => {
-        if (!cancelled) openHighlighted(tx);
+        if (isCurrent()) openHighlighted(tx);
       })
       .catch((error: unknown) => {
         // A link that resolves to nothing has to say so. Silence reads as the app
         // ignoring the tap, and the two causes send you to look at different things:
         // the row may have been deleted since the link was made, or the request may
         // never have left the device.
-        if (cancelled) return;
+        if (!isCurrent()) return;
         showToast(
           error instanceof Error ? error.message : "Could not open that transaction",
           "error",
         );
       })
       .finally(() => {
-        if (!cancelled) consumeHighlight(highlightId);
+        if (!isCurrent()) return;
+        highlightLookupRef.current = null;
+        consumeHighlight(highlightId);
       });
-
-    return () => {
-      cancelled = true;
-    };
   }, [
     highlightId,
     loading,

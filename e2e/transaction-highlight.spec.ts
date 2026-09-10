@@ -15,13 +15,26 @@ const BASE = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3111";
 
 test.afterAll(() => prisma.$disconnect());
 
+/** `buildTransactionParams` asks for this many rows, so this is page one. */
+const PAGE_SIZE = 15;
+
 interface Fixture {
   userId: string;
   role: UserRole;
-  /** The oldest row, which is the one a single page of newest rows cannot contain. */
+  /** The oldest row. `rowsAfterOldest` is what proves it is past page one. */
   oldestId: string;
   oldestMonth: string;
   newestMonth: string;
+  /**
+   * How many rows carry a strictly later date than the oldest.
+   *
+   * The endpoint sorts by date, then createdAt, then id, and several rows can share
+   * the oldest date — so "oldest by date" alone does not say which of them Prisma
+   * returns, and a tie could in principle sit inside page one. Counting the rows
+   * that sort strictly ahead of it settles that for every tie at once: at 15 or
+   * more, no row on the oldest date can be on page one.
+   */
+  rowsAfterOldest: number;
   total: number;
 }
 
@@ -46,6 +59,9 @@ const loadFixture = async (): Promise<Fixture | null> => {
   });
   const total = await prisma.transaction.count({ where: { userId: user.id } });
   if (!oldest || !newest) return null;
+  const rowsAfterOldest = await prisma.transaction.count({
+    where: { userId: user.id, date: { gt: oldest.date } },
+  });
 
   // Account-local month, the same convention the page's own period uses.
   const monthOf = (d: Date) =>
@@ -57,6 +73,7 @@ const loadFixture = async (): Promise<Fixture | null> => {
     oldestId: oldest.id,
     oldestMonth: monthOf(oldest.date),
     newestMonth: monthOf(newest.date),
+    rowsAfterOldest,
     total,
   };
 };
@@ -86,11 +103,17 @@ test.describe("a ?highlight= link", () => {
   test.beforeEach(async ({ page }) => {
     fixture ??= await loadFixture();
     test.skip(!fixture, "The local database has no transactions to link to");
-    // The point of the test is a row that one page of newest rows cannot hold, and
-    // a month away from the one the ledger would land on by itself.
+    // Both properties are load-bearing, and neither is about size alone. The row has
+    // to be off page one, or the pre-fix code finds it in the loaded set and this
+    // stops being a regression test at all; and it has to be in another month, or the
+    // period assertion passes against a page that never moved.
     test.skip(
-      fixture!.total <= 15 || fixture!.oldestMonth === fixture!.newestMonth,
-      "Needs more than one page of transactions spanning more than one month",
+      fixture!.rowsAfterOldest < PAGE_SIZE,
+      `Needs ${PAGE_SIZE}+ rows dated after the oldest, so it cannot be on page one`,
+    );
+    test.skip(
+      fixture!.oldestMonth === fixture!.newestMonth,
+      "Needs transactions spanning more than one month",
     );
     await signIn(page, fixture!);
   });
@@ -144,3 +167,45 @@ test.describe("a ?highlight= link", () => {
     await page.waitForURL((url) => !url.searchParams.has("highlight"));
   });
 });
+
+test.describe("two highlight links in a row", () => {
+  test.skip(!process.env.NEXTAUTH_SECRET, "Set NEXTAUTH_SECRET (the dev server's own)");
+
+  test("the second wins, and the first's reply is dropped", async ({ page }) => {
+    // The lookup is no longer cancelled when the loaded rows change underneath it —
+    // that cancellation lost responses permanently, since the id was already claimed.
+    // Staleness is tracked by which id is being looked up, so this is the case that
+    // has to keep working: an earlier reply arriving after a later link must not open
+    // the wrong row.
+    const fixture = await loadFixture();
+    test.skip(!fixture, "The local database has no transactions to link to");
+    await signIn(page, fixture!);
+
+    const [first, second] = await prisma.transaction.findMany({
+      where: { userId: fixture!.userId },
+      orderBy: [{ date: "asc" }, { createdAt: "desc" }, { id: "asc" }],
+      take: 2,
+      select: { id: true, description: true, amount: true },
+    });
+    test.skip(!second || first.id === second.id, "Needs two distinct transactions");
+
+    // Hold the first lookup open long enough for the second link to supersede it.
+    await page.route(`**/api/transactions/${first.id}`, async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      await route.continue();
+    });
+
+    await page.goto(`/transactions?highlight=${first.id}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`/transactions?highlight=${second.id}`, { waitUntil: "domcontentloaded" });
+
+    await expect(page.getByRole("dialog")).toBeVisible({ timeout: 60_000 });
+    // The amount field identifies which row was opened.
+    const amount = page.getByRole("dialog").locator('input[name="amount"]');
+    await expect(amount).toHaveValue(String(second.amount));
+
+    // And the first reply, arriving later, must not swap the modal out from under it.
+    await page.waitForTimeout(3000);
+    await expect(amount).toHaveValue(String(second.amount));
+  });
+});
+
