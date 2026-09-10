@@ -32,13 +32,17 @@ export interface TransactionFilters {
   type: "ALL" | "INCOME" | "EXPENSE";
   month: string;
   /**
-   * An inclusive calendar-day range. Set only by a drill-down from analytics,
-   * where the period ("last 90 days", one heatmap day) is not a calendar month.
-   * The server treats it as a replacement for `month`, so the two are never
-   * active at once — anything setting one clears the other.
+   * The selected period, in the shape `transactionFilterFields` validates.
+   *
+   * `null` means no window: `month` is authoritative and this is the ordinary
+   * month view. A drill-down from analytics sets "custom" with both bounds, since
+   * the period it came from ("last 90 days", one heatmap day) is not a calendar
+   * month. The schema refuses a half-specified window, so these three move
+   * together and `month` parks at "ALL" while one is in force.
    */
-  dateFrom: string | null;
-  dateTo: string | null;
+  period: "custom" | null;
+  from: string | null;
+  to: string | null;
   categoryId: string | null;
   labelId: string | null;
   /** Which surface created the row. "MCP" surfaces what the remote endpoint wrote. */
@@ -67,8 +71,9 @@ export interface TransactionFiltersBarProps {
 const DEFAULT_FILTERS: Omit<TransactionFilters, "month"> = {
   search: "",
   type: "ALL",
-  dateFrom: null,
-  dateTo: null,
+  period: null,
+  from: null,
+  to: null,
   categoryId: null,
   labelId: null,
   createdVia: "ALL",
@@ -78,18 +83,15 @@ const DEFAULT_FILTERS: Omit<TransactionFilters, "month"> = {
   sortDir: "desc",
 };
 
-const hasDateRange = (filters: TransactionFilters) =>
-  filters.dateFrom !== null || filters.dateTo !== null;
+const hasDateRange = (filters: TransactionFilters) => filters.from !== null;
 
-const CLEARED_RANGE = { dateFrom: null, dateTo: null } as const;
+const CLEARED_RANGE = { period: null, from: null, to: null } as const;
 
 /** The month a month-shaped control should act on, whatever period is in force. */
 const resolveMonth = (filters: TransactionFilters, timezoneOffset: number) => {
-  // Either end will do. A range open at the start ("until Sep 30") still names a
-  // month, and falling through to today's would open the picker somewhere the
-  // range never mentioned.
-  const rangeDay = filters.dateFrom ?? filters.dateTo;
-  if (rangeDay) return rangeDay.slice(0, 7);
+  // A window always carries both bounds — the schema refuses half of one — so its
+  // start is the month every month-shaped control should act on.
+  if (filters.from) return filters.from.slice(0, 7);
   if (filters.month !== "ALL") return filters.month;
   return accountMonthKey(new Date(), timezoneOffset);
 };
@@ -111,7 +113,7 @@ const getMonthLabel = (month: string) => {
  */
 const getPeriodLabel = (filters: TransactionFilters) =>
   hasDateRange(filters)
-    ? formatFilterRangeLabel(filters.dateFrom, filters.dateTo)
+    ? formatFilterRangeLabel(filters.from, filters.to)
     : getMonthLabel(filters.month);
 
 const countAdvancedFilters = (filters: TransactionFilters) => {

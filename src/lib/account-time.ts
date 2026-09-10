@@ -16,27 +16,6 @@ export const toAccountWallClock = (
 };
 const pad = (value: number) => String(value).padStart(2, "0");
 
-const DAY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
-
-/**
- * True for a `YYYY-MM-DD` string naming a day that exists.
- *
- * A format-only check is not enough: "2026-02-31" matches the shape, and
- * `Date.UTC` then rolls it forward to March 3 rather than complaining — so a
- * filter built from it would quietly query a different range than the one asked
- * for. Round-tripping the parsed date back to its parts is what catches that.
- */
-export const isCalendarDay = (value: string): boolean => {
-  if (!DAY_PATTERN.test(value)) return false;
-  const [year, month, day] = value.split("-").map(Number);
-  const parsed = new Date(Date.UTC(year, month - 1, day));
-  return (
-    parsed.getUTCFullYear() === year &&
-    parsed.getUTCMonth() === month - 1 &&
-    parsed.getUTCDate() === day
-  );
-};
-
 /** Format an instant as the user's saved local `YYYY-MM-DDTHH:mm` wall time. */
 export const formatAccountDateInput = (
   instant: Date | string,

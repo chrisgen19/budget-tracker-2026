@@ -1,30 +1,117 @@
 import type { AnalyticsGranularity } from "@/types";
 import { MONTH_NAMES, MONTH_FULL } from "@/lib/analytics-buckets";
 
-export type PeriodType = AnalyticsGranularity | "custom";
+/**
+ * A period the user can select.
+ *
+ * `"all"` is unbounded and carries no from/to. Only the transactions ledger
+ * offers it — the analytics API requires a bounded window — so components take
+ * an `allowAllTime` flag rather than branching on the page they render in.
+ */
+export type PeriodType = AnalyticsGranularity | "custom" | "all";
 
-/** Format a local date object's UTC parts as YYYY-MM-DD. */
+export interface DateRange {
+  from: string;
+  to: string;
+}
+
+/** A period type together with the days it currently resolves to. */
+export interface PeriodSelection extends DateRange {
+  periodType: PeriodType;
+}
+
+export const ALL_TIME_LABEL = "All time";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const pad = (value: number) => String(value).padStart(2, "0");
+
+/** Format a date's UTC parts as YYYY-MM-DD. */
 const fmtUTC = (d: Date) =>
-  `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+  `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 
 /** Get "today" shifted into the user's saved timezone (read via UTC accessors). */
 export const getLocalToday = (tzOffset: number): Date =>
   new Date(Date.now() - tzOffset * 60 * 1000);
 
-/** Get current month boundaries using the user's saved timezone. */
-export const getCurrentMonth = (tzOffset: number): { from: string; to: string } => {
-  const now = getLocalToday(tzOffset);
-  const y = now.getUTCFullYear();
-  const m = now.getUTCMonth();
-  const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+/*
+ * Every range below is built from UTC accessors deliberately. These are calendar
+ * day keys, not instants: `new Date(y, m, d)` resolves them against the *browser's*
+ * zone, so a user whose account is UTC+8 sitting at a machine set to UTC-7 would
+ * get week and month boundaries a day away from the ones `buildTransactionWhere`
+ * applies against `users.timezone_offset`. Day keys also sort lexicographically,
+ * so a string compare between two of them is a date compare.
+ */
+
+/** The calendar month containing `monthIndex` (0-based; out of range rolls the year). */
+export const monthRange = (year: number, monthIndex: number): DateRange => ({
+  from: fmtUTC(new Date(Date.UTC(year, monthIndex, 1))),
+  to: fmtUTC(new Date(Date.UTC(year, monthIndex + 1, 0))),
+});
+
+/** The whole calendar year. */
+export const yearRange = (year: number): DateRange => ({
+  from: `${year}-01-01`,
+  to: `${year}-12-31`,
+});
+
+/** The Monday-to-Sunday week containing `dayKey`. */
+export const weekRange = (dayKey: string): DateRange => {
+  const [y, m, d] = dayKey.split("-").map(Number);
+  const dayOfWeek = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = Sunday
+  const toMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
   return {
-    from: `${y}-${String(m + 1).padStart(2, "0")}-01`,
-    to: `${y}-${String(m + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+    from: fmtUTC(new Date(Date.UTC(y, m - 1, d + toMonday))),
+    to: fmtUTC(new Date(Date.UTC(y, m - 1, d + toMonday + 6))),
   };
+};
+
+export interface WeekOption extends DateRange {
+  label: string;
+}
+
+/** Short "Aug 31 – Sep 6" label for a week. */
+const weekLabel = ({ from, to }: DateRange): string => {
+  const [, fM, fD] = from.split("-").map(Number);
+  const [, tM, tD] = to.split("-").map(Number);
+  return `${MONTH_NAMES[fM - 1]} ${fD} – ${MONTH_NAMES[tM - 1]} ${tD}`;
+};
+
+/** Every Monday-to-Sunday week overlapping the given calendar month, in order. */
+export const weeksInMonth = (year: number, monthIndex: number): WeekOption[] => {
+  const month = monthRange(year, monthIndex);
+  const weeks: WeekOption[] = [];
+  let week = weekRange(month.from);
+  while (week.from <= month.to) {
+    weeks.push({ ...week, label: weekLabel(week) });
+    const [y, m, d] = week.from.split("-").map(Number);
+    week = weekRange(fmtUTC(new Date(Date.UTC(y, m - 1, d + 7))));
+  }
+  return weeks;
+};
+
+/** Get current month boundaries using the user's saved timezone. */
+export const getCurrentMonth = (tzOffset: number): DateRange => {
+  const now = getLocalToday(tzOffset);
+  return monthRange(now.getUTCFullYear(), now.getUTCMonth());
+};
+
+/** True when from/to cover exactly one whole calendar month. */
+const coversWholeMonth = (from: string, to: string): boolean => {
+  const month = monthRange(Number(from.slice(0, 4)), Number(from.slice(5, 7)) - 1);
+  return from === month.from && to === month.to;
+};
+
+/** True when from/to cover exactly one whole calendar year. */
+const coversWholeYear = (from: string, to: string): boolean => {
+  const year = yearRange(Number(from.slice(0, 4)));
+  return from === year.from && to === year.to;
 };
 
 /** Format period label from from/to strings. */
 export const formatPeriodLabel = (periodType: PeriodType, from: string, to: string): string => {
+  if (periodType === "all") return ALL_TIME_LABEL;
+
   const [fY, fM, fD] = from.split("-").map(Number);
   const [tY, tM, tD] = to.split("-").map(Number);
 
@@ -40,13 +127,11 @@ export const formatPeriodLabel = (periodType: PeriodType, from: string, to: stri
     }
     return `${MONTH_NAMES[fM - 1]} ${fD}, ${fY} – ${MONTH_NAMES[tM - 1]} ${tD}, ${tY}`;
   }
-  // Custom — only show full month label if range covers the entire month
-  const lastDayOfMonth = new Date(fY, fM, 0).getDate();
-  if (fY === tY && fM === tM && fD === 1 && tD === lastDayOfMonth) {
+  // Custom — only show a month or year label if the range covers the whole of one
+  if (coversWholeMonth(from, to)) {
     return `${MONTH_FULL[fM - 1]} ${fY}`;
   }
-  // Custom full year
-  if (fY === tY && fM === 1 && fD === 1 && tM === 12 && tD === 31) {
+  if (coversWholeYear(from, to)) {
     return `${fY}`;
   }
   if (fY === tY) {
@@ -55,68 +140,67 @@ export const formatPeriodLabel = (periodType: PeriodType, from: string, to: stri
   return `${MONTH_NAMES[fM - 1]} ${fD}, ${fY} – ${MONTH_NAMES[tM - 1]} ${tD}, ${tY}`;
 };
 
-/** Navigate to previous/next period. */
+/**
+ * Navigate to the previous/next period.
+ *
+ * Returns the resulting period type as well as its days, because leaving All time
+ * genuinely changes it: without that, a second arrow press would land on the
+ * current month again instead of advancing past it.
+ */
 export const navigatePeriod = (
   periodType: PeriodType,
   from: string,
   to: string,
   direction: "prev" | "next",
-): { from: string; to: string } => {
+  tzOffset: number,
+): PeriodSelection => {
+  // All time has no neighbours. An arrow press moves to the account's current
+  // month, which is what the transactions toolbar has always done.
+  if (periodType === "all") {
+    return { periodType: "monthly", ...getCurrentMonth(tzOffset) };
+  }
+
   const [fY, fM, fD] = from.split("-").map(Number);
   const sign = direction === "next" ? 1 : -1;
 
   if (periodType === "monthly") {
-    const d = new Date(fY, fM - 1 + sign, 1);
-    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-    return {
-      from: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`,
-      to: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
-    };
+    return { periodType, ...monthRange(fY, fM - 1 + sign) };
   }
 
   if (periodType === "yearly") {
-    const y = fY + sign;
-    return { from: `${y}-01-01`, to: `${y}-12-31` };
+    return { periodType, ...yearRange(fY + sign) };
   }
 
   const [tY, tM, tD] = to.split("-").map(Number);
 
-  // Custom range that matches a full calendar month — navigate by month
-  const lastDayOfFromMonth = new Date(fY, fM, 0).getDate();
-  if (periodType === "custom" && fD === 1 && fY === tY && fM === tM && tD === lastDayOfFromMonth) {
-    const d = new Date(fY, fM - 1 + sign, 1);
-    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-    return {
-      from: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`,
-      to: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
-    };
+  // A custom range that happens to be a whole calendar month or year navigates by
+  // the calendar rather than by its day span, so December steps to January.
+  if (periodType === "custom" && coversWholeMonth(from, to)) {
+    return { periodType, ...monthRange(fY, fM - 1 + sign) };
+  }
+  if (periodType === "custom" && coversWholeYear(from, to)) {
+    return { periodType, ...yearRange(fY + sign) };
   }
 
-  // Custom range that matches a full calendar year — navigate by year
-  if (periodType === "custom" && fM === 1 && fD === 1 && tM === 12 && tD === 31 && fY === tY) {
-    const y = fY + sign;
-    return { from: `${y}-01-01`, to: `${y}-12-31` };
-  }
-
-  // Weekly or other custom: shift by exact day span
-  const fromDate = new Date(fY, fM - 1, fD);
-  const toDate = new Date(tY, tM - 1, tD);
-  const span = Math.round((toDate.getTime() - fromDate.getTime()) / (24 * 60 * 60 * 1000)) + 1;
-  fromDate.setDate(fromDate.getDate() + sign * span);
-  toDate.setDate(toDate.getDate() + sign * span);
-
-  const fmtDate = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  return { from: fmtDate(fromDate), to: fmtDate(toDate) };
+  // Weekly or other custom: shift by the exact day span
+  const span = Math.round((Date.UTC(tY, tM - 1, tD) - Date.UTC(fY, fM - 1, fD)) / DAY_MS) + 1;
+  return {
+    periodType,
+    from: fmtUTC(new Date(Date.UTC(fY, fM - 1, fD + sign * span))),
+    to: fmtUTC(new Date(Date.UTC(tY, tM - 1, tD + sign * span))),
+  };
 };
 
 /** Map period type to internal chart granularity. */
 export const chartGranularity = (periodType: PeriodType, from: string, to: string): AnalyticsGranularity => {
+  // Analytics never selects All time — its API requires a bounded window — but the
+  // type is shared with the ledger, so give it a defined answer rather than a throw.
+  if (periodType === "all") return "monthly";
   if (periodType === "yearly") return "monthly";
   if (periodType === "monthly") return "weekly";
   if (periodType === "weekly") return "weekly";
-  // Custom: auto based on span (UTC midnight parse is intentional — only computing day count)
-  const days = (new Date(to).getTime() - new Date(from).getTime()) / (24 * 60 * 60 * 1000);
+  // Custom: auto based on span
+  const days = (Date.parse(to) - Date.parse(from)) / DAY_MS;
   if (days < 90) return "weekly";
   if (days < 730) return "monthly";
   return "yearly";
@@ -125,7 +209,7 @@ export const chartGranularity = (periodType: PeriodType, from: string, to: strin
 export interface DatePreset {
   id: string;
   label: string;
-  getRange: (tzOffset: number) => { from: string; to: string };
+  getRange: (tzOffset: number) => DateRange;
 }
 
 /** Quick date presets for the time range picker (computed in the user's timezone). */

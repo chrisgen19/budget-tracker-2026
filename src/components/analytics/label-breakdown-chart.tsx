@@ -49,8 +49,8 @@ export function LabelBreakdownChart({ data, currency, hideAmounts, range, type }
             href={buildTransactionsHref({
               labelId: item.id,
               type,
-              dateFrom: range.from,
-              dateTo: range.to,
+              from: range.from,
+              to: range.to,
             })}
             label={drillDownLabel(item.transactionCount, item.name)}
             className="-mx-1.5 space-y-1.5 px-1.5 py-1.5"

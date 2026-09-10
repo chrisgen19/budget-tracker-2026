@@ -2,17 +2,17 @@ import { describe, expect, it } from "vitest";
 import { MAX_TRANSACTION_SEARCH_LENGTH } from "@/lib/transaction-filter-limits";
 import {
   buildTransactionWhere,
-  parseTransactionSearchParams,
   transactionFilterSchema,
 } from "@/lib/transaction-filter-query";
 
-/** UTC+8, the app's own timezone, in `getTimezoneOffset` convention. */
+/** `Date#getTimezoneOffset` convention: UTC+8 is -480, UTC-8 is 480. */
 const MANILA = -480;
+const LOS_ANGELES = 480;
 
-const whereDate = (overrides: Record<string, unknown>) => {
-  const filters = transactionFilterSchema.parse(overrides);
-  return buildTransactionWhere("user-1", filters).date;
-};
+const parse = (filters: Record<string, unknown>) => transactionFilterSchema.safeParse(filters);
+
+const where = (filters: Record<string, unknown>) =>
+  buildTransactionWhere("user-1", transactionFilterSchema.parse(filters));
 
 describe("transactionFilterSchema", () => {
   it("accepts the shared search ceiling and rejects one character beyond it", () => {
@@ -25,105 +25,156 @@ describe("transactionFilterSchema", () => {
         .success,
     ).toBe(false);
   });
-});
 
-describe("date range filtering", () => {
-  it("rejects a day that is not YYYY-MM-DD", () => {
-    expect(transactionFilterSchema.safeParse({ dateFrom: "2026-9-1" }).success).toBe(false);
-    expect(transactionFilterSchema.safeParse({ dateFrom: "2026-13-01" }).success).toBe(false);
-    expect(transactionFilterSchema.safeParse({ dateFrom: "2026-09-01" }).success).toBe(true);
+  it("accepts a fully described range", () => {
+    expect(parse({ period: "custom", from: "2026-09-01", to: "2026-09-30" }).success).toBe(true);
   });
 
-  it("rejects a well-formed day that does not exist", () => {
-    // Date.UTC rolls 2026-02-31 forward to March 3, so accepting it would query a
-    // different range than the caller asked for and never say so.
-    expect(transactionFilterSchema.safeParse({ dateFrom: "2026-02-31" }).success).toBe(false);
-    expect(transactionFilterSchema.safeParse({ dateTo: "2026-04-31" }).success).toBe(false);
-    expect(transactionFilterSchema.safeParse({ dateFrom: "2026-02-29" }).success).toBe(false);
-    // 2028 is a leap year, so the same date is fine there.
-    expect(transactionFilterSchema.safeParse({ dateFrom: "2028-02-29" }).success).toBe(true);
+  it("accepts a single-day range", () => {
+    expect(parse({ period: "custom", from: "2026-09-10", to: "2026-09-10" }).success).toBe(true);
   });
 
-  it("ends at the start of the day after dateTo, so the last day is included", () => {
-    // A transaction at 23:59 on the 3rd must be inside a Jan 1–3 range.
-    expect(whereDate({ dateFrom: "2026-01-01", dateTo: "2026-01-03" })).toEqual({
-      gte: new Date("2026-01-01T00:00:00.000Z"),
-      lt: new Date("2026-01-04T00:00:00.000Z"),
-    });
+  it("refuses a half-specified range from either end", () => {
+    // The bulk endpoints materialize their targets from these filters, so a bound
+    // lost in transit must fail rather than silently widen the operation.
+    expect(parse({ period: "custom", from: "2026-09-01", to: null }).success).toBe(false);
+    expect(parse({ period: "custom", from: null, to: "2026-09-30" }).success).toBe(false);
   });
 
-  it("turns a single day into that one whole local day", () => {
-    // Manila midnight is 16:00 UTC the previous day.
-    expect(whereDate({ dateFrom: "2026-09-12", dateTo: "2026-09-12", timezoneOffset: MANILA })).toEqual({
-      gte: new Date("2026-09-11T16:00:00.000Z"),
-      lt: new Date("2026-09-12T16:00:00.000Z"),
-    });
+  it("refuses a range that runs backwards", () => {
+    expect(parse({ period: "custom", from: "2026-09-30", to: "2026-09-01" }).success).toBe(false);
   });
 
-  it("replaces the month window rather than intersecting it", () => {
-    // A range straddling two months must not be narrowed back to one of them.
-    expect(whereDate({ month: "2026-02", dateFrom: "2026-01-15", dateTo: "2026-03-03" })).toEqual({
-      gte: new Date("2026-01-15T00:00:00.000Z"),
-      lt: new Date("2026-03-04T00:00:00.000Z"),
-    });
+  it("refuses a bounded period that arrives with no window", () => {
+    expect(parse({ period: "monthly", from: null, to: null }).success).toBe(false);
+    expect(parse({ period: "weekly", from: null, to: null }).success).toBe(false);
   });
 
-  it("still uses the month window when no range is set", () => {
-    expect(whereDate({ month: "2026-02" })).toEqual({
-      gte: new Date("2026-02-01T00:00:00.000Z"),
-      lt: new Date("2026-03-01T00:00:00.000Z"),
-    });
+  it("refuses a date that is not on the calendar", () => {
+    expect(parse({ period: "custom", from: "2026-02-30", to: "2026-03-01" }).success).toBe(false);
   });
 
-  it("accepts an open-ended range at either end", () => {
-    expect(whereDate({ dateFrom: "2026-01-01" })).toEqual({
-      gte: new Date("2026-01-01T00:00:00.000Z"),
-    });
-    expect(whereDate({ dateTo: "2026-01-31" })).toEqual({
-      lt: new Date("2026-02-01T00:00:00.000Z"),
-    });
+  it("accepts All time with no window", () => {
+    expect(parse({ period: "all" }).success).toBe(true);
   });
 
-  it("crosses a month and a year boundary on the exclusive end", () => {
-    expect(whereDate({ dateFrom: "2026-12-31", dateTo: "2026-12-31" })).toEqual({
-      gte: new Date("2026-12-31T00:00:00.000Z"),
-      lt: new Date("2027-01-01T00:00:00.000Z"),
-    });
+  it("refuses All time that still carries the previous range", () => {
+    // A client that switches to All time without clearing from/to would otherwise
+    // keep filtering by the old window while the UI reads "All time".
+    expect(parse({ period: "all", from: "2026-09-01", to: "2026-09-30" }).success).toBe(false);
   });
 
-  it("leaves the date predicate off entirely when nothing narrows it", () => {
-    expect(whereDate({})).toBeUndefined();
-  });
-
-  it("reads both ends off the query string", () => {
-    const params = new URLSearchParams({ dateFrom: "2026-09-01", dateTo: "2026-09-30" });
-    expect(parseTransactionSearchParams(params)).toMatchObject({
-      dateFrom: "2026-09-01",
-      dateTo: "2026-09-30",
-    });
-    expect(parseTransactionSearchParams(new URLSearchParams())).toMatchObject({
-      dateFrom: null,
-      dateTo: null,
-    });
+  it("accepts a legacy month-only caller that sends no period at all", () => {
+    const result = parse({ month: "2026-08" });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.period).toBeNull();
   });
 });
 
-describe("a contradictory range", () => {
-  it("is rejected rather than answered with an empty list", () => {
-    // "No transactions" would be a claim about the data; this is a bad request.
+describe("buildTransactionWhere date window", () => {
+  it("resolves a range against the account timezone, not UTC", () => {
+    // Sep 1–30 in Manila starts at 16:00 UTC on Aug 31 and ends before 16:00 UTC on Sep 30.
     expect(
-      transactionFilterSchema.safeParse({ dateFrom: "2026-09-30", dateTo: "2026-09-02" }).success,
-    ).toBe(false);
+      where({ period: "monthly", from: "2026-09-01", to: "2026-09-30", timezoneOffset: MANILA })
+        .date,
+    ).toEqual({
+      gte: new Date("2026-08-31T16:00:00.000Z"),
+      lt: new Date("2026-09-30T16:00:00.000Z"),
+    });
+
+    expect(
+      where({
+        period: "monthly",
+        from: "2026-09-01",
+        to: "2026-09-30",
+        timezoneOffset: LOS_ANGELES,
+      }).date,
+    ).toEqual({
+      gte: new Date("2026-09-01T08:00:00.000Z"),
+      lt: new Date("2026-10-01T08:00:00.000Z"),
+    });
   });
 
-  it("allows the ends to be equal, which is how a single day is expressed", () => {
-    expect(
-      transactionFilterSchema.safeParse({ dateFrom: "2026-09-12", dateTo: "2026-09-12" }).success,
-    ).toBe(true);
+  it("includes the whole of the final day", () => {
+    // An inclusive `to` of Sep 10 must not stop at Sep 10 00:00.
+    const single = where({
+      period: "custom",
+      from: "2026-09-10",
+      to: "2026-09-10",
+      timezoneOffset: MANILA,
+    }).date;
+    expect(single).toEqual({
+      gte: new Date("2026-09-09T16:00:00.000Z"),
+      lt: new Date("2026-09-10T16:00:00.000Z"),
+    });
   });
 
-  it("does not object when only one end is given", () => {
-    expect(transactionFilterSchema.safeParse({ dateFrom: "2026-09-30" }).success).toBe(true);
-    expect(transactionFilterSchema.safeParse({ dateTo: "2026-09-02" }).success).toBe(true);
+  it("rolls the upper bound over a year boundary", () => {
+    expect(
+      where({ period: "yearly", from: "2026-01-01", to: "2026-12-31", timezoneOffset: MANILA })
+        .date,
+    ).toEqual({
+      gte: new Date("2025-12-31T16:00:00.000Z"),
+      lt: new Date("2026-12-31T16:00:00.000Z"),
+    });
+  });
+
+  it("still honors a legacy month when no range is given", () => {
+    expect(where({ month: "2026-08", timezoneOffset: MANILA }).date).toEqual({
+      gte: new Date("2026-07-31T16:00:00.000Z"),
+      lt: new Date("2026-08-31T16:00:00.000Z"),
+    });
+  });
+
+  it("gives an explicit range precedence over a month left in the payload", () => {
+    expect(
+      where({
+        period: "weekly",
+        from: "2026-09-07",
+        to: "2026-09-13",
+        month: "2026-08",
+        timezoneOffset: MANILA,
+      }).date,
+    ).toEqual({
+      gte: new Date("2026-09-06T16:00:00.000Z"),
+      lt: new Date("2026-09-13T16:00:00.000Z"),
+    });
+  });
+
+  it("lets All time clear a stale month rather than quietly filtering by it", () => {
+    expect(where({ period: "all", month: "2026-08", timezoneOffset: MANILA }).date).toBeUndefined();
+  });
+
+  it("keeps All time unbounded even if a range reaches the builder unparsed", () => {
+    // buildTransactionWhere is exported and takes a plain object, so the ordering
+    // has to hold for a caller that assembled the filters without the schema.
+    expect(
+      buildTransactionWhere("user-1", {
+        ...transactionFilterSchema.parse({ period: "all", timezoneOffset: MANILA }),
+        from: "2026-09-01",
+        to: "2026-09-30",
+      }).date,
+    ).toBeUndefined();
+  });
+
+  it("applies no date clause when nothing narrows the window", () => {
+    expect(where({ timezoneOffset: MANILA }).date).toBeUndefined();
+  });
+
+  it("leaves the other filters untouched", () => {
+    expect(
+      where({
+        period: "custom",
+        from: "2026-09-01",
+        to: "2026-09-30",
+        type: "EXPENSE",
+        search: "coffee",
+        timezoneOffset: MANILA,
+      }),
+    ).toMatchObject({
+      userId: "user-1",
+      type: "EXPENSE",
+      description: { contains: "coffee", mode: "insensitive" },
+    });
   });
 });

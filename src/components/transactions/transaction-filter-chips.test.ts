@@ -6,8 +6,9 @@ const baseFilters: TransactionFilters = {
   search: "",
   type: "ALL",
   month: "2026-08",
-  dateFrom: null,
-  dateTo: null,
+  period: null,
+  from: null,
+  to: null,
   categoryId: null,
   labelId: null,
   createdVia: "ALL",
@@ -106,8 +107,8 @@ describe("date range chip", () => {
     // put a month back or the list silently widens to every transaction ever.
     const { chips, update } = build({
       month: "ALL",
-      dateFrom: "2026-01-15",
-      dateTo: "2026-03-03",
+      from: "2026-01-15",
+      to: "2026-03-03",
     });
 
     expect(chips.map((chip) => chip.id)).toEqual(["dateRange"]);
@@ -115,14 +116,15 @@ describe("date range chip", () => {
 
     chips[0].onRemove();
     expect(update).toHaveBeenCalledWith({
-      dateFrom: null,
-      dateTo: null,
+      period: null,
+      from: null,
+      to: null,
       month: "2026-08",
     });
   });
 
   it("sits ahead of the type chip, where the period is read", () => {
-    const { chips } = build({ dateFrom: "2026-09-12", dateTo: "2026-09-12", type: "EXPENSE" });
+    const { chips } = build({ from: "2026-09-12", to: "2026-09-12", type: "EXPENSE" });
     expect(chips.map((chip) => chip.id)).toEqual(["dateRange", "type"]);
     expect(chips[0].label).toBe("Sep 12, 2026");
   });

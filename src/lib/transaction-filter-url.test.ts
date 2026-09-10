@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { buildTransactionParams } from "@/hooks/use-transactions";
 import { MAX_TRANSACTION_SEARCH_LENGTH } from "@/lib/transaction-filter-limits";
+import {
+  parseTransactionSearchParams,
+  transactionFilterSchema,
+} from "@/lib/transaction-filter-query";
 import {
   buildTransactionsHref,
   hasTransactionFilterParams,
@@ -12,26 +17,29 @@ const MANILA = -480;
 const queryOf = (href: string) => new URLSearchParams(href.split("?")[1] ?? "");
 
 describe("buildTransactionsHref", () => {
-  it("carries a category drill-down with its period and type", () => {
+  it("carries a category drill-down with its window and type", () => {
     const href = buildTransactionsHref({
       type: "EXPENSE",
       categoryId: "cat-1",
-      dateFrom: "2026-01-15",
-      dateTo: "2026-03-03",
+      from: "2026-01-15",
+      to: "2026-03-03",
     });
     expect(href).toBe(
-      "/transactions?type=EXPENSE&categoryId=cat-1&dateFrom=2026-01-15&dateTo=2026-03-03",
+      "/transactions?type=EXPENSE&categoryId=cat-1&period=custom&from=2026-01-15&to=2026-03-03",
     );
   });
 
+  it("names the window custom rather than the period it came from", () => {
+    // What reaches the list is a pair of days. Calling it "monthly" would invite a
+    // later reader to recompute the window from a month it no longer knows.
+    expect(queryOf(buildTransactionsHref({ from: "2026-09-01", to: "2026-09-30" })).get("period"))
+      .toBe("custom");
+  });
+
   it("passes the same day at both ends for a single heatmap day", () => {
-    const href = buildTransactionsHref({
-      type: "EXPENSE",
-      dateFrom: "2026-09-12",
-      dateTo: "2026-09-12",
-    });
-    expect(queryOf(href).get("dateFrom")).toBe("2026-09-12");
-    expect(queryOf(href).get("dateTo")).toBe("2026-09-12");
+    const params = queryOf(buildTransactionsHref({ from: "2026-09-12", to: "2026-09-12" }));
+    expect(params.get("from")).toBe("2026-09-12");
+    expect(params.get("to")).toBe("2026-09-12");
   });
 
   it("omits ALL and empty values rather than spelling out defaults", () => {
@@ -40,48 +48,60 @@ describe("buildTransactionsHref", () => {
     );
   });
 
-  it("drops a malformed day instead of sending it to the API", () => {
-    // The API rejects it with a 400; landing on an unfiltered list beats an error page.
-    expect(buildTransactionsHref({ labelId: "l1", dateFrom: "2026-9-1" })).toBe(
+  it("emits no window at all rather than half of one", () => {
+    // The schema refuses a half-specified range, because the selection endpoint
+    // materialises bulk edits from these filters and a lost bound widens them.
+    expect(buildTransactionsHref({ labelId: "l1", from: "2026-09-01" })).toBe(
+      "/transactions?labelId=l1",
+    );
+    expect(buildTransactionsHref({ labelId: "l1", to: "2026-09-30" })).toBe(
       "/transactions?labelId=l1",
     );
   });
 
-  it("drops a well-formed day that does not exist, matching what the API accepts", () => {
-    expect(buildTransactionsHref({ labelId: "l1", dateFrom: "2026-02-31" })).toBe(
+  it("drops a malformed or impossible day instead of sending it to the API", () => {
+    expect(buildTransactionsHref({ labelId: "l1", from: "2026-9-1", to: "2026-09-30" })).toBe(
       "/transactions?labelId=l1",
     );
+    // Date.UTC would roll 2026-02-31 forward to March 3 rather than complain.
+    expect(buildTransactionsHref({ labelId: "l1", from: "2026-02-01", to: "2026-02-31" })).toBe(
+      "/transactions?labelId=l1",
+    );
+  });
+
+  it("drops a backwards window", () => {
     expect(
-      readTransactionFilters(new URLSearchParams({ dateFrom: "2026-02-31" }), MANILA).dateFrom,
-    ).toBeNull();
+      buildTransactionsHref({ categoryId: "c1", from: "2026-09-30", to: "2026-09-02" }),
+    ).toBe("/transactions?categoryId=c1");
   });
 
   it("round-trips through the reader", () => {
     const drillDown = {
       type: "INCOME" as const,
       labelId: "label-9",
-      dateFrom: "2026-02-01",
-      dateTo: "2026-02-28",
+      from: "2026-02-01",
+      to: "2026-02-28",
     };
     const filters = readTransactionFilters(queryOf(buildTransactionsHref(drillDown)), MANILA);
-    expect(filters).toMatchObject(drillDown);
+    expect(filters).toMatchObject({ ...drillDown, period: "custom", month: "ALL" });
   });
 });
 
 describe("readTransactionFilters", () => {
-  it("parks the month at ALL when a range arrives, since the two are alternatives", () => {
+  it("parks the month at ALL when a window arrives, since the two are alternatives", () => {
     const filters = readTransactionFilters(
-      new URLSearchParams({ month: "2026-02", dateFrom: "2026-01-15", dateTo: "2026-03-03" }),
+      new URLSearchParams({ month: "2026-02", from: "2026-01-15", to: "2026-03-03" }),
       MANILA,
     );
-    expect(filters.month).toBe("ALL");
-    expect(filters.dateFrom).toBe("2026-01-15");
+    expect(filters).toMatchObject({ month: "ALL", period: "custom", from: "2026-01-15" });
   });
 
-  it("keeps a well-formed month when no range is given", () => {
-    expect(readTransactionFilters(new URLSearchParams({ month: "2026-02" }), MANILA).month).toBe(
-      "2026-02",
-    );
+  it("leaves period null when there is no window, so the month stays authoritative", () => {
+    const filters = readTransactionFilters(new URLSearchParams({ month: "2026-02" }), MANILA);
+    expect(filters).toMatchObject({ month: "2026-02", period: null, from: null, to: null });
+  });
+
+  it("keeps a well-formed month and honours ALL", () => {
     expect(readTransactionFilters(new URLSearchParams({ month: "ALL" }), MANILA).month).toBe("ALL");
   });
 
@@ -89,6 +109,25 @@ describe("readTransactionFilters", () => {
     const filters = readTransactionFilters(new URLSearchParams({ month: "nonsense" }), MANILA);
     expect(filters.month).toMatch(/^\d{4}-\d{2}$/);
     expect(filters.month).not.toBe("nonsense");
+  });
+
+  it("drops a half, backwards or impossible window rather than holding one the API refuses", () => {
+    // Keeping any of these would leave every list request failing with a 400 and
+    // no way out but editing the URL by hand.
+    const queries: Record<string, string>[] = [
+      { from: "2026-09-01" },
+      { to: "2026-09-30" },
+      { from: "2026-09-30", to: "2026-09-02" },
+      { from: "2026-02-01", to: "2026-02-31" },
+    ];
+    for (const query of queries) {
+      const filters = readTransactionFilters(new URLSearchParams(query), MANILA);
+      expect(filters.period).toBeNull();
+      expect(filters.from).toBeNull();
+      expect(filters.to).toBeNull();
+      // No window means the month fallback applies.
+      expect(filters.month).toMatch(/^\d{4}-\d{2}$/);
+    }
   });
 
   it("ignores a type it does not recognise", () => {
@@ -113,8 +152,6 @@ describe("readTransactionFilters", () => {
   });
 
   it("drops an id longer than the API accepts", () => {
-    // Keeping it would leave every list request failing with a 400 and no way out
-    // but editing the URL by hand.
     const filters = readTransactionFilters(
       new URLSearchParams({ categoryId: "c".repeat(101), labelId: "l".repeat(101) }),
       MANILA,
@@ -146,25 +183,48 @@ describe("hasTransactionFilterParams", () => {
 
   it("is true for anything the list should be steered by", () => {
     expect(hasTransactionFilterParams(new URLSearchParams({ categoryId: "c1" }))).toBe(true);
-    expect(hasTransactionFilterParams(new URLSearchParams({ dateFrom: "2026-09-12" }))).toBe(true);
+    expect(hasTransactionFilterParams(new URLSearchParams({ from: "2026-09-12" }))).toBe(true);
+    expect(hasTransactionFilterParams(new URLSearchParams({ period: "custom" }))).toBe(true);
   });
 });
 
-describe("a reversed range", () => {
-  it("is dropped rather than held as state every request would fail on", () => {
-    const filters = readTransactionFilters(
-      new URLSearchParams({ dateFrom: "2026-09-30", dateTo: "2026-09-02" }),
-      MANILA,
+describe("the request the client builds is one the API accepts", () => {
+  // The two halves are written in different files against the same param names,
+  // and a rename on either side fails silently as a 400 the list shows as an
+  // error state. Bind them together here.
+  const parseAsServer = (filters: Parameters<typeof buildTransactionParams>[0]) =>
+    transactionFilterSchema.safeParse(
+      Object.fromEntries(
+        new URLSearchParams(
+          Object.fromEntries(buildTransactionParams(filters, 1, MANILA).entries()),
+        ),
+      ) as Record<string, string>,
     );
-    expect(filters.dateFrom).toBeNull();
-    expect(filters.dateTo).toBeNull();
-    // Both ends gone means no range, so the month fallback applies.
-    expect(filters.month).toMatch(/^\d{4}-\d{2}$/);
+
+  it("accepts an ordinary month view", () => {
+    const filters = readTransactionFilters(new URLSearchParams({ month: "2026-09" }), MANILA);
+    expect(parseTransactionSearchParams(buildTransactionParams(filters, 1, MANILA))).toMatchObject({
+      month: "2026-09",
+      period: null,
+      from: null,
+      to: null,
+    });
+    expect(parseAsServer(filters).success).toBe(true);
   });
 
-  it("is never emitted by the link builder either", () => {
-    expect(buildTransactionsHref({ categoryId: "c1", dateFrom: "2026-09-30", dateTo: "2026-09-02" })).toBe(
-      "/transactions?categoryId=c1",
+  it("accepts a drill-down window", () => {
+    const filters = readTransactionFilters(
+      queryOf(buildTransactionsHref({ categoryId: "c1", type: "EXPENSE", from: "2026-09-01", to: "2026-09-30" })),
+      MANILA,
     );
+    const parsed = parseTransactionSearchParams(buildTransactionParams(filters, 1, MANILA));
+    expect(parsed).toMatchObject({
+      period: "custom",
+      from: "2026-09-01",
+      to: "2026-09-30",
+      month: "ALL",
+      categoryId: "c1",
+      type: "EXPENSE",
+    });
   });
 });

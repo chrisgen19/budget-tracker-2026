@@ -48,8 +48,8 @@ export function CategoryBreakdownChart({ data, currency, hideAmounts, range }: C
     return buildTransactionsHref({
       categoryId,
       type: type ?? item.type,
-      dateFrom: range.from,
-      dateTo: range.to,
+      from: range.from,
+      to: range.to,
     });
   };
 

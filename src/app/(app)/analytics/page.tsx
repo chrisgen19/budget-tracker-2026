@@ -206,8 +206,13 @@ export default function AnalyticsPage() {
   }, []);
 
   const handleNavigate = useCallback((direction: "prev" | "next") => {
-    setDateRange((prev) => navigatePeriod(periodType, prev.from, prev.to, direction));
-  }, [periodType]);
+    // navigatePeriod returns the resulting type too — leaving All time changes it.
+    // Analytics never selects All time, but reading the type back keeps the one
+    // navigation rule in one place.
+    const next = navigatePeriod(periodType, dateRange.from, dateRange.to, direction, tz);
+    setPeriodType(next.periodType);
+    setDateRange({ from: next.from, to: next.to });
+  }, [periodType, dateRange.from, dateRange.to, tz]);
 
   // Sticky controls bar: a combined period-nav + tabs bar whose two rows are revealed
   // independently — each row appears as soon as its in-page counterpart scrolls out of

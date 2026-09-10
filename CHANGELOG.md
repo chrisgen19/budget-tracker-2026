@@ -2,6 +2,50 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-10 - Drilling down from a breakdown (#277, #279)
+
+Every breakdown on `/analytics` answered *how much* and none of them answered *on what*. The By
+Category rows, the By Label bars and a selected day in the Spending Heatmap now link into
+`/transactions` filtered to the rows that produced the number. The Breakdowns card also opens on
+Expenses instead of All, which mixed income categories into the same donut ring as the spending the
+card exists to explain.
+
+### The window had to exist before the link could be honest
+
+`TransactionFilters` could only say `month`. Analytics works in arbitrary periods -- "last 90 days",
+a custom span, one heatmap day -- so a drill-down would have snapped to the containing month and
+shown a different set of rows than the number the user tapped. #282 landed the window itself
+(`period` / `from` / `to`, refusing a half-specified or backwards range because
+`/api/transactions/selection` materialises bulk edits from these same filters); this change is the
+client half that uses it. `transaction-filter-url.ts` owns the param names in both directions, so
+the analytics side and the receiving page cannot drift, and a hand-typed URL behaves like a clicked
+one.
+
+Filters flow one way: **in**. A URL carrying them imposes them; later edits stay in local state, so
+typing in the search box does not rewrite history per keystroke. Losing the query resets the list,
+because the nav item for this page is a plain link to `/transactions` and renders as *active* while
+a drill-down is on screen -- clicking it is how someone asks for the unfiltered list back, and the
+route not changing means the page is never unmounted to reset itself.
+
+### Two things the analytics payload forced
+
+A category row's `id` is the composite `<categoryId>:<TYPE>` the API keys the breakdown by, since
+one category can carry both income and expense rows. Passing it through whole matches nothing in
+the database and lands on an **empty list rather than an error** -- the worst failure shape
+available -- so it is split and the type travels with the category.
+
+The heatmap's day count includes income, so its link carries no type filter: narrowing to expenses
+would open fewer rows than the line beside the link promises. Weekday mode gets no link at all,
+because those cells are averages across many dates and there is no single day to open.
+
+### What is deliberately not clickable
+
+The donut slices. The ring is 27px thick and a 1% category is a sliver of arc, both under the 44px
+minimum from #212, and an SVG sector cannot take the pseudo-element hit-area trick the preference
+switches use. The stronger reason: the donut has no hover, so a tap on a slice is how the tooltip is
+read on touch. Navigating away would spend the chart's only touch interaction on a destination the
+row beside it already offers with a real label and a full-size target.
+
 ## 2026-09-09 - Quick Log on the dashboard (#275, phase 1)
 
 `/quick-log` had CRUD, one-tap logging, pinned labels and the idempotency machinery, and was a page

@@ -1,39 +1,48 @@
 import type { TransactionFilters } from "@/components/transactions/transaction-filters";
-import { accountMonthKey, isCalendarDay } from "@/lib/account-time";
+import { accountMonthKey } from "@/lib/account-time";
 import { MAX_TRANSACTION_SEARCH_LENGTH } from "@/lib/transaction-filter-limits";
+import { validDateString } from "@/lib/validations";
 
 /**
  * What a breakdown row knows about itself: which slice of the data produced the
- * number the user just tapped. Every drill-down surface — category rows, donut
- * slices, label bars, heatmap days — describes itself in these terms and nothing
- * else, so they cannot drift apart in how they narrow the list.
+ * number the user just tapped. Every drill-down surface — category rows, label
+ * bars, heatmap days — describes itself in these terms and nothing else, so they
+ * cannot drift apart in how they narrow the list.
  */
 export interface TransactionDrillDown {
   type?: TransactionFilters["type"];
   categoryId?: string | null;
   labelId?: string | null;
   /** Inclusive calendar days. A single day passes the same value to both. */
-  dateFrom?: string | null;
-  dateTo?: string | null;
+  from?: string | null;
+  to?: string | null;
 }
 
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
-/** Mirrors the `.max(100)` on `categoryId` / `labelId` in `transactionFilterSchema`. */
+/** Mirrors the `.max(100)` on `categoryId` / `labelId` in `transactionFilterFields`. */
 const MAX_FILTER_ID_LENGTH = 100;
 
 /**
- * Only the params the transactions list is willing to be steered by. The same
- * predicate the API validates with, so a day this lets through cannot be one the
- * request is then rejected for.
+ * The same predicate the API validates with, so a day this lets through cannot
+ * be one the request is then rejected for.
  */
 const asDay = (value: string | null | undefined) =>
-  value && isCalendarDay(value) ? value : null;
+  value && validDateString.safeParse(value).success ? value : null;
 
-/** Both ends present, both real days, and the wrong way round. */
-const isReversed = (from: string | null | undefined, to: string | null | undefined) => {
+/**
+ * A window is all-or-nothing.
+ *
+ * `transactionFilterFields` refuses a half-specified or backwards range outright,
+ * because `/api/transactions/selection` materialises bulk edit and delete targets
+ * from these same filters and a bound lost in transit would widen the operation.
+ * A link that cannot describe a whole window therefore describes none, rather
+ * than sending half of one and having every request fail.
+ */
+const asWindow = (from: string | null | undefined, to: string | null | undefined) => {
   const start = asDay(from);
   const end = asDay(to);
-  return start !== null && end !== null && start > end;
+  if (start === null || end === null || start > end) return null;
+  return { from: start, to: end };
 };
 
 /**
@@ -49,11 +58,16 @@ export function buildTransactionsHref(drillDown: TransactionDrillDown): string {
   if (drillDown.type && drillDown.type !== "ALL") params.set("type", drillDown.type);
   if (drillDown.categoryId) params.set("categoryId", drillDown.categoryId);
   if (drillDown.labelId) params.set("labelId", drillDown.labelId);
-  const reversed = isReversed(drillDown.dateFrom, drillDown.dateTo);
-  const from = reversed ? null : asDay(drillDown.dateFrom);
-  const to = reversed ? null : asDay(drillDown.dateTo);
-  if (from) params.set("dateFrom", from);
-  if (to) params.set("dateTo", to);
+
+  const window = asWindow(drillDown.from, drillDown.to);
+  if (window) {
+    // "custom" rather than the analytics period's own name: what reaches the list
+    // is a pair of days, and calling it "monthly" would invite a later reader to
+    // recompute the window from a month it no longer knows.
+    params.set("period", "custom");
+    params.set("from", window.from);
+    params.set("to", window.to);
+  }
 
   const query = params.toString();
   return query ? `/transactions?${query}` : "/transactions";
@@ -65,8 +79,9 @@ export function hasTransactionFilterParams(params: URLSearchParams): boolean {
     params.has("type") ||
     params.has("categoryId") ||
     params.has("labelId") ||
-    params.has("dateFrom") ||
-    params.has("dateTo") ||
+    params.has("period") ||
+    params.has("from") ||
+    params.has("to") ||
     params.has("month") ||
     params.has("search")
   );
@@ -88,34 +103,31 @@ const asType = (value: string | null): TransactionFilters["type"] =>
  * anything absent or malformed. A URL is user-editable input, so an unparseable
  * value is dropped rather than allowed to reach the API and 400 there.
  *
- * A date range and a month cannot both apply (the server treats the range as a
- * replacement), so an incoming range clears the month.
+ * A window and a month cannot both apply — the server resolves the window first
+ * and `month` is the legacy path behind it — so an incoming window parks the
+ * month at "ALL", and no window leaves `period` null so the month stays
+ * authoritative.
  */
 export function readTransactionFilters(
   params: URLSearchParams,
   timezoneOffset: number,
 ): TransactionFilters {
-  // A reversed range is refused by the API, and holding one in local state would
-  // leave every request failing until the chip is cleared by hand. Dropping both
-  // ends lands on the ordinary month instead.
-  const reversed = isReversed(params.get("dateFrom"), params.get("dateTo"));
-  const dateFrom = reversed ? null : asDay(params.get("dateFrom"));
-  const dateTo = reversed ? null : asDay(params.get("dateTo"));
+  const window = asWindow(params.get("from"), params.get("to"));
   const month = params.get("month");
-  const hasRange = Boolean(dateFrom || dateTo);
 
   return {
     search: (params.get("search") ?? "").slice(0, MAX_TRANSACTION_SEARCH_LENGTH),
     type: asType(params.get("type")),
-    month: hasRange
+    period: window ? "custom" : null,
+    from: window?.from ?? null,
+    to: window?.to ?? null,
+    month: window
       ? "ALL"
       : month === "ALL" || (month && MONTH_PATTERN.test(month))
         ? month
         : accountMonthKey(new Date(), timezoneOffset),
     categoryId: asFilterId(params.get("categoryId")),
     labelId: asFilterId(params.get("labelId")),
-    dateFrom,
-    dateTo,
     createdVia: "ALL",
     amountMin: null,
     amountMax: null,

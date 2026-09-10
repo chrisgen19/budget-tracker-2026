@@ -57,8 +57,13 @@ export const buildTransactionParams = (filters: TransactionFilters, page: number
     month: filters.month,
     tz: String(tz),
   });
-  if (filters.dateFrom) params.set("dateFrom", filters.dateFrom);
-  if (filters.dateTo) params.set("dateTo", filters.dateTo);
+  // All three or none: the schema refuses a window missing a bound, and a period
+  // other than "all" that arrives without one.
+  if (filters.period && filters.from && filters.to) {
+    params.set("period", filters.period);
+    params.set("from", filters.from);
+    params.set("to", filters.to);
+  }
   if (filters.type !== "ALL") params.set("type", filters.type);
   if (filters.search) params.set("search", filters.search);
   if (filters.categoryId) params.set("categoryId", filters.categoryId);

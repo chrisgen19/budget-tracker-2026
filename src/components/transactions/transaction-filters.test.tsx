@@ -32,8 +32,9 @@ const baseFilters: TransactionFilters = {
   search: "",
   type: "ALL",
   month: "2026-08",
-  dateFrom: null,
-  dateTo: null,
+  period: null,
+  from: null,
+  to: null,
   categoryId: null,
   labelId: null,
   createdVia: "ALL",
@@ -534,8 +535,9 @@ describe("a drill-down date range", () => {
     ...baseFilters,
     // The month parks at ALL while a range is in force — the two are alternatives.
     month: "ALL",
-    dateFrom: "2026-01-15",
-    dateTo: "2026-03-03",
+    period: "custom",
+    from: "2026-01-15",
+    to: "2026-03-03",
   };
 
   it("takes over the month button, which would otherwise name a different period", () => {
@@ -551,7 +553,7 @@ describe("a drill-down date range", () => {
     renderFilters(rangeFilters);
     fireEvent.click(screen.getAllByRole("button", { name: "Previous month" })[0]);
 
-    expect(currentFilters).toMatchObject({ month: "2026-01", dateFrom: null, dateTo: null });
+    expect(currentFilters).toMatchObject({ month: "2026-01", period: null, from: null, to: null });
   });
 
   it("clears the range when a month is picked, so the two are never both live", () => {
@@ -560,14 +562,14 @@ describe("a drill-down date range", () => {
     fireEvent.click(screen.getAllByRole("button", { name: /^Choose month/ })[0]);
     fireEvent.click(screen.getByRole("button", { name: "Aug" }));
 
-    expect(currentFilters).toMatchObject({ month: "2026-08", dateFrom: null, dateTo: null });
+    expect(currentFilters).toMatchObject({ month: "2026-08", period: null, from: null, to: null });
   });
 
   it("lands back on the current month on Clear all, not on all time", () => {
     renderFilters(rangeFilters);
     fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
 
-    expect(currentFilters.dateFrom).toBeNull();
+    expect(currentFilters.from).toBeNull();
     expect(currentFilters.month).not.toBe("ALL");
     expect(currentFilters.month).toMatch(/^\d{4}-\d{2}$/);
   });
@@ -637,14 +639,3 @@ describe("changing the transaction type", () => {
   });
 });
 
-describe("a range open at one end", () => {
-  it("names its month from whichever bound it has", () => {
-    // "Until Sep 30" is still September. Falling back to today's month would open
-    // the picker somewhere the range never mentioned.
-    renderFilters({ ...baseFilters, month: "ALL", dateFrom: null, dateTo: "2026-09-30" });
-
-    fireEvent.click(screen.getAllByRole("button", { name: "Previous month" })[0]);
-
-    expect(currentFilters).toMatchObject({ month: "2026-09", dateFrom: null, dateTo: null });
-  });
-});

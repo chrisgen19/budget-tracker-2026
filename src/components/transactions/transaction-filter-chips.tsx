@@ -56,11 +56,11 @@ export function buildFilterChips({
     // the user reads which period the list is actually showing. Removing it must
     // restore a month rather than leave the parked "ALL" behind, which would widen
     // the list to all time on the way out of a drill-down.
-    filters.dateFrom !== null || filters.dateTo !== null
+    filters.from !== null
       ? {
           id: "dateRange",
-          label: formatFilterRangeLabel(filters.dateFrom, filters.dateTo),
-          onRemove: () => update({ dateFrom: null, dateTo: null, month: currentMonth }),
+          label: formatFilterRangeLabel(filters.from, filters.to),
+          onRemove: () => update({ period: null, from: null, to: null, month: currentMonth }),
         }
       : null,
     filters.type !== "ALL"

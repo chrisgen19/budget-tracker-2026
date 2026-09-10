@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accountDateKey, accountMonthKey, combineAccountDateWithTime, formatAccountDateInput, isCalendarDay, relativeAccountDateInput } from "@/lib/account-time";
+import { accountDateKey, accountMonthKey, combineAccountDateWithTime, formatAccountDateInput, relativeAccountDateInput } from "@/lib/account-time";
 
 const INSTANT = new Date("2026-08-28T00:30:00.000Z");
 
@@ -33,24 +33,3 @@ describe("account time helpers", () => {
   });
 });
 
-describe("isCalendarDay", () => {
-  it("accepts a real day and rejects a malformed one", () => {
-    expect(isCalendarDay("2026-09-12")).toBe(true);
-    expect(isCalendarDay("2026-9-1")).toBe(false);
-    expect(isCalendarDay("2026-13-01")).toBe(false);
-    expect(isCalendarDay("")).toBe(false);
-  });
-
-  it("rejects a well-formed day the calendar does not have", () => {
-    // Date.UTC rolls these forward instead of failing, which is the whole reason
-    // a format-only check is not enough.
-    expect(isCalendarDay("2026-02-31")).toBe(false);
-    expect(isCalendarDay("2026-04-31")).toBe(false);
-    expect(isCalendarDay("2026-02-29")).toBe(false);
-  });
-
-  it("knows a leap day exists in a leap year", () => {
-    expect(isCalendarDay("2028-02-29")).toBe(true);
-    expect(isCalendarDay("2100-02-29")).toBe(false);
-  });
-});
