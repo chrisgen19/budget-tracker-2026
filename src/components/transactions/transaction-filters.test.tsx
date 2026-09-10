@@ -582,3 +582,42 @@ describe("a drill-down date range", () => {
     expect(screen.getByRole("button", { name: "Filters" })).toBeTruthy();
   });
 });
+
+describe("changing the transaction type", () => {
+  it("drops a category chosen under the old type", () => {
+    filterOptionState.value.categories = [{ id: "c1", name: "Groceries" }];
+    renderFilters({ ...baseFilters, type: "EXPENSE", categoryId: "c1" });
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Income" })[0]);
+
+    expect(currentFilters).toMatchObject({ type: "INCOME", categoryId: null });
+  });
+
+  it("drops it from the type chip too, which is the other way to widen the type", () => {
+    filterOptionState.value.categories = [{ id: "c1", name: "Groceries" }];
+    renderFilters({ ...baseFilters, type: "EXPENSE", categoryId: "c1" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove Expenses filter" }));
+
+    expect(currentFilters).toMatchObject({ type: "ALL", categoryId: null });
+  });
+
+  it("keeps the category when the type arrives from outside rather than a press", () => {
+    // Restoring a drill-down by Back re-supplies type and category together. An
+    // effect watching filters.type cannot tell that from a press and used to strip
+    // the category straight back out, leaving the URL describing a filter the list
+    // was not applying.
+    filterOptionState.value.categories = [{ id: "c1", name: "Groceries" }];
+    const { rerender } = renderFilters({ ...baseFilters, type: "ALL" });
+
+    rerender(
+      <TransactionFiltersBar
+        filters={{ ...baseFilters, type: "EXPENSE", categoryId: "c1" }}
+        onChange={() => {}}
+        totalCount={10}
+      />,
+    );
+
+    expect(screen.getByText("Category: Groceries")).toBeTruthy();
+  });
+});

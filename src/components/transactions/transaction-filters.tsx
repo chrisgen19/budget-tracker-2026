@@ -148,13 +148,6 @@ export function TransactionFiltersBar({
   const search = useDebouncedSearch(filters.search, commitSearch);
   const { reset: resetSearchInput } = search;
 
-  const previousTypeRef = useRef(filters.type);
-  useEffect(() => {
-    if (previousTypeRef.current === filters.type) return;
-    previousTypeRef.current = filters.type;
-    if (filters.categoryId) update({ categoryId: null });
-  }, [filters.categoryId, filters.type, update]);
-
   const navigateMonth = (direction: -1 | 1) => {
     // "All time" and a drill-down range are both indefinite periods with no month
     // to step from. The first press resolves one to a concrete month instead of
@@ -366,7 +359,14 @@ function TypeToggle({
   return (
     <div aria-label="Transaction type" className={cn("shrink-0 items-center gap-0.5 rounded-xl bg-cream-100 p-1", className)}>
       {(["ALL", "INCOME", "EXPENSE"] as const).map((type) => (
-        <button key={type} type="button" onClick={() => onChange({ type })} aria-label={compact ? type === "ALL" ? "All transactions" : type.toLowerCase() : undefined} aria-pressed={filters.type === type} className={cn("min-h-11 min-w-11 rounded-lg text-xs font-semibold transition-colors", compact ? "px-2" : "px-3", filters.type === type ? type === "INCOME" ? "bg-white text-income shadow-warm" : type === "EXPENSE" ? "bg-white text-expense shadow-warm" : "bg-white text-warm-700 shadow-warm" : "text-warm-400 hover:text-warm-600")}>
+        // Dropping the category belongs here, on the control the user actually
+        // pressed, rather than in an effect watching `filters.type`. An effect
+        // cannot tell a press apart from the same field arriving with a restored
+        // URL, and would strip the category out of a drill-down being navigated
+        // back to. The category list is scoped to the type, so a category held
+        // across a switch either matches nothing or shows a chip that cannot
+        // resolve to a name.
+        <button key={type} type="button" onClick={() => onChange({ type, categoryId: null })} aria-label={compact ? type === "ALL" ? "All transactions" : type.toLowerCase() : undefined} aria-pressed={filters.type === type} className={cn("min-h-11 min-w-11 rounded-lg text-xs font-semibold transition-colors", compact ? "px-2" : "px-3", filters.type === type ? type === "INCOME" ? "bg-white text-income shadow-warm" : type === "EXPENSE" ? "bg-white text-expense shadow-warm" : "bg-white text-warm-700 shadow-warm" : "text-warm-400 hover:text-warm-600")}>
           {compact ? type === "ALL" ? "All" : type === "INCOME" ? "+" : "−" : type === "ALL" ? "All" : type === "INCOME" ? "Income" : "Expenses"}
         </button>
       ))}

@@ -9,7 +9,13 @@ const daySchema = z
   .nullable()
   .default(null);
 
-export const transactionFilterSchema = z.object({
+/**
+ * The fields alone, unrefined. `transactionFilterSchema` below is what parses —
+ * this exists because a cross-field refinement turns the schema into a
+ * `ZodEffects`, which has no `.omit()`, and the bulk endpoints need to drop
+ * `timezoneOffset` from the shape they accept in a request body.
+ */
+export const transactionFilterFields = z.object({
   search: z.string().max(MAX_TRANSACTION_SEARCH_LENGTH).default(""),
   type: z.enum(["ALL", "INCOME", "EXPENSE"]).default("ALL"),
   month: z.union([z.literal("ALL"), z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)]).default("ALL"),
@@ -30,6 +36,16 @@ export const transactionFilterSchema = z.object({
   sortDir: z.enum(["asc", "desc"]).default("desc"),
   timezoneOffset: z.number().int().min(-840).max(840).default(0),
 });
+
+export const transactionFilterSchema = transactionFilterFields.refine(
+  // Independently valid ends can still contradict each other. Answering
+  // "Sep 30 to Sep 2" with an empty list reads as "you spent nothing", which is a
+  // lie about the data rather than a complaint about the request — and the bulk
+  // selection endpoint shares this schema, where a malformed request quietly
+  // matching zero rows looks like a successful one.
+  (filters) => !filters.dateFrom || !filters.dateTo || filters.dateFrom <= filters.dateTo,
+  { message: "dateFrom must not be after dateTo", path: ["dateFrom"] },
+);
 
 export type NormalizedTransactionFilters = z.infer<typeof transactionFilterSchema>;
 

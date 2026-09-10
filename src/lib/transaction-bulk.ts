@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { transactionFilterSchema } from "@/lib/transaction-filter-query";
+import { transactionFilterFields } from "@/lib/transaction-filter-query";
 
 /** A personal ledger can be large, but one interactive operation must stay bounded. */
 export const MAX_BULK_TRANSACTIONS = 2_000;
@@ -11,7 +11,9 @@ export const boundedTransactionIdsSchema = z
   .transform((ids) => [...new Set(ids)]);
 
 export const selectionSnapshotSchema = z.object({
-  filters: transactionFilterSchema.omit({ timezoneOffset: true }),
+  // The unrefined shape: the route re-parses the result through the refined
+  // schema once the offset is merged back in, so the cross-field checks still run.
+  filters: transactionFilterFields.omit({ timezoneOffset: true }),
   timezoneOffset: z.number().int().min(-840).max(840),
 });
 

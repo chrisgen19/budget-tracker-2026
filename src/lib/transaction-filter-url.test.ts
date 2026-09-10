@@ -132,3 +132,22 @@ describe("hasTransactionFilterParams", () => {
     expect(hasTransactionFilterParams(new URLSearchParams({ dateFrom: "2026-09-12" }))).toBe(true);
   });
 });
+
+describe("a reversed range", () => {
+  it("is dropped rather than held as state every request would fail on", () => {
+    const filters = readTransactionFilters(
+      new URLSearchParams({ dateFrom: "2026-09-30", dateTo: "2026-09-02" }),
+      MANILA,
+    );
+    expect(filters.dateFrom).toBeNull();
+    expect(filters.dateTo).toBeNull();
+    // Both ends gone means no range, so the month fallback applies.
+    expect(filters.month).toMatch(/^\d{4}-\d{2}$/);
+  });
+
+  it("is never emitted by the link builder either", () => {
+    expect(buildTransactionsHref({ categoryId: "c1", dateFrom: "2026-09-30", dateTo: "2026-09-02" })).toBe(
+      "/transactions?categoryId=c1",
+    );
+  });
+});

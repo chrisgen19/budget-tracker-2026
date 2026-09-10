@@ -18,7 +18,14 @@ export function useDebouncedSearch(value: string, onCommit: (next: string) => vo
     timerRef.current = undefined;
   }, []);
 
-  useEffect(() => setInput(value), [value]);
+  // Cancel as well as sync. A commit still in flight belongs to the text the
+  // external change just replaced, so letting its timer land would re-apply an
+  // abandoned search a moment after the field visibly cleared — and the same sync
+  // would then put that text back in the box.
+  useEffect(() => {
+    cancel();
+    setInput(value);
+  }, [cancel, value]);
   useEffect(() => cancel, [cancel]);
 
   const change = useCallback(

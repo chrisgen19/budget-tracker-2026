@@ -107,3 +107,23 @@ describe("date range filtering", () => {
     });
   });
 });
+
+describe("a contradictory range", () => {
+  it("is rejected rather than answered with an empty list", () => {
+    // "No transactions" would be a claim about the data; this is a bad request.
+    expect(
+      transactionFilterSchema.safeParse({ dateFrom: "2026-09-30", dateTo: "2026-09-02" }).success,
+    ).toBe(false);
+  });
+
+  it("allows the ends to be equal, which is how a single day is expressed", () => {
+    expect(
+      transactionFilterSchema.safeParse({ dateFrom: "2026-09-12", dateTo: "2026-09-12" }).success,
+    ).toBe(true);
+  });
+
+  it("does not object when only one end is given", () => {
+    expect(transactionFilterSchema.safeParse({ dateFrom: "2026-09-30" }).success).toBe(true);
+    expect(transactionFilterSchema.safeParse({ dateTo: "2026-09-02" }).success).toBe(true);
+  });
+});

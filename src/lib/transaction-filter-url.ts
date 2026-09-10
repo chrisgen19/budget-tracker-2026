@@ -27,6 +27,13 @@ const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 const asDay = (value: string | null | undefined) =>
   value && isCalendarDay(value) ? value : null;
 
+/** Both ends present, both real days, and the wrong way round. */
+const isReversed = (from: string | null | undefined, to: string | null | undefined) => {
+  const start = asDay(from);
+  const end = asDay(to);
+  return start !== null && end !== null && start > end;
+};
+
 /**
  * Build the `/transactions` href behind a breakdown row.
  *
@@ -40,8 +47,9 @@ export function buildTransactionsHref(drillDown: TransactionDrillDown): string {
   if (drillDown.type && drillDown.type !== "ALL") params.set("type", drillDown.type);
   if (drillDown.categoryId) params.set("categoryId", drillDown.categoryId);
   if (drillDown.labelId) params.set("labelId", drillDown.labelId);
-  const from = asDay(drillDown.dateFrom);
-  const to = asDay(drillDown.dateTo);
+  const reversed = isReversed(drillDown.dateFrom, drillDown.dateTo);
+  const from = reversed ? null : asDay(drillDown.dateFrom);
+  const to = reversed ? null : asDay(drillDown.dateTo);
   if (from) params.set("dateFrom", from);
   if (to) params.set("dateTo", to);
 
@@ -77,8 +85,12 @@ export function readTransactionFilters(
   params: URLSearchParams,
   timezoneOffset: number,
 ): TransactionFilters {
-  const dateFrom = asDay(params.get("dateFrom"));
-  const dateTo = asDay(params.get("dateTo"));
+  // A reversed range is refused by the API, and holding one in local state would
+  // leave every request failing until the chip is cleared by hand. Dropping both
+  // ends lands on the ordinary month instead.
+  const reversed = isReversed(params.get("dateFrom"), params.get("dateTo"));
+  const dateFrom = reversed ? null : asDay(params.get("dateFrom"));
+  const dateTo = reversed ? null : asDay(params.get("dateTo"));
   const month = params.get("month");
   const hasRange = Boolean(dateFrom || dateTo);
 
