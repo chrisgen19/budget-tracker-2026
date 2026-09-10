@@ -417,6 +417,18 @@ export default function TransactionsPage() {
     [isInfinite, allInfiniteTransactions, paginatedQuery.data?.transactions],
   );
 
+  // Release the claim once the parameter is gone, so the same row can be linked to
+  // again. Not reachable today — both producers (bill history and the Telegram deep
+  // link) sit on another route, so arriving here always mounts this page fresh and
+  // the refs start empty. It is cheap insurance on a documented route contract that
+  // external callers use: an in-page link to `?highlight=` added later would
+  // otherwise open the modal once and silently do nothing on every repeat.
+  useEffect(() => {
+    if (highlightId) return;
+    highlightHandledRef.current = null;
+    setSpentHighlightId((current) => (current === null ? current : null));
+  }, [highlightId]);
+
   // Auto-open a highlighted transaction from the query param.
   //
   // The loaded rows are only a shortcut. A link from bill history or Telegram can
