@@ -1,4 +1,5 @@
 import {
+  formatPeriodLabel,
   getCurrentMonth,
   type PeriodSelection,
 } from "@/lib/analytics-period";
@@ -75,9 +76,16 @@ export function analyticsSearchParams({ period, type, tab }: AnalyticsUrlState):
   }).toString();
 }
 
+/** Where a return link goes, and the view it goes to, named. */
+export interface AnalyticsReturnTarget {
+  href: string;
+  /** The destination period, e.g. "Jul 1 – Sep 30, 2026". */
+  periodLabel: string;
+}
+
 /**
- * Resolve a return blob into an `/analytics` href, or null when there is nothing
- * trustworthy to return to.
+ * Resolve a return blob into a link, or null when there is nothing trustworthy to
+ * return to.
  *
  * The blob is a query string, never a URL: the path is a literal here, so no
  * caller-supplied value can send the user off-site. Everything inside it goes
@@ -85,9 +93,22 @@ export function analyticsSearchParams({ period, type, tab }: AnalyticsUrlState):
  * `analyticsSearchParams`, so what the link carries is what this app can express
  * — a crafted blob is narrowed to a valid view rather than rejected outright,
  * which is the right trade for a back button.
+ *
+ * The label comes back with the href, from the same parse, because they describe
+ * the same thing and a caller holding only the href has no way to name it without
+ * guessing. A drill-down from a heatmap day is where guessing goes wrong: the
+ * ledger is filtered to that one day while this link returns to the whole analytics
+ * span, so a label built from the page's own filters would name a period the link
+ * does not go to.
  */
-export function analyticsReturnHref(blob: string | null, tzOffset: number): string | null {
+export function analyticsReturnTarget(
+  blob: string | null,
+  tzOffset: number,
+): AnalyticsReturnTarget | null {
   if (!blob || blob.length > MAX_RETURN_PARAM_LENGTH) return null;
   const state = parseAnalyticsParams(new URLSearchParams(blob), tzOffset);
-  return `/analytics?${analyticsSearchParams(state)}`;
+  return {
+    href: `/analytics?${analyticsSearchParams(state)}`,
+    periodLabel: formatPeriodLabel(state.period.periodType, state.period.from, state.period.to),
+  };
 }

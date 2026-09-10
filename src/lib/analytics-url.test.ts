@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  analyticsReturnHref,
+  analyticsReturnTarget,
   analyticsSearchParams,
   parseAnalyticsParams,
 } from "@/lib/analytics-url";
@@ -90,10 +90,32 @@ describe("analyticsSearchParams", () => {
   });
 });
 
-describe("analyticsReturnHref", () => {
+describe("analyticsReturnTarget", () => {
   it("builds an analytics href from a return blob", () => {
-    expect(analyticsReturnHref("period=custom&from=2026-07-01&to=2026-09-30&type=ALL&tab=reports", MANILA))
-      .toBe("/analytics?period=custom&from=2026-07-01&to=2026-09-30&type=ALL&tab=reports");
+    expect(
+      analyticsReturnTarget("period=custom&from=2026-07-01&to=2026-09-30&type=ALL&tab=reports", MANILA)?.href,
+    ).toBe("/analytics?period=custom&from=2026-07-01&to=2026-09-30&type=ALL&tab=reports");
+  });
+
+  it("names the period it actually returns to", () => {
+    // The label travels with the href so a caller cannot pair one with a period the
+    // other does not go to — which is what a heatmap drill-down would otherwise do,
+    // naming the single filtered day while the link returns to the whole span.
+    const target = analyticsReturnTarget(
+      "period=custom&from=2026-07-01&to=2026-09-30&type=EXPENSE&tab=reports",
+      MANILA,
+    );
+    expect(target?.periodLabel).toContain("Jul");
+    expect(target?.periodLabel).toContain("Sep");
+    expect(target?.periodLabel).not.toContain("Sep 12");
+  });
+
+  it("names a month period the way the picker does", () => {
+    const target = analyticsReturnTarget(
+      "period=monthly&from=2026-09-01&to=2026-09-30&type=EXPENSE&tab=reports",
+      MANILA,
+    );
+    expect(target?.periodLabel).toBe("September 2026");
   });
 
   it("has no way to send the visitor off-site", () => {
@@ -106,18 +128,18 @@ describe("analyticsReturnHref", () => {
       "//evil.example.com",
       "javascript:alert(1)",
     ]) {
-      const href = analyticsReturnHref(blob, MANILA);
-      expect(href).not.toBeNull();
-      expect(href!.startsWith("/analytics?")).toBe(true);
-      expect(href).not.toContain("evil.example.com");
-      expect(href).not.toContain("javascript:");
+      const target = analyticsReturnTarget(blob, MANILA);
+      expect(target).not.toBeNull();
+      expect(target!.href.startsWith("/analytics?")).toBe(true);
+      expect(target!.href).not.toContain("evil.example.com");
+      expect(target!.href).not.toContain("javascript:");
     }
   });
 
   it("offers no way back when there is nothing to go back to", () => {
-    expect(analyticsReturnHref(null, MANILA)).toBeNull();
-    expect(analyticsReturnHref("", MANILA)).toBeNull();
+    expect(analyticsReturnTarget(null, MANILA)).toBeNull();
+    expect(analyticsReturnTarget("", MANILA)).toBeNull();
     // Far longer than the five short params a real blob holds.
-    expect(analyticsReturnHref("x".repeat(201), MANILA)).toBeNull();
+    expect(analyticsReturnTarget("x".repeat(201), MANILA)).toBeNull();
   });
 });

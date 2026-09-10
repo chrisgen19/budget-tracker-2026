@@ -54,8 +54,7 @@ import { groupByDate, formatTime } from "@/lib/transaction-helpers";
 import { accountDateKey } from "@/lib/account-time";
 import { getCurrentMonth, monthRange } from "@/lib/analytics-period";
 import { filterSearchParams, parseFilterParams } from "@/lib/transaction-period-url";
-import { analyticsReturnHref } from "@/lib/analytics-url";
-import { formatPeriodLabel } from "@/lib/analytics-period";
+import { analyticsReturnTarget } from "@/lib/analytics-url";
 import { ReturnBar } from "@/components/transactions/return-bar";
 import {
   emptyTransactionSelection,
@@ -278,8 +277,9 @@ export default function TransactionsPage() {
     () => parseFilterParams(new URLSearchParams(searchParams.toString()), user.timezoneOffset).ret,
   );
   // The href is built from a literal path, so a crafted `ret` can only produce a
-  // different analytics view, never an off-site link.
-  const returnHref = analyticsReturnHref(returnParam, user.timezoneOffset);
+  // different analytics view, never an off-site link. The label comes back with it
+  // so the two cannot describe different periods.
+  const returnTarget = analyticsReturnTarget(returnParam, user.timezoneOffset);
 
   const filterQuery = filterSearchParams({ ...filters, ret: returnParam });
   const appliedQueryRef = useRef(searchParams.toString());
@@ -668,19 +668,17 @@ export default function TransactionsPage() {
       <p className="sr-only" aria-live="polite" aria-atomic="true">
         {selectionAnnouncement}
       </p>
-      {/* The way back, when the URL says where this visit came from. It reads the
-          period out of the filters rather than out of the return blob: for a
-          category row those agree, and for a heatmap day the filtered window is
-          the more useful thing to name — it is what the list below is showing. */}
-      {returnHref && (
+      {/* The way back, when the URL says where this visit came from. Both the href
+          and the period it names come from the return blob, never from the filters
+          on this page: a heatmap drill-down filters the ledger to one day while the
+          link returns to the whole analytics span, and a label naming the day would
+          be describing somewhere the link does not go. The filtered window is
+          already named by the period control below. */}
+      {returnTarget && (
         <ReturnBar
-          href={returnHref}
+          href={returnTarget.href}
           label="Analytics"
-          context={
-            filters.from && filters.to
-              ? formatPeriodLabel(filters.period, filters.from, filters.to)
-              : undefined
-          }
+          context={returnTarget.periodLabel}
         />
       )}
 

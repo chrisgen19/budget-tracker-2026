@@ -6,7 +6,7 @@ import {
 } from "@/lib/transaction-filter-query";
 import { buildTransactionsHref } from "@/lib/transaction-filter-url";
 import { filterSearchParams, parseFilterParams } from "@/lib/transaction-period-url";
-import { analyticsReturnHref } from "@/lib/analytics-url";
+import { analyticsReturnTarget } from "@/lib/analytics-url";
 
 /** UTC+8 in `getTimezoneOffset` convention. */
 const MANILA = -480;
@@ -149,14 +149,17 @@ describe("the way back survives the ledger's own mirror", () => {
     const arrived = parseFilterParams(queryOf(href), MANILA);
 
     expect(arrived).toMatchObject({ from: "2026-09-12", to: "2026-09-12" });
-    expect(analyticsReturnHref(arrived.ret, MANILA)).toBe(
+    const target = analyticsReturnTarget(arrived.ret, MANILA);
+    expect(target?.href).toBe(
       "/analytics?period=custom&from=2026-07-01&to=2026-09-30&type=EXPENSE&tab=reports",
     );
+    // And the label names that span, not the one day the ledger is filtered to.
+    expect(target?.periodLabel).not.toContain("12");
   });
 
   it("offers no way back for a link that carries none", () => {
     const arrived = parseFilterParams(queryOf(buildTransactionsHref({ categoryId: "c1" })), MANILA);
     expect(arrived.ret).toBeNull();
-    expect(analyticsReturnHref(arrived.ret, MANILA)).toBeNull();
+    expect(analyticsReturnTarget(arrived.ret, MANILA)).toBeNull();
   });
 });
