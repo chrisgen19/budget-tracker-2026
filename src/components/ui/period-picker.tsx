@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
@@ -40,6 +40,9 @@ const TABS: { value: Exclude<PeriodType, "all">; label: string }[] = [
 ];
 
 const YEARS_SHOWN = 9;
+
+/** Floor for the popover's computed height, so a cramped anchor still shows rows. */
+const MIN_PANEL_HEIGHT = 200;
 
 const selectedClasses = "border-amber bg-amber-light/35 text-amber-dark";
 const unselectedClasses =
@@ -127,6 +130,33 @@ export function PeriodPickerPanel({ value, tz, allowAllTime, onSelect }: PanelPr
   const [displayMonth, setDisplayMonth] = useState(() => Number(anchor.slice(5, 7)) - 1);
   const [customFrom, setCustomFrom] = useState(value.from);
   const [customTo, setCustomTo] = useState(value.to);
+
+  // The prev/next arrows stay reachable while the popover is open, so the selection
+  // can move underneath this panel. Seeded state alone leaves the grid on the year it
+  // opened at with nothing highlighted — navigate from September 2026 back to
+  // November 2025 and the grid still reads 2026, no month pressed. The picker this
+  // replaced synced the same fields for the same reason.
+  useEffect(() => {
+    if (!value.from) return;
+    setDisplayYear(Number(value.from.slice(0, 4)));
+    setDisplayMonth(Number(value.from.slice(5, 7)) - 1);
+    setCustomFrom(value.from);
+    setCustomTo(value.to);
+  }, [value.from, value.to]);
+
+  // The tab follows the controlled type, but only when that type actually changes.
+  // Driving it from the from/to effect above instead would re-assert the tab on
+  // every arrow press and yank a user who opened Weeks to browse back to Months
+  // the moment they stepped a month. No current caller can change the type while
+  // the panel is open — analytics never selects All time and the ledger's dialog
+  // covers its own arrows — so this guards the component's contract as a shared
+  // controlled input rather than a path either page reaches today.
+  const lastType = useRef(value.periodType);
+  useEffect(() => {
+    if (value.periodType === lastType.current) return;
+    lastType.current = value.periodType;
+    if (value.periodType !== "all") setActiveTab(value.periodType);
+  }, [value.periodType]);
 
   const choose = (periodType: PeriodType, range: { from: string; to: string }) =>
     onSelect({ periodType, ...range });
@@ -329,7 +359,10 @@ export function PeriodPicker({
 }: PeriodPickerProps) {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [shift, setShift] = useState(0);
+  const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const resolvedLabel = label ?? formatPeriodLabel(value.periodType, value.from, value.to);
 
@@ -344,6 +377,45 @@ export function PeriodPicker({
     if (wasOpen.current && !open) triggerRef.current?.focus({ preventScroll: true });
     wasOpen.current = open;
   }, [open]);
+
+  // The popover is centred on its trigger, which puts it off screen whenever the
+  // trigger sits near an edge — on the analytics header it overhung the right by
+  // 18px at 1200px wide. Nudge it back inside rather than leaving part of the
+  // panel unreachable. Measured from the container and the panel's own width, so
+  // the result never feeds back into the next measurement.
+  useLayoutEffect(() => {
+    if (!open || presentation !== "popover") return;
+
+    const measure = () => {
+      const container = containerRef.current;
+      const panel = panelRef.current;
+      if (!container || !panel) return;
+
+      const GUTTER = 8;
+      const bounds = container.getBoundingClientRect();
+      const centre = bounds.left + bounds.width / 2;
+      const half = panel.offsetWidth / 2;
+      const overhangRight = centre + half - (window.innerWidth - GUTTER);
+      const overhangLeft = GUTTER - (centre - half);
+      setShift(overhangRight > 0 ? -overhangRight : overhangLeft > 0 ? overhangLeft : 0);
+
+      // Vertically the panel cannot simply overhang the way it can horizontally: on
+      // the analytics sticky bar it is anchored inside a `fixed` element, so the part
+      // below the fold does not scroll into view — the page moves and the panel does
+      // not. A six-week month on a 667px screen put "This month" at 708px, reachable
+      // by nothing. Cap it to the room below the trigger and let it scroll itself.
+      // The floor is a guard rather than a normal path: the only popover surface
+      // anchors near the top of the viewport.
+      setMaxHeight(Math.max(window.innerHeight - bounds.bottom - GUTTER * 2, MIN_PANEL_HEIGHT));
+    };
+
+    measure();
+    // A shift measured once goes stale on a resize or a rotation, and a stale one is
+    // worse than none: a desktop nudge left, carried onto a narrow viewport where the
+    // panel is already flush, pushes it off the other edge.
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [open, presentation]);
 
   useDismissOnOutside(open && presentation === "popover", () => setOpen(false), containerRef);
 
@@ -410,7 +482,11 @@ export function PeriodPicker({
         )
       ) : (
         open && (
-          <div className="absolute left-1/2 top-full z-50 mt-2 w-[340px] max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-xl border border-cream-200 bg-white p-3 shadow-lg">
+          <div
+            ref={panelRef}
+            style={{ transform: `translateX(calc(-50% + ${shift}px))`, maxHeight }}
+            className="absolute left-1/2 top-full z-50 mt-2 w-[340px] max-w-[calc(100vw-2rem)] overflow-y-auto overscroll-contain rounded-xl border border-cream-200 bg-white p-3 shadow-lg"
+          >
             {panel}
           </div>
         )
