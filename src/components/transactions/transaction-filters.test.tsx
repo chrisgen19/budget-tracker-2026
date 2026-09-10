@@ -31,7 +31,9 @@ vi.mock("@/hooks/use-transaction-filter-options", () => ({
 const baseFilters: TransactionFilters = {
   search: "",
   type: "ALL",
-  month: "2026-08",
+  period: "monthly",
+  from: "2026-08-01",
+  to: "2026-08-31",
   categoryId: null,
   labelId: null,
   createdVia: "ALL",
@@ -295,12 +297,12 @@ describe("TransactionFiltersBar", () => {
     // Index 1 is the mobile navigator. Index 0 is the `hidden sm:flex` copy, which
     // jsdom still returns because it applies no Tailwind, and which is display:none
     // at the only widths this behaviour applies to.
-    const previousMonth = screen.getAllByRole("button", { name: "Previous month" })[1];
+    const previousPeriod = screen.getAllByRole("button", { name: "Previous period" })[1];
 
     // A button keeps focus after a tap. Only text entry may pin the toolbar open,
     // or one tap on a month arrow stops it ducking for the rest of the visit.
-    fireEvent.click(previousMonth);
-    previousMonth.focus();
+    fireEvent.click(previousPeriod);
+    previousPeriod.focus();
     expect(toolbar.contains(document.activeElement)).toBe(true);
 
     // Past the window in which a scroll is taken to be the browser bringing a newly
@@ -315,12 +317,12 @@ describe("TransactionFiltersBar", () => {
     const { container } = renderFilters();
     const toolbar = screen.getByRole("region", { name: "Transaction filters" });
     setToolbarPastTop(container, true);
-    const previousMonth = screen.getAllByRole("button", { name: "Previous month" })[1];
+    const previousPeriod = screen.getAllByRole("button", { name: "Previous period" })[1];
 
     // Tabbing into the toolbar makes the browser scroll the control into view.
     // Ducking on that scroll would hide the control the reader was just handed.
-    fireEvent.focus(previousMonth);
-    previousMonth.focus();
+    fireEvent.focus(previousPeriod);
+    previousPeriod.focus();
     scrollWindow();
     expect(toolbar.className).toContain("opacity-100");
 
@@ -456,25 +458,59 @@ describe("TransactionFiltersBar", () => {
   });
 
   it("returns safely from All time to the account current month", () => {
+    // 17:00 UTC on Aug 31 is already September in Manila, which is the month the
+    // arrow has to land on — not the UTC one.
     vi.setSystemTime(new Date("2026-08-31T17:00:00.000Z"));
-    renderFilters({ ...baseFilters, month: "ALL" });
+    renderFilters({ ...baseFilters, period: "all", from: null, to: null });
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Next month" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Next period" })[0]);
 
-    expect(currentFilters.month).toBe("2026-09");
+    expect(currentFilters).toMatchObject({
+      period: "monthly",
+      from: "2026-09-01",
+      to: "2026-09-30",
+    });
     expect(screen.getAllByText("September 2026").length).toBeGreaterThan(0);
   });
 
-  it("lets the user choose any month from the month label", () => {
+  it("lets the user choose any month from the period label", () => {
     renderFilters();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Choose month, August 2026" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: /^Choose period/ })[0]);
+    act(() => vi.advanceTimersByTime(60));
     fireEvent.click(screen.getByRole("button", { name: "Previous year" }));
     fireEvent.click(screen.getByRole("button", { name: "Previous year" }));
     fireEvent.click(screen.getByRole("button", { name: "Feb" }));
 
-    expect(currentFilters.month).toBe("2024-02");
+    expect(currentFilters).toMatchObject({
+      period: "monthly",
+      from: "2024-02-01",
+      to: "2024-02-29",
+    });
     expect(screen.getAllByText("February 2024").length).toBeGreaterThan(0);
+  });
+
+  it("narrows the ledger to a week, and keeps All time free of stale bounds", () => {
+    renderFilters();
+
+    fireEvent.click(screen.getAllByRole("button", { name: /^Choose period/ })[0]);
+    act(() => vi.advanceTimersByTime(60));
+    fireEvent.click(screen.getByRole("button", { name: "Weeks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Aug 10 – Aug 16" }));
+
+    expect(currentFilters).toMatchObject({
+      period: "weekly",
+      from: "2026-08-10",
+      to: "2026-08-16",
+    });
+
+    fireEvent.click(screen.getAllByRole("button", { name: /^Choose period/ })[0]);
+    act(() => vi.advanceTimersByTime(60));
+    fireEvent.click(screen.getByRole("button", { name: "All time" }));
+
+    // The filter schema refuses All time carrying from/to, so a stale week here
+    // would 400 the very next list request.
+    expect(currentFilters).toMatchObject({ period: "all", from: null, to: null });
   });
 
   it("renders one consistently formatted result count even without active filters", () => {
@@ -519,7 +555,7 @@ describe("TransactionFiltersBar", () => {
     fireEvent.change(search, { target: { value: "coffee" } });
 
     expect(screen.getByRole("button", { name: "Clear search" }).className).toContain("min-h-11");
-    expect(screen.getAllByRole("button", { name: "Previous month" })[0].className).toContain("min-w-11");
+    expect(screen.getAllByRole("button", { name: "Previous period" })[0].className).toContain("min-w-11");
     expect(screen.getByRole("button", { name: "All transactions" }).className).toContain("min-w-11");
 
     act(() => vi.advanceTimersByTime(300));
