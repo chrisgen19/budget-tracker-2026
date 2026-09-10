@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -122,6 +123,15 @@ interface ModalProps {
 }
 
 export function Modal({ open, onClose, title, children }: ModalProps) {
+  /**
+   * `createPortal` needs a document, so the first render has to stay on the server's
+   * output. A modal is never open on first paint, so nothing is missing before this
+   * flips — and rendering the tree in place for one commit would reintroduce the very
+   * clipping this portal exists to avoid.
+   */
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   const titleId = useId();
   const modalTokenRef = useRef(Symbol("modal"));
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -237,7 +247,28 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
     ? `${viewport.height * 0.9}px`
     : "90vh";
 
-  return (
+  /**
+   * Portalled to the body, and that is load-bearing rather than tidiness.
+   *
+   * `fixed inset-0` reads as immune to an ancestor, and is not: any ancestor with a
+   * transform becomes the containing block for `position: fixed` descendants, so the
+   * overlay resolves against *that* box instead of the viewport — and an
+   * `overflow-hidden` on the way up then clips the dialog out of sight. The
+   * transactions toolbar is both, and carries a transform even at rest, because
+   * Tailwind's `translate-y-0` emits an identity matrix that still counts. Measured
+   * there, the overlay came out 878×113 instead of 1200×827 and the dialog sat at
+   * top −95, unclickable.
+   *
+   * It lives here rather than in each caller because the hazard is invisible until
+   * someone clicks: `translate-*`, `scale-*`, `rotate-*` and `will-change` all
+   * trigger it, and a class like `translate-y-0` looks like a no-op in a list.
+   *
+   * React event handlers still bubble to the JSX parent — portals bubble through the
+   * React tree, not the DOM tree — so no caller's `onClick` changes behaviour. What
+   * does change is ancestor CSS: a descendant selector rooted above the caller no
+   * longer reaches inside.
+   */
+  const modal = (
     <AnimatePresence>
       {open && (
         <div
@@ -319,4 +350,7 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
       )}
     </AnimatePresence>
   );
+
+  if (!mounted) return null;
+  return createPortal(modal, document.body);
 }

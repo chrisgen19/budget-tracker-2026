@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { useDismissOnOutside } from "@/components/ui/dropdown-button";
@@ -358,17 +357,12 @@ export function PeriodPicker({
   className,
 }: PeriodPickerProps) {
   const [open, setOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
   const [shift, setShift] = useState(0);
   const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const resolvedLabel = label ?? formatPeriodLabel(value.periodType, value.from, value.to);
-
-  // createPortal needs a document, so the dialog cannot render on the server.
-  // It is always closed on first paint, so nothing is missing before this runs.
-  useEffect(() => setMounted(true), []);
 
   // The popover has no Modal to restore focus for it, so a keyboard user who
   // closes it does not get dropped back at the top of the document.
@@ -467,19 +461,12 @@ export function PeriodPicker({
       </div>
 
       {presentation === "dialog" ? (
-        // Portalled to the body, and that is load-bearing rather than tidiness.
-        // The transactions toolbar carries a transform even at rest — Tailwind's
-        // `translate-y-0` emits an identity matrix — and any transform makes an
-        // element the containing block for `position: fixed` descendants. Left in
-        // place, Modal's full-viewport overlay resolves against the toolbar
-        // instead and its `overflow-hidden` clips the dialog out of sight.
-        mounted &&
-        createPortal(
-          <Modal open={open} onClose={() => setOpen(false)} title="Choose period">
-            {panel}
-          </Modal>,
-          document.body,
-        )
+        // No portal here any more: `Modal` does it for every caller. This one used to
+        // portal by hand because the transactions toolbar clips it, and leaving the
+        // workaround in would mean portalling a portal.
+        <Modal open={open} onClose={() => setOpen(false)} title="Choose period">
+          {panel}
+        </Modal>
       ) : (
         open && (
           <div

@@ -45,8 +45,14 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     <ToastContext.Provider value={{ showToast }}>
       {children}
 
-      {/* Toast container — fixed at top center */}
-      <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none">
+      {/* Toast container — fixed at top center.
+          Above the modal layer, not level with it. This container renders here, inside
+          the provider and before the page, while a Modal portals to the end of
+          `document.body` — so at an equal z-index the later element wins and a modal's
+          backdrop would blur the toast behind it. A save that fails while a form is
+          open is exactly when the message matters most, so toasts own the top layer
+          outright rather than by document order. */}
+      <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] flex flex-col items-center gap-2 pointer-events-none">
         <AnimatePresence>
           {toasts.map((toast) => (
             <motion.div
