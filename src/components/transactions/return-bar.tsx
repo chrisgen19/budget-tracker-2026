@@ -15,12 +15,13 @@ interface ReturnBarProps {
 /**
  * The way back from a drill-down.
  *
- * Above the page heading rather than floating at the bottom: that corner is a
- * coordinated stack — bottom nav, install prompt, bill reminder, FAB — whose
- * offsets are resolved in `bottom-overlay-clearance.ts` with `<main>` padding to
- * match, so a fifth element there means editing that file and every consumer. It
- * would also land where the two banners already span, and could only show an arrow
- * where this can name the view it returns to.
+ * Rendered into the filter toolbar's first row, which is what keeps it reachable
+ * from the bottom of a long list: the toolbar is this page's one sticky element and
+ * already knows where to pin, when to hide and when to come back. Not floating at
+ * the bottom either — that corner is a coordinated stack (bottom nav, install
+ * prompt, bill reminder, FAB) whose offsets are resolved in
+ * `bottom-overlay-clearance.ts` with `<main>` padding to match, and it could only
+ * show an arrow where this can name the view it returns to.
  *
  * A real link, not `router.back()`. An installed PWA opened cold on this URL, or a
  * pasted link, has no history to go back to — and `display: "standalone"` means
@@ -30,7 +31,7 @@ export function ReturnBar({ href, label, context }: ReturnBarProps) {
   return (
     <Link
       href={href}
-      className="group -mx-2 mb-2 inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-lg px-2 text-sm text-warm-400 transition-colors hover:bg-cream-50 hover:text-warm-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/40"
+      className="group -mx-2 inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-lg px-2 text-sm text-warm-400 transition-colors hover:bg-cream-50 hover:text-warm-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/40"
     >
       <ArrowLeft aria-hidden="true" className="h-4 w-4 shrink-0 text-amber" />
       <span className="font-medium text-warm-600 group-hover:text-warm-700">{label}</span>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { Search, SlidersHorizontal, X } from "lucide-react";
 import {
   TransactionFilterDialog,
@@ -45,6 +45,18 @@ export interface TransactionFiltersBarProps {
   filters: TransactionFilters;
   onChange: Dispatch<SetStateAction<TransactionFilters>>;
   totalCount: number | null;
+  /**
+   * The way back, when this visit came from somewhere that offers one.
+   *
+   * It rides in the toolbar rather than sitting above the page heading because the
+   * toolbar is this page's one piece of sticky chrome, and it has already solved
+   * every part of staying put: where to pin (measured off the app header), its own
+   * place in the flow, re-measuring when its height changes, hiding while the page
+   * scrolls and returning when it stops, and never hiding on desktop. A second
+   * sticky layer would have to be told about the first, since the toolbar computes
+   * its resting point from the header alone.
+   */
+  returnBar?: ReactNode;
   /**
    * Bumped by the page whenever the URL rewrites the filters from outside.
    *
@@ -99,6 +111,7 @@ export function TransactionFiltersBar({
   filters,
   onChange,
   totalCount,
+  returnBar,
   filtersRevision,
 }: TransactionFiltersBarProps) {
   const { user } = useUser();
@@ -173,6 +186,14 @@ export function TransactionFiltersBar({
         )}
       >
         <div className="p-2.5 sm:p-3">
+          {/* Above the controls and separated from them: it is a way out of this
+              view, not another way to narrow it. */}
+          {returnBar && (
+            <div className="-mt-0.5 mb-2 flex min-w-0 border-b border-cream-100 pb-1.5">
+              {returnBar}
+            </div>
+          )}
+
           <div className="flex items-center gap-2.5">
             <SearchField value={search.input} onChange={search.change} />
 

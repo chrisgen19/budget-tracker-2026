@@ -668,20 +668,6 @@ export default function TransactionsPage() {
       <p className="sr-only" aria-live="polite" aria-atomic="true">
         {selectionAnnouncement}
       </p>
-      {/* The way back, when the URL says where this visit came from. Both the href
-          and the period it names come from the return blob, never from the filters
-          on this page: a heatmap drill-down filters the ledger to one day while the
-          link returns to the whole analytics span, and a label naming the day would
-          be describing somewhere the link does not go. The filtered window is
-          already named by the period control below. */}
-      {returnTarget && (
-        <ReturnBar
-          href={returnTarget.href}
-          label="Analytics"
-          context={returnTarget.periodLabel}
-        />
-      )}
-
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
@@ -724,6 +710,19 @@ export default function TransactionsPage() {
         onChange={setFilters}
         totalCount={totalCount}
         filtersRevision={filtersRevision}
+        // Both the href and the period it names come from the return blob, never
+        // from the filters on this page: a heatmap drill-down filters the ledger to
+        // one day while the link returns to the whole analytics span, so a label
+        // built from these filters would name somewhere the link does not go.
+        returnBar={
+          returnTarget ? (
+            <ReturnBar
+              href={returnTarget.href}
+              label="Analytics"
+              context={returnTarget.periodLabel}
+            />
+          ) : undefined
+        }
       />
 
       {/* Transaction List — date-grouped */}
