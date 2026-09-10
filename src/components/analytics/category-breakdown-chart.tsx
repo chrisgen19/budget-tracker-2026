@@ -42,7 +42,15 @@ export function CategoryBreakdownChart({ data, currency, hideAmounts, range }: C
   // type would merge them back together and contradict the number just tapped.
   const hrefFor = (item: AnalyticsCategoryItem) => {
     const { categoryId, type } = parseCategoryItemId(item.id);
-    return buildTransactionsHref({ categoryId, type, dateFrom: range.from, dateTo: range.to });
+    // The row carries the same type the id encodes, so it stands in if the id
+    // ever arrives without a suffix. Dropping the type there would silently widen
+    // the destination to the category's rows of *both* types.
+    return buildTransactionsHref({
+      categoryId,
+      type: type ?? item.type,
+      dateFrom: range.from,
+      dateTo: range.to,
+    });
   };
 
   if (data.length === 0) {

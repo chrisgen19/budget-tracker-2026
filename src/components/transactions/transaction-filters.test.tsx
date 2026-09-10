@@ -607,10 +607,14 @@ describe("changing the transaction type", () => {
     // nothing, not quietly widen the list to every expense.
     filterOptionState.value.categories = [{ id: "c1", name: "Groceries" }];
     renderFilters({ ...baseFilters, type: "EXPENSE", categoryId: "c1" });
+    const before = currentFilters;
 
     fireEvent.click(screen.getAllByRole("button", { name: "Expenses" })[0]);
 
     expect(currentFilters).toMatchObject({ type: "EXPENSE", categoryId: "c1" });
+    // Same object, not an equal one: the page watches this by identity to reset
+    // the page number, drop the selection and announce that to a screen reader.
+    expect(currentFilters).toBe(before);
   });
 
   it("keeps the category when the type arrives from outside rather than a press", () => {
@@ -630,5 +634,17 @@ describe("changing the transaction type", () => {
     );
 
     expect(screen.getByText("Category: Groceries")).toBeTruthy();
+  });
+});
+
+describe("a range open at one end", () => {
+  it("names its month from whichever bound it has", () => {
+    // "Until Sep 30" is still September. Falling back to today's month would open
+    // the picker somewhere the range never mentioned.
+    renderFilters({ ...baseFilters, month: "ALL", dateFrom: null, dateTo: "2026-09-30" });
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Previous month" })[0]);
+
+    expect(currentFilters).toMatchObject({ month: "2026-09", dateFrom: null, dateTo: null });
   });
 });

@@ -112,6 +112,23 @@ describe("readTransactionFilters", () => {
     });
   });
 
+  it("drops an id longer than the API accepts", () => {
+    // Keeping it would leave every list request failing with a 400 and no way out
+    // but editing the URL by hand.
+    const filters = readTransactionFilters(
+      new URLSearchParams({ categoryId: "c".repeat(101), labelId: "l".repeat(101) }),
+      MANILA,
+    );
+    expect(filters.categoryId).toBeNull();
+    expect(filters.labelId).toBeNull();
+
+    const atLimit = readTransactionFilters(
+      new URLSearchParams({ categoryId: "c".repeat(100) }),
+      MANILA,
+    );
+    expect(atLimit.categoryId).toBe("c".repeat(100));
+  });
+
   it("truncates an oversized search rather than failing the API's ceiling", () => {
     const filters = readTransactionFilters(
       new URLSearchParams({ search: "x".repeat(500) }),

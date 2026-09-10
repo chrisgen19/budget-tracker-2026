@@ -85,7 +85,11 @@ const CLEARED_RANGE = { dateFrom: null, dateTo: null } as const;
 
 /** The month a month-shaped control should act on, whatever period is in force. */
 const resolveMonth = (filters: TransactionFilters, timezoneOffset: number) => {
-  if (filters.dateFrom) return filters.dateFrom.slice(0, 7);
+  // Either end will do. A range open at the start ("until Sep 30") still names a
+  // month, and falling through to today's would open the picker somewhere the
+  // range never mentioned.
+  const rangeDay = filters.dateFrom ?? filters.dateTo;
+  if (rangeDay) return rangeDay.slice(0, 7);
   if (filters.month !== "ALL") return filters.month;
   return accountMonthKey(new Date(), timezoneOffset);
 };
@@ -376,9 +380,14 @@ function TypeToggle({
         // back to. The category list is scoped to the type, so a category chosen
         // under one type either matches nothing under another or shows a chip
         // that cannot resolve to a name — but only an actual *switch* invalidates
-        // it. Re-pressing the type already showing is a no-op, the way pressing a
-        // pressed toggle should be.
-        <button key={type} type="button" onClick={() => onChange(type === filters.type ? { type } : { type, categoryId: null })} aria-label={compact ? type === "ALL" ? "All transactions" : type.toLowerCase() : undefined} aria-pressed={filters.type === type} className={cn("min-h-11 min-w-11 rounded-lg text-xs font-semibold transition-colors", compact ? "px-2" : "px-3", filters.type === type ? type === "INCOME" ? "bg-white text-income shadow-warm" : type === "EXPENSE" ? "bg-white text-expense shadow-warm" : "bg-white text-warm-700 shadow-warm" : "text-warm-400 hover:text-warm-600")}>
+        // it.
+        //
+        // Re-pressing the type already showing returns without calling onChange
+        // at all. Passing the same value is not the same as doing nothing: the
+        // update builds a fresh filters object, and the page watches that object
+        // by identity to reset the page number, drop the selection and announce
+        // "cleared because the filters changed" — all of it untrue here.
+        <button key={type} type="button" onClick={() => { if (type !== filters.type) onChange({ type, categoryId: null }); }} aria-label={compact ? type === "ALL" ? "All transactions" : type.toLowerCase() : undefined} aria-pressed={filters.type === type} className={cn("min-h-11 min-w-11 rounded-lg text-xs font-semibold transition-colors", compact ? "px-2" : "px-3", filters.type === type ? type === "INCOME" ? "bg-white text-income shadow-warm" : type === "EXPENSE" ? "bg-white text-expense shadow-warm" : "bg-white text-warm-700 shadow-warm" : "text-warm-400 hover:text-warm-600")}>
           {compact ? type === "ALL" ? "All" : type === "INCOME" ? "+" : "−" : type === "ALL" ? "All" : type === "INCOME" ? "Income" : "Expenses"}
         </button>
       ))}

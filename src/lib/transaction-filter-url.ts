@@ -18,6 +18,8 @@ export interface TransactionDrillDown {
 }
 
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+/** Mirrors the `.max(100)` on `categoryId` / `labelId` in `transactionFilterSchema`. */
+const MAX_FILTER_ID_LENGTH = 100;
 
 /**
  * Only the params the transactions list is willing to be steered by. The same
@@ -70,6 +72,14 @@ export function hasTransactionFilterParams(params: URLSearchParams): boolean {
   );
 }
 
+/**
+ * The API caps an id at 100 characters. Holding a longer one would leave every
+ * request failing with a 400 and no way out but editing the URL, so a URL that
+ * carries one is read as carrying no id at all.
+ */
+const asFilterId = (value: string | null) =>
+  value && value.length <= MAX_FILTER_ID_LENGTH ? value : null;
+
 const asType = (value: string | null): TransactionFilters["type"] =>
   value === "INCOME" || value === "EXPENSE" ? value : "ALL";
 
@@ -102,8 +112,8 @@ export function readTransactionFilters(
       : month === "ALL" || (month && MONTH_PATTERN.test(month))
         ? month
         : accountMonthKey(new Date(), timezoneOffset),
-    categoryId: params.get("categoryId") || null,
-    labelId: params.get("labelId") || null,
+    categoryId: asFilterId(params.get("categoryId")),
+    labelId: asFilterId(params.get("labelId")),
     dateFrom,
     dateTo,
     createdVia: "ALL",
