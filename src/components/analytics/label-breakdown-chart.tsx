@@ -23,9 +23,11 @@ interface LabelBreakdownChartProps {
    * along with it.
    */
   type: AnalyticsTypeFilter;
+  /** The analytics view to offer as a way back, as a query string for /analytics. */
+  returnTo: string;
 }
 
-export function LabelBreakdownChart({ data, currency, hideAmounts, range, type }: LabelBreakdownChartProps) {
+export function LabelBreakdownChart({ data, currency, hideAmounts, range, type, returnTo }: LabelBreakdownChartProps) {
   const [showAll, setShowAll] = useState(false);
   const labeled = data.filter((d) => d.id !== "unlabeled");
 
@@ -51,6 +53,7 @@ export function LabelBreakdownChart({ data, currency, hideAmounts, range, type }
               type,
               from: range.from,
               to: range.to,
+              ret: returnTo,
             })}
             label={drillDownLabel(item.transactionCount, item.name)}
             className="-mx-1.5 space-y-1.5 px-1.5 py-1.5"

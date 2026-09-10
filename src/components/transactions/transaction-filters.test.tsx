@@ -616,3 +616,40 @@ describe("changing the transaction type", () => {
     expect(screen.getByText("Category: Groceries")).toBeTruthy();
   });
 });
+
+describe("the return bar slot", () => {
+  const renderWithReturn = () =>
+    render(
+      <TransactionFiltersBar
+        filters={baseFilters}
+        onChange={() => {}}
+        totalCount={10}
+        returnBar={<a href="/analytics?period=monthly">Analytics</a>}
+      />,
+    );
+
+  it("rides inside the toolbar, so it pins and hides with it", () => {
+    // The toolbar is the page's one sticky element and already knows where to pin.
+    // A link outside it would scroll away from a long list, which is the bug this
+    // placement fixes.
+    const { container } = renderWithReturn();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    const link = screen.getByRole("link", { name: "Analytics" });
+
+    expect(toolbar.contains(link)).toBe(true);
+    expect(container.querySelector("[data-filter-toolbar-marker]")).toBeTruthy();
+  });
+
+  it("sits ahead of the controls, being a way out rather than another narrowing", () => {
+    renderWithReturn();
+    const link = screen.getByRole("link", { name: "Analytics" });
+    const search = screen.getByRole("searchbox", { name: "Search transactions" });
+
+    expect(link.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("leaves no empty row when there is nowhere to return to", () => {
+    renderFilters();
+    expect(screen.queryByRole("link", { name: "Analytics" })).toBeNull();
+  });
+});

@@ -14,6 +14,15 @@ export interface TransactionDrillDown {
   /** Inclusive calendar days. A single day passes the same value to both. */
   from?: string | null;
   to?: string | null;
+  /**
+   * The view to offer as a way back, as a query string for `/analytics`.
+   *
+   * It travels separately from the window above, and has to: for a category or
+   * label row the two agree, but a heatmap day filters the ledger to one day while
+   * the period to return to is the whole analytics span. A computed href could not
+   * tell those apart.
+   */
+  ret?: string | null;
 }
 
 /**
@@ -52,6 +61,7 @@ export function buildTransactionsHref(drillDown: TransactionDrillDown): string {
     type: drillDown.type,
     categoryId: drillDown.categoryId,
     labelId: drillDown.labelId,
+    ret: drillDown.ret,
     // "custom" rather than the analytics period's own name: what reaches the list
     // is a pair of days, and calling it "monthly" would invite a later reader to
     // recompute the window from a month it no longer knows.

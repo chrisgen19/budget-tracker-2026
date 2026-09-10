@@ -34,9 +34,11 @@ interface CategoryBreakdownChartProps {
   hideAmounts: boolean;
   /** The analytics period, carried into the list so a drill-down shows this number's rows. */
   range: { from: string; to: string };
+  /** The analytics view to offer as a way back, as a query string for /analytics. */
+  returnTo: string;
 }
 
-export function CategoryBreakdownChart({ data, currency, hideAmounts, range }: CategoryBreakdownChartProps) {
+export function CategoryBreakdownChart({ data, currency, hideAmounts, range, returnTo }: CategoryBreakdownChartProps) {
   // The type travels with the category: in ALL mode the same category can appear
   // as two rows, one income and one expense, and a drill-down that dropped the
   // type would merge them back together and contradict the number just tapped.
@@ -50,6 +52,7 @@ export function CategoryBreakdownChart({ data, currency, hideAmounts, range }: C
       type: type ?? item.type,
       from: range.from,
       to: range.to,
+      ret: returnTo,
     });
   };
 

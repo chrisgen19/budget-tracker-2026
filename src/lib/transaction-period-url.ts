@@ -26,6 +26,21 @@ export interface FilterParams extends PeriodParams {
   categoryId: string | null;
   labelId: string | null;
   search: string;
+  /**
+   * Where the visitor came from, as an opaque query string for that page.
+   *
+   * It lives here rather than beside the return bar that reads it because the page
+   * mirrors its filters through `filterSearchParams` on every change, and that
+   * function writes a fixed set and drops the rest. A param the serializer does
+   * not know about survives until the first mirror write and then vanishes while
+   * the user is still on the page — which is exactly how #284's mirror erased the
+   * `categoryId` a drill-down had arrived with. Round-tripping it here is what
+   * keeps the back button alive through a filter edit.
+   *
+   * Opaque on purpose: nothing in this module interprets it. `analyticsReturnHref`
+   * validates it against a literal path, so it can never become an off-site href.
+   */
+  ret: string | null;
 }
 
 /** Mirrors the `.max(100)` on `categoryId` / `labelId` in `transactionFilterFields`. */
@@ -34,6 +49,10 @@ const MAX_FILTER_ID_LENGTH = 100;
 /** An id the API would refuse is not worth holding: it 400s every request. */
 const asFilterId = (value: string | null) =>
   value && value.length <= MAX_FILTER_ID_LENGTH ? value : null;
+
+/** Long enough for the handful of params a return blob holds, short enough that a
+ *  crafted one cannot bloat every URL this page writes. */
+const MAX_RETURN_LENGTH = 200;
 
 const asType = (value: string | null): FilterParams["type"] =>
   value === "INCOME" || value === "EXPENSE" ? value : "ALL";
@@ -104,6 +123,7 @@ export const parseFilterParams = (
   categoryId: asFilterId(params.get("categoryId")),
   labelId: asFilterId(params.get("labelId")),
   search: (params.get("search") ?? "").slice(0, MAX_TRANSACTION_SEARCH_LENGTH),
+  ret: params.get("ret")?.slice(0, MAX_RETURN_LENGTH) || null,
 });
 
 /**
@@ -123,6 +143,7 @@ export const filterSearchParams = (filters: Partial<FilterParams>): string => {
   if (filters.categoryId) params.set("categoryId", filters.categoryId);
   if (filters.labelId) params.set("labelId", filters.labelId);
   if (filters.search) params.set("search", filters.search);
+  if (filters.ret) params.set("ret", filters.ret);
   return params.toString();
 };
 
