@@ -53,6 +53,7 @@ import type { TransactionInput } from "@/lib/validations";
 import { groupByDate, formatTime } from "@/lib/transaction-helpers";
 import { accountDateKey } from "@/lib/account-time";
 import { getCurrentMonth, monthRange } from "@/lib/analytics-period";
+import { parsePeriodParams, periodSearchParams } from "@/lib/transaction-period-url";
 import {
   emptyTransactionSelection,
   selectionItems,
@@ -115,11 +116,12 @@ export default function TransactionsPage() {
   const currency = user.currency;
   const isInfinite = user.transactionLayout === "infinite";
   const [filters, setFilters] = useState<TransactionFilters>(() => {
-    // If highlighting a transaction, clear the month filter so we search all data
+    const initial = createInitialFilters(user.timezoneOffset);
+    // If highlighting a transaction, drop the window so we search all data
     if (searchParams.get("highlight")) {
-      return { ...createInitialFilters(user.timezoneOffset), period: "all", from: null, to: null };
+      return { ...initial, period: "all", from: null, to: null };
     }
-    return createInitialFilters(user.timezoneOffset);
+    return { ...initial, ...parsePeriodParams(searchParams, user.timezoneOffset) };
   });
   const [page, setPage] = useState(1);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -254,6 +256,19 @@ export default function TransactionsPage() {
   }, [isInfinite, hasNextPage, isFetchingNextPage, infiniteIsLoading, fetchNextPage]);
 
   // Highlight a transaction from query param (e.g. from bill history link)
+  // The address bar mirrors the period, so a range survives a refresh and can be
+  // linked to. Deriving the string first keeps the effect keyed on its value
+  // rather than on a fresh filters object every render.
+  const periodQuery = periodSearchParams(filters);
+  useEffect(() => {
+    // While a ?highlight= is still being resolved, leave the URL alone. Writing
+    // here would drop the parameter before the row has been found and opened,
+    // and the lookup would silently do nothing. The highlight flow clears it
+    // itself once done, and this effect then runs and restores the period.
+    if (highlightId) return;
+    router.replace(`/transactions?${periodQuery}`, { scroll: false });
+  }, [highlightId, periodQuery, router]);
+
   const highlightHandledRef = useRef(false);
 
   const handleHighlight = useCallback((transactions: TransactionWithCategory[]) => {
