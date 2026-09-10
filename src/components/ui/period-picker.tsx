@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
@@ -329,7 +329,9 @@ export function PeriodPicker({
 }: PeriodPickerProps) {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [shift, setShift] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const resolvedLabel = label ?? formatPeriodLabel(value.periodType, value.from, value.to);
 
@@ -344,6 +346,26 @@ export function PeriodPicker({
     if (wasOpen.current && !open) triggerRef.current?.focus({ preventScroll: true });
     wasOpen.current = open;
   }, [open]);
+
+  // The popover is centred on its trigger, which puts it off screen whenever the
+  // trigger sits near an edge — on the analytics header it overhung the right by
+  // 18px at 1200px wide. Nudge it back inside rather than leaving part of the
+  // panel unreachable. Measured from the container and the panel's own width, so
+  // the result never feeds back into the next measurement.
+  useLayoutEffect(() => {
+    if (!open || presentation !== "popover") return;
+    const container = containerRef.current;
+    const panel = panelRef.current;
+    if (!container || !panel) return;
+
+    const GUTTER = 8;
+    const bounds = container.getBoundingClientRect();
+    const centre = bounds.left + bounds.width / 2;
+    const half = panel.offsetWidth / 2;
+    const overhangRight = centre + half - (window.innerWidth - GUTTER);
+    const overhangLeft = GUTTER - (centre - half);
+    setShift(overhangRight > 0 ? -overhangRight : overhangLeft > 0 ? overhangLeft : 0);
+  }, [open, presentation]);
 
   useDismissOnOutside(open && presentation === "popover", () => setOpen(false), containerRef);
 
@@ -410,7 +432,11 @@ export function PeriodPicker({
         )
       ) : (
         open && (
-          <div className="absolute left-1/2 top-full z-50 mt-2 w-[340px] max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-xl border border-cream-200 bg-white p-3 shadow-lg">
+          <div
+            ref={panelRef}
+            style={{ transform: `translateX(calc(-50% + ${shift}px))` }}
+            className="absolute left-1/2 top-full z-50 mt-2 w-[340px] max-w-[calc(100vw-2rem)] rounded-xl border border-cream-200 bg-white p-3 shadow-lg"
+          >
             {panel}
           </div>
         )

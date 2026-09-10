@@ -20,14 +20,13 @@ import { useUser } from "@/components/user-provider";
 import { usePrivacy } from "@/components/privacy-provider";
 import { useAnalyticsQuery, type AnalyticsParams } from "@/hooks/use-analytics";
 import {
-  type PeriodType,
+  type PeriodSelection,
   getCurrentMonth,
   formatPeriodLabel,
-  navigatePeriod,
   chartGranularity,
 } from "@/lib/analytics-period";
 import { CardHeader } from "@/components/ui/card-header";
-import { TimeRangePicker } from "@/components/analytics/time-range-picker";
+import { PeriodPicker } from "@/components/ui/period-picker";
 import { TypeFilter } from "@/components/analytics/type-filter";
 import { IncomeExpensesReport } from "@/components/analytics/income-expenses-report";
 import { CashFlowChart } from "@/components/analytics/cash-flow-chart";
@@ -176,43 +175,28 @@ export default function AnalyticsPage() {
   const currency = user.currency;
   const tz = user.timezoneOffset;
 
-  const [periodType, setPeriodType] = useState<PeriodType>("monthly");
-  const [dateRange, setDateRange] = useState(() => {
-    const { from, to } = getCurrentMonth(tz);
-    return { from, to };
-  });
+  const [period, setPeriod] = useState<PeriodSelection>(() => ({
+    periodType: "monthly",
+    ...getCurrentMonth(tz),
+  }));
   const [typeFilter, setTypeFilter] = useState<AnalyticsTypeFilter>("EXPENSE");
   const [activeTab, setActiveTab] = useState<AnalyticsTab>("reports");
 
   // Client-side label used for the picker before API data arrives
-  const clientPeriodLabel = formatPeriodLabel(periodType, dateRange.from, dateRange.to);
-  const granularity = chartGranularity(periodType, dateRange.from, dateRange.to);
+  const clientPeriodLabel = formatPeriodLabel(period.periodType, period.from, period.to);
+  const granularity = chartGranularity(period.periodType, period.from, period.to);
 
   const params: AnalyticsParams = useMemo(() => ({
     granularity,
-    from: dateRange.from,
-    to: dateRange.to,
+    from: period.from,
+    to: period.to,
     type: typeFilter,
-  }), [granularity, dateRange, typeFilter]);
+  }), [granularity, period.from, period.to, typeFilter]);
 
   const { data, isLoading, isError, refetch } = useAnalyticsQuery(params, tz);
 
   // Use API-provided label once loaded (authoritative), fall back to client-derived
   const periodLabel = data?.periodLabel ?? clientPeriodLabel;
-
-  const handlePeriodSelect = useCallback((type: PeriodType, from: string, to: string) => {
-    setPeriodType(type);
-    setDateRange({ from, to });
-  }, []);
-
-  const handleNavigate = useCallback((direction: "prev" | "next") => {
-    // navigatePeriod returns the resulting type too — leaving All time changes it.
-    // Analytics never selects All time, but reading the type back keeps the one
-    // navigation rule in one place.
-    const next = navigatePeriod(periodType, dateRange.from, dateRange.to, direction, tz);
-    setPeriodType(next.periodType);
-    setDateRange({ from: next.from, to: next.to });
-  }, [periodType, dateRange.from, dateRange.to, tz]);
 
   // Sticky controls bar: a combined period-nav + tabs bar whose two rows are revealed
   // independently — each row appears as soon as its in-page counterpart scrolls out of
@@ -280,14 +264,12 @@ export default function AnalyticsPage() {
         {/* Inert once its sticky row is shown, so keyboard / screen-reader users
             never hit two interactive period pickers. */}
         <div ref={periodNavRef} inert={!periodNavInView}>
-          <TimeRangePicker
-            periodType={periodType}
-            from={dateRange.from}
-            to={dateRange.to}
-            label={periodLabel}
+          <PeriodPicker
+            value={period}
+            onChange={setPeriod}
             tz={tz}
-            onPeriodSelect={handlePeriodSelect}
-            onNavigate={handleNavigate}
+            label={periodLabel}
+            presentation="popover"
           />
         </div>
       </div>
@@ -310,14 +292,12 @@ export default function AnalyticsPage() {
               momentarily-stale measure can't cause a flicker; the matching in-page
               control is hidden whenever its sticky row is visible. */}
           <div ref={periodRowRef} className={cn(periodNavInView && "hidden")}>
-            <TimeRangePicker
-              periodType={periodType}
-              from={dateRange.from}
-              to={dateRange.to}
-              label={periodLabel}
+            <PeriodPicker
+              value={period}
+              onChange={setPeriod}
               tz={tz}
-              onPeriodSelect={handlePeriodSelect}
-              onNavigate={handleNavigate}
+              label={periodLabel}
+              presentation="popover"
             />
           </div>
           <div className={cn("justify-center", tabBarInView ? "hidden" : "flex")}>
