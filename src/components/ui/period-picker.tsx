@@ -141,6 +141,20 @@ export function PeriodPickerPanel({ value, tz, allowAllTime, onSelect }: PanelPr
     setCustomTo(value.to);
   }, [value.from, value.to]);
 
+  // The tab follows the controlled type, but only when that type actually changes.
+  // Driving it from the from/to effect above instead would re-assert the tab on
+  // every arrow press and yank a user who opened Weeks to browse back to Months
+  // the moment they stepped a month. No current caller can change the type while
+  // the panel is open — analytics never selects All time and the ledger's dialog
+  // covers its own arrows — so this guards the component's contract as a shared
+  // controlled input rather than a path either page reaches today.
+  const lastType = useRef(value.periodType);
+  useEffect(() => {
+    if (value.periodType === lastType.current) return;
+    lastType.current = value.periodType;
+    if (value.periodType !== "all") setActiveTab(value.periodType);
+  }, [value.periodType]);
+
   const choose = (periodType: PeriodType, range: { from: string; to: string }) =>
     onSelect({ periodType, ...range });
 

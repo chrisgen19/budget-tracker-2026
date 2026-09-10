@@ -178,6 +178,48 @@ describe("PeriodPicker panel follows the selection", () => {
     expect(screen.getByRole("button", { name: "Nov" }).getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("keeps a browsed tab when only the days move", () => {
+    // Tying the tab to the from/to sync would re-assert it on every arrow press:
+    // open Weeks to browse, step one month, and you are back on Months.
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <PeriodPicker value={september} onChange={onChange} tz={MANILA} presentation="popover" />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Choose period/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Weeks" }));
+
+    rerender(
+      <PeriodPicker
+        value={{ periodType: "monthly", from: "2026-08-01", to: "2026-08-31" }}
+        onChange={onChange}
+        tz={MANILA}
+        presentation="popover"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Weeks" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("follows the tab when the controlled type itself changes", () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <PeriodPicker value={september} onChange={onChange} tz={MANILA} presentation="popover" />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Choose period/ }));
+    expect(screen.getByRole("button", { name: "Months" }).getAttribute("aria-pressed")).toBe("true");
+
+    rerender(
+      <PeriodPicker
+        value={{ periodType: "yearly", from: "2025-01-01", to: "2025-12-31" }}
+        onChange={onChange}
+        tz={MANILA}
+        presentation="popover"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Years" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("leaves the grid alone for All time, which anchors nothing", () => {
     const onChange = vi.fn();
     const { rerender } = render(
