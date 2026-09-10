@@ -143,3 +143,39 @@ describe("analyticsReturnTarget", () => {
     expect(analyticsReturnTarget("x".repeat(201), MANILA)).toBeNull();
   });
 });
+
+describe("the mirror cannot mistake its own write for a navigation", () => {
+  // The analytics page writes the URL from its state and reads its state from the
+  // URL. Those two effects only terminate because a parse of what the writer
+  // produced yields the same view, so the writer's own output never looks like an
+  // external change. If this property broke, the page would loop.
+  it("is a fixed point for every view the page can hold", () => {
+    atSeptember();
+    const views = [
+      { period: { periodType: "monthly" as const, from: "2026-09-01", to: "2026-09-30" }, type: "EXPENSE" as const, tab: "reports" as const },
+      { period: { periodType: "custom" as const, from: "2026-07-01", to: "2026-09-30" }, type: "ALL" as const, tab: "statistics" as const },
+      { period: { periodType: "weekly" as const, from: "2026-08-31", to: "2026-09-06" }, type: "INCOME" as const, tab: "health" as const },
+      { period: { periodType: "yearly" as const, from: "2026-01-01", to: "2026-12-31" }, type: "EXPENSE" as const, tab: "ai-assessment" as const },
+    ];
+
+    for (const view of views) {
+      const written = analyticsSearchParams(view);
+      const read = parseAnalyticsParams(new URLSearchParams(written), MANILA);
+      expect(read, written).toEqual(view);
+      // And writing what was read reproduces the same string, byte for byte — the
+      // comparison the page actually makes is on the string, not the object.
+      expect(analyticsSearchParams(read)).toBe(written);
+    }
+  });
+
+  it("settles in one step even from a URL it would not have written", () => {
+    // A bare URL, or one the nav item produced, parses to the default view; writing
+    // that view gives a string which then parses back to itself.
+    atSeptember();
+    const fromBare = parseAnalyticsParams(new URLSearchParams(""), MANILA);
+    const written = analyticsSearchParams(fromBare);
+    expect(analyticsSearchParams(parseAnalyticsParams(new URLSearchParams(written), MANILA))).toBe(
+      written,
+    );
+  });
+});

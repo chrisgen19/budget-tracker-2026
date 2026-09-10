@@ -183,32 +183,60 @@ export default function AnalyticsPage() {
   const tz = user.timezoneOffset;
 
   // Seeded from the address bar, so returning from a drill-down lands on the view
-  // that was left rather than on this month. Read once: the mirror below keeps the
-  // URL in step afterwards, and re-reading it on every change would fight the user.
+  // that was left rather than on this month.
   const searchParams = useSearchParams();
-  const initialUrlState = useRef<AnalyticsUrlState | null>(null);
-  if (initialUrlState.current === null) {
-    initialUrlState.current = parseAnalyticsParams(
-      new URLSearchParams(searchParams.toString()),
-      tz,
-    );
-  }
-  const initial = initialUrlState.current;
-
-  const [period, setPeriod] = useState<PeriodSelection>(initial.period);
-  const [typeFilter, setTypeFilter] = useState<AnalyticsTypeFilter>(initial.type);
-  const [activeTab, setActiveTab] = useState<AnalyticsTab>(initial.tab);
+  const queryString = searchParams.toString();
+  const [view, setView] = useState<AnalyticsUrlState>(() =>
+    parseAnalyticsParams(new URLSearchParams(queryString), tz),
+  );
+  const { period, type: typeFilter, tab: activeTab } = view;
+  const setPeriod = useCallback(
+    (next: PeriodSelection) => setView((current) => ({ ...current, period: next })),
+    [],
+  );
+  const setTypeFilter = useCallback(
+    (next: AnalyticsTypeFilter) => setView((current) => ({ ...current, type: next })),
+    [],
+  );
+  const setActiveTab = useCallback(
+    (next: AnalyticsTab) => setView((current) => ({ ...current, tab: next })),
+    [],
+  );
 
   // Mirror the view into the address bar. This is what makes the round trip work at
   // all: Next unmounts this page on navigation, so browser back, an Android gesture
   // and the nav item all remount it from scratch — whatever is not in the URL is
   // gone. Writing it here means every one of those returns to the view that was
   // left, and the period becomes linkable as a side effect.
-  const analyticsQuery = analyticsSearchParams({ period, type: typeFilter, tab: activeTab });
+  //
+  // `appliedQueryRef` separates this page describing itself from a navigation asking
+  // it to change, the same way the ledger does it. Without the distinction the two
+  // effects would undo each other; with it, only a URL this page did not write
+  // imposes a view.
+  const analyticsQuery = analyticsSearchParams(view);
   const router = useRouter();
+  const appliedQueryRef = useRef(queryString);
   useEffect(() => {
+    appliedQueryRef.current = analyticsQuery;
     router.replace(`/analytics?${analyticsQuery}`, { scroll: false });
   }, [analyticsQuery, router]);
+
+  // The other direction. The nav item for this page is a plain link to bare
+  // `/analytics` and renders as *active* while a custom period is on screen, so
+  // clicking it is how someone asks for a fresh view — and the route does not change,
+  // so this page is never unmounted to reset itself. Reading the URL only once left
+  // the address bar saying one thing while the charts showed another, which breaks
+  // the linkability this mirror exists to provide: copying or reloading that URL gave
+  // different content than the screen it was copied from.
+  //
+  // This terminates because `analyticsSearchParams` and `parseAnalyticsParams` round
+  // trip — a parse of what the mirror wrote yields the same view, so the mirror's own
+  // write never looks like an external change. `analytics-url.test.ts` pins that.
+  useEffect(() => {
+    if (appliedQueryRef.current === queryString) return;
+    appliedQueryRef.current = queryString;
+    setView(parseAnalyticsParams(new URLSearchParams(queryString), tz));
+  }, [queryString, tz]);
 
   // What a drill-down hands the ledger so it can offer a way back. Derived from the
   // live view rather than from the URL, so a link is correct on the first render —
