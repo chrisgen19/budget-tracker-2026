@@ -152,6 +152,53 @@ describe("PeriodPicker panel", () => {
   });
 });
 
+describe("PeriodPicker panel follows the selection", () => {
+  it("re-anchors the grid when the arrows move the period underneath it", () => {
+    // The popover leaves the arrows reachable, so the selection can change while the
+    // panel is mounted. Seeded-once state left the grid on the year it opened at with
+    // no month highlighted.
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <PeriodPicker value={september} onChange={onChange} tz={MANILA} presentation="popover" />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Choose period/ }));
+    expect(screen.getByText("2026")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Sep" }).getAttribute("aria-pressed")).toBe("true");
+
+    rerender(
+      <PeriodPicker
+        value={{ periodType: "monthly", from: "2025-11-01", to: "2025-11-30" }}
+        onChange={onChange}
+        tz={MANILA}
+        presentation="popover"
+      />,
+    );
+
+    expect(screen.getByText("2025")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Nov" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("leaves the grid alone for All time, which anchors nothing", () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <PeriodPicker value={september} onChange={onChange} tz={MANILA} presentation="popover" allowAllTime />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Choose period/ }));
+
+    rerender(
+      <PeriodPicker
+        value={{ periodType: "all", from: "", to: "" }}
+        onChange={onChange}
+        tz={MANILA}
+        presentation="popover"
+        allowAllTime
+      />,
+    );
+
+    expect(screen.getByText("2026")).toBeTruthy();
+  });
+});
+
 describe("PeriodPicker dialog placement", () => {
   it("escapes a clipping, transformed ancestor", () => {
     // The transactions toolbar is overflow-hidden and carries a transform even at

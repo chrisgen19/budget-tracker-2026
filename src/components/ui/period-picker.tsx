@@ -128,6 +128,19 @@ export function PeriodPickerPanel({ value, tz, allowAllTime, onSelect }: PanelPr
   const [customFrom, setCustomFrom] = useState(value.from);
   const [customTo, setCustomTo] = useState(value.to);
 
+  // The prev/next arrows stay reachable while the popover is open, so the selection
+  // can move underneath this panel. Seeded state alone leaves the grid on the year it
+  // opened at with nothing highlighted — navigate from September 2026 back to
+  // November 2025 and the grid still reads 2026, no month pressed. The picker this
+  // replaced synced the same fields for the same reason.
+  useEffect(() => {
+    if (!value.from) return;
+    setDisplayYear(Number(value.from.slice(0, 4)));
+    setDisplayMonth(Number(value.from.slice(5, 7)) - 1);
+    setCustomFrom(value.from);
+    setCustomTo(value.to);
+  }, [value.from, value.to]);
+
   const choose = (periodType: PeriodType, range: { from: string; to: string }) =>
     onSelect({ periodType, ...range });
 
@@ -354,17 +367,27 @@ export function PeriodPicker({
   // the result never feeds back into the next measurement.
   useLayoutEffect(() => {
     if (!open || presentation !== "popover") return;
-    const container = containerRef.current;
-    const panel = panelRef.current;
-    if (!container || !panel) return;
 
-    const GUTTER = 8;
-    const bounds = container.getBoundingClientRect();
-    const centre = bounds.left + bounds.width / 2;
-    const half = panel.offsetWidth / 2;
-    const overhangRight = centre + half - (window.innerWidth - GUTTER);
-    const overhangLeft = GUTTER - (centre - half);
-    setShift(overhangRight > 0 ? -overhangRight : overhangLeft > 0 ? overhangLeft : 0);
+    const measure = () => {
+      const container = containerRef.current;
+      const panel = panelRef.current;
+      if (!container || !panel) return;
+
+      const GUTTER = 8;
+      const bounds = container.getBoundingClientRect();
+      const centre = bounds.left + bounds.width / 2;
+      const half = panel.offsetWidth / 2;
+      const overhangRight = centre + half - (window.innerWidth - GUTTER);
+      const overhangLeft = GUTTER - (centre - half);
+      setShift(overhangRight > 0 ? -overhangRight : overhangLeft > 0 ? overhangLeft : 0);
+    };
+
+    measure();
+    // A shift measured once goes stale on a resize or a rotation, and a stale one is
+    // worse than none: a desktop nudge left, carried onto a narrow viewport where the
+    // panel is already flush, pushes it off the other edge.
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
   }, [open, presentation]);
 
   useDismissOnOutside(open && presentation === "popover", () => setOpen(false), containerRef);

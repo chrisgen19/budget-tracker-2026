@@ -183,6 +183,10 @@ export default function AnalyticsPage() {
   const [activeTab, setActiveTab] = useState<AnalyticsTab>("reports");
 
   // Client-side label used for the picker before API data arrives
+  // The drill-down links want the days alone, not the period type. Memoized so a
+  // fresh object each render cannot defeat the charts' own memoization.
+  const dateRange = useMemo(() => ({ from: period.from, to: period.to }), [period.from, period.to]);
+
   const clientPeriodLabel = formatPeriodLabel(period.periodType, period.from, period.to);
   const granularity = chartGranularity(period.periodType, period.from, period.to);
 
