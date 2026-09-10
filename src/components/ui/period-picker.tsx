@@ -41,6 +41,9 @@ const TABS: { value: Exclude<PeriodType, "all">; label: string }[] = [
 
 const YEARS_SHOWN = 9;
 
+/** Floor for the popover's computed height, so a cramped anchor still shows rows. */
+const MIN_PANEL_HEIGHT = 200;
+
 const selectedClasses = "border-amber bg-amber-light/35 text-amber-dark";
 const unselectedClasses =
   "border-cream-200 text-warm-500 hover:border-cream-300 hover:bg-cream-50 hover:text-warm-700";
@@ -357,6 +360,7 @@ export function PeriodPicker({
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [shift, setShift] = useState(0);
+  const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -394,6 +398,15 @@ export function PeriodPicker({
       const overhangRight = centre + half - (window.innerWidth - GUTTER);
       const overhangLeft = GUTTER - (centre - half);
       setShift(overhangRight > 0 ? -overhangRight : overhangLeft > 0 ? overhangLeft : 0);
+
+      // Vertically the panel cannot simply overhang the way it can horizontally: on
+      // the analytics sticky bar it is anchored inside a `fixed` element, so the part
+      // below the fold does not scroll into view — the page moves and the panel does
+      // not. A six-week month on a 667px screen put "This month" at 708px, reachable
+      // by nothing. Cap it to the room below the trigger and let it scroll itself.
+      // The floor is a guard rather than a normal path: the only popover surface
+      // anchors near the top of the viewport.
+      setMaxHeight(Math.max(window.innerHeight - bounds.bottom - GUTTER * 2, MIN_PANEL_HEIGHT));
     };
 
     measure();
@@ -471,8 +484,8 @@ export function PeriodPicker({
         open && (
           <div
             ref={panelRef}
-            style={{ transform: `translateX(calc(-50% + ${shift}px))` }}
-            className="absolute left-1/2 top-full z-50 mt-2 w-[340px] max-w-[calc(100vw-2rem)] rounded-xl border border-cream-200 bg-white p-3 shadow-lg"
+            style={{ transform: `translateX(calc(-50% + ${shift}px))`, maxHeight }}
+            className="absolute left-1/2 top-full z-50 mt-2 w-[340px] max-w-[calc(100vw-2rem)] overflow-y-auto overscroll-contain rounded-xl border border-cream-200 bg-white p-3 shadow-lg"
           >
             {panel}
           </div>
