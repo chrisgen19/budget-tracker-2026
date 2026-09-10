@@ -168,3 +168,50 @@ test.describe("a ?highlight= link", () => {
   });
 });
 
+
+test.describe("navigating away while the lookup is in flight", () => {
+  test.skip(!process.env.NEXTAUTH_SECRET, "Set NEXTAUTH_SECRET (the dev server's own)");
+
+  test("abandons the lookup instead of opening it afterwards", async ({ page }) => {
+    // The nav item for this page is a plain link to bare /transactions and renders as
+    // active, so clicking it during a slow lookup is an ordinary thing to do — and it
+    // is the one in-app navigation that drops the parameter without remounting. The
+    // reply must not then open a modal for a row the user has navigated away from,
+    // and must not jump the period to that row's month.
+    const fixture = await loadFixture();
+    test.skip(!fixture, "The local database has no transactions to link to");
+    test.skip(fixture!.rowsAfterOldest < PAGE_SIZE, "Needs a row beyond page one");
+    await signIn(page, fixture!);
+
+    await page.route(`**/api/transactions/${fixture!.oldestId}`, async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      await route.continue();
+    });
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/transactions?highlight=${fixture!.oldestId}`, {
+      waitUntil: "domcontentloaded",
+    });
+    // The list has to settle, or the lookup has not started yet.
+    await expect(page.locator("[data-transaction-date-heading]").first()).toBeVisible({
+      timeout: 60_000,
+    });
+
+    await page
+      .getByRole("link", { name: "Transactions", exact: true })
+      .filter({ visible: true })
+      .first()
+      .click();
+    await page.waitForURL((url) => !url.searchParams.has("highlight"));
+
+    // Past the delay, so the reply has definitely landed.
+    await page.waitForTimeout(4000);
+    await expect(page.getByRole("dialog")).toBeHidden();
+
+    // And the period is the one a fresh view shows, not the old row's month.
+    const params = new URL(page.url()).searchParams;
+    expect(params.get("from")?.slice(0, 7), "the period jumped to the abandoned row").not.toBe(
+      fixture!.oldestMonth,
+    );
+  });
+});

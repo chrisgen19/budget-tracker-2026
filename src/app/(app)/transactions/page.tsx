@@ -425,6 +425,14 @@ export default function TransactionsPage() {
   // otherwise open the modal once and silently do nothing on every repeat.
   useEffect(() => {
     if (highlightId) return;
+    // The lookup ref goes too, and that one is not housekeeping. A request can still
+    // be in flight here: the nav item for this page is a plain link to bare
+    // /transactions and renders as active, so clicking it during a slow lookup drops
+    // the parameter without remounting. Leaving the ref set let the reply pass its own
+    // staleness check and open a modal for a row the user had just navigated away
+    // from, jumping the period to that row's month as well — the opposite of the
+    // unfiltered list they asked for.
+    highlightLookupRef.current = null;
     highlightHandledRef.current = null;
     setSpentHighlightId((current) => (current === null ? current : null));
   }, [highlightId]);
