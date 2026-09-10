@@ -35,6 +35,7 @@ import {
 } from "@/components/transactions/transaction-bulk-dialogs";
 import { useToast } from "@/components/ui/toast";
 import {
+  fetchTransactionById,
   fetchTransactionsPage,
   queryKeys,
   useTransactionsQuery,
@@ -259,6 +260,15 @@ export default function TransactionsPage() {
   }, [isInfinite, hasNextPage, isFetchingNextPage, infiniteIsLoading, fetchNextPage]);
 
   // Highlight a transaction from query param (e.g. from bill history link)
+  // Two guards with different jobs. The ref stops re-entry inside a single commit,
+  // since `sourceTransactions` changes as pages arrive and a second pass would fire
+  // a second lookup for the same id. The state is what the mirror below gates on,
+  // and it has to be state: a highlighted row already in the current month leaves
+  // `filterQuery` unchanged, so nothing else would re-render the mirror and the
+  // parameter would sit in the URL forever.
+  const highlightHandledRef = useRef<string | null>(null);
+  const [spentHighlightId, setSpentHighlightId] = useState<string | null>(null);
+
   // The address bar mirrors the filters, so a window or a drill-down survives a
   // refresh and can be linked to. Deriving the string first keeps the effect keyed
   // on its value rather than on a fresh filters object every render.
@@ -286,16 +296,17 @@ export default function TransactionsPage() {
   useEffect(() => {
     // While a ?highlight= is still being resolved, leave the URL alone. Writing
     // here would drop the parameter before the row has been found and opened,
-    // and the lookup would silently do nothing. The highlight flow clears it
-    // itself once done, and this effect then runs and restores the period.
-    if (highlightId) return;
+    // and the lookup would silently do nothing. Once the lookup is done it marks
+    // the id spent and this effect takes over — it is the only writer, so the
+    // parameter goes away and the period it jumped to lands in the same write.
+    if (highlightId && spentHighlightId !== highlightId) return;
     // Claim it first: this write is the page describing itself, not a navigation
     // asking it to change, so the reader below must not treat it as one. Without
     // this the advanced filters — which are deliberately not in the URL — would be
     // reset by the page's own mirror on every edit.
     appliedQueryRef.current = filterQuery;
     router.replace(`/transactions?${filterQuery}`, { scroll: false });
-  }, [highlightId, filterQuery, router]);
+  }, [highlightId, spentHighlightId, filterQuery, router]);
 
   // The other direction: a URL this page did not write imposes its filters. That
   // is an analytics drill-down, a pasted link, or the back button — including the
@@ -319,26 +330,34 @@ export default function TransactionsPage() {
     setFiltersRevision((revision) => revision + 1);
   }, [queryString, user.timezoneOffset]);
 
-  const highlightHandledRef = useRef(false);
 
-  const handleHighlight = useCallback((transactions: TransactionWithCategory[]) => {
-    if (!highlightId || highlightHandledRef.current) return;
-    const tx = transactions.find((t) => t.id === highlightId);
-    if (tx) {
-      highlightHandledRef.current = true;
+  const openHighlighted = useCallback(
+    (tx: TransactionWithCategory) => {
       setEditingTransaction(tx);
       // Leave the all-time lookup on the transaction's own account-local month so the
-      // period arrows keep their normal meaning after the edit modal closes.
+      // period arrows keep their normal meaning after the edit modal closes. For a row
+      // that was not in the loaded set, this is also what brings it into view.
       const month = monthOf(tx.date, user.timezoneOffset);
       setFilters((current) =>
         current.period === "monthly" && current.from === month.from
           ? current
           : { ...current, period: "monthly", ...month }
       );
-      // Clean up URL
-      router.replace("/transactions", { scroll: false });
-    }
-  }, [highlightId, router, user.timezoneOffset]);
+      scrollTargetRef.current = tx.id;
+    },
+    [user.timezoneOffset],
+  );
+
+  /**
+   * Hand the URL back to the mirror.
+   *
+   * Replacing with a bare `/transactions` here instead looked right and was not: the
+   * mirror would then write the period, clobbering the claim on `appliedQueryRef`
+   * within the same commit, and the sync effect would read the empty query as a
+   * request for default filters — so a January row opened its modal and left the
+   * list on September. One writer removes the race rather than sequencing it.
+   */
+  const consumeHighlight = useCallback((id: string) => setSpentHighlightId(id), []);
 
   const locateTransactionPage = useCallback(
     async (transactionId: string) => {
@@ -396,12 +415,61 @@ export default function TransactionsPage() {
     [isInfinite, allInfiniteTransactions, paginatedQuery.data?.transactions],
   );
 
-  // Auto-open highlighted transaction from query param
+  // Auto-open a highlighted transaction from the query param.
+  //
+  // The loaded rows are only a shortcut. A link from bill history or Telegram can
+  // name a row from any month, and the ledger opens on all time showing the newest
+  // page — so searching that page alone meant an older row produced no modal, no
+  // message, and nothing to suggest anything had been meant to happen. Falling back
+  // to a fetch by id works the same for both layouts and hands back the row's date,
+  // which is what the period jump needs anyway.
+  //
+  // Waiting for the list to settle keeps the common case request-free: a row linked
+  // from a recent bill is usually on screen already.
   useEffect(() => {
-    if (sourceTransactions.length > 0) {
-      handleHighlight(sourceTransactions);
+    if (!highlightId || highlightHandledRef.current === highlightId || loading) return;
+    // Claimed before the await, not after. `sourceTransactions` changes as pages
+    // arrive, and re-entering here would fire a second lookup for the same id.
+    highlightHandledRef.current = highlightId;
+
+    const loaded = sourceTransactions.find((t) => t.id === highlightId);
+    if (loaded) {
+      openHighlighted(loaded);
+      consumeHighlight(highlightId);
+      return;
     }
-  }, [sourceTransactions, handleHighlight]);
+
+    let cancelled = false;
+    fetchTransactionById(highlightId)
+      .then((tx) => {
+        if (!cancelled) openHighlighted(tx);
+      })
+      .catch((error: unknown) => {
+        // A link that resolves to nothing has to say so. Silence reads as the app
+        // ignoring the tap, and the two causes send you to look at different things:
+        // the row may have been deleted since the link was made, or the request may
+        // never have left the device.
+        if (cancelled) return;
+        showToast(
+          error instanceof Error ? error.message : "Could not open that transaction",
+          "error",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) consumeHighlight(highlightId);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    highlightId,
+    loading,
+    sourceTransactions,
+    openHighlighted,
+    consumeHighlight,
+    showToast,
+  ]);
 
   // Scroll to a newly created/updated transaction once the rendered list
   // actually includes it. The target lives in a ref so clearing it does not
