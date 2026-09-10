@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildTransactionParams } from "@/hooks/use-transactions";
 import { MAX_TRANSACTION_SEARCH_LENGTH } from "@/lib/transaction-filter-limits";
 import {
+  buildTransactionWhere,
   parseTransactionSearchParams,
   transactionFilterSchema,
 } from "@/lib/transaction-filter-query";
@@ -226,5 +227,31 @@ describe("the request the client builds is one the API accepts", () => {
       categoryId: "c1",
       type: "EXPENSE",
     });
+  });
+});
+
+describe("an all-time URL", () => {
+  it("stays all time instead of collapsing to the current month", () => {
+    // period=all is what the API calls unbounded; month "ALL" is the client's
+    // name for the same thing, and sends no period and no window.
+    const filters = readTransactionFilters(new URLSearchParams({ period: "all" }), MANILA);
+    expect(filters).toMatchObject({ month: "ALL", period: null, from: null, to: null });
+  });
+
+  it("still reaches the API as an unbounded request", () => {
+    const filters = readTransactionFilters(new URLSearchParams({ period: "all" }), MANILA);
+    const parsed = parseTransactionSearchParams(buildTransactionParams(filters, 1, MANILA));
+    expect(parsed.month).toBe("ALL");
+    expect(buildTransactionWhere("user-1", parsed).date).toBeUndefined();
+  });
+
+  it("reads a contradictory all-time-plus-window as the window it describes", () => {
+    // The schema refuses bounds alongside All time, so holding both would leave
+    // every request failing.
+    const filters = readTransactionFilters(
+      new URLSearchParams({ period: "all", from: "2026-09-01", to: "2026-09-30" }),
+      MANILA,
+    );
+    expect(filters).toMatchObject({ period: "custom", from: "2026-09-01", month: "ALL" });
   });
 });
