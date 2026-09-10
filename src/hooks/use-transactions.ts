@@ -57,6 +57,8 @@ export const buildTransactionParams = (filters: TransactionFilters, page: number
     month: filters.month,
     tz: String(tz),
   });
+  if (filters.dateFrom) params.set("dateFrom", filters.dateFrom);
+  if (filters.dateTo) params.set("dateTo", filters.dateTo);
   if (filters.type !== "ALL") params.set("type", filters.type);
   if (filters.search) params.set("search", filters.search);
   if (filters.categoryId) params.set("categoryId", filters.categoryId);

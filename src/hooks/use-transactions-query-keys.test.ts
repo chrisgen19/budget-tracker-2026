@@ -6,6 +6,8 @@ const filters: TransactionFilters = {
   search: "",
   type: "ALL",
   month: "2026-08",
+  dateFrom: null,
+  dateTo: null,
   categoryId: null,
   labelId: null,
   createdVia: "ALL",

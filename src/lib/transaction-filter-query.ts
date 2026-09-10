@@ -2,10 +2,20 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { MAX_TRANSACTION_SEARCH_LENGTH } from "@/lib/transaction-filter-limits";
 
+const DAY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
 export const transactionFilterSchema = z.object({
   search: z.string().max(MAX_TRANSACTION_SEARCH_LENGTH).default(""),
   type: z.enum(["ALL", "INCOME", "EXPENSE"]).default("ALL"),
   month: z.union([z.literal("ALL"), z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)]).default("ALL"),
+  /**
+   * An explicit calendar-day range, inclusive at both ends. Analytics works in
+   * arbitrary periods ("last 90 days", one heatmap day) that `month` cannot
+   * express, so a drill-down carries the range instead. Either end may stand
+   * alone: `dateFrom` with no `dateTo` is everything since that day.
+   */
+  dateFrom: z.string().regex(DAY_PATTERN).nullable().default(null),
+  dateTo: z.string().regex(DAY_PATTERN).nullable().default(null),
   categoryId: z.string().min(1).max(100).nullable().default(null),
   labelId: z.string().min(1).max(100).nullable().default(null),
   createdVia: z.enum(["ALL", "APP", "MCP", "TELEGRAM"]).default("ALL"),
@@ -29,6 +39,8 @@ export function parseTransactionSearchParams(searchParams: URLSearchParams) {
     search: searchParams.get("search") ?? "",
     type: searchParams.get("type") ?? "ALL",
     month: searchParams.get("month") ?? "ALL",
+    dateFrom: searchParams.get("dateFrom"),
+    dateTo: searchParams.get("dateTo"),
     categoryId: searchParams.get("categoryId"),
     labelId: searchParams.get("labelId"),
     createdVia: searchParams.get("createdVia") ?? "ALL",
@@ -39,6 +51,32 @@ export function parseTransactionSearchParams(searchParams: URLSearchParams) {
     timezoneOffset: optionalNumber(searchParams.get("tz")) ?? 0,
   });
 }
+/**
+ * Turn an inclusive `YYYY-MM-DD` range into the half-open instant window the
+ * rows are stored in. Same formula as every other date boundary in the app:
+ * `Date.UTC(y, m, d) + tzOffset * 60000`. `dateTo` is inclusive to the reader,
+ * so the query ends at the *start of the next day* — anything else drops every
+ * transaction logged after midnight on the last day.
+ */
+function buildDateRange(
+  filters: NormalizedTransactionFilters,
+): Prisma.DateTimeFilter | null {
+  if (!filters.dateFrom && !filters.dateTo) return null;
+  const timezoneMs = filters.timezoneOffset * 60 * 1000;
+  const range: Prisma.DateTimeFilter = {};
+
+  if (filters.dateFrom) {
+    const [year, month, day] = filters.dateFrom.split("-").map(Number);
+    range.gte = new Date(Date.UTC(year, month - 1, day) + timezoneMs);
+  }
+  if (filters.dateTo) {
+    const [year, month, day] = filters.dateTo.split("-").map(Number);
+    range.lt = new Date(Date.UTC(year, month - 1, day + 1) + timezoneMs);
+  }
+
+  return range;
+}
+
 export function buildTransactionWhere(
   userId: string,
   filters: NormalizedTransactionFilters,
@@ -47,7 +85,13 @@ export function buildTransactionWhere(
 
   if (filters.type !== "ALL") where.type = filters.type;
 
-  if (filters.month !== "ALL") {
+  // A range and a month are alternatives, not layers: the range replaces the
+  // month window rather than intersecting it, so a drill-down from a period
+  // that straddles months can never land on a silently empty intersection.
+  const range = buildDateRange(filters);
+  if (range) {
+    where.date = range;
+  } else if (filters.month !== "ALL") {
     const [year, month] = filters.month.split("-").map(Number);
     const timezoneMs = filters.timezoneOffset * 60 * 1000;
     where.date = {

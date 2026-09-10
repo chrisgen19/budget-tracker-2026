@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatTime, groupByDate } from "@/lib/transaction-helpers";
+import { formatFilterRangeLabel, formatTime, groupByDate } from "@/lib/transaction-helpers";
 import type { TransactionWithCategory } from "@/types";
 
 const transaction = (id: string, date: string, amount: number): TransactionWithCategory =>
@@ -37,5 +37,30 @@ describe("transaction display time", () => {
       "2026-08-27",
     ].filter((key, index, all) => all.indexOf(key) === index));
     expect(formatTime(rows[1].date, 420)).toBe("5:30 PM");
+  });
+});
+
+describe("formatFilterRangeLabel", () => {
+  it("prints one day as a single date", () => {
+    expect(formatFilterRangeLabel("2026-09-12", "2026-09-12")).toBe("Sep 12, 2026");
+  });
+
+  it("prints the year once when both ends share it", () => {
+    expect(formatFilterRangeLabel("2026-01-15", "2026-03-03")).toBe("Jan 15 – Mar 3, 2026");
+  });
+
+  it("prints the year on both ends across New Year", () => {
+    expect(formatFilterRangeLabel("2025-12-28", "2026-01-03")).toBe("Dec 28, 2025 – Jan 3, 2026");
+  });
+
+  it("labels an open end", () => {
+    expect(formatFilterRangeLabel("2026-09-01", null)).toBe("From Sep 1, 2026");
+    expect(formatFilterRangeLabel(null, "2026-09-30")).toBe("Until Sep 30, 2026");
+    expect(formatFilterRangeLabel(null, null)).toBe("");
+  });
+
+  it("reads the day as written rather than shifting it into the local zone", () => {
+    // "2026-01-01" parsed as a local instant lands on Dec 31 west of UTC.
+    expect(formatFilterRangeLabel("2026-01-01", "2026-01-01")).toBe("Jan 1, 2026");
   });
 });

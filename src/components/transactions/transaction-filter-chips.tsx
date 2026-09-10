@@ -5,6 +5,7 @@ import {
   SOURCE_CHIP_LABELS,
   getSortLabel,
 } from "@/components/transactions/transaction-filter-options";
+import { formatFilterRangeLabel } from "@/lib/transaction-helpers";
 import type { TransactionFilters } from "@/components/transactions/transaction-filters";
 
 export interface FilterChip {
@@ -19,6 +20,8 @@ interface BuildFilterChipsParams {
   categoryName: string | null;
   labelName: string | null;
   currencySymbol: string;
+  /** Where removing a date-range chip lands, since "no range" is not "all time". */
+  currentMonth: string;
   update: (partial: Partial<TransactionFilters>) => void;
   /** Clearing search also has to drop the pending debounce, which only the bar owns. */
   onRemoveSearch: () => void;
@@ -41,12 +44,24 @@ export function buildFilterChips({
   categoryName,
   labelName,
   currencySymbol,
+  currentMonth,
   update,
   onRemoveSearch,
 }: BuildFilterChipsParams): FilterChip[] {
   const candidates: (FilterChip | null)[] = [
     filters.search
       ? { id: "search", label: `Search: ${filters.search}`, onRemove: onRemoveSearch }
+      : null,
+    // First after search: a range overrides the month button, so the chip is where
+    // the user reads which period the list is actually showing. Removing it must
+    // restore a month rather than leave the parked "ALL" behind, which would widen
+    // the list to all time on the way out of a drill-down.
+    filters.dateFrom !== null || filters.dateTo !== null
+      ? {
+          id: "dateRange",
+          label: formatFilterRangeLabel(filters.dateFrom, filters.dateTo),
+          onRemove: () => update({ dateFrom: null, dateTo: null, month: currentMonth }),
+        }
       : null,
     filters.type !== "ALL"
       ? {

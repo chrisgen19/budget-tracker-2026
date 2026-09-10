@@ -32,6 +32,8 @@ const baseFilters: TransactionFilters = {
   search: "",
   type: "ALL",
   month: "2026-08",
+  dateFrom: null,
+  dateTo: null,
   categoryId: null,
   labelId: null,
   createdVia: "ALL",
@@ -468,7 +470,7 @@ describe("TransactionFiltersBar", () => {
   it("lets the user choose any month from the month label", () => {
     renderFilters();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Choose month, August 2026" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Choose month, currently August 2026" })[0]);
     fireEvent.click(screen.getByRole("button", { name: "Previous year" }));
     fireEvent.click(screen.getByRole("button", { name: "Previous year" }));
     fireEvent.click(screen.getByRole("button", { name: "Feb" }));
@@ -524,5 +526,59 @@ describe("TransactionFiltersBar", () => {
 
     act(() => vi.advanceTimersByTime(300));
     expect(screen.getByRole("button", { name: /Remove Search: coffee filter/ }).className).toContain("min-h-11");
+  });
+});
+
+describe("a drill-down date range", () => {
+  const rangeFilters: TransactionFilters = {
+    ...baseFilters,
+    // The month parks at ALL while a range is in force — the two are alternatives.
+    month: "ALL",
+    dateFrom: "2026-01-15",
+    dateTo: "2026-03-03",
+  };
+
+  it("takes over the month button, which would otherwise name a different period", () => {
+    renderFilters(rangeFilters);
+    expect(
+      screen.getAllByRole("button", { name: "Choose month, currently Jan 15 – Mar 3, 2026" }).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("resolves to the month the range starts in on the first arrow press", () => {
+    // Stepping from an indefinite period has no defined answer, so the first press
+    // lands on a concrete month rather than guessing which one to step from.
+    renderFilters(rangeFilters);
+    fireEvent.click(screen.getAllByRole("button", { name: "Previous month" })[0]);
+
+    expect(currentFilters).toMatchObject({ month: "2026-01", dateFrom: null, dateTo: null });
+  });
+
+  it("clears the range when a month is picked, so the two are never both live", () => {
+    renderFilters(rangeFilters);
+    // The picker opens on the year the range starts in, so Aug is on screen.
+    fireEvent.click(screen.getAllByRole("button", { name: /^Choose month/ })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Aug" }));
+
+    expect(currentFilters).toMatchObject({ month: "2026-08", dateFrom: null, dateTo: null });
+  });
+
+  it("lands back on the current month on Clear all, not on all time", () => {
+    renderFilters(rangeFilters);
+    fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+
+    expect(currentFilters.dateFrom).toBeNull();
+    expect(currentFilters.month).not.toBe("ALL");
+    expect(currentFilters.month).toMatch(/^\d{4}-\d{2}$/);
+  });
+
+  it("counts as an active filter without badging the Filters dialog", () => {
+    // The dialog has no date-range control, so a count pointing at it would send
+    // the user looking for something that is not there.
+    renderFilters(rangeFilters);
+    expect(screen.getByRole("button", { name: "Clear all" })).toBeTruthy();
+    // "Filters" and not "Filters, 1 active" — the badge would name a control the
+    // dialog does not have.
+    expect(screen.getByRole("button", { name: "Filters" })).toBeTruthy();
   });
 });

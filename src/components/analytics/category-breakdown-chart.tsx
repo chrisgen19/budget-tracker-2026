@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { PieChart as PieChartIcon } from "lucide-react";
 import type { AnalyticsCategoryItem } from "@/types";
@@ -7,14 +8,46 @@ import { formatCurrency, getCurrencySymbol } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { ChartTooltipCard } from "@/components/analytics/chart-tooltip";
 import { ChartEmptyState } from "@/components/analytics/chart-empty-state";
+import { DrillDownLink, drillDownLabel } from "@/components/analytics/drill-down-link";
+import { buildTransactionsHref } from "@/lib/transaction-filter-url";
+
+/**
+ * Split the breakdown row's id back into the two things it is made of.
+ *
+ * `/api/analytics` keys this list by `${categoryId}:${type}`, because one category
+ * can carry both income and expense transactions and ALL mode has to show those as
+ * separate rows. Passing that composite straight through as `categoryId` matches no
+ * row in the database and the drill-down lands on an empty list rather than an
+ * error — so the split has to happen here. `lastIndexOf` in case an id ever
+ * contains a colon of its own; the type suffix is always the final segment.
+ */
+export function parseCategoryItemId(id: string): { categoryId: string; type?: "INCOME" | "EXPENSE" } {
+  const separator = id.lastIndexOf(":");
+  if (separator === -1) return { categoryId: id };
+  const suffix = id.slice(separator + 1);
+  if (suffix !== "INCOME" && suffix !== "EXPENSE") return { categoryId: id };
+  return { categoryId: id.slice(0, separator), type: suffix };
+}
 
 interface CategoryBreakdownChartProps {
   data: AnalyticsCategoryItem[];
   currency: string;
   hideAmounts: boolean;
+  /** The analytics period, carried into the list so a drill-down shows this number's rows. */
+  range: { from: string; to: string };
 }
 
-export function CategoryBreakdownChart({ data, currency, hideAmounts }: CategoryBreakdownChartProps) {
+export function CategoryBreakdownChart({ data, currency, hideAmounts, range }: CategoryBreakdownChartProps) {
+  const router = useRouter();
+
+  // The type travels with the category: in ALL mode the same category can appear
+  // as two rows, one income and one expense, and a drill-down that dropped the
+  // type would merge them back together and contradict the number just tapped.
+  const hrefFor = (item: AnalyticsCategoryItem) => {
+    const { categoryId, type } = parseCategoryItemId(item.id);
+    return buildTransactionsHref({ categoryId, type, dateFrom: range.from, dateTo: range.to });
+  };
+
   if (data.length === 0) {
     return <ChartEmptyState icon={PieChartIcon} message="No data for this period" hint="Try a wider date range or add transactions" />;
   }
@@ -39,9 +72,15 @@ export function CategoryBreakdownChart({ data, currency, hideAmounts }: Category
               paddingAngle={2}
               stroke="#FFFFFF"
               strokeWidth={1.5}
+              // The index, not the sector payload: recharts spreads its own props
+              // over the datum, and the index is the one field that cannot drift.
+              onClick={(_: unknown, index: number) => {
+                const item = data[index];
+                if (item) router.push(hrefFor(item));
+              }}
             >
               {data.map((entry) => (
-                <Cell key={entry.id} fill={entry.color} />
+                <Cell key={entry.id} fill={entry.color} className="cursor-pointer outline-none" />
               ))}
             </Pie>
             <Tooltip
@@ -72,7 +111,12 @@ export function CategoryBreakdownChart({ data, currency, hideAmounts }: Category
       {/* Category list */}
       <div className="flex-1 space-y-1 max-h-[240px] overflow-y-auto min-w-0">
         {data.map((item) => (
-          <div key={item.id} className="flex items-center gap-3 px-1.5 py-1.5 rounded-lg hover:bg-cream-50 transition-colors">
+          <DrillDownLink
+            key={item.id}
+            href={hrefFor(item)}
+            label={drillDownLabel(item.transactionCount, item.name)}
+            className="flex items-center gap-3 px-1.5 py-1.5"
+          >
             <div
               className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
               style={{ backgroundColor: item.color + "1A" }}
@@ -91,7 +135,7 @@ export function CategoryBreakdownChart({ data, currency, hideAmounts }: Category
               </p>
               <p className="text-xs text-warm-400 tabular-nums">{item.percentage}%</p>
             </div>
-          </div>
+          </DrillDownLink>
         ))}
       </div>
     </div>

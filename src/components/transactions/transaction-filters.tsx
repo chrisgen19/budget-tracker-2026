@@ -23,6 +23,7 @@ import { useDebouncedSearch } from "@/hooks/use-debounced-search";
 import { useFilterToolbarScroll } from "@/hooks/use-filter-toolbar-scroll";
 import { useTransactionFilterOptions } from "@/hooks/use-transaction-filter-options";
 import { accountMonthKey } from "@/lib/account-time";
+import { formatFilterRangeLabel } from "@/lib/transaction-helpers";
 import { MAX_TRANSACTION_SEARCH_LENGTH } from "@/lib/transaction-filter-limits";
 import { cn, getCurrencySymbol } from "@/lib/utils";
 
@@ -30,6 +31,14 @@ export interface TransactionFilters {
   search: string;
   type: "ALL" | "INCOME" | "EXPENSE";
   month: string;
+  /**
+   * An inclusive calendar-day range. Set only by a drill-down from analytics,
+   * where the period ("last 90 days", one heatmap day) is not a calendar month.
+   * The server treats it as a replacement for `month`, so the two are never
+   * active at once — anything setting one clears the other.
+   */
+  dateFrom: string | null;
+  dateTo: string | null;
   categoryId: string | null;
   labelId: string | null;
   /** Which surface created the row. "MCP" surfaces what the remote endpoint wrote. */
@@ -49,6 +58,8 @@ export interface TransactionFiltersBarProps {
 const DEFAULT_FILTERS: Omit<TransactionFilters, "month"> = {
   search: "",
   type: "ALL",
+  dateFrom: null,
+  dateTo: null,
   categoryId: null,
   labelId: null,
   createdVia: "ALL",
@@ -56,6 +67,18 @@ const DEFAULT_FILTERS: Omit<TransactionFilters, "month"> = {
   amountMax: null,
   sortBy: "date",
   sortDir: "desc",
+};
+
+const hasDateRange = (filters: TransactionFilters) =>
+  filters.dateFrom !== null || filters.dateTo !== null;
+
+const CLEARED_RANGE = { dateFrom: null, dateTo: null } as const;
+
+/** The month a month-shaped control should act on, whatever period is in force. */
+const resolveMonth = (filters: TransactionFilters, timezoneOffset: number) => {
+  if (filters.dateFrom) return filters.dateFrom.slice(0, 7);
+  if (filters.month !== "ALL") return filters.month;
+  return accountMonthKey(new Date(), timezoneOffset);
 };
 
 const getMonthLabel = (month: string) => {
@@ -68,6 +91,16 @@ const getMonthLabel = (month: string) => {
   }).format(new Date(Date.UTC(year, monthNumber - 1)));
 };
 
+/**
+ * What the month button reads. A drill-down range takes the button over: it is
+ * the period in force, and showing a month name next to a list filtered to
+ * something else is worse than showing an unexpected label.
+ */
+const getPeriodLabel = (filters: TransactionFilters) =>
+  hasDateRange(filters)
+    ? formatFilterRangeLabel(filters.dateFrom, filters.dateTo)
+    : getMonthLabel(filters.month);
+
 const countAdvancedFilters = (filters: TransactionFilters) => {
   let count = 0;
   if (filters.categoryId) count += 1;
@@ -78,8 +111,14 @@ const countAdvancedFilters = (filters: TransactionFilters) => {
   return count;
 };
 
+// A range is deliberately absent from countAdvancedFilters: that count badges the
+// Filters dialog, which has no date-range control, so counting one would point at
+// a control the user cannot find. It still makes the toolbar "active" here.
 const hasActiveFilters = (filters: TransactionFilters) =>
-  filters.search !== "" || filters.type !== "ALL" || countAdvancedFilters(filters) > 0;
+  filters.search !== "" ||
+  filters.type !== "ALL" ||
+  hasDateRange(filters) ||
+  countAdvancedFilters(filters) > 0;
 
 export function TransactionFiltersBar({
   filters,
@@ -93,7 +132,7 @@ export function TransactionFiltersBar({
   const [filterDialogOpen, setFilterDialogOpen] = useState(false);
   const [monthDialogOpen, setMonthDialogOpen] = useState(false);
   const [monthPickerYear, setMonthPickerYear] = useState(() =>
-    Number(filters.month === "ALL" ? accountMonthKey(new Date(), user.timezoneOffset).slice(0, 4) : filters.month.slice(0, 4)),
+    Number(resolveMonth(filters, user.timezoneOffset).slice(0, 4)),
   );
   const { toolbarRef, markerRef, isScrolling, isInPlace, handleToolbarFocus } =
     useFilterToolbarScroll();
@@ -117,8 +156,11 @@ export function TransactionFiltersBar({
   }, [filters.categoryId, filters.type, update]);
 
   const navigateMonth = (direction: -1 | 1) => {
-    if (filters.month === "ALL") {
-      update({ month: accountMonthKey(new Date(), user.timezoneOffset) });
+    // "All time" and a drill-down range are both indefinite periods with no month
+    // to step from. The first press resolves one to a concrete month instead of
+    // stepping, so the arrow never has to guess which month the user meant.
+    if (filters.month === "ALL" || hasDateRange(filters)) {
+      update({ month: resolveMonth(filters, user.timezoneOffset), ...CLEARED_RANGE });
       return;
     }
     const [year, monthNumber] = filters.month.split("-").map(Number);
@@ -129,20 +171,26 @@ export function TransactionFiltersBar({
   };
 
   const openMonthDialog = () => {
-    const startingMonth =
-      filters.month === "ALL" ? accountMonthKey(new Date(), user.timezoneOffset) : filters.month;
-    setMonthPickerYear(Number(startingMonth.slice(0, 4)));
+    setMonthPickerYear(Number(resolveMonth(filters, user.timezoneOffset).slice(0, 4)));
     setMonthDialogOpen(true);
   };
 
   const selectMonth = (month: string) => {
-    update({ month });
+    update({ month, ...CLEARED_RANGE });
     setMonthDialogOpen(false);
   };
 
   const clearAll = () => {
     resetSearchInput();
-    update(DEFAULT_FILTERS);
+    // Dropping a range would otherwise leave month at "ALL" — the value it was
+    // parked at while the range was in force — so Clear all would silently widen
+    // the list to all time. Land back on the month the page opens with.
+    update({
+      ...DEFAULT_FILTERS,
+      ...(hasDateRange(filters)
+        ? { month: accountMonthKey(new Date(), user.timezoneOffset) }
+        : {}),
+    });
   };
 
   const applyAdvancedFilters = (values: AdvancedFilterValues) => {
@@ -156,6 +204,7 @@ export function TransactionFiltersBar({
     categoryName: categories.find((category) => category.id === filters.categoryId)?.name ?? null,
     labelName: labels.find((label) => label.id === filters.labelId)?.name ?? null,
     currencySymbol,
+    currentMonth: accountMonthKey(new Date(), user.timezoneOffset),
     update,
     onRemoveSearch: () => {
       resetSearchInput();
@@ -289,10 +338,10 @@ function MonthNavigator({
       <button type="button" onClick={() => onNavigate(-1)} aria-label="Previous month" className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-warm-400 transition-colors hover:bg-white hover:text-warm-700">
         <ChevronLeft className="h-4 w-4" />
       </button>
-      <button type="button" onClick={onOpenPicker} aria-label={`Choose month, ${getMonthLabel(filters.month)}`} aria-haspopup="dialog" className="relative flex min-h-11 min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-1 text-sm font-semibold text-warm-600 transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/20 sm:min-w-32">
+      <button type="button" onClick={onOpenPicker} aria-label={`Choose month, currently ${getPeriodLabel(filters)}`} aria-haspopup="dialog" className="relative flex min-h-11 min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-1 text-sm font-semibold text-warm-600 transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/20 sm:min-w-32">
         <CalendarDays aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-warm-400" />
         <span className="min-w-0 select-none truncate text-center">
-          {getMonthLabel(filters.month)}
+          {getPeriodLabel(filters)}
         </span>
       </button>
       <button type="button" onClick={() => onNavigate(1)} aria-label="Next month" className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-warm-400 transition-colors hover:bg-white hover:text-warm-700">

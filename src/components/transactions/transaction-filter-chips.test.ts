@@ -6,6 +6,8 @@ const baseFilters: TransactionFilters = {
   search: "",
   type: "ALL",
   month: "2026-08",
+  dateFrom: null,
+  dateTo: null,
   categoryId: null,
   labelId: null,
   createdVia: "ALL",
@@ -26,6 +28,7 @@ const build = (
     categoryName: overrides.categoryName ?? null,
     labelName: overrides.labelName ?? null,
     currencySymbol: "₱",
+    currentMonth: "2026-08",
     update,
     onRemoveSearch,
   });
@@ -94,5 +97,33 @@ describe("buildFilterChips", () => {
     chips[0].onRemove();
     expect(onRemoveSearch).toHaveBeenCalledOnce();
     expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe("date range chip", () => {
+  it("reads the range and clears back to a month, not to all time", () => {
+    // month sits at "ALL" while a range is in force, so removing the range has to
+    // put a month back or the list silently widens to every transaction ever.
+    const { chips, update } = build({
+      month: "ALL",
+      dateFrom: "2026-01-15",
+      dateTo: "2026-03-03",
+    });
+
+    expect(chips.map((chip) => chip.id)).toEqual(["dateRange"]);
+    expect(chips[0].label).toBe("Jan 15 – Mar 3, 2026");
+
+    chips[0].onRemove();
+    expect(update).toHaveBeenCalledWith({
+      dateFrom: null,
+      dateTo: null,
+      month: "2026-08",
+    });
+  });
+
+  it("sits ahead of the type chip, where the period is read", () => {
+    const { chips } = build({ dateFrom: "2026-09-12", dateTo: "2026-09-12", type: "EXPENSE" });
+    expect(chips.map((chip) => chip.id)).toEqual(["dateRange", "type"]);
+    expect(chips[0].label).toBe("Sep 12, 2026");
   });
 });

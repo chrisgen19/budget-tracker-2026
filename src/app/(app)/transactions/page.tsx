@@ -10,6 +10,10 @@ import {
   ScanLine,
 } from "lucide-react";
 import { useSearchParams, useRouter } from "next/navigation";
+import {
+  hasTransactionFilterParams,
+  readTransactionFilters,
+} from "@/lib/transaction-filter-url";
 import { formatCurrency, cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { Modal } from "@/components/ui/modal";
@@ -72,6 +76,8 @@ const createInitialFilters = (timezoneOffset: number): TransactionFilters => {
     search: "",
     type: "ALL",
     month: accountMonthKey(new Date(), timezoneOffset),
+    dateFrom: null,
+    dateTo: null,
     categoryId: null,
     labelId: null,
     createdVia: "ALL",
@@ -80,6 +86,26 @@ const createInitialFilters = (timezoneOffset: number): TransactionFilters => {
     sortBy: "date",
     sortDir: "desc",
   };
+};
+
+/**
+ * Resolve the filters a URL asks for.
+ *
+ * Three shapes arrive here: a highlight link from bill history (which wants an
+ * all-time lookup so the row is found whatever month it sits in), a drill-down
+ * from an analytics breakdown, and a plain visit.
+ */
+const filtersFromParams = (
+  params: URLSearchParams,
+  timezoneOffset: number,
+): TransactionFilters => {
+  if (params.get("highlight")) {
+    return { ...createInitialFilters(timezoneOffset), month: "ALL" };
+  }
+  if (hasTransactionFilterParams(params)) {
+    return readTransactionFilters(params, timezoneOffset);
+  }
+  return createInitialFilters(timezoneOffset);
 };
 
 /* ------------------------------------------------------------------ */
@@ -98,13 +124,9 @@ export default function TransactionsPage() {
   const { canScan, openScan, scanLimitReached, scansRemaining, hasLimit } = useScan();
   const currency = user.currency;
   const isInfinite = user.transactionLayout === "infinite";
-  const [filters, setFilters] = useState<TransactionFilters>(() => {
-    // If highlighting a transaction, clear the month filter so we search all data
-    if (searchParams.get("highlight")) {
-      return { ...createInitialFilters(user.timezoneOffset), month: "ALL" };
-    }
-    return createInitialFilters(user.timezoneOffset);
-  });
+  const [filters, setFilters] = useState<TransactionFilters>(() =>
+    filtersFromParams(new URLSearchParams(searchParams.toString()), user.timezoneOffset),
+  );
   const [page, setPage] = useState(1);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const pageHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -137,6 +159,25 @@ export default function TransactionsPage() {
   useEffect(() => {
     selectionContextKeyRef.current = selectionContextKey;
   }, [selectionContextKey]);
+
+  // Filters flow one way: in. A URL that carries them imposes them — arriving from
+  // an analytics drill-down, or navigating between two of them without unmounting —
+  // and edits made here afterwards stay in local state, so typing in the search box
+  // does not rewrite history on every keystroke.
+  //
+  // A query string that carries no filters is deliberately ignored rather than
+  // treated as "clear everything": the highlight flow below finishes by replacing
+  // the URL with a bare /transactions, and honouring that as a filter change would
+  // undo the month it just moved to.
+  const queryString = searchParams.toString();
+  const appliedQueryRef = useRef(queryString);
+  useEffect(() => {
+    if (appliedQueryRef.current === queryString) return;
+    appliedQueryRef.current = queryString;
+    const params = new URLSearchParams(queryString);
+    if (!hasTransactionFilterParams(params)) return;
+    setFilters(filtersFromParams(params, user.timezoneOffset));
+  }, [queryString, user.timezoneOffset]);
 
   useEffect(() => {
     selectedCountRef.current = selectedItems.length;

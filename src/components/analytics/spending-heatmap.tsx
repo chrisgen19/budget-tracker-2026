@@ -1,8 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { ArrowRight } from "lucide-react";
 import { cn, formatCurrency, getCurrencySymbol } from "@/lib/utils";
 import { ChartEmptyState } from "@/components/analytics/chart-empty-state";
+import { DrillDownLink, drillDownLabel } from "@/components/analytics/drill-down-link";
+import { buildTransactionsHref } from "@/lib/transaction-filter-url";
 import {
   INTENSITY_CLASSES,
   formatDayLabel,
@@ -138,12 +141,31 @@ export function SpendingHeatmap({ data, currency, hideAmounts }: SpendingHeatmap
       {/* Footer: legend + selected day detail (tap-friendly, no hover dependency) */}
       <div className="flex items-center justify-between gap-3 pt-1">
         {mode === "weekday" ? (
+          // Weekday cells are an average across many dates, so there is no single
+          // day to open — the other two modes are one cell per calendar day.
           <p className="text-[10px] text-warm-300">Average daily spend per weekday</p>
         ) : selected ? (
-          <p className="text-xs text-warm-500 truncate">
-            <span className="font-medium text-warm-600">{formatDayLabel(selected.date, multiYear)}</span>
-            {" — "}{fmt(selected.expenses)} spent · {selected.count} {selected.count === 1 ? "txn" : "txns"}
-          </p>
+          selected.count > 0 ? (
+            // No type filter: `count` counts every transaction that day, so
+            // narrowing to expenses here would land on fewer rows than the line
+            // beside the link just promised.
+            <DrillDownLink
+              href={buildTransactionsHref({ dateFrom: selected.date, dateTo: selected.date })}
+              label={drillDownLabel(selected.count, formatDayLabel(selected.date, multiYear))}
+              className="-mx-1.5 flex min-h-11 min-w-0 items-center gap-1.5 px-1.5"
+            >
+              <span className="min-w-0 truncate text-xs text-warm-500">
+                <span className="font-medium text-warm-600">{formatDayLabel(selected.date, multiYear)}</span>
+                {" — "}{fmt(selected.expenses)} spent · {selected.count} {selected.count === 1 ? "txn" : "txns"}
+              </span>
+              <ArrowRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-amber" />
+            </DrillDownLink>
+          ) : (
+            <p className="text-xs text-warm-500 truncate">
+              <span className="font-medium text-warm-600">{formatDayLabel(selected.date, multiYear)}</span>
+              {" — "}nothing logged
+            </p>
+          )
         ) : (
           <p className="text-[10px] text-warm-300">Tap a day for details</p>
         )}

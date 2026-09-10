@@ -405,7 +405,7 @@ export default function AnalyticsPage() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <motion.div variants={fadeUp} className="card p-5">
                   <CardHeader icon={PieChart} title="By Category" subtitle="Where is my money going?" />
-                  <CategoryBreakdownChart data={data.categoryBreakdown} currency={currency} hideAmounts={hideAmounts} />
+                  <CategoryBreakdownChart data={data.categoryBreakdown} currency={currency} hideAmounts={hideAmounts} range={dateRange} />
                 </motion.div>
 
                 <motion.div variants={fadeUp} className="card p-5">
@@ -427,7 +427,7 @@ export default function AnalyticsPage() {
               {/* Label Breakdown */}
               <motion.div variants={fadeUp} className="card p-5">
                 <CardHeader icon={Tags} title="By Label" subtitle="Spending by label tags" />
-                <LabelBreakdownChart data={data.labelBreakdown} currency={currency} hideAmounts={hideAmounts} />
+                <LabelBreakdownChart data={data.labelBreakdown} currency={currency} hideAmounts={hideAmounts} range={dateRange} type={typeFilter} />
               </motion.div>
 
               {/* Income & Expenses Report */}
