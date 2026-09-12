@@ -48,7 +48,10 @@ export async function PUT(request: Request, { params }: RouteParams) {
     // NOT NULL reference, and a bill left pointing at a mismatched category writes a wrong-typed
     // transaction every time it is paid.
     type Outcome =
-      | { conflict: { transactionCount: number; billCount: number }; category?: undefined }
+      | {
+          conflict: { transactionCount: number; billCount: number; labelCount: number };
+          category?: undefined;
+        }
       | { conflict?: undefined; category: Awaited<ReturnType<typeof prisma.category.update>> };
 
     const outcome: Outcome = await prisma.$transaction(async (tx): Promise<Outcome> => {
@@ -72,8 +75,22 @@ export async function PUT(request: Request, { params }: RouteParams) {
         const transactionCount = await tx.transaction.count({ where: { categoryId: id } });
         const billCount = await tx.scheduledTransaction.count({ where: { categoryId: id } });
 
-        if (transactionCount + billCount > 0) {
-          return { conflict: { transactionCount, billCount } };
+        // Labels scoped to this category count too, and only the type-restricted ones.
+        //
+        // `categoriesUsableForLabel` refuses to link an expense-only label to an income category
+        // precisely because the pair matches nothing: the label then disappears from every picker
+        // and looks exactly like one that was deleted. Flipping the category's type underneath an
+        // existing link reaches that same state from the other direction, so leaving it out here
+        // let the database hold what the label route refuses to create.
+        //
+        // A `BOTH` label is unaffected by the flip and is deliberately not counted -- refusing
+        // over it would block a harmless change.
+        const labelCount = await tx.labelCategory.count({
+          where: { categoryId: id, label: { applicableTo: { not: "BOTH" } } },
+        });
+
+        if (transactionCount + billCount + labelCount > 0) {
+          return { conflict: { transactionCount, billCount, labelCount } };
         }
       }
 
@@ -91,16 +108,24 @@ export async function PUT(request: Request, { params }: RouteParams) {
     });
 
     if (outcome.conflict) {
-      const { transactionCount, billCount } = outcome.conflict;
+      const { transactionCount, billCount, labelCount } = outcome.conflict;
       const parts = [
         transactionCount > 0 ? `${transactionCount} transaction(s)` : null,
         billCount > 0 ? `${billCount} bill(s)` : null,
+        labelCount > 0 ? `${labelCount} label(s)` : null,
       ].filter(Boolean);
       return NextResponse.json(
         {
-          error: `Cannot change type: ${parts.join(" and ")} use this category. Move them to another category first.`,
+          // The remedy differs by what is holding the category, so the advice has to. Moving rows
+          // is meaningless for a label, whose link is edited on the label itself.
+          error: `Cannot change type: ${parts.join(" and ")} use this category. ${
+            transactionCount + billCount > 0
+              ? "Move them to another category first."
+              : "Change those labels' categories first."
+          }`,
           transactionCount,
           billCount,
+          labelCount,
         },
         { status: 409 }
       );

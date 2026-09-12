@@ -145,10 +145,16 @@ export async function POST(request: Request) {
       if (result.reason === "UNKNOWN_WHETHER_SAVED" || result.reason === "NO_LONGER_PERMITTED") {
         return NextResponse.json({ error: "Failed to create transactions" }, { status: 500 });
       }
+      // Named per reason. The category message used to be the fallback for everything that was
+      // not an ownership failure, so a label excluded by its restriction told a multi-scan user to
+      // repair categories that were all perfectly valid -- on the one path where the scan credits
+      // are already spent and the rows cannot simply be retyped.
       const message =
         result.reason === "LABELS_NOT_OWNED"
           ? "One or more labels are invalid or do not belong to you"
-          : "One or more categories are invalid or do not belong to you";
+          : result.reason === "LABELS_NOT_IN_CATEGORY"
+            ? "One or more labels are limited to categories that do not include the one they were used with"
+            : "One or more categories are invalid or do not belong to you";
       return rejectUnlessAlreadySaved(
         userId,
         clientBatchId,
