@@ -202,7 +202,16 @@ const makePrisma = (options: StubOptions = {}) => {
         mcpWritesEnabledUntil: new Date(Date.now() + 60_000),
       })),
     },
-    $queryRaw: vi.fn(async () => {
+    // Two raw statements share this stub and are told apart by the table they name: the bill row
+    // lock, and the category lock the write paths take before referencing a category.
+    $queryRaw: vi.fn(async (sql: unknown, ...values: unknown[]) => {
+      const text = Array.isArray(sql) ? sql.join("?") : String(sql);
+      if (text.includes("categories")) {
+        const [ids] = values as [string[]];
+        return (options.usableCategoryIds ?? ["cat_own"])
+          .filter((id) => ids.includes(id))
+          .map((id) => ({ id, type: options.categoryType ?? "EXPENSE" }));
+      }
       locks += 1;
       return [{ next_due_date: bill.nextDueDate }];
     }),

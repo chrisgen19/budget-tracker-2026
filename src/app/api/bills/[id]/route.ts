@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { labelRowAllowsCategory } from "@/lib/label-category-matching";
-import { categoriesAreUsable } from "@/lib/transaction-writes";
+import { categoriesAreUsableForWrite } from "@/lib/transaction-writes";
 import { scheduledTransactionSchema } from "@/lib/validations";
 import { advanceToNextUnpaidOccurrence } from "@/lib/bill-utils";
 import { lockBillRow } from "@/lib/bill-writes";
@@ -135,7 +135,9 @@ export async function PUT(
       const categoryPairMoved =
         billData.categoryId !== locked.categoryId || billData.type !== locked.type;
       if (categoryPairMoved) {
-        const usable = await categoriesAreUsable(tx, userId, [
+        // The locking variant: this already runs inside the write transaction, but an unlocked
+        // read still lets a concurrent category type flip commit between the check and the update.
+        const usable = await categoriesAreUsableForWrite(tx, userId, [
           { categoryId: billData.categoryId, type: billData.type },
         ]);
         if (!usable) {

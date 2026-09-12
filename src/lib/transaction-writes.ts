@@ -144,6 +144,62 @@ export const categoriesAreUsable = async (
 };
 
 /**
+ * The physical names behind `Category`, for the locking read below. Raw SQL cannot go through
+ * Prisma's field mapping, so this is the second place `@map` names are restated in application
+ * code -- `transaction-writes.schema.test.ts` asserts they still match `prisma/schema.prisma`, the
+ * same guard `TRANSACTION_LABELS_*` carries in `label-writes.ts`.
+ */
+export const CATEGORIES_TABLE = "categories";
+export const CATEGORIES_COLUMNS = { userId: "user_id" } as const;
+
+/**
+ * `categoriesAreUsable`, but it holds the answer through the write.
+ *
+ * The plain version reads the category's type and takes no lock, so the answer can go stale before
+ * the row referencing it is inserted. `PUT /api/categories/[id]` takes `FOR UPDATE` on the category
+ * and refuses a type flip while anything references it -- but it counts *committed* references, so
+ * a writer that has validated and not yet inserted is invisible to that count. The flip commits,
+ * the insert follows, and the pair disagrees: exactly the state that guard exists to prevent.
+ *
+ * `FOR KEY SHARE` is the lock the foreign key takes anyway when the referencing row is inserted;
+ * taking it here simply takes it *earlier*, before the decision rather than after it. That closes
+ * the window from both directions. If this gets there first the updater's `FOR UPDATE` waits, and
+ * its count then sees the committed row. If the updater gets there first this waits, and the
+ * locking read then returns the *new* type, so the validation fails honestly.
+ *
+ * Shared rather than exclusive on purpose: concurrent writers into one category must not serialise
+ * behind each other, and they do not conflict -- only the type flip does.
+ *
+ * `ORDER BY id` is load-bearing, not tidiness. A batch can name several categories, and two
+ * batches naming an overlapping set in different orders would each hold what the other waits for.
+ * Same rule `updateTransactions` applies to its own row locks.
+ *
+ * Must be called **before** any insert that references these categories. Taking a row lock after a
+ * referencing insert is the deadlock `settleBill` documents from the other side.
+ */
+export const categoriesAreUsableForWrite = async (
+  tx: Prisma.TransactionClient,
+  userId: string,
+  items: readonly { categoryId: string; type: TransactionType }[]
+): Promise<boolean> => {
+  const categoryIds = [...new Set(items.map((t) => t.categoryId))].sort();
+  if (categoryIds.length === 0) return true;
+
+  const rows = await tx.$queryRaw<{ id: string; type: TransactionType }[]>`
+    SELECT id, type
+    FROM categories
+    WHERE id = ANY(${categoryIds})
+      AND (user_id = ${userId} OR user_id IS NULL)
+    ORDER BY id
+    FOR KEY SHARE
+  `;
+  if (rows.length !== categoryIds.length) return false;
+
+  const typeById = new Map(rows.map((c) => [c.id, c.type]));
+  return items.every((t) => typeById.get(t.categoryId) === t.type);
+};
+
+/**
  * Create many transactions in one atomic write, optionally idempotent under `clientBatchId`.
  *
  * Extracted from `POST /api/transactions/batch` so the MCP tool and the route share one
@@ -273,13 +329,22 @@ export const createTransactionBatch = async ({
       });
     });
 
-  // Without a key this stays exactly as it was: one atomic multi-create.
+  // Without a key this stays one atomic multi-create. It takes the callback form rather than the
+  // array form only so the locked category re-check can run *inside* the transaction and before
+  // the inserts; Prisma runs an array sequentially within one transaction either way, so the
+  // writes themselves are unchanged.
   if (!clientBatchId) {
     if (assertStillPermitted && !(await assertStillPermitted(prisma as Prisma.TransactionClient))) {
       return { ok: false, reason: "NO_LONGER_PERMITTED" };
     }
-    const created = await prisma.$transaction(buildCreates(prisma as Prisma.TransactionClient));
-    return { ok: true, transactions: created, replayed: false };
+    const outcome = await prisma.$transaction(async (tx) => {
+      if (!(await categoriesAreUsableForWrite(tx, userId, items))) return null;
+      const rows: TransactionWithRelations[] = [];
+      for (const create of buildCreates(tx)) rows.push(await create);
+      return rows;
+    }, BATCH_TX_OPTIONS);
+    if (outcome === null) return rejectUnlessSaved("CATEGORIES_NOT_OWNED");
+    return { ok: true, transactions: outcome, replayed: false };
   }
 
   // With a key the write is replay-safe. A batch that commits but whose response is lost is
@@ -303,6 +368,15 @@ export const createTransactionBatch = async ({
       // nothing, so it is deliberately not gated on this.
       if (assertStillPermitted && !(await assertStillPermitted(tx))) {
         return { ok: false as const, reason: "NO_LONGER_PERMITTED" as const };
+      }
+
+      // Re-checked under a row lock now that the write is actually about to happen. The pre-flight
+      // check above stays for its error message and its early exit; this one is the authority,
+      // because only a locking read can hold the answer through the insert. Below the replay
+      // branch on purpose: a replay writes nothing and must not be judged on references it will
+      // never make.
+      if (!(await categoriesAreUsableForWrite(tx, userId, items))) {
+        return { ok: false as const, reason: "CATEGORIES_NOT_OWNED" as const };
       }
 
       const rows: TransactionWithRelations[] = [];
@@ -620,7 +694,9 @@ export const updateTransactions = async ({
       const reclassified = effective.filter(
         (e) => e.categoryId !== e.row.categoryId || e.type !== e.row.type
       );
-      if (!(await categoriesAreUsable(tx, userId, reclassified))) {
+      // The locking variant, for the reason it exists: this runs inside the write transaction, but
+      // an unlocked read still lets a concurrent type flip commit between the check and the update.
+      if (!(await categoriesAreUsableForWrite(tx, userId, reclassified))) {
         return { ok: false as const, reason: "CATEGORIES_NOT_OWNED" as const };
       }
 
