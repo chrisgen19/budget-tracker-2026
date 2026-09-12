@@ -2,45 +2,51 @@
 
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import { cn, TOUCH_HIT_AREA_CENTERED } from "@/lib/utils";
 
 interface ReturnBarProps {
-  /** Built by `analyticsReturnHref` — already validated against a literal path. */
+  /** Built by `analyticsReturnTarget` — already validated against a literal path. */
   href: string;
-  /** Where the link goes, e.g. "Analytics". */
+  /** Where the link goes, e.g. "Analytics". Read out, not drawn. */
   label: string;
-  /** The view being returned to, e.g. "Sep 1 – 30". Omitted when unknown. */
-  context?: string;
+  className?: string;
 }
 
 /**
- * The way back from a drill-down.
+ * The way back from a drill-down: an arrow at the head of the filter toolbar's
+ * first row, immediately left of the search box.
  *
- * Rendered into the filter toolbar's first row, which is what keeps it reachable
- * from the bottom of a long list: the toolbar is this page's one sticky element and
- * already knows where to pin, when to hide and when to come back. Not floating at
- * the bottom either — that corner is a coordinated stack (bottom nav, install
- * prompt, bill reminder, FAB) whose offsets are resolved in
- * `bottom-overlay-clearance.ts` with `<main>` padding to match, and it could only
- * show an arrow where this can name the view it returns to.
+ * It used to own a bordered row above the controls and name both its destination
+ * and the view it returned to ("Analytics · September 2026"). Both halves were
+ * wrong. The row cost a whole line of a phone screen to hold one 16px arrow. And
+ * the period named the *analytics* span, which is deliberately not the ledger's
+ * own filter — a heatmap drill-down filters the list to one day while the link
+ * returns to the whole span — so stepping the transactions period to another month
+ * left a back link confidently naming a third one. Two periods on one screen that
+ * disagree is worse than one that is unstated.
  *
- * A real link, not `router.back()`. An installed PWA opened cold on this URL, or a
- * pasted link, has no history to go back to — and `display: "standalone"` means
- * iOS offers no back affordance of its own, which is the reason this exists.
+ * The arrow alone is the convention an installed app is read against, and the
+ * destination survives as the accessible name rather than as pixels.
+ *
+ * Still inside the toolbar, which is this page's one sticky element: on the page
+ * heading it would scroll away from a long list. A real link, not `router.back()`,
+ * because an installed PWA opened cold on this URL, or a pasted link, has no
+ * history to go back to — and `display: "standalone"` means iOS offers no back
+ * affordance of its own, which is the reason this exists.
  */
-export function ReturnBar({ href, label, context }: ReturnBarProps) {
+export function ReturnBar({ href, label, className }: ReturnBarProps) {
   return (
     <Link
       href={href}
-      className="group -mx-2 inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-lg px-2 text-sm text-warm-400 transition-colors hover:bg-cream-50 hover:text-warm-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/40"
-    >
-      <ArrowLeft aria-hidden="true" className="h-4 w-4 shrink-0 text-amber" />
-      <span className="font-medium text-warm-600 group-hover:text-warm-700">{label}</span>
-      {context && (
-        <>
-          <span aria-hidden="true" className="text-warm-300">·</span>
-          <span className="min-w-0 truncate">{context}</span>
-        </>
+      aria-label={`Back to ${label}`}
+      title={`Back to ${label}`}
+      className={cn(
+        "relative -ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-amber transition-colors hover:bg-cream-100 hover:text-amber-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/40",
+        TOUCH_HIT_AREA_CENTERED,
+        className,
       )}
+    >
+      <ArrowLeft aria-hidden="true" className="h-5 w-5" />
     </Link>
   );
 }

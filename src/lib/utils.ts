@@ -2,6 +2,30 @@
 export const cn = (...classes: (string | boolean | undefined | null)[]) =>
   classes.filter(Boolean).join(" ");
 
+/**
+ * Extends a control's touch target to 44px vertically without growing its visual
+ * box — the documented way to keep a deliberately small control inside the 44px
+ * rule when making it taller would be the wrong trade. Requires `relative` on the
+ * element it is applied to.
+ *
+ * The class string is hand-repeated in about ten places; this is the shared copy,
+ * and new callers should use it rather than retyping it.
+ */
+export const TOUCH_HIT_AREA =
+  "before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']";
+
+/**
+ * The same rule for a small square icon button, extended on both axes.
+ *
+ * The horizontal extension is what needs checking: it reaches past the button's
+ * own box, and two overlapping hit areas hand taps to the wrong control. Safe
+ * where nothing interactive sits within the overhang — 4px each side on a 36px
+ * button. Where something does, keep a real 44px width and use `TOUCH_HIT_AREA`
+ * for the height alone.
+ */
+export const TOUCH_HIT_AREA_CENTERED =
+  "before:absolute before:left-1/2 before:top-1/2 before:h-11 before:w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']";
+
 /** Format a number as currency (uses Intl defaults per currency, e.g. 0 decimals for JPY/KRW) */
 export const formatCurrency = (amount: number, currency = "PHP"): string =>
   new Intl.NumberFormat("en", {

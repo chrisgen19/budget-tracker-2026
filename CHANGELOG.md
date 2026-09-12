@@ -2,6 +2,109 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-12 - A carried-over total says so
+
+Second finding from review on #296, and the deeper half of the one above. Echoing the type fixed how
+a carried-over summary is *read*; it did nothing about where the summary came from. `placeholderData`
+hands back the previous filter set's answer for every filter — another month, another search, another
+category — and a single number gives the reader no way to notice.
+
+Worse, the error path ran the wrong way round. `isError` was only allowed to produce "Totals
+unavailable" when there was no data at all, on the reasoning that stale totals beat none. That is
+true of data cached under the *current* filters, which is the last real answer to the question being
+asked. It is false of placeholder data: if the request it stands in for fails, another window's
+figure sits there indefinitely, indistinguishable from an answer.
+
+`isPlaceholderData` separates the two cleanly. While it is set the line is dimmed and marked
+`aria-busy`, and a failure gives way to the refusal instead of keeping the stand-in. Data cached
+under the current filters still survives a failed refetch, which is what the original reasoning
+actually described.
+
+## 2026-09-12 - The totals carry the type they were computed under
+
+Caught in review on #296. `useTransactionSummaryQuery` uses `placeholderData`, so the previous
+summary stays on screen while a filter change is in flight — and the summary line was reading the
+figures under the *live* filter. Those two disagree for the length of a request.
+
+That would be ordinary staleness for most fields, but not for the type. The aggregate runs over a
+WHERE that has already applied the type, so an expense summary always reports `income: 0`, meaning
+"excluded" rather than "none". Press Income and the line rendered that as `₱0.00 received · 10
+transactions` — a confident wrong answer, held for as long as the request took, built from the old
+type's count and the new type's empty subtotal.
+
+`GET /api/transactions/summary` now echoes the effective type it answered about, and
+`TransactionSummaryLine` reads that instead of the live filter, so the figures and their
+interpretation cannot come apart. The previous line stays on screen until the new one lands, which is
+what stale data should look like. Guarding it in the hook's `placeholderData` instead would have
+worked, but leaves the field readable under the wrong type by anything that later consumes it.
+
+An unreadable `type` is still refused with a 400 rather than defaulting to ALL — a silent widening
+would make the summary describe more rows than the list shows while echoing a type the caller trusts.
+
+## 2026-09-12 - The way back becomes an arrow
+
+The drill-down back link was a bordered row above the toolbar controls reading
+"Analytics · September 2026". It is now an arrow at the head of the first row, immediately left of
+the search box, with the destination carried as its accessible name instead of as pixels.
+
+Two problems, one of them substantive. The row spent a whole line of a phone screen on one 16px
+arrow. And the period it named was the *analytics* span, which a drill-down deliberately does not
+share with the ledger's own filter: a heatmap day drill-down filters the list to that one day while
+the link returns to the whole span. Step the transactions period to another month and the back link
+confidently named a third one. The old code was right that the label could not be built from the
+page's filters; the conclusion it drew was to name the destination anyway, and naming neither is
+better. Two periods on one screen that disagree read as a bug in whichever the reader trusts less.
+
+So `analyticsReturnTarget` no longer returns `periodLabel`, and `AnalyticsReturnTarget` is just an
+href. The property that field's tests were really demonstrating — that a day drill-down returns to
+the span, not the day — is now asserted on the href.
+
+It stays inside the toolbar. That was reconsidered and put back: the toolbar is this page's one
+sticky element, and on the page heading the arrow would scroll away from a long list. An installed
+PWA opened cold on this URL has no browser back button to fall back on, which is the case the
+component exists for.
+
+`TOUCH_HIT_AREA_CENTERED` in `utils.ts` is the square variant of the 44px rule, for the 36px arrow.
+Unlike the vertical-only spelling it reaches past the button horizontally, so it is only safe where
+nothing interactive sits within the 4px overhang — here the search box is 10px away.
+
+## 2026-09-12 - One filter rail, and a total the list never had
+
+The transactions toolbar was four stacked rows on a phone and rendered the same type toggle three
+times. A mobile row carried the period picker and a compact toggle; a second row, `sm:flex lg:hidden`,
+carried the toggle again with full labels; a third carried the count and the chips. Only the compact
+copy had an `aria-label`, so the screen-reader name of one control changed with the viewport.
+
+Rows two through four are now one horizontally scrollable rail
+(`transaction-filter-rail.tsx`). Which controls appear is still a breakpoint question, answered by
+hiding items inside one row rather than by stacking rows. The toggle exists once, with both
+spellings on the same button and the full word as its accessible name at every width.
+
+The rail's scroll container carries 2px of vertical padding, and removing it breaks something
+invisible: `overflow-x: auto` forces the other axis to `auto` too, so the rail clips vertically, and
+the 44px hit areas on the 36px chips overhang by exactly 4px at each end. The pseudo-elements have no
+paint, so the clipped targets look fine and simply stop responding near their edges. `TOUCH_HIT_AREA`
+in `utils.ts` is the shared spelling of that pattern, which had been hand-repeated in about ten
+places.
+
+The toolbar's bare count is gone. It repeated the number the page header was already showing, and it
+was the least useful thing that could occupy a row. In its place is what the header cannot show:
+what the filtered rows add up to. `GET /api/transactions/summary` answers `{ count, income, expense,
+net }` over the same `buildTransactionWhere` the list uses, and the line signs the figure only where
+the sign carries information — a type filter has already picked a side, so `spent` and `received`
+take no sign, while All shows a signed net. The case that prompted it is the analytics drill-down,
+where a label and a type are both pinned and the total of what was selected was unavailable
+anywhere.
+
+The endpoint is separate from the list rather than a field on it because the list is fetched page by
+page in infinite mode, and a total riding along would re-run the aggregate on every scroll to produce
+the same answer. Keyed on the filters alone, it runs once per filter change; every existing mutation
+already invalidates the `transactions` root, so it refreshes with the list.
+
+One thing fixed on the way past: an active filter that shows no chip — a category whose name has not
+loaded yet — used to hide Clear all along with the empty chip row, leaving no way out of it. Clear
+all is now pinned outside the scroller and rendered independently of the chips.
+
 ## 2026-09-11 - One owner for the highlight link (#291)
 
 No behaviour change. `?highlight=<id>` resolution moved out of `transactions/page.tsx` into

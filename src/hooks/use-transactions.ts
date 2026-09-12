@@ -26,6 +26,23 @@ export interface TransactionsResponse {
   };
 }
 
+/** Totals across every row the filters match, not just the page that is loaded. */
+export interface TransactionSummary {
+  /**
+   * The type filter these figures were computed under, echoed by the server.
+   *
+   * Load-bearing, not decorative: `placeholderData` keeps the previous summary on
+   * screen across a filter change, so the live filter and the data on screen
+   * disagree for the length of a request. Reading the figures under the live type
+   * turned that into a wrong answer rather than a stale one.
+   */
+  type: "ALL" | "INCOME" | "EXPENSE";
+  count: number;
+  income: number;
+  expense: number;
+  net: number;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Query key factory                                                  */
 /* ------------------------------------------------------------------ */
@@ -38,6 +55,13 @@ export const queryKeys = {
       ["transactions", "list", filters, page, timezoneOffset] as const,
     infinite: (filters: TransactionFilters, timezoneOffset: number) =>
       ["transactions", "infinite", filters, timezoneOffset] as const,
+    /**
+     * Deliberately carries no page: the totals cover the whole filtered window, so
+     * scrolling another page in must not refetch them. Sits under the same
+     * "transactions" root every mutation already invalidates.
+     */
+    summary: (filters: TransactionFilters, timezoneOffset: number) =>
+      ["transactions", "summary", filters, timezoneOffset] as const,
   },
   dashboard: {
     all: ["dashboard"] as const,
@@ -50,10 +74,13 @@ export const queryKeys = {
 /*  Fetch helpers                                                      */
 /* ------------------------------------------------------------------ */
 
-export const buildTransactionParams = (filters: TransactionFilters, page: number, tz: number) => {
+/**
+ * Everything that narrows the result set, and nothing that slices it into pages.
+ * The list adds `page`/`limit` on top; the summary endpoint takes these verbatim,
+ * which is what keeps the two reading the same rows.
+ */
+export const buildTransactionFilterParams = (filters: TransactionFilters, tz: number) => {
   const params = new URLSearchParams({
-    page: String(page),
-    limit: "15",
     period: filters.period,
     tz: String(tz),
   });
@@ -69,6 +96,13 @@ export const buildTransactionParams = (filters: TransactionFilters, page: number
   if (filters.amountMax !== null) params.set("amountMax", String(filters.amountMax));
   if (filters.sortBy !== "date") params.set("sortBy", filters.sortBy);
   if (filters.sortDir !== "desc") params.set("sortDir", filters.sortDir);
+  return params;
+};
+
+export const buildTransactionParams = (filters: TransactionFilters, page: number, tz: number) => {
+  const params = buildTransactionFilterParams(filters, tz);
+  params.set("page", String(page));
+  params.set("limit", "15");
   return params;
 };
 
@@ -91,6 +125,16 @@ export const fetchTransactionsPage = async (
   const params = buildTransactionParams(filters, page, tz);
   const res = await fetch(`/api/transactions?${params}`);
   if (!res.ok) throw new Error("Failed to fetch transactions");
+  return res.json();
+};
+
+export const fetchTransactionSummary = async (
+  filters: TransactionFilters,
+  tz: number
+): Promise<TransactionSummary> => {
+  const params = buildTransactionFilterParams(filters, tz);
+  const res = await fetch(`/api/transactions/summary?${params}`);
+  if (!res.ok) throw await responseError(res, "Failed to load transaction totals");
   return res.json();
 };
 
@@ -123,6 +167,24 @@ export function useTransactionsInfiniteQuery(filters: TransactionFilters, tz: nu
       lastPage.pagination.page < lastPage.pagination.totalPages
         ? lastPage.pagination.page + 1
         : undefined,
+  });
+}
+
+/**
+ * Totals for the current filters.
+ *
+ * `placeholderData` keeps the previous figures on screen while a new window
+ * loads, the same way the paginated list does — a summary line that empties on
+ * every keystroke of the search box flickers more than it informs. What it hands
+ * back is genuinely stale data, so nothing may re-interpret it under the current
+ * filters: the type it was computed under travels inside the summary for exactly
+ * that reason.
+ */
+export function useTransactionSummaryQuery(filters: TransactionFilters, tz: number) {
+  return useQuery({
+    queryKey: queryKeys.transactions.summary(filters, tz),
+    queryFn: () => fetchTransactionSummary(filters, tz),
+    placeholderData: (previousData) => previousData,
   });
 }
 
