@@ -40,7 +40,14 @@ export async function PUT(request: Request, { params }: RouteParams) {
     // preserve what is stored, because an empty list here means *every* category. A client that
     // predates this feature omits it, and treating that as "unrestrict this label" would quietly
     // undo the narrowing on the first save from a stale tab.
-    if (!("categoryIds" in body)) {
+    //
+    // Presence is tracked rather than inferred from the filled value, because the two are not the
+    // same thing at write time. Filling it from the snapshot and then syncing unconditionally
+    // rewrites the links from a read taken *before* the transaction opened, so a concurrent edit
+    // that narrowed the label in between is silently reverted by a save that never mentioned
+    // categories -- and it churns a delete plus insert on every unrelated rename besides.
+    const categoryIdsProvided = "categoryIds" in body;
+    if (!categoryIdsProvided) {
       validated.categoryIds = existing.categories.map((c) => c.categoryId);
     }
     const confirmRemoval = body.confirmRemoval === true;
@@ -145,8 +152,9 @@ export async function PUT(request: Request, { params }: RouteParams) {
       }
 
       // Sync categories the same way: delete all existing, re-create from input. The set is
-      // small and unordered, so reconciling it row by row would buy nothing.
-      if (validated.categoryIds !== undefined) {
+      // small and unordered, so reconciling it row by row would buy nothing. Gated on the request
+      // having actually named them, so an omitted field writes nothing at all.
+      if (categoryIdsProvided && validated.categoryIds !== undefined) {
         await tx.labelCategory.deleteMany({ where: { labelId: id } });
 
         if (validated.categoryIds.length > 0) {

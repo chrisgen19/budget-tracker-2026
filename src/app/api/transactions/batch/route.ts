@@ -318,28 +318,6 @@ export async function PATCH(request: NextRequest) {
         };
       }
 
-      // The same all-or-nothing rule the type check above applies, and the reason this branch
-      // needed it most: a bulk add is the one place a label meets transactions the user never
-      // opened, spanning every category the selection covers. Nothing is grandfathered here --
-      // every link a bulk add writes is new -- so a label restricted away from any selected row
-      // refuses the whole operation rather than silently labelling the subset that qualifies.
-      //
-      // Named separately from the type refusal because the two are fixed on different screens.
-      if (input.operation === "add") {
-        const outOfCategory = labels.filter((label) =>
-          transactions.some(
-            (transaction) => !labelRowAllowsCategory(label, transaction.categoryId),
-          ),
-        );
-        if (outOfCategory.length > 0) {
-          const names = outOfCategory.map((label) => label.name).join(", ");
-          return {
-            error: `${names} is limited to categories that do not cover every selected transaction`,
-            status: 409 as const,
-          };
-        }
-      }
-
       const labelIds = labels.map((label) => label.id);
 
       if (input.operation === "add") {
@@ -353,6 +331,33 @@ export async function PATCH(request: NextRequest) {
         const existingKeys = new Set(
           existingLinks.map(({ transactionId, labelId }) => `${transactionId}:${labelId}`),
         );
+
+        // The same all-or-nothing rule the type check above applies, and the reason this branch
+        // needed it most: a bulk add is the one place a label meets transactions the user never
+        // opened, spanning every category the selection covers.
+        //
+        // Judged on the pairs this write would actually **insert**, never on the whole selection.
+        // A pair that already exists is grandfathered exactly as it is on every other edit path:
+        // a row carrying a label from before the restriction stays as it is, and refusing over it
+        // would block an add whose only real effect is a legitimate link on a different row. That
+        // is why this sits after `existingKeys` rather than before -- the earlier ordering read
+        // "nothing is grandfathered here", which was wrong about its own write.
+        //
+        // Named separately from the type refusal because the two are fixed on different screens.
+        const outOfCategory = labels.filter((label) =>
+          transactions.some(
+            (transaction) =>
+              !existingKeys.has(`${transaction.id}:${label.id}`) &&
+              !labelRowAllowsCategory(label, transaction.categoryId),
+          ),
+        );
+        if (outOfCategory.length > 0) {
+          const names = outOfCategory.map((label) => label.name).join(", ");
+          return {
+            error: `${names} is limited to categories that do not cover every selected transaction`,
+            status: 409 as const,
+          };
+        }
         const linksToAdd = matchedIds.flatMap((transactionId) =>
           labelIds.flatMap((labelId) =>
             existingKeys.has(`${transactionId}:${labelId}`) ? [] : [{ transactionId, labelId }],

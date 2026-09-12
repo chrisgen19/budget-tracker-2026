@@ -146,7 +146,13 @@ export function LabelPicker({
   // themselves, and doing it twice would fight them. `onChange` is read through a ref because the
   // forms pass a fresh closure each render, which as a dependency re-runs this forever.
   const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
+  // Kept in sync from an effect rather than during render. Writing a ref while rendering is
+  // impure: React may discard a render it has begun, and the pruning effect below would then be
+  // holding a callback from a render that never committed. Declared *before* that effect so it
+  // has already run when the prune fires.
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   useEffect(() => {
     if (labels.length === 0 || selectedIds.length === 0) return;

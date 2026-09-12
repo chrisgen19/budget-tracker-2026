@@ -60,7 +60,11 @@ export function LabelCategoryPicker({ value, onChange, applicableTo }: LabelCate
   // deps: the parent passes a fresh closure on every render, and depending on it re-runs this
   // effect forever.
   const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
+  // Synced from an effect rather than during render, for the reason the sibling picker is:
+  // a discarded render must not leave this holding a callback that never committed.
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   useEffect(() => {
     if (!categoriesQuery.isSuccess || value.length === 0) return;
