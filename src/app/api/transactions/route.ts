@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { transactionSchema } from "@/lib/validations";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
-import { categoriesAreUsable } from "@/lib/transaction-writes";
+import { categoriesAreUsable, categoriesAreUsableForWrite } from "@/lib/transaction-writes";
 import {
   buildTransactionOrderBy,
   buildTransactionWhere,
@@ -109,6 +109,11 @@ export async function POST(request: Request) {
     }
 
     const result = await prisma.$transaction(async (tx) => {
+      // Re-checked under a row lock, because the pre-flight read above takes none and a concurrent
+      // type flip can commit between it and the insert. Returning null rather than throwing keeps
+      // the refusal a 400 instead of reaching the catch as a 500.
+      if (!(await categoriesAreUsableForWrite(tx, userId, [validated]))) return null;
+
       const transaction = await tx.transaction.create({
         data: {
           amount: validated.amount,
@@ -134,6 +139,13 @@ export async function POST(request: Request) {
         include: { category: true, bill: true, labels: { include: { label: true } } },
       });
     });
+
+    if (result === null) {
+      return NextResponse.json(
+        { error: "That category does not exist, or its type does not match the transaction's" },
+        { status: 400 }
+      );
+    }
 
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
