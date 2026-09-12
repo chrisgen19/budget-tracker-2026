@@ -20,8 +20,10 @@ interface PageHeaderProps {
   /**
    * Where `action` sits on mobile. `"inline"` puts it on the title row, which is
    * right for a compact control or one that is hidden below `sm` anyway. `"below"`
-   * gives it its own full-width row, which is the only option for a control whose
-   * own hit targets are 44px — squeezing those in beside a title breaks them.
+   * gives it its own full-width row, for a control that needs the width: the period
+   * picker's label would truncate to nothing beside a title. This is about layout
+   * width, not hit area — an inline control still owes the 44px rule, which it pays
+   * with a pseudo-element (see the dashboard's month arrows) rather than by growing.
    */
   actionPlacement?: "inline" | "below";
   headingRef?: Ref<HTMLHeadingElement>;

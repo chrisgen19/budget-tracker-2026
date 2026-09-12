@@ -203,7 +203,8 @@ export default function DashboardPage() {
             <div className="flex items-center gap-2 bg-white rounded-xl border border-cream-300/60 shadow-warm px-2 py-1.5">
               <button
                 onClick={() => navigateMonth(-1)}
-                className="p-1.5 rounded-lg text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors"
+                aria-label="Previous month"
+                className="relative p-1.5 rounded-lg text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors before:absolute before:left-1/2 before:top-1/2 before:h-11 before:w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
@@ -212,7 +213,8 @@ export default function DashboardPage() {
               </span>
               <button
                 onClick={() => navigateMonth(1)}
-                className="p-1.5 rounded-lg text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors"
+                aria-label="Next month"
+                className="relative p-1.5 rounded-lg text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors before:absolute before:left-1/2 before:top-1/2 before:h-11 before:w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
