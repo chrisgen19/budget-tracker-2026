@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/ui/page-header";
 
 const TABS = [
   { href: "/admin", label: "Users" },
@@ -17,17 +18,11 @@ export default function AdminLayout({
   const pathname = usePathname();
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="font-serif text-2xl text-warm-700">Admin</h1>
-        <p className="text-warm-400 text-sm mt-1">
-          Manage users, roles, and app settings
-        </p>
-      </div>
+    <div>
+      <PageHeader title="Admin" description="Manage users, roles, and app settings" />
 
       {/* Tab bar */}
-      <div className="flex gap-1 p-1 bg-cream-200/60 rounded-xl w-fit">
+      <div className="flex gap-1 p-1 bg-cream-200/60 rounded-xl w-fit mb-6">
         {TABS.map((tab) => {
           const isActive =
             tab.href === "/admin"
