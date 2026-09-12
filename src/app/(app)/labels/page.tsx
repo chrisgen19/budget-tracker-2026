@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Plus, Pencil, Trash2, Tag, Clock, Folder, Play, Zap } from "lucide-react";
+import { AlertTriangle, Plus, Pencil, Trash2, Tag, Clock, Folder, Play, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { Modal } from "@/components/ui/modal";
@@ -42,7 +42,13 @@ export default function LabelsPage() {
     categoriesNarrowed: boolean;
   } | null>(null);
 
-  const { data: labels = [], isLoading: loading } = useLabelsQuery();
+  const {
+    data: labels = [],
+    isLoading: loading,
+    isError: labelsFailed,
+    isFetching: labelsFetching,
+    refetch: refetchLabels,
+  } = useLabelsQuery();
   const { data: quickLabelIds = [], isLoading: quickLoading } = useQuickLabelsQuery();
   const createLabel = useCreateLabel();
   const updateLabel = useUpdateLabel();
@@ -213,6 +219,27 @@ export default function LabelsPage() {
               </div>
             </div>
           ))}
+        </div>
+      ) : labelsFailed ? (
+        /* A failed read and an empty account are not the same thing, and they rendered
+           identically: `data` defaults to `[]`, so a 500 fell straight through to "No labels yet"
+           and told the user their labels were gone. That really happened -- a dev server holding a
+           Prisma client from before `label_categories` existed threw on every label query, and the
+           page reported it as an empty account. `LabelPicker` already distinguishes the two; this
+           is the same panel, so the two surfaces cannot drift. */
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-expense/20 bg-expense-light/40 p-4">
+          <span className="flex min-w-0 items-center gap-2 text-sm text-warm-600">
+            <AlertTriangle aria-hidden="true" className="h-4 w-4 shrink-0 text-expense" />
+            Couldn&apos;t load your labels. They haven&apos;t been deleted.
+          </span>
+          <button
+            type="button"
+            onClick={() => void refetchLabels()}
+            disabled={labelsFetching}
+            className="min-h-11 shrink-0 rounded-lg px-3 text-sm font-medium text-amber-dark transition-colors hover:bg-white/60 disabled:opacity-50"
+          >
+            {labelsFetching ? "Retrying…" : "Retry"}
+          </button>
         </div>
       ) : labels.length === 0 ? (
         <EmptyState
