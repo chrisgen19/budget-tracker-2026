@@ -30,12 +30,18 @@
  *   is whether the author knew these rules exist. It is not evidence that an existing route is
  *   correct, and nothing here should be read as saying it is.
  *
+ * Both checks read the **parsed** file with comments removed, which review on #302 is the reason
+ * for. Matching raw text let a comment naming a guard stand in for the guard: stripping the call
+ * and its import from `POST /api/transactions` left one explanatory sentence behind and the suite
+ * reported 10 passed over a route with no ownership check at all.
+ *
  * Both are reachability tests over source text, not proofs that a rule is applied correctly.
  * Correctness stays the job of the unit tests and the verify scripts beside them.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import ts from "typescript";
 
 const ROOT = join(__dirname, "..", "..", "..");
 const API_DIR = join(ROOT, "src", "app", "api");
@@ -90,8 +96,26 @@ const GUARDS = [
 
 const read = (file: string) => readFileSync(join(ROOT, file), "utf8");
 
+/**
+ * The file's *executable* text, with comments removed.
+ *
+ * Matching raw source was this test's own worst bug, and it was caught in review on #302 rather
+ * than by me. Both routes that carried the CWE-639 gap explain the guard in a comment that names
+ * it, so deleting the call and its import left the name behind and the test stayed green --
+ * certifying, in writing, protection that was no longer there. Proved by doing exactly that: the
+ * suite reported 10 passed over a route with no ownership check at all.
+ *
+ * A test that cannot distinguish a call from a sentence about a call is worse than no test, since
+ * it converts an absent guarantee into a stated one. Printing the parsed tree without comments
+ * costs one dependency the repo already has, and removes the whole class.
+ */
+const executableText = (file: string) => {
+  const source = ts.createSourceFile(file, read(file), ts.ScriptTarget.Latest, true);
+  return ts.createPrinter({ removeComments: true }).printFile(source);
+};
+
 /** Routes that write a row, so the rule applies to them. */
-const writingRoutes = routeFiles.filter((file) => WRITE_CALL.test(read(file)));
+const writingRoutes = routeFiles.filter((file) => WRITE_CALL.test(executableText(file)));
 
 describe("write routes reach the shared rules", () => {
   /**
@@ -123,7 +147,7 @@ describe("write routes reach the shared rules", () => {
   });
 
   it.each(writingRoutes)("%s consults a shared rule", (file) => {
-    const source = read(file);
+    const source = executableText(file);
     const referenced = GUARDS.filter((guard) => source.includes(guard));
 
     expect(
@@ -143,7 +167,25 @@ describe("write routes reach the shared rules", () => {
  * without it, and both echoed the foreign category's name back in their response.
  */
 describe("routes that write a caller-supplied categoryId verify it", () => {
-  const CATEGORY_GUARDS = ["categoriesAreUsable", "categoriesAreUsableForWrite"];
+  /**
+   * Ownership is verified either by the shared predicate or by an inline query scoped to the
+   * caller, and both count.
+   *
+   * The inline form is not an oversight to be tidied away. `PATCH /api/transactions/batch` needs
+   * the category's *type* back as well, so it can tell "no such category" (400) from "type does
+   * not match every selected row" (409) -- two different answers the route deliberately gives.
+   * `categoriesAreUsable` returns a boolean and would collapse them, so folding that route onto it
+   * changes an API response, which is not a thing a test-only change should do. Recognising the
+   * pattern it actually uses is the honest way to cover it until #301's option 3 is taken.
+   */
+  const verifiesOwnership = (source: string) =>
+    source.includes("categoriesAreUsable") ||
+    // The inline form: a category lookup narrowed to the caller's own rows plus the shared
+    // defaults. Both halves are required -- `userId` alone hides the defaults every account may
+    // use, and `isDefault` alone is the cross-account hole itself.
+    (/\bcategory\.find(First|Many)\b/.test(source) &&
+      source.includes("isDefault") &&
+      source.includes("userId"));
 
   /**
    * Named rather than derived. Deriving "writes a caller-supplied categoryId" from the text is
@@ -154,15 +196,16 @@ describe("routes that write a caller-supplied categoryId verify it", () => {
   const ROUTES = [
     "src/app/api/transactions/route.ts",
     "src/app/api/transactions/[id]/route.ts",
+    "src/app/api/transactions/batch/route.ts",
     "src/app/api/bills/[id]/route.ts",
   ];
 
   it.each(ROUTES)("%s checks category ownership", (file) => {
-    const source = read(file);
     expect(
-      CATEGORY_GUARDS.some((guard) => source.includes(guard)),
-      `${file} writes a caller-supplied categoryId without calling categoriesAreUsable or ` +
-        `categoriesAreUsableForWrite, so it would accept another account's category (CWE-639).`
+      verifiesOwnership(executableText(file)),
+      `${file} writes a caller-supplied categoryId without verifying the caller may use it, ` +
+        `so it would accept another account's category (CWE-639). Call categoriesAreUsable` +
+        `ForWrite, or narrow the category lookup to { OR: [{ isDefault: true }, { userId }] }.`
     ).toBe(true);
   });
 });
