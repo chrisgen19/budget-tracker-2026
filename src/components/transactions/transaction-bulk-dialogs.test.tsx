@@ -52,12 +52,88 @@ describe("TransactionBulkLabelsDialog", () => {
         onClose={vi.fn()}
         selectedCount={2}
         selectedTypes={new Set<"INCOME" | "EXPENSE">(["EXPENSE"])}
+        selectedCategoryIds={new Set<string>(["cat_1"])}
         pending={false}
         onApply={vi.fn()}
       />,
     );
 
     expect(screen.getByText("Loading labels…")).toBeTruthy();
+  });
+
+  // The write is all-or-nothing: `PATCH /api/transactions/batch` refuses an add whose label does
+  // not cover every selected row. Offering such a label here would put the user one press away
+  // from a guaranteed 409, with nothing on screen explaining which label caused it.
+  it("hides a label that does not cover every selected category, in add mode", () => {
+    const label = (id: string, name: string, categoryIds: string[]) => ({
+      id,
+      name,
+      color: "#F5A623",
+      applicableTo: "EXPENSE",
+      userId: "u1",
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      _count: { transactions: 0 },
+      schedules: [],
+      categories: categoryIds.map((categoryId) => ({ categoryId })),
+    });
+    mocks.useLabelsQuery.mockReturnValue(
+      queryState({
+        data: [
+          label("tnvs", "TNVS", ["cat_transport"]),
+          label("both", "Covers Both", ["cat_transport", "cat_food"]),
+          label("anywhere", "Anywhere", []),
+        ],
+      }),
+    );
+
+    render(
+      <TransactionBulkLabelsDialog
+        open
+        onClose={vi.fn()}
+        selectedCount={2}
+        selectedTypes={new Set<"INCOME" | "EXPENSE">(["EXPENSE"])}
+        selectedCategoryIds={new Set<string>(["cat_transport", "cat_food"])}
+        pending={false}
+        onApply={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("TNVS")).toBeNull();
+    expect(screen.getByText("Covers Both")).toBeTruthy();
+    expect(screen.getByText("Anywhere")).toBeTruthy();
+  });
+
+  // Remove mode stays unfiltered: taking a label off rows it should never have carried is how a
+  // mismatch left by an earlier restriction gets cleaned up, so hiding it removes the only cure.
+  it("still offers a non-covering label in remove mode", () => {
+    const label = {
+      id: "tnvs",
+      name: "TNVS",
+      color: "#F5A623",
+      applicableTo: "EXPENSE",
+      userId: "u1",
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      _count: { transactions: 0 },
+      schedules: [],
+      categories: [{ categoryId: "cat_transport" }],
+    };
+    mocks.useLabelsQuery.mockReturnValue(queryState({ data: [label] }));
+
+    render(
+      <TransactionBulkLabelsDialog
+        open
+        onClose={vi.fn()}
+        selectedCount={2}
+        selectedTypes={new Set<"INCOME" | "EXPENSE">(["EXPENSE"])}
+        selectedCategoryIds={new Set<string>(["cat_food"])}
+        pending={false}
+        onApply={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("TNVS")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /remove/i }));
+    expect(screen.getByText("TNVS")).toBeTruthy();
   });
 
   it("keeps every dismissal path locked while applying labels", () => {
@@ -68,6 +144,7 @@ describe("TransactionBulkLabelsDialog", () => {
         onClose={onClose}
         selectedCount={2}
         selectedTypes={new Set<"INCOME" | "EXPENSE">(["EXPENSE"])}
+        selectedCategoryIds={new Set<string>(["cat_1"])}
         pending
         onApply={vi.fn()}
       />,
@@ -86,6 +163,7 @@ describe("TransactionBulkLabelsDialog", () => {
         onClose={vi.fn()}
         selectedCount={2}
         selectedTypes={new Set<"INCOME" | "EXPENSE">(["EXPENSE"])}
+        selectedCategoryIds={new Set<string>(["cat_1"])}
         pending={false}
         onApply={vi.fn()}
       />,

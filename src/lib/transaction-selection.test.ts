@@ -12,6 +12,7 @@ const item = (id: string): TransactionSelectionItem => ({
   description: id,
   type: "EXPENSE",
   amount: 1,
+  categoryId: "cat_1",
 });
 describe("transactionSelectionReducer", () => {
   it("toggles one transaction without affecting another page", () => {

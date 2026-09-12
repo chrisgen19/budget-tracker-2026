@@ -22,7 +22,7 @@ export async function POST(request: Request) {
       where: buildTransactionWhere(userId, filters),
       orderBy: buildTransactionOrderBy(filters),
       take: MAX_BULK_TRANSACTIONS + 1,
-      select: { id: true, description: true, type: true, amount: true },
+      select: { id: true, description: true, type: true, amount: true, categoryId: true },
     });
 
     if (transactions.length > MAX_BULK_TRANSACTIONS) {

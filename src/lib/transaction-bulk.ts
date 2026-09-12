@@ -39,4 +39,12 @@ export interface TransactionSelectionItem {
   description: string;
   type: "INCOME" | "EXPENSE";
   amount: number;
+  /**
+   * The category the row is filed under.
+   *
+   * Carried for the bulk **label** dialog, which has to know what a restricted label would meet:
+   * `PATCH /api/transactions/batch` refuses an add whose label does not cover every selected row,
+   * and without this the dialog offers exactly the choices that refusal rejects.
+   */
+  categoryId: string;
 }

@@ -9,6 +9,7 @@ const selected = (id: string): TransactionSelectionItem => ({
   description: id,
   type: "EXPENSE",
   amount: 1,
+  categoryId: "cat_1",
 });
 
 const transaction = (id: string) => ({ id }) as TransactionWithCategory;
