@@ -1,3 +1,5 @@
+import { labelAllowsCategory } from "@/lib/label-category-matching";
+
 /**
  * Read an explicit label directive out of free text.
  *
@@ -28,6 +30,15 @@ export interface BotLabel {
    * an income-only label on a receipt would show it and then quietly not write it.
    */
   applicableTo?: string;
+  /**
+   * Categories the label is limited to. **Empty or absent means every category**, not none.
+   *
+   * Optional for the same reason `applicableTo` is: `findByName` and the search path need only id
+   * and name. Where it is present and a category is known, a label the category excludes is
+   * reported rather than applied -- and `createTransactionBatch` would now *refuse* the whole
+   * write rather than filter it, so sending one on is worse here than it is for a type mismatch.
+   */
+  categoryIds?: string[];
 }
 
 export interface LabelDirective {
@@ -52,6 +63,15 @@ export interface LabelDirective {
    * as a missing one.
    */
   incompatible: string[];
+  /**
+   * Real labels the user named that this transaction's category excludes.
+   *
+   * Its own bucket rather than folded into `incompatible`, for the reason that one is kept apart
+   * from `unresolved`: the three need different advice, and the two restrictions are changed in
+   * different places -- the label's "Applies To" against its "Categories". A single "cannot be
+   * used here" would send the user to the wrong screen half the time.
+   */
+  outOfCategory: string[];
   /**
    * Names that could be the start of more than one label, with the labels they could mean.
    *
@@ -194,16 +214,19 @@ const tidy = (text: string): string =>
 /**
  * Whether the parser read this text as naming labels at all.
  *
- * Applied, missing, type-mismatched or ambiguous — every one of those means the user was talking
- * about labels, and a caller deciding "is this a label edit or a new description" has to treat
- * them alike. Enumerating the buckets at the call site got this wrong once per bucket added:
- * first `incompatible`, then `ambiguous`, each time renaming a receipt draft to the text of the
- * instruction. It lives here so the next bucket cannot repeat it.
+ * Applied, missing, type-mismatched, out-of-category or ambiguous — every one of those means the
+ * user was talking about labels, and a caller deciding "is this a label edit or a new description"
+ * has to treat them alike. Enumerating the buckets at the call site got this wrong once per bucket
+ * added: first `incompatible`, then `ambiguous`, each time renaming a receipt draft to the text of
+ * the instruction. It lives here so the next bucket cannot repeat it -- and `outOfCategory` did
+ * repeat it, by being added to the parser and not to this list, which is the argument for the
+ * exhaustive shape below rather than another hand-written disjunction.
  */
 export const namesLabels = (directive: LabelDirective): boolean =>
   directive.ids.length > 0 ||
   directive.unresolved.length > 0 ||
   directive.incompatible.length > 0 ||
+  directive.outOfCategory.length > 0 ||
   directive.ambiguous.length > 0;
 
 /**
@@ -218,12 +241,15 @@ export const readLabelDirective = (
   text: string,
   labels: BotLabel[],
   /** The transaction type these labels are for, when known. Enables the compatibility check. */
-  appliesTo?: "EXPENSE" | "INCOME"
+  appliesTo?: "EXPENSE" | "INCOME",
+  /** The category the transaction will be filed under, when known. Enables the category check. */
+  categoryId?: string | null
 ): LabelDirective => {
   const ids: string[] = [];
   const names: string[] = [];
   const unresolved: string[] = [];
   const incompatible: string[] = [];
+  const outOfCategory: string[] = [];
   const ambiguous: { name: string; candidates: string[] }[] = [];
   const spans: Span[] = [];
 
@@ -233,6 +259,12 @@ export const readLabelDirective = (
     const type = label.applicableTo;
     if (appliesTo && type && type !== "BOTH" && type !== appliesTo) {
       if (!incompatible.includes(label.name)) incompatible.push(label.name);
+      return;
+    }
+    // Checked only when the caller resolved a category first. Without one there is nothing to
+    // compare against, and guessing would report a perfectly good label as unusable.
+    if (categoryId && !labelAllowsCategory(label.categoryIds, categoryId)) {
+      if (!outOfCategory.includes(label.name)) outOfCategory.push(label.name);
       return;
     }
     if (ids.includes(label.id)) return;
@@ -442,6 +474,7 @@ export const readLabelDirective = (
     names,
     unresolved,
     incompatible,
+    outOfCategory,
     ambiguous,
     removedDirective: spans.length > 0,
     rest: tidy(rest),
@@ -465,7 +498,7 @@ export const readLabelDirective = (
  */
 export const renderLabelNotice = (
   directive: Pick<LabelDirective, "names" | "unresolved"> &
-    Partial<Pick<LabelDirective, "incompatible" | "ambiguous">>,
+    Partial<Pick<LabelDirective, "incompatible" | "outOfCategory" | "ambiguous">>,
   labelsReadable = true
 ): string => {
   let notice = "";
@@ -490,6 +523,16 @@ export const renderLabelNotice = (
       `\n\u26a0\ufe0f ${named} ${one ? "doesn't" : "don't"} apply to this kind of transaction, ` +
       `so I left ${one ? "it" : "them"} off. Set ${one ? "it" : "them"} to "Both" in the app ` +
       `to use ${one ? "it" : "them"} here.\n`;
+  }
+  if (directive.outOfCategory?.length) {
+    // Separate from the type message above, and pointing at a different screen. Both say "you
+    // have it, but not here"; only this one is fixed on the label's Categories.
+    const one = directive.outOfCategory.length === 1;
+    const named = directive.outOfCategory.map((n) => `*${n}*`).join(", ");
+    notice +=
+      `\n\u26a0\ufe0f ${named} ${one ? "is" : "are"} limited to other categories, so I left ` +
+      `${one ? "it" : "them"} off. Add this category to ${one ? "it" : "them"} in the app, or ` +
+      `set ${one ? "it" : "them"} to "All categories".\n`;
   }
   if (directive.unresolved.length > 0) {
     const one = directive.unresolved.length === 1;

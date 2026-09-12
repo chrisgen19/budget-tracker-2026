@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { labelSchema } from "@/lib/validations";
+import { categoriesUsableForLabel, LABEL_INCLUDE } from "@/lib/label-writes";
+import { categoryRestrictionNarrowed } from "@/lib/label-category-matching";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -16,6 +19,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
   try {
     const existing = await prisma.label.findFirst({
       where: { id, userId },
+      include: { categories: { select: { categoryId: true } } },
     });
 
     if (!existing) {
@@ -32,7 +36,31 @@ export async function PUT(request: Request, { params }: RouteParams) {
     if (!("applicableTo" in body)) {
       validated.applicableTo = existing.applicableTo as "EXPENSE" | "INCOME" | "BOTH";
     }
+    // Same reasoning for the category restriction: an absent field means "not sent" and must
+    // preserve what is stored, because an empty list here means *every* category. A client that
+    // predates this feature omits it, and treating that as "unrestrict this label" would quietly
+    // undo the narrowing on the first save from a stale tab.
+    //
+    // Presence is tracked rather than inferred from the filled value, because the two are not the
+    // same thing at write time. Filling it from the snapshot and then syncing unconditionally
+    // rewrites the links from a read taken *before* the transaction opened, so a concurrent edit
+    // that narrowed the label in between is silently reverted by a save that never mentioned
+    // categories -- and it churns a delete plus insert on every unrelated rename besides.
+    const categoryIdsProvided = "categoryIds" in body;
+    if (!categoryIdsProvided) {
+      validated.categoryIds = existing.categories.map((c) => c.categoryId);
+    }
     const confirmRemoval = body.confirmRemoval === true;
+
+    const categoryCheck = await categoriesUsableForLabel(
+      prisma,
+      userId,
+      validated.categoryIds ?? [],
+      validated.applicableTo,
+    );
+    if (!categoryCheck.ok) {
+      return NextResponse.json({ error: categoryCheck.message }, { status: 400 });
+    }
 
     // Check for duplicate name (excluding self)
     const duplicate = await prisma.label.findFirst({
@@ -59,24 +87,51 @@ export async function PUT(request: Request, { params }: RouteParams) {
       else if (oldApplicableTo === "EXPENSE" && newApplicableTo === "INCOME") removedType = "EXPENSE";
     }
 
-    if (removedType) {
+    // Narrowing the category restriction strips associations exactly the way narrowing the type
+    // does, so it goes through the same confirm-before-removing flow rather than a second one.
+    //
+    // Only a *change* counts. A save that leaves the set alone must not offer to strip rows that
+    // were already outside it: those are grandfathered everywhere else (the picker keeps showing
+    // them, the write paths keep accepting them), and a confirmation prompt on an unrelated
+    // rename would be the one place that disagreed.
+    //
+    // An empty new set means every category, which removes nothing by definition.
+    const oldCategoryIds = existing.categories.map((c) => c.categoryId).sort();
+    const newCategoryIds = [...(validated.categoryIds ?? [])].sort();
+    // Narrowed means the new set *removes* something the old one allowed, never merely that it
+    // differs -- see `categoryRestrictionNarrowed`, which owns that rule beside the predicate it
+    // mirrors. Comparing the two for inequality counted a pure widening as a narrowing.
+    const categoriesNarrowed = categoryRestrictionNarrowed(oldCategoryIds, newCategoryIds);
+
+    // One predicate for both narrowings, so a save that does both asks once and strips once.
+    const excluded: Prisma.TransactionWhereInput[] = [
+      ...(removedType ? [{ type: removedType as "INCOME" | "EXPENSE" }] : []),
+      ...(categoriesNarrowed ? [{ categoryId: { notIn: newCategoryIds } }] : []),
+    ];
+
+    if (excluded.length > 0) {
       const affectedCount = await prisma.transactionLabel.count({
-        where: { labelId: id, transaction: { type: removedType as "INCOME" | "EXPENSE" } },
+        where: { labelId: id, transaction: { OR: excluded } },
       });
 
       if (affectedCount > 0 && !confirmRemoval) {
         return NextResponse.json(
-          { needsConfirmation: true, affectedCount, removedType },
+          {
+            needsConfirmation: true,
+            affectedCount,
+            removedType,
+            categoriesNarrowed,
+          },
           { status: 409 }
         );
       }
     }
 
     const label = await prisma.$transaction(async (tx) => {
-      // Remove associations for the excluded type if confirmed
-      if (removedType && confirmRemoval) {
+      // Remove associations the narrowed type or category set no longer allows, once confirmed
+      if (excluded.length > 0 && confirmRemoval) {
         await tx.transactionLabel.deleteMany({
-          where: { labelId: id, transaction: { type: removedType as "INCOME" | "EXPENSE" } },
+          where: { labelId: id, transaction: { OR: excluded } },
         });
       }
 
@@ -96,6 +151,19 @@ export async function PUT(request: Request, { params }: RouteParams) {
         }
       }
 
+      // Sync categories the same way: delete all existing, re-create from input. The set is
+      // small and unordered, so reconciling it row by row would buy nothing. Gated on the request
+      // having actually named them, so an omitted field writes nothing at all.
+      if (categoryIdsProvided && validated.categoryIds !== undefined) {
+        await tx.labelCategory.deleteMany({ where: { labelId: id } });
+
+        if (validated.categoryIds.length > 0) {
+          await tx.labelCategory.createMany({
+            data: validated.categoryIds.map((categoryId) => ({ labelId: id, categoryId })),
+          });
+        }
+      }
+
       return tx.label.update({
         where: { id },
         data: {
@@ -103,10 +171,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
           color: validated.color,
           applicableTo: validated.applicableTo,
         },
-        include: {
-          _count: { select: { transactions: true } },
-          schedules: { orderBy: { createdAt: "asc" } },
-        },
+        include: LABEL_INCLUDE,
       });
     });
 

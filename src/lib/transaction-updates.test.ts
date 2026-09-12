@@ -29,7 +29,7 @@ const row = (over: Record<string, unknown> = {}) => ({
 interface StubOptions {
   rows?: ReturnType<typeof row>[];
   categories?: { id: string; type: string }[];
-  labels?: { id: string; applicableTo: string; name: string }[];
+  labels?: { id: string; applicableTo: string; name: string; categoryIds?: string[] }[];
   permitted?: boolean;
   /** Thrown from `$transaction`, to exercise how a failed write is classified. */
   throwOnWrite?: unknown;
@@ -101,7 +101,14 @@ const makePrisma = ({
     },
     label: {
       findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
-        labels.filter((l) => where.id.in.includes(l.id))
+        // Shaped the way the real `select` returns it: the relation, not a flat id list. Empty
+        // means the label is offered on every category.
+        labels
+          .filter((l) => where.id.in.includes(l.id))
+          .map((l) => ({
+            ...l,
+            categories: (l.categoryIds ?? []).map((categoryId) => ({ categoryId })),
+          }))
       ),
     },
     // Two raw statements now share this stub, and they are told apart by their bound values: the
@@ -291,6 +298,62 @@ describe("updateTransactions", () => {
   it("refuses a label the user does not own", async () => {
     const { result } = run([{ id: "tx_1", labelIds: ["lab_someone_else"] }], { labels: [] });
     expect(await result).toEqual({ ok: false, reason: "LABELS_NOT_OWNED" });
+  });
+
+  it("refuses a label being added that the row's category excludes", async () => {
+    const { stub, result } = run([{ id: "tx_1", labelIds: ["lab_shopee"] }], {
+      labels: [{ id: "lab_shopee", applicableTo: "BOTH", name: "Shopee", categoryIds: ["cat_food"] }],
+    });
+
+    expect(await result).toEqual({ ok: false, reason: "LABELS_NOT_IN_CATEGORY" });
+    expect(stub.labelWrites.created).toEqual([]);
+  });
+
+  // The grandfather clause, and the reason the picker keeps a mismatched label selected rather
+  // than dropping it. Narrowing a label's categories is an edit to the *label*; it must not make
+  // every older transaction carrying it unsaveable, down to fixing a typo in its description.
+  it("re-accepts a label already on the row, however its restriction has since changed", async () => {
+    const { stub, result } = run([{ id: "tx_1", labelIds: ["lab_shopee"], amount: 300 }], {
+      rows: [
+        row({
+          labels: [{ labelId: "lab_shopee", label: { name: "Shopee", applicableTo: "BOTH" } }],
+        }),
+      ],
+      labels: [{ id: "lab_shopee", applicableTo: "BOTH", name: "Shopee", categoryIds: ["cat_food"] }],
+    });
+    const r = await result;
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.updated[0].droppedLabels).toEqual([]);
+    // Nothing moved, so nothing is rewritten -- the row keeps the label it had.
+    expect(stub.labelWrites.deleted).toEqual([]);
+  });
+
+  // Omitting `labelIds` preserves what is on the row, which must not be second-guessed either.
+  it("preserves an out-of-category label when the patch omits labelIds", async () => {
+    const { stub, result } = run([{ id: "tx_1", description: "Grab home" }], {
+      rows: [
+        row({
+          labels: [{ labelId: "lab_shopee", label: { name: "Shopee", applicableTo: "BOTH" } }],
+        }),
+      ],
+      labels: [{ id: "lab_shopee", applicableTo: "BOTH", name: "Shopee", categoryIds: ["cat_food"] }],
+    });
+
+    expect((await result).ok).toBe(true);
+    expect(stub.labelWrites.deleted).toEqual([]);
+  });
+
+  it("accepts a label the row's category allows", async () => {
+    const { stub, result } = run([{ id: "tx_1", labelIds: ["lab_tnvs"] }], {
+      labels: [
+        { id: "lab_tnvs", applicableTo: "BOTH", name: "TNVS", categoryIds: ["cat_transport"] },
+      ],
+    });
+
+    expect((await result).ok).toBe(true);
+    expect(stub.labelWrites.created).toEqual([{ transactionId: "tx_1", labelId: "lab_tnvs" }]);
   });
 
   // --- Batch integrity ---

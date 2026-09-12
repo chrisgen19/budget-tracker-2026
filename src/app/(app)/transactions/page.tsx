@@ -154,6 +154,12 @@ export default function TransactionsPage() {
     () => new Set(selectedItems.map((item) => item.type)),
     [selectedItems],
   );
+  // Every category the selection spans, for the bulk label dialog: a restricted label has to cover
+  // all of them or the write refuses the whole operation.
+  const selectedCategoryIds = useMemo(
+    () => new Set(selectedItems.map((item) => item.categoryId)),
+    [selectedItems],
+  );
   const selectedCountRef = useRef(0);
   const [selectionAnnouncement, setSelectionAnnouncement] = useState("");
 
@@ -460,11 +466,12 @@ export default function TransactionsPage() {
   const dateGroups = groupByDate(sourceTransactions, user.timezoneOffset);
   const visibleSelectionItems = useMemo<TransactionSelectionItem[]>(
     () =>
-      sourceTransactions.map(({ id, description, type, amount }) => ({
+      sourceTransactions.map(({ id, description, type, amount, categoryId }) => ({
         id,
         description,
         type,
         amount,
+        categoryId,
       })),
     [sourceTransactions],
   );
@@ -1054,6 +1061,7 @@ export default function TransactionsPage() {
       />
 
       <TransactionBulkLabelsDialog
+        selectedCategoryIds={selectedCategoryIds}
         open={showBulkLabels}
         onClose={() => setShowBulkLabels(false)}
         selectedCount={selectedItems.length}

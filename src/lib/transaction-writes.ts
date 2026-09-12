@@ -1,5 +1,6 @@
 import { Prisma, type TransactionSource, type TransactionType } from "@prisma/client";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
+import { labelAllowsCategory } from "@/lib/label-category-matching";
 import { isDateOnly, resolveTransactionDate, type BatchTransactionInput } from "@/lib/validations";
 import type { PrismaClient } from "@/lib/budget-query-types";
 
@@ -19,6 +20,8 @@ export type BatchFailureReason =
   | "LABELS_NOT_OWNED"
   /** A category id was neither a default nor the caller's, or its type did not match the item's. */
   | "CATEGORIES_NOT_OWNED"
+  /** A named label is restricted to categories that exclude the one the item is filed under. */
+  | "LABELS_NOT_IN_CATEGORY"
   /** Permission was withdrawn between the request arriving and the write starting. */
   | "NO_LONGER_PERMITTED"
   /** The advisory lock could not be taken, so whether the batch exists is genuinely unknown. */
@@ -238,16 +241,39 @@ export const createTransactionBatch = async ({
   // Collect all explicitly-provided label IDs for a single ownership query
   const allExplicitLabelIds = [...new Set(items.flatMap((t) => t.labelIds ?? []))];
 
-  let ownedLabelMap = new Map<string, string>();
+  let ownedLabelMap = new Map<string, { applicableTo: string; categoryIds: string[] }>();
   if (allExplicitLabelIds.length > 0) {
     const ownedLabels = await prisma.label.findMany({
       where: { id: { in: allExplicitLabelIds }, userId },
-      select: { id: true, applicableTo: true },
+      select: { id: true, applicableTo: true, categories: { select: { categoryId: true } } },
     });
     if (ownedLabels.length !== allExplicitLabelIds.length) {
       return rejectUnlessSaved("LABELS_NOT_OWNED");
     }
-    ownedLabelMap = new Map(ownedLabels.map((l) => [l.id, l.applicableTo]));
+    ownedLabelMap = new Map(
+      ownedLabels.map((l) => [
+        l.id,
+        { applicableTo: l.applicableTo, categoryIds: l.categories.map((c) => c.categoryId) },
+      ])
+    );
+
+    // A label restricted to other categories is **refused**, not filtered away like a type
+    // mismatch is. The two differ because of who is on the other end: the type filter predates
+    // this and is relied on by callers that hand over a whole label set and expect the usable
+    // part back, while naming a label the category forbids is a request the app's own picker
+    // cannot produce -- it means a stale client or a model that guessed. Silently dropping it
+    // would file the row with no label and report success, which is the one outcome nobody can
+    // notice. Checked only for labels the type filter would have kept, so this changes nothing
+    // about rows that were already being dropped.
+    const outOfCategory = items.some((t) =>
+      (t.labelIds ?? []).some((id) => {
+        const label = ownedLabelMap.get(id);
+        if (!label) return false;
+        if (label.applicableTo !== "BOTH" && label.applicableTo !== t.type) return false;
+        return !labelAllowsCategory(label.categoryIds, t.categoryId);
+      })
+    );
+    if (outOfCategory) return rejectUnlessSaved("LABELS_NOT_IN_CATEGORY");
   }
 
   if (!(await categoriesAreUsable(prisma, userId, items))) {
@@ -268,14 +294,16 @@ export const createTransactionBatch = async ({
       // - labelIds === ['id1', ...] → use explicit labels (type-filtered)
       let resolvedLabelIds: string[] = [];
       if (t.labelIds === undefined) {
-        const scheduledLabelId = ctx ? matchScheduledLabel(txDate, ctx, t.type) : null;
+        const scheduledLabelId = ctx
+          ? matchScheduledLabel(txDate, ctx, t.type, t.categoryId)
+          : null;
         if (scheduledLabelId) resolvedLabelIds = [scheduledLabelId];
       } else if (t.labelIds.length > 0) {
         const seen = new Set<string>();
         resolvedLabelIds = t.labelIds.filter((id) => {
           if (seen.has(id)) return false;
           seen.add(id);
-          const applicableTo = ownedLabelMap.get(id);
+          const applicableTo = ownedLabelMap.get(id)?.applicableTo;
           return applicableTo === "BOTH" || applicableTo === t.type;
         });
       }
@@ -409,6 +437,8 @@ export type UpdateFailureReason =
   | "DUPLICATE_ID"
   | "LABELS_NOT_OWNED"
   | "CATEGORIES_NOT_OWNED"
+  /** A newly added label is restricted to categories that exclude the row's effective category. */
+  | "LABELS_NOT_IN_CATEGORY"
   /** Permission was withdrawn between the request arriving and the write starting. */
   | "NO_LONGER_PERMITTED"
   /** The write failed for a reason retrying cannot change -- a category or label deleted between
@@ -672,18 +702,58 @@ export const updateTransactions = async ({
 
       // One ownership query for every explicitly named label across the batch, as on the create path.
       const explicitLabelIds = [...new Set(patches.flatMap((p) => p.labelIds ?? []))];
-      let ownedLabelMap = new Map<string, { applicableTo: string; name: string }>();
+      let ownedLabelMap = new Map<
+        string,
+        { applicableTo: string; name: string; categoryIds: string[] }
+      >();
       if (explicitLabelIds.length > 0) {
         const owned = await tx.label.findMany({
           where: { id: { in: explicitLabelIds }, userId },
           // `name` is selected so a label the type filter removes can be named back. An id would be
           // useless to the person being told about it.
-          select: { id: true, applicableTo: true, name: true },
+          select: {
+            id: true,
+            applicableTo: true,
+            name: true,
+            categories: { select: { categoryId: true } },
+          },
         });
         if (owned.length !== explicitLabelIds.length) {
           return { ok: false as const, reason: "LABELS_NOT_OWNED" as const };
         }
-        ownedLabelMap = new Map(owned.map((l) => [l.id, { applicableTo: l.applicableTo, name: l.name }]));
+        ownedLabelMap = new Map(
+          owned.map((l) => [
+            l.id,
+            {
+              applicableTo: l.applicableTo,
+              name: l.name,
+              categoryIds: l.categories.map((c) => c.categoryId),
+            },
+          ])
+        );
+
+        // Refused, the same as on the create path -- but only for labels the patch is *adding*.
+        //
+        // A label already on the row passes whatever its restriction now says. Narrowing a
+        // label's categories is an edit to the label, and it must not turn every older
+        // transaction carrying it into a row that can no longer be saved: the picker deliberately
+        // keeps such a label selected and marked rather than dropping it, and an edit path that
+        // then refused the save would be the one place that disagreed. Correcting a typo in a
+        // description has to keep working on a row tagged last month.
+        const addsOutOfCategory = effective.some((e) => {
+          if (e.patch.labelIds === undefined) return false;
+          const alreadyOnRow = new Set(e.row.labels.map((l) => l.labelId));
+          return e.patch.labelIds.some((id) => {
+            if (alreadyOnRow.has(id)) return false;
+            const label = ownedLabelMap.get(id);
+            if (!label) return false;
+            if (label.applicableTo !== "BOTH" && label.applicableTo !== e.type) return false;
+            return !labelAllowsCategory(label.categoryIds, e.categoryId);
+          });
+        });
+        if (addsOutOfCategory) {
+          return { ok: false as const, reason: "LABELS_NOT_IN_CATEGORY" as const };
+        }
       }
 
       const resolved = effective.map((e) => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Plus, Pencil, Trash2, Tag, Clock, Play, Zap } from "lucide-react";
+import { Plus, Pencil, Trash2, Tag, Clock, Folder, Play, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { Modal } from "@/components/ui/modal";
@@ -32,11 +32,14 @@ export default function LabelsPage() {
   const [applyingLabel, setApplyingLabel] = useState<LabelWithCountAndSchedules | null>(null);
   const [applyResult, setApplyResult] = useState<{ applied: number; removed: number } | null>(null);
   const [applyError, setApplyError] = useState<string | null>(null);
+  // One confirmation covers both narrowings -- type and category -- because a single save can do
+  // both and asking twice for one press of Update would be worse than asking once about the total.
   const [typeChangeConfirm, setTypeChangeConfirm] = useState<{
     id: string;
     input: LabelInput;
     affectedCount: number;
-    removedType: string;
+    removedType: string | null;
+    categoriesNarrowed: boolean;
   } | null>(null);
 
   const { data: labels = [], isLoading: loading } = useLabelsQuery();
@@ -83,7 +86,7 @@ export default function LabelsPage() {
       await updateLabel.mutateAsync({ id: editingLabel.id, input });
       setEditingLabel(null);
     } catch (err) {
-      // Handle 409 confirmation for type narrowing
+      // Handle 409 confirmation for narrowing the type or the category restriction
       const error = err as Error & { data?: TypeChangeConfirmation };
       if (error.message === "needs_confirmation" && error.data) {
         setTypeChangeConfirm({
@@ -91,6 +94,7 @@ export default function LabelsPage() {
           input,
           affectedCount: error.data.affectedCount,
           removedType: error.data.removedType,
+          categoriesNarrowed: error.data.categoriesNarrowed,
         });
       }
     }
@@ -230,6 +234,9 @@ export default function LabelsPage() {
           <AnimatePresence mode="popLayout">
             {labels.map((lbl) => {
               const hasSchedules = lbl.schedules.length > 0;
+              // Zero linked categories means every category, so the badge marks the restricted
+              // case only -- see label-category-matching.ts.
+              const categoryCount = lbl.categories.length;
               return (
                 <motion.div
                   key={lbl.id}
@@ -256,6 +263,14 @@ export default function LabelsPage() {
                         </p>
                         {hasSchedules && (
                           <Clock className="w-3 h-3 text-amber shrink-0" />
+                        )}
+                        {categoryCount > 0 && (
+                          <Folder
+                            className="w-3 h-3 text-warm-300 shrink-0"
+                            aria-label={`Limited to ${categoryCount} ${
+                              categoryCount === 1 ? "category" : "categories"
+                            }`}
+                          />
                         )}
                         {lbl.applicableTo !== "BOTH" && (
                           <span className={cn(
@@ -410,12 +425,20 @@ export default function LabelsPage() {
         confirmLabel="Remove"
         message={
           <p>
+            {/* Name what the rows have in common only when one restriction narrowed. A save that
+                narrowed both would need "income transactions and transactions outside the chosen
+                categories", which is longer and no clearer than the count itself. */}
             This will remove the label from{" "}
             <span className="font-medium text-warm-700">
               {typeChangeConfirm?.affectedCount}{" "}
-              {typeChangeConfirm?.removedType?.toLowerCase()}{" "}
+              {typeChangeConfirm?.removedType && !typeChangeConfirm.categoriesNarrowed
+                ? `${typeChangeConfirm.removedType.toLowerCase()} `
+                : ""}
               {typeChangeConfirm?.affectedCount === 1 ? "transaction" : "transactions"}
             </span>
+            {typeChangeConfirm?.categoriesNarrowed && !typeChangeConfirm.removedType
+              ? " outside the categories you chose"
+              : ""}
             . This action cannot be undone.
           </p>
         }

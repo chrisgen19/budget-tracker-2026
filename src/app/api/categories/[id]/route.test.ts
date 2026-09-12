@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   categoryUpdate: vi.fn(),
   transactionCount: vi.fn(),
   billCount: vi.fn(),
+  labelCount: vi.fn(),
   queryRaw: vi.fn(),
   /** Call order across the mocked client, so "locked before counting" is assertable. */
   calls: [] as string[],
@@ -24,6 +25,7 @@ vi.mock("@/lib/prisma", () => {
     },
     transaction: { count: track("countTransactions", mocks.transactionCount) },
     scheduledTransaction: { count: track("countBills", mocks.billCount) },
+    labelCategory: { count: track("countLabels", mocks.labelCount) },
     $queryRaw: track("lock", mocks.queryRaw),
     $transaction: (run: (tx: unknown) => unknown) => run(client),
   };
@@ -66,6 +68,7 @@ describe("PUT /api/categories/[id]", () => {
     });
     mocks.transactionCount.mockResolvedValue(0);
     mocks.billCount.mockResolvedValue(0);
+    mocks.labelCount.mockResolvedValue(0);
     mocks.categoryUpdate.mockResolvedValue({ id: "cat-1" });
   });
 
@@ -105,6 +108,7 @@ describe("PUT /api/categories/[id]", () => {
         "Cannot change type: 12 transaction(s) use this category. Move them to another category first.",
       transactionCount: 12,
       billCount: 0,
+      labelCount: 0,
     });
     expect(mocks.categoryUpdate).not.toHaveBeenCalled();
   });
@@ -127,6 +131,35 @@ describe("PUT /api/categories/[id]", () => {
     expect(mocks.categoryUpdate).not.toHaveBeenCalled();
   });
 
+  // A label scoped to this category and restricted to one type is the third way the flip creates
+  // a contradiction, and the quietest: `categoriesUsableForLabel` refuses to *create* that pair
+  // because it matches nothing, so letting the flip reach it from the other direction left the
+  // database holding what the label route rejects -- and the label simply vanished from every
+  // picker. The advice differs too, since a label is not "moved" anywhere.
+  it("refuses a type flip while a type-restricted label is scoped to the category", async () => {
+    mocks.labelCount.mockResolvedValue(2);
+
+    const response = await put(body({ type: "INCOME" }));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error:
+        "Cannot change type: 2 label(s) use this category. Change those labels' categories first.",
+      labelCount: 2,
+    });
+    expect(mocks.categoryUpdate).not.toHaveBeenCalled();
+  });
+
+  // A BOTH label is unaffected by the flip, so counting it would block a harmless change. The
+  // route asks the database for that narrowing rather than filtering after the fact.
+  it("asks only for type-restricted labels when counting", async () => {
+    await put(body({ type: "INCOME" }));
+
+    expect(mocks.labelCount).toHaveBeenCalledWith({
+      where: { categoryId: "cat-1", label: { applicableTo: { not: "BOTH" } } },
+    });
+  });
+
   it("names both when transactions and bills each use the category", async () => {
     mocks.transactionCount.mockResolvedValue(12);
     mocks.billCount.mockResolvedValue(1);
@@ -145,7 +178,7 @@ describe("PUT /api/categories/[id]", () => {
   it("locks the category row before counting, and holds it through the update", async () => {
     await put(body({ type: "INCOME" }));
 
-    expect(mocks.calls).toEqual(["lock", "countTransactions", "countBills", "update"]);
+    expect(mocks.calls).toEqual(["lock", "countTransactions", "countBills", "countLabels", "update"]);
   });
 
   it("404s a category that is not the caller's, or is a default", async () => {

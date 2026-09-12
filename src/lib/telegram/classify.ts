@@ -28,7 +28,7 @@ export const GEMINI_ENABLED = !!process.env.GEMINI_API_KEY;
 export async function classifyMessage(
   text: string,
   categories: { id: string; name: string; type: string }[],
-  labels: { id: string; name: string }[],
+  labels: { id: string; name: string; categoryIds?: string[] }[],
   tzOffset: number
 ): Promise<any> {
   if (!GEMINI_ENABLED) return null;
@@ -42,9 +42,23 @@ export async function classifyMessage(
 
   const localIso = localTimestamp(tzOffset);
   const categoryNames = categories.map((c) => ({ name: c.name, type: c.type, id: c.id }));
+  const categoryNameById = new Map(categories.map((c) => [c.id, c.name]));
   // Names only. Gemini picks one by name and the bot resolves it against the real list, so a
   // hallucinated id cannot reach the query.
-  const labelNames = labels.map((l) => l.name);
+  //
+  // A restricted label carries the category *names* it is limited to, so the model stops
+  // proposing one the category forbids -- which the write now refuses outright rather than
+  // filtering, so a bad guess costs the whole transaction. Only restricted labels carry the
+  // field: adding "onlyForCategories: null" to every ordinary label would be noise on the
+  // majority of them. This is a hint, not a gate. Every name still comes back to
+  // `readLabelDirective` and `findByName` to be re-resolved against the real rows, exactly as
+  // `parseSearchIntent` does -- the model is never the thing that decides.
+  const labelNames = labels.map((l) => {
+    const names = (l.categoryIds ?? [])
+      .map((id) => categoryNameById.get(id))
+      .filter((name): name is string => !!name);
+    return names.length > 0 ? { name: l.name, onlyForCategories: names } : { name: l.name };
+  });
 
   const prompt = `You are an AI assistant for a personal budget tracker.
 Current timestamp in user timezone: ${localIso}
@@ -119,6 +133,8 @@ If logging a transaction:
   explicitly asks to label or tag it ("label it pickleball", "tag as work", "#groceries"). Leave
   it null otherwise. A label name merely appearing in the description is NOT a request to apply
   it: "pickleball court fee" gets no label. Never invent a name that is not in the list.
+  A label carrying "onlyForCategories" may be used ONLY when the categoryId you chose is one of
+  those categories; leave it out otherwise. A label with no "onlyForCategories" fits any category.
 
 Return ONLY a JSON object in this format:
 {

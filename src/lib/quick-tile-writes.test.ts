@@ -49,9 +49,10 @@ const CATEGORIES = [
 ];
 
 const LABELS = [
-  { id: "l_work", name: "Work", color: "#111111", applicableTo: "BOTH" },
-  { id: "l_commute", name: "Commute", color: "#222222", applicableTo: "EXPENSE" },
-  { id: "l_payday", name: "Payday", color: "#333333", applicableTo: "INCOME" },
+// `categories` is the relation `listOwnedLabels` selects. Empty means every category.
+  { id: "l_work", name: "Work", color: "#111111", applicableTo: "BOTH", categories: [] },
+  { id: "l_commute", name: "Commute", color: "#222222", applicableTo: "EXPENSE", categories: [] },
+  { id: "l_payday", name: "Payday", color: "#333333", applicableTo: "INCOME", categories: [] },
 ];
 
 const tileRow = (over: Record<string, unknown> = {}) => ({
@@ -72,7 +73,7 @@ const logTileRow = (over: Record<string, unknown> = {}) => ({
   amount: 38,
   type: "EXPENSE",
   categoryId: "transportation",
-  labels: [] as { label: { id: string; applicableTo: string } }[],
+  labels: [] as { label: { id: string; applicableTo: string; categories?: { categoryId: string }[] } }[],
   ...over,
 });
 
@@ -174,6 +175,72 @@ describe("pinning labels to a button", () => {
     expect(mocks.tileCreate).not.toHaveBeenCalled();
   });
 
+  // Its own message, not folded into the type one: the two are fixed on different screens, and
+  // "cannot be used on an expense button" would send the user to the wrong one.
+  it("refuses a label limited to categories the button does not file into", async () => {
+    mocks.labelFindMany.mockResolvedValue([
+      ...LABELS,
+      {
+        id: "l_shopee",
+        name: "Shopee",
+        color: "#444444",
+        applicableTo: "EXPENSE",
+        categories: [{ categoryId: "other" }],
+      },
+    ]);
+
+    const result = await createQuickTile(prisma, "user_1", input({ labelIds: ["l_shopee"] }));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("LABELS_UNUSABLE");
+    expect(result.message).toContain("Shopee");
+    expect(result.message).toContain("category");
+    expect(mocks.tileCreate).not.toHaveBeenCalled();
+  });
+
+  // A tile with no category of its own still files somewhere: `resolveTileCategory` reads the
+  // description, and the form shows the user that answer while they pin. Judging the pin against
+  // the raw null instead let every restricted label through, so a Shopping-only label could be
+  // pinned to a fare that resolves to Transportation -- saved, then marked stale, then silently
+  // dropped on every tap.
+  const shopeeOnly = {
+    id: "l_shopee",
+    name: "Shopee",
+    color: "#444444",
+    applicableTo: "EXPENSE",
+    categories: [{ categoryId: "other" }],
+  };
+
+  it("refuses a pin the resolved category excludes, with no category chosen", async () => {
+    mocks.labelFindMany.mockResolvedValue([...LABELS, shopeeOnly]);
+
+    // "fare to office" resolves to Transportation, which Shopee does not cover.
+    const result = await createQuickTile(
+      prisma,
+      "user_1",
+      input({ categoryId: null, labelIds: ["l_shopee"] })
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("LABELS_UNUSABLE");
+    expect(mocks.tileCreate).not.toHaveBeenCalled();
+  });
+
+  it("accepts a pin the resolved category allows, with no category chosen", async () => {
+    mocks.labelFindMany.mockResolvedValue([...LABELS, shopeeOnly]);
+
+    // Nothing in "misc stuff" matches a hint, so it falls back to Other -- which Shopee covers.
+    const result = await createQuickTile(
+      prisma,
+      "user_1",
+      input({ categoryId: null, description: "misc stuff", labelIds: ["l_shopee"] })
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
   it("reads the cap and the sort order under a per-user advisory lock", async () => {
     // A bare count-then-insert cannot enforce a limit under READ COMMITTED. Measured against a
     // real database: four concurrent creates against eleven existing tiles all read eleven, all
@@ -234,7 +301,7 @@ describe("pinning labels to a button", () => {
     // Reachable with no edit at all: `PUT /api/labels/[id]` narrows a label's type underneath the
     // buttons that pin it. Judging only what moves is the rule `updateBill` already follows.
     mocks.labelFindMany.mockResolvedValue([
-      { id: "l_stale", name: "Payday", color: "#333333", applicableTo: "INCOME" },
+      { id: "l_stale", name: "Payday", color: "#333333", applicableTo: "INCOME", categories: [] },
     ]);
     mocks.tileFindFirst.mockResolvedValue(tileRow({ labels: [{ labelId: "l_stale" }] }));
     mocks.tileFindFirstOrThrow.mockResolvedValue(tileRow({ labels: [{ labelId: "l_stale" }] }));
@@ -391,8 +458,8 @@ describe("what a tap writes", () => {
     mocks.tileFindFirst.mockResolvedValue(
       logTileRow({
         labels: [
-          { label: { id: "l_work", applicableTo: "BOTH" } },
-          { label: { id: "l_commute", applicableTo: "EXPENSE" } },
+          { label: { id: "l_work", applicableTo: "BOTH", categories: [] } },
+          { label: { id: "l_commute", applicableTo: "EXPENSE", categories: [] } },
         ],
       })
     );
@@ -414,8 +481,8 @@ describe("what a tap writes", () => {
     mocks.tileFindFirst.mockResolvedValue(
       logTileRow({
         labels: [
-          { label: { id: "l_work", applicableTo: "BOTH" } },
-          { label: { id: "l_payday", applicableTo: "INCOME" } },
+          { label: { id: "l_work", applicableTo: "BOTH", categories: [] } },
+          { label: { id: "l_payday", applicableTo: "INCOME", categories: [] } },
         ],
       })
     );
@@ -432,7 +499,9 @@ describe("what a tap writes", () => {
 
   it("omits labelIds when every pin was narrowed away, rather than sending an empty opt-out", async () => {
     mocks.tileFindFirst.mockResolvedValue(
-      logTileRow({ labels: [{ label: { id: "l_payday", applicableTo: "INCOME" } }] })
+      logTileRow({
+        labels: [{ label: { id: "l_payday", applicableTo: "INCOME", categories: [] } }],
+      })
     );
 
     await logQuickTile(
@@ -470,6 +539,37 @@ describe("what a tap writes", () => {
     );
 
     expect(writtenItem().amount).toBe(38);
+  });
+});
+
+describe("a pin the tap's category excludes", () => {
+  // Filtered at the write, not refused: nobody named this label at the moment of the tap. It was
+  // pinned when the button was made and the restriction may have been narrowed since, and a
+  // button that stops working because of an edit elsewhere is the wrong failure.
+  it("is dropped, and the rest are kept", async () => {
+    mocks.tileFindFirst.mockResolvedValue(
+      logTileRow({
+        labels: [
+          { label: { id: "l_work", applicableTo: "BOTH", categories: [] } },
+          {
+            label: {
+              id: "l_shopee",
+              applicableTo: "EXPENSE",
+              categories: [{ categoryId: "other" }],
+            },
+          },
+        ],
+      })
+    );
+
+    await logQuickTile(
+      prisma,
+      "user_1",
+      { tileId: "tile_1", description: "x", amount: 1, type: "EXPENSE", clientBatchId: KEY },
+      "APP"
+    );
+
+    expect(writtenItem().labelIds).toEqual(["l_work"]);
   });
 });
 

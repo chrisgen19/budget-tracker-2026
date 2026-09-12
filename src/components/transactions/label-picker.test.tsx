@@ -29,6 +29,7 @@ const label = (
   name: string,
   transactionCount = 0,
   applicableTo = "BOTH",
+  categoryIds: string[] = [],
 ): LabelWithCountAndSchedules => ({
   id,
   name,
@@ -38,6 +39,7 @@ const label = (
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
   _count: { transactions: transactionCount },
   schedules: [],
+  categories: categoryIds.map((categoryId) => ({ categoryId })),
 });
 
 const LABELS = [
@@ -56,11 +58,15 @@ function ControlledPicker({
   onChange = () => {},
   autoAppliedIds,
   transactionType,
+  categoryId,
+  attachedIds,
 }: {
   initialIds?: string[];
   onChange?: (ids: string[]) => void;
   autoAppliedIds?: string[];
   transactionType?: "INCOME" | "EXPENSE";
+  categoryId?: string | null;
+  attachedIds?: string[];
 }) {
   const [selectedIds, setSelectedIds] = useState(initialIds);
   return (
@@ -72,6 +78,8 @@ function ControlledPicker({
       }}
       autoAppliedIds={autoAppliedIds}
       transactionType={transactionType}
+      categoryId={categoryId}
+      attachedIds={attachedIds}
     />
   );
 }
@@ -203,5 +211,123 @@ describe("LabelPicker", () => {
     );
 
     expect(screen.getByText("No labels are available for expenses.")).toBeTruthy();
+  });
+});
+
+describe("LabelPicker category restriction", () => {
+  const TNVS = label("tnvs", "TNVS", 5, "EXPENSE", ["cat_transport"]);
+  const SHOPEE = label("shopee", "Shopee", 4, "EXPENSE", ["cat_shopping"]);
+  const ANYWHERE = label("anywhere", "Anywhere", 3, "EXPENSE");
+
+  beforeEach(() => {
+    mocks.useLabelsQuery.mockReturnValue(queryState([TNVS, SHOPEE, ANYWHERE]));
+    mocks.useQuickLabelsQuery.mockReturnValue(queryState([]));
+  });
+
+  const quickNames = () =>
+    within(screen.getByRole("group", { name: "Quick label choices" }))
+      .getAllByRole("button")
+      .map((button) => button.textContent?.trim());
+
+  it("offers only the labels linked to the chosen category, plus unrestricted ones", () => {
+    render(<ControlledPicker transactionType="EXPENSE" categoryId="cat_transport" />);
+
+    expect(quickNames()).toEqual(["TNVS", "Anywhere"]);
+  });
+
+  // The backward-compatibility guarantee, from the picker's side: a label nobody restricted has
+  // to keep appearing under every category.
+  it("offers every label when no category has been chosen yet", () => {
+    render(<ControlledPicker transactionType="EXPENSE" />);
+
+    expect(quickNames()).toEqual(["TNVS", "Shopee", "Anywhere"]);
+  });
+
+  // Dropping it instead would look like data loss on a saved transaction whose label was
+  // restricted afterwards, so it stays put and says why. Only labels that were on the record when
+  // the form opened qualify, which is the same set the write paths grandfather.
+  it("keeps an attached label visible and marks it out of category", () => {
+    render(
+      <ControlledPicker
+        initialIds={["shopee"]}
+        attachedIds={["shopee"]}
+        transactionType="EXPENSE"
+        categoryId="cat_transport"
+      />,
+    );
+
+    expect(screen.getByText("Not in this category")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Remove Shopee label" })).toBeTruthy();
+  });
+
+  // Nothing to grandfather on a label the user picked in this session, and keeping it would leave
+  // the form holding a pairing every write path refuses -- so Save would fail naming a label the
+  // picker had offered a moment earlier.
+  it("drops a label the user selected once the category excludes it", () => {
+    const onChange = vi.fn();
+    render(
+      <ControlledPicker
+        initialIds={["shopee"]}
+        onChange={onChange}
+        transactionType="EXPENSE"
+        categoryId="cat_transport"
+      />,
+    );
+
+    expect(onChange).toHaveBeenCalledWith([]);
+    expect(screen.queryByText("Not in this category")).toBeNull();
+  });
+
+  // The drop is scoped to the category rule. A type mismatch is reconciled by the forms
+  // themselves, and doing it here too would fight them.
+  it("leaves a type-mismatched selection alone", () => {
+    const incomeOnly = label("payday", "Payday", 1, "INCOME");
+    mocks.useLabelsQuery.mockReturnValue(queryState([TNVS, SHOPEE, ANYWHERE, incomeOnly]));
+    const onChange = vi.fn();
+
+    render(
+      <ControlledPicker
+        initialIds={["payday"]}
+        onChange={onChange}
+        transactionType="EXPENSE"
+        categoryId="cat_transport"
+      />,
+    );
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByText("Not for this type")).toBeTruthy();
+  });
+
+  // The two restrictions send the user to different screens, so they must not share a message.
+  it("distinguishes a type mismatch from a category mismatch", () => {
+    const incomeOnly = label("payday", "Payday", 1, "INCOME");
+    mocks.useLabelsQuery.mockReturnValue(queryState([TNVS, SHOPEE, ANYWHERE, incomeOnly]));
+
+    render(
+      <ControlledPicker
+        initialIds={["payday"]}
+        attachedIds={["payday"]}
+        transactionType="EXPENSE"
+        categoryId="cat_transport"
+      />,
+    );
+
+    expect(screen.getByText("Not for this type")).toBeTruthy();
+    expect(screen.queryByText("Not in this category")).toBeNull();
+  });
+
+  it("names the category when nothing is available for it", () => {
+    mocks.useLabelsQuery.mockReturnValue(queryState([TNVS]));
+
+    render(
+      <LabelPicker
+        selectedIds={[]}
+        onChange={() => {}}
+        transactionType="EXPENSE"
+        categoryId="cat_shopping"
+      />,
+    );
+
+    expect(screen.getByText("No labels are available for this category.")).toBeTruthy();
   });
 });

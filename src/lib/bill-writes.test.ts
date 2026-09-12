@@ -48,11 +48,19 @@ const BILL: BillRow = {
 
 interface StubOptions {
   bill?: Partial<BillRow>;
-  billLabels?: { labelId: string; label: { id: string; name: string; applicableTo: string } }[];
+  billLabels?: {
+    labelId: string;
+    label: {
+      id: string;
+      name: string;
+      applicableTo: string;
+      categories?: { categoryId: string }[];
+    };
+  }[];
   /** Logs already on the bill: read by the double-settle guard, the occurrence check and the
    *  snooze replay. */
   logs?: { dueDate: Date; status: "PAID" | "SKIPPED" | "SNOOZED"; snoozeUntil?: Date | null }[];
-  ownedLabels?: { id: string; name: string; applicableTo: string }[];
+  ownedLabels?: { id: string; name: string; applicableTo: string; categoryIds?: string[] }[];
   usableCategoryIds?: string[];
   categoryType?: "INCOME" | "EXPENSE";
   /** How many rows `transaction.updateMany` claims — 0 means the payment already had a bill. */
@@ -169,7 +177,13 @@ const makePrisma = (options: StubOptions = {}) => {
     },
     label: {
       findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
-        (options.ownedLabels ?? []).filter((l) => where.id.in.includes(l.id))
+        // Shaped the way the real `select` returns it: the relation, not a flat id list.
+        (options.ownedLabels ?? [])
+          .filter((l) => where.id.in.includes(l.id))
+          .map((l) => ({
+            ...l,
+            categories: (l.categoryIds ?? []).map((categoryId) => ({ categoryId })),
+          }))
       ),
     },
     billLabel: {
@@ -803,6 +817,35 @@ describe("createBill", () => {
     expect(result).toEqual({ ok: false, reason: "INVALID_SCHEDULE" });
   });
 
+  // Refused rather than reported, unlike the type mismatch below, and for the reason the
+  // transaction create path refuses it: the app's picker cannot produce this pairing, so naming
+  // it means a stale client or a model that guessed.
+  it("refuses a label restricted to other categories", async () => {
+    const { client, written } = makePrisma({
+      ownedLabels: [
+        { id: "lab_1", name: "Shopee", applicableTo: "BOTH", categoryIds: ["cat_other"] },
+      ],
+    });
+
+    const result = await create(client, { labelIds: ["lab_1"] });
+
+    expect(result).toEqual({ ok: false, reason: "LABELS_NOT_IN_CATEGORY" });
+    expect(written).toHaveLength(0);
+  });
+
+  it("applies a label restricted to the bill's own category", async () => {
+    const { client } = makePrisma({
+      ownedLabels: [
+        { id: "lab_1", name: "Utilities", applicableTo: "BOTH", categoryIds: ["cat_own"] },
+      ],
+    });
+
+    const result = await create(client, { labelIds: ["lab_1"] });
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.droppedLabels).toEqual([]);
+  });
+
   /**
    * A label excluded by type is neither applied nor an error. Reporting it is the point: silently
    * writing nothing is what made a receipt review promise a label and then not write it.
@@ -1024,6 +1067,37 @@ describe("updateBill", () => {
     await update(client, { amount: 1900 });
 
     expect(deletedBillLabels()).toBe(0);
+  });
+
+  // The grandfather clause. Narrowing a label's categories must not make an existing bill
+  // unsaveable, down to correcting a typo in its description.
+  it("re-accepts a stored label the restriction no longer allows", async () => {
+    const { client, deletedBillLabels } = makePrisma({
+      billLabels: [
+        { labelId: "lab_1", label: { id: "lab_1", name: "Shopee", applicableTo: "BOTH" } },
+      ],
+      ownedLabels: [
+        { id: "lab_1", name: "Shopee", applicableTo: "BOTH", categoryIds: ["cat_other"] },
+      ],
+    });
+
+    const result = await update(client, { labelIds: ["lab_1"], amount: 1900 });
+
+    expect(result.ok).toBe(true);
+    expect(deletedBillLabels()).toBe(0);
+  });
+
+  it("refuses a label the patch adds that the bill's category excludes", async () => {
+    const { client, billUpdates } = makePrisma({
+      ownedLabels: [
+        { id: "lab_new", name: "Shopee", applicableTo: "BOTH", categoryIds: ["cat_other"] },
+      ],
+    });
+
+    const result = await update(client, { labelIds: ["lab_new"] });
+
+    expect(result).toEqual({ ok: false, reason: "LABELS_NOT_IN_CATEGORY" });
+    expect(billUpdates).toHaveLength(0);
   });
 
   it("clears labels when the patch sends an empty array", async () => {

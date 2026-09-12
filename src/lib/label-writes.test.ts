@@ -9,12 +9,26 @@ interface StubOptions {
   existing?: string[];
   /** Thrown by `label.create`, for the concurrent-create path. */
   createError?: unknown;
+  /** Categories the account can use. Defaults cover both types. */
+  categories?: { id: string; name: string; type: string }[];
 }
 
-const makePrisma = ({ existing = [], createError }: StubOptions = {}) => {
+const makePrisma = ({
+  existing = [],
+  createError,
+  categories = [
+    { id: "cat_transport", name: "Transportation", type: "EXPENSE" },
+    { id: "cat_salary", name: "Salary", type: "INCOME" },
+  ],
+}: StubOptions = {}) => {
   const created: Record<string, unknown>[] = [];
 
   const client = {
+    category: {
+      findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
+        categories.filter((c) => where.id.in.includes(c.id))
+      ),
+    },
     label: {
       findFirst: vi.fn(async ({ where }: { where: { name: { equals: string } } }) => {
         const hit = existing.find((n) => n.toLowerCase() === where.name.equals.toLowerCase());
@@ -29,6 +43,9 @@ const makePrisma = ({ existing = [], createError }: StubOptions = {}) => {
           schedules: ((data.schedules as { create?: unknown[] } | undefined)?.create ?? []).map(
             (s, i) => ({ id: `sch_${i}`, ...(s as object) })
           ),
+          categories: (
+            (data.categories as { create?: { categoryId: string }[] } | undefined)?.create ?? []
+          ).map((c) => ({ categoryId: c.categoryId })),
           _count: { transactions: 0 },
         };
       }),
@@ -118,5 +135,65 @@ describe("createLabel", () => {
 
     expect(result).toEqual({ ok: false, reason: "NO_LONGER_PERMITTED" });
     expect(created).toHaveLength(0);
+  });
+});
+
+describe("createLabel category restriction", () => {
+  it("links the categories it was given", async () => {
+    const { client, created } = makePrisma();
+
+    const result = await create(client, {
+      applicableTo: "EXPENSE",
+      categoryIds: ["cat_transport"],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(created[0].categories).toEqual({ create: [{ categoryId: "cat_transport" }] });
+  });
+
+  // Empty means every category, so it must write no rows rather than an empty relation payload
+  // -- and must certainly not be mistaken for "restricted to nothing".
+  it("writes no links when no categories were named", async () => {
+    const { client, created } = makePrisma();
+
+    await create(client, { categoryIds: [] });
+
+    expect(created[0].categories).toBeUndefined();
+  });
+
+  it("refuses a category the user cannot use", async () => {
+    const { client, created } = makePrisma();
+
+    const result = await create(client, { categoryIds: ["cat_someone_else"] });
+
+    expect(result).toMatchObject({ ok: false, reason: "INVALID_CATEGORIES" });
+    expect(created).toHaveLength(0);
+  });
+
+  // The half that is easy to leave out and quietly destructive: an expense-only label limited to
+  // an income category matches nothing, and a label that stops appearing looks like a deleted one.
+  it("refuses a category whose type the label's applicableTo excludes", async () => {
+    const { client, created } = makePrisma();
+
+    const result = await create(client, {
+      applicableTo: "EXPENSE",
+      categoryIds: ["cat_salary"],
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: "INVALID_CATEGORIES" });
+    // Names the offending category, since "invalid input" sends the user nowhere.
+    expect((result as { message: string }).message).toContain("Salary");
+    expect(created).toHaveLength(0);
+  });
+
+  it("allows either type when the label applies to BOTH", async () => {
+    const { client } = makePrisma();
+
+    const result = await create(client, {
+      applicableTo: "BOTH",
+      categoryIds: ["cat_transport", "cat_salary"],
+    });
+
+    expect(result.ok).toBe(true);
   });
 });

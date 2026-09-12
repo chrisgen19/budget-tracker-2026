@@ -7,6 +7,7 @@ import { Check, Clock, Plus, Trash2, X } from "lucide-react";
 import { labelSchema, type LabelInput } from "@/lib/validations";
 import { cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
+import { LabelCategoryPicker } from "@/components/labels/label-category-picker";
 import type { LabelWithCountAndSchedules } from "@/types";
 
 const PRESET_COLORS = [
@@ -45,6 +46,7 @@ export function LabelForm({ label, onSubmit, onCancel }: LabelFormProps) {
         startTime: s.startTime,
         endTime: s.endTime,
       })) ?? [],
+      categoryIds: label?.categories?.map((c) => c.categoryId) ?? [],
     },
   });
 
@@ -54,6 +56,8 @@ export function LabelForm({ label, onSubmit, onCancel }: LabelFormProps) {
   });
 
   const selectedColor = watch("color");
+  const applicableTo = watch("applicableTo");
+  const categoryIds = watch("categoryIds") ?? [];
 
   return (
     <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
@@ -153,6 +157,13 @@ export function LabelForm({ label, onSubmit, onCancel }: LabelFormProps) {
           This label will only appear for the selected transaction types.
         </p>
       </div>
+
+      {/* Categories */}
+      <LabelCategoryPicker
+        value={categoryIds}
+        onChange={(ids) => setValue("categoryIds", ids, { shouldValidate: true })}
+        applicableTo={applicableTo}
+      />
 
       {/* Schedules */}
       <div>

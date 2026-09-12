@@ -5,6 +5,7 @@ import {
 } from "@tanstack/react-query";
 import type { LabelInput } from "@/lib/validations";
 import { analyticsKeys } from "@/hooks/use-analytics";
+import { quickTileKeys } from "@/hooks/use-quick-tiles";
 import type { LabelWithCountAndSchedules } from "@/types";
 import { usePreferencesQuery, preferencesKeys } from "@/hooks/use-preferences";
 
@@ -94,10 +95,18 @@ export function useCreateLabel() {
   });
 }
 
+/**
+ * The 409 the edit route returns when a save would strip existing associations.
+ *
+ * Covers both narrowings, because a save can do both at once and asking twice for one press of
+ * Update would be worse than asking once about the total. `removedType` is null when only the
+ * category restriction narrowed.
+ */
 export interface TypeChangeConfirmation {
   needsConfirmation: true;
   affectedCount: number;
-  removedType: string;
+  removedType: string | null;
+  categoriesNarrowed: boolean;
 }
 
 export function useUpdateLabel() {
@@ -129,6 +138,11 @@ export function useUpdateLabel() {
       // figure. Neither was invalidated, so both kept showing the old grouping
       // until something else happened to refresh them.
       queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
+      // A tile's pins carry an `applies` flag computed server-side from the label's type *and*
+      // its category restriction, so narrowing either leaves the cached grid showing a pin as
+      // active that the next tap will filter out. Deleting a label cascades its pins away
+      // outright, which the cache is just as blind to.
+      queryClient.invalidateQueries({ queryKey: quickTileKeys.all });
     },
   });
 }
@@ -154,6 +168,11 @@ export function useDeleteLabel() {
       // figure. Neither was invalidated, so both kept showing the old grouping
       // until something else happened to refresh them.
       queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
+      // A tile's pins carry an `applies` flag computed server-side from the label's type *and*
+      // its category restriction, so narrowing either leaves the cached grid showing a pin as
+      // active that the next tap will filter out. Deleting a label cascades its pins away
+      // outright, which the cache is just as blind to.
+      queryClient.invalidateQueries({ queryKey: quickTileKeys.all });
     },
   });
 }

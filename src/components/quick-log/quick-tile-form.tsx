@@ -73,6 +73,10 @@ export function QuickTileForm({
   const categoryId = watch("categoryId");
   const description = watch("description");
   const labelIds = watch("labelIds") ?? [];
+  // Pins already on the stored tile. `checkPinnedLabels` re-judges them only when the pins, the
+  // type or the category actually move, so an unrelated edit must not have them dropped underneath
+  // it -- and `viewTiles` already reports a stale pin rather than hiding it.
+  const attachedLabelIds = useMemo(() => defaults?.labelIds ?? [], [defaults]);
 
   const selectable = useMemo(
     () => categories.filter((c) => c.type === type),
@@ -238,6 +242,11 @@ export function QuickTileForm({
         <LabelPicker
           selectedIds={labelIds}
           onChange={(ids) => setValue("labelIds", ids)}
+          // The *resolved* category, not the box: with none chosen the description decides where
+          // a tap files, and the server now judges pins against that same resolution. Passing the
+          // raw value would offer labels the save then refuses.
+          categoryId={resolved?.categoryId ?? null}
+          attachedIds={attachedLabelIds}
           transactionType={type}
         />
         {/* Rendered, or pressing Save past the cap does nothing at all: the resolver refuses the

@@ -105,12 +105,23 @@ export async function POST(request: Request) {
     });
 
     if (!result.ok) {
-      const status = result.reason === "CATEGORY_NOT_USABLE" || result.reason === "LABELS_NOT_OWNED"
-        ? 400
-        : result.reason === "INVALID_SCHEDULE"
-          ? 400
-          : 500;
-      return NextResponse.json({ error: "Failed to create bill" }, { status });
+      // Every deterministic refusal is a 4xx and says which field to repair. A reason added to
+      // `createBill` and not listed here fell through to a 500, which tells the client the server
+      // broke and the request was fine -- the opposite of true, and not retryable in the way a
+      // 500 implies. `LABELS_NOT_IN_CATEGORY` shipped in exactly that state.
+      const refusals: Partial<Record<typeof result.reason, string>> = {
+        CATEGORY_NOT_USABLE:
+          "That category does not exist, or its type does not match the bill's.",
+        LABELS_NOT_OWNED: "One or more labels are invalid or do not belong to you.",
+        LABELS_NOT_IN_CATEGORY:
+          "One or more labels cannot be used on a bill in this category.",
+        INVALID_SCHEDULE:
+          "That schedule is not usable: a custom frequency needs an interval, and an end date cannot fall before the start date.",
+      };
+      const error = refusals[result.reason];
+      return error
+        ? NextResponse.json({ error }, { status: 400 })
+        : NextResponse.json({ error: "Failed to create bill" }, { status: 500 });
     }
 
     return NextResponse.json(result.bill, { status: 201 });

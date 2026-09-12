@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import type { PrismaClient } from "@/lib/budget-query-types";
+import { labelAllowsCategory } from "@/lib/label-category-matching";
 import {
   createTransactionBatch,
   findSavedBatch,
@@ -128,17 +129,43 @@ interface OwnedLabel {
   name: string;
   color: string;
   applicableTo: string;
+  /** Categories the label is restricted to. **Empty means every category**, not none. */
+  categoryIds: string[];
 }
 
-/** Whether a label may be written onto a transaction of this type. */
-const labelApplies = (label: { applicableTo: string }, type: "EXPENSE" | "INCOME"): boolean =>
-  label.applicableTo === "BOTH" || label.applicableTo === type;
+/**
+ * Whether a label may be written onto a transaction of this type, filed under this category.
+ *
+ * `categoryId` is optional because a tile need not have one: the category is then resolved at tap
+ * time, and an absent one has nothing to check against.
+ */
+const labelApplies = (
+  label: { applicableTo: string; categoryIds: string[] },
+  type: "EXPENSE" | "INCOME",
+  categoryId?: string | null
+): boolean =>
+  (label.applicableTo === "BOTH" || label.applicableTo === type) &&
+  labelAllowsCategory(label.categoryIds, categoryId);
 
-const listOwnedLabels = (prisma: PrismaClient, userId: string): Promise<OwnedLabel[]> =>
-  prisma.label.findMany({
+const listOwnedLabels = async (prisma: PrismaClient, userId: string): Promise<OwnedLabel[]> => {
+  const rows = await prisma.label.findMany({
     where: { userId },
-    select: { id: true, name: true, color: true, applicableTo: true },
+    select: {
+      id: true,
+      name: true,
+      color: true,
+      applicableTo: true,
+      categories: { select: { categoryId: true } },
+    },
   });
+  return rows.map((l) => ({
+    id: l.id,
+    name: l.name,
+    color: l.color,
+    applicableTo: l.applicableTo,
+    categoryIds: l.categories.map((c) => c.categoryId),
+  }));
+};
 
 /**
  * Check a pinned label set against what the user actually owns and what the tile's type allows.
@@ -153,7 +180,8 @@ const listOwnedLabels = (prisma: PrismaClient, userId: string): Promise<OwnedLab
 const checkPinnedLabels = (
   labelIds: string[],
   type: "EXPENSE" | "INCOME",
-  owned: OwnedLabel[]
+  owned: OwnedLabel[],
+  categoryId: string | null
 ): { ok: true; ids: string[] } | { ok: false; reason: QuickTileFailureReason; message: string } => {
   const unique = [...new Set(labelIds)];
   const byId = new Map(owned.map((l) => [l.id, l]));
@@ -163,12 +191,32 @@ const checkPinnedLabels = (
     return fail("LABELS_UNUSABLE", "One or more labels do not exist or do not belong to you.");
   }
 
-  const mismatched = unique.map((id) => byId.get(id)!).filter((l) => !labelApplies(l, type));
-  if (mismatched.length > 0) {
-    const names = mismatched.map((l) => l.name).join(", ");
+  const chosen = unique.map((id) => byId.get(id)!);
+
+  const wrongType = chosen.filter(
+    (l) => l.applicableTo !== "BOTH" && l.applicableTo !== type
+  );
+  if (wrongType.length > 0) {
+    const names = wrongType.map((l) => l.name).join(", ");
     return fail(
       "LABELS_UNUSABLE",
       `${names} cannot be used on ${type === "INCOME" ? "an income" : "an expense"} button. Change the label's type, or pick another.`
+    );
+  }
+
+  // Its own message rather than folded into the one above. Both send the user somewhere to fix
+  // it, and they are different somewheres: one is the label's "Applies To", the other its
+  // "Categories". A single "cannot be used here" would be right half the time.
+  //
+  // Judged against the tile's *chosen* category only. A tile with none files wherever
+  // `resolveTileCategory` lands at tap time, which is not knowable at the edit, and refusing a
+  // pin on that basis would refuse it on a guess.
+  const wrongCategory = chosen.filter((l) => !labelAllowsCategory(l.categoryIds, categoryId));
+  if (wrongCategory.length > 0) {
+    const names = wrongCategory.map((l) => l.name).join(", ");
+    return fail(
+      "LABELS_UNUSABLE",
+      `${names} cannot be used on a button filing into this category. Change the label's categories, or pick another.`
     );
   }
 
@@ -219,7 +267,29 @@ export const createQuickTile = async (
     }
   }
 
-  const pinned = checkPinnedLabels(input.labelIds ?? [], input.type, labels);
+  // Judged against where a tap will actually file, not against the category box.
+  //
+  // A tile left on "Decide automatically" has a null `categoryId`, and passing that straight in
+  // made every category-restricted label pass: a Shopping-only label could be pinned to a fare
+  // that resolves to Transportation, the save succeeded, and `viewTiles` then marked the pin
+  // stale while every tap dropped it. The user configured something that could never fire and was
+  // told nothing at the moment they configured it.
+  //
+  // The resolution is deterministic and the form already shows it ("This will file under X"), so
+  // this is knowable here -- it is only *unstable*, because a later description edit can move it.
+  // That drift is deliberately still tolerated: `pinsMoved` below does not re-judge pins when only
+  // the description changes, and `viewTiles` reports the stale pin rather than the write refusing
+  // an unrelated edit.
+  const resolvedForPins = resolveTileCategory(
+    { description: input.description, type: input.type, categoryId: input.categoryId ?? null },
+    categories
+  );
+  const pinned = checkPinnedLabels(
+    input.labelIds ?? [],
+    input.type,
+    labels,
+    resolvedForPins?.categoryId ?? null
+  );
   if (!pinned.ok) return pinned;
 
   try {
@@ -318,6 +388,9 @@ export const updateQuickTile = async (
   const effective = {
     type: patch.type ?? storedType,
     categoryId: patch.categoryId !== undefined ? patch.categoryId : stored.categoryId,
+    // Carried because the pin check resolves the filing category, and with no category chosen the
+    // description is what decides it.
+    description: patch.description ?? stored.description,
     // An absent `labelIds` preserves the pins.
     labelIds: patch.labelIds ?? storedLabelIds,
   };
@@ -356,9 +429,28 @@ export const updateQuickTile = async (
   //
   // A pin left behind is not lost: `viewTiles` reports it as not applying and the tap filters it
   // out, so the button keeps working and the web page shows why.
-  const pinsMoved = patch.labelIds !== undefined || typeMoved;
+  const pinsMoved = patch.labelIds !== undefined || typeMoved || categoryMoved;
+  // Same resolution as the create path, for the same reason. Note `pinsMoved` deliberately does
+  // **not** include a description change even though the description feeds the resolution: a pin
+  // stranded by a later rename is reported by `viewTiles` and dropped at the tap, and refusing the
+  // rename outright is the response that leaves the user stuck with no way to edit the button.
+  const resolvedForPins = pinsMoved
+    ? resolveTileCategory(
+        {
+          description: effective.description,
+          type: effective.type,
+          categoryId: effective.categoryId ?? null,
+        },
+        categories
+      )
+    : null;
   const pinned = pinsMoved
-    ? checkPinnedLabels(effective.labelIds, effective.type, labels)
+    ? checkPinnedLabels(
+        effective.labelIds,
+        effective.type,
+        labels,
+        resolvedForPins?.categoryId ?? null
+      )
     : ({ ok: true, ids: effective.labelIds } as const);
   if (!pinned.ok) return pinned;
 
@@ -610,7 +702,17 @@ export const logQuickTile = async (
           amount: true,
           type: true,
           categoryId: true,
-          labels: { select: { label: { select: { id: true, applicableTo: true } } } },
+          labels: {
+            select: {
+              label: {
+                select: {
+                  id: true,
+                  applicableTo: true,
+                  categories: { select: { categoryId: true } },
+                },
+              },
+            },
+          },
         },
       })
     : null;
@@ -648,8 +750,13 @@ export const logQuickTile = async (
   // valid when it was saved -- would vanish with no sign it was ever promised. Filtering here
   // means the tap still writes the labels that do apply and the confirmation names only those.
   const pinnedLabelIds = (tile?.labels ?? [])
-    .map((l) => l.label)
-    .filter((l) => labelApplies(l, type))
+    .map((l) => ({
+      id: l.label.id,
+      applicableTo: l.label.applicableTo,
+      categoryIds: l.label.categories.map((c) => c.categoryId),
+    }))
+    // Judged against the category the tap actually resolved to, not the tile's stored one.
+    .filter((l) => labelApplies(l, type, resolved.categoryId))
     .map((l) => l.id);
 
   const result = await createTransactionBatch({

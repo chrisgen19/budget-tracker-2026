@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
+import { labelRowAllowsCategory } from "@/lib/label-category-matching";
 import { categoriesAreUsableForWrite } from "@/lib/transaction-writes";
 import { scheduledTransactionSchema } from "@/lib/validations";
 import { advanceToNextUnpaidOccurrence } from "@/lib/bill-utils";
@@ -148,18 +149,50 @@ export async function PUT(
 
       // Validate label ownership + type compatibility
       let verifiedLabelIds: string[] | undefined;
+      let outOfCategoryNames: string[] = [];
       if (labelIds !== undefined) {
         if (labelIds.length > 0) {
           const owned = await tx.label.findMany({
             where: { id: { in: labelIds }, userId },
-            select: { id: true, applicableTo: true },
+            select: {
+              id: true,
+              name: true,
+              applicableTo: true,
+              categories: { select: { categoryId: true } },
+            },
           });
-          verifiedLabelIds = owned
-            .filter((l) => l.applicableTo === "BOTH" || l.applicableTo === billData.type)
-            .map((l) => l.id);
+          const compatible = owned.filter(
+            (l) => l.applicableTo === "BOTH" || l.applicableTo === billData.type
+          );
+
+          // The same refusal `updateBill` applies, restated because this route is the browser's
+          // edit path and deliberately does not share that writer -- so without it the rule holds
+          // over MCP and not in the app. Grandfathered against the labels already on the bill:
+          // narrowing a label is an edit to the *label*, and it must not make an existing bill
+          // unsaveable, down to correcting a typo in its description.
+          const attached = new Set(
+            (await tx.billLabel.findMany({
+              where: { scheduledTransactionId: id },
+              select: { labelId: true },
+            })).map((bl) => bl.labelId)
+          );
+          outOfCategoryNames = compatible
+            .filter(
+              (l) =>
+                !attached.has(l.id) && !labelRowAllowsCategory(l, billData.categoryId)
+            )
+            .map((l) => l.name);
+
+          verifiedLabelIds = compatible.map((l) => l.id);
         } else {
           verifiedLabelIds = [];
         }
+      }
+
+      if (outOfCategoryNames.length > 0) {
+        return {
+          refusal: `${outOfCategoryNames.join(", ")} cannot be used on a bill in this category.`,
+        } as const;
       }
 
       const updated = await tx.scheduledTransaction.update({

@@ -7,6 +7,7 @@ import { useLabelsQuery } from "@/hooks/use-labels";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { Modal } from "@/components/ui/modal";
 import { cn } from "@/lib/utils";
+import { labelRowAllowsCategory } from "@/lib/label-category-matching";
 import type { LabelWithCountAndSchedules } from "@/types";
 
 const EMPTY_LABELS: LabelWithCountAndSchedules[] = [];
@@ -150,6 +151,14 @@ interface LabelsDialogProps {
   onClose: () => void;
   selectedCount: number;
   selectedTypes: Set<"INCOME" | "EXPENSE">;
+  /**
+   * Every category the selection spans.
+   *
+   * Add mode offers only labels that cover **all** of them, because
+   * `PATCH /api/transactions/batch` refuses the whole operation otherwise. Without it the dialog
+   * offers precisely the choices that refusal rejects, and the user learns only on pressing Add.
+   */
+  selectedCategoryIds: Set<string>;
   pending: boolean;
   onApply: (operation: "add" | "remove", labelIds: string[]) => Promise<void>;
 }
@@ -159,6 +168,7 @@ export function TransactionBulkLabelsDialog({
   onClose,
   selectedCount,
   selectedTypes,
+  selectedCategoryIds,
   pending,
   onApply,
 }: LabelsDialogProps) {
@@ -178,13 +188,22 @@ export function TransactionBulkLabelsDialog({
   };
   const compatibleLabels = useMemo(
     () =>
-      labels.filter(
-        (label) =>
-          operation === "remove" ||
+      labels.filter((label) => {
+        // Remove mode is unfiltered on purpose: taking a label off rows it should never have had
+        // is exactly how a mismatch left by an earlier restriction gets cleaned up, so hiding it
+        // here would remove the only way to undo one.
+        if (operation === "remove") return true;
+        const typeFits =
           label.applicableTo === "BOTH" ||
-          (selectedTypes.size === 1 && selectedTypes.has(label.applicableTo as "INCOME" | "EXPENSE")),
-      ),
-    [labels, operation, selectedTypes],
+          (selectedTypes.size === 1 &&
+            selectedTypes.has(label.applicableTo as "INCOME" | "EXPENSE"));
+        if (!typeFits) return false;
+        // Must cover *every* selected category, since the write is all-or-nothing.
+        return Array.from(selectedCategoryIds).every((categoryId) =>
+          labelRowAllowsCategory(label, categoryId),
+        );
+      }),
+    [labels, operation, selectedTypes, selectedCategoryIds],
   );
 
   useEffect(() => {

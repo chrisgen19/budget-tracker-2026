@@ -2,6 +2,7 @@ import type { PrismaClient } from "@/lib/budget-query-types";
 import { getCategoryList } from "@/lib/budget-queries";
 import type { BotCategory } from "@/lib/telegram/category-match";
 import { resolveTileCategory, tileFallsBack } from "@/lib/telegram/quick-tiles";
+import { labelAllowsCategory } from "@/lib/label-category-matching";
 
 /**
  * Reading the configured half of the quick-log grid.
@@ -37,10 +38,10 @@ export interface QuickTileView {
    *
    * `applies` is recomputed on **every** read rather than trusted from the edit that saved it,
    * for the same reason `resolveTileCategory` re-checks the category on every read:
-   * `PUT /api/labels/[id]` can narrow a label's `applicableTo` underneath a button that was valid
-   * when it was pinned -- it runs a 409 confirmation for the *transactions* an incompatible label
-   * is on, and knows nothing about buttons. A pin that will no longer be written shows as
-   * degraded in the grid instead of going missing on the next tap.
+   * `PUT /api/labels/[id]` can narrow a label's `applicableTo` **or its category restriction**
+   * underneath a button that was valid when it was pinned -- it runs a 409 confirmation for the
+   * *transactions* an incompatible label is on, and knows nothing about buttons. A pin that will
+   * no longer be written shows as degraded in the grid instead of going missing on the next tap.
    */
   labels: QuickTileLabelView[];
   sortOrder: number;
@@ -51,7 +52,10 @@ export interface QuickTileLabelView {
   id: string;
   name: string;
   color: string;
-  /** False when this label's type no longer allows it on this button, so it will not be written. */
+  /**
+   * False when this label's type or category restriction no longer allows it on this button, so
+   * it will not be written.
+   */
   applies: boolean;
 }
 
@@ -74,6 +78,8 @@ export interface TileLabel {
   name: string;
   color: string;
   applicableTo: string;
+  /** Categories the label is restricted to. **Empty means every category**, not none. */
+  categoryIds: string[];
 }
 
 /**
@@ -119,7 +125,12 @@ export const viewTiles = (
             id: label.id,
             name: label.name,
             color: label.color,
-            applies: label.applicableTo === "BOTH" || label.applicableTo === type,
+            // Judged against the **resolved** category, not `row.categoryId`: a tile whose
+            // chosen category was deleted files somewhere else, and a pin has to be judged
+            // against where the tap will actually land.
+            applies:
+              (label.applicableTo === "BOTH" || label.applicableTo === type) &&
+              labelAllowsCategory(label.categoryIds, resolved?.categoryId ?? null),
           },
         ];
       }),

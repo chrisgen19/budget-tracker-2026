@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
+import { labelRowAllowsCategory } from "@/lib/label-category-matching";
 import { transactionSchema } from "@/lib/validations";
 import { categoriesAreUsable } from "@/lib/transaction-writes";
 
@@ -87,7 +88,12 @@ export async function PUT(request: Request, { params }: RouteParams) {
     if (hasLabelIds && validated.labelIds!.length > 0) {
       const ownedLabels = await prisma.label.findMany({
         where: { id: { in: validated.labelIds! }, userId },
-        select: { id: true, applicableTo: true },
+        select: {
+          id: true,
+          name: true,
+          applicableTo: true,
+          categories: { select: { categoryId: true } },
+        },
       });
       if (ownedLabels.length !== validated.labelIds!.length) {
         return NextResponse.json(
@@ -99,6 +105,25 @@ export async function PUT(request: Request, { params }: RouteParams) {
       const compatible = ownedLabels.filter(
         (l) => l.applicableTo === "BOTH" || l.applicableTo === validated.type
       );
+
+      // Refused, as on the create path -- but only for labels this save is *adding*. A label
+      // already on the row passes whatever its restriction now says, the same grandfather clause
+      // `updateTransactions` applies: narrowing a label's categories is an edit to the label, and
+      // it must not make every older transaction carrying it unsaveable, down to fixing a typo in
+      // its description. The form posts the whole object on every save, so without this an
+      // unrelated edit to such a row would be refused.
+      const alreadyOnRow = new Set(existing.labels.map((el) => el.labelId));
+      const outOfCategory = compatible.filter(
+        (l) => !alreadyOnRow.has(l.id) && !labelRowAllowsCategory(l, validated.categoryId)
+      );
+      if (outOfCategory.length > 0) {
+        const names = outOfCategory.map((l) => l.name).join(", ");
+        return NextResponse.json(
+          { error: `${names} cannot be used on a transaction in this category.` },
+          { status: 400 }
+        );
+      }
+
       verifiedLabelIds.push(...compatible.map((l) => l.id));
     }
 

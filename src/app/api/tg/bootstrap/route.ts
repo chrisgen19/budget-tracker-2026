@@ -35,12 +35,28 @@ export async function GET(request: Request) {
   const [categories, labels, tileRows] = await Promise.all([
     listTileCategories(prisma, userId),
     // Read for the same reason `categories` is: a tile carries pinned label *ids*, and whether a
-    // pin still applies depends on the label's current `applicableTo`, which can be narrowed
-    // underneath a button that was valid when it was saved.
-    prisma.label.findMany({
-      where: { userId },
-      select: { id: true, name: true, color: true, applicableTo: true },
-    }),
+    // pin still applies depends on the label's current `applicableTo` and category restriction,
+    // either of which can be narrowed underneath a button that was valid when it was saved.
+    prisma.label
+      .findMany({
+        where: { userId },
+        select: {
+          id: true,
+          name: true,
+          color: true,
+          applicableTo: true,
+          categories: { select: { categoryId: true } },
+        },
+      })
+      .then((rows) =>
+        rows.map((l) => ({
+          id: l.id,
+          name: l.name,
+          color: l.color,
+          applicableTo: l.applicableTo,
+          categoryIds: l.categories.map((c) => c.categoryId),
+        }))
+      ),
     listTileRows(prisma, userId),
   ]);
 

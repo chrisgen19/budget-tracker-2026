@@ -63,10 +63,12 @@ const INIT_DATA =
 
 const AUTH = `tma ${INIT_DATA}`;
 
+// `categories` is the relation `listOwnedLabels` selects, not a flat id list. Empty means the
+// label is offered on every category, which is what every label here is.
 const LABELS = [
-  { id: "label_work", name: "Work", color: "#111111", applicableTo: "BOTH" },
-  { id: "label_commute", name: "Commute", color: "#222222", applicableTo: "EXPENSE" },
-  { id: "label_payday", name: "Payday", color: "#333333", applicableTo: "INCOME" },
+  { id: "label_work", name: "Work", color: "#111111", applicableTo: "BOTH", categories: [] },
+  { id: "label_commute", name: "Commute", color: "#222222", applicableTo: "EXPENSE", categories: [] },
+  { id: "label_payday", name: "Payday", color: "#333333", applicableTo: "INCOME", categories: [] },
 ];
 
 const CATEGORIES = [

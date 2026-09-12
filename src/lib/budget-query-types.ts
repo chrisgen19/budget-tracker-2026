@@ -439,6 +439,8 @@ export interface LabelBreakdown {
 export interface LabelListParams {
   /** Only labels usable on this transaction type (matches "BOTH" too) */
   applicableTo?: TransactionType;
+  /** Only labels usable on this category (matches unrestricted labels too) */
+  categoryId?: string;
 }
 
 export interface LabelItem {
@@ -447,6 +449,11 @@ export interface LabelItem {
   color: string;
   /** "EXPENSE" | "INCOME" | "BOTH" -- which transaction types the label may be used on */
   applicableTo: string;
+  /**
+   * Categories the label is limited to. **An empty array means every category**, not none, which
+   * is the state of any label that has never been restricted.
+   */
+  categoryIds: string[];
   transactionCount: number;
   /** Auto-apply rules: transactions created in these windows get the label */
   schedules: Array<{ days: number[]; startTime: string; endTime: string }>;

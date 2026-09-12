@@ -2,6 +2,61 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-12 - A label can be limited to categories
+
+A label was offered on every transaction of a compatible type, and `applicableTo` was the only
+filter there had ever been. Choosing Transportation still offered Shopee, and the list only grew as
+labels were added — the picker got less useful with every label the user created, which is the wrong
+direction for the thing it is meant to speed up.
+
+A label can now be linked to categories on the Labels page, as a two-state control: **All
+categories** or a specific set. The join table is `label_categories`, and the load-bearing detail is
+that **zero rows means every category, not none**. That is what lets this ship with no backfill —
+every existing label has no rows there and keeps behaving exactly as it did, the same way
+`applicableTo`'s `BOTH` default leaves a label unrestricted by type. The two compose: a label has to
+pass both checks. One predicate, `labelAllowsCategory`, is the only place that rule is written down;
+re-deriving "empty means all" at a call site is how the two halves would come to disagree.
+
+The restriction is enforced, not merely hidden in the picker, and it deliberately fails two
+different ways depending on who is on the other end.
+
+**Where the caller named the label, it is refused.** `createTransactionBatch`,
+`updateTransactions`, `createBill` and `updateBill` reject a label the row's category excludes,
+because the app's own picker cannot produce that pairing — naming it means a stale client or a model
+that guessed, and silently filing the row with no label while reporting success is the one outcome
+nobody notices. Quick-log tiles refuse at the edit, which is where the user can act on it.
+
+**Where the label was chosen *for* them, it is filtered and reported.** Schedule auto-apply,
+`settleBill`, a quick-tile tap and the Telegram caption resolver all drop it instead, because nobody
+asked for that label at that moment: it was configured earlier and may have been narrowed since, and
+a bill that cannot be paid because of an edit to one of its labels is the wrong failure. Category
+mismatch gets its own bucket everywhere it is reported, never folded into the existing type one —
+the two are fixed on different screens, and a single "cannot be used here" would send the user to
+the wrong one half the time.
+
+**Labels already attached are grandfathered.** Narrowing a label's categories is an edit to the
+*label*, and it must not make every older transaction carrying it unsaveable, down to fixing a typo
+in its description. So the picker keeps such a label selected and marks it "Not in this category"
+rather than dropping it, and the write paths only judge what a patch *adds*. Narrowing on the Labels
+page instead goes through the same 409 confirm-then-strip flow that narrowing the type already had,
+which now asks once about both.
+
+Schedule matching gained the category dimension for the same reason: auto-apply was the one path
+that could still write the pairing everything else refuses. `POST /api/labels/[id]/apply` scans rows
+*outside* the restriction on purpose — a row may be carrying the label from before it existed, and
+the removal branch is the only thing that will ever clean that up.
+
+Over MCP, `get_label_list` takes a `categoryId` and every label reports its `categoryIds`, and
+`create_label` can set them. The Telegram classifier is told which categories each restricted label
+accepts so it stops proposing one the write would refuse, and its answer is still re-resolved
+against the real rows afterwards — the model is never the thing that decides.
+
+Deleting a category cascades, so removing a label's last linked category makes it unrestricted
+again. That is the deliberate direction to fail in: a category can only be deleted while no
+transaction uses it, and a label that starts appearing everywhere is visible and re-narrowable,
+where one that matched nothing would simply vanish from every picker with no way to notice why.
+`scripts/verify-label-categories.ts` proves both halves against a real Postgres.
+
 ## 2026-09-12 - A carried-over total says so
 
 Second finding from review on #296, and the deeper half of the one above. Echoing the type fixed how

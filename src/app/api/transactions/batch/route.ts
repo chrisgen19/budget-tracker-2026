@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
+import { labelRowAllowsCategory } from "@/lib/label-category-matching";
 import {
   batchTransactionSchema,
   clientBatchIdSchema,
@@ -144,10 +145,16 @@ export async function POST(request: Request) {
       if (result.reason === "UNKNOWN_WHETHER_SAVED" || result.reason === "NO_LONGER_PERMITTED") {
         return NextResponse.json({ error: "Failed to create transactions" }, { status: 500 });
       }
+      // Named per reason. The category message used to be the fallback for everything that was
+      // not an ownership failure, so a label excluded by its restriction told a multi-scan user to
+      // repair categories that were all perfectly valid -- on the one path where the scan credits
+      // are already spent and the rows cannot simply be retyped.
       const message =
         result.reason === "LABELS_NOT_OWNED"
           ? "One or more labels are invalid or do not belong to you"
-          : "One or more categories are invalid or do not belong to you";
+          : result.reason === "LABELS_NOT_IN_CATEGORY"
+            ? "One or more labels are limited to categories that do not include the one they were used with"
+            : "One or more categories are invalid or do not belong to you";
       return rejectUnlessAlreadySaved(
         userId,
         clientBatchId,
@@ -291,7 +298,12 @@ export async function PATCH(request: NextRequest) {
 
       const labels = await tx.label.findMany({
         where: { id: { in: input.labelIds }, userId },
-        select: { id: true, applicableTo: true },
+        select: {
+          id: true,
+          name: true,
+          applicableTo: true,
+          categories: { select: { categoryId: true } },
+        },
       });
       if (labels.length !== input.labelIds.length) {
         return { error: "One or more labels were not found", status: 400 as const };
@@ -325,6 +337,33 @@ export async function PATCH(request: NextRequest) {
         const existingKeys = new Set(
           existingLinks.map(({ transactionId, labelId }) => `${transactionId}:${labelId}`),
         );
+
+        // The same all-or-nothing rule the type check above applies, and the reason this branch
+        // needed it most: a bulk add is the one place a label meets transactions the user never
+        // opened, spanning every category the selection covers.
+        //
+        // Judged on the pairs this write would actually **insert**, never on the whole selection.
+        // A pair that already exists is grandfathered exactly as it is on every other edit path:
+        // a row carrying a label from before the restriction stays as it is, and refusing over it
+        // would block an add whose only real effect is a legitimate link on a different row. That
+        // is why this sits after `existingKeys` rather than before -- the earlier ordering read
+        // "nothing is grandfathered here", which was wrong about its own write.
+        //
+        // Named separately from the type refusal because the two are fixed on different screens.
+        const outOfCategory = labels.filter((label) =>
+          transactions.some(
+            (transaction) =>
+              !existingKeys.has(`${transaction.id}:${label.id}`) &&
+              !labelRowAllowsCategory(label, transaction.categoryId),
+          ),
+        );
+        if (outOfCategory.length > 0) {
+          const names = outOfCategory.map((label) => label.name).join(", ");
+          return {
+            error: `${names} is limited to categories that do not cover every selected transaction`,
+            status: 409 as const,
+          };
+        }
         const linksToAdd = matchedIds.flatMap((transactionId) =>
           labelIds.flatMap((labelId) =>
             existingKeys.has(`${transactionId}:${labelId}`) ? [] : [{ transactionId, labelId }],

@@ -5,6 +5,8 @@ import {
 } from "@tanstack/react-query";
 import type { CategoryInput } from "@/lib/validations";
 import type { Category } from "@/types";
+import { labelKeys } from "@/hooks/use-labels";
+import { quickTileKeys } from "@/hooks/use-quick-tiles";
 import { usePreferencesQuery, preferencesKeys } from "@/hooks/use-preferences";
 
 /* ------------------------------------------------------------------ */
@@ -122,6 +124,13 @@ export function useDeleteCategory() {
     onSuccess: () => {
       // Invalidate all category queries
       queryClient.invalidateQueries({ queryKey: categoryKeys.all });
+      // Deleting a category cascades into `label_categories`, and losing a label's last link
+      // makes it unrestricted again -- so the cached label list still carries the dead id and
+      // every picker keeps hiding a label that now belongs everywhere.
+      queryClient.invalidateQueries({ queryKey: labelKeys.all });
+      // Tiles hold `categoryId` with `onDelete: SetNull`, so a deleted category also changes
+      // where a button files and whether its pins still apply.
+      queryClient.invalidateQueries({ queryKey: quickTileKeys.all });
     },
   });
 }
