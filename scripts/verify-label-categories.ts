@@ -293,6 +293,40 @@ async function main() {
         String(mixed.status)
       );
 
+      // The same ownership question on the transaction create path, which had no category check
+      // at all: `createTransactionBatch` and the sibling PUT both run `categoriesAreUsable`, and
+      // this route wrote the id it was given. Its response includes `category` too.
+      const foreign = await prisma.user.create({
+        data: { email: `lc-foreign-${Date.now()}@test.local`, name: "LC Foreign", password: "x" },
+      });
+      const foreignCategory = await prisma.category.create({
+        data: {
+          name: "Foreign Only",
+          type: "EXPENSE",
+          icon: "Lock",
+          color: "#666",
+          userId: foreign.id,
+        },
+      });
+      try {
+        const stolenTx = await send("/api/transactions", "POST", row(foreignCategory.id));
+        check(
+          "POST /api/transactions refuses a category belonging to another account",
+          stolenTx.status === 400,
+          String(stolenTx.status)
+        );
+        const leakedTx = JSON.stringify(await stolenTx.json().catch(() => ({})));
+        check(
+          "and does not echo that category's name back",
+          !leakedTx.includes("Foreign Only"),
+          leakedTx.slice(0, 80)
+        );
+      } finally {
+        await prisma.transaction.deleteMany({ where: { categoryId: foreignCategory.id } });
+        await prisma.user.delete({ where: { id: foreign.id } });
+        await prisma.category.deleteMany({ where: { id: foreignCategory.id } });
+      }
+
       // --- the bill edit route's category ownership (CWE-639) ---
       //
       // The bill is ownership-checked and the category was not, so a caller could point their own
