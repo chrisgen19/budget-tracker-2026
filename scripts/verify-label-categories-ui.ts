@@ -204,6 +204,26 @@ async function main() {
       chips.some((n) => n.startsWith("E2E ")),
       ours(chips)
     );
+    // A failed read must not render as an empty account. This is the one defect here that was
+    // met in the wild: a dev server holding a Prisma client from before `label_categories`
+    // existed threw on every label query, and the page answered "No labels yet" -- indistinguishable
+    // from the labels having been deleted, which is how it was read.
+    //
+    // Forced rather than waited for, because the only natural trigger is a broken server.
+    await page.route("**/api/labels", (route) => route.fulfill({ status: 500, body: "{}" }));
+    await page.goto(`${BASE}/labels`);
+    await page.waitForTimeout(2500);
+    const failed = await page.locator("body").innerText();
+    check(
+      "a failed label read says so rather than claiming the account is empty",
+      failed.includes("Couldn't load your labels") && !failed.includes("No labels yet"),
+      failed.includes("No labels yet") ? "rendered the empty state" : ""
+    );
+    check(
+      "and offers a retry",
+      await page.getByRole("button", { name: /retry/i }).isVisible().catch(() => false)
+    );
+    await page.unroute("**/api/labels");
   } finally {
     await browser.close();
     await prisma.transaction.deleteMany({ where: { userId: user.id } });
