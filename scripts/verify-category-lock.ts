@@ -27,6 +27,8 @@ import { categoriesAreUsableForWrite } from "../src/lib/transaction-writes";
 const prisma = new PrismaClient();
 /** A second client, so the two transactions really are two connections. */
 const other = new PrismaClient();
+/** A third, used only to observe lock waits, so polling never competes for either side's pool. */
+const observer = new PrismaClient();
 
 let failures = 0;
 
@@ -35,26 +37,46 @@ const check = (name: string, ok: boolean, detail = "") => {
   if (!ok) failures++;
 };
 
-/** Resolves once some backend is waiting on a lock. */
-const someoneIsBlocked = async (): Promise<boolean> => {
-  const [{ count }] = await other.$queryRaw<{ count: bigint }[]>`
-    SELECT count(*) AS count FROM pg_locks WHERE NOT granted
+/**
+ * Is *this* backend waiting on a lock?
+ *
+ * Filtered to one pid, and that filter is what makes the script failable at all. A cluster-wide
+ * `pg_locks WHERE NOT granted` answers true for any waiter anywhere -- the dev server, another app
+ * on a shared Postgres, a psql left open -- while the counterparty here may not have started.
+ * Measured rather than assumed: with the fix reverted and a single unrelated advisory-lock waiter
+ * present, every assertion below passed. A verifier that cannot fail is worse than none, because
+ * it manufactures confidence in exactly the code it exists to doubt.
+ */
+const isBlocked = async (pid: number | null): Promise<boolean> => {
+  if (pid === null) return false;
+  const [{ count }] = await observer.$queryRaw<{ count: bigint }[]>`
+    SELECT count(*) AS count FROM pg_locks WHERE NOT granted AND pid = ${pid}
   `;
   return Number(count) > 0;
 };
 
+/** Each side publishes the backend it is really running on, so the other can watch that one. */
+const backendPid = async (tx: { $queryRaw: PrismaClient["$queryRaw"] }): Promise<number> => {
+  const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+  return Number(pid);
+};
+
 /**
- * Waits until the flipper has either blocked on our lock or finished without one.
+ * Waits until the counterparty has either blocked on our lock or finished without taking one.
  *
  * Both outcomes are the cue to carry on, and accepting either is what makes this script fail
  * *informatively* against the unfixed code rather than by timing out. Waiting only for a blocked
  * backend would hang for the whole transaction timeout when no lock is taken, and the run would
  * die with "transaction already closed" -- a failure that proves nothing about the race.
  */
-const waitForFlipper = async (settled: () => boolean, timeoutMs = 3_000) => {
+const waitForCounterparty = async (
+  pid: () => number | null,
+  settled: () => boolean,
+  timeoutMs = 3_000
+) => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (settled() || (await someoneIsBlocked())) return;
+    if (settled() || (await isBlocked(pid()))) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 };
@@ -79,12 +101,13 @@ async function main() {
     // EXPENSE transaction filed under a category that is now INCOME.
     let validated = false;
     let flipperSettled = false;
+    let flipperPid: number | null = null;
 
     const writer = prisma.$transaction(async (tx) => {
       validated = await categoriesAreUsableForWrite(tx, user.id, [
         { categoryId: category.id, type: "EXPENSE" },
       ]);
-      await waitForFlipper(() => flipperSettled);
+      await waitForCounterparty(() => flipperPid, () => flipperSettled);
       await tx.transaction.create({
         data: {
           amount: 10,
@@ -102,6 +125,9 @@ async function main() {
 
     const flipper = other
       .$transaction(async (tx) => {
+        // Published before the locking read, so the writer is watching this backend by the time
+        // it blocks rather than watching the whole cluster.
+        flipperPid = await backendPid(tx);
         await tx.$queryRaw`SELECT 1 FROM categories WHERE id = ${category.id} FOR UPDATE`;
         const count = await tx.transaction.count({ where: { categoryId: category.id } });
         if (count > 0) return "refused" as const;
@@ -135,10 +161,11 @@ async function main() {
 
     let usableDuringFlip: boolean | null = null;
     let readerSettled = false;
+    let readerPid: number | null = null;
 
     const flipFirst = other.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT 1 FROM categories WHERE id = ${category.id} FOR UPDATE`;
-      await waitForFlipper(() => readerSettled);
+      await waitForCounterparty(() => readerPid, () => readerSettled);
       await tx.category.update({ where: { id: category.id }, data: { type: "INCOME" } });
     }, TX);
 
@@ -146,6 +173,7 @@ async function main() {
 
     const reader = prisma
       .$transaction(async (tx) => {
+        readerPid = await backendPid(tx);
         usableDuringFlip = await categoriesAreUsableForWrite(tx, user.id, [
           { categoryId: category.id, type: "EXPENSE" },
         ]);
@@ -174,7 +202,7 @@ main()
     failures++;
   })
   .finally(async () => {
-    await Promise.all([prisma.$disconnect(), other.$disconnect()]);
+    await Promise.all([prisma.$disconnect(), other.$disconnect(), observer.$disconnect()]);
     console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
     process.exit(failures === 0 ? 0 : 1);
   });
