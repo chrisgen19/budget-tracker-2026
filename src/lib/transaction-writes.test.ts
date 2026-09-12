@@ -22,7 +22,7 @@ const ITEM: BatchTransactionInput = {
 interface StubOptions {
   /** Category ids the caller may use: their own plus the shared defaults. */
   usableCategoryIds?: string[];
-  ownedLabels?: { id: string; applicableTo: string }[];
+  ownedLabels?: { id: string; applicableTo: string; categoryIds?: string[] }[];
   /** Type every stub category reports, so type-mismatch rejection is testable. */
   categoryType?: "INCOME" | "EXPENSE";
 }
@@ -45,7 +45,15 @@ const makePrisma = ({
     },
     label: {
       findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
-        ownedLabels.filter((l) => where.id.in.includes(l.id))
+        // Shaped the way the real `select` returns it: the relation, not a flat id list. A
+        // fixture that skipped it would let the production `.map` over `categories` pass here
+        // and throw against a real database.
+        ownedLabels
+          .filter((l) => where.id.in.includes(l.id))
+          .map((l) => ({
+            ...l,
+            categories: (l.categoryIds ?? []).map((categoryId) => ({ categoryId })),
+          }))
       ),
     },
     transaction: {
@@ -148,6 +156,59 @@ describe("createTransactionBatch", () => {
       prisma: client,
       userId: "u1",
       items: [{ ...ITEM, type: "EXPENSE", labelIds: ["lbl_income_only"] }],
+      createdVia: "MCP",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(created[0]).not.toHaveProperty("labels");
+  });
+
+  // Refused rather than filtered, unlike the type mismatch above. The app's picker cannot
+  // produce this pairing, so naming it means a stale client or a model that guessed -- and
+  // dropping it silently would file the row with no label while reporting success.
+  it("refuses a label restricted to other categories", async () => {
+    const { client, created } = makePrisma({
+      ownedLabels: [{ id: "lbl_tnvs", applicableTo: "EXPENSE", categoryIds: ["cat_transport"] }],
+    });
+
+    const result = await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [{ ...ITEM, categoryId: "cat_own", labelIds: ["lbl_tnvs"] }],
+      createdVia: "MCP",
+    });
+
+    expect(result).toEqual({ ok: false, reason: "LABELS_NOT_IN_CATEGORY" });
+    expect(created).toHaveLength(0);
+  });
+
+  it("attaches a label restricted to the category the row is filed under", async () => {
+    const { client, created } = makePrisma({
+      ownedLabels: [{ id: "lbl_tnvs", applicableTo: "EXPENSE", categoryIds: ["cat_own"] }],
+    });
+
+    const result = await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [{ ...ITEM, labelIds: ["lbl_tnvs"] }],
+      createdVia: "MCP",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(created[0].labels).toEqual({ createMany: { data: [{ labelId: "lbl_tnvs" }] } });
+  });
+
+  // The type filter runs first, so a label already being dropped for its type must not turn a
+  // silent drop into a hard refusal -- that would change behaviour for rows nothing has restricted.
+  it("still drops, rather than refuses, a label the type filter already excludes", async () => {
+    const { client, created } = makePrisma({
+      ownedLabels: [{ id: "lbl_payday", applicableTo: "INCOME", categoryIds: ["cat_salary"] }],
+    });
+
+    const result = await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [{ ...ITEM, type: "EXPENSE", labelIds: ["lbl_payday"] }],
       createdVia: "MCP",
     });
 

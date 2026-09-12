@@ -84,11 +84,33 @@ export const labelScheduleSchema = z.object({
   { message: "End time must be after start time (overnight ranges not supported)", path: ["endTime"] }
 );
 
+/**
+ * How many categories one label may be restricted to.
+ *
+ * Generous rather than tight: the seed alone ships 18 defaults and users add their own, so a cap
+ * that bites would turn "everything except one category" into an unexpressible restriction. It is
+ * here to bound the request, not to shape the feature.
+ */
+export const MAX_LABEL_CATEGORIES = 50;
+
 export const labelSchema = z.object({
   name: z.string().min(1, "Name is required").max(30),
   color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Invalid color format"),
   applicableTo: z.enum(["EXPENSE", "INCOME", "BOTH"]).default("BOTH"),
   schedules: z.array(labelScheduleSchema).max(10, "Maximum 10 schedules per label").optional(),
+  /**
+   * Categories this label is restricted to. **Empty or absent means every category**, not none --
+   * see `label-category-matching.ts`. Duplicates are refused rather than deduped, because a
+   * client sending the same id twice has a bug worth surfacing, and the unique index would
+   * reject the write anyway.
+   */
+  categoryIds: z
+    .array(z.string())
+    .max(MAX_LABEL_CATEGORIES, `Maximum ${MAX_LABEL_CATEGORIES} categories per label`)
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: "must not contain duplicate ids",
+    })
+    .optional(),
 });
 
 export const categorySchema = z.object({

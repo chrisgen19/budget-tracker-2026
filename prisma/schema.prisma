@@ -190,6 +190,7 @@ model Category {
   transactions          Transaction[]
   scheduledTransactions ScheduledTransaction[]
   telegramQuickTiles    TelegramQuickTile[]
+  labels                LabelCategory[]
   createdAt    DateTime        @default(now()) @map("created_at")
 
   // NOTE: this constraint does NOT cover defaults. Their userId is NULL, and Postgres treats
@@ -389,6 +390,7 @@ model Label {
   bills        BillLabel[]
   quickTiles   TelegramQuickTileLabel[]
   schedules    LabelSchedule[]
+  categories   LabelCategory[]
   createdAt    DateTime           @default(now()) @map("created_at")
 
   // NOTE: The actual DB index uses LOWER(name) for case-insensitive uniqueness
@@ -409,6 +411,33 @@ model LabelSchedule {
 
   @@index([labelId])
   @@map("label_schedules")
+}
+
+// Restricts a label to the categories it is linked to, so the picker only offers "TNVS" under
+// Transportation rather than under everything of a compatible type.
+//
+// ZERO ROWS MEANS EVERY CATEGORY, not none. That is what keeps every label that predates this
+// table behaving exactly as it did, with no backfill -- the same thing `applicableTo`'s "BOTH"
+// default does for transaction type. The two compose: a label must pass both checks. The single
+// predicate is `labelAllowsCategory` in src/lib/label-category-matching.ts; nothing should
+// re-derive the empty-means-all rule by hand.
+//
+// Deleting a category cascades here, so removing a label's last link silently makes it
+// unrestricted again. That is the deliberate direction to fail in: a category can only be deleted
+// while no transaction uses it, and a label that suddenly appears everywhere is visible and
+// re-narrowable, where one that matched nothing would just vanish from every picker.
+model LabelCategory {
+  id         String   @id @default(cuid())
+  labelId    String   @map("label_id")
+  label      Label    @relation(fields: [labelId], references: [id], onDelete: Cascade)
+  categoryId String   @map("category_id")
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@unique([labelId, categoryId])
+  @@index([labelId])
+  @@index([categoryId])
+  @@map("label_categories")
 }
 
 model TransactionLabel {

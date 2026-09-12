@@ -15,6 +15,7 @@ import type { PrismaClient } from "@/lib/budget-query-types";
 export const LABEL_INCLUDE = {
   _count: { select: { transactions: true } },
   schedules: { orderBy: { createdAt: "asc" } },
+  categories: { select: { categoryId: true } },
 } as const;
 
 export type LabelWithRelations = Prisma.LabelGetPayload<{ include: typeof LABEL_INCLUDE }>;
@@ -22,12 +23,60 @@ export type LabelWithRelations = Prisma.LabelGetPayload<{ include: typeof LABEL_
 export type LabelWriteFailureReason =
   /** A label with this name already exists on the account, ignoring case. */
   | "DUPLICATE_NAME"
+  /** One or more `categoryIds` are not usable -- unknown, someone else's, or the wrong type. */
+  | "INVALID_CATEGORIES"
   /** The write lease lapsed between the request arriving and the write. Nothing was written. */
   | "NO_LONGER_PERMITTED";
 
 export type LabelWriteResult =
   | { ok: true; label: LabelWithRelations }
-  | { ok: false; reason: LabelWriteFailureReason };
+  | { ok: false; reason: "INVALID_CATEGORIES"; message: string }
+  | { ok: false; reason: Exclude<LabelWriteFailureReason, "INVALID_CATEGORIES"> };
+
+/**
+ * Check that every category a label is being restricted to is one this user may use, and that its
+ * type agrees with the label's own `applicableTo`.
+ *
+ * Shared by `createLabel` and `PUT /api/labels/[id]` so the two cannot disagree. The type check is
+ * the half that is easy to leave out and would be quietly destructive: restricting an
+ * income-only label to an expense category produces a label that can never match anything, which
+ * looks identical to a label that simply stopped appearing.
+ *
+ * Defaults (`userId: null`) are shared by every account and are usable by all of them, which is
+ * why ownership is `isDefault OR mine` rather than `userId = mine` -- the same condition
+ * `GET /api/categories` uses.
+ */
+export const categoriesUsableForLabel = async (
+  prisma: PrismaClient | Prisma.TransactionClient,
+  userId: string,
+  categoryIds: string[],
+  applicableTo: "EXPENSE" | "INCOME" | "BOTH",
+): Promise<{ ok: true } | { ok: false; message: string }> => {
+  if (categoryIds.length === 0) return { ok: true };
+
+  const found = await prisma.category.findMany({
+    where: { id: { in: categoryIds }, OR: [{ isDefault: true }, { userId }] },
+    select: { id: true, name: true, type: true },
+  });
+
+  if (found.length !== categoryIds.length) {
+    return { ok: false, message: "One or more categories could not be found." };
+  }
+
+  if (applicableTo !== "BOTH") {
+    const wrongType = found.filter((c) => c.type !== applicableTo);
+    if (wrongType.length > 0) {
+      const names = wrongType.map((c) => c.name).join(", ");
+      const noun = applicableTo === "EXPENSE" ? "expenses" : "income";
+      return {
+        ok: false,
+        message: `This label only applies to ${noun}, so it cannot be limited to ${names}.`,
+      };
+    }
+  }
+
+  return { ok: true };
+};
 
 export interface LabelScheduleInput {
   /** 0 = Sunday. */
@@ -44,6 +93,8 @@ export interface CreateLabelParams {
   color: string;
   applicableTo: "EXPENSE" | "INCOME" | "BOTH";
   schedules?: LabelScheduleInput[];
+  /** Categories to restrict the label to. **Empty or absent means every category**, not none. */
+  categoryIds?: string[];
   assertStillPermitted?: (tx: Prisma.TransactionClient) => Promise<boolean>;
 }
 
@@ -54,6 +105,7 @@ export const createLabel = async ({
   color,
   applicableTo,
   schedules,
+  categoryIds,
   assertStillPermitted,
 }: CreateLabelParams): Promise<LabelWriteResult> => {
   const existing = await prisma.label.findFirst({
@@ -61,6 +113,16 @@ export const createLabel = async ({
     select: { id: true },
   });
   if (existing) return { ok: false, reason: "DUPLICATE_NAME" };
+
+  const categoryCheck = await categoriesUsableForLabel(
+    prisma,
+    userId,
+    categoryIds ?? [],
+    applicableTo,
+  );
+  if (!categoryCheck.ok) {
+    return { ok: false, reason: "INVALID_CATEGORIES", message: categoryCheck.message };
+  }
 
   try {
     const label = await prisma.$transaction(async (tx) => {
@@ -80,6 +142,9 @@ export const createLabel = async ({
                 endTime: s.endTime,
               })),
             },
+          }),
+          ...(categoryIds && categoryIds.length > 0 && {
+            categories: { create: categoryIds.map((categoryId) => ({ categoryId })) },
           }),
         },
         include: LABEL_INCLUDE,

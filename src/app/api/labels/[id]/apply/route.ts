@@ -17,7 +17,7 @@ export async function POST(_request: Request, { params }: RouteParams) {
   // Verify label ownership and has schedules
   const label = await prisma.label.findFirst({
     where: { id, userId },
-    include: { schedules: true },
+    include: { schedules: true, categories: { select: { categoryId: true } } },
   });
 
   if (!label) {
@@ -56,6 +56,12 @@ export async function POST(_request: Request, { params }: RouteParams) {
         id: true,
         date: true,
         type: true,
+        // Needed by `matchScheduledLabel`, which will not auto-apply a label into a category its
+        // restriction excludes. Deliberately *not* narrowed in the `where` above the way the type
+        // restriction is: a row outside the categories may still be carrying this label from
+        // before the restriction was added, and the removal branch below is the only thing that
+        // will ever clean it up. Filtering it out of the scan would leave it there forever.
+        categoryId: true,
         labels: {
           where: { labelId: id },
           select: { id: true },
@@ -76,7 +82,7 @@ export async function POST(_request: Request, { params }: RouteParams) {
     const toRemoveFrom: string[] = [];
 
     for (const tx of transactions) {
-      const matchedLabelId = matchScheduledLabel(tx.date, ctx, tx.type);
+      const matchedLabelId = matchScheduledLabel(tx.date, ctx, tx.type, tx.categoryId);
       const hasLabel = tx.labels.length > 0;
 
       if (matchedLabelId === id && !hasLabel) {

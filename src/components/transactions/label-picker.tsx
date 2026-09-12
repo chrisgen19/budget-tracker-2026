@@ -4,6 +4,7 @@ import { useId, useMemo, useState } from "react";
 import { AlertTriangle, ArrowLeft, Check, ChevronRight, Clock, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLabelsQuery, useQuickLabelsQuery } from "@/hooks/use-labels";
+import { labelRowAllowsCategory } from "@/lib/label-category-matching";
 import type { LabelWithCountAndSchedules } from "@/types";
 
 /** Minimum number of stable quick choices shown before the full picker. */
@@ -18,15 +19,40 @@ interface LabelPickerProps {
   onChange: (ids: string[]) => void;
   autoAppliedIds?: string[];
   transactionType?: "INCOME" | "EXPENSE";
+  /**
+   * The category the row is being filed under, when one has been chosen. Labels restricted to
+   * other categories are not offered. Absent or null offers everything the type allows, which is
+   * what the form renders before a category is picked.
+   */
+  categoryId?: string | null;
 }
+
+/**
+ * Why a label cannot be used here, or null when it can.
+ *
+ * Two independent restrictions, reported separately because the fix differs: the type one is
+ * changed on the label's "Applies To", the category one on its "Categories". A single "not
+ * available" marker would send the user to look in the wrong place half the time.
+ */
+const incompatibleReason = (
+  label: LabelWithCountAndSchedules,
+  transactionType?: "INCOME" | "EXPENSE",
+  categoryId?: string | null,
+): "type" | "category" | null => {
+  const typeAllows =
+    !transactionType ||
+    label.applicableTo === "BOTH" ||
+    label.applicableTo === transactionType;
+  if (!typeAllows) return "type";
+  if (!labelRowAllowsCategory(label, categoryId)) return "category";
+  return null;
+};
 
 const isCompatible = (
   label: LabelWithCountAndSchedules,
   transactionType?: "INCOME" | "EXPENSE",
-) =>
-  !transactionType ||
-  label.applicableTo === "BOTH" ||
-  label.applicableTo === transactionType;
+  categoryId?: string | null,
+) => incompatibleReason(label, transactionType, categoryId) === null;
 
 const byName = (a: LabelWithCountAndSchedules, b: LabelWithCountAndSchedules) =>
   a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
@@ -41,6 +67,7 @@ export function LabelPicker({
   onChange,
   autoAppliedIds = [],
   transactionType,
+  categoryId,
 }: LabelPickerProps) {
   const [showAll, setShowAll] = useState(false);
   const [search, setSearch] = useState("");
@@ -53,8 +80,8 @@ export function LabelPicker({
   const quickLabelIds = quickLabelsQuery.data ?? EMPTY_QUICK_LABEL_IDS;
 
   const compatibleLabels = useMemo(
-    () => labels.filter((label) => isCompatible(label, transactionType)),
-    [labels, transactionType],
+    () => labels.filter((label) => isCompatible(label, transactionType, categoryId)),
+    [labels, transactionType, categoryId],
   );
 
   const selectedLabels = useMemo(
@@ -83,6 +110,28 @@ export function LabelPicker({
       Math.max(QUICK_LABEL_COUNT, pinned.length),
     );
   }, [compatibleLabels, quickLabelIds]);
+
+  // Only selected labels can be mismatched: everything else is filtered out before it is shown.
+  // A label already on the row is deliberately kept rather than dropped -- a label vanishing from
+  // a saved transaction because its restriction changed later reads as data loss.
+  const mismatchByLabelId = useMemo(() => {
+    const reasons = new Map<string, "type" | "category">();
+    for (const label of selectedLabels) {
+      const reason = incompatibleReason(label, transactionType, categoryId);
+      if (reason) reasons.set(label.id, reason);
+    }
+    return reasons;
+  }, [selectedLabels, transactionType, categoryId]);
+
+  const renderMismatch = (labelId: string) => {
+    const reason = mismatchByLabelId.get(labelId);
+    if (!reason) return null;
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-cream-200/70 px-2 py-0.5 text-[11px] font-medium text-warm-400">
+        {reason === "type" ? "Not for this type" : "Not in this category"}
+      </span>
+    );
+  };
 
   const quickIds = useMemo(() => new Set(quickLabels.map((label) => label.id)), [quickLabels]);
   const selectedOutsideQuick = selectedLabels.filter((label) => !quickIds.has(label.id));
@@ -175,6 +224,7 @@ export function LabelPicker({
         style={{ backgroundColor: label.color }}
       />
       {label.name}
+      {renderMismatch(label.id)}
       <X aria-hidden="true" className="h-3.5 w-3.5 text-warm-400" />
     </button>
   );
@@ -224,7 +274,9 @@ export function LabelPicker({
         </div>
       ) : fullLabels.length === 0 ? (
         <div className="rounded-xl border border-cream-200 bg-cream-50/60 px-4 py-3 text-sm text-warm-400">
-          No labels are available for {transactionType === "INCOME" ? "income" : "expenses"}.
+          {categoryId
+            ? "No labels are available for this category."
+            : `No labels are available for ${transactionType === "INCOME" ? "income" : "expenses"}.`}
         </div>
       ) : showAll ? (
         <div id={allLabelsId} className="space-y-4">
@@ -307,6 +359,7 @@ export function LabelPicker({
                     <span className="min-w-0 flex-1 truncate text-sm font-medium text-warm-600">
                       {label.name}
                     </span>
+                    {renderMismatch(label.id)}
                     {isAuto && (
                       <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-amber-dark">
                         <Clock aria-hidden="true" className="h-3.5 w-3.5" />

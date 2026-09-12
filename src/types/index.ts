@@ -38,10 +38,17 @@ export type LabelWithCount = Label & {
   _count: { transactions: number };
 };
 
-/** Label with transaction count and schedules */
+/**
+ * Label with transaction count, schedules, and the categories it is restricted to.
+ *
+ * `categories` is **empty for an unrestricted label**, which is the overwhelming majority of them
+ * -- see `label-category-matching.ts`. Read it through `labelAllowsCategory` rather than testing
+ * the array directly, or the empty case gets inverted.
+ */
 export type LabelWithCountAndSchedules = Label & {
   _count: { transactions: number };
   schedules: LabelSchedule[];
+  categories: { categoryId: string }[];
 };
 
 /** Dashboard summary stats */

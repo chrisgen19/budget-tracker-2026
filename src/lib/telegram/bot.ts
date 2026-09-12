@@ -47,6 +47,7 @@ import { RECEIPT_ITEM_SHOW, renderReceiptItems } from "@/lib/telegram/receipt-re
 import { renderLabelBreakdown } from "@/lib/telegram/label-reply";
 import { monthsSince, previousMonthOf } from "@/lib/telegram/month-window";
 import { confirmPendingScan, scanToTransaction } from "@/lib/telegram/confirm-scan";
+import { labelAllowsCategory } from "@/lib/label-category-matching";
 import {
   hasPendingScan,
   isConfirmation,
@@ -1100,6 +1101,8 @@ async function handleReceiptPhoto(
   //
   // The *category* half of a caption ("category fun") is deliberately left in. Gemini sees the
   // whole category list and picks from it, which the bot has no better answer than.
+  // Parsed without a category, because the scan has not run yet and the category is its output.
+  // Re-read below once `scan.categoryId` exists; that is the only thing the second pass adds.
   const directive = readLabelDirective(rawCaption ?? "", labelLookup.labels, "EXPENSE");
   const caption = directive.rest || undefined;
 
@@ -1137,6 +1140,20 @@ async function handleReceiptPhoto(
   const categoryName =
     categories.find((c) => c.id === scan.categoryId)?.name ?? "Uncategorised";
 
+  // Re-read now that the scan has chosen a category, so a label limited to other categories is
+  // reported rather than carried to the save -- where `createTransactionBatch` would refuse the
+  // whole write and the receipt would be lost after the scan credit was already spent.
+  //
+  // Re-parsing rather than filtering the first pass's ids: the buckets are built inside the
+  // parser and a name moved between them by hand would be reported as two different problems.
+  // It is a regex over one caption, so the second pass costs nothing.
+  const labelled = readLabelDirective(
+    rawCaption ?? "",
+    labelLookup.labels,
+    "EXPENSE",
+    scan.categoryId
+  );
+
   let reply = `\ud83e\uddfe *Receipt read*\n\n`;
   reply += `\ud83d\udcdd *Description:* ${scan.description}\n`;
   reply += `\ud83d\udcb0 *Amount:* ${SYMBOL}${scan.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
@@ -1156,7 +1173,7 @@ async function handleReceiptPhoto(
   // ignored, and this is the moment they can still correct it. Same principle as the date repair:
   // an inference the user cannot see is one they cannot undo.
   if (caption) reply += `\n\u2139\ufe0f I used your caption as a hint.\n`;
-  reply += renderLabelNotice(directive, labelLookup.readable);
+  reply += renderLabelNotice(labelled, labelLookup.readable);
 
   reply += `\nNothing is saved yet. Tap a button below, or send a short description to correct it.`;
 
@@ -1196,8 +1213,8 @@ async function handleReceiptPhoto(
     updateId,
     reviewMessageId,
     createdAt: Date.now(),
-    labelIds: directive.ids,
-    labelNames: directive.names,
+    labelIds: labelled.ids,
+    labelNames: labelled.names,
   });
 }
 
@@ -1356,7 +1373,12 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     // detect, so there is nothing cheaper to test first; a review being open is itself the
     // signal that a reply might be naming a label.
     const lookup = hasPendingScan(chatId) ? await loadLabels() : null;
-    const directive = lookup ? readLabelDirective(text, lookup.labels, "EXPENSE") : null;
+    // The draft already has a category, so a label limited to other categories can be reported
+    // here rather than accepted and then refused by the write on save.
+    const pendingCategoryId = lookup ? (peekPendingScan(chatId)?.categoryId ?? null) : null;
+    const directive = lookup
+      ? readLabelDirective(text, lookup.labels, "EXPENSE", pendingCategoryId)
+      : null;
     // Any directive the parser understood is a label edit, including one naming a label that
     // cannot apply to an expense, or one that could mean two. Spelling those cases out here got
     // it wrong once per bucket added, each time renaming the draft to the text of the
@@ -1413,6 +1435,7 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
           names: revised.labelNames,
           unresolved: directive?.unresolved ?? [],
           incompatible: directive?.incompatible ?? [],
+          outOfCategory: directive?.outOfCategory ?? [],
           ambiguous: directive?.ambiguous ?? [],
         },
         lookup?.readable ?? true
@@ -1579,9 +1602,10 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       // with no GEMINI_API_KEY — which is the whole reason this path exists. Parsed per entry, so
       // a directive applies to the transaction it was written beside rather than to all of them:
       // a wrong label moves money in `getLabelBreakdown`, so it is the guess not worth making.
-      const directive = readLabelDirective(entry.description, labelLookup.labels, type);
+      // Parsed without a category first, because `rest` is what the category is matched *from*.
+      const parsed = readLabelDirective(entry.description, labelLookup.labels, type);
       // A clause that is *only* a directive leaves nothing to describe the purchase.
-      const description = directive.rest;
+      const description = parsed.rest;
 
       // No confident match returns null rather than a guess. It used to fall back to the first
       // category of that type, and the list is ordered defaults-first then alphabetically, so
@@ -1597,6 +1621,15 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       if (!category && (!GEMINI_ENABLED || entries.length > 1)) {
         category = findOtherCategory(type, categories);
       }
+
+      // Re-read now the category is known, so a label limited to other categories is reported
+      // instead of being sent on to a write that refuses the whole batch. Re-parsing rather than
+      // filtering the first pass's ids: the buckets are built inside the parser, and a name moved
+      // between them by hand would be reported as two different problems. It is a regex over one
+      // short clause, so the second pass costs nothing.
+      const directive = category
+        ? readLabelDirective(entry.description, labelLookup.labels, type, category.id)
+        : parsed;
 
       return { entry, type, directive, description, category };
     });
@@ -1637,6 +1670,7 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
               names: [],
               unresolved: [...new Set(prepared.flatMap((p) => p.directive.unresolved))],
               incompatible: [...new Set(prepared.flatMap((p) => p.directive.incompatible))],
+              outOfCategory: [...new Set(prepared.flatMap((p) => p.directive.outOfCategory))],
               ambiguous: unique(
                 prepared.flatMap((p) => p.directive.ambiguous),
                 (a) => a.name
@@ -1674,14 +1708,26 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       const asked = readLabelDirective(
         text,
         knownLabels,
-        txData.type === "INCOME" ? "INCOME" : "EXPENSE"
+        txData.type === "INCOME" ? "INCOME" : "EXPENSE",
+        txData.categoryId
       );
 
+      // The model is told which labels each category accepts, but it is still only a hint: a
+      // name it returns is re-checked against the category it also returned, and dropped if the
+      // restriction excludes it. The write refuses such a pairing outright, so passing one
+      // through would lose the whole transaction rather than one label.
+      //
+      // Dropped in silence, unlike `asked`: nobody asked for a label the model invented, so
+      // there is nothing to report.
       const labelIds = [
         ...new Set([
           ...namedLabels
-            .map((name) => findByName(knownLabels, name)?.id)
-            .filter((id): id is string => !!id),
+            .map((name) => findByName(knownLabels, name))
+            .filter(
+              (label): label is BotLabel =>
+                !!label && labelAllowsCategory(label.categoryIds, txData.categoryId)
+            )
+            .map((label) => label.id),
           ...asked.ids,
         ]),
       ];
@@ -1708,6 +1754,7 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
               names: [],
               unresolved: asked.unresolved,
               incompatible: asked.incompatible,
+              outOfCategory: asked.outOfCategory,
               ambiguous: asked.ambiguous,
             },
             labelsReadable

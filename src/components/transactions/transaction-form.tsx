@@ -123,6 +123,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   const { scheduledLabelId } = useScheduledLabel(
     isEditing ? undefined : resolveTransactionDate(watchedDate, user.timezoneOffset),
     selectedType,
+    watchedCategoryId,
   );
   const userRemovedAutoLabels = useRef<Set<string>>(new Set());
   const autoAppliedLabels = useRef<Set<string>>(new Set());
@@ -515,6 +516,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                 }}
                 autoAppliedIds={autoAppliedSnapshot}
                 transactionType={selectedType}
+                categoryId={watchedCategoryId}
               />
             )}
 

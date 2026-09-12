@@ -3,10 +3,14 @@
  * Shared between client (transaction form) and server (batch API, retroactive apply).
  */
 
+import { labelAllowsCategory } from "@/lib/label-category-matching";
+
 export interface ScheduleRule {
   labelId: string;
   labelCreatedAt: Date | string;
   applicableTo: string; // "EXPENSE" | "INCOME" | "BOTH"
+  /** Categories the label is restricted to. **Empty means every category**, not none. */
+  categoryIds: string[];
   days: number[];
   startTime: string; // "HH:mm"
   endTime: string;   // "HH:mm"
@@ -37,12 +41,17 @@ export const toLocalComponents = (dateUTC: Date, timezoneOffset: number) => {
  * or null if none match.
  *
  * Priority: the label with the earliest `createdAt` wins when multiple match.
+ *
+ * A schedule never overrides the label's own restrictions: a rule whose label the transaction's
+ * type or category excludes simply does not match. Auto-applying past a restriction would be the
+ * one path that could write the mismatch the pickers and the write checks all refuse.
  */
 export const getScheduledLabelId = (
   transactionDateUTC: Date,
   timezoneOffset: number,
   scheduleRules: ScheduleRule[],
-  transactionType?: string
+  transactionType?: string,
+  categoryId?: string | null
 ): string | null => {
   if (scheduleRules.length === 0) return null;
 
@@ -54,7 +63,8 @@ export const getScheduledLabelId = (
       r.days.includes(day) &&
       r.startTime <= time &&
       time < r.endTime &&
-      (!transactionType || r.applicableTo === "BOTH" || r.applicableTo === transactionType)
+      (!transactionType || r.applicableTo === "BOTH" || r.applicableTo === transactionType) &&
+      labelAllowsCategory(r.categoryIds, categoryId)
   );
 
   if (matching.length === 0) return null;

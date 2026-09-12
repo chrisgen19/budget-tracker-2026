@@ -94,10 +94,18 @@ export function useCreateLabel() {
   });
 }
 
+/**
+ * The 409 the edit route returns when a save would strip existing associations.
+ *
+ * Covers both narrowings, because a save can do both at once and asking twice for one press of
+ * Update would be worse than asking once about the total. `removedType` is null when only the
+ * category restriction narrowed.
+ */
 export interface TypeChangeConfirmation {
   needsConfirmation: true;
   affectedCount: number;
-  removedType: string;
+  removedType: string | null;
+  categoriesNarrowed: boolean;
 }
 
 export function useUpdateLabel() {

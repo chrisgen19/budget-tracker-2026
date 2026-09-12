@@ -238,6 +238,7 @@ export function QuickTileForm({
         <LabelPicker
           selectedIds={labelIds}
           onChange={(ids) => setValue("labelIds", ids)}
+          categoryId={categoryId}
           transactionType={type}
         />
         {/* Rendered, or pressing Save past the cap does nothing at all: the resolver refuses the

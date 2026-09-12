@@ -113,9 +113,12 @@ describe("TransactionForm account-local dates", () => {
       />,
     );
 
+    // The category goes in too: a label restricted to other categories must not be auto-applied,
+    // and the hook is the client half of the same decision the write path makes.
     expect(scheduledLabelMocks.useScheduledLabel).toHaveBeenLastCalledWith(
       "2026-08-28T00:30:00.000Z",
       "EXPENSE",
+      "food",
     );
   });
 
@@ -212,6 +215,7 @@ describe("TransactionForm account-local dates", () => {
       expect(scheduledLabelMocks.useScheduledLabel).toHaveBeenLastCalledWith(
         "2026-09-06T04:15:00.000Z",
         "EXPENSE",
+        "food",
       ),
     );
     expect(
@@ -309,7 +313,11 @@ describe("TransactionForm account-local dates", () => {
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "" } });
 
     await waitFor(() =>
-      expect(scheduledLabelMocks.useScheduledLabel).toHaveBeenLastCalledWith("", "EXPENSE"),
+      expect(scheduledLabelMocks.useScheduledLabel).toHaveBeenLastCalledWith(
+        "",
+        "EXPENSE",
+        "food",
+      ),
     );
     expect(screen.queryByText("Choose a date.")).toBeNull();
 

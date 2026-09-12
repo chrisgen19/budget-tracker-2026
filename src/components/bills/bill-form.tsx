@@ -428,6 +428,7 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
               selectedIds={watchedLabelIds}
               onChange={(ids) => setValue("labelIds", ids)}
               transactionType={selectedType}
+              categoryId={watchedCategoryId}
             />
 
             {/* Description */}

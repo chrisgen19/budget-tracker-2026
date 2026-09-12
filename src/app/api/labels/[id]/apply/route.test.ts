@@ -46,10 +46,11 @@ const apply = (id = "label-1") =>
     params: Promise.resolve({ id }),
   });
 
-const row = (id: string, labels: { id: string }[] = []) => ({
+const row = (id: string, labels: { id: string }[] = [], categoryId = "cat_transport") => ({
   id,
   date: new Date("2026-09-07T02:00:00.000Z"),
   type: "EXPENSE" as const,
+  categoryId,
   labels,
 });
 
@@ -61,6 +62,7 @@ describe("POST /api/labels/[id]/apply", () => {
       id: "label-1",
       applicableTo: "BOTH",
       schedules: [{ id: "sched-1" }],
+      categories: [],
     });
     mocks.getScheduleContext.mockResolvedValue({ labels: [], timezoneOffset: -480 });
     mocks.transactionLabelCreateManyAndReturn.mockResolvedValue([{ transactionId: "tx-1" }]);
@@ -187,6 +189,38 @@ describe("POST /api/labels/[id]/apply", () => {
     await apply();
 
     expect(mocks.databaseTransaction).not.toHaveBeenCalled();
+  });
+
+  // The category is what `matchScheduledLabel` needs to refuse auto-applying a restricted label
+  // into a category it excludes, and the scan is the only thing that will ever clean up a link
+  // left behind by a restriction added later.
+  it("passes each row's category to the matcher", async () => {
+    mocks.transactionFindMany.mockResolvedValueOnce([row("tx-1", [], "cat_shopping")]);
+    mocks.matchScheduledLabel.mockReturnValue(null);
+
+    await apply();
+
+    expect(mocks.matchScheduledLabel).toHaveBeenCalledWith(
+      expect.any(Date),
+      expect.anything(),
+      "EXPENSE",
+      "cat_shopping"
+    );
+  });
+
+  // Deliberately not narrowed out of the scan the way the *type* restriction is: a row outside
+  // the categories may still be carrying the label from before the restriction existed, and
+  // filtering it out of the query would leave it there forever.
+  it("removes a link from a row the matcher now rejects on category", async () => {
+    mocks.transactionFindMany.mockResolvedValueOnce([
+      row("tx-1", [{ id: "link-1" }], "cat_shopping"),
+    ]);
+    mocks.matchScheduledLabel.mockReturnValue(null);
+    mocks.transactionLabelCreateManyAndReturn.mockResolvedValue([]);
+
+    const response = await apply();
+
+    expect(await response.json()).toMatchObject({ applied: 0, removed: 1 });
   });
 
   it("404s a label that is not the caller's, before touching any transaction", async () => {

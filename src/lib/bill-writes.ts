@@ -13,6 +13,7 @@ import {
 import { addUtcDays, userToday, utcDayStart } from "@/lib/bill-dates";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 import { categoriesAreUsable } from "@/lib/transaction-writes";
+import { labelAllowsCategory, labelRowAllowsCategory } from "@/lib/label-category-matching";
 
 /**
  * The single write path for settling a recurring bill, shared by the app's route and the MCP tool.
@@ -255,7 +256,14 @@ export const settleBill = async ({
 
   const bill = await prisma.scheduledTransaction.findUnique({
     where: { id: billId },
-    include: { category: true, labels: { include: { label: true } } },
+    include: {
+      category: true,
+      // `label.categories` is selected only here, not in `BILL_INCLUDE`: this is the one path
+      // that has to decide whether a pinned label may be carried onto the payment it writes, and
+      // widening the shape every bill response is serialised from would put the restriction on
+      // the wire for every list request that has no use for it.
+      labels: { include: { label: { include: { categories: { select: { categoryId: true } } } } } },
+    },
   });
 
   if (!bill || bill.userId !== userId) return { ok: false, reason: "BILL_NOT_FOUND" };
@@ -378,8 +386,17 @@ export const settleBill = async ({
     if (bill.isVariable && paidAmount === undefined) return { ok: false, reason: "AMOUNT_REQUIRED" };
 
     // Bill labels take priority over scheduled auto-labels.
+    //
+    // Filtered, not refused, and deliberately unlike `createBill`/`updateBill`: nobody named these
+    // labels at this moment, they were chosen when the bill was set up and may have been narrowed
+    // since. Refusing here would make a bill unpayable because of an edit to one of its labels,
+    // and paying a bill is the one action that must not be blocked by tidying elsewhere.
     const billLabelIds = (bill.labels ?? [])
-      .filter((bl) => bl.label.applicableTo === "BOTH" || bl.label.applicableTo === bill.type)
+      .filter(
+        (bl) =>
+          (bl.label.applicableTo === "BOTH" || bl.label.applicableTo === bill.type) &&
+          labelRowAllowsCategory(bl.label, bill.categoryId),
+      )
       .map((bl) => bl.labelId);
     let transactionLabelIds: string[] = [];
 
@@ -388,7 +405,9 @@ export const settleBill = async ({
     } else {
       const paymentDate = new Date();
       const ctx = await getScheduleContext(userId);
-      const scheduledLabelId = ctx ? matchScheduledLabel(paymentDate, ctx, bill.type) : null;
+      const scheduledLabelId = ctx
+        ? matchScheduledLabel(paymentDate, ctx, bill.type, bill.categoryId)
+        : null;
       if (scheduledLabelId) transactionLabelIds = [scheduledLabelId];
     }
 
@@ -725,6 +744,8 @@ export type BillWriteFailureReason =
   | "CATEGORY_NOT_USABLE"
   /** A label id was not the caller's. */
   | "LABELS_NOT_OWNED"
+  /** A newly added label is restricted to categories that exclude the bill's effective category. */
+  | "LABELS_NOT_IN_CATEGORY"
   /** CUSTOM without an interval, or an end date before the start date. */
   | "INVALID_SCHEDULE"
   /** A patch that names nothing to change. */
@@ -779,32 +800,56 @@ export interface BillDefinition {
 export type BillPatch = Partial<BillDefinition> & { labelIds?: string[] };
 
 /**
- * Resolve the labels a bill may carry, type-filtered against the bill's *effective* type.
+ * Resolve the labels a bill may carry, filtered against the bill's *effective* type and category.
  *
- * Same rule as the transaction write path: ownership is a refusal, an incompatible type is a
- * report. A label whose `applicableTo` excludes the bill's type is neither applied nor an error --
- * silently writing nothing is what made a receipt review promise a label and then not write it.
+ * Same rules as the transaction write path, and they differ between the two restrictions on
+ * purpose. Ownership is a refusal. An incompatible **type** is a report -- silently writing
+ * nothing is what made a receipt review promise a label and then not write it. An incompatible
+ * **category** is a refusal, because the app's own picker cannot produce one: naming such a label
+ * means a stale client or a model that guessed, and filing the bill with no label while reporting
+ * success is the one outcome nobody notices.
+ *
+ * `grandfathered` holds the labels already on the bill, which are never refused however the
+ * restriction has since changed. Narrowing a label's categories is an edit to the *label*, and it
+ * must not make an existing bill unsaveable -- down to correcting a typo in its description.
  */
 const resolveBillLabels = async (
   prisma: PrismaClient,
   userId: string,
   labelIds: string[],
   type: TransactionType,
-): Promise<{ ok: false } | { ok: true; ids: string[]; dropped: DroppedBillLabel[] }> => {
+  categoryId: string,
+  grandfathered: ReadonlySet<string>,
+): Promise<
+  | { ok: false; reason: "LABELS_NOT_OWNED" | "LABELS_NOT_IN_CATEGORY" }
+  | { ok: true; ids: string[]; dropped: DroppedBillLabel[] }
+> => {
   const unique = [...new Set(labelIds)];
   if (unique.length === 0) return { ok: true, ids: [], dropped: [] };
 
   const owned = await prisma.label.findMany({
     where: { id: { in: unique }, userId },
-    select: { id: true, name: true, applicableTo: true },
+    select: {
+      id: true,
+      name: true,
+      applicableTo: true,
+      categories: { select: { categoryId: true } },
+    },
   });
-  if (owned.length !== unique.length) return { ok: false };
+  if (owned.length !== unique.length) return { ok: false, reason: "LABELS_NOT_OWNED" };
 
   const ids: string[] = [];
   const dropped: DroppedBillLabel[] = [];
   for (const label of owned) {
-    if (label.applicableTo === "BOTH" || label.applicableTo === type) ids.push(label.id);
-    else dropped.push({ labelId: label.id, name: label.name, reason: "TYPE_MISMATCH" });
+    if (label.applicableTo !== "BOTH" && label.applicableTo !== type) {
+      dropped.push({ labelId: label.id, name: label.name, reason: "TYPE_MISMATCH" });
+      continue;
+    }
+    const allowedCategoryIds = label.categories.map((c) => c.categoryId);
+    if (!grandfathered.has(label.id) && !labelAllowsCategory(allowedCategoryIds, categoryId)) {
+      return { ok: false, reason: "LABELS_NOT_IN_CATEGORY" };
+    }
+    ids.push(label.id);
   }
   return { ok: true, ids, dropped };
 };
@@ -921,8 +966,16 @@ export const createBill = async ({
   ]);
   if (!usable) return { ok: false, reason: "CATEGORY_NOT_USABLE" };
 
-  const labels = await resolveBillLabels(prisma, userId, labelIds ?? [], input.type);
-  if (!labels.ok) return { ok: false, reason: "LABELS_NOT_OWNED" };
+  // Nothing to grandfather on a create: every label named here is being added.
+  const labels = await resolveBillLabels(
+    prisma,
+    userId,
+    labelIds ?? [],
+    input.type,
+    input.categoryId,
+    new Set(),
+  );
+  if (!labels.ok) return { ok: false, reason: labels.reason };
 
   const created = await prisma.$transaction(async (tx) => {
     if (assertStillPermitted && !(await assertStillPermitted(tx))) return null;
@@ -1032,8 +1085,17 @@ export const updateBill = async ({
   // Omitting `labelIds` preserves what is there, dropping only what the effective type now
   // excludes. Passing `[]` clears them. Same rule as `updateTransactions`.
   const requestedLabelIds = patch.labelIds ?? stored.labels.map((bl) => bl.labelId);
-  const labels = await resolveBillLabels(prisma, userId, requestedLabelIds, effective.type);
-  if (!labels.ok) return { ok: false, reason: "LABELS_NOT_OWNED" };
+  // Labels already on the bill pass whatever their restriction now says, so narrowing a label's
+  // categories cannot make an existing bill unsaveable. Only what this patch *adds* is checked.
+  const labels = await resolveBillLabels(
+    prisma,
+    userId,
+    requestedLabelIds,
+    effective.type,
+    effective.categoryId,
+    new Set(stored.labels.map((bl) => bl.labelId)),
+  );
+  if (!labels.ok) return { ok: false, reason: labels.reason };
 
   const before = stored.labels.map((bl) => bl.labelId).sort();
   const after = [...labels.ids].sort();

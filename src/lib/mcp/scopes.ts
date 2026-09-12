@@ -54,7 +54,7 @@ export const MCP_SCOPE_LABELS: Record<McpScope, string> = {
   "bills:write":
     "Settle a recurring bill (pay, skip, snooze, or link a payment already recorded), and create or change bills. Paying writes a transaction and advances the schedule. Cannot delete a bill, only switch it off",
   "labels:write":
-    "Create new labels. Cannot rename or delete an existing one, and cannot change what any transaction is tagged with",
+    "Create new labels, optionally limited to chosen categories. Cannot rename, re-scope or delete an existing one, and cannot change what any transaction is tagged with",
 };
 
 /**

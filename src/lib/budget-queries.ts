@@ -950,11 +950,23 @@ export const getLabelList = async (
     where.applicableTo = { in: [params.applicableTo, "BOTH"] };
   }
 
+  // An unrestricted label has **no** rows in `label_categories` and is usable everywhere, so the
+  // filter is "has no restriction, or names this one". Expressing it as `categories: { some: ... }`
+  // alone would return only the restricted labels and hide every general one -- which is the whole
+  // list for most accounts.
+  if (params.categoryId) {
+    where.OR = [
+      { categories: { none: {} } },
+      { categories: { some: { categoryId: params.categoryId } } },
+    ];
+  }
+
   const labels = await prisma.label.findMany({
     where,
     include: {
       _count: { select: { transactions: true } },
       schedules: { orderBy: { createdAt: "asc" } },
+      categories: { select: { categoryId: true } },
     },
     orderBy: { name: "asc" },
   });
@@ -964,6 +976,7 @@ export const getLabelList = async (
     name: l.name,
     color: l.color,
     applicableTo: l.applicableTo,
+    categoryIds: l.categories.map((c) => c.categoryId),
     transactionCount: l._count.transactions,
     schedules: l.schedules.map((sc) => ({
       days: sc.days,

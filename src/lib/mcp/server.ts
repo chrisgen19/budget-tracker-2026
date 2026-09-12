@@ -61,6 +61,7 @@ import {
   resolveTransactionDate,
   HH_MM,
   MAX_BATCH_TRANSACTIONS,
+  MAX_LABEL_CATEGORIES,
   MAX_UPDATE_TRANSACTIONS,
 } from "../validations";
 import {
@@ -810,8 +811,10 @@ export const createBudgetMcpServer = ({
       title: "Label list",
       description:
         "List the user's labels with how many transactions carry each, which transaction types " +
-        "they apply to, and any schedules that auto-apply them. Useful for finding label IDs to " +
-        "use with other tools.",
+        "and categories they apply to, and any schedules that auto-apply them. Useful for " +
+        "finding label IDs to use with other tools. Each label's `categoryIds` lists the " +
+        "categories it is limited to; an EMPTY array means it may be used on ANY category, not " +
+        "none.",
       inputSchema: {
         applicableTo: z
           .enum(["INCOME", "EXPENSE"])
@@ -819,12 +822,21 @@ export const createBudgetMcpServer = ({
           .describe(
             "Only labels usable on this transaction type. Labels marked BOTH always match."
           ),
+        categoryId: z
+          .string()
+          .optional()
+          .describe(
+            "Only labels usable on this category. Labels with no category restriction always " +
+              "match. Pass the categoryId you intend to write a transaction or bill under: " +
+              "naming a label outside its categories is refused by create_transactions, " +
+              "update_transactions, create_bill and update_bill."
+          ),
       },
       outputSchema: labelListOutput,
       annotations: { readOnlyHint: true },
     },
-    async ({ applicableTo }) => {
-      const result = await getLabelList(prisma, userId, { applicableTo });
+    async ({ applicableTo, categoryId }) => {
+      const result = await getLabelList(prisma, userId, { applicableTo, categoryId });
       const payload = { labels: result };
       return {
         content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
@@ -1967,6 +1979,17 @@ export const createBudgetMcpServer = ({
           .enum(["EXPENSE", "INCOME", "BOTH"])
           .optional()
           .describe("Which transaction types may carry it. Defaults to BOTH."),
+        categoryIds: z
+          .array(z.string())
+          .max(MAX_LABEL_CATEGORIES)
+          .optional()
+          .describe(
+            "Limit the label to these categories, so it is only offered and only accepted on " +
+              "transactions filed under one of them. OMIT IT to leave the label usable on every " +
+              "category, which is the default and what nearly every label wants; an empty array " +
+              "means the same thing. Every id must be of a type the label's applicableTo allows. " +
+              "Call get_category_list for valid ids."
+          ),
         schedules: z
           .array(
             z.object({
@@ -1995,7 +2018,7 @@ export const createBudgetMcpServer = ({
       outputSchema: createLabelOutput,
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ name, color, applicableTo, schedules }) => {
+    async ({ name, color, applicableTo, categoryIds, schedules }) => {
       const permission = resolveWritePermission(scopes, writesEnabledUntil, "labels:write");
       if (!permission.allowed) {
         const message =
@@ -2025,6 +2048,7 @@ export const createBudgetMcpServer = ({
         color,
         applicableTo: applicableTo ?? "BOTH",
         schedules,
+        categoryIds,
         assertStillPermitted: async (tx) => {
           const current = await tx.user.findUnique({
             where: { id: userId },
@@ -2050,6 +2074,7 @@ export const createBudgetMcpServer = ({
         name: result.label.name,
         color: result.label.color,
         applicableTo: result.label.applicableTo,
+        categoryIds: result.label.categories.map((c) => c.categoryId),
         schedules: result.label.schedules.map((s) => ({
           id: s.id,
           days: s.days,

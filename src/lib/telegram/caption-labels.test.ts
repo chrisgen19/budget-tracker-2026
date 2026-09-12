@@ -189,10 +189,65 @@ describe("readLabelDirective", () => {
       names: [],
       unresolved: [],
       incompatible: [],
+      outOfCategory: [],
       ambiguous: [],
       removedDirective: false,
       rest: "",
     });
+  });
+});
+
+describe("label category restriction", () => {
+  const SCOPED: BotLabel[] = [
+    { id: "lbl_tnvs", name: "TNVS", applicableTo: "EXPENSE", categoryIds: ["cat_transport"] },
+    { id: "lbl_shopee", name: "Shopee", applicableTo: "EXPENSE", categoryIds: ["cat_shopping"] },
+    { id: "lbl_work", name: "Work", applicableTo: "EXPENSE" },
+  ];
+
+  it("applies a label the category allows", () => {
+    const result = readLabelDirective("fare, label it tnvs", SCOPED, "EXPENSE", "cat_transport");
+
+    expect(result.names).toEqual(["TNVS"]);
+    expect(result.outOfCategory).toEqual([]);
+  });
+
+  // Worse than a type mismatch to pass through: `createTransactionBatch` refuses the whole write
+  // on a category mismatch rather than filtering it, so the transaction would be lost.
+  it("reports a label the category excludes, in its own bucket", () => {
+    const result = readLabelDirective("fare, label it shopee", SCOPED, "EXPENSE", "cat_transport");
+
+    expect(result.ids).toEqual([]);
+    expect(result.outOfCategory).toEqual(["Shopee"]);
+    // Kept apart from both of the others: the label exists, and it does apply to this type.
+    expect(result.incompatible).toEqual([]);
+    expect(result.unresolved).toEqual([]);
+  });
+
+  it("always applies a label with no category restriction", () => {
+    expect(
+      readLabelDirective("label it work", SCOPED, "EXPENSE", "cat_shopping").names
+    ).toEqual(["Work"]);
+  });
+
+  it("keeps the allowed half of a list", () => {
+    const result = readLabelDirective(
+      "label it tnvs and shopee",
+      SCOPED,
+      "EXPENSE",
+      "cat_transport"
+    );
+
+    expect(result.names).toEqual(["TNVS"]);
+    expect(result.outOfCategory).toEqual(["Shopee"]);
+  });
+
+  // The bot parses the directive before the scan or the matcher has chosen a category. Refusing
+  // on an unknown category would report a perfectly usable label as unusable.
+  it("skips the check when no category is given", () => {
+    const result = readLabelDirective("label it shopee", SCOPED, "EXPENSE");
+
+    expect(result.names).toEqual(["Shopee"]);
+    expect(result.outOfCategory).toEqual([]);
   });
 });
 

@@ -66,7 +66,7 @@ const validDay = (value: unknown): string | null => {
  * writes the wrong label onto a row, and `getLabelBreakdown` splits an amount across whatever
  * labels it carries, so that quietly moves money in the breakdown.
  */
-export const findByName = (refs: NamedRef[], name: unknown): NamedRef | null => {
+export const findByName = <T extends NamedRef>(refs: T[], name: unknown): T | null => {
   if (typeof name !== "string" || !name.trim()) return null;
   const needle = name.trim().toLowerCase();
   return refs.find((r) => r.name.toLowerCase() === needle) ?? null;

@@ -372,6 +372,7 @@ const labelItem = z.object({
   name: z.string(),
   color: z.string(),
   applicableTo: z.string(),
+  categoryIds: z.array(z.string()),
   transactionCount: z.number(),
   schedules: z.array(
     z.object({
@@ -983,6 +984,8 @@ export const createLabelOutput = {
   name: z.string(),
   color: z.string(),
   applicableTo: z.enum(["EXPENSE", "INCOME", "BOTH"]),
+  /** Categories the label is limited to. **Empty means every category**, not none. */
+  categoryIds: z.array(z.string()),
   /** Auto-apply rules, if any were given. A schedule tags matching transactions at write time. */
   schedules: z.array(
     z.object({

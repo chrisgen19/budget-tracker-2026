@@ -21,6 +21,8 @@ export const WRITE_ERROR_MESSAGES: Record<BatchFailureReason, string> = {
   LABELS_NOT_OWNED: "One or more label IDs are not this user's. Call get_label_list for valid IDs.",
   CATEGORIES_NOT_OWNED:
     "One or more category IDs are not this user's. Call get_category_list for valid IDs.",
+  LABELS_NOT_IN_CATEGORY:
+    "One or more labels are limited to categories that do not include the one the transaction is filed under. Nothing was written. Call get_label_list with that `categoryId` to see which labels it accepts, then send only those or drop `labelIds`.",
   // Writes were switched off between the request arriving and the rows being written. The check
   // runs inside the transaction before anything is created, so nothing was saved. Saying so
   // matters: it used to share the "could not confirm" wording below, which sent the caller
@@ -58,6 +60,8 @@ export const UPDATE_ERROR_MESSAGES: Record<UpdateFailureReason, string> = {
     "One or more transaction IDs do not exist on this account. Nothing was changed. Call search_transactions or get_top_expenses for current IDs.",
   NO_FIELDS:
     "Every transaction must name at least one field to change. Nothing was changed. Send the fields you want to differ and omit the rest.",
+  LABELS_NOT_IN_CATEGORY:
+    "One or more labels being added are limited to categories that do not include the transaction's effective category. Nothing was changed. Labels already on a row are never refused, so this names only a label the patch adds. Call get_label_list with that `categoryId` to see which labels it accepts.",
   DUPLICATE_ID:
     "The same transaction ID appeared more than once. Nothing was changed. Combine the edits for that transaction into a single entry.",
   LABELS_NOT_OWNED:
@@ -128,6 +132,8 @@ export const BILL_WRITE_ERROR_MESSAGES: Record<BillWriteFailureReason, string> =
     "That category is not this user's, or its type does not match the bill's. Nothing was changed. If you changed `type`, send a `categoryId` of that same type as well; call get_category_list for valid IDs.",
   LABELS_NOT_OWNED:
     "One or more label IDs are not this user's. Nothing was changed. Call get_label_list for valid IDs, or create_label to make one.",
+  LABELS_NOT_IN_CATEGORY:
+    "One or more labels being added are limited to categories that do not include the bill's effective category. Nothing was changed. Labels already on the bill are never refused, so this names only a label this call adds. Call get_label_list with that `categoryId` to see which labels it accepts.",
   INVALID_SCHEDULE:
     "The schedule is not usable: a CUSTOM frequency needs `customIntervalDays`, and `endDate` cannot fall before `startDate`. Nothing was changed.",
   NO_FIELDS:
@@ -142,6 +148,8 @@ export const BILL_WRITE_ERROR_MESSAGES: Record<BillWriteFailureReason, string> =
 export const LABEL_WRITE_ERROR_MESSAGES: Record<LabelWriteFailureReason, string> = {
   DUPLICATE_NAME:
     "A label with that name already exists on this account (names are compared without case). Nothing was created. Call get_label_list and use the existing label's ID.",
+  INVALID_CATEGORIES:
+    "One or more `categoryIds` are not usable: unknown, not this user's, or of a type the label's `applicableTo` excludes. Nothing was created. Call get_category_list for valid IDs, or omit `categoryIds` to leave the label available on every category.",
   NO_LONGER_PERMITTED:
     "Writes were switched off before this could be saved, so nothing was created. Turn them on in Profile > MCP Access, then try again.",
 };
