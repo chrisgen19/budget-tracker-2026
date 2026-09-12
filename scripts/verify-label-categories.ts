@@ -29,25 +29,35 @@ const check = (name: string, ok: boolean, detail = "") => {
 };
 
 async function main() {
-  const user = await prisma.user.create({
-    data: { email: `lc-${Date.now()}@test.local`, name: "LC", password: "x" },
-  });
-  const transport = await prisma.category.create({
-    data: { name: "Transportation LC", type: "EXPENSE", icon: "Car", color: "#111", userId: user.id },
-  });
-  const shopping = await prisma.category.create({
-    data: { name: "Shopping LC", type: "EXPENSE", icon: "Bag", color: "#222", userId: user.id },
-  });
-  const salary = await prisma.category.create({
-    data: { name: "Salary LC", type: "INCOME", icon: "Wallet", color: "#333", userId: user.id },
-  });
+  // Everything the run creates, so cleanup can tolerate a half-built fixture. The `try` opens
+  // before the first insert rather than after the last: a category creation that throws would
+  // otherwise skip `finally` entirely and leave the user and whatever came before it behind.
+  let user: Awaited<ReturnType<typeof prisma.user.create>> | null = null;
+  const createdCategoryIds: string[] = [];
 
-  const args = { prisma: prisma as never, userId: user.id, color: "#A8763E" as const };
+  const makeCategory = async (
+    name: string,
+    type: "EXPENSE" | "INCOME",
+    icon: string,
+    color: string,
+    userId: string
+  ) => {
+    const category = await prisma.category.create({
+      data: { name, type, icon, color, userId },
+    });
+    createdCategoryIds.push(category.id);
+    return category;
+  };
 
-  // Cleanup goes in `finally`, not after the checks: a dependent sequence that bails early
-  // returns, and an assertion that throws unwinds, and either one used to leave the throwaway
-  // user, its categories and its transactions behind in the dev database.
   try {
+    user = await prisma.user.create({
+      data: { email: `lc-${Date.now()}@test.local`, name: "LC", password: "x" },
+    });
+    const transport = await makeCategory("Transportation LC", "EXPENSE", "Car", "#111", user.id);
+    const shopping = await makeCategory("Shopping LC", "EXPENSE", "Bag", "#222", user.id);
+    const salary = await makeCategory("Salary LC", "INCOME", "Wallet", "#333", user.id);
+
+    const args = { prisma: prisma as never, userId: user.id, color: "#A8763E" as const };
     // --- createLabel ---
     const tnvs = await createLabel({ ...args, name: "TNVS", applicableTo: "EXPENSE", categoryIds: [transport.id] });
     check("creates a label restricted to a category", tnvs.ok);
@@ -282,14 +292,75 @@ async function main() {
         mixed.status === 200,
         String(mixed.status)
       );
+
+      // --- the bill edit route's category ownership (CWE-639) ---
+      //
+      // The bill is ownership-checked and the category was not, so a caller could point their own
+      // bill at somebody else's category id -- and `billInclude` returns `category`, so the
+      // response handed back that category's name. Proved with a real second account rather than
+      // a made-up id, since a nonexistent id fails the foreign key and would pass this check for
+      // the wrong reason.
+      const stranger = await prisma.user.create({
+        data: { email: `lc-other-${Date.now()}@test.local`, name: "LC Other", password: "x" },
+      });
+      const strangerCategory = await prisma.category.create({
+        data: {
+          name: "Stranger Only",
+          type: "EXPENSE",
+          icon: "Lock",
+          color: "#555",
+          userId: stranger.id,
+        },
+      });
+      try {
+        const billBody = {
+          amount: 100,
+          description: "Rent",
+          type: "EXPENSE" as const,
+          categoryId: transport.id,
+          frequency: "MONTHLY" as const,
+          reminderDaysBefore: 3,
+          startDate: "2026-10-01",
+          isActive: true,
+        };
+        const madeBill = await send("/api/bills", "POST", billBody);
+        const billId = ((await madeBill.json().catch(() => null)) as { id?: string } | null)?.id;
+        if (!billId) {
+          check("the bill the ownership check depends on was created", false, String(madeBill.status));
+        } else {
+          const stolen = await send(`/api/bills/${billId}`, "PUT", {
+            ...billBody,
+            categoryId: strangerCategory.id,
+          });
+          check(
+            "PUT /api/bills/[id] refuses a category belonging to another account",
+            stolen.status === 400,
+            String(stolen.status)
+          );
+          const leaked = JSON.stringify(await stolen.json().catch(() => ({})));
+          check(
+            "and does not echo that category's name back",
+            !leaked.includes("Stranger Only"),
+            leaked.slice(0, 80)
+          );
+        }
+      } finally {
+        await prisma.scheduledTransaction.deleteMany({ where: { userId: user.id } });
+        await prisma.user.delete({ where: { id: stranger.id } });
+        await prisma.category.deleteMany({ where: { id: strangerCategory.id } });
+      }
     }
 
   } finally {
-    await prisma.transaction.deleteMany({ where: { userId: user.id } });
-    await prisma.user.delete({ where: { id: user.id } });
-    await prisma.category.deleteMany({
-      where: { id: { in: [transport.id, shopping.id, salary.id] } },
-    });
+    // Tolerates a fixture that never finished being built: `user` is null if its own insert threw,
+    // and `createdCategoryIds` holds only what really landed.
+    if (user) {
+      await prisma.transaction.deleteMany({ where: { userId: user.id } });
+      await prisma.user.delete({ where: { id: user.id } });
+    }
+    if (createdCategoryIds.length > 0) {
+      await prisma.category.deleteMany({ where: { id: { in: createdCategoryIds } } });
+    }
   }
 }
 

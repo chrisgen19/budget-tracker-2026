@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { labelRowAllowsCategory } from "@/lib/label-category-matching";
+import { categoriesAreUsable } from "@/lib/transaction-writes";
 import { scheduledTransactionSchema } from "@/lib/validations";
 import { advanceToNextUnpaidOccurrence } from "@/lib/bill-utils";
 import { lockBillRow } from "@/lib/bill-writes";
@@ -118,6 +119,31 @@ export async function PUT(
         startDate,
         endDate,
       );
+
+      // The category has to be one this caller may actually use, which nothing here checked.
+      //
+      // `createBill` and `updateBill` both run `categoriesAreUsable`; this route keeps its own
+      // implementation and simply wrote whatever `categoryId` arrived. The bill is ownership-
+      // checked, the category was not, so a caller could point their own bill at somebody else's
+      // category id (CWE-639) -- and `billInclude` returns `category`, so the response handed
+      // back that category's name, icon and colour. It also let the type pair disagree, which is
+      // the state `PUT /api/categories/[id]` goes to some length to keep out of the database.
+      //
+      // Judged only where the pair actually moves, matching `updateBill` and `updateTransactions`:
+      // a bill left mismatched by a category type flip must stay editable, or the only way out of
+      // that state is closed.
+      const categoryPairMoved =
+        billData.categoryId !== locked.categoryId || billData.type !== locked.type;
+      if (categoryPairMoved) {
+        const usable = await categoriesAreUsable(tx, userId, [
+          { categoryId: billData.categoryId, type: billData.type },
+        ]);
+        if (!usable) {
+          return {
+            refusal: "That category does not exist, or its type does not match the bill's.",
+          } as const;
+        }
+      }
 
       // Validate label ownership + type compatibility
       let verifiedLabelIds: string[] | undefined;
