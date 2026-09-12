@@ -109,9 +109,40 @@ const read = (file: string) => readFileSync(join(ROOT, file), "utf8");
  * it converts an absent guarantee into a stated one. Printing the parsed tree without comments
  * costs one dependency the repo already has, and removes the whole class.
  */
-const executableText = (file: string) => {
-  const source = ts.createSourceFile(file, read(file), ts.ScriptTarget.Latest, true);
-  return ts.createPrinter({ removeComments: true }).printFile(source);
+const parse = (file: string) =>
+  ts.createSourceFile(file, read(file), ts.ScriptTarget.Latest, true);
+
+const printer = ts.createPrinter({ removeComments: true });
+
+const executableText = (file: string) => printer.printFile(parse(file));
+
+/**
+ * The printed arguments of every `category.findFirst` / `category.findMany` call in a file.
+ *
+ * Scoped to the call rather than read off the whole file, which review on #302 caught twice over.
+ * A file-wide search for `userId` is satisfied by any of the dozens of unrelated mentions in a
+ * route, so weakening the ownership arm from `{ userId }` to `{}` -- which opens every account's
+ * categories -- left the test green. Demonstrated: 11 passed against exactly that edit.
+ *
+ * That is the same mistake as matching comments, one level in: asking whether a token appears
+ * somewhere near the code, instead of whether it constrains the thing it has to constrain.
+ */
+const categoryQueryArgs = (file: string): string[] => {
+  const found: string[] = [];
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      /^find(First|Many)$/.test(node.expression.name.text) &&
+      ts.isPropertyAccessExpression(node.expression.expression) &&
+      node.expression.expression.name.text === "category"
+    ) {
+      found.push(node.arguments.map((arg) => printer.printNode(ts.EmitHint.Unspecified, arg, parse(file))).join(""));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(parse(file));
+  return found;
 };
 
 /** Routes that write a row, so the rule applies to them. */
@@ -178,14 +209,16 @@ describe("routes that write a caller-supplied categoryId verify it", () => {
    * changes an API response, which is not a thing a test-only change should do. Recognising the
    * pattern it actually uses is the honest way to cover it until #301's option 3 is taken.
    */
-  const verifiesOwnership = (source: string) =>
-    source.includes("categoriesAreUsable") ||
+  const verifiesOwnership = (file: string) =>
+    executableText(file).includes("categoriesAreUsable") ||
     // The inline form: a category lookup narrowed to the caller's own rows plus the shared
-    // defaults. Both halves are required -- `userId` alone hides the defaults every account may
-    // use, and `isDefault` alone is the cross-account hole itself.
-    (/\bcategory\.find(First|Many)\b/.test(source) &&
-      source.includes("isDefault") &&
-      source.includes("userId"));
+    // defaults. Both halves are required *inside the query itself* -- `userId` alone hides the
+    // defaults every account may use, and `isDefault` alone is the cross-account hole. Read off
+    // the call's own arguments, so an unrelated `userId` elsewhere in the route cannot stand in
+    // for the one that has to be in the predicate.
+    categoryQueryArgs(file).some(
+      (args) => args.includes("isDefault") && args.includes("userId")
+    );
 
   /**
    * Named rather than derived. Deriving "writes a caller-supplied categoryId" from the text is
@@ -202,7 +235,7 @@ describe("routes that write a caller-supplied categoryId verify it", () => {
 
   it.each(ROUTES)("%s checks category ownership", (file) => {
     expect(
-      verifiesOwnership(executableText(file)),
+      verifiesOwnership(file),
       `${file} writes a caller-supplied categoryId without verifying the caller may use it, ` +
         `so it would accept another account's category (CWE-639). Call categoriesAreUsable` +
         `ForWrite, or narrow the category lookup to { OR: [{ isDefault: true }, { userId }] }.`
