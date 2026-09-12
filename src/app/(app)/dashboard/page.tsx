@@ -183,7 +183,7 @@ export default function DashboardPage() {
   return (
     <div>
       {/* Page Header */}
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between sm:mb-8">
         <div>
           <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">
             Dashboard

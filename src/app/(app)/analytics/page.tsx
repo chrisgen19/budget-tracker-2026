@@ -321,7 +321,7 @@ export default function AnalyticsPage() {
   return (
     <div>
       {/* Page Header + Period Selector */}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between mb-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between sm:mb-6">
         <div>
           <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">Analytics</h1>
           <p className="text-warm-400 text-sm mt-1">Reports &amp; insights</p>
