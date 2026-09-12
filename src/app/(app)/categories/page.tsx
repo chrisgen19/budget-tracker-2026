@@ -136,7 +136,7 @@ export default function CategoriesPage() {
   return (
     <div>
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 sm:mb-6">
         <div>
           <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">
             Categories

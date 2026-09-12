@@ -682,7 +682,7 @@ export default function TransactionsPage() {
         {selectionAnnouncement}
       </p>
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 sm:mb-6">
         <div>
           <h1
             ref={pageHeadingRef}

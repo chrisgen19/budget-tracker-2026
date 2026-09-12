@@ -129,7 +129,7 @@ export default function QuickLogPage() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
-      <header className="mb-6 flex items-start justify-between gap-4">
+      <header className="flex items-start justify-between gap-4 sm:mb-6">
         <div>
           <h1 className="font-serif text-2xl text-warm-700 sm:text-3xl">Quick Log</h1>
           <p className="mt-1 text-sm text-warm-400">
