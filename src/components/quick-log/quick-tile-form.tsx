@@ -242,7 +242,10 @@ export function QuickTileForm({
         <LabelPicker
           selectedIds={labelIds}
           onChange={(ids) => setValue("labelIds", ids)}
-          categoryId={categoryId}
+          // The *resolved* category, not the box: with none chosen the description decides where
+          // a tap files, and the server now judges pins against that same resolution. Passing the
+          // raw value would offer labels the save then refuses.
+          categoryId={resolved?.categoryId ?? null}
           attachedIds={attachedLabelIds}
           transactionType={type}
         />

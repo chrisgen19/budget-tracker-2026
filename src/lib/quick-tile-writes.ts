@@ -267,11 +267,28 @@ export const createQuickTile = async (
     }
   }
 
+  // Judged against where a tap will actually file, not against the category box.
+  //
+  // A tile left on "Decide automatically" has a null `categoryId`, and passing that straight in
+  // made every category-restricted label pass: a Shopping-only label could be pinned to a fare
+  // that resolves to Transportation, the save succeeded, and `viewTiles` then marked the pin
+  // stale while every tap dropped it. The user configured something that could never fire and was
+  // told nothing at the moment they configured it.
+  //
+  // The resolution is deterministic and the form already shows it ("This will file under X"), so
+  // this is knowable here -- it is only *unstable*, because a later description edit can move it.
+  // That drift is deliberately still tolerated: `pinsMoved` below does not re-judge pins when only
+  // the description changes, and `viewTiles` reports the stale pin rather than the write refusing
+  // an unrelated edit.
+  const resolvedForPins = resolveTileCategory(
+    { description: input.description, type: input.type, categoryId: input.categoryId ?? null },
+    categories
+  );
   const pinned = checkPinnedLabels(
     input.labelIds ?? [],
     input.type,
     labels,
-    input.categoryId ?? null
+    resolvedForPins?.categoryId ?? null
   );
   if (!pinned.ok) return pinned;
 
@@ -371,6 +388,9 @@ export const updateQuickTile = async (
   const effective = {
     type: patch.type ?? storedType,
     categoryId: patch.categoryId !== undefined ? patch.categoryId : stored.categoryId,
+    // Carried because the pin check resolves the filing category, and with no category chosen the
+    // description is what decides it.
+    description: patch.description ?? stored.description,
     // An absent `labelIds` preserves the pins.
     labelIds: patch.labelIds ?? storedLabelIds,
   };
@@ -410,12 +430,26 @@ export const updateQuickTile = async (
   // A pin left behind is not lost: `viewTiles` reports it as not applying and the tap filters it
   // out, so the button keeps working and the web page shows why.
   const pinsMoved = patch.labelIds !== undefined || typeMoved || categoryMoved;
+  // Same resolution as the create path, for the same reason. Note `pinsMoved` deliberately does
+  // **not** include a description change even though the description feeds the resolution: a pin
+  // stranded by a later rename is reported by `viewTiles` and dropped at the tap, and refusing the
+  // rename outright is the response that leaves the user stuck with no way to edit the button.
+  const resolvedForPins = pinsMoved
+    ? resolveTileCategory(
+        {
+          description: effective.description,
+          type: effective.type,
+          categoryId: effective.categoryId ?? null,
+        },
+        categories
+      )
+    : null;
   const pinned = pinsMoved
     ? checkPinnedLabels(
         effective.labelIds,
         effective.type,
         labels,
-        effective.categoryId ?? null
+        resolvedForPins?.categoryId ?? null
       )
     : ({ ok: true, ids: effective.labelIds } as const);
   if (!pinned.ok) return pinned;
