@@ -12,7 +12,7 @@ import {
 } from "@/lib/bill-utils";
 import { addUtcDays, userToday, utcDayStart } from "@/lib/bill-dates";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
-import { categoriesAreUsable } from "@/lib/transaction-writes";
+import { categoriesAreUsable, categoriesAreUsableForWrite } from "@/lib/transaction-writes";
 
 /**
  * The single write path for settling a recurring bill, shared by the app's route and the MCP tool.
@@ -927,6 +927,14 @@ export const createBill = async ({
   const created = await prisma.$transaction(async (tx) => {
     if (assertStillPermitted && !(await assertStillPermitted(tx))) return null;
 
+    // Re-checked under a row lock now the write is about to happen. The pre-flight check above
+    // takes none, so a concurrent category type flip can commit between it and the insert.
+    if (!(await categoriesAreUsableForWrite(tx, userId, [
+      { categoryId: input.categoryId, type: input.type },
+    ]))) {
+      return "category-unusable" as const;
+    }
+
     return tx.scheduledTransaction.create({
       data: {
         amount: input.amount,
@@ -952,6 +960,7 @@ export const createBill = async ({
     });
   });
 
+  if (created === "category-unusable") return { ok: false, reason: "CATEGORY_NOT_USABLE" };
   if (created === null) return { ok: false, reason: "NO_LONGER_PERMITTED" };
 
   return { ok: true, bill: created, changed: [], droppedLabels: labels.dropped, deactivated: false };
@@ -1133,6 +1142,19 @@ export const updateBill = async ({
     await lockBillRow(tx, billId);
     if (assertStillPermitted && !(await assertStillPermitted(tx))) return null;
 
+    // Re-checked under a row lock, for the reason the pre-flight check above cannot be the
+    // authority: it takes no lock, so a concurrent type flip can commit between it and the update.
+    // After the bill row lock, never before it -- the ordering every writer here shares, so two
+    // paths cannot each hold what the other waits for.
+    if (
+      categoryPairMoved &&
+      !(await categoriesAreUsableForWrite(tx, userId, [
+        { categoryId: effective.categoryId, type: effective.type },
+      ]))
+    ) {
+      return "category-unusable" as const;
+    }
+
     const schedule = await deriveSchedule(tx);
     const { recalculated, ranOut, reactivatedNextDue, failed: reactivationFailed } = schedule;
 
@@ -1174,6 +1196,7 @@ export const updateBill = async ({
     return { bill, reactivationFailed, ranOut };
   });
 
+  if (written === "category-unusable") return { ok: false, reason: "CATEGORY_NOT_USABLE" };
   if (written === null) return { ok: false, reason: "NO_LONGER_PERMITTED" };
 
   return {
