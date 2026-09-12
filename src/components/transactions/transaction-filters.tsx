@@ -233,6 +233,7 @@ export function TransactionFiltersBar({
             <TransactionSummaryLine
               summary={summaryQuery.data}
               isError={summaryQuery.isError}
+              isPlaceholder={summaryQuery.isPlaceholderData}
               currency={user.currency}
               hideAmounts={hideAmounts}
             />

@@ -2,6 +2,24 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-12 - A carried-over total says so
+
+Second finding from review on #296, and the deeper half of the one above. Echoing the type fixed how
+a carried-over summary is *read*; it did nothing about where the summary came from. `placeholderData`
+hands back the previous filter set's answer for every filter — another month, another search, another
+category — and a single number gives the reader no way to notice.
+
+Worse, the error path ran the wrong way round. `isError` was only allowed to produce "Totals
+unavailable" when there was no data at all, on the reasoning that stale totals beat none. That is
+true of data cached under the *current* filters, which is the last real answer to the question being
+asked. It is false of placeholder data: if the request it stands in for fails, another window's
+figure sits there indefinitely, indistinguishable from an answer.
+
+`isPlaceholderData` separates the two cleanly. While it is set the line is dimmed and marked
+`aria-busy`, and a failure gives way to the refusal instead of keeping the stand-in. Data cached
+under the current filters still survives a failed refetch, which is what the original reasoning
+actually described.
+
 ## 2026-09-12 - The totals carry the type they were computed under
 
 Caught in review on #296. `useTransactionSummaryQuery` uses `placeholderData`, so the previous

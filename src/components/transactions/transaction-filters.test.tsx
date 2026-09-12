@@ -31,6 +31,7 @@ const summaryState = vi.hoisted(() => ({
       | Summary
       | undefined,
     isError: false,
+    isPlaceholderData: false,
   },
 }));
 
@@ -152,7 +153,7 @@ const baseSummary: Summary = {
 beforeEach(() => {
   vi.useFakeTimers();
   currentFilters = baseFilters;
-  summaryState.value = { data: { ...baseSummary }, isError: false };
+  summaryState.value = { data: { ...baseSummary }, isError: false, isPlaceholderData: false };
   privacyState.hideAmounts = false;
   filterOptionState.value.categories = [];
   filterOptionState.value.categoriesPending = false;
@@ -559,6 +560,7 @@ describe("TransactionFiltersBar", () => {
     summaryState.value = {
       data: { type: "EXPENSE", count: 10, income: 0, expense: 2500, net: -2500 },
       isError: false,
+      isPlaceholderData: false,
     };
     renderFilters({ ...baseFilters, type: "INCOME" });
 

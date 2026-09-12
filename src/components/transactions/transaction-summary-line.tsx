@@ -1,7 +1,7 @@
 "use client";
 
 import type { TransactionSummary } from "@/hooks/use-transactions";
-import { formatCurrency, maskCurrency } from "@/lib/utils";
+import { cn, formatCurrency, maskCurrency } from "@/lib/utils";
 
 type SummaryType = TransactionSummary["type"];
 
@@ -9,6 +9,17 @@ interface TransactionSummaryLineProps {
   /** Undefined until the first fetch resolves; kept across refetches by placeholderData. */
   summary: TransactionSummary | undefined;
   isError: boolean;
+  /**
+   * True while `summary` is the *previous* filter set's answer, carried over by
+   * `placeholderData` because this filter set has never resolved.
+   *
+   * Distinct from ordinary staleness, and the distinction is the whole reason this
+   * prop exists. Data cached under the current key is last-good for this view and
+   * worth keeping on screen through a failed refetch. Placeholder data describes a
+   * different window entirely — another month, another search — and a single number
+   * gives the reader no way to tell the two apart.
+   */
+  isPlaceholder: boolean;
   currency: string;
   hideAmounts: boolean;
 }
@@ -55,19 +66,28 @@ const amountText = (
  * equally wrong: the aggregate runs over a WHERE that already applied the type, so
  * an expense summary reports `income: 0` meaning "excluded". Interpreted under a
  * freshly-pressed Income that renders as "₱0.00 received" — a confident wrong
- * answer, held for as long as the request takes. Reading the summary's own type
- * instead shows the previous line unchanged until the new one lands, which is what
- * stale data should look like.
+ * answer, held for as long as the request takes.
+ *
+ * That fixes the *reading*, not the provenance. A carried-over summary still
+ * answers a question nobody is asking any more — the previous month, the previous
+ * search — and one number offers no way to notice. So while it is placeholder data
+ * the line is dimmed and marked `aria-busy`, and if the request it is standing in
+ * for fails, it gives way to the refusal rather than leaving another window's total
+ * on screen indefinitely. Data cached under the *current* filters is a different
+ * case and survives a failed refetch: it is the last true answer to this question.
  */
 export function TransactionSummaryLine({
   summary,
   isError,
+  isPlaceholder,
   currency,
   hideAmounts,
 }: TransactionSummaryLineProps) {
-  // A failure after a success keeps the figures that did load: stale totals beat
-  // no totals, and every write on this page invalidates them anyway.
-  const text = !summary
+  // Nothing usable: either this view has never resolved, or what is held belongs to
+  // a different one and the request that would have replaced it failed.
+  const unusable = !summary || (isError && isPlaceholder);
+
+  const text = unusable
     ? isError
       ? "Totals unavailable"
       : "Loading…"
@@ -75,8 +95,17 @@ export function TransactionSummaryLine({
       ? "No transactions"
       : `${amountText(summary, currency, hideAmounts)} ${AMOUNT_NOUN[summary.type]} · ${summary.count.toLocaleString()} ${summary.count === 1 ? "transaction" : "transactions"}`;
 
+  const provisional = !unusable && isPlaceholder;
+
   return (
-    <p aria-live="polite" className="min-w-0 truncate text-xs font-medium text-warm-400">
+    <p
+      aria-live="polite"
+      aria-busy={provisional || undefined}
+      className={cn(
+        "min-w-0 truncate text-xs font-medium text-warm-400 transition-opacity",
+        provisional && "opacity-50",
+      )}
+    >
       {text}
     </p>
   );
