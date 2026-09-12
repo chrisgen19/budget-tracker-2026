@@ -10,6 +10,7 @@ import { CategoryIcon } from "@/components/ui/icon-map";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
 import { CategoryForm } from "@/components/categories/category-form";
 import { ActionFab } from "@/components/ui/action-fab";
 import { QuickCategoryPicker } from "@/components/categories/quick-category-picker";
@@ -136,23 +137,19 @@ export default function CategoriesPage() {
   return (
     <div>
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 sm:mb-6">
-        <div>
-          <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">
-            Categories
-          </h1>
-          <p className="text-warm-400 text-sm mt-1">
-            Manage your income and expense categories.
-          </p>
-        </div>
-        <button
-          onClick={openCreateForm}
-          className="hidden sm:inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-5 py-2.5 rounded-xl transition-colors shadow-soft hover:shadow-soft-md"
-        >
-          <Plus className="w-4 h-4" />
-          New Category
-        </button>
-      </div>
+      <PageHeader
+        title="Categories"
+        description="Manage your income and expense categories."
+        action={
+          <button
+            onClick={openCreateForm}
+            className="hidden sm:inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-5 py-2.5 rounded-xl transition-colors shadow-soft hover:shadow-soft-md"
+          >
+            <Plus className="w-4 h-4" />
+            New Category
+          </button>
+        }
+      />
 
       {/* Mobile link to Labels (desktop uses sidebar) */}
       <Link

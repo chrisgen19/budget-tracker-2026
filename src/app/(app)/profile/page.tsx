@@ -12,6 +12,7 @@ import {
 } from "@/lib/validations";
 import { cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
+import { PageHeader } from "@/components/ui/page-header";
 import { PersonalInfoForm } from "@/components/profile/personal-info-form";
 import { PasswordForm } from "@/components/profile/password-form";
 import { FeaturesForm } from "@/components/profile/features-form";
@@ -147,24 +148,21 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <div className="flex items-center gap-3">
-          <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">
-            Profile Settings
-          </h1>
+    <div>
+      <PageHeader
+        title="Profile Settings"
+        description="Manage your account settings"
+        badge={
           <span
             className={cn(
-              "text-[10px] font-semibold px-2.5 py-0.5 rounded-full uppercase tracking-wide",
+              "shrink-0 text-[10px] font-semibold px-2.5 py-0.5 rounded-full uppercase tracking-wide",
               ROLE_BADGE_STYLES[user.role]
             )}
           >
             {user.role}
           </span>
-        </div>
-        <p className="text-warm-400 mt-1">Manage your account settings</p>
-      </div>
+        }
+      />
 
       <div className="flex flex-col lg:flex-row gap-6">
         {/* Desktop Tab Nav */}

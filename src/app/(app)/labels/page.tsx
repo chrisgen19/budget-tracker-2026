@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
 import { LabelForm } from "@/components/labels/label-form";
 import { QuickLabelPicker } from "@/components/labels/quick-label-picker";
 import { ActionFab } from "@/components/ui/action-fab";
@@ -130,23 +131,19 @@ export default function LabelsPage() {
   return (
     <div>
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 sm:mb-6">
-        <div>
-          <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">
-            Labels
-          </h1>
-          <p className="text-warm-400 text-sm mt-1">
-            Create labels to tag and organize your transactions.
-          </p>
-        </div>
-        <button
-          onClick={() => setShowForm(true)}
-          className="hidden sm:inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-5 py-2.5 rounded-xl transition-colors shadow-soft hover:shadow-soft-md"
-        >
-          <Plus className="w-4 h-4" />
-          New Label
-        </button>
-      </div>
+      <PageHeader
+        title="Labels"
+        description="Create labels to tag and organize your transactions."
+        action={
+          <button
+            onClick={() => setShowForm(true)}
+            className="hidden sm:inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-5 py-2.5 rounded-xl transition-colors shadow-soft hover:shadow-soft-md"
+          >
+            <Plus className="w-4 h-4" />
+            New Label
+          </button>
+        }
+      />
 
       {/* Quick Access Section */}
       <div className="card p-5 mb-6">

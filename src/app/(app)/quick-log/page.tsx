@@ -7,6 +7,7 @@ import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ActionFab } from "@/components/ui/action-fab";
+import { PageHeader } from "@/components/ui/page-header";
 import { useToast } from "@/components/ui/toast";
 import { useUser } from "@/components/user-provider";
 import { QuickTileCard } from "@/components/quick-log/quick-tile-card";
@@ -128,25 +129,22 @@ export default function QuickLogPage() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
-      <header className="flex items-start justify-between gap-4 sm:mb-6">
-        <div>
-          <h1 className="font-serif text-2xl text-warm-700 sm:text-3xl">Quick Log</h1>
-          <p className="mt-1 text-sm text-warm-400">
-            One tap for the things you buy every week. The same buttons appear in your Telegram
-            mini app.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => openNew()}
-          disabled={atLimit || isError}
-          className="hidden min-h-11 shrink-0 items-center gap-2 rounded-xl bg-amber px-4 text-sm font-medium text-white transition hover:bg-amber-dark disabled:opacity-50 sm:inline-flex"
-        >
-          <Plus className="h-4 w-4" aria-hidden />
-          New Button
-        </button>
-      </header>
+    <div className="mx-auto max-w-5xl">
+      <PageHeader
+        title="Quick Log"
+        description="One tap for the things you buy every week. The same buttons appear in your Telegram mini app."
+        action={
+          <button
+            type="button"
+            onClick={() => openNew()}
+            disabled={atLimit || isError}
+            className="hidden min-h-11 shrink-0 items-center gap-2 rounded-xl bg-amber px-4 text-sm font-medium text-white transition hover:bg-amber-dark disabled:opacity-50 sm:inline-flex"
+          >
+            <Plus className="h-4 w-4" aria-hidden />
+            New Button
+          </button>
+        }
+      />
 
       {isLoading ? (
         <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">

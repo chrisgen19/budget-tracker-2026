@@ -33,6 +33,7 @@ import {
   chartGranularity,
 } from "@/lib/analytics-period";
 import { CardHeader } from "@/components/ui/card-header";
+import { PageHeader } from "@/components/ui/page-header";
 import { PeriodPicker } from "@/components/ui/period-picker";
 import { TypeFilter } from "@/components/analytics/type-filter";
 import { IncomeExpensesReport } from "@/components/analytics/income-expenses-report";
@@ -321,23 +322,24 @@ export default function AnalyticsPage() {
   return (
     <div>
       {/* Page Header + Period Selector */}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between sm:mb-6">
-        <div>
-          <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">Analytics</h1>
-          <p className="text-warm-400 text-sm mt-1">Reports &amp; insights</p>
-        </div>
-        {/* Inert once its sticky row is shown, so keyboard / screen-reader users
-            never hit two interactive period pickers. */}
-        <div ref={periodNavRef} inert={!periodNavInView}>
-          <PeriodPicker
-            value={period}
-            onChange={setPeriod}
-            tz={tz}
-            label={periodLabel}
-            presentation="popover"
-          />
-        </div>
-      </div>
+      <PageHeader
+        title="Analytics"
+        description="Reports & insights"
+        actionPlacement="below"
+        action={
+          /* Inert once its sticky row is shown, so keyboard / screen-reader users
+             never hit two interactive period pickers. */
+          <div ref={periodNavRef} inert={!periodNavInView}>
+            <PeriodPicker
+              value={period}
+              onChange={setPeriod}
+              tz={tz}
+              label={periodLabel}
+              presentation="popover"
+            />
+          </div>
+        }
+      />
 
       {/* Sticky controls bar — combined period nav + tabs. Each row is shown only when
           its in-page counterpart has scrolled out of view, so a control is pinned the

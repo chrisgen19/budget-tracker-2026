@@ -15,6 +15,7 @@ import { CategoryIcon } from "@/components/ui/icon-map";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
 import { DropdownButton, type DropdownItem } from "@/components/ui/dropdown-button";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import {
@@ -682,40 +683,36 @@ export default function TransactionsPage() {
         {selectionAnnouncement}
       </p>
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 sm:mb-6">
-        <div>
-          <h1
-            ref={pageHeadingRef}
-            tabIndex={-1}
-            className="font-serif text-2xl text-warm-700 outline-none lg:text-3xl"
-          >
-            Transactions
-          </h1>
-          <p className="text-warm-400 text-sm mt-1">
-            {totalCount !== null
-              ? isInfinite
-                ? `${allInfiniteTransactions.length} of ${totalCount} loaded`
-                : `${totalCount} total`
-              : "Loading..."}
-          </p>
-        </div>
-        {canScan ? (
-          <DropdownButton
-            label="Add Transaction"
-            icon={Plus}
-            className="hidden sm:inline-flex px-5 py-2.5"
-            items={addTransactionItems}
-          />
-        ) : (
-          <button
-            onClick={() => setShowForm(true)}
-            className="hidden sm:inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-5 py-2.5 rounded-xl transition-colors shadow-soft hover:shadow-soft-md"
-          >
-            <Plus className="w-4 h-4" />
-            Add Transaction
-          </button>
-        )}
-      </div>
+      <PageHeader
+        title="Transactions"
+        headingRef={pageHeadingRef}
+        focusable
+        meta={
+          totalCount !== null
+            ? isInfinite
+              ? `${allInfiniteTransactions.length} of ${totalCount} loaded`
+              : `${totalCount} total`
+            : "Loading..."
+        }
+        action={
+          canScan ? (
+            <DropdownButton
+              label="Add Transaction"
+              icon={Plus}
+              className="hidden sm:inline-flex px-5 py-2.5"
+              items={addTransactionItems}
+            />
+          ) : (
+            <button
+              onClick={() => setShowForm(true)}
+              className="hidden sm:inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-5 py-2.5 rounded-xl transition-colors shadow-soft hover:shadow-soft-md"
+            >
+              <Plus className="w-4 h-4" />
+              Add Transaction
+            </button>
+          )
+        }
+      />
 
       {/* Filters Bar */}
       <TransactionFiltersBar

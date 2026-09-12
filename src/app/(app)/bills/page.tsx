@@ -10,6 +10,7 @@ import { CategoryIcon } from "@/components/ui/icon-map";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
 import { BillForm } from "@/components/bills/bill-form";
 import { ActionFab } from "@/components/ui/action-fab";
 import {
@@ -80,23 +81,19 @@ export default function BillsPage() {
   return (
     <div>
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 sm:mb-6">
-        <div>
-          <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">
-            Bills
-          </h1>
-          <p className="text-warm-400 text-sm mt-1">
-            Manage your recurring bills and subscriptions.
-          </p>
-        </div>
-        <button
-          onClick={() => setShowForm(true)}
-          className="hidden sm:inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-5 py-2.5 rounded-xl transition-colors shadow-soft hover:shadow-soft-md"
-        >
-          <Plus className="w-4 h-4" />
-          New Bill
-        </button>
-      </div>
+      <PageHeader
+        title="Bills"
+        description="Manage your recurring bills and subscriptions."
+        action={
+          <button
+            onClick={() => setShowForm(true)}
+            className="hidden sm:inline-flex items-center gap-2 bg-amber hover:bg-amber-dark text-white font-medium text-sm px-5 py-2.5 rounded-xl transition-colors shadow-soft hover:shadow-soft-md"
+          >
+            <Plus className="w-4 h-4" />
+            New Bill
+          </button>
+        }
+      />
 
       {/* Filter */}
       <div className="flex gap-1 p-0.5 bg-cream-200/60 rounded-lg w-fit mb-6">

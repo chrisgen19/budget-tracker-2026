@@ -27,6 +27,7 @@ import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import { SpendingChart, TrendChart, BalanceTrendChart } from "@/components/dashboard/charts";
 import { DropdownButton, type DropdownItem } from "@/components/ui/dropdown-button";
+import { PageHeader } from "@/components/ui/page-header";
 import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import { useScan } from "@/components/scan-provider";
@@ -183,47 +184,42 @@ export default function DashboardPage() {
   return (
     <div>
       {/* Page Header */}
-      <div className="flex items-center justify-between sm:mb-8">
-        <div>
-          <h1 className="font-serif text-2xl lg:text-3xl text-warm-700">
-            Dashboard
-          </h1>
-          <p className="text-warm-400 text-sm mt-1">
-            Your financial overview at a glance.
-          </p>
-        </div>
+      <PageHeader
+        title="Dashboard"
+        description="Your financial overview at a glance."
+        action={
+          <>
+            {/* Add Transaction Button — desktop only. Always the dropdown: the menu carries Quick
+                Log whether or not this account can scan, and the plain-button branch it replaces
+                was the reason a non-scanning account could not reach it. */}
+            <DropdownButton
+              label="Add Transaction"
+              icon={Plus}
+              className="hidden sm:inline-flex"
+              items={addTransactionItems}
+            />
 
-        <div className="flex items-center gap-3">
-          {/* Add Transaction Button — desktop only. Always the dropdown: the menu carries Quick
-              Log whether or not this account can scan, and the plain-button branch it replaces
-              was the reason a non-scanning account could not reach it. */}
-          <DropdownButton
-            label="Add Transaction"
-            icon={Plus}
-            className="hidden sm:inline-flex"
-            items={addTransactionItems}
-          />
-
-          {/* Month Navigator */}
-          <div className="flex items-center gap-2 bg-white rounded-xl border border-cream-300/60 shadow-warm px-2 py-1.5">
-          <button
-            onClick={() => navigateMonth(-1)}
-            className="p-1.5 rounded-lg text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <span className="text-sm font-medium text-warm-600 min-w-[120px] text-center">
-            {monthLabel}
-          </span>
-          <button
-            onClick={() => navigateMonth(1)}
-            className="p-1.5 rounded-lg text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
-        </div>
-      </div>
+            {/* Month Navigator */}
+            <div className="flex items-center gap-2 bg-white rounded-xl border border-cream-300/60 shadow-warm px-2 py-1.5">
+              <button
+                onClick={() => navigateMonth(-1)}
+                className="p-1.5 rounded-lg text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-sm font-medium text-warm-600 text-center min-w-20 sm:min-w-[120px]">
+                {monthLabel}
+              </span>
+              <button
+                onClick={() => navigateMonth(1)}
+                className="p-1.5 rounded-lg text-warm-400 hover:text-warm-600 hover:bg-cream-100 transition-colors"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </>
+        }
+      />
 
       {loading ? (
         <DashboardSkeleton />
