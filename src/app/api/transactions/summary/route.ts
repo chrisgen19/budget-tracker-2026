@@ -46,6 +46,13 @@ export async function GET(request: Request) {
     const expense = sumOf("EXPENSE");
 
     return NextResponse.json({
+      // Echoed rather than left for the caller to remember. The aggregate runs over
+      // a WHERE that already applied the type, so an expense summary always reports
+      // `income: 0` — a figure that means "excluded", not "none". Read under the
+      // wrong type it is not stale, it is wrong, so the answer carries the question.
+      // `filters.type` is the *effective* type after parsing, which is what the
+      // numbers describe even when the caller sent something the schema defaulted.
+      type: filters.type,
       count: grouped.reduce((total, row) => total + row._count._all, 0),
       income,
       expense,

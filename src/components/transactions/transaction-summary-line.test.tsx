@@ -4,6 +4,7 @@ import { TransactionSummaryLine } from "@/components/transactions/transaction-su
 import type { TransactionSummary } from "@/hooks/use-transactions";
 
 const summary = (overrides: Partial<TransactionSummary> = {}): TransactionSummary => ({
+  type: "EXPENSE",
   count: 10,
   income: 0,
   expense: 2500,
@@ -16,7 +17,6 @@ const renderLine = (props: Partial<Parameters<typeof TransactionSummaryLine>[0]>
     <TransactionSummaryLine
       summary={summary()}
       isError={false}
-      type="EXPENSE"
       currency="PHP"
       hideAmounts={false}
       {...props}
@@ -31,27 +31,25 @@ describe("the transaction summary line", () => {
 
   it("reads income as received, and takes its figure from the income total", () => {
     renderLine({
-      type: "INCOME",
-      summary: summary({ count: 4, income: 80000, expense: 0, net: 80000 }),
+      summary: summary({ type: "INCOME", count: 4, income: 80000, expense: 0, net: 80000 }),
     });
     expect(screen.getByText("₱80,000.00 received · 4 transactions")).toBeTruthy();
   });
 
   it("signs the net, because All is the only view where the direction is in doubt", () => {
     renderLine({
-      type: "ALL",
-      summary: summary({ count: 32, income: 80000, expense: 45230, net: 34770 }),
+      summary: summary({ type: "ALL", count: 32, income: 80000, expense: 45230, net: 34770 }),
     });
     expect(screen.getByText("+₱34,770.00 net · 32 transactions")).toBeTruthy();
   });
 
   it("signs a negative net too", () => {
-    renderLine({ type: "ALL" });
+    renderLine({ summary: summary({ type: "ALL" }) });
     expect(screen.getByText("−₱2,500.00 net · 10 transactions")).toBeTruthy();
   });
 
   it("leaves a zero net unsigned, which would otherwise read as a rounding artefact", () => {
-    renderLine({ type: "ALL", summary: summary({ count: 2, income: 500, expense: 500, net: 0 }) });
+    renderLine({ summary: summary({ type: "ALL", count: 2, income: 500, expense: 500, net: 0 }) });
     expect(screen.getByText("₱0.00 net · 2 transactions")).toBeTruthy();
   });
 

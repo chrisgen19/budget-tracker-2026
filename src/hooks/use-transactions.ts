@@ -28,6 +28,15 @@ export interface TransactionsResponse {
 
 /** Totals across every row the filters match, not just the page that is loaded. */
 export interface TransactionSummary {
+  /**
+   * The type filter these figures were computed under, echoed by the server.
+   *
+   * Load-bearing, not decorative: `placeholderData` keeps the previous summary on
+   * screen across a filter change, so the live filter and the data on screen
+   * disagree for the length of a request. Reading the figures under the live type
+   * turned that into a wrong answer rather than a stale one.
+   */
+  type: "ALL" | "INCOME" | "EXPENSE";
   count: number;
   income: number;
   expense: number;
@@ -166,7 +175,10 @@ export function useTransactionsInfiniteQuery(filters: TransactionFilters, tz: nu
  *
  * `placeholderData` keeps the previous figures on screen while a new window
  * loads, the same way the paginated list does — a summary line that empties on
- * every keystroke of the search box flickers more than it informs.
+ * every keystroke of the search box flickers more than it informs. What it hands
+ * back is genuinely stale data, so nothing may re-interpret it under the current
+ * filters: the type it was computed under travels inside the summary for exactly
+ * that reason.
  */
 export function useTransactionSummaryQuery(filters: TransactionFilters, tz: number) {
   return useQuery({

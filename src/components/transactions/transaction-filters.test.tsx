@@ -17,10 +17,18 @@ vi.mock("@/components/privacy-provider", () => ({
 
 const privacyState = vi.hoisted(() => ({ hideAmounts: false }));
 
+type Summary = {
+  type: "ALL" | "INCOME" | "EXPENSE";
+  count: number;
+  income: number;
+  expense: number;
+  net: number;
+};
+
 const summaryState = vi.hoisted(() => ({
   value: {
-    data: { count: 10, income: 0, expense: 2500, net: -2500 } as
-      | { count: number; income: number; expense: number; net: number }
+    data: { type: "EXPENSE", count: 10, income: 0, expense: 2500, net: -2500 } as
+      | Summary
       | undefined,
     isError: false,
   },
@@ -133,9 +141,19 @@ const openFilters = () => {
   return { trigger, dialog: screen.getByText("Filter & sort").closest("div")! };
 };
 
+const baseSummary: Summary = {
+  type: "EXPENSE",
+  count: 10,
+  income: 0,
+  expense: 2500,
+  net: -2500,
+};
+
 beforeEach(() => {
   vi.useFakeTimers();
   currentFilters = baseFilters;
+  summaryState.value = { data: { ...baseSummary }, isError: false };
+  privacyState.hideAmounts = false;
   filterOptionState.value.categories = [];
   filterOptionState.value.categoriesPending = false;
   filterOptionState.value.categoriesError = false;
@@ -530,6 +548,22 @@ describe("TransactionFiltersBar", () => {
     // The filter schema refuses All time carrying from/to, so a stale week here
     // would 400 the very next list request.
     expect(currentFilters).toMatchObject({ period: "all", from: null, to: null });
+  });
+
+  it("reads the type off the totals, never off a filter the totals predate", () => {
+    // placeholderData holds the previous summary across a filter change, so the
+    // live filter and the data on screen disagree for the length of a request. The
+    // two readings are not equally wrong: the aggregate applies the type before
+    // grouping, so this expense summary's income: 0 means "excluded", and rendering
+    // it under a freshly-pressed Income would claim ₱0.00 was received.
+    summaryState.value = {
+      data: { type: "EXPENSE", count: 10, income: 0, expense: 2500, net: -2500 },
+      isError: false,
+    };
+    renderFilters({ ...baseFilters, type: "INCOME" });
+
+    expect(screen.getByText("₱2,500.00 spent · 10 transactions")).toBeTruthy();
+    expect(screen.queryByText(/received/)).toBeNull();
   });
 
   it("reports the filtered total once, beside its count", () => {

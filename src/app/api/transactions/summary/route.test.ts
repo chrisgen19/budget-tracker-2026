@@ -33,11 +33,37 @@ describe("GET /api/transactions/summary", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
+      type: "ALL",
       count: 32,
       income: 80000,
       expense: 45230,
       net: 34770,
     });
+  });
+
+  it("echoes the type it answered about, so nothing can read the figures under another", async () => {
+    // The aggregate runs over a WHERE that already applied the type, so an expense
+    // summary reports income: 0 meaning "excluded". A client holding it alongside a
+    // newer filter would render that as a real "₱0.00 received". An omitted type
+    // defaults to ALL, so the echo is the type the figures were built under rather
+    // than a copy of the query string.
+    const body = await (
+      await GET(request("period=monthly&from=2026-09-01&to=2026-09-30&type=EXPENSE&tz=-480"))
+    ).json();
+
+    expect(body.type).toBe("EXPENSE");
+  });
+
+  it("refuses an unreadable type rather than widening it to ALL", async () => {
+    // A silent default here would make the summary describe more rows than the list
+    // shows, while still echoing a type the caller would trust. The list route
+    // shares this parser and refuses the same way.
+    const response = await GET(
+      request("period=monthly&from=2026-09-01&to=2026-09-30&type=nonsense&tz=-480"),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.groupBy).not.toHaveBeenCalled();
   });
 
   it("scopes the aggregate to the caller and the window the filters name", async () => {
@@ -57,6 +83,7 @@ describe("GET /api/transactions/summary", () => {
     mocks.groupBy.mockResolvedValue(rows(null, 45230));
 
     expect(await (await GET(request())).json()).toEqual({
+      type: "ALL",
       count: 28,
       income: 0,
       expense: 45230,
@@ -70,6 +97,7 @@ describe("GET /api/transactions/summary", () => {
     mocks.groupBy.mockResolvedValue(rows(0.1 + 0.2, 45230.000000001));
 
     expect(await (await GET(request())).json()).toEqual({
+      type: "ALL",
       count: 32,
       income: 0.3,
       expense: 45230,

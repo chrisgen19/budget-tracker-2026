@@ -2,6 +2,27 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-12 - The totals carry the type they were computed under
+
+Caught in review on #296. `useTransactionSummaryQuery` uses `placeholderData`, so the previous
+summary stays on screen while a filter change is in flight — and the summary line was reading the
+figures under the *live* filter. Those two disagree for the length of a request.
+
+That would be ordinary staleness for most fields, but not for the type. The aggregate runs over a
+WHERE that has already applied the type, so an expense summary always reports `income: 0`, meaning
+"excluded" rather than "none". Press Income and the line rendered that as `₱0.00 received · 10
+transactions` — a confident wrong answer, held for as long as the request took, built from the old
+type's count and the new type's empty subtotal.
+
+`GET /api/transactions/summary` now echoes the effective type it answered about, and
+`TransactionSummaryLine` reads that instead of the live filter, so the figures and their
+interpretation cannot come apart. The previous line stays on screen until the new one lands, which is
+what stale data should look like. Guarding it in the hook's `placeholderData` instead would have
+worked, but leaves the field readable under the wrong type by anything that later consumes it.
+
+An unreadable `type` is still refused with a 400 rather than defaulting to ALL — a silent widening
+would make the summary describe more rows than the list shows while echoing a type the caller trusts.
+
 ## 2026-09-12 - The way back becomes an arrow
 
 The drill-down back link was a bordered row above the toolbar controls reading

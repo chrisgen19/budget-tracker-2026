@@ -1,20 +1,20 @@
 "use client";
 
-import type { TransactionFilters } from "@/components/transactions/transaction-filters";
 import type { TransactionSummary } from "@/hooks/use-transactions";
 import { formatCurrency, maskCurrency } from "@/lib/utils";
+
+type SummaryType = TransactionSummary["type"];
 
 interface TransactionSummaryLineProps {
   /** Undefined until the first fetch resolves; kept across refetches by placeholderData. */
   summary: TransactionSummary | undefined;
   isError: boolean;
-  type: TransactionFilters["type"];
   currency: string;
   hideAmounts: boolean;
 }
 
-/** Which side of the ledger the current type filter has already picked. */
-const AMOUNT_NOUN: Record<TransactionFilters["type"], string> = {
+/** Which side of the ledger the summary's own type filter had already picked. */
+const AMOUNT_NOUN: Record<SummaryType, string> = {
   ALL: "net",
   INCOME: "received",
   EXPENSE: "spent",
@@ -30,10 +30,10 @@ const AMOUNT_NOUN: Record<TransactionFilters["type"], string> = {
  */
 const amountText = (
   summary: TransactionSummary,
-  type: TransactionFilters["type"],
   currency: string,
   hideAmounts: boolean,
 ) => {
+  const { type } = summary;
   const value =
     type === "INCOME" ? summary.income : type === "EXPENSE" ? summary.expense : summary.net;
   if (hideAmounts) return maskCurrency(value, currency, true);
@@ -43,17 +43,25 @@ const amountText = (
 };
 
 /**
- * What the current filters add up to, across the whole window rather than the
- * rows that happen to be loaded.
+ * What the filters add up to, across the whole window rather than the rows that
+ * happen to be loaded.
  *
  * This replaces the toolbar's old bare count, which repeated the number the page
  * header was already showing. The count survives here as the second half of the
  * line, because a total with no denominator invites the wrong reading.
+ *
+ * The type is read off the summary and never off the live filters. They disagree
+ * whenever a filter change is still in flight, and the two readings are not
+ * equally wrong: the aggregate runs over a WHERE that already applied the type, so
+ * an expense summary reports `income: 0` meaning "excluded". Interpreted under a
+ * freshly-pressed Income that renders as "₱0.00 received" — a confident wrong
+ * answer, held for as long as the request takes. Reading the summary's own type
+ * instead shows the previous line unchanged until the new one lands, which is what
+ * stale data should look like.
  */
 export function TransactionSummaryLine({
   summary,
   isError,
-  type,
   currency,
   hideAmounts,
 }: TransactionSummaryLineProps) {
@@ -65,7 +73,7 @@ export function TransactionSummaryLine({
       : "Loading…"
     : summary.count === 0
       ? "No transactions"
-      : `${amountText(summary, type, currency, hideAmounts)} ${AMOUNT_NOUN[type]} · ${summary.count.toLocaleString()} ${summary.count === 1 ? "transaction" : "transactions"}`;
+      : `${amountText(summary, currency, hideAmounts)} ${AMOUNT_NOUN[summary.type]} · ${summary.count.toLocaleString()} ${summary.count === 1 ? "transaction" : "transactions"}`;
 
   return (
     <p aria-live="polite" className="min-w-0 truncate text-xs font-medium text-warm-400">
