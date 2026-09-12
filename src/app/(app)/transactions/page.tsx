@@ -718,20 +718,12 @@ export default function TransactionsPage() {
       <TransactionFiltersBar
         filters={filters}
         onChange={setFilters}
-        totalCount={totalCount}
         filtersRevision={filtersRevision}
-        // Both the href and the period it names come from the return blob, never
-        // from the filters on this page: a heatmap drill-down filters the ledger to
-        // one day while the link returns to the whole analytics span, so a label
-        // built from these filters would name somewhere the link does not go.
+        // The href comes from the return blob, never from the filters on this page:
+        // a heatmap drill-down filters the ledger to one day while the link returns
+        // to the whole analytics span.
         returnBar={
-          returnTarget ? (
-            <ReturnBar
-              href={returnTarget.href}
-              label="Analytics"
-              context={returnTarget.periodLabel}
-            />
-          ) : undefined
+          returnTarget ? <ReturnBar href={returnTarget.href} label="Analytics" /> : undefined
         }
       />
 

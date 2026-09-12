@@ -1,8 +1,4 @@
-import {
-  formatPeriodLabel,
-  getCurrentMonth,
-  type PeriodSelection,
-} from "@/lib/analytics-period";
+import { getCurrentMonth, type PeriodSelection } from "@/lib/analytics-period";
 import { parsePeriodParams } from "@/lib/transaction-period-url";
 import type { AnalyticsTypeFilter } from "@/types";
 
@@ -76,11 +72,9 @@ export function analyticsSearchParams({ period, type, tab }: AnalyticsUrlState):
   }).toString();
 }
 
-/** Where a return link goes, and the view it goes to, named. */
+/** Where a return link goes. */
 export interface AnalyticsReturnTarget {
   href: string;
-  /** The destination period, e.g. "Jul 1 – Sep 30, 2026". */
-  periodLabel: string;
 }
 
 /**
@@ -94,12 +88,13 @@ export interface AnalyticsReturnTarget {
  * — a crafted blob is narrowed to a valid view rather than rejected outright,
  * which is the right trade for a back button.
  *
- * The label comes back with the href, from the same parse, because they describe
- * the same thing and a caller holding only the href has no way to name it without
- * guessing. A drill-down from a heatmap day is where guessing goes wrong: the
- * ledger is filtered to that one day while this link returns to the whole analytics
- * span, so a label built from the page's own filters would name a period the link
- * does not go to.
+ * It carries no label. One used to come back with the href, on the reasoning that
+ * a caller holding only the href cannot name where it goes — true, and the reason
+ * matters: a drill-down from a heatmap day filters the ledger to that one day while
+ * this link returns to the whole analytics span, so a label built from the page's
+ * own filters names a period the link does not go to. The UI answered that by
+ * naming neither. A back arrow that shows one period beside a toolbar showing a
+ * different one reads as a bug in whichever the reader trusts less.
  */
 export function analyticsReturnTarget(
   blob: string | null,
@@ -107,8 +102,5 @@ export function analyticsReturnTarget(
 ): AnalyticsReturnTarget | null {
   if (!blob || blob.length > MAX_RETURN_PARAM_LENGTH) return null;
   const state = parseAnalyticsParams(new URLSearchParams(blob), tzOffset);
-  return {
-    href: `/analytics?${analyticsSearchParams(state)}`,
-    periodLabel: formatPeriodLabel(state.period.periodType, state.period.from, state.period.to),
-  };
+  return { href: `/analytics?${analyticsSearchParams(state)}` };
 }

@@ -6,15 +6,19 @@ import {
   TransactionFilterDialog,
   type AdvancedFilterValues,
 } from "@/components/transactions/transaction-filter-dialog";
+import { buildFilterChips } from "@/components/transactions/transaction-filter-chips";
 import {
-  TransactionFilterChips,
-  buildFilterChips,
-} from "@/components/transactions/transaction-filter-chips";
+  TransactionFilterRail,
+  TransactionTypeToggle,
+} from "@/components/transactions/transaction-filter-rail";
+import { TransactionSummaryLine } from "@/components/transactions/transaction-summary-line";
 import { PeriodPicker } from "@/components/ui/period-picker";
+import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import { useDebouncedSearch } from "@/hooks/use-debounced-search";
 import { useFilterToolbarScroll } from "@/hooks/use-filter-toolbar-scroll";
 import { useTransactionFilterOptions } from "@/hooks/use-transaction-filter-options";
+import { useTransactionSummaryQuery } from "@/hooks/use-transactions";
 import { getCurrentMonth, type PeriodSelection, type PeriodType } from "@/lib/analytics-period";
 import { MAX_TRANSACTION_SEARCH_LENGTH } from "@/lib/transaction-filter-limits";
 import { cn, getCurrencySymbol } from "@/lib/utils";
@@ -44,17 +48,19 @@ export interface TransactionFilters {
 export interface TransactionFiltersBarProps {
   filters: TransactionFilters;
   onChange: Dispatch<SetStateAction<TransactionFilters>>;
-  totalCount: number | null;
   /**
    * The way back, when this visit came from somewhere that offers one.
    *
-   * It rides in the toolbar rather than sitting above the page heading because the
-   * toolbar is this page's one piece of sticky chrome, and it has already solved
-   * every part of staying put: where to pin (measured off the app header), its own
-   * place in the flow, re-measuring when its height changes, hiding while the page
-   * scrolls and returning when it stops, and never hiding on desktop. A second
-   * sticky layer would have to be told about the first, since the toolbar computes
-   * its resting point from the header alone.
+   * It rides in the toolbar rather than on the page heading because the toolbar is
+   * this page's one piece of sticky chrome, and it has already solved every part of
+   * staying put: where to pin (measured off the app header), its own place in the
+   * flow, re-measuring when its height changes, hiding while the page scrolls and
+   * returning when it stops, and never hiding on desktop. On the heading it would
+   * scroll away, and an installed PWA opened cold on this URL has no browser back
+   * button to fall back on.
+   *
+   * Inline at the head of the first row rather than on a bordered row of its own,
+   * which cost a whole line on a phone to hold one 16px arrow.
    */
   returnBar?: ReactNode;
   /**
@@ -110,12 +116,15 @@ const hasActiveFilters = (filters: TransactionFilters) =>
 export function TransactionFiltersBar({
   filters,
   onChange,
-  totalCount,
   returnBar,
   filtersRevision,
 }: TransactionFiltersBarProps) {
   const { user } = useUser();
+  const { hideAmounts } = usePrivacy();
   const currencySymbol = getCurrencySymbol(user.currency);
+  // Owned here rather than passed down from the page: the bar already holds both
+  // halves of the key, and the totals are read nowhere else.
+  const summaryQuery = useTransactionSummaryQuery(filters, user.timezoneOffset);
   const filterOptions = useTransactionFilterOptions(filters.type);
   const { categories, labels } = filterOptions;
   const [filterDialogOpen, setFilterDialogOpen] = useState(false);
@@ -186,15 +195,8 @@ export function TransactionFiltersBar({
         )}
       >
         <div className="p-2.5 sm:p-3">
-          {/* Above the controls and separated from them: it is a way out of this
-              view, not another way to narrow it. */}
-          {returnBar && (
-            <div className="-mt-0.5 mb-2 flex min-w-0 border-b border-cream-100 pb-1.5">
-              {returnBar}
-            </div>
-          )}
-
           <div className="flex items-center gap-2.5">
+            {returnBar}
             <SearchField value={search.input} onChange={search.change} />
 
             <PeriodPicker
@@ -205,29 +207,36 @@ export function TransactionFiltersBar({
               className="hidden sm:block"
             />
 
-            <TypeToggle filters={filters} onChange={update} className="hidden lg:flex" />
+            <TransactionTypeToggle
+              value={filters.type}
+              onChange={(type) => update({ type, categoryId: null })}
+              className="hidden lg:flex"
+            />
 
             <FiltersButton count={advancedCount} expanded={filterDialogOpen} onClick={() => setFilterDialogOpen(true)} />
           </div>
 
-          <div className="mt-2.5 flex items-center gap-2 sm:hidden">
-            <PeriodPicker
-              value={periodOf(filters)}
-              onChange={(next) => update(periodFilters(next))}
-              tz={user.timezoneOffset}
-              allowAllTime
-              className="min-w-0 flex-1"
+          <TransactionFilterRail
+            period={periodOf(filters)}
+            onPeriodChange={(next) => update(periodFilters(next))}
+            type={filters.type}
+            onTypeChange={(type) => update({ type, categoryId: null })}
+            tz={user.timezoneOffset}
+            chips={activeChips}
+            onClearAll={hasActiveFilters(filters) ? clearAll : null}
+          />
+
+          {/* No rule above it: at text-xs in warm-400 the line is already quiet
+              enough to read as a footnote, and a border cost 17px of a phone
+              screen to say what the type contrast says for free. */}
+          <div className="mt-2 flex min-w-0 items-center">
+            <TransactionSummaryLine
+              summary={summaryQuery.data}
+              isError={summaryQuery.isError}
+              type={filters.type}
+              currency={user.currency}
+              hideAmounts={hideAmounts}
             />
-            <TypeToggle filters={filters} onChange={update} compact className="flex" />
-          </div>
-
-          <div className="mt-2.5 hidden items-center justify-end sm:flex lg:hidden">
-            <TypeToggle filters={filters} onChange={update} className="flex" />
-          </div>
-
-          <div className="mt-2.5 flex min-w-0 items-center gap-2 border-t border-cream-100 pt-2.5">
-            <ResultCount totalCount={totalCount} />
-            <TransactionFilterChips chips={activeChips} onClearAll={hasActiveFilters(filters) ? clearAll : null} />
           </div>
         </div>
       </section>
@@ -282,51 +291,5 @@ function FiltersButton({ count, expanded, onClick }: { count: number; expanded: 
         </span>
       )}
     </button>
-  );
-}
-
-function TypeToggle({
-  filters,
-  onChange,
-  compact = false,
-  className,
-}: {
-  filters: TransactionFilters;
-  onChange: (partial: Partial<TransactionFilters>) => void;
-  compact?: boolean;
-  className?: string;
-}) {
-  return (
-    <div aria-label="Transaction type" className={cn("shrink-0 items-center gap-0.5 rounded-xl bg-cream-100 p-1", className)}>
-      {(["ALL", "INCOME", "EXPENSE"] as const).map((type) => (
-        // Dropping the category belongs here, on the control the user actually
-        // pressed, rather than in an effect watching `filters.type`. An effect
-        // cannot tell a press apart from the same field arriving with a restored
-        // URL, and would strip the category out of a drill-down being navigated
-        // back to. The category list is scoped to the type, so a category chosen
-        // under one type either matches nothing under another or shows a chip
-        // that cannot resolve to a name — but only an actual *switch* invalidates
-        // it.
-        //
-        // Re-pressing the type already showing returns without calling onChange
-        // at all. Passing the same value is not the same as doing nothing: the
-        // update builds a fresh filters object, and the page watches that object
-        // by identity to reset the page number, drop the selection and announce
-        // "cleared because the filters changed" — all of it untrue here.
-        <button key={type} type="button" onClick={() => { if (type !== filters.type) onChange({ type, categoryId: null }); }} aria-label={compact ? type === "ALL" ? "All transactions" : type.toLowerCase() : undefined} aria-pressed={filters.type === type} className={cn("min-h-11 min-w-11 rounded-lg text-xs font-semibold transition-colors", compact ? "px-2" : "px-3", filters.type === type ? type === "INCOME" ? "bg-white text-income shadow-warm" : type === "EXPENSE" ? "bg-white text-expense shadow-warm" : "bg-white text-warm-700 shadow-warm" : "text-warm-400 hover:text-warm-600")}>
-          {compact ? type === "ALL" ? "All" : type === "INCOME" ? "+" : "−" : type === "ALL" ? "All" : type === "INCOME" ? "Income" : "Expenses"}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function ResultCount({ totalCount }: { totalCount: number | null }) {
-  return (
-    <p aria-live="polite" className="shrink-0 text-xs font-medium text-warm-400">
-      {totalCount === null
-        ? "Loading…"
-        : `${totalCount.toLocaleString()} ${totalCount === 1 ? "transaction" : "transactions"}`}
-    </p>
   );
 }

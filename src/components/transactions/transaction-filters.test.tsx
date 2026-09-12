@@ -11,6 +11,25 @@ vi.mock("@/components/user-provider", () => ({
   useUser: () => ({ user: { currency: "PHP", timezoneOffset: -480 } }),
 }));
 
+vi.mock("@/components/privacy-provider", () => ({
+  usePrivacy: () => ({ hideAmounts: privacyState.hideAmounts }),
+}));
+
+const privacyState = vi.hoisted(() => ({ hideAmounts: false }));
+
+const summaryState = vi.hoisted(() => ({
+  value: {
+    data: { count: 10, income: 0, expense: 2500, net: -2500 } as
+      | { count: number; income: number; expense: number; net: number }
+      | undefined,
+    isError: false,
+  },
+}));
+
+vi.mock("@/hooks/use-transactions", () => ({
+  useTransactionSummaryQuery: () => summaryState.value,
+}));
+
 const filterOptionState = vi.hoisted(() => ({
   value: {
     categories: [] as { id: string; name: string }[],
@@ -49,7 +68,7 @@ const renderFilters = (initial: TransactionFilters = baseFilters) => {
   function Harness() {
     const [filters, setFilters] = useState(initial);
     currentFilters = filters;
-    return <TransactionFiltersBar filters={filters} onChange={setFilters} totalCount={10} />;
+    return <TransactionFiltersBar filters={filters} onChange={setFilters} />;
   }
 
   return render(<Harness />);
@@ -513,11 +532,15 @@ describe("TransactionFiltersBar", () => {
     expect(currentFilters).toMatchObject({ period: "all", from: null, to: null });
   });
 
-  it("renders one consistently formatted result count even without active filters", () => {
-    renderFilters();
+  it("reports the filtered total once, beside its count", () => {
+    // The bare count used to live here and repeated the page header's own meta.
+    // What the toolbar carries now is the thing the header cannot: what the
+    // filtered rows add up to.
+    renderFilters({ ...baseFilters, type: "EXPENSE" });
 
-    expect(screen.getAllByText("10 transactions")).toHaveLength(1);
-    expect(screen.getAllByText("10 transactions")[0].getAttribute("aria-live")).toBe("polite");
+    const line = screen.getAllByText("₱2,500.00 spent · 10 transactions");
+    expect(line).toHaveLength(1);
+    expect(line[0].getAttribute("aria-live")).toBe("polite");
   });
 
   it("clears an unavailable selected label from the draft before applying", () => {
@@ -556,10 +579,123 @@ describe("TransactionFiltersBar", () => {
 
     expect(screen.getByRole("button", { name: "Clear search" }).className).toContain("min-h-11");
     expect(screen.getAllByRole("button", { name: "Previous period" })[0].className).toContain("min-w-11");
-    expect(screen.getByRole("button", { name: "All transactions" }).className).toContain("min-w-11");
+    // Two instances now: the rail's, and the search row's from `lg` up.
+    expect(screen.getAllByRole("button", { name: "All transactions" })[0].className).toContain(
+      "min-w-11",
+    );
 
     act(() => vi.advanceTimersByTime(300));
-    expect(screen.getByRole("button", { name: /Remove Search: coffee filter/ }).className).toContain("min-h-11");
+    // The rail clips vertically (overflow-x forces it), so the chip is 36px with
+    // its 44px target carried by a pseudo-element that the rail's padding fits.
+    const remove = screen.getByRole("button", { name: /Remove Search: coffee filter/ });
+    expect(remove.className).toContain("w-11");
+    expect(remove.className).toContain("before:h-11");
+  });
+});
+
+describe("the return arrow", () => {
+  const renderWithReturn = () =>
+    render(
+      <TransactionFiltersBar
+        filters={baseFilters}
+        onChange={() => {}}
+        returnBar={<a href="/analytics?period=monthly" aria-label="Back to Analytics" />}
+      />,
+    );
+
+  it("rides inside the toolbar, so it pins and hides with it", () => {
+    // The toolbar is the page's one sticky element and already knows where to pin.
+    // On the page heading it would scroll away from a long list, and an installed
+    // PWA opened cold on this URL has no browser back button to fall back on.
+    const { container } = renderWithReturn();
+    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
+    const link = screen.getByRole("link", { name: "Back to Analytics" });
+
+    expect(toolbar.contains(link)).toBe(true);
+    expect(container.querySelector("[data-filter-toolbar-marker]")).toBeTruthy();
+  });
+
+  it("shares the search row rather than taking a line of its own", () => {
+    // It used to own a bordered row above the controls, which spent a whole line of
+    // a phone screen on one arrow.
+    renderWithReturn();
+    const link = screen.getByRole("link", { name: "Back to Analytics" });
+    const search = screen.getByRole("searchbox", { name: "Search transactions" });
+
+    expect(link.parentElement).toBe(search.closest("[role=search]")!.parentElement);
+    expect(link.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("leaves the row unchanged when there is nowhere to return to", () => {
+    renderFilters();
+    expect(screen.queryByRole("link", { name: /Back to/ })).toBeNull();
+  });
+});
+
+describe("the filter rail", () => {
+  const rail = (container: HTMLElement) =>
+    container.querySelector<HTMLElement>("[data-filter-rail]")!;
+
+  it("renders the type toggle once per breakpoint band instead of three times", () => {
+    // Three copies used to exist — a compact one below sm, a full one from sm to
+    // lg, and a full one on the search row — each costing a row on a phone, and
+    // only one of them carried an aria-label.
+    renderFilters();
+
+    expect(screen.getAllByRole("button", { name: "All transactions" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Income" })).toHaveLength(2);
+  });
+
+  it("names the type the same way at every width", () => {
+    renderFilters();
+
+    for (const button of screen.getAllByRole("button", { name: "Expenses" })) {
+      expect(button.textContent).toContain("−");
+      expect(button.textContent).toContain("Expenses");
+    }
+  });
+
+  it("carries the period picker, so a phone keeps one-tap month stepping", () => {
+    const { container } = renderFilters();
+    const stepper = screen.getAllByRole("button", { name: "Previous period" })[1];
+
+    expect(rail(container).contains(stepper)).toBe(true);
+  });
+
+  it("collapses at lg when it holds nothing that width still needs", () => {
+    const { container } = renderFilters();
+    expect(rail(container).className).toContain("lg:hidden");
+  });
+
+  it("stays put at lg once it holds a chip", () => {
+    const { container } = renderFilters({ ...baseFilters, type: "EXPENSE" });
+    expect(rail(container).className).not.toContain("lg:hidden");
+  });
+
+  it("keeps Clear all out of the scroller, where enough chips would bury it", () => {
+    const { container } = renderFilters({ ...baseFilters, type: "EXPENSE" });
+    const clearAll = screen.getByRole("button", { name: "Clear all" });
+    const scroller = rail(container).firstElementChild!;
+
+    expect(rail(container).contains(clearAll)).toBe(true);
+    expect(scroller.contains(clearAll)).toBe(false);
+  });
+
+  it("offers Clear all for a filter that shows no chip of its own", () => {
+    // A category whose name has not loaded yields no chip on purpose, but the
+    // filter is live and the way out of it has to exist.
+    filterOptionState.value.categories = [];
+    const { container } = renderFilters({ ...baseFilters, categoryId: "unloaded" });
+
+    expect(screen.getByRole("button", { name: "Clear all" })).toBeTruthy();
+    expect(rail(container).className).not.toContain("lg:hidden");
+  });
+
+  it("pads the scroller so its clipped overflow cannot cut the 44px targets", () => {
+    // overflow-x: auto forces the other axis to auto too, so the rail clips
+    // vertically and the hit areas overhang their 36px chips by 4px each side.
+    const { container } = renderFilters();
+    expect(rail(container).firstElementChild!.className).toContain("py-0.5");
   });
 });
 
@@ -609,7 +745,6 @@ describe("changing the transaction type", () => {
       <TransactionFiltersBar
         filters={{ ...baseFilters, type: "EXPENSE", categoryId: "c1" }}
         onChange={() => {}}
-        totalCount={10}
       />,
     );
 
@@ -617,39 +752,3 @@ describe("changing the transaction type", () => {
   });
 });
 
-describe("the return bar slot", () => {
-  const renderWithReturn = () =>
-    render(
-      <TransactionFiltersBar
-        filters={baseFilters}
-        onChange={() => {}}
-        totalCount={10}
-        returnBar={<a href="/analytics?period=monthly">Analytics</a>}
-      />,
-    );
-
-  it("rides inside the toolbar, so it pins and hides with it", () => {
-    // The toolbar is the page's one sticky element and already knows where to pin.
-    // A link outside it would scroll away from a long list, which is the bug this
-    // placement fixes.
-    const { container } = renderWithReturn();
-    const toolbar = screen.getByRole("region", { name: "Transaction filters" });
-    const link = screen.getByRole("link", { name: "Analytics" });
-
-    expect(toolbar.contains(link)).toBe(true);
-    expect(container.querySelector("[data-filter-toolbar-marker]")).toBeTruthy();
-  });
-
-  it("sits ahead of the controls, being a way out rather than another narrowing", () => {
-    renderWithReturn();
-    const link = screen.getByRole("link", { name: "Analytics" });
-    const search = screen.getByRole("searchbox", { name: "Search transactions" });
-
-    expect(link.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  it("leaves no empty row when there is nowhere to return to", () => {
-    renderFilters();
-    expect(screen.queryByRole("link", { name: "Analytics" })).toBeNull();
-  });
-});

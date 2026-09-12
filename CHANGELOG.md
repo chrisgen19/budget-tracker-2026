@@ -2,6 +2,70 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-12 - The way back becomes an arrow
+
+The drill-down back link was a bordered row above the toolbar controls reading
+"Analytics · September 2026". It is now an arrow at the head of the first row, immediately left of
+the search box, with the destination carried as its accessible name instead of as pixels.
+
+Two problems, one of them substantive. The row spent a whole line of a phone screen on one 16px
+arrow. And the period it named was the *analytics* span, which a drill-down deliberately does not
+share with the ledger's own filter: a heatmap day drill-down filters the list to that one day while
+the link returns to the whole span. Step the transactions period to another month and the back link
+confidently named a third one. The old code was right that the label could not be built from the
+page's filters; the conclusion it drew was to name the destination anyway, and naming neither is
+better. Two periods on one screen that disagree read as a bug in whichever the reader trusts less.
+
+So `analyticsReturnTarget` no longer returns `periodLabel`, and `AnalyticsReturnTarget` is just an
+href. The property that field's tests were really demonstrating — that a day drill-down returns to
+the span, not the day — is now asserted on the href.
+
+It stays inside the toolbar. That was reconsidered and put back: the toolbar is this page's one
+sticky element, and on the page heading the arrow would scroll away from a long list. An installed
+PWA opened cold on this URL has no browser back button to fall back on, which is the case the
+component exists for.
+
+`TOUCH_HIT_AREA_CENTERED` in `utils.ts` is the square variant of the 44px rule, for the 36px arrow.
+Unlike the vertical-only spelling it reaches past the button horizontally, so it is only safe where
+nothing interactive sits within the 4px overhang — here the search box is 10px away.
+
+## 2026-09-12 - One filter rail, and a total the list never had
+
+The transactions toolbar was four stacked rows on a phone and rendered the same type toggle three
+times. A mobile row carried the period picker and a compact toggle; a second row, `sm:flex lg:hidden`,
+carried the toggle again with full labels; a third carried the count and the chips. Only the compact
+copy had an `aria-label`, so the screen-reader name of one control changed with the viewport.
+
+Rows two through four are now one horizontally scrollable rail
+(`transaction-filter-rail.tsx`). Which controls appear is still a breakpoint question, answered by
+hiding items inside one row rather than by stacking rows. The toggle exists once, with both
+spellings on the same button and the full word as its accessible name at every width.
+
+The rail's scroll container carries 2px of vertical padding, and removing it breaks something
+invisible: `overflow-x: auto` forces the other axis to `auto` too, so the rail clips vertically, and
+the 44px hit areas on the 36px chips overhang by exactly 4px at each end. The pseudo-elements have no
+paint, so the clipped targets look fine and simply stop responding near their edges. `TOUCH_HIT_AREA`
+in `utils.ts` is the shared spelling of that pattern, which had been hand-repeated in about ten
+places.
+
+The toolbar's bare count is gone. It repeated the number the page header was already showing, and it
+was the least useful thing that could occupy a row. In its place is what the header cannot show:
+what the filtered rows add up to. `GET /api/transactions/summary` answers `{ count, income, expense,
+net }` over the same `buildTransactionWhere` the list uses, and the line signs the figure only where
+the sign carries information — a type filter has already picked a side, so `spent` and `received`
+take no sign, while All shows a signed net. The case that prompted it is the analytics drill-down,
+where a label and a type are both pinned and the total of what was selected was unavailable
+anywhere.
+
+The endpoint is separate from the list rather than a field on it because the list is fetched page by
+page in infinite mode, and a total riding along would re-run the aggregate on every scroll to produce
+the same answer. Keyed on the filters alone, it runs once per filter change; every existing mutation
+already invalidates the `transactions` root, so it refreshes with the list.
+
+One thing fixed on the way past: an active filter that shows no chip — a category whose name has not
+loaded yet — used to hide Clear all along with the empty chip row, leaving no way out of it. Clear
+all is now pinned outside the scroller and rendered independently of the chips.
+
 ## 2026-09-11 - One owner for the highlight link (#291)
 
 No behaviour change. `?highlight=<id>` resolution moved out of `transactions/page.tsx` into

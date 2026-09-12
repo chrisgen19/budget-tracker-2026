@@ -6,6 +6,7 @@ import {
   getSortLabel,
 } from "@/components/transactions/transaction-filter-options";
 import type { TransactionFilters } from "@/components/transactions/transaction-filters";
+import { cn, TOUCH_HIT_AREA } from "@/lib/utils";
 
 export interface FilterChip {
   id: string;
@@ -95,31 +96,42 @@ export function buildFilterChips({
 
 interface TransactionFilterChipsProps {
   chips: FilterChip[];
-  /** Null hides the Clear all button, which nothing but an active filter should show. */
-  onClearAll: (() => void) | null;
 }
 
-export function TransactionFilterChips({ chips, onClearAll }: TransactionFilterChipsProps) {
-  if (chips.length === 0) return null;
-
+/**
+ * The chips themselves and nothing else — no scroll container and no Clear all.
+ *
+ * Both of those moved out to the filter rail, which places the chips after the
+ * period and type controls in one scrollable row and pins Clear all outside it.
+ * Owning the wrapper here meant the chips could only ever be their own row.
+ *
+ * 36px tall to match the rail's other chips, with the 44px target kept as a
+ * pseudo-element on the remove button. That button also holds a real 44px width,
+ * since a hit area can be stretched vertically without colliding with anything
+ * but would overlap its neighbours horizontally.
+ */
+export function TransactionFilterChips({ chips }: TransactionFilterChipsProps) {
   return (
     <>
-      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {chips.map((chip) => (
-          <span key={chip.id} className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-full bg-amber-light/35 pl-3 text-xs font-medium text-amber-dark">
-            {chip.label}
-            <button type="button" onClick={chip.onRemove} aria-label={`Remove ${chip.label} filter`} className="flex min-h-11 min-w-11 items-center justify-center rounded-full transition-colors hover:bg-amber/15">
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </span>
-        ))}
-      </div>
-
-      {onClearAll && (
-        <button type="button" onClick={onClearAll} className="ml-auto min-h-11 shrink-0 rounded-lg px-2 text-xs font-semibold text-warm-400 transition-colors hover:bg-cream-100 hover:text-warm-700">
-          Clear all
-        </button>
-      )}
+      {chips.map((chip) => (
+        <span
+          key={chip.id}
+          className="inline-flex h-9 shrink-0 items-center gap-1 rounded-full bg-amber-light/35 pl-3 text-xs font-medium text-amber-dark"
+        >
+          {chip.label}
+          <button
+            type="button"
+            onClick={chip.onRemove}
+            aria-label={`Remove ${chip.label} filter`}
+            className={cn(
+              "relative flex h-9 w-11 items-center justify-center rounded-full transition-colors hover:bg-amber/15",
+              TOUCH_HIT_AREA,
+            )}
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </span>
+      ))}
     </>
   );
 }
