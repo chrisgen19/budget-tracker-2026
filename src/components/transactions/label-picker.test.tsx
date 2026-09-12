@@ -59,12 +59,14 @@ function ControlledPicker({
   autoAppliedIds,
   transactionType,
   categoryId,
+  attachedIds,
 }: {
   initialIds?: string[];
   onChange?: (ids: string[]) => void;
   autoAppliedIds?: string[];
   transactionType?: "INCOME" | "EXPENSE";
   categoryId?: string | null;
+  attachedIds?: string[];
 }) {
   const [selectedIds, setSelectedIds] = useState(initialIds);
   return (
@@ -77,6 +79,7 @@ function ControlledPicker({
       autoAppliedIds={autoAppliedIds}
       transactionType={transactionType}
       categoryId={categoryId}
+      attachedIds={attachedIds}
     />
   );
 }
@@ -241,11 +244,13 @@ describe("LabelPicker category restriction", () => {
   });
 
   // Dropping it instead would look like data loss on a saved transaction whose label was
-  // restricted afterwards, so it stays put and says why.
-  it("keeps an already-selected label visible and marks it out of category", () => {
+  // restricted afterwards, so it stays put and says why. Only labels that were on the record when
+  // the form opened qualify, which is the same set the write paths grandfather.
+  it("keeps an attached label visible and marks it out of category", () => {
     render(
       <ControlledPicker
         initialIds={["shopee"]}
+        attachedIds={["shopee"]}
         transactionType="EXPENSE"
         categoryId="cat_transport"
       />,
@@ -253,6 +258,44 @@ describe("LabelPicker category restriction", () => {
 
     expect(screen.getByText("Not in this category")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Remove Shopee label" })).toBeTruthy();
+  });
+
+  // Nothing to grandfather on a label the user picked in this session, and keeping it would leave
+  // the form holding a pairing every write path refuses -- so Save would fail naming a label the
+  // picker had offered a moment earlier.
+  it("drops a label the user selected once the category excludes it", () => {
+    const onChange = vi.fn();
+    render(
+      <ControlledPicker
+        initialIds={["shopee"]}
+        onChange={onChange}
+        transactionType="EXPENSE"
+        categoryId="cat_transport"
+      />,
+    );
+
+    expect(onChange).toHaveBeenCalledWith([]);
+    expect(screen.queryByText("Not in this category")).toBeNull();
+  });
+
+  // The drop is scoped to the category rule. A type mismatch is reconciled by the forms
+  // themselves, and doing it here too would fight them.
+  it("leaves a type-mismatched selection alone", () => {
+    const incomeOnly = label("payday", "Payday", 1, "INCOME");
+    mocks.useLabelsQuery.mockReturnValue(queryState([TNVS, SHOPEE, ANYWHERE, incomeOnly]));
+    const onChange = vi.fn();
+
+    render(
+      <ControlledPicker
+        initialIds={["payday"]}
+        onChange={onChange}
+        transactionType="EXPENSE"
+        categoryId="cat_transport"
+      />,
+    );
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByText("Not for this type")).toBeTruthy();
   });
 
   // The two restrictions send the user to different screens, so they must not share a message.
@@ -263,6 +306,7 @@ describe("LabelPicker category restriction", () => {
     render(
       <ControlledPicker
         initialIds={["payday"]}
+        attachedIds={["payday"]}
         transactionType="EXPENSE"
         categoryId="cat_transport"
       />,

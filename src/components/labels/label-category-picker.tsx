@@ -46,6 +46,10 @@ export function LabelCategoryPicker({ value, onChange, applicableTo }: LabelCate
   );
 
   const isRestricted = value.length > 0;
+  // The list is only usable once it has actually arrived. An unrestricted label is the common
+  // case and used to short-circuit the pending and error branches entirely, which is how a failed
+  // fetch reached the user as a dead button rather than as a failure.
+  const categoriesLoaded = categoriesQuery.isSuccess;
 
   // Narrowing "Applies To" can invalidate picks that were legal when they were made: an
   // Expenses+Income label limited to Groceries and Salary, narrowed to Expenses, must not keep
@@ -94,14 +98,17 @@ export function LabelCategoryPicker({ value, onChange, applicableTo }: LabelCate
         <button
           type="button"
           aria-pressed={isRestricted}
-          // Ticking the first selectable category rather than opening an empty list: "Specific"
-          // with nothing chosen is indistinguishable from "All" in the stored value, so it would
-          // render as a pressed button that immediately un-presses itself.
+          // Disabled rather than inert while the list is unusable. It used to test
+          // `selectable.length > 0` inside the handler, so a failed request left a button that
+          // looked live and did nothing at all when pressed -- the silent no-op the house rule on
+          // failed saves exists to prevent, and the error below was unreachable to explain it.
+          disabled={!categoriesLoaded}
           onClick={() => {
             if (!isRestricted && selectable.length > 0) onChange([selectable[0].id]);
           }}
           className={cn(
             "flex-1 min-h-11 rounded-xl px-3 text-sm font-medium transition-all duration-150",
+            "disabled:cursor-not-allowed disabled:opacity-50",
             isRestricted
               ? "bg-amber-light/60 text-amber-dark ring-2 ring-amber/30"
               : "bg-cream-100 text-warm-400 hover:bg-cream-200",
@@ -111,11 +118,7 @@ export function LabelCategoryPicker({ value, onChange, applicableTo }: LabelCate
         </button>
       </div>
 
-      {!isRestricted ? (
-        <p className="text-[11px] text-warm-300 mt-1.5">
-          This label is offered on every category of a matching type.
-        </p>
-      ) : categoriesQuery.isPending ? (
+      {categoriesQuery.isPending ? (
         <div aria-label="Loading categories" className="mt-3 flex flex-wrap gap-2">
           {["w-24", "w-28", "w-20", "w-24"].map((width, index) => (
             <div key={index} className={cn("h-11 animate-shimmer rounded-full", width)} />
@@ -139,6 +142,10 @@ export function LabelCategoryPicker({ value, onChange, applicableTo }: LabelCate
       ) : selectable.length === 0 ? (
         <p className="mt-3 rounded-xl border border-cream-200 bg-cream-50/60 px-4 py-3 text-sm text-warm-400">
           No categories of a matching type yet. Create one first, or leave this on All categories.
+        </p>
+      ) : !isRestricted ? (
+        <p className="text-[11px] text-warm-300 mt-1.5">
+          This label is offered on every category of a matching type.
         </p>
       ) : (
         <>

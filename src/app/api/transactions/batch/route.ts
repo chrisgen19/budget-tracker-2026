@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
+import { labelRowAllowsCategory } from "@/lib/label-category-matching";
 import {
   batchTransactionSchema,
   clientBatchIdSchema,
@@ -291,7 +292,12 @@ export async function PATCH(request: NextRequest) {
 
       const labels = await tx.label.findMany({
         where: { id: { in: input.labelIds }, userId },
-        select: { id: true, applicableTo: true },
+        select: {
+          id: true,
+          name: true,
+          applicableTo: true,
+          categories: { select: { categoryId: true } },
+        },
       });
       if (labels.length !== input.labelIds.length) {
         return { error: "One or more labels were not found", status: 400 as const };
@@ -310,6 +316,28 @@ export async function PATCH(request: NextRequest) {
           error: "One or more labels do not apply to every selected transaction",
           status: 409 as const,
         };
+      }
+
+      // The same all-or-nothing rule the type check above applies, and the reason this branch
+      // needed it most: a bulk add is the one place a label meets transactions the user never
+      // opened, spanning every category the selection covers. Nothing is grandfathered here --
+      // every link a bulk add writes is new -- so a label restricted away from any selected row
+      // refuses the whole operation rather than silently labelling the subset that qualifies.
+      //
+      // Named separately from the type refusal because the two are fixed on different screens.
+      if (input.operation === "add") {
+        const outOfCategory = labels.filter((label) =>
+          transactions.some(
+            (transaction) => !labelRowAllowsCategory(label, transaction.categoryId),
+          ),
+        );
+        if (outOfCategory.length > 0) {
+          const names = outOfCategory.map((label) => label.name).join(", ");
+          return {
+            error: `${names} is limited to categories that do not cover every selected transaction`,
+            status: 409 as const,
+          };
+        }
       }
 
       const labelIds = labels.map((label) => label.id);

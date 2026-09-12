@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { transactionSchema } from "@/lib/validations";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
+import { labelRowAllowsCategory } from "@/lib/label-category-matching";
 import {
   buildTransactionOrderBy,
   buildTransactionWhere,
@@ -64,7 +65,12 @@ export async function POST(request: Request) {
       const uniqueLabelIds = [...new Set(validated.labelIds)];
       const ownedLabels = await prisma.label.findMany({
         where: { id: { in: uniqueLabelIds }, userId },
-        select: { id: true, applicableTo: true },
+        select: {
+          id: true,
+          name: true,
+          applicableTo: true,
+          categories: { select: { categoryId: true } },
+        },
       });
       if (ownedLabels.length !== uniqueLabelIds.length) {
         return NextResponse.json(
@@ -76,6 +82,23 @@ export async function POST(request: Request) {
       const compatible = ownedLabels.filter(
         (l) => l.applicableTo === "BOTH" || l.applicableTo === validated.type
       );
+
+      // A label restricted to other categories is refused, not filtered, matching
+      // `createTransactionBatch`. This route is the browser's create path and does not share that
+      // writer, so the rule has to be restated here or the app's own primary write is the one
+      // place it does not hold. Checked after the type filter, so a label already being dropped
+      // for its type does not turn into a hard refusal.
+      const outOfCategory = compatible.filter(
+        (l) => !labelRowAllowsCategory(l, validated.categoryId)
+      );
+      if (outOfCategory.length > 0) {
+        const names = outOfCategory.map((l) => l.name).join(", ");
+        return NextResponse.json(
+          { error: `${names} cannot be used on a transaction in this category.` },
+          { status: 400 }
+        );
+      }
+
       verifiedLabelIds.push(...compatible.map((l) => l.id));
     }
 
@@ -84,7 +107,14 @@ export async function POST(request: Request) {
     if (validated.labelIds === undefined) {
       const ctx = await getScheduleContext(userId);
       if (ctx) {
-        const scheduledId = matchScheduledLabel(new Date(validated.date), ctx, validated.type);
+        // The category goes in, or auto-apply becomes the one path that can still write the
+        // pairing every other path refuses.
+        const scheduledId = matchScheduledLabel(
+          new Date(validated.date),
+          ctx,
+          validated.type,
+          validated.categoryId
+        );
         if (scheduledId) verifiedLabelIds.push(scheduledId);
       }
     }

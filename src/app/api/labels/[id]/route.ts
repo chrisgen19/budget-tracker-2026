@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { labelSchema } from "@/lib/validations";
 import { categoriesUsableForLabel, LABEL_INCLUDE } from "@/lib/label-writes";
+import { categoryRestrictionNarrowed } from "@/lib/label-category-matching";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -90,10 +91,10 @@ export async function PUT(request: Request, { params }: RouteParams) {
     // An empty new set means every category, which removes nothing by definition.
     const oldCategoryIds = existing.categories.map((c) => c.categoryId).sort();
     const newCategoryIds = [...(validated.categoryIds ?? [])].sort();
-    const categoriesNarrowed =
-      newCategoryIds.length > 0 &&
-      (oldCategoryIds.length !== newCategoryIds.length ||
-        oldCategoryIds.some((value, index) => value !== newCategoryIds[index]));
+    // Narrowed means the new set *removes* something the old one allowed, never merely that it
+    // differs -- see `categoryRestrictionNarrowed`, which owns that rule beside the predicate it
+    // mirrors. Comparing the two for inequality counted a pure widening as a narrowing.
+    const categoriesNarrowed = categoryRestrictionNarrowed(oldCategoryIds, newCategoryIds);
 
     // One predicate for both narrowings, so a save that does both asks once and strips once.
     const excluded: Prisma.TransactionWhereInput[] = [

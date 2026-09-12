@@ -114,6 +114,12 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     () => toReceiptBreakdownMeta(transaction?.receiptBreakdown),
     [transaction?.receiptBreakdown]
   );
+  // Labels already on the saved row, which the picker grandfathers. `initialData` is a scan draft
+  // rather than a stored record, so its labels are not: nothing has been written to grandfather.
+  const attachedLabelIds = useMemo(
+    () => transaction?.labels?.map((tl) => tl.labelId) ?? [],
+    [transaction]
+  );
   const watchedCategoryId = watch("categoryId");
   const watchedDate = watch("date");
   const watchedLabelIds = watch("labelIds") ?? [];
@@ -517,6 +523,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                 autoAppliedIds={autoAppliedSnapshot}
                 transactionType={selectedType}
                 categoryId={watchedCategoryId}
+                attachedIds={attachedLabelIds}
               />
             )}
 

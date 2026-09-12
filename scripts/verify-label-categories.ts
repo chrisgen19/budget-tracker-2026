@@ -1,11 +1,21 @@
 /**
  * End-to-end proof of the label-category restriction against a real Postgres.
  *
- * Exercises the shared write paths directly -- the same functions the app routes, the MCP tools
- * and the Telegram bot all call -- so what passes here is what every surface does. Everything is
- * created under one throwaway user and deleted at the end.
+ * Exercises the shared write paths directly -- the same functions the MCP tools and the Telegram
+ * bot call -- and then, when a dev server is running, the three **browser** routes over real HTTP.
+ *
+ * The second half is not redundant. `POST /api/transactions`, `PUT /api/transactions/[id]` and the
+ * bulk-label branch of `PATCH /api/transactions/batch` deliberately do not share
+ * `createTransactionBatch`, so each carries its own copy of the label rules -- and each shipped
+ * enforcing only `applicableTo`, which made the restriction hold everywhere except the app's own
+ * primary write path. A test against the shared writer cannot see that, because the routes never
+ * call it. Set `BASE_URL` to run it: `BASE_URL=http://localhost:3111 pnpm exec tsx --env-file=.env
+ * scripts/verify-label-categories.ts`.
+ *
+ * Everything is created under one throwaway user and deleted at the end.
  */
 import { PrismaClient } from "@prisma/client";
+import { encode } from "next-auth/jwt";
 import { createLabel } from "../src/lib/label-writes";
 import { createTransactionBatch } from "../src/lib/transaction-writes";
 import { getLabelList } from "../src/lib/budget-queries";
@@ -137,6 +147,100 @@ async function main() {
     "deleting the last linked category leaves the label unrestricted, not unusable",
     afterDelete?.categories.length === 0
   );
+
+  // --- the browser routes, over real HTTP ---
+  //
+  // Skipped without a BASE_URL so the database half still runs unattended, and announced rather
+  // than silently passing: a skipped check that prints nothing is how a regression reaches main.
+  const baseUrl = process.env.BASE_URL;
+  if (!baseUrl) {
+    console.log("\nSKIP  browser routes -- set BASE_URL to a running dev server to include them");
+  } else {
+    const secret = process.env.NEXTAUTH_SECRET;
+    if (!secret) throw new Error("NEXTAUTH_SECRET is required to mint a session cookie");
+    const token = await encode({
+      token: { id: user.id, role: user.role, sub: user.id, email: user.email, name: "LC" },
+      secret,
+    });
+    const send = (path: string, method: string, body: unknown) =>
+      fetch(`${baseUrl}${path}`, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          cookie: `next-auth.session-token=${token}`,
+        },
+        body: JSON.stringify(body),
+      });
+
+    const row = (categoryId: string, labelIds?: string[]) => ({
+      amount: 100,
+      description: "Fare",
+      type: "EXPENSE" as const,
+      date: "2026-09-12",
+      categoryId,
+      ...(labelIds && { labelIds }),
+    });
+
+    const ok = await send("/api/transactions", "POST", row(transport.id, [tnvs.label.id]));
+    check("POST /api/transactions writes a label its category allows", ok.status === 201, String(ok.status));
+
+    const bad = await send("/api/transactions", "POST", row(shopping.id, [tnvs.label.id]));
+    check("POST /api/transactions refuses a label out of category", bad.status === 400, String(bad.status));
+
+    // The edit path has to grandfather what is already on the row, or narrowing a label makes
+    // every older transaction carrying it unsaveable -- down to fixing a typo in its description.
+    const created = (await ok.json()) as { id: string };
+    await prisma.transaction.update({
+      where: { id: created.id },
+      data: { categoryId: shopping.id },
+    });
+    const grandfathered = await send(`/api/transactions/${created.id}`, "PUT", {
+      ...row(shopping.id, [tnvs.label.id]),
+      description: "Fare, corrected",
+    });
+    check(
+      "PUT /api/transactions/[id] re-accepts a label already on the row",
+      grandfathered.status === 200,
+      String(grandfathered.status)
+    );
+
+    const adding = await send(`/api/transactions/${created.id}`, "PUT", {
+      ...row(shopping.id, [tnvs.label.id, open.label.id]),
+    });
+    check(
+      "PUT /api/transactions/[id] still accepts adding an unrestricted label",
+      adding.status === 200,
+      String(adding.status)
+    );
+
+    // The path that needed this most: a bulk add meets transactions the user never opened,
+    // spanning every category the selection covers.
+    const other = await send("/api/transactions", "POST", row(shopping.id));
+    const otherId = ((await other.json()) as { id: string }).id;
+    const bulk = await send("/api/transactions/batch", "PATCH", {
+      ids: [created.id, otherId],
+      action: "labels",
+      operation: "add",
+      labelIds: [tnvs.label.id],
+    });
+    check(
+      "PATCH /api/transactions/batch refuses a bulk add outside the label's categories",
+      bulk.status === 409,
+      String(bulk.status)
+    );
+
+    const bulkOk = await send("/api/transactions/batch", "PATCH", {
+      ids: [created.id, otherId],
+      action: "labels",
+      operation: "add",
+      labelIds: [open.label.id],
+    });
+    check(
+      "PATCH /api/transactions/batch still adds an unrestricted label in bulk",
+      bulkOk.status === 200,
+      String(bulkOk.status)
+    );
+  }
 
   await prisma.transaction.deleteMany({ where: { userId: user.id } });
   await prisma.user.delete({ where: { id: user.id } });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion, AnimatePresence } from "framer-motion";
@@ -98,6 +98,9 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
   });
 
   const selectedType = watch("type");
+  // Labels already on the stored bill, which the picker grandfathers -- `updateBill` accepts
+  // exactly this set however the restriction has since narrowed.
+  const attachedLabelIds = useMemo(() => bill?.labels?.map((bl) => bl.labelId) ?? [], [bill]);
   const watchedCategoryId = watch("categoryId");
   const watchedFrequency = watch("frequency");
   const watchedLabelIds = watch("labelIds") ?? [];
@@ -429,6 +432,7 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
               onChange={(ids) => setValue("labelIds", ids)}
               transactionType={selectedType}
               categoryId={watchedCategoryId}
+              attachedIds={attachedLabelIds}
             />
 
             {/* Description */}

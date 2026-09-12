@@ -559,6 +559,21 @@ describe("namesLabels", () => {
     expect(namesLabels(readLabelDirective("label it work", TWO))).toBe(true);
   });
 
+  // The bucket this predicate was written to survive, and the one it did not: `outOfCategory` was
+  // added to the parser and not here, so a pending receipt answered with "label it Shopee" had
+  // every other bucket empty, read as a description correction, and saved a transaction titled
+  // "label it Shopee".
+  it("is true for a label the category excludes", () => {
+    const scoped: BotLabel[] = [
+      { id: "s1", name: "Shopee", applicableTo: "EXPENSE", categoryIds: ["cat_shopping"] },
+    ];
+    const directive = readLabelDirective("label it shopee", scoped, "EXPENSE", "cat_transport");
+
+    expect(directive.outOfCategory).toEqual(["Shopee"]);
+    expect(directive.ids).toEqual([]);
+    expect(namesLabels(directive)).toBe(true);
+  });
+
   it("is false for text that says nothing about labels", () => {
     expect(namesLabels(readLabelDirective("Groceries at SM", TWO))).toBe(false);
   });

@@ -214,16 +214,19 @@ const tidy = (text: string): string =>
 /**
  * Whether the parser read this text as naming labels at all.
  *
- * Applied, missing, type-mismatched or ambiguous — every one of those means the user was talking
- * about labels, and a caller deciding "is this a label edit or a new description" has to treat
- * them alike. Enumerating the buckets at the call site got this wrong once per bucket added:
- * first `incompatible`, then `ambiguous`, each time renaming a receipt draft to the text of the
- * instruction. It lives here so the next bucket cannot repeat it.
+ * Applied, missing, type-mismatched, out-of-category or ambiguous — every one of those means the
+ * user was talking about labels, and a caller deciding "is this a label edit or a new description"
+ * has to treat them alike. Enumerating the buckets at the call site got this wrong once per bucket
+ * added: first `incompatible`, then `ambiguous`, each time renaming a receipt draft to the text of
+ * the instruction. It lives here so the next bucket cannot repeat it -- and `outOfCategory` did
+ * repeat it, by being added to the parser and not to this list, which is the argument for the
+ * exhaustive shape below rather than another hand-written disjunction.
  */
 export const namesLabels = (directive: LabelDirective): boolean =>
   directive.ids.length > 0 ||
   directive.unresolved.length > 0 ||
   directive.incompatible.length > 0 ||
+  directive.outOfCategory.length > 0 ||
   directive.ambiguous.length > 0;
 
 /**

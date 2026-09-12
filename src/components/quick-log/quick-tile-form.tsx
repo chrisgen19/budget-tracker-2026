@@ -73,6 +73,10 @@ export function QuickTileForm({
   const categoryId = watch("categoryId");
   const description = watch("description");
   const labelIds = watch("labelIds") ?? [];
+  // Pins already on the stored tile. `checkPinnedLabels` re-judges them only when the pins, the
+  // type or the category actually move, so an unrelated edit must not have them dropped underneath
+  // it -- and `viewTiles` already reports a stale pin rather than hiding it.
+  const attachedLabelIds = useMemo(() => defaults?.labelIds ?? [], [defaults]);
 
   const selectable = useMemo(
     () => categories.filter((c) => c.type === type),
@@ -239,6 +243,7 @@ export function QuickTileForm({
           selectedIds={labelIds}
           onChange={(ids) => setValue("labelIds", ids)}
           categoryId={categoryId}
+          attachedIds={attachedLabelIds}
           transactionType={type}
         />
         {/* Rendered, or pressing Save past the cap does nothing at all: the resolver refuses the

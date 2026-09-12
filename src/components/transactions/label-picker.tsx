@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowLeft, Check, ChevronRight, Clock, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLabelsQuery, useQuickLabelsQuery } from "@/hooks/use-labels";
@@ -13,6 +13,7 @@ const QUICK_LABEL_COUNT = 4;
 const SEARCH_LABEL_THRESHOLD = 8;
 const EMPTY_LABELS: LabelWithCountAndSchedules[] = [];
 const EMPTY_QUICK_LABEL_IDS: string[] = [];
+const EMPTY_ATTACHED_IDS: string[] = [];
 
 interface LabelPickerProps {
   selectedIds: string[];
@@ -25,6 +26,18 @@ interface LabelPickerProps {
    * what the form renders before a category is picked.
    */
   categoryId?: string | null;
+  /**
+   * Labels that were already on the record when the form opened.
+   *
+   * Only these are grandfathered: they stay selected and are marked when a restriction now
+   * excludes them, because a label vanishing from a saved transaction reads as data loss and the
+   * write paths accept them for the same reason. A label the *user* picked in this session has
+   * nothing to grandfather -- switching to a category that excludes it drops it, matching what
+   * the type switch already does, so no save can fail for a pairing the picker allowed.
+   *
+   * Omitted on a create form, where nothing is attached yet.
+   */
+  attachedIds?: string[];
 }
 
 /**
@@ -68,6 +81,7 @@ export function LabelPicker({
   autoAppliedIds = [],
   transactionType,
   categoryId,
+  attachedIds = EMPTY_ATTACHED_IDS,
 }: LabelPickerProps) {
   const [showAll, setShowAll] = useState(false);
   const [search, setSearch] = useState("");
@@ -112,8 +126,9 @@ export function LabelPicker({
   }, [compatibleLabels, quickLabelIds]);
 
   // Only selected labels can be mismatched: everything else is filtered out before it is shown.
-  // A label already on the row is deliberately kept rather than dropped -- a label vanishing from
-  // a saved transaction because its restriction changed later reads as data loss.
+  // A label already on the record is deliberately kept rather than dropped -- one vanishing from
+  // a saved transaction because its restriction changed later reads as data loss, and the write
+  // paths grandfather exactly this set for the same reason.
   const mismatchByLabelId = useMemo(() => {
     const reasons = new Map<string, "type" | "category">();
     for (const label of selectedLabels) {
@@ -122,6 +137,26 @@ export function LabelPicker({
     }
     return reasons;
   }, [selectedLabels, transactionType, categoryId]);
+
+  // Drop a label the user picked in this session once the chosen category excludes it. Marking it
+  // instead would leave the form holding a pairing every write path refuses, so Save would fail
+  // naming a label the picker had offered a moment earlier.
+  //
+  // Scoped to the category rule on purpose: the type switch is already reconciled by the forms
+  // themselves, and doing it twice would fight them. `onChange` is read through a ref because the
+  // forms pass a fresh closure each render, which as a dependency re-runs this forever.
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  useEffect(() => {
+    if (labels.length === 0 || selectedIds.length === 0) return;
+    const kept = selectedIds.filter((id) => {
+      if (attachedIds.includes(id)) return true;
+      const label = labels.find((candidate) => candidate.id === id);
+      return !label || labelRowAllowsCategory(label, categoryId);
+    });
+    if (kept.length !== selectedIds.length) onChangeRef.current(kept);
+  }, [labels, selectedIds, categoryId, attachedIds]);
 
   const renderMismatch = (labelId: string) => {
     const reason = mismatchByLabelId.get(labelId);

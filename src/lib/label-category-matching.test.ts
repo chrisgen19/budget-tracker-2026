@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  categoryRestrictionNarrowed,
   labelAllowsCategory,
   labelRowAllowsCategory,
   toAllowedCategoryIds,
@@ -51,5 +52,32 @@ describe("labelRowAllowsCategory", () => {
   // paths deliberately omit it, and inverting the default there would hide every label.
   it("treats a row selected without the relation as unrestricted", () => {
     expect(labelRowAllowsCategory({}, "cat_food")).toBe(true);
+  });
+});
+
+describe("categoryRestrictionNarrowed", () => {
+  it("is true when the new set drops a category the old one allowed", () => {
+    expect(categoryRestrictionNarrowed(["a", "b"], ["a"])).toBe(true);
+    expect(categoryRestrictionNarrowed(["a"], ["b"])).toBe(true);
+  });
+
+  // The bug this replaced: adding a category changed the set, so an inequality test called it a
+  // narrowing and offered to strip every grandfathered row outside the *wider* set.
+  it("is false for a pure widening", () => {
+    expect(categoryRestrictionNarrowed(["a"], ["a", "b"])).toBe(false);
+  });
+
+  it("is false when the set does not move, whatever the order", () => {
+    expect(categoryRestrictionNarrowed(["a", "b"], ["b", "a"])).toBe(false);
+  });
+
+  // Empty means every category, so it cannot narrow -- and is the one thing everything narrows
+  // away from.
+  it("treats an empty new set as removing nothing", () => {
+    expect(categoryRestrictionNarrowed(["a"], [])).toBe(false);
+  });
+
+  it("treats restricting a previously unrestricted label as narrowing", () => {
+    expect(categoryRestrictionNarrowed([], ["a"])).toBe(true);
   });
 });

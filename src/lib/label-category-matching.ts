@@ -39,3 +39,24 @@ export const labelRowAllowsCategory = (
   label: { categories?: readonly LabelCategoryLink[] },
   categoryId: string | null | undefined,
 ): boolean => labelAllowsCategory(toAllowedCategoryIds(label.categories), categoryId);
+
+/**
+ * Whether replacing a label's category restriction *removes* permission it previously granted.
+ *
+ * The question the edit route asks before offering to strip associations, and the one place the
+ * asymmetry is written down. Narrowing is not "the set changed": widening from one category to two
+ * changes it and removes nothing, and treating that as a narrowing offered to delete every
+ * grandfathered row outside the wider set on an edit that only ever added permission.
+ *
+ * An **empty new set means every category**, so it can never narrow. An empty *old* set is the
+ * mirror of that and always does, since going from unrestricted to any restriction removes the
+ * rest of them.
+ */
+export const categoryRestrictionNarrowed = (
+  oldCategoryIds: readonly string[],
+  newCategoryIds: readonly string[],
+): boolean => {
+  if (newCategoryIds.length === 0) return false;
+  if (oldCategoryIds.length === 0) return true;
+  return oldCategoryIds.some((categoryId) => !newCategoryIds.includes(categoryId));
+};

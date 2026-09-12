@@ -1982,6 +1982,13 @@ export const createBudgetMcpServer = ({
         categoryIds: z
           .array(z.string())
           .max(MAX_LABEL_CATEGORIES)
+          // Matches `labelSchema`. Without it a repeated id reaches `categoriesUsableForLabel`,
+          // whose `findMany` returns one row for the two, fails the length comparison, and reports
+          // a category that plainly exists as "could not be found" -- sending the caller to
+          // re-fetch the list rather than to drop the duplicate.
+          .refine((ids) => new Set(ids).size === ids.length, {
+            message: "categoryIds must not contain duplicate ids",
+          })
           .optional()
           .describe(
             "Limit the label to these categories, so it is only offered and only accepted on " +
