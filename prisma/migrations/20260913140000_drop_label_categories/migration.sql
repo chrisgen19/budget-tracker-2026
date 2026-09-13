@@ -1,0 +1,33 @@
+-- Drops the label -> category restriction table created by 20260912120000_add_label_categories.
+--
+-- The contract half of the expand/contract pair opened by #304, which reverted the code and
+-- deliberately left the table. Safe to apply only because that revert is already deployed: no
+-- running release reads `label_categories` any more. Applying this alongside the code revert would
+-- have dropped the table out from under the still-serving previous release, which selected the
+-- relation on every label query -- `build:deploy` runs `prisma migrate deploy` before `next build`,
+-- so the schema moves while the old container is still answering requests. See #303 and #306.
+--
+-- A FORWARD migration, never an edit to 20260912120000. That one is applied to production, and
+-- `scripts/check-migration-drift.ts` fails a deploy naming any applied migration the checkout
+-- lacks, so deleting its directory would break every deploy rather than undo anything (#192).
+--
+-- WHY THE FEATURE WENT, so nobody rebuilds it unchanged: the restriction was opt-in. A label could
+-- narrow itself, but a category had no way to exclude labels that never opted in, so with six of
+-- eight labels unrestricted the picker still offered seven of eight on Transportation -- including
+-- the Shopee label the feature was opened to exclude. The join table's DIRECTION was never the
+-- problem: it carried both label_id and category_id, so "which labels may this category use" was
+-- always answerable from it. What was missing was a screen and an opt-OUT default. A future attempt
+-- should settle the DEFAULT first -- empty means every category, versus a category owning its list
+-- and needing a backfill. #303 has the detail.
+--
+-- THE ROWS THIS DESTROYS. A dropped table takes its data with it, and the most recent backup that
+-- predates this (12 Sep 18:00 UTC) was taken before these were created, so they exist nowhere else:
+--
+--   Pickleball Budget -> Fun, Shopping
+--   TNVC              -> Transportation
+--
+-- Nothing else references this table. Its foreign keys run inward from `labels` and `categories`,
+-- both ON DELETE CASCADE, so no other table needs unwinding. Transactions, bills and quick tiles
+-- keep every label they carry: this table only ever gated which labels were OFFERED, never which
+-- were attached.
+DROP TABLE IF EXISTS "label_categories";

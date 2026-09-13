@@ -190,7 +190,6 @@ model Category {
   transactions          Transaction[]
   scheduledTransactions ScheduledTransaction[]
   telegramQuickTiles    TelegramQuickTile[]
-  labels                LabelCategory[]
   createdAt             DateTime               @default(now()) @map("created_at")
 
   // NOTE: this constraint does NOT cover defaults. Their userId is NULL, and Postgres treats
@@ -390,7 +389,6 @@ model Label {
   bills        BillLabel[]
   quickTiles   TelegramQuickTileLabel[]
   schedules    LabelSchedule[]
-  categories   LabelCategory[]
   createdAt    DateTime                 @default(now()) @map("created_at")
 
   // NOTE: The actual DB index uses LOWER(name) for case-insensitive uniqueness
@@ -411,34 +409,6 @@ model LabelSchedule {
 
   @@index([labelId])
   @@map("label_schedules")
-}
-
-/// Retained deliberately although nothing reads it any more. See issue #303.
-///
-/// The label -> category restriction was reverted in #304, but the TABLE was not dropped in the
-/// same deploy: `build:deploy` runs `prisma migrate deploy` before `next build`, so a drop would
-/// have removed the table out from under the release still serving, which reads it on every label
-/// query. The drop is a follow-up, once no deployed version references it.
-///
-/// Until then this model has to stay, because `prisma migrate dev` diffs schema.prisma against the
-/// migration history rather than comparing migration names the way `check-migration-drift.ts` does.
-/// Delete the model while the table still exists and the NEXT migration anyone generates -- for a
-/// change with nothing to do with labels -- silently carries `DROP TABLE "label_categories"`.
-/// Verified with `prisma migrate diff`, which emits exactly that.
-///
-/// Remove this model and add the drop migration together, in one PR, after #304 has deployed.
-model LabelCategory {
-  id         String   @id @default(cuid())
-  labelId    String   @map("label_id")
-  label      Label    @relation(fields: [labelId], references: [id], onDelete: Cascade)
-  categoryId String   @map("category_id")
-  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  createdAt  DateTime @default(now()) @map("created_at")
-
-  @@unique([labelId, categoryId])
-  @@index([labelId])
-  @@index([categoryId])
-  @@map("label_categories")
 }
 
 model TransactionLabel {
