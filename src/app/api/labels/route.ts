@@ -17,7 +17,31 @@ export async function GET() {
     orderBy: { name: "asc" },
   });
 
-  return NextResponse.json(labels);
+  // Per-category usage, for ranking the picker's quick chips. `categoryId` lives on the
+  // transaction rather than the join row, so this cannot be a Prisma `groupBy` on
+  // `transactionLabel` -- that can only group by its own columns.
+  //
+  // Ranking data, never a restriction: a pair missing here means the label has not been used in
+  // that category yet, so it sorts last rather than disappearing. That distinction is the whole
+  // reason this is a count and not a filter (#304).
+  const usage = await prisma.$queryRaw<{ labelId: string; categoryId: string; n: number }[]>`
+    SELECT tl.label_id AS "labelId", t.category_id AS "categoryId", COUNT(*)::int AS n
+    FROM transaction_labels tl
+    JOIN transactions t ON t.id = tl.transaction_id
+    WHERE t.user_id = ${userId}
+    GROUP BY tl.label_id, t.category_id
+  `;
+
+  const countsByLabel = new Map<string, Record<string, number>>();
+  for (const row of usage) {
+    const existing = countsByLabel.get(row.labelId) ?? {};
+    existing[row.categoryId] = row.n;
+    countsByLabel.set(row.labelId, existing);
+  }
+
+  return NextResponse.json(
+    labels.map((label) => ({ ...label, categoryCounts: countsByLabel.get(label.id) ?? {} })),
+  );
 }
 
 export async function POST(request: Request) {

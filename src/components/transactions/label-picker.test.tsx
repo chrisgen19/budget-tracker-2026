@@ -29,6 +29,7 @@ const label = (
   name: string,
   transactionCount = 0,
   applicableTo = "BOTH",
+  categoryCounts: Record<string, number> = {},
 ): LabelWithCountAndSchedules => ({
   id,
   name,
@@ -38,6 +39,7 @@ const label = (
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
   _count: { transactions: transactionCount },
   schedules: [],
+  categoryCounts,
 });
 
 const LABELS = [
@@ -56,11 +58,13 @@ function ControlledPicker({
   onChange = () => {},
   autoAppliedIds,
   transactionType,
+  categoryId,
 }: {
   initialIds?: string[];
   onChange?: (ids: string[]) => void;
   autoAppliedIds?: string[];
   transactionType?: "INCOME" | "EXPENSE";
+  categoryId?: string;
 }) {
   const [selectedIds, setSelectedIds] = useState(initialIds);
   return (
@@ -72,6 +76,7 @@ function ControlledPicker({
       }}
       autoAppliedIds={autoAppliedIds}
       transactionType={transactionType}
+      categoryId={categoryId}
     />
   );
 }
@@ -100,6 +105,157 @@ describe("LabelPicker", () => {
     expect(quickNames()).toEqual(["Delta", "Beta", "Gamma", "Epsilon"]);
     expect(beta.getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByText("1 selected")).toBeTruthy();
+  });
+
+  /**
+   * The behaviour #304 left unsolved. Restriction could not fix the picker, because the labels
+   * that crowd it are envelopes that legitimately span every category. Ordering can: a label used
+   * everywhere still ranks first exactly where it is used most.
+   */
+  describe("category-aware ordering of the quick chips", () => {
+    const quickNames = () =>
+      within(screen.getByRole("group", { name: "Quick label choices" }))
+        .getAllByRole("button")
+        .map((button) => button.textContent?.trim());
+
+    it("puts the labels used most in this category first", () => {
+      mocks.useLabelsQuery.mockReturnValue(
+        queryState([
+          // Beta dominates overall but has never been used here; Zeta is rare overall and is what
+          // this category actually gets. Ordering by total alone gets this exactly backwards.
+          label("beta", "Beta", 500, "BOTH", {}),
+          label("zeta", "Zeta", 3, "BOTH", { "cat-transport": 40 }),
+          label("eta", "Eta", 2, "BOTH", { "cat-transport": 9 }),
+          label("alpha", "Alpha", 1, "BOTH", {}),
+        ]),
+      );
+      render(<ControlledPicker categoryId="cat-transport" />);
+
+      expect(quickNames()).toEqual(["Zeta", "Eta", "Beta", "Alpha"]);
+    });
+
+    it("falls back to overall usage for a category with no history", () => {
+      mocks.useLabelsQuery.mockReturnValue(
+        queryState([
+          label("beta", "Beta", 500, "BOTH", {}),
+          label("zeta", "Zeta", 3, "BOTH", { "cat-transport": 40 }),
+          label("eta", "Eta", 2, "BOTH", { "cat-transport": 9 }),
+          label("alpha", "Alpha", 1, "BOTH", {}),
+        ]),
+      );
+      // A category nobody has filed under yet: every per-category count is zero, so the second tier
+      // decides. Dropping straight to alphabetical would lead with Alpha and its single use.
+      render(<ControlledPicker categoryId="cat-brand-new" />);
+
+      expect(quickNames()).toEqual(["Beta", "Zeta", "Eta", "Alpha"]);
+    });
+
+    it("orders by overall usage when no category is chosen yet", () => {
+      mocks.useLabelsQuery.mockReturnValue(
+        queryState([
+          label("beta", "Beta", 500, "BOTH", { "cat-transport": 1 }),
+          label("zeta", "Zeta", 3, "BOTH", { "cat-transport": 40 }),
+        ]),
+      );
+      // The form renders this before a category is picked. Unchanged from the old behaviour.
+      render(<ControlledPicker />);
+
+      expect(quickNames()).toEqual(["Beta", "Zeta"]);
+    });
+
+    it("still offers a label never used in this category", () => {
+      // Ranking, not restricting -- the distinction #304 exists to preserve. Alpha has no history
+      // anywhere and must remain reachable.
+      mocks.useLabelsQuery.mockReturnValue(
+        queryState([
+          label("zeta", "Zeta", 3, "BOTH", { "cat-transport": 40 }),
+          label("alpha", "Alpha", 0, "BOTH", {}),
+        ]),
+      );
+      render(<ControlledPicker categoryId="cat-transport" />);
+
+      expect(quickNames()).toContain("Alpha");
+    });
+  });
+
+  /**
+   * The other half of the same problem. The quick chips only surface four, so the long tail is
+   * where "choosing Transportation still offered Shopee" actually lives -- this list was one flat
+   * alphabetical run of every compatible label.
+   */
+  describe("grouping the browse-all list", () => {
+    const openBrowseAll = () =>
+      fireEvent.click(screen.getByRole("button", { name: /Browse all \d+ labels/ }));
+
+    const rowNames = () =>
+      screen
+        .getAllByRole("checkbox")
+        .map((box) => box.closest("label")?.textContent?.trim());
+
+    const MIXED = [
+      label("shopee", "Shopee", 4, "BOTH", {}),
+      label("work", "Work Budget", 400, "BOTH", { "cat-transport": 167 }),
+      label("tnvc", "TNVC", 91, "BOTH", { "cat-transport": 91 }),
+      label("family", "Family Budget", 158, "BOTH", { "cat-transport": 4 }),
+      label("credit", "Credit Card", 4, "BOTH", {}),
+      label("personal", "Personal", 35, "BOTH", {}),
+    ];
+
+    it("puts labels used in this category above everything else", () => {
+      mocks.useLabelsQuery.mockReturnValue(queryState(MIXED));
+      render(<ControlledPicker categoryId="cat-transport" />);
+      openBrowseAll();
+
+      expect(screen.getByText("Used in this category")).toBeTruthy();
+      expect(screen.getByText("All labels")).toBeTruthy();
+
+      // Used-here first, ranked by usage here; the rest stay alphabetical for scanning by name.
+      expect(rowNames()).toEqual([
+        "Work Budget",
+        "TNVC",
+        "Family Budget",
+        "Credit Card",
+        "Personal",
+        "Shopee",
+      ]);
+    });
+
+    it("still lists every label, including ones never used here", () => {
+      // Grouping, not filtering. Shopee sinks; it does not disappear.
+      mocks.useLabelsQuery.mockReturnValue(queryState(MIXED));
+      render(<ControlledPicker categoryId="cat-transport" />);
+      openBrowseAll();
+
+      expect(rowNames()).toContain("Shopee");
+      expect(rowNames()).toHaveLength(MIXED.length);
+    });
+
+    it("stays one flat alphabetical list when no category is chosen", () => {
+      mocks.useLabelsQuery.mockReturnValue(queryState(MIXED));
+      render(<ControlledPicker />);
+      openBrowseAll();
+
+      expect(screen.queryByText("Used in this category")).toBeNull();
+      expect(rowNames()).toEqual([
+        "Credit Card",
+        "Family Budget",
+        "Personal",
+        "Shopee",
+        "TNVC",
+        "Work Budget",
+      ]);
+    });
+
+    it("does not show a heading when nothing has been used here", () => {
+      // A brand-new category: every label would sit under "All labels" with an empty section
+      // above it, which is worse than no heading at all.
+      mocks.useLabelsQuery.mockReturnValue(queryState(MIXED));
+      render(<ControlledPicker categoryId="cat-brand-new" />);
+      openBrowseAll();
+
+      expect(screen.queryByText("Used in this category")).toBeNull();
+      expect(rowNames()).toHaveLength(MIXED.length);
+    });
   });
 
   it("keeps a selected non-quick label visible and removable", () => {

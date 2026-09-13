@@ -665,6 +665,11 @@ export function useBatchCreateTransactions() {
         queryKey: queryKeys.dashboard.all,
       });
       queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
+      // The only mutation in this file that was missing this. A receipt batch can carry labels, and
+      // `GET /api/labels` reports per-label transaction counts -- `_count.transactions`, and the
+      // per-category counts the picker ranks and groups by -- so the cached label list is now
+      // behind. Every sibling create/update/delete above already invalidates it.
+      queryClient.invalidateQueries({ queryKey: labelKeys.all });
     },
   });
 }

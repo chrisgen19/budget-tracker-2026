@@ -7,6 +7,7 @@ import {
 import { useCallback } from "react";
 import { queryKeys } from "@/hooks/use-transactions";
 import { analyticsKeys } from "@/hooks/use-analytics";
+import { labelKeys } from "@/hooks/use-labels";
 import type { ScheduledTransactionInput, BillActionInput } from "@/lib/validations";
 import type { ScheduledTransactionWithCategory, PendingReminder } from "@/types";
 import type { ScheduledTransactionLog } from "@prisma/client";
@@ -287,6 +288,9 @@ export function useInvalidateBillPayment() {
         queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
         queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
+        // Settling a bill writes a transaction carrying the bill's labels (bill-writes.ts:422), so
+        // the cached label list's per-label and per-category counts are now behind.
+        queryClient.invalidateQueries({ queryKey: labelKeys.all }),
       ]),
     [queryClient],
   );
@@ -321,6 +325,8 @@ export function useBillAction() {
         queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all });
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
         queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
+        // Same reason as `useInvalidateBillPayment`: a paid bill is a labelled transaction.
+        queryClient.invalidateQueries({ queryKey: labelKeys.all });
       }
     },
   });

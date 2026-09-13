@@ -42,6 +42,14 @@ export type LabelWithCount = Label & {
 export type LabelWithCountAndSchedules = Label & {
   _count: { transactions: number };
   schedules: LabelSchedule[];
+  /**
+   * How often this label has been used per category, keyed by category id.
+   *
+   * Ranking only -- it never restricts what the picker offers, which is the distinction that
+   * matters after #304. A category absent from the map means "never used here", not "not allowed
+   * here", so a label with no history still appears; it simply sorts below ones with some.
+   */
+  categoryCounts: Record<string, number>;
 };
 
 /** Dashboard summary stats */

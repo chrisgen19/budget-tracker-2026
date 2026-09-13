@@ -425,6 +425,7 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
 
             {/* Labels */}
             <LabelPicker
+              categoryId={watchedCategoryId}
               selectedIds={watchedLabelIds}
               onChange={(ids) => setValue("labelIds", ids)}
               transactionType={selectedType}
