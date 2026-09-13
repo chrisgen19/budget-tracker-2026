@@ -3,6 +3,28 @@ import { join, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PROTECTED_PAGE_PATHS, isProtectedPagePath } from "@/lib/protected-paths";
 
+/**
+ * A URL a browser could actually request for this route.
+ *
+ * Dynamic segments are substituted, because `isProtectedPagePath` compares with `startsWith` against
+ * real request paths. Checking the symbolic route instead would let `/reports/[id]` be "covered" by
+ * adding the literal string `/reports/[id]` to the denylist -- both assertions green, and
+ * `/reports/123` still written to disk. The guard has to reject that and force the `/reports` prefix,
+ * or it teaches people to satisfy it rather than to think.
+ */
+const concreteUrl = (route: string): string =>
+  route
+    .split("/")
+    .map((segment) => {
+      // Optional catch-all matches zero segments too, but one is the case that must be covered.
+      if (segment.startsWith("[[...")) return "sample";
+      // Catch-all matches one or more, so use two to catch a prefix that only handles depth 1.
+      if (segment.startsWith("[...")) return "sample/deeper";
+      if (segment.startsWith("[")) return "sample";
+      return segment;
+    })
+    .join("/");
+
 /** Every route under `src/app/(app)`, which is the authenticated segment, as URL paths. */
 const authenticatedRoutes = (): string[] => {
   const root = join(process.cwd(), "src", "app", "(app)");
@@ -43,7 +65,7 @@ describe("PROTECTED_PAGE_PATHS", () => {
       "/profile",
       "/preferences",
       "/admin",
-      "/tg",
+          "/tg",
     ]);
   });
 
@@ -63,7 +85,11 @@ describe("PROTECTED_PAGE_PATHS", () => {
     expect(routes.length).toBeGreaterThan(5);
     expect(routes).toContain("/dashboard");
 
-    const uncovered = routes.filter((route) => !isProtectedPagePath(route));
+    // Reported as route -> concrete URL, so a failure names both the file to look at and the
+    // request that is not covered.
+    const uncovered = routes
+      .filter((route) => !isProtectedPagePath(concreteUrl(route)))
+      .map((route) => `${route} (e.g. ${concreteUrl(route)})`);
     expect(uncovered).toEqual([]);
   });
 
