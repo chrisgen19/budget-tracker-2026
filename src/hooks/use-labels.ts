@@ -130,6 +130,11 @@ export function useUpdateLabel() {
       // figure. Neither was invalidated, so both kept showing the old grouping
       // until something else happened to refresh them.
       queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
+      // A tile's pins carry an `applies` flag computed server-side from the label's type, so
+      // narrowing `applicableTo` leaves the cached grid showing a pin as active that the next
+      // tap will filter out. Deleting a label cascades its pins away outright, which the cache
+      // is just as blind to.
+      queryClient.invalidateQueries({ queryKey: quickTileKeys.all });
     },
   });
 }
@@ -185,11 +190,6 @@ export function useApplyLabelSchedule() {
       // figure. Neither was invalidated, so both kept showing the old grouping
       // until something else happened to refresh them.
       queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
-      // A tile's pins carry an `applies` flag computed server-side from the label's type, so
-      // narrowing `applicableTo` leaves the cached grid showing a pin as active that the next
-      // tap will filter out. Deleting a label cascades its pins away outright, which the cache
-      // is just as blind to.
-      queryClient.invalidateQueries({ queryKey: quickTileKeys.all });
     },
   });
 }
