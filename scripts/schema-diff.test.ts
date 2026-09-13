@@ -1,10 +1,12 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import {
+  AUTHORITATIVE_INDEXES,
   CASE_INSENSITIVE_LABEL_INDEX,
   diffStatements,
   driftingStatements,
-  isCaseInsensitiveLabelIndex,
+  matchesAuthoritativeIndex,
+  parseIndexDef,
 } from "./schema-diff";
 
 /** The one statement `migrate diff` reports on a clean checkout, verified against the real database. */
@@ -94,68 +96,133 @@ describe("driftingStatements", () => {
 });
 
 /**
- * Each of these was accepted by an earlier version of the predicate, which tested `indexdef` for the
- * substring `LOWER(name)`. Two were confirmed against a real database before the fix: the check
- * exited 0 with no uniqueness enforced at all.
+ * Each shape below was accepted by an earlier version of this check. Two were confirmed against a
+ * real database before the fix: it exited 0 with no uniqueness enforced at all.
  */
-describe("isCaseInsensitiveLabelIndex", () => {
-  const healthy = {
+describe("matchesAuthoritativeIndex", () => {
+  const LABELS = AUTHORITATIVE_INDEXES.find((i) => i.table === "labels")!;
+  const CATEGORIES = AUTHORITATIVE_INDEXES.find((i) => i.table === "categories")!;
+
+  const healthyLabels = {
+    name: "labels_name_user_id_key",
     isUnique: true,
     isValid: true,
-    notPartial: true,
     indexdef:
       "CREATE UNIQUE INDEX labels_name_user_id_key ON public.labels USING btree (lower(name), user_id)",
   };
+  const healthyCategories = {
+    name: "categories_default_name_type_key",
+    isUnique: true,
+    isValid: true,
+    indexdef:
+      "CREATE UNIQUE INDEX categories_default_name_type_key ON public.categories USING btree (name, type) WHERE (user_id IS NULL)",
+  };
 
-  it("accepts the real constraint", () => {
-    expect(isCaseInsensitiveLabelIndex(healthy)).toBe(true);
+  it("accepts both real constraints", () => {
+    expect(matchesAuthoritativeIndex(healthyLabels, LABELS)).toBe(true);
+    expect(matchesAuthoritativeIndex(healthyCategories, CATEGORIES)).toBe(true);
   });
 
-  it("rejects a non-unique index over the same expression", () => {
-    // `CREATE INDEX ... (LOWER(name), user_id)` contains the substring and enforces nothing.
-    expect(isCaseInsensitiveLabelIndex({ ...healthy, isUnique: false })).toBe(false);
+  it("rejects a non-unique index over the right expression", () => {
+    // `CREATE INDEX ...` contains everything the old substring test looked for and enforces nothing.
+    expect(matchesAuthoritativeIndex({ ...healthyLabels, isUnique: false }, LABELS)).toBe(false);
+  });
+
+  it("rejects an invalid index", () => {
+    // A failed CREATE INDEX CONCURRENTLY leaves one in the catalogue that enforces nothing.
+    expect(matchesAuthoritativeIndex({ ...healthyLabels, isValid: false }, LABELS)).toBe(false);
   });
 
   it("rejects an index missing user_id", () => {
-    // Unique across the whole table rather than per user: two people could not both have a
-    // "Groceries". Wrong in the opposite direction, and just as quiet.
+    // Unique across the table rather than per user: two people could not both have a "Groceries".
     expect(
-      isCaseInsensitiveLabelIndex({
-        ...healthy,
-        indexdef:
-          "CREATE UNIQUE INDEX labels_name_user_id_key ON public.labels USING btree (lower(name))",
-      })
+      matchesAuthoritativeIndex(
+        {
+          ...healthyLabels,
+          indexdef:
+            "CREATE UNIQUE INDEX labels_name_user_id_key ON public.labels USING btree (lower(name))",
+        },
+        LABELS
+      )
     ).toBe(false);
   });
 
   it("rejects the case-SENSITIVE index of the same name", () => {
     // The silent downgrade: stops `Groceries` duplicating `Groceries`, lets it duplicate `groceries`.
     expect(
-      isCaseInsensitiveLabelIndex({
-        ...healthy,
-        indexdef:
-          "CREATE UNIQUE INDEX labels_name_user_id_key ON public.labels USING btree (name, user_id)",
-      })
+      matchesAuthoritativeIndex(
+        {
+          ...healthyLabels,
+          indexdef:
+            "CREATE UNIQUE INDEX labels_name_user_id_key ON public.labels USING btree (name, user_id)",
+        },
+        LABELS
+      )
     ).toBe(false);
   });
 
-  it("rejects an invalid index", () => {
-    // A failed CREATE INDEX CONCURRENTLY leaves one in the catalogue that enforces nothing.
-    expect(isCaseInsensitiveLabelIndex({ ...healthy, isValid: false })).toBe(false);
-  });
-
-  it("rejects a partial index", () => {
-    // A WHERE clause narrows what is constrained without touching the key.
-    expect(isCaseInsensitiveLabelIndex({ ...healthy, notPartial: false })).toBe(false);
-  });
-
-  it("tolerates whitespace and case in the definition", () => {
+  it("rejects a labels index that has become partial", () => {
+    // A WHERE narrows what is constrained without touching the key.
     expect(
-      isCaseInsensitiveLabelIndex({
-        ...healthy,
-        indexdef:
-          "CREATE UNIQUE INDEX labels_name_user_id_key ON public.labels USING BTREE ( LOWER(name),   user_id )",
-      })
+      matchesAuthoritativeIndex(
+        { ...healthyLabels, indexdef: `${healthyLabels.indexdef} WHERE (user_id IS NOT NULL)` },
+        LABELS
+      )
+    ).toBe(false);
+  });
+
+  it("rejects a categories index that has LOST its predicate", () => {
+    // The mirror case, and the reason predicates are compared rather than rejected outright:
+    // categories_default_name_type_key is partial by design. Without `WHERE user_id IS NULL` it
+    // constrains every category rather than only the defaults.
+    expect(
+      matchesAuthoritativeIndex(
+        {
+          ...healthyCategories,
+          indexdef:
+            "CREATE UNIQUE INDEX categories_default_name_type_key ON public.categories USING btree (name, type)",
+        },
+        CATEGORIES
+      )
+    ).toBe(false);
+  });
+
+  it("rejects an index of the wrong name", () => {
+    expect(matchesAuthoritativeIndex({ ...healthyLabels, name: "something_else" }, LABELS)).toBe(
+      false
+    );
+  });
+
+  it("tolerates whitespace and case", () => {
+    expect(
+      matchesAuthoritativeIndex(
+        {
+          ...healthyCategories,
+          indexdef:
+            "CREATE UNIQUE INDEX categories_default_name_type_key ON public.categories USING BTREE ( name,  type ) WHERE ( user_id IS NULL )",
+        },
+        CATEGORIES
+      )
     ).toBe(true);
+  });
+});
+
+describe("parseIndexDef", () => {
+  it("keeps a nested expression in the key", () => {
+    // A lazy match would stop inside `lower(name)`.
+    expect(
+      parseIndexDef("CREATE UNIQUE INDEX x ON t USING btree (lower(name), user_id)")
+    ).toEqual({ key: "lower(name), user_id", where: null });
+  });
+
+  it("splits the predicate off before reading the key", () => {
+    // A greedy match over the whole definition would swallow the WHERE into the key.
+    expect(
+      parseIndexDef("CREATE UNIQUE INDEX x ON t USING btree (name, type) WHERE (user_id IS NULL)")
+    ).toEqual({ key: "name, type", where: "user_id is null" });
+  });
+
+  it("returns null for something that is not a btree definition", () => {
+    expect(parseIndexDef("not an index definition")).toBeNull();
   });
 });

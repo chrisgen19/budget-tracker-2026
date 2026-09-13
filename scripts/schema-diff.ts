@@ -60,39 +60,104 @@ export const driftingStatements = (
 ): string[] => diffStatements(script).filter((statement) => !accepted.has(statement));
 
 /** The facts about an index that decide whether it is the constraint we need. */
-export interface LabelIndexRow {
+export interface IndexRow {
+  name: string;
   isUnique: boolean;
   isValid: boolean;
-  notPartial: boolean;
-  /** `pg_get_indexdef()` output, e.g. `CREATE UNIQUE INDEX ... USING btree (lower(name), user_id)`. */
+  /** `pg_get_indexdef()` output, which carries the key list and any WHERE predicate. */
   indexdef: string;
 }
 
-/** The key list the constraint must have, normalised: lower-cased, single-spaced. */
-const REQUIRED_LABEL_INDEX_KEY = "lower(name), user_id";
+/**
+ * A uniqueness constraint the database enforces and `schema.prisma` cannot describe.
+ *
+ * Prisma has no syntax for an expression index or a partial index, so for these the DATABASE is the
+ * authority and the schema carries at best an approximation. That has a consequence worth stating
+ * plainly: `prisma migrate diff` cannot report them missing. The label index is invisible because it
+ * shares a name with the plain index Prisma wants, so the diff reads identically whether or not it
+ * exists; the categories index is invisible because Prisma has never heard of it, so dropping it
+ * changes the diff not at all. Both were verified against a real database.
+ *
+ * Which is why they are listed here and checked directly. Anything in this list is, by definition,
+ * something no schema diff will ever catch.
+ */
+export interface AuthoritativeIndex {
+  table: string;
+  name: string;
+  /** Normalised key list, e.g. `lower(name), user_id`. */
+  key: string;
+  /** Normalised WHERE predicate without its wrapping parens, or null for a full index. */
+  where: string | null;
+  /** What stops being enforced without it — said in the failure, where it is actually read. */
+  guards: string;
+  /** SQL that restores it, so the failure is actionable without a hunt through migrations. */
+  restore: string;
+}
+
+export const AUTHORITATIVE_INDEXES: readonly AuthoritativeIndex[] = [
+  {
+    table: "labels",
+    name: "labels_name_user_id_key",
+    key: "lower(name), user_id",
+    where: null,
+    guards:
+      "duplicate label names differing only in case, per user (migration 20260405120000). " +
+      "schema.prisma's @@unique([name, userId]) is declared for ORM awareness and is NOT the constraint",
+    restore:
+      'CREATE UNIQUE INDEX "labels_name_user_id_key" ON "labels" (LOWER("name"), "user_id");',
+  },
+  {
+    table: "categories",
+    name: "categories_default_name_type_key",
+    key: "name, type",
+    where: "user_id is null",
+    guards:
+      "duplicate DEFAULT categories (migration 20260828100000). @@unique([name, type, userId]) " +
+      "does not constrain them: their user_id is NULL and Postgres treats NULLs as distinct, so " +
+      "two concurrent seeds can each insert the same default",
+    restore:
+      'CREATE UNIQUE INDEX "categories_default_name_type_key" ON "categories" ("name", "type") WHERE "user_id" IS NULL;',
+  },
+];
+
+/** Lower-cases and collapses whitespace, so formatting differences do not read as drift. */
+const normalise = (value: string): string => value.toLowerCase().replace(/\s+/g, " ").trim();
 
 /**
- * Whether an index row really is the case-insensitive uniqueness constraint on `labels`.
+ * Splits `pg_get_indexdef()` into its key list and predicate.
  *
- * Every clause here failed a real database that this returned true for when it was a substring
- * test for `LOWER(name)`:
- *
- * - `isUnique` -- `CREATE INDEX ... (LOWER(name))` contains the substring and enforces nothing.
- *   Verified: the check exited 0 against exactly that.
- * - the full key -- an index on `LOWER(name)` ALONE is unique across the whole table rather than
- *   per user, so two people cannot both have a "Groceries". Wrong in the other direction, and
- *   equally invisible.
- * - `isValid` -- a `CREATE INDEX CONCURRENTLY` that failed leaves an invalid index behind. It
- *   appears in the catalogue and enforces nothing.
- * - `notPartial` -- a `WHERE` clause narrows what is constrained without changing the key.
- *
- * Structured facts rather than comparing the whole `indexdef` string, which varies by Postgres
- * version and schema qualification and would make this brittle where it needs to be exact.
+ * The predicate is split off FIRST, then the key taken greedily up to the final paren. A lazy match
+ * for the key would stop inside `lower(name)`, and a greedy one applied to the whole definition
+ * would swallow a trailing `WHERE (...)`.
  */
-export const isCaseInsensitiveLabelIndex = (row: LabelIndexRow): boolean => {
-  if (!row.isUnique || !row.isValid || !row.notPartial) return false;
-  // The key list is the parenthesised tail, captured rather than split on "(" -- `lower(name)`
-  // nests, so anything simpler truncates it.
-  const key = /using\s+btree\s*\((.+)\)\s*$/i.exec(row.indexdef.trim())?.[1];
-  return key?.toLowerCase().replace(/\s+/g, " ").trim() === REQUIRED_LABEL_INDEX_KEY;
+export const parseIndexDef = (indexdef: string): { key: string; where: string | null } | null => {
+  const [keyPart, ...predicate] = indexdef.trim().split(/\s+where\s+/i);
+  const key = /using\s+btree\s*\((.+)\)\s*$/i.exec(keyPart.trim())?.[1];
+  if (key === undefined) return null;
+  // Trimmed AFTER the parens come off: `WHERE ( user_id IS NULL )` normalises to
+  // `( user_id is null )`, and stripping the wrapper leaves the inner spaces behind.
+  const where =
+    predicate.length > 0
+      ? normalise(normalise(predicate.join(" where ")).replace(/^\((.*)\)$/, "$1"))
+      : null;
+  return { key: normalise(key), where };
+};
+
+/**
+ * Whether an index row really is the constraint `expected` describes.
+ *
+ * Each clause corresponds to a database shape an earlier version of this accepted:
+ *
+ * - `isUnique` -- `CREATE INDEX ... (LOWER(name), user_id)` enforces nothing. Verified: the check
+ *   exited 0 against exactly that.
+ * - `isValid` -- a failed `CREATE INDEX CONCURRENTLY` leaves one in the catalogue enforcing nothing.
+ * - the key -- an index on `LOWER(name)` alone is unique across the table rather than per user, so
+ *   two people could not both have a "Groceries". Wrong in the other direction, equally quiet.
+ * - the predicate -- compared rather than merely rejected, because `categories_default_name_type_key`
+ *   is partial BY DESIGN. A `WHERE` that differs narrows what is constrained without touching the key.
+ */
+export const matchesAuthoritativeIndex = (row: IndexRow, expected: AuthoritativeIndex): boolean => {
+  if (row.name !== expected.name || !row.isUnique || !row.isValid) return false;
+  const parsed = parseIndexDef(row.indexdef);
+  return parsed !== null && parsed.key === expected.key && parsed.where === expected.where;
 };

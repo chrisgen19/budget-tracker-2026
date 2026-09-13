@@ -49,14 +49,16 @@
 import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { resolveDatabaseUrl } from "./database-url";
 import { isMissingTableError } from "./prisma-errors";
 import {
+  AUTHORITATIVE_INDEXES,
   CASE_INSENSITIVE_LABEL_INDEX,
   driftingStatements,
-  isCaseInsensitiveLabelIndex,
-  type LabelIndexRow,
+  matchesAuthoritativeIndex,
+  type AuthoritativeIndex,
+  type IndexRow,
 } from "./schema-diff";
 
 const MIGRATIONS_DIR = join(process.cwd(), "prisma", "migrations");
@@ -103,33 +105,29 @@ const appliedMigrationNames = async (): Promise<string[] | null> => {
 };
 
 /**
- * Whether the case-insensitive uniqueness index on `labels` is actually present.
+ * The authoritative indexes that are missing or no longer say what they should.
  *
- * The expression index shares its NAME with the plain index Prisma wants, so Prisma cannot see it
- * and proposes the same `CREATE UNIQUE INDEX` either way. Accepting that statement on its text
- * alone therefore certifies a database that has lost the constraint entirely -- verified: with the
- * index dropped, this check reported OK and exited 0 (#312).
- *
- * Checked on what the index actually IS, not on its name and not on a substring of its definition.
- * `isCaseInsensitiveLabelIndex` carries the reasoning and the cases; each clause there corresponds
- * to a real database shape an earlier version of this accepted.
+ * Every index on the named tables is read and matched, rather than the one by the expected name
+ * fetched -- so an index of the right name with the wrong definition and an index that is simply
+ * gone both come back as absent, which is what they are.
  */
-const hasCaseInsensitiveLabelIndex = async (): Promise<boolean> => {
-  const rows = await prisma.$queryRaw<LabelIndexRow[]>`
+const missingAuthoritativeIndexes = async (): Promise<AuthoritativeIndex[]> => {
+  const tables = [...new Set(AUTHORITATIVE_INDEXES.map((index) => index.table))];
+  const rows = await prisma.$queryRaw<IndexRow[]>`
     SELECT
-      i.indisunique       AS "isUnique",
-      i.indisvalid        AS "isValid",
-      i.indpred IS NULL   AS "notPartial",
+      c.relname     AS "name",
+      i.indisunique AS "isUnique",
+      i.indisvalid  AS "isValid",
       pg_get_indexdef(i.indexrelid) AS "indexdef"
     FROM pg_index i
     JOIN pg_class c ON c.oid = i.indexrelid
     JOIN pg_class t ON t.oid = i.indrelid
     JOIN pg_namespace n ON n.oid = t.relnamespace
-    WHERE t.relname = 'labels'
-      AND c.relname = 'labels_name_user_id_key'
-      AND n.nspname = current_schema()
+    WHERE n.nspname = current_schema() AND t.relname IN (${Prisma.join(tables)})
   `;
-  return rows.some(isCaseInsensitiveLabelIndex);
+  return AUTHORITATIVE_INDEXES.filter(
+    (expected) => !rows.some((row) => matchesAuthoritativeIndex(row, expected))
+  );
 };
 
 /**
@@ -179,19 +177,21 @@ async function main(): Promise<number> {
   const unknown = applied.filter((name) => !local.has(name));
 
   if (unknown.length === 0) {
-    // The label index is accepted only once the database is known to still have it. See
-    // `hasCaseInsensitiveLabelIndex` -- unconditional acceptance passed a database that had lost it.
-    const indexPresent = await hasCaseInsensitiveLabelIndex();
-    if (!indexPresent) {
+    // Checked before the diff, not after: the diff cannot see these at all, so a clean diff says
+    // nothing about them. Accepting the label statement below is only honest once this has passed.
+    const missingIndexes = await missingAuthoritativeIndexes();
+    if (missingIndexes.length > 0) {
       console.error(
-        "[check-migration-drift] the case-insensitive unique index on labels is missing.\n\n" +
-          "`labels` should be uniquely indexed on LOWER(name), user_id (migration " +
-          "20260405120000). Without it two labels differing only in case can both be created, and " +
-          "nothing else enforces this -- schema.prisma's @@unique([name, userId]) is declared for " +
-          "ORM awareness and is not the constraint.\n\n" +
-          "Restore it:\n" +
-          '  CREATE UNIQUE INDEX "labels_name_user_id_key" ON "labels" (LOWER("name"), "user_id");'
+        `[check-migration-drift] ${missingIndexes.length} uniqueness constraint(s) the database ` +
+          `is supposed to enforce are missing or no longer say what they should.\n\n` +
+          `These are invisible to a schema diff by construction: Prisma cannot express an ` +
+          `expression or partial index, so it never reports them absent.\n`
       );
+      for (const index of missingIndexes) {
+        console.error(`  ${index.table}.${index.name}`);
+        console.error(`    without it: ${index.guards}`);
+        console.error(`    restore:    ${index.restore}\n`);
+      }
       return 1;
     }
 
