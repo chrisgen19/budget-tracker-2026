@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { ACCEPTED_DIFF_STATEMENTS, diffStatements, driftingStatements } from "./schema-diff";
+import { CASE_INSENSITIVE_LABEL_INDEX, diffStatements, driftingStatements } from "./schema-diff";
 
 /** The one statement `migrate diff` reports on a clean checkout, verified against the real database. */
-const ACCEPTED_INDEX =
-  'CREATE UNIQUE INDEX "labels_name_user_id_key" ON "labels"("name", "user_id");';
+const ACCEPTED_INDEX = CASE_INSENSITIVE_LABEL_INDEX;
+
+/** What the caller passes once it has confirmed the expression index is really there. */
+const WHEN_INDEX_PRESENT = new Set([CASE_INSENSITIVE_LABEL_INDEX]);
 
 describe("diffStatements", () => {
   it("drops Prisma's comment headers", () => {
@@ -46,7 +48,7 @@ describe("driftingStatements", () => {
     // schema.prisma declares @@unique([name, userId]) while the database has a LOWER(name) index
     // (migration 20260405120000). The diff proposes creating the one Prisma thinks is missing on
     // every run, forever, and that is not drift.
-    expect(driftingStatements(`-- CreateIndex\n${ACCEPTED_INDEX}`)).toEqual([]);
+    expect(driftingStatements(`-- CreateIndex\n${ACCEPTED_INDEX}`, WHEN_INDEX_PRESENT)).toEqual([]);
   });
 
   it("does NOT accept a DROP of that same index", () => {
@@ -54,7 +56,7 @@ describe("driftingStatements", () => {
     // "mentions labels_name_user_id_key" would swallow this, and losing that index means duplicate
     // label names stop being refused case-insensitively.
     const drop = 'DROP INDEX "labels_name_user_id_key";';
-    expect(driftingStatements(drop)).toEqual([drop]);
+    expect(driftingStatements(drop, WHEN_INDEX_PRESENT)).toEqual([drop]);
   });
 
   it("reports a dropped table, which is the #306 case", () => {
@@ -62,18 +64,25 @@ describe("driftingStatements", () => {
     // migration name matched, so the name check said OK -- and the next unrelated `migrate dev`
     // would have folded this DROP into itself.
     const script = ["-- DropTable", 'DROP TABLE "label_categories";'].join("\n");
-    expect(driftingStatements(script)).toEqual(['DROP TABLE "label_categories";']);
+    expect(driftingStatements(script, WHEN_INDEX_PRESENT)).toEqual(['DROP TABLE "label_categories";']);
   });
 
   it("reports real drift alongside the accepted index", () => {
     // The accepted statement must not mask anything reported with it.
     const script = `-- CreateIndex\n${ACCEPTED_INDEX}\n-- DropTable\nDROP TABLE "label_categories";`;
-    expect(driftingStatements(script)).toEqual(['DROP TABLE "label_categories";']);
+    expect(driftingStatements(script, WHEN_INDEX_PRESENT)).toEqual(['DROP TABLE "label_categories";']);
   });
 
-  it("keeps the allowlist to one entry", () => {
-    // Growing it is how a real schema change gets waved through. Adding one should be a deliberate
-    // act that updates this test and says why.
-    expect([...ACCEPTED_DIFF_STATEMENTS]).toEqual([ACCEPTED_INDEX]);
+  it("accepts nothing at all by default", () => {
+    // The default matters more than it looks. Acceptance is the caller's decision, made against the
+    // live database, and a filter that quietly accepted the label index on its own is exactly the
+    // hole this was changed to close: the expression index shares a NAME with the plain one Prisma
+    // wants, so Prisma cannot see it and emits the same statement whether or not it exists.
+    expect(driftingStatements(`-- CreateIndex\n${ACCEPTED_INDEX}`)).toEqual([ACCEPTED_INDEX]);
+  });
+
+  it("reports the label index when the caller has not confirmed it", () => {
+    // What the script now does when `hasCaseInsensitiveLabelIndex()` comes back false.
+    expect(driftingStatements(ACCEPTED_INDEX, new Set())).toEqual([ACCEPTED_INDEX]);
   });
 });

@@ -52,7 +52,7 @@ import { join } from "node:path";
 import { PrismaClient } from "@prisma/client";
 import { resolveDatabaseUrl } from "./database-url";
 import { isMissingTableError } from "./prisma-errors";
-import { driftingStatements } from "./schema-diff";
+import { CASE_INSENSITIVE_LABEL_INDEX, driftingStatements } from "./schema-diff";
 
 const MIGRATIONS_DIR = join(process.cwd(), "prisma", "migrations");
 
@@ -98,6 +98,27 @@ const appliedMigrationNames = async (): Promise<string[] | null> => {
 };
 
 /**
+ * Whether the case-insensitive uniqueness index on `labels` is actually present.
+ *
+ * The expression index shares its NAME with the plain index Prisma wants, so Prisma cannot see it
+ * and proposes the same `CREATE UNIQUE INDEX` either way. Accepting that statement on its text
+ * alone therefore certifies a database that has lost the constraint entirely -- verified: with the
+ * index dropped, this check reported OK and exited 0 (#312).
+ *
+ * Checked on `indexdef` rather than merely on the name existing, because an index by that name with
+ * a plain `(name, user_id)` definition is a different constraint: it stops `Groceries` duplicating
+ * `Groceries`, and lets it duplicate `groceries`.
+ */
+const hasCaseInsensitiveLabelIndex = async (): Promise<boolean> => {
+  const rows = await prisma.$queryRaw<{ indexdef: string }[]>`
+    SELECT indexdef
+    FROM pg_indexes
+    WHERE tablename = 'labels' AND indexname = 'labels_name_user_id_key'
+  `;
+  return rows.some((row) => /lower\s*\(\s*name\s*\)/i.test(row.indexdef));
+};
+
+/**
  * Whether `schema.prisma` and the live database actually agree.
  *
  * The name check above compares migration *names*, which is the #192 direction: something applied a
@@ -112,7 +133,7 @@ const appliedMigrationNames = async (): Promise<string[] | null> => {
  *
  * Read-only: `--script` prints SQL and applies nothing.
  */
-const schemaDiffStatements = (): string[] => {
+const schemaDiffStatements = (accepted: ReadonlySet<string>): string[] => {
   const prismaBin = join(process.cwd(), "node_modules", ".bin", "prisma");
   const schema = join("prisma", "schema.prisma");
   // Resolved directly rather than through `pnpm exec`, which need not be on PATH in a builder.
@@ -129,7 +150,7 @@ const schemaDiffStatements = (): string[] => {
     ],
     { encoding: "utf8", env: { ...process.env, DATABASE_URL: databaseUrl } }
   );
-  return driftingStatements(script);
+  return driftingStatements(script, accepted);
 };
 
 /** Returns the process exit code rather than setting it, so the caller owns the one exit path. */
@@ -144,7 +165,23 @@ async function main(): Promise<number> {
   const unknown = applied.filter((name) => !local.has(name));
 
   if (unknown.length === 0) {
-    const schemaDrift = schemaDiffStatements();
+    // The label index is accepted only once the database is known to still have it. See
+    // `hasCaseInsensitiveLabelIndex` -- unconditional acceptance passed a database that had lost it.
+    const indexPresent = await hasCaseInsensitiveLabelIndex();
+    if (!indexPresent) {
+      console.error(
+        "[check-migration-drift] the case-insensitive unique index on labels is missing.\n\n" +
+          "`labels` should be uniquely indexed on LOWER(name), user_id (migration " +
+          "20260405120000). Without it two labels differing only in case can both be created, and " +
+          "nothing else enforces this -- schema.prisma's @@unique([name, userId]) is declared for " +
+          "ORM awareness and is not the constraint.\n\n" +
+          "Restore it:\n" +
+          '  CREATE UNIQUE INDEX "labels_name_user_id_key" ON "labels" (LOWER("name"), "user_id");'
+      );
+      return 1;
+    }
+
+    const schemaDrift = schemaDiffStatements(new Set([CASE_INSENSITIVE_LABEL_INDEX]));
     if (schemaDrift.length > 0) {
       console.error(
         `[check-migration-drift] every migration name matches, but schema.prisma and the database ` +
