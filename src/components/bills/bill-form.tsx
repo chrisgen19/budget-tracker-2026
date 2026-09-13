@@ -137,20 +137,13 @@ export function BillForm({ bill, onSubmit, onCancel }: BillFormProps) {
     }
   }, [categories, selectedType, setValue, bill]);
 
-  // Filter out incompatible labels when type changes.
-  // Uses getValues (not watched value) so this only fires on selectedType/allLabels changes.
-  useEffect(() => {
-    if (allLabels.length === 0) return;
-    const currentIds = getValues("labelIds") ?? [];
-    if (currentIds.length === 0) return;
-    const compatible = currentIds.filter((id) => {
-      const label = allLabels.find((l) => l.id === id);
-      return !label || label.applicableTo === "BOTH" || label.applicableTo === selectedType;
-    });
-    if (compatible.length !== currentIds.length) {
-      setValue("labelIds", compatible);
-    }
-  }, [selectedType, allLabels, getValues, setValue]);
+  // Incompatible labels are KEPT when the type changes, and marked by `LabelPicker` rather than
+  // removed here -- the same change as `TransactionForm`, for the same reason (#305). A chip that
+  // vanishes unexplained is worse than one that stays and says why it will not be saved, and the
+  // picker already grandfathers labels already on a record.
+  //
+  // Safe here because `createBill`/`updateBill` treat an incompatible type as a report rather than
+  // a refusal -- "ownership is a refusal, an incompatible type is a report" (bill-writes.ts:785).
 
   return (
     <AnimatePresence mode="wait" initial={false}>
