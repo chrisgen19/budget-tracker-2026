@@ -12,7 +12,6 @@ const label = (id: string, name: string): LabelWithCountAndSchedules => ({
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
   _count: { transactions: 0 },
   schedules: [],
-  categories: [],
 });
 
 const LABELS = [label("alpha", "Alpha"), label("beta", "Beta"), label("gamma", "Gamma")];

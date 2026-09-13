@@ -77,8 +77,8 @@ const CATEGORIES = [
 ];
 
 const LABELS = [
-  { id: "l_work", name: "Work", color: "#111111", applicableTo: "BOTH", categories: [] },
-  { id: "l_payday", name: "Payday", color: "#333333", applicableTo: "INCOME", categories: [] },
+  { id: "l_work", name: "Work", color: "#111111", applicableTo: "BOTH" },
+  { id: "l_payday", name: "Payday", color: "#333333", applicableTo: "INCOME" },
 ];
 
 const tileRow = (over: Record<string, unknown> = {}) => ({

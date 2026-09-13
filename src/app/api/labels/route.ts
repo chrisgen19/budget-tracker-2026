@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { labelSchema } from "@/lib/validations";
-import { createLabel, LABEL_INCLUDE } from "@/lib/label-writes";
+import { createLabel } from "@/lib/label-writes";
 
 export async function GET() {
   const userId = await getAuthUserId();
@@ -10,7 +10,10 @@ export async function GET() {
 
   const labels = await prisma.label.findMany({
     where: { userId },
-    include: LABEL_INCLUDE,
+    include: {
+      _count: { select: { transactions: true } },
+      schedules: { orderBy: { createdAt: "asc" } },
+    },
     orderBy: { name: "asc" },
   });
 
@@ -34,19 +37,11 @@ export async function POST(request: Request) {
       color: validated.color,
       applicableTo: validated.applicableTo,
       schedules: validated.schedules,
-      categoryIds: validated.categoryIds,
     });
 
     if (!result.ok) {
-      // The category failure carries its own message because it names the offending categories,
-      // and "a label with this name already exists" would be actively misleading there.
       return NextResponse.json(
-        {
-          error:
-            result.reason === "INVALID_CATEGORIES"
-              ? result.message
-              : "A label with this name already exists",
-        },
+        { error: "A label with this name already exists" },
         { status: 400 }
       );
     }
