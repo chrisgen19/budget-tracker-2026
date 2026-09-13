@@ -124,6 +124,34 @@ export function LabelPicker({
   const visibleFullLabels = normalizedSearch
     ? fullLabels.filter((label) => label.name.toLocaleLowerCase().includes(normalizedSearch))
     : fullLabels;
+
+  /**
+   * The full list, split into labels already used in this category and everything else.
+   *
+   * The quick chips only surface four, so the long tail is where "choosing Transportation still
+   * offered Shopee" actually lives -- this list was one flat alphabetical run of every compatible
+   * label. Sorting it by usage instead would fix that and break the other thing this list is for,
+   * which is finding a specific label by name. Grouping keeps both: the handful you actually use
+   * here, then everything, still alphabetical.
+   *
+   * Only grouped when both halves are non-empty. One section under a heading is worse than no
+   * heading, and on a category with no history every label would sit under "All labels" with an
+   * empty section above it.
+   */
+  const groupedFullLabels = useMemo(() => {
+    if (!categoryId) return null;
+    const usedHere = visibleFullLabels
+      .filter((label) => (label.categoryCounts[categoryId] ?? 0) > 0)
+      .sort(
+        (a, b) =>
+          (b.categoryCounts[categoryId] ?? 0) - (a.categoryCounts[categoryId] ?? 0) || byName(a, b),
+      );
+    if (usedHere.length === 0) return null;
+    const usedHereIds = new Set(usedHere.map((label) => label.id));
+    const rest = visibleFullLabels.filter((label) => !usedHereIds.has(label.id));
+    if (rest.length === 0) return null;
+    return { usedHere, rest };
+  }, [visibleFullLabels, categoryId]);
   const selectedCount = selectedLabels.length;
   const hasMore = fullLabels.some((label) => !quickIds.has(label.id));
   const labelsPending =
@@ -140,6 +168,41 @@ export function LabelPicker({
   const closeAll = () => {
     setShowAll(false);
     setSearch("");
+  };
+
+  const renderFullRow = (label: LabelWithCountAndSchedules) => {
+    const checked = selectedIds.includes(label.id);
+    const isAuto = autoAppliedIds.includes(label.id);
+    return (
+      <label
+        key={label.id}
+        className={cn(
+          "flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border px-3 py-2 transition-colors",
+          checked ? "border-amber/30 bg-amber-light/30" : "border-transparent hover:bg-cream-50",
+        )}
+      >
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={() => toggle(label.id)}
+          className="h-5 w-5 shrink-0 accent-amber focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/50 focus-visible:ring-offset-2"
+        />
+        <span
+          aria-hidden="true"
+          className="h-2.5 w-2.5 shrink-0 rounded-full"
+          style={{ backgroundColor: label.color }}
+        />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-warm-600">
+          {label.name}
+        </span>
+        {isAuto && (
+          <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-amber-dark">
+            <Clock aria-hidden="true" className="h-3.5 w-3.5" />
+            Auto-applied
+          </span>
+        )}
+      </label>
+    );
   };
 
   const renderQuickChip = (label: LabelWithCountAndSchedules) => {
@@ -309,42 +372,18 @@ export function LabelPicker({
             </div>
           ) : (
             <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
-              {visibleFullLabels.map((label) => {
-                const checked = selectedIds.includes(label.id);
-                const isAuto = autoAppliedIds.includes(label.id);
-                return (
-                  <label
-                    key={label.id}
-                    className={cn(
-                      "flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border px-3 py-2 transition-colors",
-                      checked
-                        ? "border-amber/30 bg-amber-light/30"
-                        : "border-transparent hover:bg-cream-50",
-                    )}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggle(label.id)}
-                      className="h-5 w-5 shrink-0 accent-amber focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/50 focus-visible:ring-offset-2"
-                    />
-                    <span
-                      aria-hidden="true"
-                      className="h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{ backgroundColor: label.color }}
-                    />
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-warm-600">
-                      {label.name}
-                    </span>
-                    {isAuto && (
-                      <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-amber-dark">
-                        <Clock aria-hidden="true" className="h-3.5 w-3.5" />
-                        Auto-applied
-                      </span>
-                    )}
-                  </label>
-                );
-              })}
+              {groupedFullLabels ? (
+                <>
+                  <p className="px-1 pb-1 pt-0.5 text-xs font-medium text-warm-400">
+                    Used in this category
+                  </p>
+                  {groupedFullLabels.usedHere.map(renderFullRow)}
+                  <p className="px-1 pb-1 pt-3 text-xs font-medium text-warm-400">All labels</p>
+                  {groupedFullLabels.rest.map(renderFullRow)}
+                </>
+              ) : (
+                visibleFullLabels.map(renderFullRow)
+              )}
             </div>
           )}
         </div>
