@@ -13,9 +13,11 @@ import { usePreferencesQuery, preferencesKeys } from "@/hooks/use-preferences";
 /*  Query key factory                                                  */
 /* ------------------------------------------------------------------ */
 
-export const labelKeys = {
-  all: ["labels"] as const,
-};
+// Defined in its own module so `use-quick-tiles.ts` can import it without closing an import cycle
+// back through this file. Re-exported here so existing importers are unaffected.
+import { labelKeys } from "@/hooks/label-keys";
+
+export { labelKeys };
 
 /* ------------------------------------------------------------------ */
 /*  Fetch helpers                                                      */
