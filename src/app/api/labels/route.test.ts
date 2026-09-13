@@ -31,28 +31,14 @@ beforeEach(() => {
 });
 
 /**
- * Pins the cutover shim in `GET /api/labels`, which has no other coverage.
+ * Coverage for `GET /api/labels`, which had none before #304.
  *
- * `categories: []` is there so a tab still running the pre-revert bundle survives the deploy: that
- * bundle reads `lbl.categories.length` on the labels page and `label.categories.map(...)` in
- * `useScheduledLabel`, and both throw on undefined. Its removal is already scheduled as part of the
- * #303 follow-up, which is exactly why it needs a test -- deleting it early, or landing that PR
- * before this one has deployed, otherwise keeps the suite green and white-screens the first person
- * who left the app in a background tab.
+ * The cutover shim this file was originally written for -- `categories: []`, kept so a tab running
+ * the pre-revert bundle survived the deploy -- is gone with the rest of the feature, and its test
+ * with it. What remains is the shape the current client depends on and the ordering of the auth
+ * check, neither of which was pinned anywhere.
  */
 describe("GET /api/labels", () => {
-  it("returns an empty categories array on every label, for stale clients", async () => {
-    mocks.labelFindMany.mockResolvedValue([label("a"), label("b")]);
-
-    const body = await (await GET()).json();
-
-    expect(body).toHaveLength(2);
-    for (const row of body) {
-      expect(row).toHaveProperty("categories");
-      expect(row.categories).toEqual([]);
-    }
-  });
-
   it("keeps the fields the current client reads", async () => {
     mocks.labelFindMany.mockResolvedValue([label("a")]);
 
