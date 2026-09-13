@@ -18,6 +18,16 @@ interface LabelPickerProps {
   onChange: (ids: string[]) => void;
   autoAppliedIds?: string[];
   transactionType?: "INCOME" | "EXPENSE";
+  /**
+   * The category being filed under, used to ORDER the quick chips. It never filters them.
+   *
+   * That distinction is the point. #297 tried restricting which labels a category may use and was
+   * reverted in #304: six of eight labels were unrestricted, so the noisy ones stayed noisy, and
+   * the five that carry most of the tagging are envelopes that span every category by nature and
+   * must never be restricted. Ordering fixes what restriction could not, because a label that
+   * belongs everywhere still ranks first exactly where it is actually used.
+   */
+  categoryId?: string;
 }
 
 const isCompatible = (
@@ -31,16 +41,35 @@ const isCompatible = (
 const byName = (a: LabelWithCountAndSchedules, b: LabelWithCountAndSchedules) =>
   a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
 
-const byUsageThenName = (
-  a: LabelWithCountAndSchedules,
-  b: LabelWithCountAndSchedules,
-) => b._count.transactions - a._count.transactions || byName(a, b);
+/**
+ * Most-used in this category first, then most-used overall, then alphabetical.
+ *
+ * The category tier is what makes the chips useful: filing Transportation should surface the label
+ * used for Transportation, not the one with the largest total. The total tier still decides when a
+ * category has no history -- on a new category every count is zero, and falling straight to
+ * alphabetical would put Alpha ahead of a label carrying four hundred transactions.
+ *
+ * A missing entry is zero, never an exclusion. Every compatible label remains reachable; this only
+ * decides which four are shown before "show all".
+ */
+const byUsageThenName =
+  (categoryId?: string) =>
+  (a: LabelWithCountAndSchedules, b: LabelWithCountAndSchedules) => {
+    const here = (label: LabelWithCountAndSchedules) =>
+      categoryId ? (label.categoryCounts[categoryId] ?? 0) : 0;
+    return (
+      here(b) - here(a) ||
+      b._count.transactions - a._count.transactions ||
+      byName(a, b)
+    );
+  };
 
 export function LabelPicker({
   selectedIds,
   onChange,
   autoAppliedIds = [],
   transactionType,
+  categoryId,
 }: LabelPickerProps) {
   const [showAll, setShowAll] = useState(false);
   const [search, setSearch] = useState("");
@@ -76,13 +105,13 @@ export function LabelPicker({
     const pinnedIds = new Set(pinned.map((label) => label.id));
     const backfill = compatibleLabels
       .filter((label) => !pinnedIds.has(label.id))
-      .sort(byUsageThenName);
+      .sort(byUsageThenName(categoryId));
 
     return [...pinned, ...backfill].slice(
       0,
       Math.max(QUICK_LABEL_COUNT, pinned.length),
     );
-  }, [compatibleLabels, quickLabelIds]);
+  }, [compatibleLabels, quickLabelIds, categoryId]);
 
   const quickIds = useMemo(() => new Set(quickLabels.map((label) => label.id)), [quickLabels]);
   const selectedOutsideQuick = selectedLabels.filter((label) => !quickIds.has(label.id));

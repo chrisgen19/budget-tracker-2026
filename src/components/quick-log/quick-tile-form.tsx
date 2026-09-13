@@ -235,7 +235,10 @@ export function QuickTileForm({
 
       <div>
         <span className="mb-1 block text-sm font-medium text-warm-600">Labels</span>
+        {/* A tile may carry no category at all, in which case this is undefined and the chips fall
+            back to overall usage -- the ordering this had before. */}
         <LabelPicker
+          categoryId={categoryId ?? undefined}
           selectedIds={labelIds}
           onChange={(ids) => setValue("labelIds", ids)}
           transactionType={type}

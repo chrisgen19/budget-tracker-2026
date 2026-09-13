@@ -495,6 +495,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
             {/* Labels */}
             {!hideLabelPicker && (
               <LabelPicker
+                categoryId={watchedCategoryId}
                 selectedIds={watchedLabelIds}
                 onChange={(ids) => {
                   userTouchedLabels.current = true;
