@@ -52,7 +52,12 @@ import { join } from "node:path";
 import { PrismaClient } from "@prisma/client";
 import { resolveDatabaseUrl } from "./database-url";
 import { isMissingTableError } from "./prisma-errors";
-import { CASE_INSENSITIVE_LABEL_INDEX, driftingStatements } from "./schema-diff";
+import {
+  CASE_INSENSITIVE_LABEL_INDEX,
+  driftingStatements,
+  isCaseInsensitiveLabelIndex,
+  type LabelIndexRow,
+} from "./schema-diff";
 
 const MIGRATIONS_DIR = join(process.cwd(), "prisma", "migrations");
 
@@ -105,17 +110,26 @@ const appliedMigrationNames = async (): Promise<string[] | null> => {
  * alone therefore certifies a database that has lost the constraint entirely -- verified: with the
  * index dropped, this check reported OK and exited 0 (#312).
  *
- * Checked on `indexdef` rather than merely on the name existing, because an index by that name with
- * a plain `(name, user_id)` definition is a different constraint: it stops `Groceries` duplicating
- * `Groceries`, and lets it duplicate `groceries`.
+ * Checked on what the index actually IS, not on its name and not on a substring of its definition.
+ * `isCaseInsensitiveLabelIndex` carries the reasoning and the cases; each clause there corresponds
+ * to a real database shape an earlier version of this accepted.
  */
 const hasCaseInsensitiveLabelIndex = async (): Promise<boolean> => {
-  const rows = await prisma.$queryRaw<{ indexdef: string }[]>`
-    SELECT indexdef
-    FROM pg_indexes
-    WHERE tablename = 'labels' AND indexname = 'labels_name_user_id_key'
+  const rows = await prisma.$queryRaw<LabelIndexRow[]>`
+    SELECT
+      i.indisunique       AS "isUnique",
+      i.indisvalid        AS "isValid",
+      i.indpred IS NULL   AS "notPartial",
+      pg_get_indexdef(i.indexrelid) AS "indexdef"
+    FROM pg_index i
+    JOIN pg_class c ON c.oid = i.indexrelid
+    JOIN pg_class t ON t.oid = i.indrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE t.relname = 'labels'
+      AND c.relname = 'labels_name_user_id_key'
+      AND n.nspname = current_schema()
   `;
-  return rows.some((row) => /lower\s*\(\s*name\s*\)/i.test(row.indexdef));
+  return rows.some(isCaseInsensitiveLabelIndex);
 };
 
 /**

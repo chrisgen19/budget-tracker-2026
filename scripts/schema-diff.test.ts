@@ -1,5 +1,11 @@
+// @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { CASE_INSENSITIVE_LABEL_INDEX, diffStatements, driftingStatements } from "./schema-diff";
+import {
+  CASE_INSENSITIVE_LABEL_INDEX,
+  diffStatements,
+  driftingStatements,
+  isCaseInsensitiveLabelIndex,
+} from "./schema-diff";
 
 /** The one statement `migrate diff` reports on a clean checkout, verified against the real database. */
 const ACCEPTED_INDEX = CASE_INSENSITIVE_LABEL_INDEX;
@@ -84,5 +90,72 @@ describe("driftingStatements", () => {
   it("reports the label index when the caller has not confirmed it", () => {
     // What the script now does when `hasCaseInsensitiveLabelIndex()` comes back false.
     expect(driftingStatements(ACCEPTED_INDEX, new Set())).toEqual([ACCEPTED_INDEX]);
+  });
+});
+
+/**
+ * Each of these was accepted by an earlier version of the predicate, which tested `indexdef` for the
+ * substring `LOWER(name)`. Two were confirmed against a real database before the fix: the check
+ * exited 0 with no uniqueness enforced at all.
+ */
+describe("isCaseInsensitiveLabelIndex", () => {
+  const healthy = {
+    isUnique: true,
+    isValid: true,
+    notPartial: true,
+    indexdef:
+      "CREATE UNIQUE INDEX labels_name_user_id_key ON public.labels USING btree (lower(name), user_id)",
+  };
+
+  it("accepts the real constraint", () => {
+    expect(isCaseInsensitiveLabelIndex(healthy)).toBe(true);
+  });
+
+  it("rejects a non-unique index over the same expression", () => {
+    // `CREATE INDEX ... (LOWER(name), user_id)` contains the substring and enforces nothing.
+    expect(isCaseInsensitiveLabelIndex({ ...healthy, isUnique: false })).toBe(false);
+  });
+
+  it("rejects an index missing user_id", () => {
+    // Unique across the whole table rather than per user: two people could not both have a
+    // "Groceries". Wrong in the opposite direction, and just as quiet.
+    expect(
+      isCaseInsensitiveLabelIndex({
+        ...healthy,
+        indexdef:
+          "CREATE UNIQUE INDEX labels_name_user_id_key ON public.labels USING btree (lower(name))",
+      })
+    ).toBe(false);
+  });
+
+  it("rejects the case-SENSITIVE index of the same name", () => {
+    // The silent downgrade: stops `Groceries` duplicating `Groceries`, lets it duplicate `groceries`.
+    expect(
+      isCaseInsensitiveLabelIndex({
+        ...healthy,
+        indexdef:
+          "CREATE UNIQUE INDEX labels_name_user_id_key ON public.labels USING btree (name, user_id)",
+      })
+    ).toBe(false);
+  });
+
+  it("rejects an invalid index", () => {
+    // A failed CREATE INDEX CONCURRENTLY leaves one in the catalogue that enforces nothing.
+    expect(isCaseInsensitiveLabelIndex({ ...healthy, isValid: false })).toBe(false);
+  });
+
+  it("rejects a partial index", () => {
+    // A WHERE clause narrows what is constrained without touching the key.
+    expect(isCaseInsensitiveLabelIndex({ ...healthy, notPartial: false })).toBe(false);
+  });
+
+  it("tolerates whitespace and case in the definition", () => {
+    expect(
+      isCaseInsensitiveLabelIndex({
+        ...healthy,
+        indexdef:
+          "CREATE UNIQUE INDEX labels_name_user_id_key ON public.labels USING BTREE ( LOWER(name),   user_id )",
+      })
+    ).toBe(true);
   });
 });
