@@ -115,6 +115,29 @@ export function LabelPicker({
 
   const quickIds = useMemo(() => new Set(quickLabels.map((label) => label.id)), [quickLabels]);
   const selectedOutsideQuick = selectedLabels.filter((label) => !quickIds.has(label.id));
+
+  /**
+   * Selected labels that the chosen transaction type will drop on save.
+   *
+   * A label already on a record is deliberately kept selected rather than cleared -- one vanishing
+   * because the type was flipped later reads as data loss, and the write paths grandfather the same
+   * set. But kept-and-unmarked is the worst of both: the chip looks ordinary, `POST`/`PUT
+   * /api/transactions` filters it out by `applicableTo`, and the label is simply gone from the row
+   * with nothing having said so. The writer does report it, in `droppedLabels` -- just not to the
+   * browser. MCP callers get a warning; the person pressing Save gets nothing (#305).
+   *
+   * Type only. The sibling `"category"` reason existed in #297 and went with its revert in #304,
+   * and nothing here should reintroduce it -- there is no category restriction left to violate.
+   */
+  const typeMismatchIds = useMemo(
+    () =>
+      new Set(
+        selectedLabels
+          .filter((label) => !isCompatible(label, transactionType))
+          .map((label) => label.id),
+      ),
+    [selectedLabels, transactionType],
+  );
   const fullLabels = useMemo(() => {
     const compatibleIds = new Set(compatibleLabels.map((label) => label.id));
     const selectedIncompatible = selectedLabels.filter((label) => !compatibleIds.has(label.id));
@@ -253,12 +276,20 @@ export function LabelPicker({
     );
   };
 
-  const renderSelectedChip = (label: LabelWithCountAndSchedules) => (
+  const renderSelectedChip = (label: LabelWithCountAndSchedules) => {
+    const mismatched = typeMismatchIds.has(label.id);
+    return (
     <button
       key={label.id}
       type="button"
       onClick={() => toggle(label.id)}
-      aria-label={`Remove ${label.name} label`}
+      // Said in the accessible name too, not only the visible pill: a screen reader user otherwise
+      // hears an ordinary selected label and gets the same silent drop the marker exists to prevent.
+      aria-label={
+        mismatched
+          ? `Remove ${label.name} label, which will not be saved on this transaction type`
+          : `Remove ${label.name} label`
+      }
       className="inline-flex min-h-11 items-center gap-2 rounded-full border border-amber/40 bg-amber-light/40 px-3.5 py-2 text-sm font-medium text-warm-600 transition-colors hover:bg-amber-light focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/50 focus-visible:ring-offset-2"
     >
       <span
@@ -267,9 +298,15 @@ export function LabelPicker({
         style={{ backgroundColor: label.color }}
       />
       {label.name}
+      {mismatched && (
+        <span className="inline-flex shrink-0 items-center rounded-full bg-cream-200/70 px-2 py-0.5 text-[11px] font-medium text-warm-400">
+          Not for this type
+        </span>
+      )}
       <X aria-hidden="true" className="h-3.5 w-3.5 text-warm-400" />
     </button>
-  );
+    );
+  };
 
   return (
     <fieldset aria-describedby={hintId} className="min-w-0">

@@ -258,6 +258,71 @@ describe("LabelPicker", () => {
     });
   });
 
+  /**
+   * #305. The label is kept on purpose -- clearing it would read as data loss -- but kept and
+   * unmarked is worse: the write path drops it by `applicableTo` and nothing in the browser says
+   * so. `droppedLabels` is reported to MCP callers and never to the person pressing Save.
+   */
+  describe("marking a selected label the transaction type will drop", () => {
+    const INCOMPATIBLE = [
+      label("expenseOnly", "Expense Only", 5, "EXPENSE"),
+      label("both", "Both Ways", 5, "BOTH"),
+    ];
+
+    it("marks a selected label that does not apply to the chosen type", () => {
+      mocks.useLabelsQuery.mockReturnValue(queryState(INCOMPATIBLE));
+      render(<ControlledPicker initialIds={["expenseOnly"]} transactionType="INCOME" />);
+
+      expect(screen.getByText("Not for this type")).toBeTruthy();
+    });
+
+    it("says so in the accessible name, not only the visible pill", () => {
+      mocks.useLabelsQuery.mockReturnValue(queryState(INCOMPATIBLE));
+      render(<ControlledPicker initialIds={["expenseOnly"]} transactionType="INCOME" />);
+
+      expect(
+        screen.getByRole("button", {
+          name: /Expense Only label, which will not be saved on this transaction type/,
+        }),
+      ).toBeTruthy();
+    });
+
+    it("keeps the label selected and removable rather than clearing it", () => {
+      // The grandfathering the write paths rely on: flipping the type must not silently strip a
+      // label off a saved row, so the chip stays and the user decides.
+      mocks.useLabelsQuery.mockReturnValue(queryState(INCOMPATIBLE));
+      const onChange = vi.fn();
+      render(
+        <ControlledPicker
+          initialIds={["expenseOnly"]}
+          transactionType="INCOME"
+          onChange={onChange}
+        />,
+      );
+
+      expect(onChange).not.toHaveBeenCalled();
+      fireEvent.click(
+        screen.getByRole("button", { name: /Expense Only label, which will not be saved/ }),
+      );
+      expect(onChange).toHaveBeenCalledWith([]);
+    });
+
+    it("does not mark a label that applies to the chosen type", () => {
+      mocks.useLabelsQuery.mockReturnValue(queryState(INCOMPATIBLE));
+      render(<ControlledPicker initialIds={["both"]} transactionType="INCOME" />);
+
+      expect(screen.queryByText("Not for this type")).toBeNull();
+    });
+
+    it("does not mark anything when no type is chosen", () => {
+      // The form renders this before a type is picked; nothing would be dropped yet.
+      mocks.useLabelsQuery.mockReturnValue(queryState(INCOMPATIBLE));
+      render(<ControlledPicker initialIds={["expenseOnly"]} />);
+
+      expect(screen.queryByText("Not for this type")).toBeNull();
+    });
+  });
+
   it("keeps a selected non-quick label visible and removable", () => {
     const onChange = vi.fn();
     render(<ControlledPicker initialIds={["zeta"]} onChange={onChange} />);
@@ -315,8 +380,13 @@ describe("LabelPicker", () => {
     );
 
     expect(screen.getByRole("button", { name: "Expense only" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Remove Income only label" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Remove Income only label" }));
+    // The accessible name carries the #305 warning now: this is exactly the case it describes, an
+    // INCOME-only label sitting on an EXPENSE transaction that the write path will drop.
+    const remove = screen.getByRole("button", {
+      name: "Remove Income only label, which will not be saved on this transaction type",
+    });
+    expect(remove).toBeTruthy();
+    fireEvent.click(remove);
     expect(onChange).toHaveBeenCalledWith([]);
   });
 
