@@ -31,14 +31,28 @@
  * name only `nixpacks.toml` calls, so a builder that runs `pnpm build` by convention no longer
  * migrates anything.
  *
+ * Since #306 this checks two different things, and they catch opposite failures:
+ *
+ *   1. Migration NAMES -- the #192 direction. Something applied a migration this repo does not have.
+ *   2. Schema versus DATABASE -- every name matching while `schema.prisma` and the database describe
+ *      different tables. #304 removed the `LabelCategory` model while its table was deliberately
+ *      still in place; every name matched, this script said OK, and the next `prisma migrate dev`
+ *      for an unrelated change would have folded `DROP TABLE "label_categories"` into itself.
+ *
+ * Neither subsumes the other. A name check cannot see (2) because it never looks at a table, and a
+ * schema diff cannot see (1) because a migration applied from elsewhere usually leaves the schema
+ * agreeing perfectly.
+ *
  * Usage:
  *   pnpm exec tsx scripts/check-migration-drift.ts
  */
+import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { PrismaClient } from "@prisma/client";
 import { resolveDatabaseUrl } from "./database-url";
 import { isMissingTableError } from "./prisma-errors";
+import { driftingStatements } from "./schema-diff";
 
 const MIGRATIONS_DIR = join(process.cwd(), "prisma", "migrations");
 
@@ -83,6 +97,41 @@ const appliedMigrationNames = async (): Promise<string[] | null> => {
   }
 };
 
+/**
+ * Whether `schema.prisma` and the live database actually agree.
+ *
+ * The name check above compares migration *names*, which is the #192 direction: something applied a
+ * migration this repo does not have. It is blind to the mirror case -- every name matching while the
+ * schema and the database describe different tables.
+ *
+ * That is not hypothetical either. #304 removed the `LabelCategory` model while its table was still
+ * deliberately in place, and every name still matched, so this script said OK. `prisma migrate dev`
+ * diffs the schema against migration history rather than comparing names, so the next migration
+ * anyone generated -- for a change with nothing to do with labels -- would have silently carried
+ * `DROP TABLE "label_categories"`. See #306.
+ *
+ * Read-only: `--script` prints SQL and applies nothing.
+ */
+const schemaDiffStatements = (): string[] => {
+  const prismaBin = join(process.cwd(), "node_modules", ".bin", "prisma");
+  const schema = join("prisma", "schema.prisma");
+  // Resolved directly rather than through `pnpm exec`, which need not be on PATH in a builder.
+  const script = execFileSync(
+    prismaBin,
+    [
+      "migrate",
+      "diff",
+      "--from-schema-datasource",
+      schema,
+      "--to-schema-datamodel",
+      schema,
+      "--script",
+    ],
+    { encoding: "utf8", env: { ...process.env, DATABASE_URL: databaseUrl } }
+  );
+  return driftingStatements(script);
+};
+
 /** Returns the process exit code rather than setting it, so the caller owns the one exit path. */
 async function main(): Promise<number> {
   const applied = await appliedMigrationNames();
@@ -95,8 +144,27 @@ async function main(): Promise<number> {
   const unknown = applied.filter((name) => !local.has(name));
 
   if (unknown.length === 0) {
+    const schemaDrift = schemaDiffStatements();
+    if (schemaDrift.length > 0) {
+      console.error(
+        `[check-migration-drift] every migration name matches, but schema.prisma and the database ` +
+          `disagree on ${schemaDrift.length} object(s):`
+      );
+      for (const statement of schemaDrift) console.error(`  ${statement}`);
+      console.error(
+        "\nThese are the statements Prisma would run to make the database match schema.prisma. " +
+          "They are not applied here, and on a deploy they should not be: a schema that has moved " +
+          "without a migration means the migration is missing, not that the database is wrong.\n" +
+          "\nWrite the migration that reconciles them, or restore the model the schema dropped. " +
+          "Ignoring this is how a DROP reaches the next unrelated migration: `prisma migrate dev` " +
+          "diffs the schema against history, so it will fold these statements into whatever you " +
+          "generate next, under a name that says nothing about them."
+      );
+      return 1;
+    }
+
     console.log(
-      `[check-migration-drift] OK — ${applied.length} applied migration(s), all present in prisma/migrations`
+      `[check-migration-drift] OK — ${applied.length} applied migration(s), all present in prisma/migrations; schema.prisma agrees with the database`
     );
     return 0;
   }
