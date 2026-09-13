@@ -56,10 +56,30 @@ vi.mock("@/hooks/use-categories", () => {
 });
 
 vi.mock("@/hooks/use-labels", () => {
-  const labels: unknown[] = [];
+  // A real EXPENSE-only label rather than an empty list: the stripper this form used to run
+  // early-returned on an empty one, so an empty mock would let the retention test below pass
+  // against the stripping code too.
+  const labels = [{ id: "label-1", name: "Expense Only", color: "#F5A623", applicableTo: "EXPENSE" }];
   return { useLabelsQuery: () => ({ data: labels }) };
 });
-vi.mock("@/components/transactions/label-picker", () => ({ LabelPicker: () => null }));
+vi.mock("@/components/transactions/label-picker", () => ({
+  // Renders what it is handed, so a test can assert the form leaves the selection alone across a
+  // type flip. Marking the incompatible ones is the picker's own concern, tested there.
+  LabelPicker: ({
+    selectedIds,
+    onChange,
+  }: {
+    selectedIds: string[];
+    onChange: (ids: string[]) => void;
+  }) => (
+    <div>
+      <span data-testid="picker-selected-ids">{selectedIds.join(",")}</span>
+      <button type="button" onClick={() => onChange(["label-1"])}>
+        Select test label
+      </button>
+    </div>
+  ),
+}));
 
 /** A bill as the API sends it: date-only values serialised at UTC midnight. */
 const bill = (overrides: Partial<ScheduledTransactionWithCategory> = {}) =>
@@ -94,6 +114,25 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("BillForm date-only bill dates", () => {
+  /**
+   * #305, at the form level. `createBill`/`updateBill` treat an incompatible type as a report
+   * rather than a refusal (bill-writes.ts:785), so the label is safe to keep and mark rather than
+   * strip out from under the picker. `QuickTileForm` deliberately still clears, because its writer
+   * answers `LABELS_UNUSABLE` and keeping one would turn a clean clear into a failed save.
+   */
+  it("keeps selected labels when the bill type changes", async () => {
+    render(<BillForm onSubmit={() => Promise.resolve()} onCancel={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Select test label" }));
+    expect(screen.getByTestId("picker-selected-ids").textContent).toBe("label-1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Income" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("picker-selected-ids").textContent).toBe("label-1"),
+    );
+  });
+
   it("shows the stored start date, not the browser's reading of it", () => {
     const { container } = render(
       <BillForm bill={bill()} onSubmit={() => Promise.resolve()} onCancel={() => {}} />,
