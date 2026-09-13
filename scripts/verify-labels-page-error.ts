@@ -41,31 +41,36 @@ async function main() {
   const user = await prisma.user.create({
     data: { email: `lperr-${Date.now()}@test.local`, name: "LP Err", password: "x" },
   });
-  // One real label, so a passing run cannot be the empty state being correct by accident.
-  await prisma.label.create({
-    data: { name: "E2E Anywhere", color: "#2D8B5A", applicableTo: "EXPENSE", userId: user.id },
-  });
 
-  const token = await encode({
-    token: { id: user.id, role: user.role, name: user.name, email: user.email, sub: user.id },
-    secret,
-  });
-
-  const browser = await chromium.launch();
-  const context = await browser.newContext();
-  await context.addCookies([
-    {
-      name: "next-auth.session-token",
-      value: token,
-      domain: new URL(BASE).hostname,
-      path: "/",
-      httpOnly: true,
-      sameSite: "Lax",
-    },
-  ]);
-  const page = await context.newPage();
-
+  // Everything after the user exists goes inside the guard, so a throw in setup -- label
+  // creation, JWT encoding, a browser that will not launch -- still deletes the user. Leaving it
+  // behind is how a local database accumulates a throwaway account per failed run.
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   try {
+    // One real label, so a passing run cannot be the empty state being correct by accident.
+    await prisma.label.create({
+      data: { name: "E2E Anywhere", color: "#2D8B5A", applicableTo: "EXPENSE", userId: user.id },
+    });
+
+    const token = await encode({
+      token: { id: user.id, role: user.role, name: user.name, email: user.email, sub: user.id },
+      secret,
+    });
+
+    browser = await chromium.launch();
+    const context = await browser.newContext();
+    await context.addCookies([
+      {
+        name: "next-auth.session-token",
+        value: token,
+        domain: new URL(BASE).hostname,
+        path: "/",
+        httpOnly: true,
+        sameSite: "Lax",
+      },
+    ]);
+    const page = await context.newPage();
+
     await page.route("**/api/labels", (route) => route.fulfill({ status: 500, body: "{}" }));
     await page.goto(`${BASE}/labels`);
     await page.waitForTimeout(2500);
@@ -81,7 +86,7 @@ async function main() {
     );
     await page.unroute("**/api/labels");
   } finally {
-    await browser.close();
+    await browser?.close();
     await prisma.user.delete({ where: { id: user.id } });
   }
 }
