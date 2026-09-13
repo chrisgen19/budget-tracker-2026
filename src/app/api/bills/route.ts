@@ -106,15 +106,13 @@ export async function POST(request: Request) {
 
     if (!result.ok) {
       // Every deterministic refusal is a 4xx and says which field to repair. A reason added to
-      // `createBill` and not listed here fell through to a 500, which tells the client the server
+      // `createBill` and not listed here falls through to a 500, which tells the client the server
       // broke and the request was fine -- the opposite of true, and not retryable in the way a
-      // 500 implies. `LABELS_NOT_IN_CATEGORY` shipped in exactly that state.
+      // 500 implies.
       const refusals: Partial<Record<typeof result.reason, string>> = {
         CATEGORY_NOT_USABLE:
           "That category does not exist, or its type does not match the bill's.",
         LABELS_NOT_OWNED: "One or more labels are invalid or do not belong to you.",
-        LABELS_NOT_IN_CATEGORY:
-          "One or more labels cannot be used on a bill in this category.",
         INVALID_SCHEDULE:
           "That schedule is not usable: a custom frequency needs an interval, and an end date cannot fall before the start date.",
       };

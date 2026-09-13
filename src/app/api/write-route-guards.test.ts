@@ -89,8 +89,6 @@ const GUARDS = [
   // The predicates a route restates them with.
   "categoriesAreUsable",
   "categoriesAreUsableForWrite",
-  "labelAllowsCategory",
-  "labelRowAllowsCategory",
   "matchScheduledLabel",
 ];
 

@@ -20,7 +20,7 @@ export interface ScheduleContext {
 export const getScheduleContext = async (userId: string): Promise<ScheduleContext | null> => {
   const labelsWithSchedules = await prisma.label.findMany({
     where: { userId, schedules: { some: {} } },
-    include: { schedules: true, categories: { select: { categoryId: true } } },
+    include: { schedules: true },
     orderBy: { createdAt: "asc" },
   });
 
@@ -36,7 +36,6 @@ export const getScheduleContext = async (userId: string): Promise<ScheduleContex
       labelId: label.id,
       labelCreatedAt: label.createdAt,
       applicableTo: label.applicableTo,
-      categoryIds: label.categories.map((c) => c.categoryId),
       days: s.days,
       startTime: s.startTime,
       endTime: s.endTime,
@@ -56,14 +55,7 @@ export const getScheduleContext = async (userId: string): Promise<ScheduleContex
 export const matchScheduledLabel = (
   date: Date,
   ctx: ScheduleContext,
-  transactionType?: string,
-  categoryId?: string | null
+  transactionType?: string
 ): string | null => {
-  return getScheduledLabelId(
-    date,
-    ctx.timezoneOffset,
-    ctx.scheduleRules,
-    transactionType,
-    categoryId
-  );
+  return getScheduledLabelId(date, ctx.timezoneOffset, ctx.scheduleRules, transactionType);
 };

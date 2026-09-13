@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { labelSchema } from "@/lib/validations";
-import { createLabel, LABEL_INCLUDE } from "@/lib/label-writes";
+import { createLabel } from "@/lib/label-writes";
 
 export async function GET() {
   const userId = await getAuthUserId();
@@ -10,11 +10,28 @@ export async function GET() {
 
   const labels = await prisma.label.findMany({
     where: { userId },
-    include: LABEL_INCLUDE,
+    include: {
+      _count: { select: { transactions: true } },
+      schedules: { orderBy: { createdAt: "asc" } },
+    },
     orderBy: { name: "asc" },
   });
 
-  return NextResponse.json(labels);
+  // `categories: []` is here for the cutover only, and is removed with the rest of the feature in
+  // the #303 follow-up.
+  //
+  // A tab still running the pre-revert bundle keeps that JS in memory across a deploy -- the
+  // service worker precaches bundles, and `skipWaiting` swapping the worker does not swap the
+  // script an open page is already running. `/api/*` is NetworkOnly, so React Query's
+  // refetch-on-focus sends the NEW json into the OLD code, which reads `lbl.categories.length`
+  // on the labels page and `label.categories.map(...)` in `useScheduledLabel`. Both throw on
+  // undefined, and the sequence is ordinary: leave the app in a background tab, deploy, come back.
+  //
+  // The empty array is not merely crash-avoidance. Zero links meant "every category" in that
+  // bundle, so a stale client reads every label as unrestricted -- which is exactly what this
+  // revert makes true. Returning the real rows would instead leave it hiding labels the server no
+  // longer restricts.
+  return NextResponse.json(labels.map((label) => ({ ...label, categories: [] })));
 }
 
 export async function POST(request: Request) {
@@ -34,19 +51,11 @@ export async function POST(request: Request) {
       color: validated.color,
       applicableTo: validated.applicableTo,
       schedules: validated.schedules,
-      categoryIds: validated.categoryIds,
     });
 
     if (!result.ok) {
-      // The category failure carries its own message because it names the offending categories,
-      // and "a label with this name already exists" would be actively misleading there.
       return NextResponse.json(
-        {
-          error:
-            result.reason === "INVALID_CATEGORIES"
-              ? result.message
-              : "A label with this name already exists",
-        },
+        { error: "A label with this name already exists" },
         { status: 400 }
       );
     }
