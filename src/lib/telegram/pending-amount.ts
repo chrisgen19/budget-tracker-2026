@@ -4,14 +4,26 @@
  * Tapping `Grab · ₱?` on the reply keyboard cannot log anything: the button carries no amount. So
  * the bot asks, and the next message that is only a number answers it.
  *
- * Holds the tile's id, never its category or labels. Those are read again when the number arrives,
- * so an edit made on `/quick-log` in between is honoured rather than overwritten by a snapshot.
- *
  * Deliberately not persisted, the same trade `pending-scan.ts` makes: after a restart the user
  * taps the button again, which costs one tap and needs no schema.
  */
+
+/**
+ * What the figure is for.
+ *
+ * A saved tile holds only its id: its category and labels are read again when the number arrives,
+ * so an edit made on `/quick-log` in between is honoured rather than overwritten by a snapshot.
+ *
+ * A Frequent entry holds a snapshot instead, and that is safe where it would not be for a tile.
+ * Nothing edits a Frequent entry, and its category came off real transactions, which
+ * `onDelete: Restrict` keeps from being deleted, so there is nothing a re-read could learn.
+ */
+export type PendingAmountSource =
+  | { kind: "tile"; tileId: string }
+  | { kind: "frequent"; description: string; categoryId: string };
+
 export interface PendingAmount {
-  tileId: string;
+  source: PendingAmountSource;
   /** For the reply, so a stale prompt can still name the button it came from. */
   label: string;
   createdAt: number;

@@ -16,6 +16,12 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { PrismaClient } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { mintMcpToken } from "../src/lib/mcp/tokens";
+import {
+  MCP_TOOL_SCOPES,
+  grantCoversTool,
+  type McpScope,
+  type McpToolName,
+} from "../src/lib/mcp/scopes";
 
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:3000";
 const ENDPOINT = new URL("/api/mcp", BASE_URL);
@@ -113,13 +119,29 @@ async function main() {
   check("an unknown token is 401", (await rawStatus("Bearer btmcp_nope")).status, 401);
 
   // --- Full access ---
+  const fullScopes: McpScope[] = [
+    "budget:read",
+    "transactions:read",
+    "labels:read",
+    "bills:read",
+    "receipts:read",
+  ];
   const full = await mintMcpToken({
     userId: user.id,
     name: "full",
-    scopes: ["budget:read", "transactions:read", "labels:read", "bills:read", "receipts:read"],
+    scopes: fullScopes,
     expiresInDays: 30,
   });
-  check("a valid token sees all 12 tools", (await toolNamesFor(full.token)).length, 12);
+  // Names derived from the scope map, not a count. A hardcoded count went stale silently every
+  // time a read tool was added, and then failed against a correct server; this also names the
+  // tool that is missing or unexpected instead of only reporting a number.
+  check(
+    "a valid token sees every tool its scopes cover",
+    await toolNamesFor(full.token),
+    (Object.keys(MCP_TOOL_SCOPES) as McpToolName[])
+      .filter((name) => grantCoversTool(fullScopes, name))
+      .sort()
+  );
 
   // --- Scope narrowing over the wire ---
   const scoped = await mintMcpToken({

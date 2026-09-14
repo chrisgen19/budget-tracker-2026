@@ -429,6 +429,84 @@ describe("createBudgetMcpServer", () => {
     expect(tiles[1]).toMatchObject({ resolvedCategoryId: "cat_other", fallsBack: true });
   });
 
+  /** Derived from real rows, so descriptions and amounts off transactions: `transactions:read`,
+   *  and `budget:read` for the category names. Both are in the default grant. */
+  it("serves get_frequent_tiles only when both budget:read and transactions:read are granted", async () => {
+    expect(await listToolNames(["budget:read"])).not.toContain("get_frequent_tiles");
+    expect(await listToolNames(["transactions:read"])).not.toContain("get_frequent_tiles");
+    expect(await listToolNames(["budget:read", "transactions:read"])).toContain(
+      "get_frequent_tiles"
+    );
+    expect(await listToolNames(READ_ONLY_SCOPES)).toContain("get_frequent_tiles");
+  });
+
+  /**
+   * A habit a saved button already covers must not be offered again, or the keyboard would carry
+   * the same purchase twice under two texts. And the date has to leave as a string, since the
+   * output schema says so and the SDK does not check.
+   */
+  it("get_frequent_tiles leaves out what a saved button covers", async () => {
+    const at = (day: number) => new Date(Date.UTC(2026, 8, day, 4));
+    const row = (description: string, amount: number, day: number) => ({
+      description,
+      amount,
+      date: at(day),
+      categoryId: "cat_food",
+      category: { name: "Food & Dining" },
+    });
+    const stub = {
+      telegramQuickTile: {
+        findMany: vi.fn(async () => [
+          {
+            id: "tile_office",
+            label: "Office",
+            description: "Fare to office",
+            amount: 38,
+            type: "EXPENSE",
+            categoryId: null,
+            sortOrder: 10,
+            labels: [],
+          },
+        ]),
+      },
+      transaction: {
+        findMany: vi.fn(async () => [
+          row("Jollibee lunch", 180, 12),
+          row("Fare to office", 38, 12),
+          row("Jollibee lunch", 180, 11),
+          row("Fare to office", 38, 11),
+          row("Jollibee lunch", 180, 10),
+          row("Fare to office", 38, 10),
+        ]),
+      },
+    } as unknown as PrismaClient;
+
+    const server = createBudgetMcpServer({
+      prisma: stub,
+      userId: "user_1",
+      timezoneOffset: -480,
+      scopes: READ_ONLY_SCOPES,
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const result = await client.callTool({ name: "get_frequent_tiles", arguments: {} });
+    await client.close();
+
+    const { frequent } = result.structuredContent as { frequent: Record<string, unknown>[] };
+
+    expect(frequent).toEqual([
+      expect.objectContaining({
+        description: "Jollibee lunch",
+        count: 3,
+        amount: 180,
+        amountIsStable: true,
+        categoryId: "cat_food",
+        lastLoggedAt: at(12).toISOString(),
+      }),
+    ]);
+  });
+
   /**
    * Every month-taking tool has to reject a month that is not one.
    *
