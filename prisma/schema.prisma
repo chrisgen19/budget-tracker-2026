@@ -553,11 +553,12 @@ model TelegramPromptLog {
 /// One button in the Telegram Mini App's quick-log grid: a routine expense whose description and
 /// category are already decided, so logging it costs a tap instead of a sentence.
 ///
-/// This is `QUICK_FARES` (`src/lib/telegram/quick-keyboard.ts`) made into data. That file names the
-/// point at which the trade flips - "storing them per user means a column, an editor and a settings
-/// page, which is most of the work this whole approach exists to avoid" - and a Mini App *is* the
-/// editor, so the editor stops being an additional cost. The reply keyboard itself stays: it is
-/// zero latency and needs no webview.
+/// This began as the reply keyboard's hardcoded `QUICK_FARES` list made into data. That list named
+/// the point at which the trade flips - "storing them per user means a column, an editor and a
+/// settings page, which is most of the work this whole approach exists to avoid" - and a Mini App
+/// *is* the editor, so the editor stops being an additional cost. The reply keyboard stays, since it
+/// is zero latency and needs no webview, and it now renders these same rows
+/// (`src/lib/telegram/quick-keyboard.ts`).
 ///
 /// A table rather than a `Json` column on `users`, and rather than the `String[]` of ids the
 /// quick-pick preferences use. Both were considered and both fail the same two ways. They hold a

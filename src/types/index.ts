@@ -283,31 +283,23 @@ export interface AnalyticsStatistics {
   categoriesUsed: number;
 }
 
-/** Trend direction for health score indicators */
-export type HealthTrend = "improving" | "declining" | "stable" | "new";
-
-/** Individual sub-score within the financial health composite */
-export interface HealthSubScore {
-  score: number;
-  label: string;
-  description: string;
-  trend: HealthTrend;
-  rawValue: number | null;
-}
-
-/** Financial health score composite */
-export interface AnalyticsHealthScore {
-  overallScore: number;
-  overallLabel: string;
-  overallTrend: HealthTrend;
+/**
+ * Descriptive signals the transaction ledger can support without claiming to
+ * measure the user's broader financial health.
+ */
+export interface AnalyticsCashFlowSignals {
+  netCashFlow: number;
   savingsRate: number | null;
-  subScores: {
-    savingsRate: HealthSubScore;
-    expenseTrend: HealthSubScore;
-    incomeStability: HealthSubScore;
-    diversification: HealthSubScore;
-    consistency: HealthSubScore;
-  };
+  previousSavingsRate: number | null;
+  /** Percentage-point movement expressed as a decimal (0.05 = 5 points). */
+  savingsRateChange: number | null;
+  /** Relative movement from the previous period (0.10 = 10%). */
+  expenseChange: number | null;
+  /** Relative movement from the previous period (0.10 = 10%). */
+  incomeChange: number | null;
+  expenseDays: number;
+  totalDaysInPeriod: number;
+  hasPreviousData: boolean;
 }
 
 /** Full analytics API response */
@@ -324,7 +316,7 @@ export interface AnalyticsData {
   periodLabel: string;
   previousPeriodLabel: string;
   statistics: AnalyticsStatistics;
-  healthScore: AnalyticsHealthScore;
+  cashFlowSignals: AnalyticsCashFlowSignals;
   /** Dense per-day series for the spending heatmap */
   daily: AnalyticsDailyItem[];
   /** Top expense categories per time bucket */
@@ -404,7 +396,8 @@ export interface AiDataQualityItem {
 /** Full AI assessment report content (stored as JSON, validated by Zod) */
 export interface AiAssessmentReport {
   summary: string;
-  scoreCommentary: string;
+  /** What the descriptive cash-flow signals mean, without assigning a health grade. */
+  cashFlowCommentary: string;
   /** What the next few weeks look like given bills due and the current run rate. */
   outlook: string;
   /** What went wrong (or unusually) in this period, grounded in `AssessmentFacts`. */

@@ -73,7 +73,11 @@ export function AssessmentNarrative({ report, fmt }: { report: AiAssessmentRepor
     <>
       <Section icon={Sparkles} title="Summary">
         <p className="text-sm text-warm-600 leading-relaxed">{report.summary}</p>
-        <p className="text-sm text-warm-500 leading-relaxed mt-3">{report.scoreCommentary}</p>
+        {report.cashFlowCommentary && (
+          <p className="text-sm text-warm-500 leading-relaxed mt-3">
+            {report.cashFlowCommentary}
+          </p>
+        )}
       </Section>
 
       {report.outlook && (

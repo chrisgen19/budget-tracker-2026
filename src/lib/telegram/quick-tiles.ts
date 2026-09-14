@@ -3,11 +3,11 @@ import { findOtherCategory, matchCategory, type BotCategory } from "@/lib/telegr
 /**
  * Deciding which category a quick-log tile writes to.
  *
- * This is the runtime successor to a compile-time guarantee. `quick-keyboard.test.ts` can assert
- * that `38 fare to office` resolves to Transportation and not to Housing, because `QUICK_FARES` is
- * a three-element `as const` list checked against the real matcher at build time. Once tiles are
- * user data there is no build-time list, so the same property has to be answered at three runtime
- * moments instead:
+ * This is the runtime successor to a compile-time guarantee. `quick-keyboard.test.ts` once asserted
+ * that `38 fare to office` resolved to Transportation and not to Housing, because the reply
+ * keyboard's fares were a hardcoded `as const` list checked against the real matcher at build time.
+ * Once tiles are user data there is no build-time list (the keyboard now renders tiles too), so the
+ * same property has to be answered at three runtime moments instead:
  *
  *  - when a tile is **saved**, so the editor can say "this will file under Other Expense" before
  *    the user commits to it

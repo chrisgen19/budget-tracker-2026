@@ -15,7 +15,7 @@ import {
   ArrowLeftRight,
   BarChart3,
   CalendarDays,
-  Heart,
+  Gauge,
   Layers,
   PieChart,
   Sparkles,
@@ -46,7 +46,7 @@ import { TopTransactions } from "@/components/analytics/top-transactions";
 import { AnalyticsHero } from "@/components/analytics/analytics-hero";
 import { AnalyticsHeroSkeleton, AnalyticsContentSkeleton } from "@/components/analytics/analytics-skeleton";
 import { RecordsStatistics } from "@/components/analytics/records-statistics";
-import { FinancialHealthScore } from "@/components/analytics/financial-health-score";
+import { CashFlowSignals } from "@/components/analytics/cash-flow-signals";
 import { AiAssessmentReport } from "@/components/analytics/ai-assessment-report";
 import { stagger, fadeUp } from "@/components/analytics/motion-variants";
 import type { AnalyticsTypeFilter } from "@/types";
@@ -56,7 +56,7 @@ type AnalyticsTab = AnalyticsTabId;
 const ANALYTICS_TABS = [
   { id: "reports" as const, label: "Reports", shortLabel: "Reports", icon: BarChart3 },
   { id: "statistics" as const, label: "Records & Statistics", shortLabel: "Stats", icon: Trophy },
-  { id: "health" as const, label: "Financial Health", shortLabel: "Health", icon: Heart },
+  { id: "health" as const, label: "Cash Flow Signals", shortLabel: "Signals", icon: Gauge },
   { id: "ai-assessment" as const, label: "AI Assessment", shortLabel: "AI", icon: Sparkles },
 ];
 
@@ -510,10 +510,15 @@ export default function AnalyticsPage() {
             </motion.div>
           )}
 
-          {/* Financial Health Tab */}
+          {/* Keep the `health` URL id so existing bookmarked analytics links still work. */}
           {activeTab === "health" && (
             <motion.div key="health" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-              <FinancialHealthScore healthScore={data.healthScore} />
+              <CashFlowSignals
+                signals={data.cashFlowSignals}
+                previousPeriodLabel={data.previousPeriodLabel}
+                currency={currency}
+                hideAmounts={hideAmounts}
+              />
             </motion.div>
           )}
 

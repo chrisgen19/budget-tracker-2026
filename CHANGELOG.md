@@ -31,6 +31,63 @@ be broken down into what it was spent on.
 
 No UI yet: the Cards pages, the payment picker on the transaction form and the bill link follow.
 
+## 2026-09-14 - Analytics stops grading financial health from transaction activity
+
+The Analytics page no longer presents a 0–100 Financial Health score. Its formula treated spending
+across more categories and spending on more days as inherently healthier, called a single
+period-over-period income change “stability,” and assigned confident labels without knowing account
+balances, liquid savings, assets, debt, goals, insurance, or the user’s circumstances. Those inputs
+cannot support an overall financial-wellbeing grade.
+
+The existing bookmarked `tab=health` URL still opens the same tab, now named **Cash Flow Signals**.
+It shows only auditable transaction-ledger facts: net cash flow, income kept, income and expense
+change against the preceding period, and days with a logged expense. Zero baselines and periods with
+no prior transactions show no comparison instead of manufacturing a percentage. A visible scope
+note explains what the ledger does not measure, and Hide Amounts now applies to the tab’s net figure.
+
+The AI Assessment payload and prompt no longer receive or discuss the discarded score. New reports
+use `cashFlowCommentary` and are explicitly forbidden from implying an overall grade. Cached reports
+with the old `scoreCommentary` field remain readable through a one-way compatibility normalization;
+no database migration is required.
+
+## 2026-09-14 - The Telegram keyboard fills spare spots from Frequent
+
+With fewer than six saved Quick Log buttons, `/keyboard` used to leave the spare spots empty. It
+now fills them with **Frequent** entries, the same "what you log most often" the Mini App grid
+shows, after your saved buttons.
+
+- A Frequent button shows its usual amount only when that amount is stable, `Jollibee · ₱180`, and
+  logs in one tap. Otherwise it shows `Lunch · ₱?` and asks how much, like a saved button with no
+  amount
+- It logs with the entry's usual category and no labels, so your label schedules decide, exactly as
+  a Mini App tap on the same entry does
+- Frequent entries move as your habits change. Tapping one that has dropped out or changed its
+  usual amount logs nothing and replies with the current keyboard
+- Anything a saved button already covers is left out, and a Frequent button never takes a saved
+  button's text
+- New read-only MCP tool `get_frequent_tiles` (`budget:read` + `transactions:read`, both in the
+  default grant)
+
+No schema or data change. Send `/keyboard` once after deploying.
+
+## 2026-09-14 - The Telegram keyboard is your Quick Log buttons
+
+`/keyboard` used to pin three hardcoded fares. It now pins the first six Quick Log buttons, in the
+order set on `/quick-log`, with a `/summary` `/recent` row underneath. Editing a button in the app
+changes the keyboard too; there is no second list to maintain.
+
+- A button shows its label and amount, `Office · ₱38`. One tap logs it with the button's own
+  category and pinned labels, exactly as a Mini App tap does
+- A button with no fixed amount shows `Grab · ₱?`. Tapping it asks "How much for Grab?", and the
+  next message that is only a number logs it. Anything else cancels the question, and it expires
+  after five minutes
+- Tapping a button that was renamed, re-priced or deleted in the app since the keyboard was sent
+  logs nothing and replies with the current keyboard
+- New read-only MCP tool `get_quick_tiles` (`budget:read` + `labels:read`, both in the default
+  grant), which is how the bot, holding no database credentials, reads the buttons
+
+No schema or data change. Send `/keyboard` once after deploying to replace the old fare buttons.
+
 ## 2026-09-14 - A bare label name logs from Telegram shorthand
 
 `250 tnvs` names a label and nothing else, and the shorthand logger could not write it. A clause
