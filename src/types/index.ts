@@ -136,6 +136,8 @@ export interface MultiScanItem {
     date?: string;
     categoryId?: string;
     labelIds?: string[];
+    /** The credit card chosen in Paid with while reviewing; null or absent is Bank / cash. */
+    creditAccountId?: string | null;
     receiptGroupId?: string;
     receiptBreakdown?: ReceiptBreakdownMeta;
     /** Whether the receipt has items spanning 2+ spending categories */

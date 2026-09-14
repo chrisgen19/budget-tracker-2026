@@ -118,6 +118,18 @@ describe("TransactionForm paid with", () => {
     expect(onSubmit.mock.calls[0][0]).toMatchObject({ creditAccountId: null });
   });
 
+  // A scanned receipt being reviewed has no saved row, only the card picked in an earlier edit.
+  it("clears a card that came in with the initial data, as on a reviewed scan", async () => {
+    const onSubmit = renderForm({ initialData: { amount: 1111, categoryId: "subs", creditAccountId: "card-1" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /Credit card/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /Bank \/ cash/ }));
+    submit();
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ creditAccountId: null });
+  });
+
   // The server refuses income on a card, so the form has to send the unlink.
   it("drops the card when an edited purchase is switched to income", async () => {
     const onSubmit = renderForm({ transaction: cardPurchase });

@@ -344,8 +344,13 @@ export function useMultiScan() {
       setItems((prev) => {
         const index = prev.findIndex((i) => i.id === id);
         if (index === -1) return prev;
+        // One receipt was paid one way, so a card picked before itemizing stays on every part.
+        const card = prev[index].data?.creditAccountId;
+        const parts = card
+          ? children.map((child) => ({ ...child, data: { ...child.data, creditAccountId: card } }))
+          : children;
         const next = [...prev];
-        next.splice(index, 1, ...children);
+        next.splice(index, 1, ...parts);
         return next;
       });
     },
@@ -519,6 +524,7 @@ export function useMultiScan() {
             : new Date().toISOString(),
           categoryId: item.data!.categoryId!,
           ...(item.data!.labelIds !== undefined && { labelIds: item.data!.labelIds }),
+          ...(item.data!.creditAccountId && { creditAccountId: item.data!.creditAccountId }),
           ...(item.data!.receiptGroupId && { receiptGroupId: item.data!.receiptGroupId }),
           ...(item.data!.receiptBreakdown && { receiptBreakdown: item.data!.receiptBreakdown }),
         })),

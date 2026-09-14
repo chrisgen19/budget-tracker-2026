@@ -284,6 +284,38 @@ describe("saveAll", () => {
     await waitFor(() => expect(result.current.items).toHaveLength(0));
     expect(result.current.showReview).toBe(false);
   });
+
+  // Paid with is offered in the review's edit form, so a card chosen there has to reach the save.
+  it("saves the card picked in review, and leaves it out once set back to bank or cash", async () => {
+    const batchBody = () => {
+      const save = fetchMock.mock.calls.filter((c) => (c[0] as string) === "/api/transactions/batch").at(-1)!;
+      return JSON.parse((save[1] as { body: string }).body) as { transactions: Record<string, unknown>[] };
+    };
+    fetchMock.mockResolvedValueOnce(scanOk());
+    const { result } = setup();
+    await act(async () => {
+      await result.current.scanMultiple([receipt()]);
+    });
+    const id = result.current.items[0].id;
+
+    act(() => {
+      result.current.updateItem(id, { creditAccountId: "card-1" });
+    });
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ error: "nope" }) });
+    await act(async () => {
+      await result.current.saveAll();
+    });
+    expect(batchBody().transactions[0]).toMatchObject({ creditAccountId: "card-1" });
+
+    act(() => {
+      result.current.updateItem(id, { creditAccountId: null });
+    });
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ error: "nope" }) });
+    await act(async () => {
+      await result.current.saveAll();
+    });
+    expect(batchBody().transactions[0]).not.toHaveProperty("creditAccountId");
+  });
 });
 
 describe("response validation", () => {

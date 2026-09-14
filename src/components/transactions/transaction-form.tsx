@@ -322,11 +322,12 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                 ...rest,
                 date: resolveTransactionDate(data.date, user.timezoneOffset),
                 // Sent only when it means something: the card an expense was paid with, or an explicit
-                // null clearing a card the row had. Every other save leaves the field out, so the many
-                // flows sharing this form post exactly what they did before cards existed.
+                // null clearing a card the row came in with (a saved row, or a scanned one picked
+                // earlier in review). Every other save leaves the field out, so the many flows sharing
+                // this form post exactly what they did before cards existed.
                 ...(creditAccountId
                   ? { creditAccountId }
-                  : transaction?.creditAccountId
+                  : (transaction?.creditAccountId ?? initialData?.creditAccountId)
                     ? { creditAccountId: null }
                     : {}),
               };

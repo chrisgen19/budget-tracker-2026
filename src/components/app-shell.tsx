@@ -145,6 +145,8 @@ export function AppShell({ children }: AppShellProps) {
       date: input.date,
       categoryId: input.categoryId,
       labelIds: input.labelIds,
+      // Undefined keeps what the row has; null is Bank / cash chosen over a card picked earlier.
+      creditAccountId: input.creditAccountId,
     });
     setEditingItemId(null);
   };
@@ -449,6 +451,7 @@ export function AppShell({ children }: AppShellProps) {
                   date: editItem.data.date,
                   categoryId: editItem.data.categoryId,
                   labelIds: editItem.data.labelIds,
+                  creditAccountId: editItem.data.creditAccountId,
                 }}
                 dateWarning={editItem.data.dateWarning}
                 onSubmit={handleMultiScanEditSubmit}
