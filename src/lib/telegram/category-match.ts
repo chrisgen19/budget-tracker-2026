@@ -38,11 +38,13 @@ const HINTS: { pattern: RegExp; name: string }[] = [
     //
     // The ride-hailing apps are named for the same reason: "150 green gsm" and "220 indrive"
     // matched nothing and cost a model call to recognise a car ride, and with no Gemini key they
-    // were filed under Other Expense.
+    // were filed under Other Expense. GSM is matched by the service's name in either order, never
+    // as the bare acronym: "gsm" is also a paper weight ("300 gsm cardstock") and a mobile
+    // standard, and a keyword wins before Gemini or the Other fallback is ever consulted.
     pattern: words(
-      "grab", "grabcar", "angkas", "taxi", "tnvs", "gsm", "indrive", "joyride", "bus", "buses",
-      "jeep", "jeepney", "uv", "tricycle", "mrt", "lrt", "gas", "fare", "fuel", "commute",
-      "transport", "transportation"
+      "grab", "grabcar", "angkas", "taxi", "tnvs", "green gsm", "gsm green", "indrive", "joyride",
+      "bus", "buses", "jeep", "jeepney", "uv", "tricycle", "mrt", "lrt", "gas", "fare", "fuel",
+      "commute", "transport", "transportation"
     ),
     name: "transport",
   },

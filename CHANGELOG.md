@@ -23,10 +23,13 @@ leaves nothing and reaches the classifier as before. Two knock-on effects, both 
   the fallback every other unmatched shorthand entry already takes, where before it logged nothing
 
 The transport keywords in `matchCategory` (`src/lib/telegram/category-match.ts`) now also name the
-ride-hailing apps in use here: `gsm`, `indrive` and `joyride`. `150 green gsm` matched nothing,
-since neither word was a keyword, so it cost a Gemini call to recognise a car ride and filed under
-`Other Expense` with no key. Like every keyword they match whole words only. The label is still
-applied only when named (`150 green gsm, tnvs`): keywords choose a category, never a label.
+ride-hailing services in use here: `green gsm` (in either order), `indrive` and `joyride`.
+`150 green gsm` matched nothing, since neither word was a keyword, so it cost a Gemini call to
+recognise a car ride and filed under `Other Expense` with no key. GSM is matched by the service's
+name rather than the bare acronym, because `gsm` is also a paper weight (`300 gsm cardstock`) and
+a mobile standard, and a keyword match is final; every GSM ride in the ledger is written "GSM
+Green" or "Green GSM". Like every keyword they match whole words only. The label is still applied
+only when named (`150 green gsm, tnvs`): keywords choose a category, never a label.
 
 ## 2026-09-14 - Labels count a transaction in full
 

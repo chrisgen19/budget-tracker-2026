@@ -45,6 +45,7 @@ describe("matchCategory", () => {
       "grabcar home",
       "green gsm",
       "gsm green to mega tower",
+      "(work) green gsm: mirea to csmc",
       "indrive home",
       "joyride to bgc",
       "tricycle to the terminal",
@@ -54,6 +55,15 @@ describe("matchCategory", () => {
     ]) {
       expect(matchCategory(desc, "EXPENSE", CATEGORIES)?.name, desc).toBe("Transportation");
     }
+  });
+
+  // "gsm" alone is also a paper weight and a mobile standard, and a keyword match is final: it
+  // wins before Gemini or the Other fallback is consulted. Every GSM ride in the ledger is written
+  // "GSM Green" or "Green GSM", so only the service's own name counts.
+  it("matches a GSM ride by the service name, never the bare acronym", () => {
+    expect(matchCategory("300 gsm cardstock", "EXPENSE", CATEGORIES)).toBeNull();
+    expect(matchCategory("gsm sim", "EXPENSE", CATEGORIES)).toBeNull();
+    expect(matchCategory("gsm to mirea", "EXPENSE", CATEGORIES)).toBeNull();
   });
 
   // `uv` is only two letters, so the word boundary is the whole safety margin. Without it every
