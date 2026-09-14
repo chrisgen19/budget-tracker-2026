@@ -24,6 +24,9 @@ export const transactionSchema = z.object({
   date: z.string().min(1, "Date is required"),
   categoryId: z.string().min(1, "Category is required"),
   labelIds: z.array(z.string()).optional(),
+  /** The credit card this row pays down. On an edit, omitted keeps the stored link and null removes
+   *  it. Validated by `checkCardPayments`. */
+  creditAccountId: z.string().min(1).max(100).nullable().optional(),
 });
 
 export const receiptBreakdownLineItemSchema = z.object({
@@ -55,7 +58,13 @@ export const receiptBreakdownMetaSchema = z
   })
   .strict();
 
-export const batchTransactionSchema = transactionSchema.extend({
+/**
+ * `creditAccountId` is left out on purpose, so the batch route, the MCP tool and the Telegram paths
+ * that share `createTransactionBatch` cannot link a payment to a card: a card payment is recorded
+ * one at a time, from the transaction form or by paying the card's bill. Omitted rather than
+ * ignored, so the field is stripped at the schema and no writer can be handed it by accident.
+ */
+export const batchTransactionSchema = transactionSchema.omit({ creditAccountId: true }).extend({
   receiptGroupId: z.string().optional(),
   receiptBreakdown: receiptBreakdownMetaSchema.optional(),
 });
@@ -700,3 +709,84 @@ export type TelegramQuickTileInput = z.infer<typeof telegramQuickTileSchema>;
 export type TelegramQuickTilePatchInput = z.infer<typeof telegramQuickTilePatchSchema>;
 export type TelegramQuickLogInput = z.infer<typeof telegramQuickLogSchema>;
 export type TelegramQuickTileOrderInput = z.infer<typeof telegramQuickTileOrderSchema>;
+
+/** A calendar day, `YYYY-MM-DD`, that exists. Statement lines carry no time of day. */
+const calendarDaySchema = z
+  .string()
+  .refine((value) => isDateOnly(value) && isRealDate(value), {
+    message: "Use a real calendar date, e.g. 2026-08-25",
+  });
+
+const dayOfMonthSchema = z.number().int().min(1).max(31);
+
+/** Ceiling on the charges one request may add: a whole statement, with room to spare. */
+export const MAX_CREDIT_CHARGES = 100;
+
+export const creditAccountSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(50),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Invalid color format").default("#8B7E6A"),
+  creditLimit: z.number().positive("Limit must be greater than 0").nullable().optional(),
+  statementDay: dayOfMonthSchema.nullable().optional(),
+  dueDay: dayOfMonthSchema.nullable().optional(),
+  /** Negative is allowed: a card can start out holding a credit. */
+  openingBalance: z.number().finite().default(0),
+  openingBalanceDate: calendarDaySchema.optional(),
+});
+
+/** Editing a card. `isActive: false` archives it and `true` brings it back. */
+export const creditAccountPatchSchema = creditAccountSchema
+  .partial()
+  .extend({ isActive: z.boolean().optional() })
+  .refine((patch) => Object.values(patch).some((value) => value !== undefined), {
+    message: "Nothing to update",
+  });
+
+const creditChargeFields = z.object({
+  kind: z.enum(["CHARGE", "CREDIT"]).default("CHARGE"),
+  amount: z.number().positive("Amount must be greater than 0"),
+  description: z.string().trim().max(255).default(""),
+  date: calendarDaySchema,
+  categoryId: z.string().min(1, "Category is required"),
+  originalAmount: z.number().positive().nullable().optional(),
+  originalCurrency: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z]{3}$/, "Use a 3-letter currency code, e.g. USD")
+    .nullable()
+    .optional(),
+});
+
+/** A foreign amount means nothing without its currency, and the reverse, so they travel together. */
+const FOREIGN_AMOUNT_UNPAIRED = {
+  message: "Send the original amount and its currency together",
+  path: ["originalCurrency"],
+};
+
+export const creditChargeSchema = creditChargeFields.refine(
+  (charge) => (charge.originalAmount == null) === (charge.originalCurrency == null),
+  FOREIGN_AMOUNT_UNPAIRED
+);
+
+export const createCreditChargesSchema = z.object({
+  charges: z.array(creditChargeSchema).min(1, "Add at least one charge").max(MAX_CREDIT_CHARGES),
+});
+
+/** Editing one charge. A patch naming either foreign-amount field must name both, with both set
+ *  or both null, so the stored pair cannot end up half cleared. */
+export const creditChargePatchSchema = creditChargeFields
+  .partial()
+  .refine((patch) => Object.values(patch).some((value) => value !== undefined), {
+    message: "Nothing to update",
+  })
+  .refine(
+    (patch) =>
+      (patch.originalAmount === undefined) === (patch.originalCurrency === undefined) &&
+      (patch.originalAmount === null) === (patch.originalCurrency === null),
+    FOREIGN_AMOUNT_UNPAIRED
+  );
+
+export type CreditAccountInput = z.infer<typeof creditAccountSchema>;
+export type CreditAccountPatch = z.infer<typeof creditAccountPatchSchema>;
+export type CreditChargeInput = z.infer<typeof creditChargeSchema>;
+export type CreditChargePatch = z.infer<typeof creditChargePatchSchema>;

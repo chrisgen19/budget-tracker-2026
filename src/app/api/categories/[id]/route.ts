@@ -134,14 +134,24 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
     );
   }
 
-  // Check if category has transactions
-  const transactionCount = await prisma.transaction.count({
-    where: { categoryId: id },
-  });
+  // Check if category has transactions, or credit card charges filed under it. Both reference it
+  // through a Restrict foreign key, so deleting one still in use fails at the database and would
+  // otherwise surface as a generic 500.
+  const [transactionCount, chargeCount] = await Promise.all([
+    prisma.transaction.count({ where: { categoryId: id } }),
+    prisma.creditCharge.count({ where: { categoryId: id } }),
+  ]);
 
   if (transactionCount > 0) {
     return NextResponse.json(
       { error: `Cannot delete: ${transactionCount} transaction(s) use this category` },
+      { status: 400 }
+    );
+  }
+
+  if (chargeCount > 0) {
+    return NextResponse.json(
+      { error: `Cannot delete: ${chargeCount} credit card charge(s) use this category` },
       { status: 400 }
     );
   }

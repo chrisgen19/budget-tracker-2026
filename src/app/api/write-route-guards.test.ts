@@ -240,3 +240,23 @@ describe("routes that write a caller-supplied categoryId verify it", () => {
     ).toBe(true);
   });
 });
+
+/**
+ * Two rules that live outside the transaction and bill writers, so the checks above cannot see them.
+ *
+ * A credit card charge carries a caller-supplied `categoryId` exactly as a transaction does, but it
+ * is written through `credit-account-writes.ts`, which none of the write patterns above match. And a
+ * transaction linked to a card only makes sense as an expense under the payment category, a rule a
+ * sibling route could forget the way #298 forgot category ownership.
+ */
+describe("credit card writes reach their shared rules", () => {
+  it.each([
+    ["src/app/api/credit-accounts/[id]/charges/route.ts", "createCreditCharges"],
+    ["src/app/api/credit-accounts/[id]/charges/[chargeId]/route.ts", "updateCreditCharge"],
+    ["src/app/api/transactions/route.ts", "checkCardPayments"],
+    ["src/app/api/transactions/[id]/route.ts", "checkCardPayments"],
+  ])("%s calls %s", (file, guard) => {
+    expect(routeFiles).toContain(file);
+    expect(executableText(file)).toContain(guard);
+  });
+});
