@@ -147,7 +147,9 @@ export async function POST(request: Request) {
       const message =
         result.reason === "LABELS_NOT_OWNED"
           ? "One or more labels are invalid or do not belong to you"
-          : "One or more categories are invalid or do not belong to you";
+          : result.reason === "CARD_NOT_USABLE"
+            ? "A card is not yours, is archived, or was used on an income"
+            : "One or more categories are invalid or do not belong to you";
       return rejectUnlessAlreadySaved(
         userId,
         clientBatchId,

@@ -18,9 +18,9 @@ export function CardSummary({ account, monthTotals }: CardSummaryProps) {
   const holdsCredit = account.balance < 0;
 
   const stats = [
-    { label: "Charged this month", value: money(monthTotals.charges) },
-    ...(monthTotals.credits > 0 ? [{ label: "Refunded", value: money(monthTotals.credits) }] : []),
+    { label: "Bought this month", value: money(monthTotals.purchases) },
     { label: "Paid this month", value: money(monthTotals.payments) },
+    ...(monthTotals.credits > 0 ? [{ label: "Refunded", value: money(monthTotals.credits) }] : []),
     ...(account.availableCredit !== null
       ? [{ label: "Available credit", value: money(account.availableCredit) }]
       : []),

@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
-import { createCreditChargesSchema } from "@/lib/validations";
+import { creditPaymentSchema } from "@/lib/validations";
 import { readTimezoneOffset } from "@/lib/credit-account-queries";
-import { createCreditCharges } from "@/lib/credit-account-writes";
+import { createCreditPayment } from "@/lib/credit-account-writes";
 import {
   creditFailureResponse,
   creditRouteIdSchema,
@@ -20,22 +20,16 @@ export async function POST(request: Request, { params }: RouteParams) {
 
   try {
     const accountId = creditRouteIdSchema.parse((await params).id);
-    const { charges } = createCreditChargesSchema.parse(await request.json());
+    const input = creditPaymentSchema.parse(await request.json());
     const timezoneOffset = await readTimezoneOffset(prisma, userId);
-    const result = await createCreditCharges({
-      prisma,
-      userId,
-      accountId,
-      items: charges,
-      timezoneOffset,
-    });
+    const result = await createCreditPayment({ prisma, userId, accountId, input, timezoneOffset });
     if (!result.ok) return creditFailureResponse(result.reason);
 
-    return NextResponse.json({ charges: result.charges }, { status: 201 });
+    return NextResponse.json(result.payment, { status: 201 });
   } catch (error) {
     return (
       invalidInputResponse(error) ??
-      NextResponse.json({ error: "Failed to add charges" }, { status: 500 })
+      NextResponse.json({ error: "Failed to record the payment" }, { status: 500 })
     );
   }
 }

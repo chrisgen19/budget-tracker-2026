@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
+import { getOwedOnCards } from "@/lib/credit-account-queries";
 
 export async function GET(request: Request) {
   const userId = await getAuthUserId();
@@ -196,7 +197,11 @@ export async function GET(request: Request) {
     balanceTrend.push({ date: key, balance: bal });
   }
 
+  // All-time, like the running balance it explains: cash in the bank is that balance plus this.
+  const owedOnCards = await getOwedOnCards(prisma, userId);
+
   return NextResponse.json({
+    owedOnCards,
     totalIncome,
     totalExpenses,
     balance: totalIncome - totalExpenses, // monthly net (income - expenses for selected month)

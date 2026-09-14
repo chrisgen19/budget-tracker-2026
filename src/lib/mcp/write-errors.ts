@@ -21,6 +21,8 @@ export const WRITE_ERROR_MESSAGES: Record<BatchFailureReason, string> = {
   LABELS_NOT_OWNED: "One or more label IDs are not this user's. Call get_label_list for valid IDs.",
   CATEGORIES_NOT_OWNED:
     "One or more category IDs are not this user's. Call get_category_list for valid IDs.",
+  CARD_NOT_USABLE:
+    "A credit card named as the payment method is not this user's, is archived, or was put on an income. Nothing was written.",
   // Writes were switched off between the request arriving and the rows being written. The check
   // runs inside the transaction before anything is created, so nothing was saved. Saying so
   // matters: it used to share the "could not confirm" wording below, which sent the caller
@@ -67,10 +69,10 @@ export const UPDATE_ERROR_MESSAGES: Record<UpdateFailureReason, string> = {
   // model fixes the real problem rather than re-sending the same id.
   CATEGORIES_NOT_OWNED:
     "One or more category IDs are not this user's, or do not match the transaction's type. Nothing was changed. If you changed `type`, send a `categoryId` of that same type as well; call get_category_list for valid IDs.",
-  // A payment to a credit card lowers that card's debt, which only stays true while the row is an
-  // expense under the payment category. The model cannot move the link itself, so say what to keep.
-  CARD_PAYMENT_INVALID:
-    'One or more of these transactions pays down a credit card, and the edit would stop it counting as that payment. Nothing was changed. Leave its type as EXPENSE and its category as "Credit Card Payment"; to reclassify it, the user has to unlink it from the card in the app first.',
+  // A purchase paid with a card has to stay an expense. The model cannot move the link itself, so
+  // say what to keep and who can change it.
+  CARD_PURCHASE_INVALID:
+    "One or more of these transactions was paid with a credit card, and a card purchase cannot become income. Nothing was changed. Leave its type as EXPENSE; to reclassify it, the user has to set it to Bank / cash in the app first.",
   NO_LONGER_PERMITTED:
     "Writes were switched off before these could be changed, so nothing was changed. Turn them on in Profile > MCP Access, then try again.",
   WRITE_REJECTED:

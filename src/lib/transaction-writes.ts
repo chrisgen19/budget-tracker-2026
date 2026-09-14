@@ -2,7 +2,7 @@ import { Prisma, type TransactionSource, type TransactionType } from "@prisma/cl
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 import { isDateOnly, resolveTransactionDate, type BatchTransactionInput } from "@/lib/validations";
 import type { PrismaClient } from "@/lib/budget-query-types";
-import { checkCardPayments } from "@/lib/card-payment-rule";
+import { checkCardPurchases } from "@/lib/card-purchase-rule";
 
 /** Bounds for the keyed batch transaction. Prisma defaults to 5s, which a full
  *  MAX_BATCH_TRANSACTIONS batch can exceed: the keyed path awaits each create in turn, so a
@@ -20,6 +20,8 @@ export type BatchFailureReason =
   | "LABELS_NOT_OWNED"
   /** A category id was neither a default nor the caller's, or its type did not match the item's. */
   | "CATEGORIES_NOT_OWNED"
+  /** A card named as the payment method is not the caller's, is archived, or was put on income. */
+  | "CARD_NOT_USABLE"
   /** Permission was withdrawn between the request arriving and the write starting. */
   | "NO_LONGER_PERMITTED"
   /** The advisory lock could not be taken, so whether the batch exists is genuinely unknown. */
@@ -255,6 +257,12 @@ export const createTransactionBatch = async ({
     return rejectUnlessSaved("CATEGORIES_NOT_OWNED");
   }
 
+  // Paid with a card: an expense, on an active card the caller owns. Not re-checked under a lock; a
+  // card archived mid-batch still records real purchases against it, visible on its page.
+  if (await checkCardPurchases(prisma, userId, items)) {
+    return rejectUnlessSaved("CARD_NOT_USABLE");
+  }
+
   // Fetch schedule context only when at least one item needs auto-tagging
   const needsAutoLabel = items.some((t) => t.labelIds === undefined);
   const ctx = needsAutoLabel ? await getScheduleContext(userId) : null;
@@ -292,6 +300,7 @@ export const createTransactionBatch = async ({
           createdVia,
           ...(mcpTokenId && { mcpTokenId }),
           ...(clientBatchId && { clientBatchId }),
+          ...(t.creditAccountId && { creditAccountId: t.creditAccountId }),
           ...(t.receiptGroupId && { receiptGroupId: t.receiptGroupId }),
           ...(t.receiptBreakdown && { receiptBreakdown: t.receiptBreakdown }),
           ...(resolvedLabelIds.length > 0 && {
@@ -410,9 +419,8 @@ export type UpdateFailureReason =
   | "DUPLICATE_ID"
   | "LABELS_NOT_OWNED"
   | "CATEGORIES_NOT_OWNED"
-  /** A row that pays down a credit card would stop qualifying as a payment: its type or category
-   *  moved off what `checkCardPayments` requires, or its card has been archived since. */
-  | "CARD_PAYMENT_INVALID"
+  /** A purchase paid with a credit card would be turned into income, which a card cannot carry. */
+  | "CARD_PURCHASE_INVALID"
   /** Permission was withdrawn between the request arriving and the write starting. */
   | "NO_LONGER_PERMITTED"
   /** The write failed for a reason retrying cannot change -- a category or label deleted between
@@ -674,19 +682,19 @@ export const updateTransactions = async ({
         return { ok: false as const, reason: "CATEGORIES_NOT_OWNED" as const };
       }
 
-      // A card payment keeps its card only while it still qualifies as a payment. The link is not an
-      // updatable field, so reclassifying a linked row is the one way through here to break the rule,
-      // and it is refused rather than silently detaching the row from the debt it paid.
-      const cardRefusal = await checkCardPayments(
+      // A purchase paid with a card has to stay an expense. The link is not an updatable field, so
+      // flipping a linked row to income is the one way through here to break the rule, and it is
+      // refused rather than silently leaving income on a card.
+      const cardRefusal = await checkCardPurchases(
         tx,
         userId,
         reclassified.map((e) => ({
           creditAccountId: e.row.creditAccountId,
-          categoryId: e.categoryId,
           type: e.type,
+          storedCreditAccountId: e.row.creditAccountId,
         }))
       );
-      if (cardRefusal) return { ok: false as const, reason: "CARD_PAYMENT_INVALID" as const };
+      if (cardRefusal) return { ok: false as const, reason: "CARD_PURCHASE_INVALID" as const };
 
       // One ownership query for every explicitly named label across the batch, as on the create path.
       const explicitLabelIds = [...new Set(patches.flatMap((p) => p.labelIds ?? []))];
