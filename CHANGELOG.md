@@ -2,6 +2,35 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-14 - The heatmap's drill-down says it is one
+
+The Spending Heatmap has linked into `/transactions` since #277, but it reads as a caption rather
+than a control, and it takes two taps where the By Category and By Label cards take one. The second
+tap is now a full-width row at the 44px minimum, with a border and an amber ground, instead of a
+line of text with a small arrow at the end of it.
+
+The two taps stay. Both reasons point the same way. A day cell is roughly 40px in calendar mode and
+between 3 and 20px in weeks mode, all under the minimum #212 adopted, so the cell cannot be the
+control that navigates. And on touch there is no hover, which makes tapping a cell the only way to
+read what a day cost: a cell that navigated would spend the chart's only inspect gesture on leaving
+it. That is the argument `category-breakdown-chart.tsx` already makes for why the donut slices are
+deliberately not links. The cell selects, the row navigates.
+
+Multi-year ranges are unchanged. A weekday cell is an average across many dates, so there is no
+single day to open, and `filterSearchParams` cannot express "every Tuesday" without a new filter
+param reaching the API and the bulk-selection endpoint.
+
+The label is `text-amber-dark`, not the `text-amber` the rest of the palette reaches for first. At
+14px it is normal text, so the bar is 4.5:1 rather than the 3:1 an icon answers to, and `text-amber`
+gives 3.40:1 on this ground -- 3.33:1 once the shared hover tint lands, so hovering makes it slightly
+worse. The old footer had amber only on the arrow, where 3:1 governs and 3.40:1 was fine: promoting
+the row to a text label is what made the ratio start mattering.
+
+The footer moved to `heatmap-footer.tsx`, which puts `spending-heatmap.tsx` back under the component
+size guideline and gives the drill-down a unit test it did not have. A day cell also reports
+`aria-pressed`, which it had communicated only through colour. `e2e/analytics-drilldown.spec.ts`
+passes unchanged: the cell keeps its `formatDayLabel` name and the link keeps its `drillDownLabel`
+one, which is what that spec locates them by.
 ## 2026-09-12 - A carried-over total says so
 
 Second finding from review on #296, and the deeper half of the one above. Echoing the type fixed how

@@ -1,11 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ArrowRight } from "lucide-react";
 import { cn, formatCurrency, getCurrencySymbol } from "@/lib/utils";
 import { ChartEmptyState } from "@/components/analytics/chart-empty-state";
-import { DrillDownLink, drillDownLabel } from "@/components/analytics/drill-down-link";
-import { buildTransactionsHref } from "@/lib/transaction-filter-url";
+import { HeatmapFooter } from "@/components/analytics/heatmap-footer";
 import {
   INTENSITY_CLASSES,
   formatDayLabel,
@@ -26,18 +24,6 @@ interface SpendingHeatmapProps {
   hideAmounts: boolean;
   /** The analytics view to offer as a way back, as a query string for /analytics. */
   returnTo: string;
-}
-
-function Legend() {
-  return (
-    <div className="flex items-center gap-1 text-[10px] text-warm-300">
-      less
-      {INTENSITY_CLASSES.map((c) => (
-        <span key={c} className={cn("w-2.5 h-2.5 rounded-[3px]", c)} />
-      ))}
-      more
-    </div>
-  );
 }
 
 export function SpendingHeatmap({ data, currency, hideAmounts, returnTo }: SpendingHeatmapProps) {
@@ -67,6 +53,8 @@ export function SpendingHeatmap({ data, currency, hideAmounts, returnTo }: Spend
         key={day.date}
         onClick={() => setSelectedDate(isSelected ? null : day.date)}
         aria-label={formatDayLabel(day.date, multiYear)}
+        // It is a toggle, and said so only in colour until now.
+        aria-pressed={isSelected}
         className={cn(
           "aspect-square transition-shadow",
           compact ? "flex-1 rounded-[3px]" : "rounded-md text-[10px] text-warm-500",
@@ -140,41 +128,14 @@ export function SpendingHeatmap({ data, currency, hideAmounts, returnTo }: Spend
         </div>
       )}
 
-      {/* Footer: legend + selected day detail (tap-friendly, no hover dependency) */}
-      <div className="flex items-center justify-between gap-3 pt-1">
-        {mode === "weekday" ? (
-          // Weekday cells are an average across many dates, so there is no single
-          // day to open — the other two modes are one cell per calendar day.
-          <p className="text-[10px] text-warm-300">Average daily spend per weekday</p>
-        ) : selected ? (
-          selected.count > 0 ? (
-            // No type filter: `count` counts every transaction that day, so
-            // narrowing to expenses here would land on fewer rows than the line
-            // beside the link just promised.
-            <DrillDownLink
-              // The window is one day; the view to return to is the whole analytics
-              // period, which is why the two travel separately.
-              href={buildTransactionsHref({ from: selected.date, to: selected.date, ret: returnTo })}
-              label={drillDownLabel(selected.count, formatDayLabel(selected.date, multiYear))}
-              className="-mx-1.5 flex min-h-11 min-w-0 items-center gap-1.5 px-1.5"
-            >
-              <span className="min-w-0 truncate text-xs text-warm-500">
-                <span className="font-medium text-warm-600">{formatDayLabel(selected.date, multiYear)}</span>
-                {" — "}{fmt(selected.expenses)} spent · {selected.count} {selected.count === 1 ? "txn" : "txns"}
-              </span>
-              <ArrowRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-amber" />
-            </DrillDownLink>
-          ) : (
-            <p className="text-xs text-warm-500 truncate">
-              <span className="font-medium text-warm-600">{formatDayLabel(selected.date, multiYear)}</span>
-              {" — "}nothing logged
-            </p>
-          )
-        ) : (
-          <p className="text-[10px] text-warm-300">Tap a day for details</p>
-        )}
-        <Legend />
-      </div>
+      {/* Legend, the selected day, and the way into that day's transactions. */}
+      <HeatmapFooter
+        mode={mode}
+        selected={selected}
+        multiYear={multiYear}
+        fmt={fmt}
+        returnTo={returnTo}
+      />
     </div>
   );
 }
