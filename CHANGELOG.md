@@ -2,6 +2,30 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-14 - The heatmap's drill-down says it is one
+
+The Spending Heatmap has linked into `/transactions` since #277, but it reads as a caption rather
+than a control, and it takes two taps where the By Category and By Label cards take one. The second
+tap is now a full-width row at the 44px minimum, with a border and an amber ground, instead of a
+line of text with a small arrow at the end of it.
+
+The two taps stay. Both reasons point the same way. A day cell is roughly 40px in calendar mode and
+between 3 and 20px in weeks mode, all under the minimum #212 adopted, so the cell cannot be the
+control that navigates. And on touch there is no hover, which makes tapping a cell the only way to
+read what a day cost: a cell that navigated would spend the chart's only inspect gesture on leaving
+it. That is the argument `category-breakdown-chart.tsx` already makes for why the donut slices are
+deliberately not links. The cell selects, the row navigates.
+
+Multi-year ranges are unchanged. A weekday cell is an average across many dates, so there is no
+single day to open, and `filterSearchParams` cannot express "every Tuesday" without a new filter
+param reaching the API and the bulk-selection endpoint.
+
+The footer moved to `heatmap-footer.tsx`, which puts `spending-heatmap.tsx` back under the component
+size guideline and gives the drill-down a unit test it did not have. A day cell also reports
+`aria-pressed`, which it had communicated only through colour. `e2e/analytics-drilldown.spec.ts`
+passes unchanged: the cell keeps its `formatDayLabel` name and the link keeps its `drillDownLabel`
+one, which is what that spec locates them by.
+
 ## 2026-09-11 - One owner for the highlight link (#291)
 
 No behaviour change. `?highlight=<id>` resolution moved out of `transactions/page.tsx` into
