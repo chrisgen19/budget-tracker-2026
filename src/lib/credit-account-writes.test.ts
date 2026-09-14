@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { Prisma } from "@prisma/client";
 import {
+  createCardReminder,
   createCreditCharges,
   deleteCreditAccount,
   localDayStart,
   localTodayKey,
+  nextDueOn,
   updateCreditAccount,
 } from "./credit-account-writes";
 import type { PrismaClient } from "./budget-query-types";
@@ -23,7 +25,13 @@ const CHARGE: CreditChargeInput = {
 };
 
 interface StubOptions {
-  account?: { id?: string; name?: string; isActive: boolean } | null;
+  account?: {
+    id?: string;
+    name?: string;
+    isActive: boolean;
+    dueDay?: number | null;
+    billId?: string | null;
+  } | null;
   usableCategoryIds?: string[];
   chargeCount?: number;
   paymentCount?: number;
@@ -159,6 +167,53 @@ describe("deleteCreditAccount", () => {
     const { prisma } = stub({ deleteError: new Error("connection lost") });
 
     await expect(remove(prisma)).rejects.toThrow("connection lost");
+  });
+});
+
+/** A calendar day at UTC midnight, the way bill dates are stored. */
+const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+
+describe("nextDueOn", () => {
+  it("is this month's due day while it has not passed, today included", () => {
+    expect(nextDueOn(20, day("2026-09-14"))).toEqual(day("2026-09-20"));
+    expect(nextDueOn(14, day("2026-09-14"))).toEqual(day("2026-09-14"));
+  });
+
+  it("rolls to next month once it has passed", () => {
+    expect(nextDueOn(5, day("2026-09-14"))).toEqual(day("2026-10-05"));
+  });
+
+  it("clamps to a short month, and rolls across the year", () => {
+    expect(nextDueOn(31, day("2026-09-14"))).toEqual(day("2026-09-30"));
+    expect(nextDueOn(5, day("2026-12-20"))).toEqual(day("2027-01-05"));
+  });
+});
+
+describe("createCardReminder", () => {
+  const remind = (prisma: PrismaClient) =>
+    createCardReminder({ prisma, userId: "user-1", accountId: "card-1", timezoneOffset: MANILA });
+
+  it("refuses an archived card", async () => {
+    const { prisma } = stub({ account: { isActive: false, dueDay: 5 } });
+    expect(await remind(prisma)).toEqual({ ok: false, reason: "ACCOUNT_ARCHIVED" });
+  });
+
+  // A second bill would leave two reminders both claiming to pay one card.
+  it("refuses a card that already has a reminder", async () => {
+    const { prisma } = stub({ account: { isActive: true, dueDay: 5, billId: "bill-1" } });
+    expect(await remind(prisma)).toEqual({ ok: false, reason: "REMINDER_EXISTS" });
+  });
+
+  it("refuses a card with no due day, since there is nothing to schedule", async () => {
+    const { prisma } = stub({ account: { isActive: true, dueDay: null } });
+    expect(await remind(prisma)).toEqual({ ok: false, reason: "NO_DUE_DAY" });
+  });
+
+  it("says the payment category is missing rather than filing the bill somewhere else", async () => {
+    const { prisma, client } = stub({ account: { isActive: true, dueDay: 5, billId: null } });
+    Object.assign(client, { category: { findFirst: vi.fn(async () => null) } });
+
+    expect(await remind(prisma)).toEqual({ ok: false, reason: "PAYMENT_CATEGORY_MISSING" });
   });
 });
 

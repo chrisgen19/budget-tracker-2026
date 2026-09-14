@@ -31,6 +31,8 @@ export type TransactionWithCategory = Transaction & {
   category: Category;
   bill?: ScheduledTransaction | null;
   labels?: (TransactionLabel & { label: Label })[];
+  /** The credit card this row pays down, when it is a card payment. */
+  creditAccount?: { id: string; name: string; color: string } | null;
 };
 
 /** Label with transaction count */

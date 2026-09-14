@@ -856,6 +856,7 @@ export default function TransactionsPage() {
                               receiptGroupId={tx.receiptGroupId}
                               billId={tx.billId}
                               createdVia={tx.createdVia}
+                              creditAccount={tx.creditAccount}
                             />
                           </div>
                           <div className="flex items-center gap-1 min-w-0 overflow-hidden">

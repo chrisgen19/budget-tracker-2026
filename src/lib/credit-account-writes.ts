@@ -1,6 +1,13 @@
 import { Prisma, type CreditAccount, type TransactionSource } from "@prisma/client";
 import type { PrismaClient } from "@/lib/budget-query-types";
-import { CHARGE_ROW_INCLUDE, type CreditChargeRow } from "@/lib/credit-account-queries";
+import { createBill } from "@/lib/bill-writes";
+import { clampToMonth, userToday } from "@/lib/bill-dates";
+import { CARD_PAYMENT_CATEGORY_NAME } from "@/lib/card-payment-category";
+import {
+  CHARGE_ROW_INCLUDE,
+  getCreditAccountSummaries,
+  type CreditChargeRow,
+} from "@/lib/credit-account-queries";
 import { categoriesAreUsableForWrite } from "@/lib/transaction-writes";
 import type {
   CreditAccountInput,
@@ -17,7 +24,13 @@ export type CreditWriteFailureReason =
   /** New charges cannot be added to an archived card. */
   | "ACCOUNT_ARCHIVED"
   /** A category is not this user's or a default, or is not an expense category. */
-  | "CATEGORIES_NOT_USABLE";
+  | "CATEGORIES_NOT_USABLE"
+  /** A reminder needs to know which day payment is due. */
+  | "NO_DUE_DAY"
+  /** The card already has a reminder bill. */
+  | "REMINDER_EXISTS"
+  /** The default payment category has not been seeded on this database. */
+  | "PAYMENT_CATEGORY_MISSING";
 
 /** The one place a reason becomes a status code and a message, so every route answers alike. */
 export const CREDIT_WRITE_FAILURES: Record<
@@ -33,6 +46,12 @@ export const CREDIT_WRITE_FAILURES: Record<
   CATEGORIES_NOT_USABLE: {
     status: 400,
     message: "One or more categories do not exist, are not yours, or are not expense categories",
+  },
+  NO_DUE_DAY: { status: 400, message: "Set a due day on this card before adding a reminder" },
+  REMINDER_EXISTS: { status: 409, message: "This card already has a payment reminder" },
+  PAYMENT_CATEGORY_MISSING: {
+    status: 409,
+    message: `The "${CARD_PAYMENT_CATEGORY_NAME}" category is missing. Run the database seed, then try again`,
   },
 };
 
@@ -303,6 +322,97 @@ export const deleteCreditCharge = async ({
 }): Promise<{ ok: true } | Failure> => {
   const { count } = await prisma.creditCharge.deleteMany({
     where: { id: chargeId, accountId, userId },
+  });
+  return count > 0 ? { ok: true } : fail("NOT_FOUND");
+};
+
+/**
+ * The next day a monthly due day falls on, counting today. Both dates are date-only values at UTC
+ * midnight, the way every bill date is stored. Clamped to short months, so a card due on the 31st
+ * comes due on the 30th in September.
+ */
+export const nextDueOn = (dueDay: number, today: Date): Date => {
+  const thisMonth = clampToMonth(today.getUTCFullYear(), today.getUTCMonth(), dueDay);
+  if (thisMonth >= today) return thisMonth;
+  return clampToMonth(today.getUTCFullYear(), today.getUTCMonth() + 1, dueDay);
+};
+
+/**
+ * Create the monthly bill that reminds you to pay a card, and link it to the card.
+ *
+ * A **variable** bill, because no two statements are the same: paying it then asks for the amount
+ * actually paid rather than writing a stored figure, and its forecast learns from real payments. The
+ * stored amount is only that fallback, so it starts at what the card owes today. It is filed under
+ * the payment category, which is what lets `settleBill` link each payment back to this card.
+ *
+ * The schedule follows the start date's day of the month, so a due day clamped into a short month
+ * (the 31st landing on the 30th) keeps recurring on the 30th. Moving the bill's start date on the
+ * Bills page fixes that.
+ */
+export const createCardReminder = async ({
+  prisma,
+  userId,
+  accountId,
+  timezoneOffset,
+}: AccountWriteParams & { accountId: string }): Promise<{ ok: true; billId: string } | Failure> => {
+  const account = await prisma.creditAccount.findFirst({ where: { id: accountId, userId } });
+  if (!account) return fail("NOT_FOUND");
+  if (!account.isActive) return fail("ACCOUNT_ARCHIVED");
+  if (account.billId) return fail("REMINDER_EXISTS");
+  if (!account.dueDay) return fail("NO_DUE_DAY");
+
+  const paymentCategory = await prisma.category.findFirst({
+    where: { userId: null, isDefault: true, name: CARD_PAYMENT_CATEGORY_NAME, type: "EXPENSE" },
+    select: { id: true },
+  });
+  if (!paymentCategory) return fail("PAYMENT_CATEGORY_MISSING");
+
+  const summary = (await getCreditAccountSummaries(prisma, userId)).find((a) => a.id === accountId);
+  const created = await createBill({
+    prisma,
+    userId,
+    input: {
+      amount: Math.max(Math.round(summary?.balance ?? 0), 1),
+      description: `${account.name} payment`,
+      type: "EXPENSE",
+      categoryId: paymentCategory.id,
+      frequency: "MONTHLY",
+      customIntervalDays: null,
+      reminderDaysBefore: 3,
+      isVariable: true,
+      startDate: nextDueOn(account.dueDay, userToday(timezoneOffset)),
+      endDate: null,
+      isActive: true,
+    },
+  });
+  if (!created.ok) return fail("CATEGORIES_NOT_USABLE");
+
+  // Conditional on the card still having no reminder, so a double click cannot leave two bills both
+  // claiming it. The losing bill has no occurrences yet, so removing it loses nothing.
+  const { count } = await prisma.creditAccount.updateMany({
+    where: { id: accountId, userId, billId: null },
+    data: { billId: created.bill.id },
+  });
+  if (count === 0) {
+    await prisma.scheduledTransaction.delete({ where: { id: created.bill.id } });
+    return fail("REMINDER_EXISTS");
+  }
+  return { ok: true, billId: created.bill.id };
+};
+
+/** Unlink a card's reminder. The bill itself stays, with its history; it is switched off on Bills. */
+export const removeCardReminder = async ({
+  prisma,
+  userId,
+  accountId,
+}: {
+  prisma: PrismaClient;
+  userId: string;
+  accountId: string;
+}): Promise<{ ok: true } | Failure> => {
+  const { count } = await prisma.creditAccount.updateMany({
+    where: { id: accountId, userId },
+    data: { billId: null },
   });
   return count > 0 ? { ok: true } : fail("NOT_FOUND");
 };

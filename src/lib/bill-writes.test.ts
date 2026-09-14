@@ -27,6 +27,8 @@ interface BillRow {
   nextDueDate: Date;
   endDate: Date | null;
   isActive: boolean;
+  /** Set when the bill is a credit card's payment reminder. */
+  creditAccount?: { id: string } | null;
 }
 
 const BILL: BillRow = {
@@ -58,9 +60,18 @@ interface StubOptions {
   /** How many rows `transaction.updateMany` claims — 0 means the payment already had a bill. */
   claimCount?: number;
   existingTransaction?:
-    | { id: string; amount: number; type?: "INCOME" | "EXPENSE"; categoryId?: string; date?: Date }
+    | {
+        id: string;
+        amount: number;
+        type?: "INCOME" | "EXPENSE";
+        categoryId?: string;
+        date?: Date;
+        creditAccountId?: string | null;
+      }
     | null;
   timezoneOffset?: number;
+  /** Cards the user owns, for a bill that is a card's reminder. */
+  cards?: { id: string; isActive: boolean }[];
 }
 
 /**
@@ -172,6 +183,11 @@ const makePrisma = (options: StubOptions = {}) => {
         (options.ownedLabels ?? []).filter((l) => where.id.in.includes(l.id))
       ),
     },
+    creditAccount: {
+      findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
+        (options.cards ?? []).filter((card) => where.id.in.includes(card.id))
+      ),
+    },
     billLabel: {
       deleteMany: vi.fn(async () => {
         deletedBillLabels += 1;
@@ -229,6 +245,66 @@ const settle = (client: PrismaClient, overrides: Record<string, unknown> = {}) =
     timezoneOffset: -480,
     ...overrides,
   } as Parameters<typeof settleBill>[0]);
+
+describe("settleBill with a credit card's reminder", () => {
+  const CARD_BILL = { creditAccount: { id: "card_1" } };
+  const ACTIVE_CARD = [{ id: "card_1", isActive: true }];
+
+  it("links the payment to the card the bill reminds about", async () => {
+    const { client, written } = makePrisma({ bill: CARD_BILL, cards: ACTIVE_CARD });
+
+    const result = await settle(client);
+
+    expect(result.ok).toBe(true);
+    expect(written[0].creditAccountId).toBe("card_1");
+  });
+
+  // Refusing would leave the reminder firing for a debt the user just paid.
+  it("still pays the bill, unlinked, once the card no longer qualifies", async () => {
+    const { client, written } = makePrisma({
+      bill: CARD_BILL,
+      cards: [{ id: "card_1", isActive: false }],
+    });
+
+    const result = await settle(client);
+
+    expect(result.ok).toBe(true);
+    expect(written[0]).not.toHaveProperty("creditAccountId");
+  });
+
+  it("writes no card link for an ordinary bill", async () => {
+    const { client, written } = makePrisma();
+
+    await settle(client);
+
+    expect(written[0]).not.toHaveProperty("creditAccountId");
+  });
+
+  it("links an attached payment to the card", async () => {
+    const { client, claims } = makePrisma({
+      bill: CARD_BILL,
+      cards: ACTIVE_CARD,
+      existingTransaction: { id: "tx_1", amount: 5000 },
+    });
+
+    const result = await settle(client, { action: "pay_existing", transactionId: "tx_1" });
+
+    expect(result.ok).toBe(true);
+    expect(claims[0].creditAccountId).toBe("card_1");
+  });
+
+  it("leaves an attached payment on the card it already pays", async () => {
+    const { client, claims } = makePrisma({
+      bill: CARD_BILL,
+      cards: ACTIVE_CARD,
+      existingTransaction: { id: "tx_1", amount: 5000, creditAccountId: "card_9" },
+    });
+
+    await settle(client, { action: "pay_existing", transactionId: "tx_1" });
+
+    expect(claims[0]).not.toHaveProperty("creditAccountId");
+  });
+});
 
 describe("settleBill — paying", () => {
   /**

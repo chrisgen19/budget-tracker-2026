@@ -65,4 +65,19 @@ describe("mobile More destinations", () => {
     labels?.onSelect();
     expect(push).toHaveBeenCalledWith("/labels");
   });
+
+  it("includes a Cards action", () => {
+    const push = vi.fn();
+    const items = buildMenuItems({
+      isAdmin: false,
+      hideAmounts: false,
+      router: { push },
+      toggleHideAmounts: vi.fn(),
+    });
+    const cards = items.find((item) => item.key === "cards");
+
+    expect(cards?.mobileOnly).toBe(true);
+    cards?.onSelect();
+    expect(push).toHaveBeenCalledWith("/cards");
+  });
 });

@@ -8,6 +8,7 @@ import { useCallback } from "react";
 import { queryKeys } from "@/hooks/use-transactions";
 import { analyticsKeys } from "@/hooks/use-analytics";
 import { labelKeys } from "@/hooks/use-labels";
+import { creditAccountKeys } from "@/hooks/use-credit-accounts";
 import type { ScheduledTransactionInput, BillActionInput } from "@/lib/validations";
 import type { ScheduledTransactionWithCategory, PendingReminder } from "@/types";
 import type { ScheduledTransactionLog } from "@prisma/client";
@@ -291,6 +292,8 @@ export function useInvalidateBillPayment() {
         // Settling a bill writes a transaction carrying the bill's labels (bill-writes.ts:422), so
         // the cached label list's per-label and per-category counts are now behind.
         queryClient.invalidateQueries({ queryKey: labelKeys.all }),
+        // A card's reminder is one of the bills Pay All can settle.
+        queryClient.invalidateQueries({ queryKey: creditAccountKeys.all }),
       ]),
     [queryClient],
   );
@@ -327,6 +330,8 @@ export function useBillAction() {
         queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
         // Same reason as `useInvalidateBillPayment`: a paid bill is a labelled transaction.
         queryClient.invalidateQueries({ queryKey: labelKeys.all });
+        // Paying a card's reminder lowers what the card owes.
+        queryClient.invalidateQueries({ queryKey: creditAccountKeys.all });
       }
     },
   });

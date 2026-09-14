@@ -23,6 +23,7 @@ paths:
 - `GET/PUT/DELETE /api/credit-accounts/[id]` — one card for one month (`?month=YYYY-MM` in the user's timezone, default this month, 400 on a malformed one): the all-time balance, that month's charges and payments, and a category breakdown of its charges; edit as a patch (`isActive` archives or restores); delete, which **archives** instead once any charge or payment exists and says which it did as `outcome`
 - `POST /api/credit-accounts/[id]/charges` — add up to 100 statement lines, all or nothing. 409 on an archived card. Charges never reach `transactions`, so they appear in no expense total anywhere; only the payment does
 - `PUT/DELETE /api/credit-accounts/[id]/charges/[chargeId]` — correct or remove one charge, allowed on an archived card
+- `POST/DELETE /api/credit-accounts/[id]/reminder` — create the card's monthly payment reminder (a variable bill under "Credit Card Payment", starting on the next due day, linked through `credit_accounts.bill_id`), or unlink it. Unlinking leaves the bill and its history in place. 400 with no due day, 409 when one exists or the payment category has not been seeded. Paying the linked bill through `settleBill` records the payment against the card
 - `GET /api/bills/upcoming` — bills due within 30 days
 - `POST /api/bills/[id]/pay` — pay bill: creates transaction + advances next due date
 - `POST /api/bills/[id]/action` — `pay` / `pay_existing` / `skip` / `snooze` for one occurrence. A thin wrapper over `settleBill` in `src/lib/bill-writes.ts`, shared with the MCP `pay_bill` tool
