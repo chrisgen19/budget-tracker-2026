@@ -102,6 +102,12 @@ export function LabelBreakdownChart({ data, currency, hideAmounts, range, type, 
           {showAll ? "Show less" : `Show ${hiddenCount} more`}
         </button>
       )}
+
+      {labeled.length > 1 && (
+        <p className="text-xs text-warm-400">
+          A transaction with more than one label counts in full under each, so labels can add to more than 100%.
+        </p>
+      )}
     </div>
   );
 }

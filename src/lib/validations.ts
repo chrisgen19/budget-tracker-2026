@@ -654,7 +654,7 @@ export const telegramQuickTileSchema = z.object({
    *
    * Capped at the same 10 `labelSchema.schedules` uses. A button carrying more labels than that
    * is not pinning a label, it is filing a transaction under everything at once, and
-   * `getLabelBreakdown` splits one amount across every label a row carries.
+   * `getLabelBreakdown` counts the full amount under every label a row carries.
    */
   labelIds: quickPickIdsSchema(MAX_TILE_LABELS).optional(),
 });

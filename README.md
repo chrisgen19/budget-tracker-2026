@@ -522,7 +522,7 @@ questions are routed to a real query instead of being answered by the model.
 | *am I spending more than last month* | This month against last, with the categories that moved |
 | *show me the last 6 months* | Income, spending and net per month |
 | *what were my biggest expenses* | The ten largest, optionally for one month |
-| *where did my work budget go* | Spending split across labels |
+| *where did my work budget go* | Spending by label |
 | *what did I buy at south supermarket* | Individual line items from itemized receipts |
 | *did I pay the water bill* | Checks that recurring bill's history: paid, skipped or snoozed |
 | *(send a photo)* | Reads the receipt with AI, shows what it found, and waits for `yes` before saving |

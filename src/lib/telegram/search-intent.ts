@@ -63,8 +63,8 @@ const validDay = (value: unknown): string | null => {
  *
  * Exported because the write path needs the same discipline for a stronger reason. A model that
  * names a label for a *search* costs a wrong answer; one that names it for a `create_transactions`
- * writes the wrong label onto a row, and `getLabelBreakdown` splits an amount across whatever
- * labels it carries, so that quietly moves money in the breakdown.
+ * writes the wrong label onto a row, and `getLabelBreakdown` counts the full amount under whatever
+ * labels it carries, so that quietly inflates a label in the breakdown.
  */
 export const findByName = (refs: NamedRef[], name: unknown): NamedRef | null => {
   if (typeof name !== "string" || !name.trim()) return null;

@@ -16,6 +16,7 @@ import type {
 } from "@/types";
 import { MONTH_NAMES, MONTH_FULL, toBucketKey, toBucketLabel, generateBucketKeys } from "@/lib/analytics-buckets";
 import { computeCategoryTrends, selectTopTransactions } from "@/lib/analytics-compute";
+import { buildLabelBreakdown } from "@/lib/budget-queries";
 
 /** Generate a human-readable label for a period's from/to range. */
 const formatPeriodLabel = (from: string, to: string): string => {
@@ -576,54 +577,10 @@ export async function GET(request: Request) {
     : computePeriodData(prevTransactions, type).categoryBreakdown;
 
   // --- Label Breakdown (current period only) ---
+  // Shared with MCP and Telegram: a multi-labelled transaction counts in full under each label.
   const filteredForLabel = type === "ALL" ? transactions : transactions.filter((t) => t.type === type);
-  const labelMap = new Map<string, AnalyticsLabelItem>();
   const totalForLabelPct = filteredForLabel.reduce((sum, t) => sum + t.amount, 0);
-  let unlabeledAmount = 0;
-  let unlabeledCount = 0;
-
-  for (const t of filteredForLabel) {
-    if (!t.labels || t.labels.length === 0) {
-      unlabeledAmount += t.amount;
-      unlabeledCount += 1;
-      continue;
-    }
-    const share = t.amount / t.labels.length;
-    for (const tl of t.labels) {
-      const existing = labelMap.get(tl.labelId);
-      if (existing) {
-        existing.amount += share;
-        existing.transactionCount += 1;
-      } else {
-        labelMap.set(tl.labelId, {
-          id: tl.labelId,
-          name: tl.label.name,
-          color: tl.label.color,
-          amount: share,
-          percentage: 0,
-          transactionCount: 1,
-        });
-      }
-    }
-  }
-
-  const labelEntries: AnalyticsLabelItem[] = Array.from(labelMap.values()).map((item) => ({
-    ...item,
-    percentage: totalForLabelPct > 0 ? Math.round((item.amount / totalForLabelPct) * 100) : 0,
-  }));
-
-  if (unlabeledCount > 0) {
-    labelEntries.push({
-      id: "unlabeled",
-      name: "Unlabeled",
-      color: "#9CA3AF",
-      amount: unlabeledAmount,
-      percentage: totalForLabelPct > 0 ? Math.round((unlabeledAmount / totalForLabelPct) * 100) : 0,
-      transactionCount: unlabeledCount,
-    });
-  }
-
-  const labelBreakdown = [...labelEntries].sort((a, b) => b.amount - a.amount);
+  const labelBreakdown: AnalyticsLabelItem[] = buildLabelBreakdown(filteredForLabel, totalForLabelPct);
 
   // --- Top transactions (respects the type filter, like the breakdowns) ---
   const multiYear =

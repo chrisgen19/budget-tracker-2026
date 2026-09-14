@@ -445,11 +445,6 @@ async function handleBills(chatId: number) {
   await sendMessage(chatId, msg);
 }
 
-/** Rows fetched for the total, and rows actually listed. Fetching wider makes the total real
- *  without turning the reply into a wall of text. The fetch limit is the tool's own ceiling:
- *  asking for more is rejected outright, which returns nothing rather than more. */
-const SEARCH_SUM_LIMIT = 100;
-
 /** How far back bill history can be asked for. Beyond this the answer is "I cannot check",
  *  never "it was not paid". */
 const MAX_HISTORY_MONTHS = 60;
@@ -459,6 +454,8 @@ const HISTORY_PAGE = 100;
 
 /** Receipt line items fetched per call. How many are listed back lives with the renderer. */
 const RECEIPT_ITEM_PAGE = 200;
+
+/** Search rows listed in a reply, and so also fetched: the count and total come from `totals`. */
 const SEARCH_SHOW_LIMIT = 10;
 
 /**
@@ -489,7 +486,6 @@ async function handleSearch(
       localDate: string;
       categoryName: string;
       type: string;
-      labels: { name: string }[];
     }[];
     period: ReportedPeriod | null;
     totals: { count: number; income: number; expenses: number };
@@ -507,9 +503,9 @@ async function handleSearch(
     ...(month && { month }),
     ...(filters.from && { from: filters.from }),
     ...(filters.to && { to: filters.to }),
-    // Still fetched wider than shown, but no longer to make the total right: `totals` covers
-    // every match. The extra rows are what the shared-label note below is counted from.
-    limit: SEARCH_SUM_LIMIT,
+    // Only the rows the reply lists. The match count and the total come from `totals`, which the
+    // database aggregates over every match, so fetching wider changes neither.
+    limit: SEARCH_SHOW_LIMIT,
     sortBy: "date",
     sortDir: "desc",
     compact: true,
@@ -549,18 +545,6 @@ async function handleSearch(
 
   if (total > 0) {
     msg += `\n\nTotal: *${money(total)}*`;
-
-    // The app's label breakdown divides a transaction's amount evenly among its labels, so a row
-    // carrying two labels contributes half there and all of it here. Both are defensible for the
-    // question each answers, but a user comparing the two numbers deserves to know why they
-    // differ rather than discovering it as an apparent error. Summing full amounts is what keeps
-    // this total equal to the rows listed above it.
-    const shared = rows.filter((r) => (r.labels?.length ?? 0) > 1).length;
-    if (filters.labelId && shared > 0) {
-      msg +=
-        `\n\n_${shared} of these also carry another label. This total counts each in full, ` +
-        `so the app's label breakdown, which splits them, will show less._`;
-    }
   }
 
   await sendMessage(chatId, msg);
@@ -1661,7 +1645,7 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       // Resolved against the real list rather than trusted, the same boundary `parseSearchIntent`
       // draws: the model is given names and can return one nobody has. A hallucinated label on a
       // *search* costs a wrong answer; on a write it lands on the row, and `getLabelBreakdown`
-      // splits an amount across whatever labels it carries, so it quietly moves money.
+      // counts the full amount under whatever labels it carries, so it quietly inflates a label.
       const namedLabels: string[] = Array.isArray(txData.labels) ? txData.labels : [];
 
       // And read the directive locally as well, merging the two. The model is asked to fill

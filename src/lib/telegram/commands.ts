@@ -88,7 +88,7 @@ export const COMMAND_MENU: { command: string; description: string }[] = [
   { command: "trends", description: "This month against last month" },
   { command: "months", description: "Income and spending, last 6 months" },
   { command: "top", description: "Your biggest expenses" },
-  { command: "labels", description: "Spending split across your labels" },
+  { command: "labels", description: "Spending by label" },
   { command: "items", description: "Line items from your last receipt" },
   { command: "categories", description: "List your categories" },
   { command: "quick", description: "Open the quick-log grid" },

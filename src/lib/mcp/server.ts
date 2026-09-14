@@ -770,9 +770,10 @@ export const createBudgetMcpServer = ({
       title: "Spending by label",
       description:
         "Get spending (or income) grouped by label for a month, with an 'unlabeled' entry for " +
-        "untagged transactions. A transaction tagged with several labels splits its amount " +
-        "evenly between them, so label amounts sum to the period total. Matches the app's " +
-        "analytics page.",
+        "untagged transactions. Labels are tags: a transaction with several labels counts in " +
+        "full under each, so when labels overlap the label amounts can add to more than " +
+        "`total` and the percentages to more than 100%. Never sum label amounts to get total " +
+        "spending; use `total`. Matches the app's analytics page.",
       inputSchema: {
         month: z
           .string()

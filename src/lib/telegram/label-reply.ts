@@ -9,13 +9,12 @@ export interface LabelShare {
 export const LABEL_SHOW = 10;
 
 /**
- * Render spending split across labels.
+ * Render spending by label.
  *
- * The listed rows have to reconcile with the total printed under them. An earlier version listed
- * the top ten, printed the whole month's total, and asserted that the percentages "add to 100%",
- * which is false for anyone with more than ten labels in use and leaves the difference
- * unaccounted for. Whatever is cut is now summarised into one line, so the visible figures still
- * add up, and the 100% claim is only made when nothing was omitted.
+ * Whatever is cut past `LABEL_SHOW` is summarised into one line rather than dropped. A transaction
+ * with several labels counts in full under each (see `buildLabelBreakdown`), so when labels overlap
+ * the figures add to more than the total, and the reply says so instead of leaving it to look like
+ * an error.
  */
 export const renderLabelBreakdown = (
   month: string,
@@ -41,12 +40,11 @@ export const renderLabelBreakdown = (
 
   msg += `\nTotal: *${money(total)}*`;
 
-  // The app divides a transaction's amount evenly across its labels, which is what makes these
-  // shares sum to the month's spending. Worth saying, because the search handler counts each
-  // transaction in full and the two figures would otherwise look like a contradiction.
-  msg += `\n\n_A transaction with two labels counts half to each${
-    rest.length > 0 ? "" : ", so these add to 100%"
-  }._`;
+  // Half a centavo of slack, so floating-point sums of an exact partition never read as overlap.
+  const listed = labels.reduce((sum, l) => sum + l.amount, 0);
+  if (listed > total + 0.005) {
+    msg += `\n\n_A transaction with more than one label counts in full under each, so these add to more than the total._`;
+  }
 
   return msg;
 };

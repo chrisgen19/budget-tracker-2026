@@ -22,18 +22,10 @@ describe("renderLabelBreakdown", () => {
     expect(renderLabelBreakdown("2026-08", [], 0, money)).toBe("No labelled spending in 2026-08.");
   });
 
-  it("claims 100% only when every label is shown", () => {
+  it("lists every label without an others line when under the cap", () => {
     const out = renderLabelBreakdown("2026-08", shares(4), 400, money);
-    expect(out).toContain("so these add to 100%");
+    expect(out).toContain("Label 4");
     expect(out).not.toContain("other label");
-  });
-
-  // The bug this covers: the list was capped at ten while the total covered the whole month and
-  // the note asserted the percentages "add to 100%". For anyone with more than ten labels in use
-  // that is simply false, and the difference was left unexplained.
-  it("does not claim 100% when labels were omitted", () => {
-    const out = renderLabelBreakdown("2026-08", shares(14), 1400, money);
-    expect(out).not.toContain("add to 100%");
   });
 
   it("summarises the omitted labels so the figures still reconcile", () => {
@@ -55,11 +47,15 @@ describe("renderLabelBreakdown", () => {
     expect(out).not.toContain("other label");
   });
 
-  it("keeps the split explanation in both cases, since it explains the search discrepancy", () => {
+  it("explains the overlap when labels add to more than the total", () => {
+    // Three labels at 100 each over a 200 month: one transaction carries two of them.
+    const out = renderLabelBreakdown("2026-08", shares(3), 200, money);
+    expect(out).toContain("counts in full under each");
+  });
+
+  it("says nothing about overlap when the labels partition the total", () => {
     for (const n of [3, 14]) {
-      expect(renderLabelBreakdown("2026-08", shares(n), n * 100, money)).toContain(
-        "counts half to each"
-      );
+      expect(renderLabelBreakdown("2026-08", shares(n), n * 100, money)).not.toContain("counts in full");
     }
   });
 });
