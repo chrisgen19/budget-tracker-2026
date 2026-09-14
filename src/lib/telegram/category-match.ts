@@ -35,10 +35,14 @@ const HINTS: { pattern: RegExp; name: string }[] = [
     //
     // `uv` is two letters and matches only as a whole word, so "uv express" resolves while
     // nothing containing those letters does.
+    //
+    // The ride-hailing apps are named for the same reason: "150 green gsm" and "220 indrive"
+    // matched nothing and cost a model call to recognise a car ride, and with no Gemini key they
+    // were filed under Other Expense.
     pattern: words(
-      "grab", "grabcar", "angkas", "taxi", "tnvs", "bus", "buses", "jeep", "jeepney",
-      "uv", "tricycle", "mrt", "lrt", "gas", "fare", "fuel", "commute", "transport",
-      "transportation"
+      "grab", "grabcar", "angkas", "taxi", "tnvs", "gsm", "indrive", "joyride", "bus", "buses",
+      "jeep", "jeepney", "uv", "tricycle", "mrt", "lrt", "gas", "fare", "fuel", "commute",
+      "transport", "transportation"
     ),
     name: "transport",
   },

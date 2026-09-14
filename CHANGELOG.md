@@ -22,6 +22,12 @@ leaves nothing and reaches the classifier as before. Two knock-on effects, both 
   Gemini when a key is set. With no key it now files under `Other Expense` with the label applied,
   the fallback every other unmatched shorthand entry already takes, where before it logged nothing
 
+The transport keywords in `matchCategory` (`src/lib/telegram/category-match.ts`) now also name the
+ride-hailing apps in use here: `gsm`, `indrive` and `joyride`. `150 green gsm` matched nothing,
+since neither word was a keyword, so it cost a Gemini call to recognise a car ride and filed under
+`Other Expense` with no key. Like every keyword they match whole words only. The label is still
+applied only when named (`150 green gsm, tnvs`): keywords choose a category, never a label.
+
 ## 2026-09-14 - Labels count a transaction in full
 
 A label is a tag, and the label breakdown now treats it as one: a transaction counts its full

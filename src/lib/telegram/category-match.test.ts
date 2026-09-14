@@ -43,6 +43,10 @@ describe("matchCategory", () => {
       "fare home (uv + jeep)",
       "tnvs to the office",
       "grabcar home",
+      "green gsm",
+      "gsm green to mega tower",
+      "indrive home",
+      "joyride to bgc",
       "tricycle to the terminal",
       "mrt ticket",
       "lrt load",
@@ -57,6 +61,8 @@ describe("matchCategory", () => {
   it("does not match short transport keywords inside other words", () => {
     expect(matchCategory("louvre tickets", "EXPENSE", CATEGORIES)).toBeNull();
     expect(matchCategory("souvenir for mum", "EXPENSE", CATEGORIES)).toBeNull();
+    expect(matchCategory("hogsmeade tickets", "EXPENSE", CATEGORIES)).toBeNull();
+    expect(matchCategory("indriver license", "EXPENSE", CATEGORIES)).toBeNull();
   });
 
   // The bug this covers: with no match the caller took `matchingCats[0]`, which is Education
