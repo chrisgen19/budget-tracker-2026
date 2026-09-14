@@ -81,6 +81,69 @@ const formatTileAmount = (amount: number): string => {
 export const tileButtonText = (tile: KeyboardTile, symbol: string): string =>
   `${tile.label}${TILE_SEPARATOR}${symbol}${tile.amount === null ? ASK_MARK : formatTileAmount(tile.amount)}`;
 
+/** The parts of a Frequent entry the keyboard needs. `FrequentTileView` satisfies it. */
+export interface KeyboardFrequent {
+  key: string;
+  description: string;
+  amount: number | null;
+  amountIsStable: boolean;
+}
+
+/**
+ * A Frequent entry as a button: its description as the label, and its amount only when one tap may
+ * log it.
+ *
+ * An unstable amount shows `?` and asks, the rule the Mini App already follows: the user may assert
+ * a fixed amount, the system may never infer one. The id is namespaced so it cannot equal a tile id.
+ */
+export const frequentAsTile = (entry: KeyboardFrequent): KeyboardTile => ({
+  id: `frequent:${entry.key}`,
+  label: entry.description,
+  amount: entry.amountIsStable ? entry.amount : null,
+});
+
+/**
+ * What the keyboard carries: saved buttons first, then Frequent entries into the slots left.
+ *
+ * Saved buttons always win a slot, because they are the ones the user chose. A Frequent entry is
+ * skipped when its button text equals a saved tile's, since a tap is matched against saved tiles
+ * first and would log the tile rather than the entry the button showed. Nor are two Frequent
+ * buttons ever given the same text, which would make the second unreachable.
+ */
+export const keyboardButtons = (
+  tiles: KeyboardTile[],
+  frequent: KeyboardFrequent[],
+  symbol: string
+): KeyboardTile[] => {
+  const buttons = tiles.slice(0, KEYBOARD_TILE_LIMIT);
+  const taken = new Set(tiles.map((t) => tileButtonText(t, symbol)));
+
+  for (const entry of frequent) {
+    if (buttons.length >= KEYBOARD_TILE_LIMIT) break;
+    const button = frequentAsTile(entry);
+    const text = tileButtonText(button, symbol);
+    if (taken.has(text)) continue;
+    taken.add(text);
+    buttons.push(button);
+  }
+
+  return buttons;
+};
+
+/**
+ * The Frequent entry a message was sent by, or null. Checked only after the saved tiles miss.
+ *
+ * Built through `frequentAsTile` so the text matched is exactly the text the button carried.
+ */
+export const matchFrequentButton = <F extends KeyboardFrequent>(
+  text: string,
+  frequent: F[],
+  symbol: string
+): F | null => {
+  const trimmed = text.trim();
+  return frequent.find((f) => tileButtonText(frequentAsTile(f), symbol) === trimmed) ?? null;
+};
+
 /**
  * The keyboard: up to `KEYBOARD_TILE_LIMIT` tiles two to a row, then the command row.
  *

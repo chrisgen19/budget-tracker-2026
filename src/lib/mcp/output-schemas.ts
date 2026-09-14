@@ -28,6 +28,7 @@ import type {
 import type { ResolvedPeriod, TransactionTotals } from "../budget-query-types";
 import type { ScanResultPayload } from "../receipt-scan";
 import type { QuickTileLabelView, QuickTileView } from "../telegram/tile-queries";
+import type { FrequentTileView } from "../telegram/frequent-tiles";
 import type {
   AssessmentAnomaly,
   AssessmentBillAccuracy,
@@ -412,6 +413,22 @@ const quickTile = z.object({
 assertExact<z.infer<typeof quickTile>, QuickTileView>(true);
 
 export const quickTileListOutput = { tiles: z.array(quickTile) };
+
+// --- get_frequent_tiles ---
+
+const frequentTile = z.object({
+  key: z.string(),
+  description: z.string(),
+  count: z.number(),
+  amount: z.number().nullable(),
+  amountIsStable: z.boolean(),
+  categoryId: z.string(),
+  categoryName: z.string(),
+  lastLoggedAt: z.string(),
+});
+assertExact<z.infer<typeof frequentTile>, FrequentTileView>(true);
+
+export const frequentTileListOutput = { frequent: z.array(frequentTile) };
 
 // --- get_bill_history ---
 

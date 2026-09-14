@@ -50,6 +50,7 @@ import {
 } from "../bill-writes";
 import { createLabel } from "../label-writes";
 import { listTileCategories, listTileRows, viewTiles } from "../telegram/tile-queries";
+import { loadFrequentTiles } from "../telegram/frequent-tiles-query";
 import { collectAssessmentFacts } from "../assessment-facts-query";
 import { formatPeriodLabel } from "../analytics-period";
 import { utcDayKey } from "../bill-dates";
@@ -76,6 +77,7 @@ import {
   labelBreakdownOutput,
   labelListOutput,
   quickTileListOutput,
+  frequentTileListOutput,
   billHistoryOutput,
   receiptItemsOutput,
   createTransactionsOutput,
@@ -864,6 +866,42 @@ export const createBudgetMcpServer = ({
         listTileRows(prisma, userId),
       ]);
       const payload = { tiles: viewTiles(rows, categories, labels) };
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+        structuredContent: structured(payload),
+      };
+    }
+  );
+
+  registered.get_frequent_tiles = server.registerTool(
+    "get_frequent_tiles",
+    {
+      title: "Frequent quick-log entries",
+      description:
+        "What the user logs most often over the last 60 days, derived from their own expenses " +
+        "rather than configured: the most recent description, how many times it was logged, the " +
+        "amount paid most often and the category it is usually filed under. `amountIsStable` is " +
+        "true only when that amount covers most occurrences; when it is false, ask for the amount " +
+        "instead of assuming it. Entries a configured quick-log button already covers are left " +
+        "out, and bill payments, receipt splits and income never appear.",
+      inputSchema: {},
+      outputSchema: frequentTileListOutput,
+      annotations: { readOnlyHint: true },
+    },
+    async () => {
+      // Excluded against the configured buttons exactly as `GET /api/tg/bootstrap` does, so a
+      // habit that already has a button is not offered twice. Their descriptions are read only to
+      // fold into exclusions and are not returned, which is why this needs no `labels:read`.
+      const rows = await listTileRows(prisma, userId);
+      const frequent = await loadFrequentTiles(prisma, userId, timezoneOffset, {
+        excludeKeys: rows.map((r) => r.description),
+      });
+      const payload = {
+        frequent: frequent.map(({ lastLoggedAt, ...entry }) => ({
+          ...entry,
+          lastLoggedAt: lastLoggedAt.toISOString(),
+        })),
+      };
       return {
         content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
         structuredContent: structured(payload),

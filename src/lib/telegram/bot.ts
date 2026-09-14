@@ -75,13 +75,16 @@ import { userToday, utcDayKey } from "@/lib/bill-dates";
 import { isPlainShorthand } from "@/lib/telegram/shorthand";
 import { parseShorthandEntries } from "@/lib/telegram/multi-shorthand";
 import {
+  keyboardButtons,
   looksLikeTileButton,
+  matchFrequentButton,
   matchTileButton,
   parseBareAmount,
   quickKeyboard,
   removeQuickKeyboard,
   wantsKeyboardOff,
 } from "@/lib/telegram/quick-keyboard";
+import type { FrequentTileView } from "@/lib/telegram/frequent-tiles";
 import {
   clearPendingAmount,
   putPendingAmount,
@@ -1333,30 +1336,57 @@ async function loadQuickTiles(): Promise<QuickTileView[] | null> {
 }
 
 /**
- * Send a message carrying the reply keyboard, built from the tiles as they are now.
+ * The user's Frequent entries as they are right now, or null when they could not be read.
+ *
+ * Only the keyboard's fill depends on these, so a failed read is logged here and not reported in
+ * the chat: the saved buttons and the command row still show, and nothing reads as missing.
+ */
+async function loadFrequentEntries(): Promise<FrequentTileView[] | null> {
+  try {
+    const { frequent } = await callTool<{ frequent: FrequentTileView[] }>("get_frequent_tiles");
+    return Array.isArray(frequent) ? frequent : null;
+  } catch (err) {
+    console.error(
+      "[telegram] could not load frequent entries:",
+      err instanceof Error ? err.message : err
+    );
+    return null;
+  }
+}
+
+/**
+ * Send a message carrying the reply keyboard: the saved tiles, then Frequent entries into the
+ * slots they leave, as both are now.
  *
  * A reply keyboard only changes when one is sent, so this is also how a stale keyboard is replaced
- * after the buttons were edited on `/quick-log`. It never withholds the keyboard: with no tiles, or
- * none readable, the command row is still pinned and the message says why the buttons are missing.
+ * after the buttons were edited on `/quick-log` or the Frequent entries moved. It never withholds
+ * the keyboard: the command row is always pinned, and the message says when saved buttons are
+ * missing because they could not be read.
  *
- * @param known tiles the caller already read, `null` for a read that already failed, or omitted
- *   to read them here
+ * @param knownTiles tiles the caller already read, `null` for a read that already failed, or
+ *   omitted to read them here
+ * @param knownFrequent the same, for Frequent entries
  */
 async function sendQuickKeyboard(
   chatId: number,
   text: string,
-  known?: QuickTileView[] | null
+  knownTiles?: QuickTileView[] | null,
+  knownFrequent?: FrequentTileView[] | null
 ): Promise<void> {
-  const tiles = known === undefined ? await loadQuickTiles() : known;
+  const [tiles, frequent] = await Promise.all([
+    knownTiles === undefined ? loadQuickTiles() : knownTiles,
+    knownFrequent === undefined ? loadFrequentEntries() : knownFrequent,
+  ]);
 
   let msg = text;
   if (tiles === null) {
-    msg += "\n\nI couldn't load your quick-log buttons just now, so only the commands are showing.";
-  } else if (tiles.length === 0) {
+    msg += "\n\nI couldn't load your saved quick-log buttons just now, so they are missing here.";
+  } else if (tiles.length === 0 && !frequent?.length) {
     msg += "\n\nYou have no quick-log buttons yet. Add them on the Quick Log page in the app.";
   }
 
-  await sendMessage(chatId, msg, "Markdown", quickKeyboard(tiles ?? [], SYMBOL));
+  const buttons = keyboardButtons(tiles ?? [], frequent ?? [], SYMBOL);
+  await sendMessage(chatId, msg, "Markdown", quickKeyboard(buttons, SYMBOL));
 }
 
 /**
@@ -1405,12 +1435,41 @@ async function logTile(
 }
 
 /**
+ * Log one Frequent entry: its description and usual category, with the amount given.
+ *
+ * `labelIds` is always absent. A Frequent entry pins nothing, so the user's schedules decide, which
+ * is what a Mini App tap on the same entry does. The server still checks that the category is the
+ * user's own and fits an expense, so a stale snapshot is refused rather than written.
+ *
+ * @param updateId the update carrying the write, for the reason `logTile` gives
+ */
+async function logFrequent(
+  chatId: number,
+  entry: { description: string; categoryId: string },
+  amount: number,
+  updateId: number
+): Promise<void> {
+  const result = await createTransactions(updateBatchId(BOT_ID, updateId), [
+    {
+      amount,
+      description: entry.description,
+      type: "EXPENSE",
+      categoryId: entry.categoryId,
+      date: new Date().toISOString(),
+    },
+  ]);
+
+  await confirmCreated(chatId, result);
+}
+
+/**
  * Answer the "how much?" an amountless button asked, with the number the user just sent.
  *
- * The tile is read again rather than trusted from the prompt, so an edit made on `/quick-log` in
- * between is honoured. Two such edits refuse instead of logging: a deleted button, and one that now
- * carries a fixed amount, since the tile is the authority on its own figure (`logQuickTile` applies
- * the same rule) and silently preferring either number would be a guess.
+ * A saved tile is read again rather than trusted from the prompt, so an edit made on `/quick-log`
+ * in between is honoured. Two such edits refuse instead of logging: a deleted button, and one that
+ * now carries a fixed amount, since the tile is the authority on its own figure (`logQuickTile`
+ * applies the same rule) and silently preferring either number would be a guess. A Frequent entry
+ * logs from its snapshot instead, for the reasons `PendingAmountSource` gives.
  */
 async function logAskedTile(
   chatId: number,
@@ -1418,6 +1477,12 @@ async function logAskedTile(
   amount: number,
   updateId: number
 ): Promise<void> {
+  const { source } = prompt;
+  if (source.kind === "frequent") {
+    await logFrequent(chatId, source, amount, updateId);
+    return;
+  }
+
   const tiles = await loadQuickTiles();
 
   if (tiles === null) {
@@ -1435,7 +1500,7 @@ async function logAskedTile(
     return;
   }
 
-  const tile = tiles.find((t) => t.id === prompt.tileId);
+  const tile = tiles.find((t) => t.id === source.tileId);
 
   if (!tile) {
     await sendQuickKeyboard(
@@ -1512,27 +1577,57 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     const tiles = await loadQuickTiles();
     const tile = tiles ? matchTileButton(text, tiles, SYMBOL) : null;
 
-    if (!tile) {
-      // Renamed, re-priced or deleted since this keyboard was sent, or unreadable. Nothing is
-      // logged: guessing which button was meant is how a fare lands under the wrong amount. The
-      // fresh keyboard replaces the stale one, which is the only way a reply keyboard updates.
-      await sendQuickKeyboard(
-        chatId,
-        tiles
-          ? "That button has changed since this keyboard was sent, so nothing was logged. Here are your current buttons."
-          : "Nothing was logged.",
-        tiles
-      );
+    if (tile) {
+      if (tile.amount === null) {
+        putPendingAmount(chatId, {
+          source: { kind: "tile", tileId: tile.id },
+          label: tile.label,
+          createdAt: Date.now(),
+        });
+        await sendMessage(chatId, `How much for ${tile.label}? Send just the number, like \`180\`.`);
+        return;
+      }
+
+      await logTile(chatId, tile, tile.amount, updateId);
       return;
     }
 
-    if (tile.amount === null) {
-      putPendingAmount(chatId, { tileId: tile.id, label: tile.label, createdAt: Date.now() });
-      await sendMessage(chatId, `How much for ${tile.label}? Send just the number, like \`180\`.`);
+    // Saved tiles first, then the Frequent entries that fill the rest of the keyboard. Read only
+    // after the tiles miss, so a tap on a saved button costs no second call. `keyboardButtons`
+    // never gives a Frequent entry a saved tile's text, so this order cannot shadow one.
+    const frequent = await loadFrequentEntries();
+    const entry = frequent ? matchFrequentButton(text, frequent, SYMBOL) : null;
+
+    if (entry) {
+      if (!entry.amountIsStable || entry.amount === null) {
+        putPendingAmount(chatId, {
+          source: { kind: "frequent", description: entry.description, categoryId: entry.categoryId },
+          label: entry.description,
+          createdAt: Date.now(),
+        });
+        await sendMessage(
+          chatId,
+          `How much for ${entry.description}? Send just the number, like \`180\`.`
+        );
+        return;
+      }
+
+      await logFrequent(chatId, entry, entry.amount, updateId);
       return;
     }
 
-    await logTile(chatId, tile, tile.amount, updateId);
+    // Renamed, re-priced or deleted since this keyboard was sent, a Frequent entry that has since
+    // dropped out or changed its usual amount, or unreadable. Nothing is logged: guessing which
+    // button was meant is how a fare lands under the wrong amount. The fresh keyboard replaces the
+    // stale one, which is the only way a reply keyboard updates.
+    await sendQuickKeyboard(
+      chatId,
+      tiles
+        ? "That button has changed since this keyboard was sent, so nothing was logged. Here are your current buttons."
+        : "Nothing was logged.",
+      tiles,
+      frequent
+    );
     return;
   }
 
@@ -1664,9 +1759,10 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       `fixed amount opens a pad to type one. It is also behind the Menu button beside the ` +
       `message box.\n\n` +
       `\u2328\ufe0f *Quick-log buttons:*\n` +
-      `/keyboard pins your first six Quick Log buttons above the message box. A button with an ` +
-      `amount logs in one tap, and one showing ${SYMBOL}? asks how much first. Edit them on the ` +
-      `Quick Log page in the app. /keyboard off takes them away.\n\n` +
+      `/keyboard pins your Quick Log buttons above the message box, and fills any spare spots ` +
+      `with what you log most often. A button with an amount logs in one tap, and one showing ` +
+      `${SYMBOL}? asks how much first. Edit your buttons on the Quick Log page in the app. ` +
+      `/keyboard off takes them away.\n\n` +
       `The slash is optional, and you can ask in your own words. Type / for the full menu, ` +
       `or /examples for a list you can copy from.`;
     // The keyboard rides along with the welcome, so it is there before it has to be asked for.
