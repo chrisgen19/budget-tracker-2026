@@ -1,96 +1,168 @@
 import { describe, expect, it } from "vitest";
 import {
-  QUICK_FARES,
+  KEYBOARD_TILE_LIMIT,
+  QUICK_COMMANDS,
+  looksLikeTileButton,
+  matchTileButton,
+  parseBareAmount,
   quickKeyboard,
   removeQuickKeyboard,
+  tileButtonText,
   wantsKeyboardOff,
+  type KeyboardTile,
 } from "@/lib/telegram/quick-keyboard";
-import { isPlainShorthand } from "@/lib/telegram/shorthand";
+import { resolveCommand } from "@/lib/telegram/commands";
 import { parseShorthandEntries } from "@/lib/telegram/multi-shorthand";
-import { matchCategory, type BotCategory } from "@/lib/telegram/category-match";
 
-/** The seeded defaults, in the order `get_category_list` returns them. */
-const CATEGORIES: BotCategory[] = [
-  "Entertainment",
-  "Food & Dining",
-  "Fun",
-  "Groceries",
-  "Healthcare",
-  "Home Supplies",
-  "Housing",
-  "Other Expense",
-  "Personal Care",
-  "Shopping",
-  "Transportation",
-  "Utilities",
-].map((name) => ({ id: name.toLowerCase(), name, type: "EXPENSE" }));
+const PESO = "₱";
 
-/**
- * The production parser, not a copy of its grammar.
- *
- * These tests exist to prove a button's label survives the real logging path. A second regex here
- * could keep extracting an amount and a description under the old grammar long after the bot had
- * moved on, which is exactly the failure they are supposed to catch.
- */
-const parse = (label: string) => parseShorthandEntries(label);
+const tile = (label: string, amount: number | null): KeyboardTile => ({
+  id: label,
+  label,
+  amount,
+});
 
-describe("quick keyboard labels", () => {
-  // The whole design rests on a button's label being sent verbatim as a message. A label that
-  // does not parse is a button that answers with "I couldn't understand that command".
-  it("every fare label is valid shorthand", () => {
-    for (const label of QUICK_FARES) {
-      expect(isPlainShorthand(label), `${label} must not look like a dated entry`).toBe(true);
+const TILES: KeyboardTile[] = [
+  tile("Office", 38),
+  tile("Home UV", 80),
+  tile("Grab", null),
+  tile("Lunch", null),
+  tile("Jeep", 13.5),
+  tile("Coffee", 120),
+  tile("Taxi", null),
+];
 
-      const entries = parse(label);
-      // Exactly one: a label that split into two would log a button press as two transactions.
-      expect(entries, `${label} must parse as a single transaction`).toHaveLength(1);
-      expect(entries[0].amount).toBeGreaterThan(0);
-      expect(entries[0].description.length).toBeGreaterThan(0);
-      expect(entries[0].isIncome, `${label} is a fare, not income`).toBe(false);
-    }
+const texts = (tiles: KeyboardTile[]) =>
+  quickKeyboard(tiles, PESO).keyboard.flat().map((b) => b.text);
+
+describe("tileButtonText", () => {
+  it("shows the label and the amount a tap logs", () => {
+    expect(tileButtonText(tile("Office", 38), PESO)).toBe(`Office · ${PESO}38`);
   });
 
-  // The failure this prevents is silent: a relabelled button still logs, just into the wrong
-  // category, and the spending only looks wrong months later in the breakdown.
-  it("every fare label resolves to Transportation", () => {
-    for (const label of QUICK_FARES) {
-      const { description } = parse(label)[0];
-      expect(matchCategory(description, "EXPENSE", CATEGORIES)?.name, label).toBe("Transportation");
-    }
+  it("shows two decimals for a fractional amount", () => {
+    expect(tileButtonText(tile("Jeep", 13.5), PESO)).toBe(`Jeep · ${PESO}13.50`);
   });
 
-  // "fare home (UV)" contains "home", and there are two categories whose names start with it.
-  // `matchCategory` checks category names before keyword hints, so this is worth pinning.
-  it("does not let 'home' in a fare label pull it into Housing or Home Supplies", () => {
-    for (const label of QUICK_FARES) {
-      const name = matchCategory(parse(label)[0].description, "EXPENSE", CATEGORIES)?.name;
-      expect(name).not.toBe("Housing");
-      expect(name).not.toBe("Home Supplies");
-    }
+  // A tap logs the stored amount, and the Mini App editor saves any precision. A rounded label
+  // would show one figure and write another.
+  it("never rounds an amount the button would log unrounded", () => {
+    const precise = tile("Fare", 38.999);
+    const text = tileButtonText(precise, PESO);
+    expect(text).toBe(`Fare · ${PESO}38.999`);
+    expect(looksLikeTileButton(text, PESO)).toBe(true);
+    expect(matchTileButton(text, [precise], PESO)).toBe(precise);
   });
 
-  it("carries the amounts the fares actually cost", () => {
-    expect(QUICK_FARES).toContain("38 fare to office");
-    expect(QUICK_FARES).toContain("80 fare home (UV)");
-    expect(QUICK_FARES).toContain("95 fare home (UV + jeep)");
+  it("marks a button that asks for its amount", () => {
+    expect(tileButtonText(tile("Grab", null), PESO)).toBe(`Grab · ${PESO}?`);
+  });
+
+  // A comma splits entries in `parseShorthandEntries`. The button is matched first, but its text
+  // should not rely on that ordering to be safe.
+  it("never puts a thousands separator in the amount", () => {
+    expect(tileButtonText(tile("Rent", 12000), PESO)).not.toContain(",");
+  });
+
+  // The old keyboard's buttons *were* shorthand. These must not be, or a tap would log twice as
+  // much meaning: once as the tile, and once as whatever the parser made of the text.
+  it("never reads as shorthand or as a command", () => {
+    for (const t of TILES) {
+      const text = tileButtonText(t, PESO);
+      expect(parseShorthandEntries(text), text).toEqual([]);
+      expect(resolveCommand(text), text).toBeNull();
+    }
   });
 });
 
 describe("quickKeyboard", () => {
   it("stays up between messages and keeps typing visible as an option", () => {
-    const kb = quickKeyboard();
+    const kb = quickKeyboard(TILES, PESO);
     expect(kb.is_persistent).toBe(true);
     expect(kb.resize_keyboard).toBe(true);
     expect(kb.input_field_placeholder).toMatch(/type/i);
   });
 
-  it("offers every fare", () => {
-    const labels = quickKeyboard().keyboard.flat().map((b) => b.text);
-    for (const fare of QUICK_FARES) expect(labels).toContain(fare);
+  it("carries the first tiles in order, two to a row, then the command row", () => {
+    const { keyboard } = quickKeyboard(TILES, PESO);
+    expect(keyboard.slice(0, 3).every((row) => row.length === 2)).toBe(true);
+    expect(keyboard.at(-1)?.map((b) => b.text)).toEqual([...QUICK_COMMANDS]);
+    expect(texts(TILES)).toHaveLength(KEYBOARD_TILE_LIMIT + QUICK_COMMANDS.length);
+    expect(texts(TILES)[0]).toBe(tileButtonText(TILES[0], PESO));
+  });
+
+  // Reorder on /quick-log decides what shows, exactly as it does for the dashboard strip.
+  it("leaves out tiles past the limit", () => {
+    expect(texts(TILES)).not.toContain(tileButtonText(TILES[KEYBOARD_TILE_LIMIT], PESO));
+  });
+
+  it("still shows the command row when there are no tiles", () => {
+    expect(quickKeyboard([], PESO).keyboard).toEqual([QUICK_COMMANDS.map((text) => ({ text }))]);
+  });
+
+  it("puts an odd tile out on its own row", () => {
+    const { keyboard } = quickKeyboard(TILES.slice(0, 3), PESO);
+    expect(keyboard.map((row) => row.length)).toEqual([2, 1, QUICK_COMMANDS.length]);
+  });
+
+  it("offers commands the bot actually handles", () => {
+    for (const command of QUICK_COMMANDS) expect(resolveCommand(command), command).not.toBeNull();
   });
 
   it("removes the keyboard rather than replacing it with an empty one", () => {
     expect(removeQuickKeyboard()).toEqual({ remove_keyboard: true });
+  });
+});
+
+describe("looksLikeTileButton", () => {
+  it("recognises every button the keyboard can carry", () => {
+    for (const t of TILES) {
+      expect(looksLikeTileButton(tileButtonText(t, PESO), PESO), t.label).toBe(true);
+    }
+  });
+
+  // The gate decides whether a message costs a tile read, so ordinary logging must not trip it.
+  it("ignores ordinary messages", () => {
+    for (const text of ["250 grab", "summary", "/recent", "38 fare to office", "grab ? 20", `${PESO}38`]) {
+      expect(looksLikeTileButton(text, PESO), text).toBe(false);
+    }
+  });
+
+  it("rejects a separator with nothing before it", () => {
+    expect(looksLikeTileButton(` · ${PESO}38`, PESO)).toBe(false);
+  });
+});
+
+describe("matchTileButton", () => {
+  it("finds the tile a button was built from", () => {
+    for (const t of TILES) expect(matchTileButton(tileButtonText(t, PESO), TILES, PESO)).toBe(t);
+  });
+
+  // A button left on the phone after its tile was reordered out of the first six still logs.
+  it("matches tiles the keyboard no longer shows", () => {
+    const hidden = TILES[KEYBOARD_TILE_LIMIT];
+    expect(matchTileButton(tileButtonText(hidden, PESO), TILES, PESO)).toBe(hidden);
+  });
+
+  // Renamed or re-priced on the web since the keyboard was sent: nothing may log.
+  it("misses when the tile has changed since the button was sent", () => {
+    const sent = tileButtonText(tile("Office", 38), PESO);
+    expect(matchTileButton(sent, [tile("Office", 40)], PESO)).toBeNull();
+    expect(matchTileButton(sent, [tile("To office", 38)], PESO)).toBeNull();
+  });
+});
+
+describe("parseBareAmount", () => {
+  it("reads a reply that is only an amount", () => {
+    expect(parseBareAmount("180")).toBe(180);
+    expect(parseBareAmount(" 37.5 ")).toBe(37.5);
+    expect(parseBareAmount("1,200")).toBe(1200);
+  });
+
+  it("refuses anything that is not only a positive amount", () => {
+    for (const text of ["0", "-5", "180 lunch", "1,20", "12.345", "abc", "", "+50"]) {
+      expect(parseBareAmount(text), text).toBeNull();
+    }
   });
 });
 

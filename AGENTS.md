@@ -79,7 +79,7 @@ src/
 │   └── index.ts            # Re-exports
 ├── types/                  # TypeScript type definitions
 └── mcp-server/             # stdio entry point for the MCP server (local Claude Desktop)
-    └── src/index.ts        # Thin wrapper; the 20 tools live in src/lib/mcp/server.ts
+    └── src/index.ts        # Thin wrapper; the 21 tools live in src/lib/mcp/server.ts
 ```
 
 ## Detailed Rules

@@ -2,6 +2,24 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-14 - The Telegram keyboard is your Quick Log buttons
+
+`/keyboard` used to pin three hardcoded fares. It now pins the first six Quick Log buttons, in the
+order set on `/quick-log`, with a `/summary` `/recent` row underneath. Editing a button in the app
+changes the keyboard too; there is no second list to maintain.
+
+- A button shows its label and amount, `Office · ₱38`. One tap logs it with the button's own
+  category and pinned labels, exactly as a Mini App tap does
+- A button with no fixed amount shows `Grab · ₱?`. Tapping it asks "How much for Grab?", and the
+  next message that is only a number logs it. Anything else cancels the question, and it expires
+  after five minutes
+- Tapping a button that was renamed, re-priced or deleted in the app since the keyboard was sent
+  logs nothing and replies with the current keyboard
+- New read-only MCP tool `get_quick_tiles` (`budget:read` + `labels:read`, both in the default
+  grant), which is how the bot, holding no database credentials, reads the buttons
+
+No schema or data change. Send `/keyboard` once after deploying to replace the old fare buttons.
+
 ## 2026-09-14 - A bare label name logs from Telegram shorthand
 
 `250 tnvs` names a label and nothing else, and the shorthand logger could not write it. A clause
