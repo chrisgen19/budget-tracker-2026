@@ -1252,6 +1252,10 @@ async function handleCallback(query: TelegramCallbackQuery): Promise<void> {
   const messageId = query.message?.message_id;
   if (chatId === undefined || messageId === undefined) return;
 
+  // A press is a move to something else, exactly like a non-number message, so it drops an
+  // unanswered "how much?". This path never reaches `handleMessage`, where that happens for text.
+  clearPendingAmount(chatId);
+
   // The evening prompt's "Nothing today". It writes nothing - the prompt only ever asked - so
   // this is an acknowledgement, and its whole job is to stop the message looking unanswered.
   const promptPress = parsePromptCallback(query.data);
@@ -1455,6 +1459,22 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
   const chatId = message.chat.id;
   const text = (message.text || "").trim();
 
+  // Answering the "how much?" an amountless quick-log button asked. Only a bare number answers it,
+  // and anything else drops the prompt, so a figure typed later for another reason is never filed
+  // under a button the user has moved on from. First, ahead of every early return: a receipt photo
+  // or a "yes" to a waiting scan used to return before reaching this, leaving the prompt armed.
+  // Nothing below can be a bare number, so running it first takes no message from them.
+  const bareAmount = parseBareAmount(text);
+  if (bareAmount === null) {
+    clearPendingAmount(chatId);
+  } else {
+    const prompt = takePendingAmount(chatId);
+    if (prompt) {
+      await logAskedTile(chatId, prompt, bareAmount, updateId);
+      return;
+    }
+  }
+
   // A photo carries no `text`, so this has to come before the empty-text return that used to
   // drop every non-text message on the floor.
   if (message.photo?.length || message.document) {
@@ -1477,20 +1497,6 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     const scan = takePendingScan(chatId);
     if (scan) {
       await saveConfirmedScan(chatId, scan);
-      return;
-    }
-  }
-
-  // Answering the "how much?" an amountless quick-log button asked. Only a bare number answers it,
-  // and anything else drops the prompt, so a figure typed later for another reason is never filed
-  // under a button the user has moved on from.
-  const bareAmount = parseBareAmount(text);
-  if (bareAmount === null) {
-    clearPendingAmount(chatId);
-  } else {
-    const prompt = takePendingAmount(chatId);
-    if (prompt) {
-      await logAskedTile(chatId, prompt, bareAmount, updateId);
       return;
     }
   }

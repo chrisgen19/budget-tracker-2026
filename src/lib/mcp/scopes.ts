@@ -41,7 +41,7 @@ export const mcpScopeSchema = z.enum(MCP_SCOPES);
  *  make the scope picker actively misleading about what is being handed over. */
 export const MCP_SCOPE_LABELS: Record<McpScope, string> = {
   "budget:read":
-    "Monthly totals, category breakdowns, trends, the category list, and your quick-log buttons",
+    "Monthly totals, category breakdowns, trends, and the category list. Together with Labels, also your quick-log buttons",
   "transactions:read": "Individual transactions, search, and largest expenses",
   "labels:read": "Labels and spending grouped by label",
   "bills:read":
