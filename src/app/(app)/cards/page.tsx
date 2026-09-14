@@ -18,6 +18,7 @@ import {
   type CreditAccountView,
 } from "@/hooks/use-credit-accounts";
 import { maskCurrency } from "@/lib/utils";
+import { sumOwedOnCards } from "@/lib/card-owed";
 import type { CreditAccountInput } from "@/lib/validations";
 
 const PRIMARY_BUTTON =
@@ -68,7 +69,7 @@ function CardsContent({ loading, failed, retrying, onRetry, accounts, onAdd }: C
       <EmptyState
         icon={CreditCard}
         title="No cards yet"
-        description="Add a credit card to track what you owe on it. Charges only count as spending once you pay the card."
+        description="Add a credit card to track what you owe on it. Purchases count as spending the day you make them, and paying the card only lowers what you owe."
         action={
           <button type="button" onClick={onAdd} className={PRIMARY_BUTTON}>
             <Plus className="h-4 w-4" />
@@ -95,13 +96,13 @@ export default function CardsPage() {
   const { showToast } = useToast();
   const [showForm, setShowForm] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
-  const { data: accounts = [], isLoading, isError, isFetching, refetch } =
-    useCreditAccountsQuery(showArchived);
+  // Archived cards are always fetched: one that still owes money belongs in the total even while the
+  // list hides it, the same rule the dashboard's Owed on cards follows.
+  const { data: accounts = [], isLoading, isError, isFetching, refetch } = useCreditAccountsQuery(true);
   const createAccount = useCreateCreditAccount();
 
-  const totalOwed = accounts
-    .filter((account) => account.isActive)
-    .reduce((sum, account) => sum + account.balance, 0);
+  const shownAccounts = showArchived ? accounts : accounts.filter((account) => account.isActive);
+  const totalOwed = sumOwedOnCards(accounts);
 
   const handleCreate = async (input: CreditAccountInput) => {
     try {
@@ -117,9 +118,9 @@ export default function CardsPage() {
     <div>
       <PageHeader
         title="Cards"
-        description="Charges add to what you owe. They count as spending when you pay the card."
+        description="Purchases count as spending the day you make them. Paying the card lowers what you owe."
         meta={
-          !isLoading && !isError && accounts.length > 0
+          !isLoading && !isError && totalOwed !== null
             ? `${maskCurrency(totalOwed, user.currency, hideAmounts)} owed`
             : undefined
         }
@@ -136,7 +137,7 @@ export default function CardsPage() {
         failed={isError}
         retrying={isFetching}
         onRetry={() => void refetch()}
-        accounts={accounts}
+        accounts={shownAccounts}
         onAdd={() => setShowForm(true)}
       />
 

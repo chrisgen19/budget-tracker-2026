@@ -211,18 +211,45 @@ export function useDeleteCreditAccount() {
 }
 
 /**
+ * A failed purchases save, and whether it can have written anything. The batch route raises every
+ * 4xx before it opens a transaction, so `no` is safe to correct and resubmit. No response, or a 5xx,
+ * may sit in front of a batch that committed, so `unknown` must be retried exactly as sent.
+ */
+export class PurchaseSaveError extends Error {
+  constructor(message: string, readonly committed: "no" | "unknown") {
+    super(message);
+    this.name = "PurchaseSaveError";
+  }
+}
+
+const postPurchases = async (body: { transactions: CardPurchasePayload[]; clientBatchId: string }) => {
+  let res: Response;
+  try {
+    res = await fetch("/api/transactions/batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new PurchaseSaveError("Couldn't reach the server to save the purchases", "unknown");
+  }
+  const json: unknown = await res.json().catch(() => null);
+  if (res.ok) return json as { transactions: { id: string }[] };
+
+  if (res.status >= 400 && res.status < 500) {
+    const message = (json as { error?: unknown } | null)?.error;
+    throw new PurchaseSaveError(typeof message === "string" ? message : "Failed to add purchases", "no");
+  }
+  throw new PurchaseSaveError("The server didn't confirm the purchases were saved", "unknown");
+};
+
+/**
  * Add purchases to a card: one batch of ordinary transactions paid with it. The key makes a retry
- * of a lost response replay the same rows instead of writing them twice.
+ * of a lost response replay the same rows instead of writing them twice; `useCardPurchaseBatch`
+ * owns the key and the retry.
  */
 export function useAddCardPurchases() {
-  return useCardMutation(
-    ({ transactions, clientBatchId }: { transactions: CardPurchasePayload[]; clientBatchId: string }) =>
-      requestJson<{ transactions: { id: string }[] }>("/api/transactions/batch", "Failed to add purchases", {
-        method: "POST",
-        body: JSON.stringify({ transactions, clientBatchId }),
-      }),
-    SPENDING_KEYS
-  );
+  return useCardMutation(postPurchases, SPENDING_KEYS);
 }
 
 export function useCreateCreditPayment() {

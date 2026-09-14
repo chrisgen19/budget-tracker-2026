@@ -1,6 +1,7 @@
 import type { CreditAccount, CreditPayment, CreditPaymentKind, Prisma } from "@prisma/client";
 import type { PrismaClient } from "@/lib/budget-query-types";
 import { buildLabelBreakdown } from "@/lib/budget-queries";
+import { sumOwedOnCards } from "@/lib/card-owed";
 
 const round2 = (value: number): number => Math.round(value * 100) / 100;
 
@@ -98,15 +99,19 @@ export const foldLedgerGroups = (
   return totals;
 };
 
-/** Every card's ledger in two grouped queries, rather than two per card. */
+/**
+ * Every card's ledger in two grouped queries, rather than two per card. Bounded to a month's window,
+ * or to everything up to `asOf`, or neither for all time.
+ */
 const sumLedgers = async (
   prisma: PrismaClient,
   userId: string,
   accountIds: string[],
-  window?: DateWindow
+  window?: DateWindow,
+  asOf?: Date
 ): Promise<Map<string, LedgerTotals>> => {
   if (accountIds.length === 0) return new Map();
-  const date = window ? { gte: window.start, lte: window.end } : undefined;
+  const date = window ? { gte: window.start, lte: window.end } : asOf ? { lte: asOf } : undefined;
 
   const [purchaseGroups, paymentGroups] = await Promise.all([
     prisma.transaction.groupBy({
@@ -135,7 +140,7 @@ export interface CreditAccountSummary {
   openingBalanceDate: Date;
   isActive: boolean;
   billId: string | null;
-  /** What is owed right now, across the card's whole history. */
+  /** What is owed across the card's whole history, or up to `asOf` when one was asked for. */
   balance: number;
   /** Limit minus balance, or null with no limit recorded. Not clamped: being over it is worth seeing. */
   availableCredit: number | null;
@@ -143,8 +148,18 @@ export interface CreditAccountSummary {
   totals: LedgerTotals;
 }
 
-const toSummary = (account: CreditAccount, totals: LedgerTotals): CreditAccountSummary => {
-  const balance = computeAccountBalance(account.openingBalance, totals);
+/**
+ * The opening balance as it stood at `asOf`. It is what the card owed on its opening date, so a
+ * period that ended before that date knows nothing of it.
+ */
+export const openingBalanceAsOf = (
+  account: { openingBalance: number; openingBalanceDate: Date },
+  asOf?: Date
+): number =>
+  !asOf || account.openingBalanceDate.getTime() <= asOf.getTime() ? account.openingBalance : 0;
+
+const toSummary = (account: CreditAccount, totals: LedgerTotals, asOf?: Date): CreditAccountSummary => {
+  const balance = computeAccountBalance(openingBalanceAsOf(account, asOf), totals);
   return {
     id: account.id,
     name: account.name,
@@ -162,40 +177,37 @@ const toSummary = (account: CreditAccount, totals: LedgerTotals): CreditAccountS
   };
 };
 
-/** The user's cards with what each one owes. Archived cards only when asked for. */
+/**
+ * The user's cards with what each one owes. Archived cards only when asked for. `asOf` counts only
+ * what had happened by that instant, for a view of a month that has already ended.
+ */
 export const getCreditAccountSummaries = async (
   prisma: PrismaClient,
   userId: string,
-  { includeArchived = false }: { includeArchived?: boolean } = {}
+  { includeArchived = false, asOf }: { includeArchived?: boolean; asOf?: Date } = {}
 ): Promise<CreditAccountSummary[]> => {
   const accounts = await prisma.creditAccount.findMany({
     where: { userId, ...(includeArchived ? {} : { isActive: true }) },
     orderBy: [{ isActive: "desc" }, { name: "asc" }],
   });
-  const totals = await sumLedgers(prisma, userId, accounts.map((account) => account.id));
-  return accounts.map((account) => toSummary(account, totals.get(account.id) ?? emptyTotals()));
+  const totals = await sumLedgers(prisma, userId, accounts.map((account) => account.id), undefined, asOf);
+  return accounts.map((account) => toSummary(account, totals.get(account.id) ?? emptyTotals(), asOf));
 };
 
 /**
- * What the cards owe together, archived ones included, or null when there is nothing to show.
- *
- * Deleting a card with any history archives it whatever it still owes, so leaving archived cards out
- * would drop real debt from the total. Null only when no card is active and no archived one carries
- * a balance, which is when the dashboard hides the line.
- */
-export const sumOwedOnCards = (cards: readonly { isActive: boolean; balance: number }[]): number | null => {
-  if (!cards.some((card) => card.isActive || card.balance !== 0)) return null;
-  return round2(cards.reduce((sum, card) => sum + card.balance, 0));
-};
-
-/**
- * What the user's cards owe, together. See `sumOwedOnCards`.
+ * What the user's cards owe together as of `asOf`, archived ones included. See `sumOwedOnCards`.
  *
  * The gap between the dashboard's Running Balance and cash in the bank: a purchase on a card lowers
  * the running balance the day it is made, while the money only leaves the bank when the card is paid.
+ * The running balance stops at the end of the month shown, so this has to stop there too, or a past
+ * month would pair its balance with today's debt.
  */
-export const getOwedOnCards = async (prisma: PrismaClient, userId: string): Promise<number | null> =>
-  sumOwedOnCards(await getCreditAccountSummaries(prisma, userId, { includeArchived: true }));
+export const getOwedOnCards = async (
+  prisma: PrismaClient,
+  userId: string,
+  asOf?: Date
+): Promise<number | null> =>
+  sumOwedOnCards(await getCreditAccountSummaries(prisma, userId, { includeArchived: true, asOf }));
 
 export interface CardCategorySpend {
   categoryId: string;

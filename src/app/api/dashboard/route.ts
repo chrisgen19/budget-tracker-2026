@@ -111,10 +111,10 @@ export async function GET(request: Request) {
       orderBy: { date: "asc" },
     }),
 
-    // All-time, like the running balance it explains: cash in the bank is that balance plus this.
-    // Null for a user the /admin/settings switch keeps from cards, which hides the line.
+    // Up to the end of the selected month, like the running balance it explains: cash in the bank
+    // is that balance plus this. Null for a user the /admin/settings switch keeps from cards.
     userCanUseCreditCards(prisma, userId).then((allowed) =>
-      allowed ? getOwedOnCards(prisma, userId) : null
+      allowed ? getOwedOnCards(prisma, userId, endDate) : null
     ),
   ]);
 

@@ -5,30 +5,20 @@ import {
   currentMonthKey,
   foldLedgerGroups,
   monthWindow,
-  sumOwedOnCards,
+  openingBalanceAsOf,
 } from "./credit-account-queries";
 
-describe("sumOwedOnCards", () => {
-  it("counts an archived card that still owes money", () => {
-    expect(
-      sumOwedOnCards([
-        { isActive: true, balance: 1000.1 },
-        { isActive: false, balance: 2500.2 },
-      ])
-    ).toBe(3500.3);
+describe("openingBalanceAsOf", () => {
+  const card = { openingBalance: 74270.8, openingBalanceDate: new Date("2026-09-14T16:00:00.000Z") };
+
+  it("counts the opening balance for all time, or once its date has passed", () => {
+    expect(openingBalanceAsOf(card)).toBe(74270.8);
+    expect(openingBalanceAsOf(card, new Date("2026-09-30T15:59:59.999Z"))).toBe(74270.8);
   });
 
-  it("is zero, not hidden, for an active card that owes nothing", () => {
-    expect(sumOwedOnCards([{ isActive: true, balance: 0 }])).toBe(0);
-  });
-
-  it("is null with no cards, or only archived cards that are paid off", () => {
-    expect(sumOwedOnCards([])).toBeNull();
-    expect(sumOwedOnCards([{ isActive: false, balance: 0 }])).toBeNull();
-  });
-
-  it("shows a debt left on archived cards alone", () => {
-    expect(sumOwedOnCards([{ isActive: false, balance: 76566.08 }])).toBe(76566.08);
+  // A dashboard month that ended before the card's opening date knows nothing of that debt.
+  it("leaves it out of a month that ended before the opening date", () => {
+    expect(openingBalanceAsOf(card, new Date("2026-08-31T15:59:59.999Z"))).toBe(0);
   });
 });
 

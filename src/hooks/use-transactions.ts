@@ -679,6 +679,8 @@ export function useBatchCreateTransactions() {
       // per-category counts the picker ranks and groups by -- so the cached label list is now
       // behind. Every sibling create/update/delete above already invalidates it.
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
+      // A reviewed receipt can be paid with a card, which moves that card's balance and month.
+      queryClient.invalidateQueries({ queryKey: creditAccountKeys.all });
     },
   });
 }

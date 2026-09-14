@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { AlertTriangle, ArchiveRestore, ArrowLeft, Banknote, ListFilter, Pencil, Plus, Trash2 } from "lucide-react";
@@ -16,8 +16,9 @@ import { CardLedgerList } from "@/components/credit-accounts/card-ledger-list";
 import { CreditAccountForm } from "@/components/credit-accounts/credit-account-form";
 import { CardPurchasesForm } from "@/components/credit-accounts/card-purchases-form";
 import { CardPaymentForm } from "@/components/credit-accounts/card-payment-form";
+import { UnconfirmedPurchases } from "@/components/credit-accounts/unconfirmed-purchases";
+import { useCardPurchaseBatch, type PurchaseBatchResult } from "@/hooks/use-card-purchase-batch";
 import {
-  useAddCardPurchases,
   useCreateCreditPayment,
   useCreditAccountDetailQuery,
   useDeleteCreditAccount,
@@ -65,11 +66,9 @@ export default function CardDetailPage() {
   const [deletingPayment, setDeletingPayment] = useState<CreditPaymentView | null>(null);
   const [editingCard, setEditingCard] = useState(false);
   const [deletingCard, setDeletingCard] = useState(false);
-  // One key per opening of the purchases form, so retrying a lost response replays rather than duplicates.
-  const purchaseBatchId = useRef<string>("");
 
   const detail = useCreditAccountDetailQuery(id, month);
-  const addPurchases = useAddCardPurchases();
+  const purchaseBatch = useCardPurchaseBatch();
   const createPayment = useCreateCreditPayment();
   const updatePayment = useUpdateCreditPayment();
   const deletePayment = useDeleteCreditPayment();
@@ -88,9 +87,19 @@ export default function CardDetailPage() {
     }
   };
 
-  const openPurchases = () => {
-    purchaseBatchId.current = crypto.randomUUID();
-    setAddingPurchases(true);
+  /** A save closes the form; a refusal leaves the lines to correct; an unconfirmed save pins them. */
+  const settlePurchases = (result: PurchaseBatchResult | null) => {
+    if (!result) return;
+    if (result.outcome === "saved") {
+      showToast(`Added ${result.count} ${result.count === 1 ? "purchase" : "purchases"}`, "success");
+      setAddingPurchases(false);
+      // Show the month the purchases landed in, or a statement entered on the 2nd vanishes from view.
+      setMonth(accountMonthKey(result.firstDate, user.timezoneOffset));
+    } else if (result.outcome === "refused") {
+      showToast(result.message, "error");
+    } else {
+      showToast("Couldn't confirm the purchases were saved", "error");
+    }
   };
 
   const handleAddPurchases = async (lines: CardPurchaseLine[]) => {
@@ -106,13 +115,7 @@ export default function CardDetailPage() {
       labelIds: line.labelIds,
       creditAccountId: id,
     }));
-    const write = () => addPurchases.mutateAsync({ transactions, clientBatchId: purchaseBatchId.current });
-    const count = `${lines.length} ${lines.length === 1 ? "purchase" : "purchases"}`;
-    if (await attempt(write, `Added ${count}`, "Failed to add purchases")) {
-      setAddingPurchases(false);
-      // Show the month the purchases landed in, or a statement entered on the 2nd vanishes from view.
-      setMonth(lines[0].date.slice(0, 7));
-    }
+    settlePurchases(await purchaseBatch.submit(transactions));
   };
 
   const handleRecordPayment = async (input: CreditPaymentInput) => {
@@ -193,7 +196,7 @@ export default function CardDetailPage() {
       <div className="mb-6 flex flex-wrap gap-2">
         {account.isActive ? (
           <>
-            <button type="button" onClick={openPurchases} className={PRIMARY_BUTTON}>
+            <button type="button" onClick={() => setAddingPurchases(true)} className={PRIMARY_BUTTON}>
               <Plus className="h-4 w-4" />
               Add Purchases
             </button>
@@ -244,7 +247,16 @@ export default function CardDetailPage() {
       </div>
 
       <Modal open={addingPurchases} onClose={() => setAddingPurchases(false)} title="Add Purchases">
-        <CardPurchasesForm onSubmit={handleAddPurchases} onCancel={() => setAddingPurchases(false)} />
+        {purchaseBatch.unconfirmed ? (
+          <UnconfirmedPurchases
+            purchases={purchaseBatch.unconfirmed}
+            retrying={purchaseBatch.saving}
+            onRetry={() => void purchaseBatch.retry().then(settlePurchases)}
+            onClose={() => setAddingPurchases(false)}
+          />
+        ) : (
+          <CardPurchasesForm onSubmit={handleAddPurchases} onCancel={() => setAddingPurchases(false)} />
+        )}
       </Modal>
 
       <Modal open={paying} onClose={() => setPaying(false)} title="Pay Card">

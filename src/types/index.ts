@@ -64,8 +64,8 @@ export interface DashboardStats {
   balance: number;        // monthly net (selected month only)
   runningBalance: number; // cumulative all-time net up to end of selected month
   /**
-   * What the credit cards owe together, archived ones included, or null when there is nothing to
-   * show. Cash in the bank = runningBalance + this.
+   * What the credit cards owe together at the end of the selected month, archived ones included, or
+   * null when there is nothing to show. Cash in the bank = runningBalance + this.
    */
   owedOnCards: number | null;
   transactionCount: number;
