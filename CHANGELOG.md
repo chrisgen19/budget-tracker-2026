@@ -20,6 +20,35 @@ changes the keyboard too; there is no second list to maintain.
 
 No schema or data change. Send `/keyboard` once after deploying to replace the old fare buttons.
 
+## 2026-09-14 - A bare label name logs from Telegram shorthand
+
+`250 tnvs` names a label and nothing else, and the shorthand logger could not write it. A clause
+that is only a label name is applied as that label and cut out of the description, the rule that
+lets `150 court fee, pickleball` apply Pickleball, so this entry was left with no description, and
+the shorthand path writes no row without one. The whole message went to Gemini instead: a model
+call to log a ride that was already described, and no log at all on a deployment with no
+`GEMINI_API_KEY`. It surfaced when the `TNVC` label was renamed `TNVS`, since `tnvs` had until then
+been only a transport keyword and logged instantly.
+
+`shorthandDescription` (`src/lib/telegram/caption-labels.ts`) now uses the resolved label names as
+the description when nothing else is left, so `250 tnvs` writes "TNVS" under Transportation with
+the TNVS label and no model call. Only names that resolved stand in: `250 label it foo` still
+leaves nothing and reaches the classifier as before. Two knock-on effects, both deliberate:
+- A multi-entry message such as `250 tnvs, 180 lunch` now logs both rows instantly. The empty first
+  entry used to send the whole message to the classifier, which returns a single transaction
+- A label-only entry with no transport or food keyword (`100 work budget`) is still handed to
+  Gemini when a key is set. With no key it now files under `Other Expense` with the label applied,
+  the fallback every other unmatched shorthand entry already takes, where before it logged nothing
+
+The transport keywords in `matchCategory` (`src/lib/telegram/category-match.ts`) now also name the
+ride-hailing services in use here: `green gsm` (in either order), `indrive` and `joyride`.
+`150 green gsm` matched nothing, since neither word was a keyword, so it cost a Gemini call to
+recognise a car ride and filed under `Other Expense` with no key. GSM is matched by the service's
+name rather than the bare acronym, because `gsm` is also a paper weight (`300 gsm cardstock`) and
+a mobile standard, and a keyword match is final; every GSM ride in the ledger is written "GSM
+Green" or "Green GSM". Like every keyword they match whole words only. The label is still applied
+only when named (`150 green gsm, tnvs`): keywords choose a category, never a label.
+
 ## 2026-09-14 - Labels count a transaction in full
 
 A label is a tag, and the label breakdown now treats it as one: a transaction counts its full

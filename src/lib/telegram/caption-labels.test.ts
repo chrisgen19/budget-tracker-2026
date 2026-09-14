@@ -3,8 +3,10 @@ import {
   namesLabels,
   readLabelDirective,
   renderLabelNotice,
+  shorthandDescription,
   type BotLabel,
 } from "@/lib/telegram/caption-labels";
+import { matchCategory, type BotCategory } from "@/lib/telegram/category-match";
 
 const LABELS: BotLabel[] = [
   { id: "lbl_pickleball", name: "Pickleball" },
@@ -193,6 +195,52 @@ describe("readLabelDirective", () => {
       removedDirective: false,
       rest: "",
     });
+  });
+});
+
+describe("shorthandDescription", () => {
+  const RIDE_LABELS: BotLabel[] = [
+    { id: "lbl_tnvs", name: "TNVS", applicableTo: "EXPENSE" },
+    { id: "lbl_work", name: "Work Budget", applicableTo: "EXPENSE" },
+  ];
+  const CATEGORIES: BotCategory[] = ["Food & Dining", "Other Expense", "Transportation"].map(
+    (name) => ({ id: name.toLowerCase(), name, type: "EXPENSE" })
+  );
+
+  it("describes an entry that was only a label name by that name", () => {
+    // "250 tnvs" cut the bare name and left no description, so the shorthand path handed a ride
+    // that was already described to Gemini, and logged nothing at all without a key.
+    const directive = readLabelDirective("tnvs", RIDE_LABELS, "EXPENSE");
+    const description = shorthandDescription(directive);
+
+    expect(directive.ids).toEqual(["lbl_tnvs"]);
+    expect(description).toBe("TNVS");
+    // The name is also the word the keyword matcher needs, so the row files with no model call.
+    expect(matchCategory(description, "EXPENSE", CATEGORIES)?.name).toBe("Transportation");
+  });
+
+  it("keeps the description the user left beside the directive", () => {
+    const directive = readLabelDirective("gsm green, label it tnvs", RIDE_LABELS, "EXPENSE");
+    expect(directive.ids).toEqual(["lbl_tnvs"]);
+    expect(shorthandDescription(directive)).toBe("gsm green");
+  });
+
+  it("joins several bare names", () => {
+    const directive = readLabelDirective("tnvs, work budget", RIDE_LABELS, "EXPENSE");
+    expect(shorthandDescription(directive)).toBe("TNVS, Work Budget");
+  });
+
+  it("leaves nothing when the directive named no real label", () => {
+    // An instruction that resolved nothing is not a description, so the entry still falls
+    // through to the classifier as it did before.
+    const directive = readLabelDirective("label it foo", RIDE_LABELS, "EXPENSE");
+    expect(directive.removedDirective).toBe(true);
+    expect(shorthandDescription(directive)).toBe("");
+  });
+
+  it("leaves an untouched description alone", () => {
+    const directive = readLabelDirective("250 grab to office", RIDE_LABELS, "EXPENSE");
+    expect(shorthandDescription(directive)).toBe("250 grab to office");
   });
 });
 
