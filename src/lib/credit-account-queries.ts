@@ -177,16 +177,25 @@ export const getCreditAccountSummaries = async (
 };
 
 /**
- * What every active card owes, together, or null with no cards.
+ * What the cards owe together, archived ones included, or null when there is nothing to show.
+ *
+ * Deleting a card with any history archives it whatever it still owes, so leaving archived cards out
+ * would drop real debt from the total. Null only when no card is active and no archived one carries
+ * a balance, which is when the dashboard hides the line.
+ */
+export const sumOwedOnCards = (cards: readonly { isActive: boolean; balance: number }[]): number | null => {
+  if (!cards.some((card) => card.isActive || card.balance !== 0)) return null;
+  return round2(cards.reduce((sum, card) => sum + card.balance, 0));
+};
+
+/**
+ * What the user's cards owe, together. See `sumOwedOnCards`.
  *
  * The gap between the dashboard's Running Balance and cash in the bank: a purchase on a card lowers
  * the running balance the day it is made, while the money only leaves the bank when the card is paid.
  */
-export const getOwedOnCards = async (prisma: PrismaClient, userId: string): Promise<number | null> => {
-  const cards = await getCreditAccountSummaries(prisma, userId);
-  if (cards.length === 0) return null;
-  return round2(cards.reduce((sum, card) => sum + card.balance, 0));
-};
+export const getOwedOnCards = async (prisma: PrismaClient, userId: string): Promise<number | null> =>
+  sumOwedOnCards(await getCreditAccountSummaries(prisma, userId, { includeArchived: true }));
 
 export interface CardCategorySpend {
   categoryId: string;

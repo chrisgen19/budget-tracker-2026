@@ -53,12 +53,23 @@ interface LineProps {
   setValue: UseFormSetValue<PurchaseRows>;
   errors: FieldErrors<PurchaseRows>["lines"];
   categories: Category[];
+  loadingCategories: boolean;
   labels: LabelOption[];
   selectedLabelIds: string[];
   onRemove?: () => void;
 }
 
-function PurchaseLineFields({ index, register, setValue, errors, categories, labels, selectedLabelIds, onRemove }: LineProps) {
+function PurchaseLineFields({
+  index,
+  register,
+  setValue,
+  errors,
+  categories,
+  loadingCategories,
+  labels,
+  selectedLabelIds,
+  onRemove,
+}: LineProps) {
   const lineErrors = errors?.[index];
   const toggleLabel = (id: string) =>
     setValue(
@@ -88,7 +99,7 @@ function PurchaseLineFields({ index, register, setValue, errors, categories, lab
       </Field>
       <Field label="Category" error={lineErrors?.categoryId?.message}>
         <select {...register(`lines.${index}.categoryId`)} className={INPUT_CLASS}>
-          <option value="">Choose…</option>
+          <option value="">{loadingCategories ? "Loading categories…" : "Choose…"}</option>
           {categories.map((category) => (
             <option key={category.id} value={category.id}>
               {category.name}
@@ -145,7 +156,12 @@ interface CardPurchasesFormProps {
  */
 export function CardPurchasesForm({ onSubmit, onCancel }: CardPurchasesFormProps) {
   const { user } = useUser();
-  const { data: categories = [] } = useCategoriesQuery("EXPENSE");
+  const {
+    data: categories = [],
+    isLoading: loadingCategories,
+    isError: categoriesFailed,
+    refetch: refetchCategories,
+  } = useCategoriesQuery("EXPENSE");
   const { data: allLabels = [] } = useLabelsQuery();
   const labels = allLabels.filter((label) => label.applicableTo !== "INCOME");
   const today = accountDateKey(new Date(), user.timezoneOffset);
@@ -173,6 +189,15 @@ export function CardPurchasesForm({ onSubmit, onCancel }: CardPurchasesFormProps
 
   return (
     <form onSubmit={handleSubmit((data) => onSubmit(data.lines))} noValidate className="space-y-4">
+      {/* Every line needs a category, so without the list nothing can be saved: say so. */}
+      {categoriesFailed && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl bg-expense/10 px-4 py-2 text-sm text-expense">
+          <span>Couldn&apos;t load your categories, so these purchases can&apos;t be saved yet.</span>
+          <button type="button" onClick={() => refetchCategories()} className="min-h-11 shrink-0 font-medium underline">
+            Retry
+          </button>
+        </div>
+      )}
       {fields.map((row, index) => (
         <PurchaseLineFields
           key={row.id}
@@ -181,6 +206,7 @@ export function CardPurchasesForm({ onSubmit, onCancel }: CardPurchasesFormProps
           setValue={setValue}
           errors={errors.lines}
           categories={categories}
+          loadingCategories={loadingCategories}
           labels={labels}
           selectedLabelIds={lines[index]?.labelIds ?? []}
           onRemove={fields.length > 1 ? () => remove(index) : undefined}

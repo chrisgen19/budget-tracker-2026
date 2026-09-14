@@ -31,7 +31,10 @@ export type TransactionWithCategory = Transaction & {
   category: Category;
   bill?: ScheduledTransaction | null;
   labels?: (TransactionLabel & { label: Label })[];
-  /** The credit card this row pays down, when it is a card payment. */
+  /**
+   * The credit card this expense was paid with. Paying the card is a `CreditPayment`, never a
+   * transaction, so no row here is a card payment.
+   */
   creditAccount?: { id: string; name: string; color: string } | null;
 };
 
@@ -60,7 +63,10 @@ export interface DashboardStats {
   totalExpenses: number;
   balance: number;        // monthly net (selected month only)
   runningBalance: number; // cumulative all-time net up to end of selected month
-  /** What every active credit card owes, or null with no cards. Cash in the bank = balance + this. */
+  /**
+   * What the credit cards owe together, archived ones included, or null when there is nothing to
+   * show. Cash in the bank = runningBalance + this.
+   */
   owedOnCards: number | null;
   transactionCount: number;
   recentTransactions: TransactionWithCategory[];

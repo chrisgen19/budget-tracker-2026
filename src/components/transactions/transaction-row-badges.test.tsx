@@ -60,15 +60,15 @@ describe("TransactionRowBadges", () => {
     expect(screen.queryByText("Bill")).toBeNull();
   });
 
-  it("names the card a payment pays down", () => {
+  it("names the card a purchase was paid with", () => {
     render(<TransactionRowBadges creditAccount={{ name: "BPI Credit Card", color: "#5B6B8C" }} />);
     expect(screen.getByText("BPI Credit Card")).toBeDefined();
-    expect(screen.getByTitle("Pays BPI Credit Card")).toBeDefined();
+    expect(screen.getByTitle("Paid with BPI Credit Card")).toBeDefined();
   });
 
-  it("shows no card chip on a row that pays no card", () => {
+  it("shows no card chip on a row not paid with a card", () => {
     render(<TransactionRowBadges creditAccount={null} />);
-    expect(screen.queryByTitle(/^Pays /)).toBeNull();
+    expect(screen.queryByTitle(/^Paid with /)).toBeNull();
   });
 
   it("shows all three together when they all apply", () => {

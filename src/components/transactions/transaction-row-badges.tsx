@@ -45,10 +45,10 @@ export function TransactionRowBadges({
           Bill
         </span>
       )}
-      {/* Names the card, since "paid a card" alone does not say which debt went down. */}
+      {/* Names the card the purchase was made on, since a card chip alone does not say which. */}
       {creditAccount && (
         <span
-          title={`Pays ${creditAccount.name}`}
+          title={`Paid with ${creditAccount.name}`}
           className="shrink-0 inline-flex max-w-[9rem] items-center gap-0.5 bg-cream-100 text-warm-500 text-[10px] font-medium px-1.5 py-0.5 rounded"
         >
           <CreditCard className="w-2.5 h-2.5 shrink-0" style={{ color: creditAccount.color }} />

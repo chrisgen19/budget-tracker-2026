@@ -58,6 +58,7 @@ export async function GET(request: Request) {
     runningIncome,
     runningExpenses,
     trendWindowTx,
+    owedOnCards,
   ] = await Promise.all([
     // Current month transactions for stats
     prisma.transaction.findMany({
@@ -109,6 +110,12 @@ export async function GET(request: Request) {
       select: { amount: true, type: true, date: true },
       orderBy: { date: "asc" },
     }),
+
+    // All-time, like the running balance it explains: cash in the bank is that balance plus this.
+    // Null for a user the /admin/settings switch keeps from cards, which hides the line.
+    userCanUseCreditCards(prisma, userId).then((allowed) =>
+      allowed ? getOwedOnCards(prisma, userId) : null
+    ),
   ]);
 
   // Calculate monthly totals (selected month only)
@@ -197,12 +204,6 @@ export async function GET(request: Request) {
     bal += txByDay.get(key) ?? 0;
     balanceTrend.push({ date: key, balance: bal });
   }
-
-  // All-time, like the running balance it explains: cash in the bank is that balance plus this.
-  // Null for a user the /admin/settings switch keeps from cards, which hides the line.
-  const owedOnCards = (await userCanUseCreditCards(prisma, userId))
-    ? await getOwedOnCards(prisma, userId)
-    : null;
 
   return NextResponse.json({
     owedOnCards,

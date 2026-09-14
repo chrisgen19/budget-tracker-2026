@@ -17,7 +17,7 @@ export function CardCategoryBreakdown({ rows }: { rows: CardCategorySpendView[] 
   const { hideAmounts } = usePrivacy();
 
   if (rows.length === 0) {
-    return <p className="text-sm text-warm-400">No charges this month.</p>;
+    return <p className="text-sm text-warm-400">No purchases this month.</p>;
   }
 
   return (

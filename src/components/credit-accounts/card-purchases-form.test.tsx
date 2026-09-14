@@ -1,7 +1,9 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CardPurchasesForm, purchasesTotal } from "@/components/credit-accounts/card-purchases-form";
 import type { CardPurchaseLine } from "@/lib/validations";
+
+const categoriesQuery = vi.hoisted(() => ({ failed: false, refetch: vi.fn() }));
 
 vi.mock("@/components/user-provider", () => ({
   useUser: () => ({ user: { currency: "PHP", timezoneOffset: -480 } }),
@@ -10,7 +12,17 @@ vi.mock("@/components/user-provider", () => ({
 vi.mock("@/hooks/use-categories", () => {
   // Hoisted for a stable identity across renders.
   const categories = [{ id: "cat-subs", name: "Subscriptions", type: "EXPENSE", icon: "Film", color: "#FF6B6B" }];
-  return { useCategoriesQuery: () => ({ data: categories, isLoading: false }) };
+  return {
+    useCategoriesQuery: () =>
+      categoriesQuery.failed
+        ? { data: undefined, isLoading: false, isError: true, refetch: categoriesQuery.refetch }
+        : { data: categories, isLoading: false, isError: false, refetch: categoriesQuery.refetch },
+  };
+});
+
+afterEach(() => {
+  categoriesQuery.failed = false;
+  categoriesQuery.refetch.mockReset();
 });
 
 vi.mock("@/hooks/use-labels", () => {
@@ -65,5 +77,14 @@ describe("CardPurchasesForm", () => {
 
     await waitFor(() => expect(screen.getByText("Enter an amount above 0")).toBeTruthy());
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("says when categories failed to load, and retries", () => {
+    categoriesQuery.failed = true;
+    render(<CardPurchasesForm onSubmit={async () => {}} onCancel={() => {}} />);
+
+    expect(screen.getByRole("alert").textContent).toMatch(/couldn.t load your categories/i);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(categoriesQuery.refetch).toHaveBeenCalled();
   });
 });
