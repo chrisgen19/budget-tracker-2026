@@ -139,12 +139,19 @@ export function useCreditAccountDetailQuery(accountId: string, month: string) {
  * show a stale balance.
  */
 function useCardMutation<TVariables, TResult>(
-  mutationFn: (variables: TVariables) => Promise<TResult>
+  mutationFn: (variables: TVariables) => Promise<TResult>,
+  /** Other caches the write changes, such as the bills list a reminder adds to. */
+  alsoInvalidate: readonly (readonly unknown[])[] = []
 ) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: creditAccountKeys.all }),
+    onSuccess: () =>
+      Promise.all(
+        [creditAccountKeys.all, ...alsoInvalidate].map((queryKey) =>
+          queryClient.invalidateQueries({ queryKey })
+        )
+      ),
   });
 }
 
@@ -193,6 +200,29 @@ export function useUpdateCreditCharge() {
         "Failed to update charge",
         { method: "PUT", body: JSON.stringify(patch) }
       )
+  );
+}
+
+/** Keyed literally, as `use-transactions.ts` does: `use-bills.ts` imports hooks that import this one. */
+const BILLS_KEY = ["bills"] as const;
+
+export function useCreateCardReminder() {
+  return useCardMutation(
+    (accountId: string) =>
+      requestJson<{ billId: string }>(`${cardUrl(accountId)}/reminder`, "Failed to create the reminder", {
+        method: "POST",
+      }),
+    [BILLS_KEY]
+  );
+}
+
+export function useRemoveCardReminder() {
+  return useCardMutation(
+    (accountId: string) =>
+      requestJson<{ message: string }>(`${cardUrl(accountId)}/reminder`, "Failed to unlink the reminder", {
+        method: "DELETE",
+      }),
+    [BILLS_KEY]
   );
 }
 

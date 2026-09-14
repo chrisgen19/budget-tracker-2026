@@ -21,7 +21,12 @@ export async function GET(_request: Request, { params }: RouteParams) {
     const id = transactionIdSchema.parse(rawId);
     const transaction = await prisma.transaction.findFirst({
       where: { id, userId },
-      include: { category: true, bill: true, labels: { include: { label: true } } },
+      include: {
+        category: true,
+        bill: true,
+        labels: { include: { label: true } },
+        creditAccount: { select: { id: true, name: true, color: true } },
+      },
     });
 
     if (!transaction) {
@@ -194,7 +199,12 @@ export async function PUT(request: Request, { params }: RouteParams) {
 
       return tx.transaction.findUniqueOrThrow({
         where: { id },
-        include: { category: true, bill: true, labels: { include: { label: true } } },
+        include: {
+        category: true,
+        bill: true,
+        labels: { include: { label: true } },
+        creditAccount: { select: { id: true, name: true, color: true } },
+      },
       });
     });
 

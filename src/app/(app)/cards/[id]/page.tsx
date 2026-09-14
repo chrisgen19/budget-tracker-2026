@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { AlertTriangle, ArchiveRestore, ArrowLeft, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, ArchiveRestore, ArrowLeft, Banknote, Pencil, Plus, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
@@ -24,7 +24,11 @@ import {
   useUpdateCreditCharge,
   type CreditChargeView,
 } from "@/hooks/use-credit-accounts";
+import { CardReminder } from "@/components/credit-accounts/card-reminder";
+import { PayCardModal } from "@/components/credit-accounts/pay-card-modal";
+import { useCategoriesQuery } from "@/hooks/use-categories";
 import { accountMonthKey } from "@/lib/account-time";
+import { CARD_PAYMENT_CATEGORY_NAME } from "@/lib/card-payment-category";
 import type { CreditAccountInput, CreditChargeInput } from "@/lib/validations";
 
 const PRIMARY_BUTTON =
@@ -50,6 +54,7 @@ export default function CardDetailPage() {
   const [deletingCharge, setDeletingCharge] = useState<CreditChargeView | null>(null);
   const [editingCard, setEditingCard] = useState(false);
   const [deletingCard, setDeletingCard] = useState(false);
+  const [paying, setPaying] = useState(false);
 
   const detail = useCreditAccountDetailQuery(id, month);
   const createCharges = useCreateCreditCharges();
@@ -57,6 +62,9 @@ export default function CardDetailPage() {
   const deleteCharge = useDeleteCreditCharge();
   const updateCard = useUpdateCreditAccount();
   const deleteCard = useDeleteCreditAccount();
+  const { data: expenseCategories = [] } = useCategoriesQuery("EXPENSE");
+  // Missing only when the seed has not been run since cards shipped.
+  const paymentCategoryId = expenseCategories.find((c) => c.name === CARD_PAYMENT_CATEGORY_NAME)?.id;
 
   /** Runs a write, toasting either way. Resolves true on success so the caller can close its modal. */
   const attempt = async (write: () => Promise<unknown>, success: string, fallback: string) => {
@@ -143,13 +151,26 @@ export default function CardDetailPage() {
       />
 
       <CardSummary account={account} monthTotals={period.totals} />
+      <CardReminder account={account} />
 
       <div className="mb-6 flex flex-wrap gap-2">
         {account.isActive ? (
-          <button type="button" onClick={() => setAddingCharges(true)} className={PRIMARY_BUTTON}>
-            <Plus className="h-4 w-4" />
-            Add Charges
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => setPaying(true)}
+              disabled={!paymentCategoryId}
+              title={paymentCategoryId ? undefined : "The Credit Card Payment category is missing. Run the database seed."}
+              className={`${PRIMARY_BUTTON} disabled:cursor-not-allowed disabled:opacity-50`}
+            >
+              <Banknote className="h-4 w-4" />
+              Pay
+            </button>
+            <button type="button" onClick={() => setAddingCharges(true)} className={SECONDARY_BUTTON}>
+              <Plus className="h-4 w-4" />
+              Add Charges
+            </button>
+          </>
         ) : (
           <button type="button" onClick={() => void handleRestore()} className={PRIMARY_BUTTON}>
             <ArchiveRestore className="h-4 w-4" />
@@ -184,6 +205,12 @@ export default function CardDetailPage() {
           />
         </section>
       </div>
+
+      <PayCardModal
+        account={paying ? account : null}
+        paymentCategoryId={paymentCategoryId}
+        onClose={() => setPaying(false)}
+      />
 
       <Modal open={addingCharges} onClose={() => setAddingCharges(false)} title="Add Charges">
         <CreditChargeForm onSubmit={handleAddCharges} onCancel={() => setAddingCharges(false)} />

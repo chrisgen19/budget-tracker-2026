@@ -10,6 +10,7 @@ import type { TransactionWithCategory, DashboardStats } from "@/types";
 import type { TransactionFilters } from "@/components/transactions/transaction-filters";
 import { labelKeys } from "@/hooks/use-labels";
 import { analyticsKeys } from "@/hooks/use-analytics";
+import { creditAccountKeys } from "@/hooks/use-credit-accounts";
 import type { TransactionSelectionItem } from "@/lib/transaction-bulk";
 
 /* ------------------------------------------------------------------ */
@@ -358,6 +359,8 @@ export function useCreateTransaction() {
       // use-bills.ts already imports from this module, and importing back would
       // make the cycle.
       queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] });
+      // A payment linked to a card moves that card's balance.
+      queryClient.invalidateQueries({ queryKey: creditAccountKeys.all });
     },
   });
 }
@@ -406,6 +409,8 @@ export function useUpdateTransaction() {
       // use-bills.ts already imports from this module, and importing back would
       // make the cycle.
       queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] });
+      // A payment linked to a card moves that card's balance.
+      queryClient.invalidateQueries({ queryKey: creditAccountKeys.all });
     },
   });
 }
@@ -441,6 +446,7 @@ export function useDeleteTransaction() {
         queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
         queryClient.invalidateQueries({ queryKey: labelKeys.all }),
         queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] }),
+        queryClient.invalidateQueries({ queryKey: creditAccountKeys.all }),
       ]);
     },
   });
@@ -487,6 +493,7 @@ export function useBulkDeleteTransactions() {
         queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
         queryClient.invalidateQueries({ queryKey: labelKeys.all }),
         queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] }),
+        queryClient.invalidateQueries({ queryKey: creditAccountKeys.all }),
       ]);
     },
   });
@@ -562,6 +569,7 @@ export function useBulkUpdateTransactions() {
         queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
         queryClient.invalidateQueries({ queryKey: labelKeys.all }),
         queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] }),
+        queryClient.invalidateQueries({ queryKey: creditAccountKeys.all }),
       ]);
     },
   });
@@ -718,6 +726,8 @@ export function useRemoveTransactionLabel() {
       // use-bills.ts already imports from this module, and importing back would
       // make the cycle.
       queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] });
+      // A payment linked to a card moves that card's balance.
+      queryClient.invalidateQueries({ queryKey: creditAccountKeys.all });
     },
     onError: () => {
       // Refetch to restore consistent state (pill stays visible since cache

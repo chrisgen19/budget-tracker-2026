@@ -27,7 +27,12 @@ export async function GET(request: Request) {
     const [transactions, total] = await Promise.all([
       prisma.transaction.findMany({
         where,
-        include: { category: true, bill: true, labels: { include: { label: true } } },
+        include: {
+          category: true,
+          bill: true,
+          labels: { include: { label: true } },
+          creditAccount: { select: { id: true, name: true, color: true } },
+        },
         orderBy,
         skip: (page - 1) * limit,
         take: limit,
@@ -147,7 +152,12 @@ export async function POST(request: Request) {
 
       return tx.transaction.findUniqueOrThrow({
         where: { id: transaction.id },
-        include: { category: true, bill: true, labels: { include: { label: true } } },
+        include: {
+          category: true,
+          bill: true,
+          labels: { include: { label: true } },
+          creditAccount: { select: { id: true, name: true, color: true } },
+        },
       });
     });
 

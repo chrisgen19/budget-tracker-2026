@@ -60,6 +60,17 @@ describe("TransactionRowBadges", () => {
     expect(screen.queryByText("Bill")).toBeNull();
   });
 
+  it("names the card a payment pays down", () => {
+    render(<TransactionRowBadges creditAccount={{ name: "BPI Credit Card", color: "#5B6B8C" }} />);
+    expect(screen.getByText("BPI Credit Card")).toBeDefined();
+    expect(screen.getByTitle("Pays BPI Credit Card")).toBeDefined();
+  });
+
+  it("shows no card chip on a row that pays no card", () => {
+    render(<TransactionRowBadges creditAccount={null} />);
+    expect(screen.queryByTitle(/^Pays /)).toBeNull();
+  });
+
   it("shows all three together when they all apply", () => {
     render(<TransactionRowBadges receiptGroupId="grp_1" billId="bill_1" createdVia="MCP" />);
     expect(screen.getByText("Itemized")).toBeDefined();

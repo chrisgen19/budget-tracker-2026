@@ -2,6 +2,24 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-14 - Credit cards: paying a card
+
+The last piece: recording a payment against a card, so paying the BPI statement lowers what the
+card owes while the payment counts as an expense.
+
+- **Transaction form:** choosing "Credit Card Payment" shows a **Pays down** picker with each card
+  and its balance. A new payment with only one card chooses it; "No card" stays chosen once
+  picked. Moving an edited payment to another category unlinks it. Every other save posts exactly
+  what it did before, since the field is only sent when it means something
+- **Card page:** a **Pay** button opens that form filled in for the card and what it owes
+- **Transactions list:** payment rows carry a chip naming the card
+- **Payment reminder:** a card with a due day can turn on a monthly reminder, a variable bill
+  under "Credit Card Payment". Paying it from the reminder banner or the Bills page records the
+  payment against the card: `settleBill` links both `pay` and `pay_existing`, and still pays the
+  bill without the link if the card has been archived or the bill recategorised
+- Every transaction write now refreshes the card queries, so a balance updates straight away
+- New route: `POST/DELETE /api/credit-accounts/[id]/reminder`
+
 ## 2026-09-14 - Credit cards: the Cards pages
 
 The screens for the card data model. **Cards** sits in the sidebar after Bills and in the mobile
