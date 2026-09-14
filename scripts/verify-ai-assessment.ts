@@ -32,7 +32,7 @@ const check = (ok: boolean, label: string, detail = "") => {
 /** Every free-text field the model wrote, flattened, so a rule can be checked across all of them. */
 const allProse = (r: AiAssessmentReport): string[] => [
   r.summary,
-  r.scoreCommentary,
+  r.cashFlowCommentary,
   r.outlook,
   ...r.patterns.flatMap((p) => [p.title, p.detail]),
   ...r.trends.flatMap((t) => [t.title, t.detail]),
@@ -109,7 +109,6 @@ async function main() {
     .map(([key, g]) => ({ name: key.split(":")[0], type: g.type, amount: g.amount, percentage: total > 0 ? Math.round((g.amount / total) * 100) : 0, transactionCount: g.count }))
     .sort((a, b) => b.amount - a.amount);
 
-  const savingsRate = current.summary.totalIncome > 0 ? current.summary.netCashFlow / current.summary.totalIncome : null;
   const activeDays = new Set(current.rows.map((r) => formatLocalDate(r.date, user.timezoneOffset))).size;
   const expenseRows = current.rows.filter((r) => r.type === "EXPENSE");
   // Days in the assessed range, not days in the current month, and not the days
@@ -121,10 +120,6 @@ async function main() {
   const totalDaysInPeriod =
     Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
 
-  // The sub-scores are computed inside the analytics route and are not exported, so these are
-  // stand-ins. They are labelled as such here because nothing in the new sections reads them --
-  // what is under test is whether the model uses the *facts*, and those are real.
-  const sub = { score: 70, label: "Fair", trend: "stable" };
   const payload: AssessmentPayload = {
     currency: user.currency,
     granularity: "monthly",
@@ -132,13 +127,6 @@ async function main() {
     previousPeriodLabel: previous.label,
     summary: current.summary,
     previousSummary: prior.summary,
-    healthScore: {
-      overallScore: 70,
-      overallLabel: "Fair",
-      overallTrend: "stable",
-      savingsRate,
-      subScores: { savingsRate: sub, expenseTrend: sub, incomeStability: sub, diversification: sub, consistency: sub },
-    },
     categoryBreakdown,
     statistics: {
       avgDailySpend: totalDaysInPeriod > 0 ? current.summary.totalExpenses / totalDaysInPeriod : null,

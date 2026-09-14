@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   batchTransactionSchema,
+  assessmentReportSchema,
   createMcpTokenSchema,
   formatLocalDate,
   hasTrustworthyTime,
@@ -29,6 +30,28 @@ const batchRow = (receiptBreakdown: unknown) => ({
   date: "2026-03-05",
   categoryId: "c1",
   receiptBreakdown,
+});
+
+describe("assessmentReportSchema commentary compatibility", () => {
+  it("normalizes commentary from reports cached before the health score was removed", () => {
+    const report = assessmentReportSchema.parse({
+      summary: "An older report",
+      scoreCommentary: "Legacy commentary",
+    });
+
+    expect(report.cashFlowCommentary).toBe("Legacy commentary");
+    expect(report).not.toHaveProperty("scoreCommentary");
+  });
+
+  it("prefers the current cash-flow commentary when both fields exist", () => {
+    const report = assessmentReportSchema.parse({
+      summary: "A current report",
+      cashFlowCommentary: "Current commentary",
+      scoreCommentary: "Legacy commentary",
+    });
+
+    expect(report.cashFlowCommentary).toBe("Current commentary");
+  });
 });
 
 describe("receiptBreakdownMetaSchema", () => {

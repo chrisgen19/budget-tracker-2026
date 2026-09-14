@@ -2,6 +2,25 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-14 - Analytics stops grading financial health from transaction activity
+
+The Analytics page no longer presents a 0–100 Financial Health score. Its formula treated spending
+across more categories and spending on more days as inherently healthier, called a single
+period-over-period income change “stability,” and assigned confident labels without knowing account
+balances, liquid savings, assets, debt, goals, insurance, or the user’s circumstances. Those inputs
+cannot support an overall financial-wellbeing grade.
+
+The existing bookmarked `tab=health` URL still opens the same tab, now named **Cash Flow Signals**.
+It shows only auditable transaction-ledger facts: net cash flow, income kept, income and expense
+change against the preceding period, and days with a logged expense. Zero baselines and periods with
+no prior transactions show no comparison instead of manufacturing a percentage. A visible scope
+note explains what the ledger does not measure, and Hide Amounts now applies to the tab’s net figure.
+
+The AI Assessment payload and prompt no longer receive or discuss the discarded score. New reports
+use `cashFlowCommentary` and are explicitly forbidden from implying an overall grade. Cached reports
+with the old `scoreCommentary` field remain readable through a one-way compatibility normalization;
+no database migration is required.
+
 ## 2026-09-14 - The Telegram keyboard fills spare spots from Frequent
 
 With fewer than six saved Quick Log buttons, `/keyboard` used to leave the spare spots empty. It
