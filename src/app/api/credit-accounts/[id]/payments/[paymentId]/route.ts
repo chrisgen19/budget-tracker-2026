@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getAuthUserId } from "@/lib/session";
 import { creditPaymentPatchSchema } from "@/lib/validations";
 import { readTimezoneOffset } from "@/lib/credit-account-queries";
 import { deleteCreditPayment, updateCreditPayment } from "@/lib/credit-account-writes";
@@ -8,6 +7,7 @@ import {
   creditFailureResponse,
   creditRouteIdSchema,
   invalidInputResponse,
+  requireCreditCardsUser,
 } from "@/lib/credit-account-http";
 
 interface RouteParams {
@@ -23,7 +23,7 @@ const parseIds = async (params: RouteParams["params"]) => {
 };
 
 export async function PUT(request: Request, { params }: RouteParams) {
-  const userId = await getAuthUserId();
+  const userId = await requireCreditCardsUser();
   if (userId instanceof NextResponse) return userId;
 
   try {
@@ -50,7 +50,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
 }
 
 export async function DELETE(_request: Request, { params }: RouteParams) {
-  const userId = await getAuthUserId();
+  const userId = await requireCreditCardsUser();
   if (userId instanceof NextResponse) return userId;
 
   try {

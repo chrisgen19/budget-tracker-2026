@@ -515,7 +515,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               )}
             </div>
 
-            {selectedType === "EXPENSE" && (
+            {selectedType === "EXPENSE" && user.creditCardsEnabled && (
               <PaidWithField
                 value={watchedCreditAccountId}
                 onChange={(id) => setValue("creditAccountId", id, { shouldDirty: true })}

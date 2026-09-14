@@ -4,9 +4,18 @@ import { TransactionForm } from "@/components/transactions/transaction-form";
 import type { TransactionInput } from "@/lib/validations";
 import type { TransactionWithCategory } from "@/types";
 
+const userMock = vi.hoisted(() => ({ creditCardsEnabled: true }));
+
 vi.mock("@/components/user-provider", () => ({
   useUser: () => ({
-    user: { currency: "PHP", timezoneOffset: -480, transactionAmountAutofocus: false },
+    user: {
+      currency: "PHP",
+      timezoneOffset: -480,
+      transactionAmountAutofocus: false,
+      get creditCardsEnabled() {
+        return userMock.creditCardsEnabled;
+      },
+    },
   }),
 }));
 
@@ -68,6 +77,15 @@ const cardPurchase = {
 } as unknown as TransactionWithCategory;
 
 describe("TransactionForm paid with", () => {
+  // The /admin/settings switch keeps cards to admins until it is turned on for everyone.
+  it("shows no Paid with field when credit cards are not enabled for this user", () => {
+    userMock.creditCardsEnabled = false;
+    renderForm({ initialData: { amount: 250, categoryId: "food" } });
+
+    expect(screen.queryByText("Paid with")).toBeNull();
+    userMock.creditCardsEnabled = true;
+  });
+
   // Every flow sharing this form (receipts, bills, quick add) must post what it did before cards.
   it("sends no card field for an expense paid from the bank", async () => {
     const onSubmit = renderForm({ initialData: { amount: 250, categoryId: "food" } });

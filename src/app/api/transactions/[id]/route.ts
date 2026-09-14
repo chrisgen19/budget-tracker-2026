@@ -5,6 +5,8 @@ import { getAuthUserId } from "@/lib/session";
 import { transactionSchema } from "@/lib/validations";
 import { categoriesAreUsable } from "@/lib/transaction-writes";
 import { CARD_PURCHASE_REFUSAL_MESSAGES, checkCardPurchases } from "@/lib/card-purchase-rule";
+import { userCanUseCreditCards } from "@/lib/credit-card-access";
+import { creditCardsUnavailableResponse } from "@/lib/credit-account-http";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -91,6 +93,13 @@ export async function PUT(request: Request, { params }: RouteParams) {
     // edit. `null` is the explicit way to unlink.
     const creditAccountId =
       validated.creditAccountId === undefined ? existing.creditAccountId : validated.creditAccountId;
+
+    // Putting a row on a card is for users the /admin/settings switch allows. Clearing a card, or
+    // editing a purchase that already carries one, is not: losing access must not lock their data.
+    const linksNewCard = !!creditAccountId && creditAccountId !== existing.creditAccountId;
+    if (linksNewCard && !(await userCanUseCreditCards(prisma, userId))) {
+      return creditCardsUnavailableResponse();
+    }
 
     // Judged only when the link or the type moves, for the same reason the category check above is:
     // a purchase on a card archived since must stay editable, down to a typo in its description.

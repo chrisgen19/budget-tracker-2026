@@ -10,7 +10,12 @@ const mocks = vi.hoisted(() => ({
   update: vi.fn(),
   findUniqueOrThrow: vi.fn(),
   creditAccountFindMany: vi.fn(),
+  canUseCreditCards: vi.fn(),
 }));
+
+// The /admin/settings switch, stubbed at its own seam rather than through the user and settings
+// reads beneath it, which `credit-card-access.test.ts` already covers.
+vi.mock("@/lib/credit-card-access", () => ({ userCanUseCreditCards: mocks.canUseCreditCards }));
 
 // `categoriesAreUsable` is deliberately left unmocked: it is the shared predicate under test, so
 // the PUT cases below exercise the real one against a mocked `category.findMany` rather than a
@@ -103,6 +108,7 @@ describe("PUT /api/transactions/[id]", () => {
     mocks.update.mockResolvedValue({ id: "tx-1" });
     mocks.findUniqueOrThrow.mockResolvedValue({ id: "tx-1", categoryId: "cat-1" });
     mocks.creditAccountFindMany.mockResolvedValue([{ id: "card-1", isActive: true }]);
+    mocks.canUseCreditCards.mockResolvedValue(true);
   });
 
   it("writes when the category is the caller's own and matches the type", async () => {
@@ -390,6 +396,28 @@ describe("PUT /api/transactions/[id]", () => {
       expect(response.status).toBe(400);
       expect(await response.json()).toMatchObject({ code: "NOT_AN_EXPENSE" });
       expect(mocks.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses to put a row on a card for a user the switch keeps from cards", async () => {
+      mocks.findFirst.mockResolvedValue(stored());
+      mocks.canUseCreditCards.mockResolvedValue(false);
+
+      const response = await put(payment({ creditAccountId: "card-1" }));
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ code: "FEATURE_DISABLED" });
+      expect(mocks.update).not.toHaveBeenCalled();
+    });
+
+    // Losing access must not lock someone out of their own data.
+    it("still lets that user edit a purchase that is already on a card", async () => {
+      mocks.findFirst.mockResolvedValue(stored({ creditAccountId: "card-1" }));
+      mocks.canUseCreditCards.mockResolvedValue(false);
+
+      const response = await put(payment({ amount: 5500 }));
+
+      expect(response.status).toBe(200);
+      expect(mocks.canUseCreditCards).not.toHaveBeenCalled();
     });
 
     it("keeps a purchase on an archived card editable", async () => {

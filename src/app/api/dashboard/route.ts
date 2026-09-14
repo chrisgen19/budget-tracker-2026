@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { getOwedOnCards } from "@/lib/credit-account-queries";
+import { userCanUseCreditCards } from "@/lib/credit-card-access";
 
 export async function GET(request: Request) {
   const userId = await getAuthUserId();
@@ -198,7 +199,10 @@ export async function GET(request: Request) {
   }
 
   // All-time, like the running balance it explains: cash in the bank is that balance plus this.
-  const owedOnCards = await getOwedOnCards(prisma, userId);
+  // Null for a user the /admin/settings switch keeps from cards, which hides the line.
+  const owedOnCards = (await userCanUseCreditCards(prisma, userId))
+    ? await getOwedOnCards(prisma, userId)
+    : null;
 
   return NextResponse.json({
     owedOnCards,

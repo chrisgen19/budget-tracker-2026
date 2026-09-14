@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getAuthUserId } from "@/lib/session";
 import { creditAccountPatchSchema } from "@/lib/validations";
 import {
   currentMonthKey,
@@ -12,6 +11,7 @@ import {
   creditFailureResponse,
   creditRouteIdSchema,
   invalidInputResponse,
+  requireCreditCardsUser,
 } from "@/lib/credit-account-http";
 
 interface RouteParams {
@@ -21,7 +21,7 @@ interface RouteParams {
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 export async function GET(request: Request, { params }: RouteParams) {
-  const userId = await getAuthUserId();
+  const userId = await requireCreditCardsUser();
   if (userId instanceof NextResponse) return userId;
 
   try {
@@ -48,7 +48,7 @@ export async function GET(request: Request, { params }: RouteParams) {
 }
 
 export async function PUT(request: Request, { params }: RouteParams) {
-  const userId = await getAuthUserId();
+  const userId = await requireCreditCardsUser();
   if (userId instanceof NextResponse) return userId;
 
   try {
@@ -68,7 +68,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
 }
 
 export async function DELETE(_request: Request, { params }: RouteParams) {
-  const userId = await getAuthUserId();
+  const userId = await requireCreditCardsUser();
   if (userId instanceof NextResponse) return userId;
 
   try {

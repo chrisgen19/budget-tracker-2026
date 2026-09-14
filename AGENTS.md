@@ -169,8 +169,13 @@ Active tasks:
   card, and an archived card takes no new purchases while its existing ones stay editable.
   This replaced a first version (#318) that kept statement lines in `credit_charges` and counted
   only the payment, which hid card spending from every category and label report; migration
-  `20260915120000_card_purchases_are_transactions` converts that data. Not yet: card due
-  reminders, and "Paid with" on Telegram, receipt scans, quick-log tiles and MCP
+  `20260915120000_card_purchases_are_transactions` converts that data. Who sees cards is a
+  switch on /admin/settings (`site_settings.credit_cards_access`, "Admin only" until changed,
+  and a missing row reads as that): `canUseCreditCards` in `src/lib/credit-card-access.ts`. The
+  card routes open with `requireCreditCardsUser`, linking a transaction to a card is refused
+  without access, and `/cards` has a server layout that redirects; turning it off hides everything
+  but deletes nothing. Not yet: card due reminders, and "Paid with" on Telegram, receipt scans,
+  quick-log tiles and MCP
 - Users can create custom categories on top of defaults
 - Key models: `User`, `Category`, `Transaction`, `ScheduledTransaction` (recurring bills; `@@map("scheduled_transactions")` — there is no `Bill` model), `ScheduledTransactionLog` (per-occurrence PAID/SKIPPED/SNOOZED), `BillEmailLog`, `Label`, `LabelSchedule`, `TransactionLabel`, `BillLabel`, `VerificationToken`, `ScanLog`, `AiAssessment`, `AiUsageLog`, `McpToken`, `AppSettings`, `TelegramPromptLog`, `TelegramQuickTile`, `TelegramQuickTileLabel`, `CreditAccount` (a credit card; balance derived, never stored), `CreditPayment` (payments and refunds on a card; never in `transactions`, so in no expense total)
 - Notable columns: `users.hide_amounts`, `users.timezone_offset`, `users.telegram_user_id` (the Mini App's identity half; set by hand with `scripts/link-telegram-user.ts`, so a restored database loses it), `users.email_verified`, `users.default_label_type`, `transactions.receipt_group_id`, `transactions.receipt_breakdown`, `transactions.bill_id`, `transactions.client_batch_id`, `transactions.created_via`, `transactions.mcp_token_id`, `transactions.updated_via`, `transactions.updated_by_mcp_token_id`, `users.mcp_writes_enabled_until`, `mcp_tokens.source`, `transactions.credit_account_id` (the credit card an expense was paid with; only an EXPENSE may carry it, see `src/lib/card-purchase-rule.ts`)

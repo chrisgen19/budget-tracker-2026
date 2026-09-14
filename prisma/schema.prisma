@@ -76,6 +76,12 @@ enum ScanStatus {
   FAILED
 }
 
+/// Who a feature is switched on for. Admins always have every feature; this decides everyone else.
+enum FeatureAccess {
+  ADMIN
+  EVERYONE
+}
+
 model User {
   id                         String                 @id @default(cuid())
   name                       String
@@ -631,4 +637,19 @@ model TelegramQuickTileLabel {
   @@index([tileId])
   @@index([labelId])
   @@map("telegram_quick_tile_labels")
+}
+
+/// App-wide switches an admin flips on /admin/settings.
+///
+/// One row, id 1, created on the first write. A missing row reads as every default, so a fresh
+/// database needs no seed. Separate from `AppSettings`, which holds one row per role: these switches
+/// are not per role.
+model SiteSettings {
+  id                Int           @id @default(1)
+  /// Who can use credit cards. Admin only until switched on. A user who loses access keeps their
+  /// data, since their card purchases are ordinary expenses, so flipping it back is always safe.
+  creditCardsAccess FeatureAccess @default(ADMIN) @map("credit_cards_access")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  @@map("site_settings")
 }

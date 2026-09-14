@@ -36,6 +36,11 @@ what the card was spent on. It is turned the other way round here, before any ca
   refunds into card credits, drops `credit_charges`, and removes the unused "Credit Card Payment"
   default. No seed is needed
 - `/cards` is on the service worker's denylist (`PROTECTED_PAGE_PATHS`)
+- **Admin switch:** Admin > Settings > Features > Credit Cards, **Admin only** (the default) or
+  **Everyone**. Stored in the new one-row `site_settings` table (migration
+  `20260915130000_add_site_settings`). Without access, Cards, Paid with, card chips and Owed on
+  cards are hidden, `/cards` redirects to the dashboard, and the card API answers 403. Nothing is
+  deleted: card purchases stay ordinary expenses, and switching back restores it all
 
 Not yet: card due reminders (paying one would have to write a card payment, which bills cannot do),
 and "Paid with" on Telegram, receipt scans, quick-log tiles and MCP.

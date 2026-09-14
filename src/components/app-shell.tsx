@@ -222,7 +222,7 @@ export function AppShell({ children }: AppShellProps) {
             laptop, a half-height window, devtools docked at the bottom - the profile and log-out
             control was pushed out of reach with no way to scroll to it. */}
         <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4 space-y-1">
-          {NAV_ITEMS.map((item) => {
+          {NAV_ITEMS.filter((item) => item.href !== "/cards" || user.creditCardsEnabled).map((item) => {
             const isActive = pathname === item.href;
             return (
               <Link

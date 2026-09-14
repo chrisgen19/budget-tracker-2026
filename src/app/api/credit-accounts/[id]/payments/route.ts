@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getAuthUserId } from "@/lib/session";
 import { creditPaymentSchema } from "@/lib/validations";
 import { readTimezoneOffset } from "@/lib/credit-account-queries";
 import { createCreditPayment } from "@/lib/credit-account-writes";
@@ -8,6 +7,7 @@ import {
   creditFailureResponse,
   creditRouteIdSchema,
   invalidInputResponse,
+  requireCreditCardsUser,
 } from "@/lib/credit-account-http";
 
 interface RouteParams {
@@ -15,7 +15,7 @@ interface RouteParams {
 }
 
 export async function POST(request: Request, { params }: RouteParams) {
-  const userId = await getAuthUserId();
+  const userId = await requireCreditCardsUser();
   if (userId instanceof NextResponse) return userId;
 
   try {

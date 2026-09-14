@@ -5,6 +5,8 @@ import { transactionSchema } from "@/lib/validations";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 import { categoriesAreUsable, categoriesAreUsableForWrite } from "@/lib/transaction-writes";
 import { CARD_PURCHASE_REFUSAL_MESSAGES, checkCardPurchases } from "@/lib/card-purchase-rule";
+import { userCanUseCreditCards } from "@/lib/credit-card-access";
+import { creditCardsUnavailableResponse } from "@/lib/credit-account-http";
 import {
   buildTransactionOrderBy,
   buildTransactionWhere,
@@ -81,6 +83,11 @@ export async function POST(request: Request) {
         { error: "That category does not exist, or its type does not match the transaction's" },
         { status: 400 }
       );
+    }
+
+    // Paid with a credit card: only for someone the /admin/settings switch lets use cards.
+    if (validated.creditAccountId && !(await userCanUseCreditCards(prisma, userId))) {
+      return creditCardsUnavailableResponse();
     }
 
     // Paid with a credit card: only an expense, on an active card the caller owns.

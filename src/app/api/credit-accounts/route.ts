@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getAuthUserId } from "@/lib/session";
 import { creditAccountSchema } from "@/lib/validations";
 import { getCreditAccountSummaries, readTimezoneOffset } from "@/lib/credit-account-queries";
 import { createCreditAccount } from "@/lib/credit-account-writes";
-import { creditFailureResponse, invalidInputResponse } from "@/lib/credit-account-http";
+import {
+  creditFailureResponse,
+  invalidInputResponse,
+  requireCreditCardsUser,
+} from "@/lib/credit-account-http";
 
 export async function GET(request: Request) {
-  const userId = await getAuthUserId();
+  const userId = await requireCreditCardsUser();
   if (userId instanceof NextResponse) return userId;
 
   try {
@@ -20,7 +23,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const userId = await getAuthUserId();
+  const userId = await requireCreditCardsUser();
   if (userId instanceof NextResponse) return userId;
 
   try {

@@ -66,18 +66,31 @@ describe("mobile More destinations", () => {
     expect(push).toHaveBeenCalledWith("/labels");
   });
 
-  it("includes a Cards action", () => {
+  it("includes a Cards action when credit cards are enabled", () => {
     const push = vi.fn();
     const items = buildMenuItems({
       isAdmin: false,
       hideAmounts: false,
       router: { push },
       toggleHideAmounts: vi.fn(),
+      cardsEnabled: true,
     });
     const cards = items.find((item) => item.key === "cards");
 
     expect(cards?.mobileOnly).toBe(true);
     cards?.onSelect();
     expect(push).toHaveBeenCalledWith("/cards");
+  });
+
+  // The /admin/settings switch keeps Cards to admins until it is turned on for everyone.
+  it("leaves Cards out when credit cards are not enabled for this user", () => {
+    const items = buildMenuItems({
+      isAdmin: false,
+      hideAmounts: false,
+      router: { push: vi.fn() },
+      toggleHideAmounts: vi.fn(),
+    });
+
+    expect(items.some((item) => item.key === "cards")).toBe(false);
   });
 });

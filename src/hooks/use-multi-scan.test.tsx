@@ -80,6 +80,7 @@ const createWrapper = () => {
             maxUploadFiles: 10,
             monthlyScanLimit: 5,
             scansUsedThisMonth: 0,
+            creditCardsEnabled: false,
           }}
         >
           <ToastProvider>{children}</ToastProvider>
