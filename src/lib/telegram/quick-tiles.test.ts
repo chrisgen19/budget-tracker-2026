@@ -107,8 +107,8 @@ describe("resolveTileCategory", () => {
   });
 
   it("keeps the three existing fares filing where they always did", () => {
-    // The property `quick-keyboard.test.ts` guarantees at compile time for QUICK_FARES, asserted
-    // here for the same three descriptions once they are rows instead of a literal.
+    // The property `quick-keyboard.test.ts` once guaranteed for the hardcoded fare list, asserted
+    // here for the same three descriptions now that they are rows instead of a literal.
     for (const description of ["fare to office", "fare home (UV)", "fare home (UV + jeep)"]) {
       expect(resolveTileCategory(tile({ description }), CATEGORIES)?.categoryName).toBe(
         "Transportation"

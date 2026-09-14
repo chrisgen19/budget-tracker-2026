@@ -1,11 +1,10 @@
 /**
  * Seed the Telegram Mini App's quick-log buttons for one account.
  *
- * The three fixed fares are the ones `QUICK_FARES` already pins to the reply keyboard, carried
- * across so the Mini App opens with something in it rather than an empty grid. The three
- * ask-for-an-amount tiles are the ones a reply keyboard could never offer: a button sends its label
- * verbatim, so it cannot pause to ask "how much?", which is why Grab, taxi and a variable lunch
- * never got one.
+ * The three fixed fares are the ones the reply keyboard used to hardcode, carried across so the
+ * Mini App opens with something in it rather than an empty grid. The three ask-for-an-amount tiles
+ * are the ones that hardcoded keyboard could never offer. The reply keyboard now renders these same
+ * rows (`quick-keyboard.ts`), asking "how much?" for the amountless ones, so seeding also fills it.
  *
  * Deliberately **not** part of `pnpm db:seed`, and never part of a build. It writes rows for one
  * named user, which is not a thing a deploy should decide, and re-running it after someone has

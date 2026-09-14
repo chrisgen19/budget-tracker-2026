@@ -49,6 +49,7 @@ import {
   type BillWithRelations,
 } from "../bill-writes";
 import { createLabel } from "../label-writes";
+import { listTileCategories, listTileRows, viewTiles } from "../telegram/tile-queries";
 import { collectAssessmentFacts } from "../assessment-facts-query";
 import { formatPeriodLabel } from "../analytics-period";
 import { utcDayKey } from "../bill-dates";
@@ -74,6 +75,7 @@ import {
   categoryListOutput,
   labelBreakdownOutput,
   labelListOutput,
+  quickTileListOutput,
   billHistoryOutput,
   receiptItemsOutput,
   createTransactionsOutput,
@@ -827,6 +829,41 @@ export const createBudgetMcpServer = ({
     async ({ applicableTo }) => {
       const result = await getLabelList(prisma, userId, { applicableTo });
       const payload = { labels: result };
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+        structuredContent: structured(payload),
+      };
+    }
+  );
+
+  registered.get_quick_tiles = server.registerTool(
+    "get_quick_tiles",
+    {
+      title: "Quick-log buttons",
+      description:
+        "List the user's quick-log buttons in display order: the label shown, the description " +
+        "and amount a tap writes (null amount means the button asks for one), and where it would " +
+        "file right now. `resolvedCategoryId` is the category a tap actually uses, which differs " +
+        "from `categoryId` when the chosen one was deleted or changed type (`fallsBack` is then " +
+        "true). A pinned label with `applies: false` no longer fits the button's type and is not " +
+        "written.",
+      inputSchema: {},
+      outputSchema: quickTileListOutput,
+      annotations: { readOnlyHint: true },
+    },
+    async () => {
+      // The same read `GET /api/tg/bootstrap` makes, so the Telegram keyboard, the Mini App grid
+      // and the web page agree about where a tap files. Resolution lives in `viewTiles`; a caller
+      // of this tool never re-derives it.
+      const [categories, labels, rows] = await Promise.all([
+        listTileCategories(prisma, userId),
+        prisma.label.findMany({
+          where: { userId },
+          select: { id: true, name: true, color: true, applicableTo: true },
+        }),
+        listTileRows(prisma, userId),
+      ]);
+      const payload = { tiles: viewTiles(rows, categories, labels) };
       return {
         content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
         structuredContent: structured(payload),

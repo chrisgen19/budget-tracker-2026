@@ -92,7 +92,7 @@ export const COMMAND_MENU: { command: string; description: string }[] = [
   { command: "items", description: "Line items from your last receipt" },
   { command: "categories", description: "List your categories" },
   { command: "quick", description: "Open the quick-log grid" },
-  { command: "keyboard", description: "Pin the fare buttons above the message box" },
+  { command: "keyboard", description: "Pin your quick-log buttons above the message box" },
   { command: "examples", description: "Things you can type, ready to copy" },
   { command: "help", description: "Everything you can ask, including plain English" },
 ];

@@ -343,6 +343,92 @@ describe("createBudgetMcpServer", () => {
     expect(await listToolNames(READ_ONLY_SCOPES)).toContain("get_assessment_facts");
   });
 
+  /** A button carries a category and pinned labels, so the tool needs both read scopes. Both are
+   *  in the default grant, which is what keeps the Telegram bot's token working unchanged. */
+  it("serves get_quick_tiles only when both budget:read and labels:read are granted", async () => {
+    expect(await listToolNames(["budget:read"])).not.toContain("get_quick_tiles");
+    expect(await listToolNames(["labels:read"])).not.toContain("get_quick_tiles");
+    expect(await listToolNames(["budget:read", "labels:read"])).toContain("get_quick_tiles");
+    expect(await listToolNames(READ_ONLY_SCOPES)).toContain("get_quick_tiles");
+  });
+
+  /**
+   * The tool must hand back where a tap *actually* files, not merely what was chosen.
+   *
+   * The Telegram bot writes whatever `resolvedCategoryId` and `applies` say, with no second
+   * resolution of its own, so a tile whose category is gone or whose pin no longer fits has to be
+   * reported that way here.
+   */
+  it("get_quick_tiles resolves categories and pins against the current lists", async () => {
+    const stub = {
+      category: {
+        findMany: vi.fn(async () => [
+          { id: "cat_other", name: "Other Expense", type: "EXPENSE", icon: null, color: null, isDefault: true },
+          { id: "cat_transport", name: "Transportation", type: "EXPENSE", icon: null, color: null, isDefault: true },
+        ]),
+      },
+      label: {
+        findMany: vi.fn(async () => [
+          { id: "lbl_work", name: "Work", color: "#000", applicableTo: "EXPENSE" },
+          { id: "lbl_salary", name: "Salary", color: "#fff", applicableTo: "INCOME" },
+        ]),
+      },
+      telegramQuickTile: {
+        findMany: vi.fn(async () => [
+          {
+            id: "tile_office",
+            label: "Office",
+            description: "Fare to office",
+            amount: 38,
+            type: "EXPENSE",
+            categoryId: "cat_transport",
+            sortOrder: 10,
+            labels: [{ labelId: "lbl_work" }, { labelId: "lbl_salary" }],
+          },
+          {
+            id: "tile_misc",
+            label: "Misc",
+            description: "Something",
+            amount: null,
+            type: "EXPENSE",
+            categoryId: "cat_deleted",
+            sortOrder: 20,
+            labels: [],
+          },
+        ]),
+      },
+    } as unknown as PrismaClient;
+
+    const server = createBudgetMcpServer({
+      prisma: stub,
+      userId: "user_1",
+      timezoneOffset: -480,
+      scopes: READ_ONLY_SCOPES,
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const result = await client.callTool({ name: "get_quick_tiles", arguments: {} });
+    await client.close();
+
+    const { tiles } = result.structuredContent as {
+      tiles: {
+        id: string;
+        resolvedCategoryId: string | null;
+        fallsBack: boolean;
+        labels: { id: string; applies: boolean }[];
+      }[];
+    };
+
+    expect(tiles.map((t) => t.id)).toEqual(["tile_office", "tile_misc"]);
+    expect(tiles[0]).toMatchObject({ resolvedCategoryId: "cat_transport", fallsBack: false });
+    expect(tiles[0].labels).toEqual([
+      expect.objectContaining({ id: "lbl_work", applies: true }),
+      expect.objectContaining({ id: "lbl_salary", applies: false }),
+    ]);
+    expect(tiles[1]).toMatchObject({ resolvedCategoryId: "cat_other", fallsBack: true });
+  });
+
   /**
    * Every month-taking tool has to reject a month that is not one.
    *
