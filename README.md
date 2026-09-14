@@ -37,7 +37,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **Timezone-Aware Dates** — All date queries respect the user's local timezone offset for accurate day boundaries and month grouping
 - **MCP Server** - [Model Context Protocol](https://modelcontextprotocol.io/) access to your budget data in natural language, over stdio (local) or HTTP with a scoped bearer token (remote); 12 read-only tools (spending by category, top expenses, monthly summary, spending trends, search transactions, budget overview, upcoming bills, category list, label breakdown, label list, bill history, receipt items) plus two write tools — `create_transactions` and `update_transactions` — both behind the `transactions:write` scope, a time-limited write lease, and provenance columns recording which credential created and which last edited every row; nothing can delete; shared query library reusable for future in-app AI chat
 - **Telegram Bot** - Log spending by messaging a personal Telegram bot (`100 breakfast`, `spent 350 for groceries yesterday`) and ask for summaries, recent transactions, or upcoming bills; runs inside the app on boot; talks to the app as an MCP client, so it inherits the token scope, write lease, rate limit, and audit trail rather than touching the database; Gemini only classifies each message, so every figure it reports comes from real data
-- **Analytics** — Dedicated reporting page with income vs expenses, cash flow, category and label breakdowns, period comparisons, records, transparent cash-flow signals, and flexible time range controls (weekly/monthly/yearly/custom)
+- **Analytics** — Dedicated reporting page with income vs expenses, cash flow, category and label breakdowns, like-for-like partial-period comparisons with coverage warnings, records, transparent cash-flow signals, and flexible time range controls (weekly/monthly/yearly/custom)
 - **Design** — Warm paper-ledger aesthetic with Young Serif + Outfit fonts, Plus Jakarta Sans for currency amounts, amber accents, and Framer Motion animations
 
 ## Tech Stack
@@ -825,7 +825,7 @@ AppSettings (per role: FREE, PAID)
 | Phase | Feature | Status |
 |-------|---------|--------|
 | 1 | Income & Expenses Report, Category Breakdown, Label Breakdown, Cash Flow, Time Range Controls | Done |
-| 2 | Period Comparison — compare the selected range with its preceding range | Done |
+| 2 | Period Comparison — elapsed-window matching, coverage gate, and preceding range | Done |
 | 3 | Records & Statistics — biggest expense, avg daily spend, most used category, streaks | Done |
 | 4 | Cash Flow Signals — income kept, income/expense changes, net flow, and expense days | Done |
 

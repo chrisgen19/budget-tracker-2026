@@ -47,6 +47,7 @@ import { AnalyticsHero } from "@/components/analytics/analytics-hero";
 import { AnalyticsHeroSkeleton, AnalyticsContentSkeleton } from "@/components/analytics/analytics-skeleton";
 import { RecordsStatistics } from "@/components/analytics/records-statistics";
 import { CashFlowSignals } from "@/components/analytics/cash-flow-signals";
+import { PeriodComparisonNote } from "@/components/analytics/period-comparison-note";
 import { AiAssessmentReport } from "@/components/analytics/ai-assessment-report";
 import { stagger, fadeUp } from "@/components/analytics/motion-variants";
 import type { AnalyticsTypeFilter } from "@/types";
@@ -245,10 +246,6 @@ export default function AnalyticsPage() {
   const returnParam = analyticsQuery;
 
   // Client-side label used for the picker before API data arrives
-  // The drill-down links want the days alone, not the period type. Memoized so a
-  // fresh object each render cannot defeat the charts' own memoization.
-  const dateRange = useMemo(() => ({ from: period.from, to: period.to }), [period.from, period.to]);
-
   const clientPeriodLabel = formatPeriodLabel(period.periodType, period.from, period.to);
   const granularity = chartGranularity(period.periodType, period.from, period.to);
 
@@ -260,6 +257,13 @@ export default function AnalyticsPage() {
   }), [granularity, period.from, period.to, typeFilter]);
 
   const { data, isLoading, isError, refetch } = useAnalyticsQuery(params, tz);
+
+  // Drill-downs must cover the rows behind the displayed actual, not the future
+  // tail of the picker range that the API deliberately clipped away.
+  const dateRange = useMemo(() => ({
+    from: period.from,
+    to: data?.periodContext.effectiveTo ?? period.to,
+  }), [data?.periodContext.effectiveTo, period.from, period.to]);
 
   // Use API-provided label once loaded (authoritative), fall back to client-derived
   const periodLabel = data?.periodLabel ?? clientPeriodLabel;
@@ -386,6 +390,10 @@ export default function AnalyticsPage() {
         </div>
       ) : isError || !data ? null : (
         <motion.div variants={stagger} initial="hidden" animate="show" className="mb-6">
+          <PeriodComparisonNote
+            context={data.periodContext}
+            previousPeriodLabel={data.previousPeriodLabel}
+          />
           <motion.div variants={fadeUp}>
             <AnalyticsHero
               summary={data.summary}
@@ -393,6 +401,7 @@ export default function AnalyticsPage() {
               cashFlow={data.cashFlow}
               periodLabel={data.periodLabel}
               previousPeriodLabel={data.previousPeriodLabel}
+              periodContext={data.periodContext}
               currency={currency}
               hideAmounts={hideAmounts}
             />
@@ -498,6 +507,7 @@ export default function AnalyticsPage() {
                   previousCategoryBreakdown={data.allPreviousCategoryBreakdown}
                   currency={currency}
                   hideAmounts={hideAmounts}
+                  comparisonAvailable={data.periodContext.comparisonStatus === "available"}
                 />
               </motion.div>
             </motion.div>
@@ -506,7 +516,12 @@ export default function AnalyticsPage() {
           {/* Records & Statistics Tab */}
           {activeTab === "statistics" && (
             <motion.div key="statistics" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-              <RecordsStatistics statistics={data.statistics} currency={currency} hideAmounts={hideAmounts} />
+              <RecordsStatistics
+                statistics={data.statistics}
+                currency={currency}
+                hideAmounts={hideAmounts}
+                periodContext={data.periodContext}
+              />
             </motion.div>
           )}
 
@@ -518,6 +533,7 @@ export default function AnalyticsPage() {
                 previousPeriodLabel={data.previousPeriodLabel}
                 currency={currency}
                 hideAmounts={hideAmounts}
+                comparisonStatus={data.periodContext.comparisonStatus}
               />
             </motion.div>
           )}

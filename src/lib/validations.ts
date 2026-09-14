@@ -275,7 +275,7 @@ export const analyticsQuerySchema = z.object({
   granularity: z.enum(["weekly", "monthly", "yearly"]),
   from: validDateString,
   to: validDateString,
-  tz: z.coerce.number().int(),
+  tz: timezoneOffsetParam,
   type: z.enum(["ALL", "INCOME", "EXPENSE"]).default("ALL"),
 }).refine((data) => data.from <= data.to, {
   message: "from must not be after to",

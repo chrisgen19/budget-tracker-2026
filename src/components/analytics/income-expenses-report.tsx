@@ -13,6 +13,7 @@ interface IncomeExpensesReportProps {
   previousCategoryBreakdown: AnalyticsCategoryItem[];
   currency: string;
   hideAmounts: boolean;
+  comparisonAvailable: boolean;
 }
 
 export function IncomeExpensesReport({
@@ -24,6 +25,7 @@ export function IncomeExpensesReport({
   previousCategoryBreakdown,
   currency,
   hideAmounts,
+  comparisonAvailable,
 }: IncomeExpensesReportProps) {
   const sym = getCurrencySymbol(currency);
   const fmt = (amount: number) => (hideAmounts ? `${sym} ••••••` : formatCurrency(amount, currency));
@@ -37,8 +39,12 @@ export function IncomeExpensesReport({
 
   // Also collect categories that only exist in previous period
   const currentIds = new Set(categoryBreakdown.map((c) => c.id));
-  const prevOnlyIncome = previousCategoryBreakdown.filter((c) => c.type === "INCOME" && !currentIds.has(c.id));
-  const prevOnlyExpense = previousCategoryBreakdown.filter((c) => c.type === "EXPENSE" && !currentIds.has(c.id));
+  const prevOnlyIncome = comparisonAvailable
+    ? previousCategoryBreakdown.filter((c) => c.type === "INCOME" && !currentIds.has(c.id))
+    : [];
+  const prevOnlyExpense = comparisonAvailable
+    ? previousCategoryBreakdown.filter((c) => c.type === "EXPENSE" && !currentIds.has(c.id))
+    : [];
 
   return (
     <div className="space-y-0">
@@ -60,7 +66,7 @@ export function IncomeExpensesReport({
             {fmt(summary.totalIncome)}
           </span>
           <span className="w-28 sm:w-36 text-right text-sm font-medium text-warm-400 tabular-nums">
-            {fmt(previousSummary.totalIncome)}
+            {comparisonAvailable ? fmt(previousSummary.totalIncome) : "—"}
           </span>
         </div>
 
@@ -73,6 +79,7 @@ export function IncomeExpensesReport({
             amount={cat.amount}
             prevAmount={prevMap.get(cat.id) ?? 0}
             fmt={fmt}
+            comparisonAvailable={comparisonAvailable}
           />
         ))}
         {prevOnlyIncome.map((cat) => (
@@ -84,6 +91,7 @@ export function IncomeExpensesReport({
             amount={0}
             prevAmount={cat.amount}
             fmt={fmt}
+            comparisonAvailable={comparisonAvailable}
           />
         ))}
         {incomeCategories.length === 0 && prevOnlyIncome.length === 0 && (
@@ -99,7 +107,11 @@ export function IncomeExpensesReport({
             {summary.totalExpenses > 0 ? `-${fmt(summary.totalExpenses)}` : fmt(0)}
           </span>
           <span className="w-28 sm:w-36 text-right text-sm font-medium text-warm-400 tabular-nums">
-            {previousSummary.totalExpenses > 0 ? `-${fmt(previousSummary.totalExpenses)}` : fmt(0)}
+            {comparisonAvailable
+              ? previousSummary.totalExpenses > 0
+                ? `-${fmt(previousSummary.totalExpenses)}`
+                : fmt(0)
+              : "—"}
           </span>
         </div>
 
@@ -113,6 +125,7 @@ export function IncomeExpensesReport({
             prevAmount={prevMap.get(cat.id) ?? 0}
             fmt={fmt}
             isExpense
+            comparisonAvailable={comparisonAvailable}
           />
         ))}
         {prevOnlyExpense.map((cat) => (
@@ -125,6 +138,7 @@ export function IncomeExpensesReport({
             prevAmount={cat.amount}
             fmt={fmt}
             isExpense
+            comparisonAvailable={comparisonAvailable}
           />
         ))}
         {expenseCategories.length === 0 && prevOnlyExpense.length === 0 && (
@@ -143,6 +157,7 @@ function CategoryRow({
   prevAmount,
   fmt,
   isExpense = false,
+  comparisonAvailable,
 }: {
   icon: string;
   color: string;
@@ -151,9 +166,14 @@ function CategoryRow({
   prevAmount: number;
   fmt: (n: number) => string;
   isExpense?: boolean;
+  comparisonAvailable: boolean;
 }) {
   const displayAmount = isExpense && amount > 0 ? `-${fmt(amount)}` : fmt(amount);
-  const displayPrev = isExpense && prevAmount > 0 ? `-${fmt(prevAmount)}` : fmt(prevAmount);
+  const displayPrev = comparisonAvailable
+    ? isExpense && prevAmount > 0
+      ? `-${fmt(prevAmount)}`
+      : fmt(prevAmount)
+    : "—";
 
   return (
     <div className="flex items-center py-2.5 px-1 border-b border-cream-100 last:border-0">

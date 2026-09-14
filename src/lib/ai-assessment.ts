@@ -35,6 +35,18 @@ export const assessmentPayloadSchema = z.object({
   previousPeriodLabel: z.string().max(120).default(""),
   summary: summarySchema,
   previousSummary: summarySchema,
+  periodContext: z.object({
+    requestedFrom: z.string(),
+    requestedTo: z.string(),
+    effectiveTo: z.string().nullable(),
+    isPartial: z.boolean(),
+    daysElapsed: z.number().int().nonnegative(),
+    daysInPeriod: z.number().int().positive(),
+    currentCoveragePct: z.number().min(0).max(100),
+    previousCoveragePct: z.number().min(0).max(100),
+    comparisonStatus: z.enum(["available", "low-coverage", "no-previous-data", "not-started"]),
+    coverageThresholdPct: z.number().min(0).max(100),
+  }).optional(),
   // All-types only — the Reports type filter must not skew the assessment, and the
   // cache key is type-independent, so type-filtered fields (labels, top transactions)
   // are intentionally excluded. The statistics block below carries the all-types highlights.
@@ -159,6 +171,7 @@ const buildDataSnapshot = (p: AssessmentPayload, bills: UpcomingBillsContext): s
       expenses: p.previousSummary.totalExpenses,
       net: p.previousSummary.netCashFlow,
     },
+    periodContext: p.periodContext ?? null,
     cashFlowSignals: {
       net: p.summary.netCashFlow,
       incomeKeptPct: incomeKept,

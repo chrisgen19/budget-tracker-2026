@@ -11,7 +11,7 @@ const signals = {
   incomeChange: 0.25,
   expenseDays: 18,
   totalDaysInPeriod: 30,
-  hasPreviousData: true,
+  hasComparableData: true,
 };
 
 describe("CashFlowSignals", () => {
@@ -22,6 +22,7 @@ describe("CashFlowSignals", () => {
         previousPeriodLabel="August 2026"
         currency="PHP"
         hideAmounts={false}
+        comparisonStatus="available"
       />,
     );
 
@@ -40,6 +41,7 @@ describe("CashFlowSignals", () => {
         previousPeriodLabel="August 2026"
         currency="PHP"
         hideAmounts
+        comparisonStatus="available"
       />,
     );
 

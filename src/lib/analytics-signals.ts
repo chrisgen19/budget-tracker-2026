@@ -15,9 +15,9 @@ const savingsRate = ({ totalIncome, netCashFlow }: AnalyticsSummary): number | n
 const relativeChange = (
   current: number,
   previous: number,
-  hasPreviousData: boolean,
+  hasComparableData: boolean,
 ): number | null => {
-  if (!hasPreviousData) return null;
+  if (!hasComparableData) return null;
   if (previous === 0) return current === 0 ? 0 : null;
   return (current - previous) / previous;
 };
@@ -34,10 +34,10 @@ export const computeCashFlowSignals = (
   summary: AnalyticsSummary,
   previousSummary: AnalyticsSummary,
   statistics: ExpenseDayStatistics,
+  hasComparableData = previousSummary.transactionCount > 0,
 ): AnalyticsCashFlowSignals => {
-  const hasPreviousData = previousSummary.transactionCount > 0;
   const currentSavingsRate = savingsRate(summary);
-  const priorSavingsRate = hasPreviousData ? savingsRate(previousSummary) : null;
+  const priorSavingsRate = hasComparableData ? savingsRate(previousSummary) : null;
 
   return {
     netCashFlow: summary.netCashFlow,
@@ -50,15 +50,15 @@ export const computeCashFlowSignals = (
     expenseChange: relativeChange(
       summary.totalExpenses,
       previousSummary.totalExpenses,
-      hasPreviousData,
+      hasComparableData,
     ),
     incomeChange: relativeChange(
       summary.totalIncome,
       previousSummary.totalIncome,
-      hasPreviousData,
+      hasComparableData,
     ),
     expenseDays: statistics.expenseDays,
     totalDaysInPeriod: statistics.totalDaysInPeriod,
-    hasPreviousData,
+    hasComparableData,
   };
 };
