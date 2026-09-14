@@ -449,6 +449,23 @@ export const readLabelDirective = (
 };
 
 /**
+ * The description a shorthand entry is written with, once its label directive is read out.
+ *
+ * Usually `rest`. The case this exists for is an entry that was *only* a label name: `250 tnvs`
+ * resolves `TNVS` as a bare clause and cuts it, which leaves nothing, and the shorthand path
+ * writes no row without a description. It used to hand the whole message to Gemini, spending a
+ * model call on a ride the user had already described and logging nothing at all with no
+ * `GEMINI_API_KEY`. The name they typed is the description they gave, and it is also the word
+ * `matchCategory` needs, since `tnvs` is a transport hint.
+ *
+ * Only names that resolved stand in. An instruction naming nothing real (`label it foo`) still
+ * leaves nothing and falls through to the classifier exactly as before, and a bare directive that
+ * was not cut already carries its whole text in `rest`.
+ */
+export const shorthandDescription = (directive: Pick<LabelDirective, "names" | "rest">): string =>
+  directive.rest || directive.names.join(", ");
+
+/**
  * The lines a reply adds for the labels it read, and for the ones it could not.
  *
  * Both halves are said out loud on the same principle as the existing "I used your caption as a
