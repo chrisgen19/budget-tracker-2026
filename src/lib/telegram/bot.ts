@@ -62,6 +62,7 @@ import {
   namesLabels,
   readLabelDirective,
   renderLabelNotice,
+  shorthandDescription,
   type BotLabel,
 } from "@/lib/telegram/caption-labels";
 import {
@@ -1564,8 +1565,9 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       // a directive applies to the transaction it was written beside rather than to all of them:
       // a wrong label moves money in `getLabelBreakdown`, so it is the guess not worth making.
       const directive = readLabelDirective(entry.description, labelLookup.labels, type);
-      // A clause that is *only* a directive leaves nothing to describe the purchase.
-      const description = directive.rest;
+      // A clause that is *only* a label name ("250 tnvs") is described by that name, rather than
+      // leaving nothing and sending an already described purchase to the model.
+      const description = shorthandDescription(directive);
 
       // No confident match returns null rather than a guess. It used to fall back to the first
       // category of that type, and the list is ordered defaults-first then alphabetically, so

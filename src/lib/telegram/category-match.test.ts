@@ -43,6 +43,11 @@ describe("matchCategory", () => {
       "fare home (uv + jeep)",
       "tnvs to the office",
       "grabcar home",
+      "green gsm",
+      "gsm green to mega tower",
+      "(work) green gsm: mirea to csmc",
+      "indrive home",
+      "joyride to bgc",
       "tricycle to the terminal",
       "mrt ticket",
       "lrt load",
@@ -52,11 +57,22 @@ describe("matchCategory", () => {
     }
   });
 
+  // "gsm" alone is also a paper weight and a mobile standard, and a keyword match is final: it
+  // wins before Gemini or the Other fallback is consulted. Every GSM ride in the ledger is written
+  // "GSM Green" or "Green GSM", so only the service's own name counts.
+  it("matches a GSM ride by the service name, never the bare acronym", () => {
+    expect(matchCategory("300 gsm cardstock", "EXPENSE", CATEGORIES)).toBeNull();
+    expect(matchCategory("gsm sim", "EXPENSE", CATEGORIES)).toBeNull();
+    expect(matchCategory("gsm to mirea", "EXPENSE", CATEGORIES)).toBeNull();
+  });
+
   // `uv` is only two letters, so the word boundary is the whole safety margin. Without it every
   // description containing those letters would be filed as a fare.
   it("does not match short transport keywords inside other words", () => {
     expect(matchCategory("louvre tickets", "EXPENSE", CATEGORIES)).toBeNull();
     expect(matchCategory("souvenir for mum", "EXPENSE", CATEGORIES)).toBeNull();
+    expect(matchCategory("hogsmeade tickets", "EXPENSE", CATEGORIES)).toBeNull();
+    expect(matchCategory("indriver license", "EXPENSE", CATEGORIES)).toBeNull();
   });
 
   // The bug this covers: with no match the caller took `matchingCats[0]`, which is Education
