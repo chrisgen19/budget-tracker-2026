@@ -4,6 +4,7 @@ import { getAuthUserId } from "@/lib/session";
 import { transactionSchema } from "@/lib/validations";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 import { categoriesAreUsable, categoriesAreUsableForWrite } from "@/lib/transaction-writes";
+import { CARD_PAYMENT_REFUSAL_MESSAGES, checkCardPayments } from "@/lib/card-payment-rule";
 import {
   buildTransactionOrderBy,
   buildTransactionWhere,
@@ -77,6 +78,15 @@ export async function POST(request: Request) {
       );
     }
 
+    // A payment to a credit card: an expense under the payment category, on a card the caller owns.
+    const paymentRefusal = await checkCardPayments(prisma, userId, [validated]);
+    if (paymentRefusal) {
+      return NextResponse.json(
+        { error: CARD_PAYMENT_REFUSAL_MESSAGES[paymentRefusal], code: paymentRefusal },
+        { status: 400 }
+      );
+    }
+
     // Validate label ownership and type compatibility before writing
     const verifiedLabelIds: string[] = [];
     if (validated.labelIds && validated.labelIds.length > 0) {
@@ -122,6 +132,7 @@ export async function POST(request: Request) {
           date: new Date(validated.date),
           categoryId: validated.categoryId,
           userId,
+          ...(validated.creditAccountId && { creditAccountId: validated.creditAccountId }),
         },
       });
 

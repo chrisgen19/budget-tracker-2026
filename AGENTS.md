@@ -155,9 +155,17 @@ Active tasks:
   keeps `isDefault: true`, and `DELETE /api/categories/[id]` filters on `isDefault: false`, so it
   cannot be removed through the app. The seed reports these (`findOrphanedDefaults`) rather than
   repairing them: renaming one preserves its id and its transactions, but also relabels real spending
+- **Credit cards are debts, not spending.** Swiping a card writes a `CreditCharge`, which no expense
+  total reads; paying the card writes an ordinary EXPENSE transaction carrying
+  `credit_account_id`, and only that payment reaches the dashboard, analytics and the assessment.
+  So a card's spending lands in the month it is paid, not the month it is swiped. What a card owes
+  is `opening_balance + charges - credits - payments`, derived on every read
+  (`src/lib/credit-account-queries.ts`). Charges keep a category so the card page can still say
+  what the money went on. The "Credit Card Payment" default category ships with this and, like any
+  new default, needs `pnpm db:seed` run by hand after the deploy
 - Users can create custom categories on top of defaults
-- Key models: `User`, `Category`, `Transaction`, `ScheduledTransaction` (recurring bills; `@@map("scheduled_transactions")` — there is no `Bill` model), `ScheduledTransactionLog` (per-occurrence PAID/SKIPPED/SNOOZED), `BillEmailLog`, `Label`, `LabelSchedule`, `TransactionLabel`, `BillLabel`, `VerificationToken`, `ScanLog`, `AiAssessment`, `AiUsageLog`, `McpToken`, `AppSettings`, `TelegramPromptLog`, `TelegramQuickTile`, `TelegramQuickTileLabel`
-- Notable columns: `users.hide_amounts`, `users.timezone_offset`, `users.telegram_user_id` (the Mini App's identity half; set by hand with `scripts/link-telegram-user.ts`, so a restored database loses it), `users.email_verified`, `users.default_label_type`, `transactions.receipt_group_id`, `transactions.receipt_breakdown`, `transactions.bill_id`, `transactions.client_batch_id`, `transactions.created_via`, `transactions.mcp_token_id`, `transactions.updated_via`, `transactions.updated_by_mcp_token_id`, `users.mcp_writes_enabled_until`, `mcp_tokens.source`
+- Key models: `User`, `Category`, `Transaction`, `ScheduledTransaction` (recurring bills; `@@map("scheduled_transactions")` — there is no `Bill` model), `ScheduledTransactionLog` (per-occurrence PAID/SKIPPED/SNOOZED), `BillEmailLog`, `Label`, `LabelSchedule`, `TransactionLabel`, `BillLabel`, `VerificationToken`, `ScanLog`, `AiAssessment`, `AiUsageLog`, `McpToken`, `AppSettings`, `TelegramPromptLog`, `TelegramQuickTile`, `TelegramQuickTileLabel`, `CreditAccount` (a credit card as a debt; balance derived, never stored), `CreditCharge` (statement lines; never in `transactions`, so in no expense total)
+- Notable columns: `users.hide_amounts`, `users.timezone_offset`, `users.telegram_user_id` (the Mini App's identity half; set by hand with `scripts/link-telegram-user.ts`, so a restored database loses it), `users.email_verified`, `users.default_label_type`, `transactions.receipt_group_id`, `transactions.receipt_breakdown`, `transactions.bill_id`, `transactions.client_batch_id`, `transactions.created_via`, `transactions.mcp_token_id`, `transactions.updated_via`, `transactions.updated_by_mcp_token_id`, `users.mcp_writes_enabled_until`, `mcp_tokens.source`, `transactions.credit_account_id` (marks a row as a card payment; only an EXPENSE under the default "Credit Card Payment" category may carry it, see `src/lib/card-payment-rule.ts`)
 - `Label.applicable_to` restricts labels to "EXPENSE", "INCOME", or "BOTH" (default); filters LabelPicker, schedule auto-labeling, and retroactive apply
 - `LabelSchedule` stores per-label auto-apply rules: `days` (int[]), `startTime`/`endTime` (HH:mm), linked to `Label` via `labelId`
 

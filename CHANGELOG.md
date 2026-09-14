@@ -2,6 +2,35 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-14 - Credit cards as debts: data model and API
+
+A credit card could only be logged as ordinary expenses, so every swipe counted as spending the
+moment it happened, and paying the card either went unlogged or counted the same money twice. The
+August BPI statement is the case that prompted it: 7,295.28 charged, 5,000 paid, 2,295.28 carried.
+
+Cards are now tracked as debts. `CreditAccount` is the card and `CreditCharge` holds its statement
+lines, in their own table so they never reach `transactions`, which every expense total reads. Only
+the payment is an expense: an ordinary EXPENSE transaction under the new default "Credit Card
+Payment" category, carrying `transactions.credit_account_id`. The balance is derived from the
+ledger on every read rather than stored. Charges keep their category, so a card's month can still
+be broken down into what it was spent on.
+
+- `src/lib/card-payment-rule.ts`: the one rule for what may link to a card (an expense, under the
+  payment category, on an active card the caller owns). Enforced by `POST` and `PUT
+  /api/transactions`, and by `updateTransactions`, which refuses to reclassify a linked payment
+  (`CARD_PAYMENT_INVALID`). The batch schema strips the field, so the batch route, MCP and Telegram
+  cannot link a payment at all
+- `PUT /api/transactions/[id]` keeps a stored link when the request omits the field, since the
+  current form never sends it; `null` unlinks
+- New routes under `/api/credit-accounts` (list and create, one card's month, archive, charges).
+  Deleting a card with any charge or payment archives it instead
+- `DELETE /api/categories/[id]` counts charges too, since they reference categories through a
+  Restrict foreign key
+- Migration `20260914120000_add_credit_accounts` is additive only. After deploying, run
+  `pnpm db:seed` for the new default category
+
+No UI yet: the Cards pages, the payment picker on the transaction form and the bill link follow.
+
 ## 2026-09-14 - A bare label name logs from Telegram shorthand
 
 `250 tnvs` names a label and nothing else, and the shorthand logger could not write it. A clause

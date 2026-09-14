@@ -2,6 +2,7 @@ import { Prisma, type TransactionSource, type TransactionType } from "@prisma/cl
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 import { isDateOnly, resolveTransactionDate, type BatchTransactionInput } from "@/lib/validations";
 import type { PrismaClient } from "@/lib/budget-query-types";
+import { checkCardPayments } from "@/lib/card-payment-rule";
 
 /** Bounds for the keyed batch transaction. Prisma defaults to 5s, which a full
  *  MAX_BATCH_TRANSACTIONS batch can exceed: the keyed path awaits each create in turn, so a
@@ -409,6 +410,9 @@ export type UpdateFailureReason =
   | "DUPLICATE_ID"
   | "LABELS_NOT_OWNED"
   | "CATEGORIES_NOT_OWNED"
+  /** A row that pays down a credit card would stop qualifying as a payment: its type or category
+   *  moved off what `checkCardPayments` requires, or its card has been archived since. */
+  | "CARD_PAYMENT_INVALID"
   /** Permission was withdrawn between the request arriving and the write starting. */
   | "NO_LONGER_PERMITTED"
   /** The write failed for a reason retrying cannot change -- a category or label deleted between
@@ -669,6 +673,20 @@ export const updateTransactions = async ({
       if (!(await categoriesAreUsableForWrite(tx, userId, reclassified))) {
         return { ok: false as const, reason: "CATEGORIES_NOT_OWNED" as const };
       }
+
+      // A card payment keeps its card only while it still qualifies as a payment. The link is not an
+      // updatable field, so reclassifying a linked row is the one way through here to break the rule,
+      // and it is refused rather than silently detaching the row from the debt it paid.
+      const cardRefusal = await checkCardPayments(
+        tx,
+        userId,
+        reclassified.map((e) => ({
+          creditAccountId: e.row.creditAccountId,
+          categoryId: e.categoryId,
+          type: e.type,
+        }))
+      );
+      if (cardRefusal) return { ok: false as const, reason: "CARD_PAYMENT_INVALID" as const };
 
       // One ownership query for every explicitly named label across the batch, as on the create path.
       const explicitLabelIds = [...new Set(patches.flatMap((p) => p.labelIds ?? []))];

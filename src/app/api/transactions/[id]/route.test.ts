@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   transactionLabelCreateMany: vi.fn(),
   update: vi.fn(),
   findUniqueOrThrow: vi.fn(),
+  creditAccountFindMany: vi.fn(),
 }));
 
 // `categoriesAreUsable` is deliberately left unmocked: it is the shared predicate under test, so
@@ -22,6 +23,7 @@ vi.mock("@/lib/prisma", () => {
       findUniqueOrThrow: mocks.findUniqueOrThrow,
     },
     category: { findMany: mocks.categoryFindMany },
+    creditAccount: { findMany: mocks.creditAccountFindMany },
     label: { findMany: mocks.labelFindMany },
     transactionLabel: {
       deleteMany: mocks.transactionLabelDeleteMany,
@@ -100,6 +102,7 @@ describe("PUT /api/transactions/[id]", () => {
     mocks.transactionLabelCreateMany.mockResolvedValue({ count: 0 });
     mocks.update.mockResolvedValue({ id: "tx-1" });
     mocks.findUniqueOrThrow.mockResolvedValue({ id: "tx-1", categoryId: "cat-1" });
+    mocks.creditAccountFindMany.mockResolvedValue([{ id: "card-1", isActive: true }]);
   });
 
   it("writes when the category is the caller's own and matches the type", async () => {
@@ -323,6 +326,86 @@ describe("PUT /api/transactions/[id]", () => {
     expect(response.status).toBe(200);
     expect(mocks.update).not.toHaveBeenCalled();
     expect(mocks.transactionLabelDeleteMany).not.toHaveBeenCalled();
+  });
+
+  describe("credit card payments", () => {
+    const stored = (over: Record<string, unknown> = {}) => ({
+      id: "tx-1",
+      userId: "user-1",
+      amount: 5000,
+      description: "BPI payment",
+      type: "EXPENSE",
+      date: new Date("2026-09-07T02:00:00.000Z"),
+      categoryId: "cat-1",
+      creditAccountId: null,
+      labels: [],
+      ...over,
+    });
+    const payment = (over: Record<string, unknown> = {}) =>
+      body({ amount: 5000, description: "BPI payment", date: "2026-09-07T02:00:00.000Z", ...over });
+
+    // The transaction form predates cards and never sends the field. Reading its absence as
+    // "unlink" would quietly stop a payment counting against its card on any edit.
+    it("keeps a payment's card when the edit does not mention it", async () => {
+      mocks.findFirst.mockResolvedValue(stored({ creditAccountId: "card-1" }));
+
+      const response = await put(payment({ amount: 5500 }));
+
+      expect(response.status).toBe(200);
+      expect(mocks.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ creditAccountId: "card-1" }) }),
+      );
+      // Nothing about the link moved, so the rule is not consulted.
+      expect(mocks.creditAccountFindMany).not.toHaveBeenCalled();
+    });
+
+    it("unlinks on an explicit null", async () => {
+      mocks.findFirst.mockResolvedValue(stored({ creditAccountId: "card-1" }));
+
+      const response = await put(payment({ creditAccountId: null }));
+
+      expect(response.status).toBe(200);
+      expect(mocks.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ creditAccountId: null }) }),
+      );
+    });
+
+    it("links a payment filed under the payment category", async () => {
+      mocks.findFirst.mockResolvedValue(stored());
+
+      const response = await put(payment({ creditAccountId: "card-1" }));
+
+      expect(response.status).toBe(200);
+      expect(mocks.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ creditAccountId: "card-1" }) }),
+      );
+    });
+
+    it("refuses a link under any other category, and writes nothing", async () => {
+      mocks.findFirst.mockResolvedValue(stored());
+      // `category.findMany` also answers the ownership check; only the payment-category lookup,
+      // which filters by name, comes back empty.
+      mocks.categoryFindMany.mockImplementation(async ({ where }: { where: { name?: string } }) =>
+        where.name ? [] : [{ id: "cat-1", type: "EXPENSE" }],
+      );
+
+      const response = await put(payment({ creditAccountId: "card-1" }));
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ code: "NOT_PAYMENT_CATEGORY" });
+      expect(mocks.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses a card that is not the caller's", async () => {
+      mocks.findFirst.mockResolvedValue(stored());
+      mocks.creditAccountFindMany.mockResolvedValue([]);
+
+      const response = await put(payment({ creditAccountId: "someone-elses-card" }));
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ code: "ACCOUNT_NOT_FOUND" });
+      expect(mocks.update).not.toHaveBeenCalled();
+    });
   });
 
   it("404s a transaction that is not the caller's before reading the body", async () => {
