@@ -81,10 +81,19 @@ export function HeatmapFooter({ mode, selected, multiYear, fmt, returnTo }: Heat
         // No hover class of its own: `DrillDownLink` already carries the shared
         // hover tint and focus ring, and `cn` is a plain join, so a competing
         // `hover:bg-*` here would come down to stylesheet order.
+        //
+        // `text-amber-dark` rather than `text-amber`, and not by taste. This is
+        // 14px normal text, so WCAG asks 4.5:1 rather than the 3:1 that applies to
+        // an icon. `text-amber` gives 3.40:1 on this ground and 3.33:1 once the
+        // shared hover tint lands, so hover makes it slightly worse rather than
+        // better; `text-amber-dark` is 4.72:1 and 4.63:1. The old footer had amber
+        // only on the arrow, where 3:1 governs and 3.40:1 was fine -- promoting the
+        // row to a text label is what made the ratio start mattering. The arrow
+        // inherits currentColor and darkens with it.
         <DrillDownLink
           href={buildTransactionsHref({ from: selected.date, to: selected.date, ret: returnTo })}
           label={drillDownLabel(selected.count, dayLabel!)}
-          className="flex min-h-11 items-center justify-between gap-2 border border-amber/25 bg-amber-50 px-3 text-sm font-medium text-amber"
+          className="flex min-h-11 items-center justify-between gap-2 border border-amber/25 bg-amber-50 px-3 text-sm font-medium text-amber-dark"
         >
           <span>
             View {selected.count} {selected.count === 1 ? "transaction" : "transactions"}

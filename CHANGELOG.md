@@ -20,6 +20,12 @@ Multi-year ranges are unchanged. A weekday cell is an average across many dates,
 single day to open, and `filterSearchParams` cannot express "every Tuesday" without a new filter
 param reaching the API and the bulk-selection endpoint.
 
+The label is `text-amber-dark`, not the `text-amber` the rest of the palette reaches for first. At
+14px it is normal text, so the bar is 4.5:1 rather than the 3:1 an icon answers to, and `text-amber`
+gives 3.40:1 on this ground -- 3.33:1 once the shared hover tint lands, so hovering makes it slightly
+worse. The old footer had amber only on the arrow, where 3:1 governs and 3.40:1 was fine: promoting
+the row to a text label is what made the ratio start mattering.
+
 The footer moved to `heatmap-footer.tsx`, which puts `spending-heatmap.tsx` back under the component
 size guideline and gives the drill-down a unit test it did not have. A day cell also reports
 `aria-pressed`, which it had communicated only through colour. `e2e/analytics-drilldown.spec.ts`
