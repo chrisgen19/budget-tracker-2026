@@ -27,6 +27,8 @@ import type {
 } from "../budget-query-types";
 import type { ResolvedPeriod, TransactionTotals } from "../budget-query-types";
 import type { ScanResultPayload } from "../receipt-scan";
+import type { QuickTileLabelView, QuickTileView } from "../telegram/tile-queries";
+import type { FrequentTileView } from "../telegram/frequent-tiles";
 import type {
   AssessmentAnomaly,
   AssessmentBillAccuracy,
@@ -384,6 +386,49 @@ const labelItem = z.object({
 assertExact<z.infer<typeof labelItem>, LabelItem>(true);
 
 export const labelListOutput = { labels: z.array(labelItem) };
+
+// --- get_quick_tiles ---
+
+const quickTileLabel = z.object({
+  id: z.string(),
+  name: z.string(),
+  color: z.string(),
+  applies: z.boolean(),
+});
+assertExact<z.infer<typeof quickTileLabel>, QuickTileLabelView>(true);
+
+const quickTile = z.object({
+  id: z.string(),
+  label: z.string(),
+  description: z.string(),
+  amount: z.number().nullable(),
+  type: z.enum(["EXPENSE", "INCOME"]),
+  categoryId: z.string().nullable(),
+  resolvedCategoryId: z.string().nullable(),
+  resolvedCategoryName: z.string().nullable(),
+  fallsBack: z.boolean(),
+  labels: z.array(quickTileLabel),
+  sortOrder: z.number(),
+});
+assertExact<z.infer<typeof quickTile>, QuickTileView>(true);
+
+export const quickTileListOutput = { tiles: z.array(quickTile) };
+
+// --- get_frequent_tiles ---
+
+const frequentTile = z.object({
+  key: z.string(),
+  description: z.string(),
+  count: z.number(),
+  amount: z.number().nullable(),
+  amountIsStable: z.boolean(),
+  categoryId: z.string(),
+  categoryName: z.string(),
+  lastLoggedAt: z.string(),
+});
+assertExact<z.infer<typeof frequentTile>, FrequentTileView>(true);
+
+export const frequentTileListOutput = { frequent: z.array(frequentTile) };
 
 // --- get_bill_history ---
 

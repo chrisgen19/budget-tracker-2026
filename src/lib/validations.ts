@@ -329,7 +329,11 @@ const tipField = z.object({
  *  to safe defaults rather than failing the whole parse. */
 export const assessmentReportSchema = z.object({
   summary: z.string().catch(""),
-  scoreCommentary: z.string().catch(""),
+  cashFlowCommentary: z.string().default("").catch(""),
+  // Reports cached before the score was removed use this key. Accept it on
+  // reads, then normalize to cashFlowCommentary so the old claim is not kept in
+  // the current API contract.
+  scoreCommentary: z.string().default("").catch(""),
   // The four fields below arrived after reports were already cached, so each one
   // defaults rather than failing: an older row must still render, minus the
   // sections it was never asked for.
@@ -371,7 +375,10 @@ export const assessmentReportSchema = z.object({
   boostSavings: z.array(tipField).catch([]),
   earnIdeas: z.array(tipField).catch([]),
   quickActions: z.array(z.string()).catch([]),
-});
+}).transform(({ cashFlowCommentary, scoreCommentary, ...report }) => ({
+  ...report,
+  cashFlowCommentary: cashFlowCommentary || scoreCommentary,
+}));
 
 /** Validates the grounded web-tips JSON (sources come separately from grounding metadata). */
 export const webTipsSchema = z.object({

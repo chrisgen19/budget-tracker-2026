@@ -40,8 +40,10 @@ export const mcpScopeSchema = z.enum(MCP_SCOPES);
  *  narrowed to either still exposes individual transactions; a label implying otherwise would
  *  make the scope picker actively misleading about what is being handed over. */
 export const MCP_SCOPE_LABELS: Record<McpScope, string> = {
-  "budget:read": "Monthly totals, category breakdowns, trends, and the category list",
-  "transactions:read": "Individual transactions, search, and largest expenses",
+  "budget:read":
+    "Monthly totals, category breakdowns, trends, and the category list. Together with Labels, also your quick-log buttons",
+  "transactions:read":
+    "Individual transactions, search, and largest expenses. Together with Budget, also what you log most often",
   "labels:read": "Labels and spending grouped by label",
   "bills:read":
     "Recurring bills, what is due, and payment history (including the amount paid for each)",
@@ -135,6 +137,12 @@ export const MCP_TOOL_SCOPES = {
   search_transactions: "transactions:read",
   get_label_breakdown: "labels:read",
   get_label_list: "labels:read",
+  // Both, because a button carries a category and pinned labels. Both are in `READ_ONLY_SCOPES`,
+  // so the Telegram bot's token keeps working without a re-mint.
+  get_quick_tiles: ["budget:read", "labels:read"],
+  // Derived from the user's own expenses, so it carries descriptions and amounts off real rows:
+  // `transactions:read`, plus `budget:read` for the category names. Both in the default grant.
+  get_frequent_tiles: ["budget:read", "transactions:read"],
   get_upcoming_bills: "bills:read",
   get_bill_history: "bills:read",
   get_receipt_items: "receipts:read",

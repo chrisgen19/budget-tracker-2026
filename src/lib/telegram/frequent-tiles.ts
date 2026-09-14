@@ -152,6 +152,12 @@ export interface FrequentTile {
   lastLoggedAt: Date;
 }
 
+/**
+ * A Frequent entry as it travels over MCP: `lastLoggedAt` as an ISO string, since JSON has no
+ * `Date`. `output-schemas.ts` pins the tool's schema to this with `assertExact`.
+ */
+export type FrequentTileView = Omit<FrequentTile, "lastLoggedAt"> & { lastLoggedAt: string };
+
 export interface FrequentOptions {
   /**
    * Descriptions of the user's configured tiles, which must not appear twice in the grid.

@@ -37,8 +37,6 @@ const maskProse = (text: string, hide: boolean): string =>
 
 /** Build the AI payload from the already-computed analytics data. */
 const buildPayload = (data: AnalyticsData, currency: string, granularity: string): AssessmentPayload => {
-  const sub = data.healthScore.subScores;
-  const pick = (s: { score: number; label: string; trend: string }) => ({ score: s.score, label: s.label, trend: s.trend });
   return {
     currency,
     granularity: granularity as AssessmentPayload["granularity"],
@@ -46,19 +44,6 @@ const buildPayload = (data: AnalyticsData, currency: string, granularity: string
     previousPeriodLabel: data.previousPeriodLabel,
     summary: data.summary,
     previousSummary: data.previousSummary,
-    healthScore: {
-      overallScore: data.healthScore.overallScore,
-      overallLabel: data.healthScore.overallLabel,
-      overallTrend: data.healthScore.overallTrend,
-      savingsRate: data.healthScore.savingsRate,
-      subScores: {
-        savingsRate: pick(sub.savingsRate),
-        expenseTrend: pick(sub.expenseTrend),
-        incomeStability: pick(sub.incomeStability),
-        diversification: pick(sub.diversification),
-        consistency: pick(sub.consistency),
-      },
-    },
     categoryBreakdown: data.allCategoryBreakdown.map((c) => ({
       name: c.name, type: c.type, amount: c.amount, percentage: c.percentage, transactionCount: c.transactionCount,
     })),
@@ -86,7 +71,7 @@ const maskReport = (report: Report): Report => {
   return {
     ...report,
     summary: m(report.summary),
-    scoreCommentary: m(report.scoreCommentary),
+    cashFlowCommentary: m(report.cashFlowCommentary),
     outlook: m(report.outlook),
     patterns: report.patterns.map((p) => ({ ...p, title: m(p.title), detail: m(p.detail) })),
     trends: report.trends.map((t) => ({ ...t, title: m(t.title), detail: m(t.detail) })),
