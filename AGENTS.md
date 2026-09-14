@@ -31,6 +31,7 @@ src/
 │   │   ├── transactions/   # Transaction list + CRUD
 │   │   ├── categories/     # Category management
 │   │   ├── bills/          # Recurring bills management
+│   │   ├── cards/          # Credit cards: list, and one card's month (balance, charges, payments)
 │   │   ├── quick-log/      # Quick Log: CRUD + one-tap logging for the quick-log buttons
 │   │   ├── profile/        # User profile + feature settings
 │   │   └── admin/          # Admin panel (settings)
@@ -44,6 +45,7 @@ src/
 │   ├── labels/             # LabelForm (with schedule config)
 │   ├── categories/         # Category form
 │   ├── bills/              # BillForm, BillReminderBanner, BillReminderProvider
+│   ├── credit-accounts/    # CreditAccountForm, CreditChargeForm (multi-line), CardLedgerList, CardCategoryBreakdown
 │   ├── pwa/                # InstallPromptBanner, OfflineBanner, InstallBannerContext
 │   ├── telegram/           # Mini App: TelegramApp shell, TileGrid, AmountSheet, TileEditor
 │   ├── quick-log/          # Web editor for the same tiles: QuickTileCard, QuickTileChip, QuickTileForm, AmountPrompt

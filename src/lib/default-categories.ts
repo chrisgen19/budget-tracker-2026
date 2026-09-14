@@ -1,12 +1,9 @@
 import { TransactionType } from "@prisma/client";
+// Relative rather than `@/lib`, because `prisma/seed.ts` runs this file under `tsx` with no path
+// aliases.
+import { CARD_PAYMENT_CATEGORY_NAME } from "./card-payment-category";
 
-/**
- * The default category a credit card payment is filed under, and the only one a transaction linked
- * to a card may use (`src/lib/card-payment-rule.ts`). Matched by name because a default has no id
- * that is stable across databases; the partial unique index on default `(name, type)` keeps it to
- * one row.
- */
-export const CARD_PAYMENT_CATEGORY_NAME = "Credit Card Payment";
+export { CARD_PAYMENT_CATEGORY_NAME };
 
 /**
  * The categories every account starts with, seeded by `prisma/seed.ts` as `isDefault: true`

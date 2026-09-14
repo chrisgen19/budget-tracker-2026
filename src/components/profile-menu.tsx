@@ -17,6 +17,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   User,
   CalendarClock,
+  CreditCard,
   Tags,
   Tag,
   Shield,
@@ -89,6 +90,13 @@ export const buildMenuItems = ({
     label: "Bills",
     icon: CalendarClock,
     onSelect: () => router.push("/bills"),
+    mobileOnly: true,
+  },
+  {
+    key: "cards",
+    label: "Cards",
+    icon: CreditCard,
+    onSelect: () => router.push("/cards"),
     mobileOnly: true,
   },
   {
