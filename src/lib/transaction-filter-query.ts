@@ -25,6 +25,8 @@ export const transactionFilterFields = z.object({
   month: z.union([z.literal("ALL"), z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)]).default("ALL"),
   categoryId: z.string().min(1).max(100).nullable().default(null),
   labelId: z.string().min(1).max(100).nullable().default(null),
+  /** Paid with this credit card. */
+  creditAccountId: z.string().min(1).max(100).nullable().default(null),
   createdVia: z.enum(["ALL", "APP", "MCP", "TELEGRAM"]).default("ALL"),
   amountMin: z.number().finite().nonnegative().nullable().default(null),
   amountMax: z.number().finite().nonnegative().nullable().default(null),
@@ -118,6 +120,7 @@ export function parseTransactionSearchParams(searchParams: URLSearchParams) {
     month: searchParams.get("month") ?? "ALL",
     categoryId: searchParams.get("categoryId"),
     labelId: searchParams.get("labelId"),
+    creditAccountId: searchParams.get("creditAccountId"),
     createdVia: searchParams.get("createdVia") ?? "ALL",
     amountMin: optionalNumber(searchParams.get("amountMin")),
     amountMax: optionalNumber(searchParams.get("amountMax")),
@@ -181,6 +184,7 @@ export function buildTransactionWhere(
 
   if (filters.categoryId) where.categoryId = filters.categoryId;
   if (filters.labelId) where.labels = { some: { labelId: filters.labelId } };
+  if (filters.creditAccountId) where.creditAccountId = filters.creditAccountId;
   if (filters.createdVia !== "ALL") where.createdVia = filters.createdVia;
 
   if (filters.amountMin !== null || filters.amountMax !== null) {

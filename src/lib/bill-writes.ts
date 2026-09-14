@@ -13,7 +13,6 @@ import {
 import { addUtcDays, userToday, utcDayStart } from "@/lib/bill-dates";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 import { categoriesAreUsable, categoriesAreUsableForWrite } from "@/lib/transaction-writes";
-import { checkCardPayments } from "@/lib/card-payment-rule";
 
 /**
  * The single write path for settling a recurring bill, shared by the app's route and the MCP tool.
@@ -256,32 +255,10 @@ export const settleBill = async ({
 
   const bill = await prisma.scheduledTransaction.findUnique({
     where: { id: billId },
-    include: {
-      category: true,
-      labels: { include: { label: true } },
-      creditAccount: { select: { id: true } },
-    },
+    include: { category: true, labels: { include: { label: true } } },
   });
 
   if (!bill || bill.userId !== userId) return { ok: false, reason: "BILL_NOT_FOUND" };
-
-  /**
-   * The card this payment should lower, when the bill is a credit card's reminder.
-   *
-   * Asked of the shared rule rather than assumed. A reminder moved to another category, or a card
-   * archived since, still gets its bill paid, but that payment no longer counts against the card.
-   * Refusing the bill over it would leave the reminder firing for a debt the user just settled.
-   */
-  const cardToLink = async (
-    tx: Prisma.TransactionClient,
-    payment: { categoryId: string; type: TransactionType },
-  ): Promise<string | null> => {
-    if (!bill.creditAccount) return null;
-    const refusal = await checkCardPayments(tx, userId, [
-      { creditAccountId: bill.creditAccount.id, ...payment },
-    ]);
-    return refusal ? null : bill.creditAccount.id;
-  };
 
   const originalStartDay = bill.startDate.getUTCDate();
 
@@ -428,8 +405,6 @@ export const settleBill = async ({
       if (assertStillPermitted && !(await assertStillPermitted(tx))) return "not-permitted" as const;
       if (await alreadySettled(tx)) return "settled" as const;
 
-      const creditAccountId = await cardToLink(tx, { categoryId: bill.categoryId, type: bill.type });
-
       const transaction = await tx.transaction.create({
         data: {
           amount: amountToWrite,
@@ -439,7 +414,6 @@ export const settleBill = async ({
           categoryId: bill.categoryId,
           userId,
           billId: bill.id,
-          ...(creditAccountId && { creditAccountId }),
           // Provenance follows the credential, not the endpoint. Omitted by the app, where the
           // column's own default (APP) is the right answer and is not mintable over MCP.
           ...(createdVia && { createdVia }),
@@ -488,14 +462,7 @@ export const settleBill = async ({
     // Verify the target transaction belongs to the authenticated user.
     const existingTx = await prisma.transaction.findFirst({
       where: { id: existingTransactionId ?? "", userId },
-      select: {
-        id: true,
-        amount: true,
-        type: true,
-        categoryId: true,
-        date: true,
-        creditAccountId: true,
-      },
+      select: { id: true, amount: true, type: true, categoryId: true, date: true },
     });
     if (!existingTx) return { ok: false, reason: "TRANSACTION_NOT_FOUND" };
 
@@ -560,15 +527,10 @@ export const settleBill = async ({
       // "stamp only what moved" rule the app's edit paths had to engineer comes free. The token id
       // is cleared rather than left when the caller is not a token, for the same reason it is
       // everywhere else: a stale id is not a gap in the trail but a wrong answer.
-      // A payment already on a card keeps that card. An unlinked one gains this bill's card when it
-      // qualifies, which is how "Enter amount" on a card's reminder lowers what the card owes.
-      const creditAccountId = existingTx.creditAccountId ? null : await cardToLink(tx, existingTx);
-
       const claim = await tx.transaction.updateMany({
         where: { id: existingTx.id, userId, billId: null },
         data: {
           billId: bill.id,
-          ...(creditAccountId && { creditAccountId }),
           updatedVia: actingVia,
           updatedByMcpTokenId: mcpTokenId ?? null,
         },

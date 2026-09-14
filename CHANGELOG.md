@@ -2,47 +2,43 @@
 
 All notable development history for the Budget Tracker app.
 
-## 2026-09-14 - Credit cards: paying a card
+## 2026-09-15 - Credit cards: purchases are spending, and the Cards pages
 
-The last piece: recording a payment against a card, so paying the BPI statement lowers what the
-card owes while the payment counts as an expense.
+The first card model (below) counted only the payment as an expense and kept what the card bought
+in `credit_charges`. Testing it showed the cost: after paying BPI, the Transactions list held a
+single "BPI payment", and categories, labels, search, analytics, the assessment and Claude never saw
+what the card was spent on. It is turned the other way round here, before any card UI shipped.
 
-- **Transaction form:** choosing "Credit Card Payment" shows a **Pays down** picker with each card
-  and its balance. A new payment with only one card chooses it; "No card" stays chosen once
-  picked. Moving an edited payment to another category unlinks it. Every other save posts exactly
-  what it did before, since the field is only sent when it means something
-- **Card page:** a **Pay** button opens that form filled in for the card and what it owes
-- **Transactions list:** payment rows carry a chip naming the card
-- **Payment reminder:** a card with a due day can turn on a monthly reminder, a variable bill
-  under "Credit Card Payment". Paying it from the reminder banner or the Bills page records the
-  payment against the card: `settleBill` links both `pay` and `pay_existing`, and still pays the
-  bill without the link if the card has been archived or the bill recategorised
-- Every transaction write now refreshes the card queries, so a balance updates straight away
-- New route: `POST/DELETE /api/credit-accounts/[id]/reminder`
-
-## 2026-09-14 - Credit cards: the Cards pages
-
-The screens for the card data model. **Cards** sits in the sidebar after Bills and in the mobile
-More menu.
-
-- `/cards` lists each card with what it owes, how much of its limit is used and its due day, plus
-  the total owed across active cards. Archived cards are one toggle away. A failed read says so
-  rather than rendering as "No cards yet"
-- `/cards/[id]` shows one card for one month:
-  - what it owes overall, and what was charged, refunded and paid that month
-  - "Where it went": the month's charges by category, net of refunds. This is the only place card
-    spending is broken down by category, since the dashboard sees only the payment
-  - one list of charges and payments. A payment links to its transaction, where it is edited
-- Add Charges takes several statement lines at once, with a running total to check against the
-  statement before saving. It never offers the Credit Card Payment category. After saving, the page
-  jumps to the month the lines landed in
-- Delete archives a card that has any history, and the page says which happened
+- **A purchase on a card is an ordinary expense** carrying `credit_account_id`, counted on the day
+  it was bought, so it appears in every category and label report with no card-specific code in any
+  of them. The transaction form's **Paid with** field (collapsed, and it fetches cards only when
+  opened) sets it for any expense; switching to income clears it
+- **Paying the card is not an expense.** It is a `credit_payments` row (`PAYMENT`, or `CREDIT` for
+  a refund) that only lowers what the card owes, kept out of `transactions` so nothing counts the
+  same money twice
+- **The rule** for linking a row to a card is `checkCardPurchases` (`src/lib/card-purchase-rule.ts`):
+  an expense, on the caller's own card, with no new purchases on an archived card. It runs in `POST`
+  and `PUT /api/transactions`, `createTransactionBatch` (`CARD_NOT_USABLE`) and `updateTransactions`,
+  which refuses to turn a card purchase into income (`CARD_PURCHASE_INVALID`)
+- **Cards pages:** Cards in the sidebar after Bills and in the mobile More menu. `/cards` lists what
+  each card owes, its limit used and its due day. `/cards/[id]` shows one month:
+  - what it owes, what was bought, paid and refunded
+  - **Where it went**, by Category or by Label (a purchase counts in full under each label)
+  - one list of purchases and payments. A purchase opens in Transactions, a payment edits in place
+  - **Add Purchases** takes several lines at once with labels and a running total, saved as one
+    idempotent batch; **Pay** records a payment or refund; **View in Transactions** filters the list
+    by the card for that month
+- **Transactions list:** a card chip on purchases, and a `creditAccountId` filter carried in the URL
+- **Dashboard:** "Owed on cards" under Running Balance, since a purchase lowers the balance before
+  the money leaves the bank
+- Migration `20260915120000_card_purchases_are_transactions` moves any card payment rows out of
+  `transactions`, turns charges into transactions (a foreign amount is kept in the description) and
+  refunds into card credits, drops `credit_charges`, and removes the unused "Credit Card Payment"
+  default. No seed is needed
 - `/cards` is on the service worker's denylist (`PROTECTED_PAGE_PATHS`)
-- `CARD_PAYMENT_CATEGORY_NAME` moved to `src/lib/card-payment-category.ts`, a module with no
-  imports, so the charge form can use it without pulling `@prisma/client` into the browser bundle
 
-Still to come: recording a payment against a card from the transaction form, and linking a card
-to its reminder bill.
+Not yet: card due reminders (paying one would have to write a card payment, which bills cannot do),
+and "Paid with" on Telegram, receipt scans, quick-log tiles and MCP.
 
 ## 2026-09-14 - Credit cards as debts: data model and API
 

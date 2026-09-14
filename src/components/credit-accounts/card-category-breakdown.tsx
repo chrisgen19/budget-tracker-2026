@@ -7,11 +7,10 @@ import { CategoryIcon } from "@/components/ui/icon-map";
 import type { CardCategorySpendView } from "@/hooks/use-credit-accounts";
 
 /**
- * What a card was spent on in one month, net of refunds.
+ * What a card was spent on in one month, by category.
  *
- * This is the only place card spending is broken down by category. The dashboard sees the payment
- * alone, under "Credit Card Payment", so without this the subscriptions and shopping behind it
- * would be invisible everywhere.
+ * The same purchases already count in the dashboard and analytics, since each is an ordinary
+ * expense; this narrows the view to the one card.
  */
 export function CardCategoryBreakdown({ rows }: { rows: CardCategorySpendView[] }) {
   const { user } = useUser();

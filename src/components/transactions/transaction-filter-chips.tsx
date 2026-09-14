@@ -68,6 +68,10 @@ export function buildFilterChips({
     labelName
       ? { id: "label", label: `Label: ${labelName}`, onRemove: () => update({ labelId: null }) }
       : null,
+    // Named generically: the only way in is a card's own page, which says which card it was.
+    filters.creditAccountId
+      ? { id: "card", label: "Paid with a card", onRemove: () => update({ creditAccountId: null }) }
+      : null,
     filters.createdVia !== "ALL"
       ? {
           id: "source",

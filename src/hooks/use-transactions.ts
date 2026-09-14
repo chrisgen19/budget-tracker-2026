@@ -92,6 +92,7 @@ export const buildTransactionFilterParams = (filters: TransactionFilters, tz: nu
   if (filters.search) params.set("search", filters.search);
   if (filters.categoryId) params.set("categoryId", filters.categoryId);
   if (filters.labelId) params.set("labelId", filters.labelId);
+  if (filters.creditAccountId) params.set("creditAccountId", filters.creditAccountId);
   if (filters.createdVia !== "ALL") params.set("createdVia", filters.createdVia);
   if (filters.amountMin !== null) params.set("amountMin", String(filters.amountMin));
   if (filters.amountMax !== null) params.set("amountMax", String(filters.amountMax));

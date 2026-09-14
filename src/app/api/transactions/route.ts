@@ -4,7 +4,7 @@ import { getAuthUserId } from "@/lib/session";
 import { transactionSchema } from "@/lib/validations";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 import { categoriesAreUsable, categoriesAreUsableForWrite } from "@/lib/transaction-writes";
-import { CARD_PAYMENT_REFUSAL_MESSAGES, checkCardPayments } from "@/lib/card-payment-rule";
+import { CARD_PURCHASE_REFUSAL_MESSAGES, checkCardPurchases } from "@/lib/card-purchase-rule";
 import {
   buildTransactionOrderBy,
   buildTransactionWhere,
@@ -83,11 +83,11 @@ export async function POST(request: Request) {
       );
     }
 
-    // A payment to a credit card: an expense under the payment category, on a card the caller owns.
-    const paymentRefusal = await checkCardPayments(prisma, userId, [validated]);
-    if (paymentRefusal) {
+    // Paid with a credit card: only an expense, on an active card the caller owns.
+    const cardRefusal = await checkCardPurchases(prisma, userId, [validated]);
+    if (cardRefusal) {
       return NextResponse.json(
-        { error: CARD_PAYMENT_REFUSAL_MESSAGES[paymentRefusal], code: paymentRefusal },
+        { error: CARD_PURCHASE_REFUSAL_MESSAGES[cardRefusal], code: cardRefusal },
         { status: 400 }
       );
     }

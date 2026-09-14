@@ -55,7 +55,7 @@ describe("CreditAccountForm", () => {
           billId: null,
           balance: 1200,
           availableCredit: 48800,
-          totals: { charges: 0, credits: 0, payments: 0 },
+          totals: { purchases: 0, payments: 0, credits: 0 },
         }}
         onSubmit={async () => {}}
         onCancel={() => {}}

@@ -60,6 +60,8 @@ export interface DashboardStats {
   totalExpenses: number;
   balance: number;        // monthly net (selected month only)
   runningBalance: number; // cumulative all-time net up to end of selected month
+  /** What every active credit card owes, or null with no cards. Cash in the bank = balance + this. */
+  owedOnCards: number | null;
   transactionCount: number;
   recentTransactions: TransactionWithCategory[];
   categoryBreakdown: CategoryBreakdownItem[];

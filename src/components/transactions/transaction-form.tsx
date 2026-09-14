@@ -22,8 +22,7 @@ import { useUser } from "@/components/user-provider";
 import { useCategoriesQuery, useQuickPreferencesQuery } from "@/hooks/use-categories";
 import { LabelPicker } from "@/components/transactions/label-picker";
 import { TransactionDateTimeField } from "@/components/transactions/transaction-date-time-field";
-import { CardPaymentPicker } from "@/components/transactions/card-payment-picker";
-import { CARD_PAYMENT_CATEGORY_NAME } from "@/lib/card-payment-category";
+import { PaidWithField } from "@/components/transactions/paid-with-field";
 import { useScheduledLabel } from "@/hooks/use-scheduled-label";
 import { useLabelsQuery } from "@/hooks/use-labels";
 import type { TransactionWithCategory } from "@/types";
@@ -35,7 +34,7 @@ export interface InitialTransactionData {
   date?: string;
   categoryId?: string;
   labelIds?: string[];
-  /** The card a prefilled payment pays down, e.g. from a card's Pay button. */
+  /** The credit card a prefilled expense was paid with. */
   creditAccountId?: string | null;
 }
 
@@ -145,11 +144,6 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
 
   const selectedCategory = categories.find((c) => c.id === watchedCategoryId);
 
-  // A card payment is recognised by the default category's name, the same way the server's
-  // `checkCardPayments` recognises it.
-  const paymentCategory = categories.find((c) => c.name === CARD_PAYMENT_CATEGORY_NAME);
-  const isCardPayment =
-    selectedType === "EXPENSE" && !!paymentCategory && watchedCategoryId === paymentCategory.id;
   const watchedCreditAccountId = watch("creditAccountId") ?? null;
 
   // Resolve personalized quick categories from prefs. Shared with the categories page so the tiles
@@ -181,12 +175,10 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     }
   }, [categories, selectedType, setValue, transaction, initialData]);
 
-  // Leaving the payment category drops the card. Waits for the categories to load: before then no
-  // category can be recognised as the payment one, and an edited payment would lose its card.
+  // Income cannot be paid with a credit card, so switching to it drops the card.
   useEffect(() => {
-    if (loadingCategories || categories.length === 0 || isCardPayment) return;
-    if (getValues("creditAccountId")) setValue("creditAccountId", null);
-  }, [isCardPayment, loadingCategories, categories.length, getValues, setValue]);
+    if (selectedType === "INCOME" && getValues("creditAccountId")) setValue("creditAccountId", null);
+  }, [selectedType, getValues, setValue]);
 
   // Auto-apply or remove scheduled label when date changes
   useEffect(() => {
@@ -329,11 +321,11 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               const payload = {
                 ...rest,
                 date: resolveTransactionDate(data.date, user.timezoneOffset),
-                // Sent only when it means something: the card a payment pays, or an explicit null
-                // unlinking a row that was a payment. Every other save leaves the field out, so the
-                // many flows sharing this form post exactly what they did before cards existed.
-                ...(isCardPayment
-                  ? { creditAccountId: creditAccountId ?? null }
+                // Sent only when it means something: the card an expense was paid with, or an explicit
+                // null clearing a card the row had. Every other save leaves the field out, so the many
+                // flows sharing this form post exactly what they did before cards existed.
+                ...(creditAccountId
+                  ? { creditAccountId }
                   : transaction?.creditAccountId
                     ? { creditAccountId: null }
                     : {}),
@@ -523,11 +515,11 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               )}
             </div>
 
-            {isCardPayment && (
-              <CardPaymentPicker
+            {selectedType === "EXPENSE" && (
+              <PaidWithField
                 value={watchedCreditAccountId}
                 onChange={(id) => setValue("creditAccountId", id, { shouldDirty: true })}
-                preselectOnlyCard={!transaction}
+                linkedCardName={transaction?.creditAccount?.name}
               />
             )}
 

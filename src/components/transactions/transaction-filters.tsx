@@ -37,6 +37,11 @@ export interface TransactionFilters {
   to: string | null;
   categoryId: string | null;
   labelId: string | null;
+  /**
+   * Paid with this credit card. Optional so the many places that build a filter object need not
+   * name it; absent and null both mean any payment method.
+   */
+  creditAccountId?: string | null;
   /** Which surface created the row. "MCP" surfaces what the remote endpoint wrote. */
   createdVia: "ALL" | "APP" | "MCP" | "TELEGRAM";
   amountMin: number | null;

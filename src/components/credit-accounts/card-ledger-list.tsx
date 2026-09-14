@@ -8,19 +8,19 @@ import { formatDayKey } from "@/lib/month-key";
 import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import { CategoryIcon } from "@/components/ui/icon-map";
-import type { CardPaymentView, CreditChargeView } from "@/hooks/use-credit-accounts";
+import type { CardPurchaseView, CreditPaymentView } from "@/hooks/use-credit-accounts";
 
 export type LedgerEntry =
-  | { type: "charge"; date: string; charge: CreditChargeView }
-  | { type: "payment"; date: string; payment: CardPaymentView };
+  | { type: "purchase"; date: string; purchase: CardPurchaseView }
+  | { type: "payment"; date: string; payment: CreditPaymentView };
 
-/** Charges and payments as one list, newest first. ISO instants sort correctly as plain strings. */
+/** Purchases and payments as one list, newest first. ISO instants sort correctly as plain strings. */
 export const mergeLedger = (
-  charges: readonly CreditChargeView[],
-  payments: readonly CardPaymentView[]
+  purchases: readonly CardPurchaseView[],
+  payments: readonly CreditPaymentView[]
 ): LedgerEntry[] =>
   [
-    ...charges.map((charge) => ({ type: "charge" as const, date: charge.date, charge })),
+    ...purchases.map((purchase) => ({ type: "purchase" as const, date: purchase.date, purchase })),
     ...payments.map((payment) => ({ type: "payment" as const, date: payment.date, payment })),
   ].sort((a, b) => b.date.localeCompare(a.date));
 
@@ -29,41 +29,59 @@ const ICON_BUTTON = cn(
   TOUCH_HIT_AREA_CENTERED
 );
 
-interface ChargeRowProps {
-  charge: CreditChargeView;
+type Money = (amount: number) => string;
+
+function PurchaseRow({ purchase, day, money }: { purchase: CardPurchaseView; day: string; money: Money }) {
+  const labels = purchase.labels.map((link) => link.label.name).join(", ");
+  return (
+    <li>
+      {/* A purchase is an ordinary transaction, so it is edited where every transaction is. */}
+      <Link
+        href={`/transactions?highlight=${purchase.id}`}
+        className="flex min-h-11 items-center gap-3 py-3 transition-colors hover:bg-cream-50"
+      >
+        <span
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
+          style={{ backgroundColor: `${purchase.category.color}18` }}
+        >
+          <CategoryIcon name={purchase.category.icon} className="h-4 w-4" style={{ color: purchase.category.color }} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm text-warm-600">{purchase.description || purchase.category.name}</p>
+          <p className="truncate text-xs text-warm-400">
+            {day} · {purchase.category.name}
+            {labels && ` · ${labels}`}
+          </p>
+        </div>
+        <span className="shrink-0 text-sm font-medium text-warm-700">{money(purchase.amount)}</span>
+      </Link>
+    </li>
+  );
+}
+
+interface PaymentRowProps {
+  payment: CreditPaymentView;
   day: string;
-  money: (amount: number) => string;
+  money: Money;
   onEdit: () => void;
   onDelete: () => void;
 }
 
-function ChargeRow({ charge, day, money, onEdit, onDelete }: ChargeRowProps) {
-  const refund = charge.kind === "CREDIT";
-  const title = charge.description || charge.category.name;
-  const foreign =
-    charge.originalCurrency && charge.originalAmount !== null
-      ? ` · ${charge.originalCurrency} ${charge.originalAmount.toFixed(2)}`
-      : "";
-
+function PaymentRow({ payment, day, money, onEdit, onDelete }: PaymentRowProps) {
+  const kindLabel = payment.kind === "CREDIT" ? "Refund" : "Payment";
+  const title = payment.description || kindLabel;
   return (
     <li className="flex items-center gap-3 py-3">
-      <span
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
-        style={{ backgroundColor: `${charge.category.color}18` }}
-      >
-        <CategoryIcon name={charge.category.icon} className="h-4 w-4" style={{ color: charge.category.color }} />
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-income-light">
+        <ArrowDownLeft className="h-4 w-4 text-income" />
       </span>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm text-warm-600">{title}</p>
         <p className="truncate text-xs text-warm-400">
-          {day} · {refund ? "Refund" : charge.category.name}
-          {foreign}
+          {day} · {kindLabel}
         </p>
       </div>
-      <span className={cn("shrink-0 text-sm font-medium", refund ? "text-income" : "text-warm-700")}>
-        {refund && "-"}
-        {money(charge.amount)}
-      </span>
+      <span className="shrink-0 text-sm font-medium text-income">-{money(payment.amount)}</span>
       <div className="flex shrink-0 items-center gap-2">
         <button type="button" aria-label={`Edit ${title}`} onClick={onEdit} className={cn(ICON_BUTTON, "hover:bg-amber-light hover:text-amber")}>
           <Pencil className="h-3.5 w-3.5" />
@@ -76,39 +94,18 @@ function ChargeRow({ charge, day, money, onEdit, onDelete }: ChargeRowProps) {
   );
 }
 
-function PaymentRow({ payment, day, money }: { payment: CardPaymentView; day: string; money: (amount: number) => string }) {
-  return (
-    <li>
-      {/* The payment is an ordinary transaction, so it is edited where every transaction is. */}
-      <Link
-        href={`/transactions?highlight=${payment.id}`}
-        className="flex min-h-11 items-center gap-3 py-3 transition-colors hover:bg-cream-50"
-      >
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-income-light">
-          <ArrowDownLeft className="h-4 w-4 text-income" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm text-warm-600">{payment.description || "Payment"}</p>
-          <p className="truncate text-xs text-warm-400">{day} · Payment</p>
-        </div>
-        <span className="shrink-0 text-sm font-medium text-income">-{money(payment.amount)}</span>
-      </Link>
-    </li>
-  );
-}
-
 interface CardLedgerListProps {
-  charges: CreditChargeView[];
-  payments: CardPaymentView[];
-  onEditCharge: (charge: CreditChargeView) => void;
-  onDeleteCharge: (charge: CreditChargeView) => void;
+  purchases: CardPurchaseView[];
+  payments: CreditPaymentView[];
+  onEditPayment: (payment: CreditPaymentView) => void;
+  onDeletePayment: (payment: CreditPaymentView) => void;
 }
 
-export function CardLedgerList({ charges, payments, onEditCharge, onDeleteCharge }: CardLedgerListProps) {
+export function CardLedgerList({ purchases, payments, onEditPayment, onDeletePayment }: CardLedgerListProps) {
   const { user } = useUser();
   const { hideAmounts } = usePrivacy();
-  const entries = mergeLedger(charges, payments);
-  const money = (amount: number) => maskCurrency(amount, user.currency, hideAmounts);
+  const entries = mergeLedger(purchases, payments);
+  const money: Money = (amount) => maskCurrency(amount, user.currency, hideAmounts);
   const dayOf = (instant: string) => formatDayKey(accountDateKey(instant, user.timezoneOffset));
 
   if (entries.length === 0) {
@@ -118,17 +115,17 @@ export function CardLedgerList({ charges, payments, onEditCharge, onDeleteCharge
   return (
     <ul className="divide-y divide-cream-300/40">
       {entries.map((entry) =>
-        entry.type === "charge" ? (
-          <ChargeRow
-            key={`charge-${entry.charge.id}`}
-            charge={entry.charge}
+        entry.type === "purchase" ? (
+          <PurchaseRow key={`purchase-${entry.purchase.id}`} purchase={entry.purchase} day={dayOf(entry.date)} money={money} />
+        ) : (
+          <PaymentRow
+            key={`payment-${entry.payment.id}`}
+            payment={entry.payment}
             day={dayOf(entry.date)}
             money={money}
-            onEdit={() => onEditCharge(entry.charge)}
-            onDelete={() => onDeleteCharge(entry.charge)}
+            onEdit={() => onEditPayment(entry.payment)}
+            onDelete={() => onDeletePayment(entry.payment)}
           />
-        ) : (
-          <PaymentRow key={`payment-${entry.payment.id}`} payment={entry.payment} day={dayOf(entry.date)} money={money} />
         )
       )}
     </ul>

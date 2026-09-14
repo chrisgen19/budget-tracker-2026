@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
-import { creditChargePatchSchema } from "@/lib/validations";
+import { creditPaymentPatchSchema } from "@/lib/validations";
 import { readTimezoneOffset } from "@/lib/credit-account-queries";
-import { deleteCreditCharge, updateCreditCharge } from "@/lib/credit-account-writes";
+import { deleteCreditPayment, updateCreditPayment } from "@/lib/credit-account-writes";
 import {
   creditFailureResponse,
   creditRouteIdSchema,
@@ -11,12 +11,15 @@ import {
 } from "@/lib/credit-account-http";
 
 interface RouteParams {
-  params: Promise<{ id: string; chargeId: string }>;
+  params: Promise<{ id: string; paymentId: string }>;
 }
 
 const parseIds = async (params: RouteParams["params"]) => {
-  const { id, chargeId } = await params;
-  return { accountId: creditRouteIdSchema.parse(id), chargeId: creditRouteIdSchema.parse(chargeId) };
+  const { id, paymentId } = await params;
+  return {
+    accountId: creditRouteIdSchema.parse(id),
+    paymentId: creditRouteIdSchema.parse(paymentId),
+  };
 };
 
 export async function PUT(request: Request, { params }: RouteParams) {
@@ -24,24 +27,24 @@ export async function PUT(request: Request, { params }: RouteParams) {
   if (userId instanceof NextResponse) return userId;
 
   try {
-    const { accountId, chargeId } = await parseIds(params);
-    const patch = creditChargePatchSchema.parse(await request.json());
+    const { accountId, paymentId } = await parseIds(params);
+    const patch = creditPaymentPatchSchema.parse(await request.json());
     const timezoneOffset = await readTimezoneOffset(prisma, userId);
-    const result = await updateCreditCharge({
+    const result = await updateCreditPayment({
       prisma,
       userId,
       accountId,
-      chargeId,
+      paymentId,
       patch,
       timezoneOffset,
     });
     if (!result.ok) return creditFailureResponse(result.reason);
 
-    return NextResponse.json(result.charge);
+    return NextResponse.json(result.payment);
   } catch (error) {
     return (
       invalidInputResponse(error) ??
-      NextResponse.json({ error: "Failed to update charge" }, { status: 500 })
+      NextResponse.json({ error: "Failed to update the payment" }, { status: 500 })
     );
   }
 }
@@ -51,15 +54,15 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
   if (userId instanceof NextResponse) return userId;
 
   try {
-    const { accountId, chargeId } = await parseIds(params);
-    const result = await deleteCreditCharge({ prisma, userId, accountId, chargeId });
+    const { accountId, paymentId } = await parseIds(params);
+    const result = await deleteCreditPayment({ prisma, userId, accountId, paymentId });
     if (!result.ok) return creditFailureResponse(result.reason);
 
-    return NextResponse.json({ message: "Charge deleted" });
+    return NextResponse.json({ message: "Payment deleted" });
   } catch (error) {
     return (
       invalidInputResponse(error) ??
-      NextResponse.json({ error: "Failed to delete charge" }, { status: 500 })
+      NextResponse.json({ error: "Failed to delete the payment" }, { status: 500 })
     );
   }
 }
