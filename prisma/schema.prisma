@@ -52,10 +52,9 @@ enum AiInsightKind {
 /// only PENDING and SUCCESS consume a monthly credit. FAILED rows are kept
 /// (not deleted) so a refunded attempt still counts against the rate limit.
 /// How a transaction came to exist. Provenance is a column rather than a label because labels
-/// are a spending dimension here: `getLabelBreakdown` splits a transaction's amount evenly across
-/// its labels, so tagging provenance would divert half of every MCP-written expense out of its
-/// real category. A label is also user-deletable, and an audit marker the actor can erase is not
-/// an audit marker.
+/// are a spending dimension here: `getLabelBreakdown` reports every label as spending, so a
+/// provenance label would sit in the breakdown beside Work and Family as if it were a budget. A
+/// label is also user-deletable, and an audit marker the actor can erase is not an audit marker.
 enum TransactionSource {
   APP
   MCP
@@ -511,7 +510,7 @@ model TelegramQuickTile {
   /// A pin **overrides** auto-apply schedules for that tap: `createTransactionBatch` reads an
   /// explicit `labelIds` as an opt-out from schedule matching, and that is the wanted reading
   /// here. The user named these labels on this button; a schedule guessing over a named label
-  /// moves money in `getLabelBreakdown`, which splits an amount across whatever a row carries.
+  /// inflates that label in `getLabelBreakdown`, which counts the full amount under each label.
   /// A tile with no pins omits the field entirely - never `[]` - so schedules run as before.
   labels      TelegramQuickTileLabel[]
   /// Sparse (10, 20, 30...) so one tile can be moved without rewriting every other row.

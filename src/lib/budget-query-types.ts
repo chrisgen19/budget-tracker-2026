@@ -415,9 +415,10 @@ export interface LabelBreakdownItem {
   id: string;
   name: string;
   color: string;
-  /** Sum of each transaction's amount divided by how many labels it carries */
+  /** Sum of the full amount of every transaction carrying this label. A transaction with several
+   *  labels counts in full under each, so amounts can add to more than `total`. */
   amount: number;
-  /** Share of the period total, labeled or not */
+  /** Share of the period total, labeled or not. Can add to more than 100% when labels overlap. */
   percentage: number;
   /** Counts a transaction once per label it carries */
   transactionCount: number;

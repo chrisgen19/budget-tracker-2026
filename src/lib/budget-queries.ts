@@ -857,14 +857,75 @@ export const getCategoryList = async (
   }));
 };
 
+/** The slice of a transaction `buildLabelBreakdown` reads. */
+export interface LabelBreakdownRow {
+  amount: number;
+  labels?: Array<{ labelId: string; label: { name: string; color: string } }>;
+}
+
 /**
- * Spending grouped by label for a month.
+ * Group transactions by label, shared by `getLabelBreakdown` and `/api/analytics` so the same
+ * question gets the same answer on the analytics page, over MCP and in Telegram.
  *
- * Mirrors the analytics page's LabelBreakdown (`/api/analytics`) rather than defining its own
- * arithmetic, so the same question gets the same answer in both places. In particular a
- * transaction's amount is split evenly across its labels, so a 1000 expense tagged with two
- * labels contributes 500 to each and the label amounts still sum to the period total.
- * `transactionCount` deliberately counts a transaction once per label, so the counts do not.
+ * A label is a tag, not a slice of a pie: a transaction counts **in full** under every label it
+ * carries, so a 1000 expense tagged Work and TNVC adds 1000 to each. That is what the drill-down
+ * list beneath each bar sums to, and what a filter on one label returns. The consequence is that
+ * label amounts, counts and percentages can add to more than the period total whenever labels
+ * overlap. The amount used to be divided evenly across a transaction's labels to keep the
+ * percentages under 100%, which quietly halved every label on a multi-labelled row.
+ *
+ * Percentages are against `total`, the whole period including unlabeled rows. Sorted by amount.
+ */
+export const buildLabelBreakdown = (rows: LabelBreakdownRow[], total: number): LabelBreakdownItem[] => {
+  const byLabel = new Map<string, LabelBreakdownItem>();
+  let unlabeledAmount = 0;
+  let unlabeledCount = 0;
+
+  for (const t of rows) {
+    if (!t.labels || t.labels.length === 0) {
+      unlabeledAmount += t.amount;
+      unlabeledCount += 1;
+      continue;
+    }
+
+    for (const tl of t.labels) {
+      const existing = byLabel.get(tl.labelId);
+      if (existing) {
+        existing.amount += t.amount;
+        existing.transactionCount += 1;
+      } else {
+        byLabel.set(tl.labelId, {
+          id: tl.labelId,
+          name: tl.label.name,
+          color: tl.label.color,
+          amount: t.amount,
+          percentage: 0,
+          transactionCount: 1,
+        });
+      }
+    }
+  }
+
+  const pct = (amount: number) => (total > 0 ? Math.round((amount / total) * 100) : 0);
+  const labels = Array.from(byLabel.values()).map((item) => ({ ...item, percentage: pct(item.amount) }));
+
+  if (unlabeledCount > 0) {
+    labels.push({
+      id: "unlabeled",
+      name: "Unlabeled",
+      color: "#9CA3AF",
+      amount: unlabeledAmount,
+      percentage: pct(unlabeledAmount),
+      transactionCount: unlabeledCount,
+    });
+  }
+
+  return labels.sort((a, b) => b.amount - a.amount);
+};
+
+/**
+ * Spending grouped by label for a month. See `buildLabelBreakdown` for the arithmetic: a
+ * transaction with several labels counts in full under each.
  */
 export const getLabelBreakdown = async (
   prisma: PrismaClient,
@@ -881,55 +942,7 @@ export const getLabelBreakdown = async (
   });
 
   const total = transactions.reduce((sum, t) => sum + t.amount, 0);
-  const byLabel = new Map<string, LabelBreakdownItem>();
-  let unlabeledAmount = 0;
-  let unlabeledCount = 0;
-
-  for (const t of transactions) {
-    if (t.labels.length === 0) {
-      unlabeledAmount += t.amount;
-      unlabeledCount += 1;
-      continue;
-    }
-
-    const share = t.amount / t.labels.length;
-    for (const tl of t.labels) {
-      const existing = byLabel.get(tl.labelId);
-      if (existing) {
-        existing.amount += share;
-        existing.transactionCount += 1;
-      } else {
-        byLabel.set(tl.labelId, {
-          id: tl.labelId,
-          name: tl.label.name,
-          color: tl.label.color,
-          amount: share,
-          percentage: 0,
-          transactionCount: 1,
-        });
-      }
-    }
-  }
-
-  const pct = (amount: number) => (total > 0 ? Math.round((amount / total) * 100) : 0);
-
-  const labels: LabelBreakdownItem[] = Array.from(byLabel.values()).map((item) => ({
-    ...item,
-    percentage: pct(item.amount),
-  }));
-
-  if (unlabeledCount > 0) {
-    labels.push({
-      id: "unlabeled",
-      name: "Unlabeled",
-      color: "#9CA3AF",
-      amount: unlabeledAmount,
-      percentage: pct(unlabeledAmount),
-      transactionCount: unlabeledCount,
-    });
-  }
-
-  labels.sort((a, b) => b.amount - a.amount);
+  const labels = buildLabelBreakdown(transactions, total);
 
   return { month: period.month, period, type, total, labels };
 };

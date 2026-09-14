@@ -171,7 +171,7 @@ describe("getMonthlySummary buckets by the user's local month", () => {
   });
 });
 
-describe("getLabelBreakdown mirrors the analytics page's arithmetic", () => {
+describe("getLabelBreakdown treats labels as tags", () => {
   type Tx = { amount: number; labels: Array<{ labelId: string; label: { name: string; color: string } }> };
 
   const labelPrisma = (rows: Tx[]) =>
@@ -179,8 +179,9 @@ describe("getLabelBreakdown mirrors the analytics page's arithmetic", () => {
 
   const lbl = (id: string) => ({ labelId: id, label: { name: id, color: "#000" } });
 
-  it("splits a transaction's amount evenly across its labels", async () => {
-    // One 1000 expense tagged twice contributes 500 to each, so the labels still sum to 1000.
+  // The bug this covers: the amount used to be divided evenly across a transaction's labels, so a
+  // 500 ride tagged Work and TNVC showed 250 under each while the drill-down list summed to 500.
+  it("counts a transaction's full amount under every label it carries", async () => {
     const result = await getLabelBreakdown(
       labelPrisma([{ amount: 1000, labels: [lbl("work"), lbl("travel")] }]),
       "u1",
@@ -188,11 +189,28 @@ describe("getLabelBreakdown mirrors the analytics page's arithmetic", () => {
     );
 
     expect(result.total).toBe(1000);
-    expect(result.labels.map((l) => [l.name, l.amount])).toEqual([
-      ["work", 500],
-      ["travel", 500],
+    expect(result.labels.map((l) => [l.name, l.amount, l.percentage])).toEqual([
+      ["work", 1000, 100],
+      ["travel", 1000, 100],
     ]);
-    expect(result.labels.reduce((s, l) => s + l.amount, 0)).toBe(1000);
+  });
+
+  it("lets overlapping labels add to more than the period total", async () => {
+    const result = await getLabelBreakdown(
+      labelPrisma([
+        { amount: 600, labels: [lbl("work"), lbl("travel")] },
+        { amount: 400, labels: [lbl("work")] },
+      ]),
+      "u1",
+      { month: "2026-03" }
+    );
+
+    expect(result.total).toBe(1000);
+    expect(result.labels.map((l) => [l.name, l.amount, l.percentage])).toEqual([
+      ["work", 1000, 100],
+      ["travel", 600, 60],
+    ]);
+    expect(result.labels.reduce((s, l) => s + l.amount, 0)).toBe(1600);
   });
 
   it("counts a transaction once per label, so counts do not sum to the transaction total", async () => {

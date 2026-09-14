@@ -2,6 +2,34 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-14 - Labels count a transaction in full
+
+A label is a tag, and the label breakdown now treats it as one: a transaction counts its full
+amount under every label it carries. It used to divide the amount evenly across them, so a 500
+ride tagged `Work Budget` and `TNVC` showed 250 under each. That was added the day the analytics
+page shipped, to keep the By Label percentages from adding past 100%, and it quietly halved every
+label on a multi-labelled row: on production data, year to date, `TNVC` showed 17,818 against
+23,047 of actual rides and `Credit Card` showed exactly half of its 8,187. It also made the chart
+disagree with its own drill-down, since the transactions list beneath each bar sums full amounts.
+
+The arithmetic now lives once, in `buildLabelBreakdown` (`src/lib/budget-queries.ts`), shared by
+`/api/analytics` and `getLabelBreakdown`, which serves MCP's `get_label_breakdown` and the Telegram
+`/labels` reply. There were two hand-kept copies before, and keeping them in step was a convention.
+
+What changes for a reader:
+- **Amounts and percentages can add to more than the period total** when labels overlap. `total`
+  is unchanged and is still the figure to use for spending; the MCP tool description says so, since
+  an assistant summing label amounts would now double count
+- **Unlabeled** is unchanged, and percentages are still against the whole period
+- The By Label card gets a one-line note when it lists more than one label, and the Telegram reply
+  explains the overlap only when the labels actually add to more than the total. Its old "counts
+  half to each, so these add to 100%" note is gone, and so is the search reply's warning that the
+  label breakdown "will show less", since both now count in full
+
+No schema or data change. The comments that justified other decisions by the split (provenance as
+a column, pinned labels over schedules, exact label matching) are reworded: their conclusions
+stand, since a wrong label now inflates one instead of diverting half an amount.
+
 ## 2026-09-14 - The heatmap's drill-down says it is one
 
 The Spending Heatmap has linked into `/transactions` since #277, but it reads as a caption rather

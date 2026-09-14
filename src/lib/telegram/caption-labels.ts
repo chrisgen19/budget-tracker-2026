@@ -12,8 +12,8 @@
  * Only an *explicit* directive counts. A bare mention of a label name does not auto-apply one:
  * "Pickleball court fee" is a description, and labelling on it would tag "lunch with the
  * pickleball crew" as a game. The cost of the two mistakes is not symmetric — a missing label is
- * visible in the review and fixed in the app, a wrong one quietly moves money in the label
- * breakdown, which splits an amount across whatever labels a transaction carries.
+ * visible in the review and fixed in the app, a wrong one quietly inflates a label in the label
+ * breakdown, which counts the full amount under whatever labels a transaction carries.
  */
 
 export interface BotLabel {

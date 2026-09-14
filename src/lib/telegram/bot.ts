@@ -549,18 +549,6 @@ async function handleSearch(
 
   if (total > 0) {
     msg += `\n\nTotal: *${money(total)}*`;
-
-    // The app's label breakdown divides a transaction's amount evenly among its labels, so a row
-    // carrying two labels contributes half there and all of it here. Both are defensible for the
-    // question each answers, but a user comparing the two numbers deserves to know why they
-    // differ rather than discovering it as an apparent error. Summing full amounts is what keeps
-    // this total equal to the rows listed above it.
-    const shared = rows.filter((r) => (r.labels?.length ?? 0) > 1).length;
-    if (filters.labelId && shared > 0) {
-      msg +=
-        `\n\n_${shared} of these also carry another label. This total counts each in full, ` +
-        `so the app's label breakdown, which splits them, will show less._`;
-    }
   }
 
   await sendMessage(chatId, msg);
@@ -1661,7 +1649,7 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
       // Resolved against the real list rather than trusted, the same boundary `parseSearchIntent`
       // draws: the model is given names and can return one nobody has. A hallucinated label on a
       // *search* costs a wrong answer; on a write it lands on the row, and `getLabelBreakdown`
-      // splits an amount across whatever labels it carries, so it quietly moves money.
+      // counts the full amount under whatever labels it carries, so it quietly inflates a label.
       const namedLabels: string[] = Array.isArray(txData.labels) ? txData.labels : [];
 
       // And read the directive locally as well, merging the two. The model is asked to fill
