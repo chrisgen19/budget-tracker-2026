@@ -17,8 +17,8 @@ The arithmetic now lives once, in `buildLabelBreakdown` (`src/lib/budget-queries
 `/labels` reply. There were two hand-kept copies before, and keeping them in step was a convention.
 
 What changes for a reader:
-- **Amounts and percentages can add to more than the period total** when labels overlap. `total`
-  is unchanged and is still the figure to use for spending; the MCP tool description says so, since
+- **Label amounts can add to more than the period total, and percentages to more than 100%,**
+  when labels overlap. `total` is unchanged and is still the figure to use for spending; the MCP tool description says so, since
   an assistant summing label amounts would now double count
 - **Unlabeled** is unchanged, and percentages are still against the whole period
 - The By Label card gets a one-line note when it lists more than one label, and the Telegram reply

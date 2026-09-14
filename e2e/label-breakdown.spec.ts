@@ -27,21 +27,36 @@ interface AnalyticsLabel {
   transactionCount: number;
 }
 
+/**
+ * The account every test here can actually exercise: one with an expense in the window that carries
+ * two or more labels. That single row is enough for all three preconditions (labelled spending,
+ * more than one label so the note renders, and an overlap), where "the busiest account" guaranteed
+ * none of them and failed or skipped for reasons unrelated to the breakdown.
+ *
+ * Searched a day inside each end of the window, so no timezone offset can move the row outside the
+ * local window `/api/analytics` resolves for that user.
+ */
 const findSeededUser = async () => {
-  const [user] = await prisma.user.findMany({
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      role: true,
-      currency: true,
-      timezoneOffset: true,
-      _count: { select: { transactions: true } },
-    },
-    orderBy: { transactions: { _count: "desc" } },
-    take: 1,
+  const [match] = await prisma.$queryRaw<Array<{ user_id: string }>>`
+    SELECT user_id FROM (
+      SELECT t.user_id
+      FROM transactions t
+      JOIN transaction_labels tl ON tl.transaction_id = t.id
+      WHERE t.type = 'EXPENSE'
+        AND t.date >= ${new Date(`${FROM}T00:00:00.000Z`)} + interval '1 day'
+        AND t.date <= ${new Date(`${TO}T23:59:59.999Z`)} - interval '1 day'
+      GROUP BY t.id, t.user_id
+      HAVING COUNT(*) > 1
+    ) shared
+    GROUP BY user_id
+    ORDER BY COUNT(*) DESC
+    LIMIT 1
+  `;
+  if (!match) return null;
+  return prisma.user.findUnique({
+    where: { id: match.user_id },
+    select: { id: true, name: true, email: true, role: true, currency: true, timezoneOffset: true },
   });
-  return user && user._count.transactions > 0 ? user : null;
 };
 
 type SeededUser = NonNullable<Awaited<ReturnType<typeof findSeededUser>>>;
@@ -114,7 +129,7 @@ test.describe("label breakdown counts multi-labelled transactions in full", () =
 
   test.beforeEach(async ({ page }) => {
     user = await findSeededUser();
-    test.skip(!user, "The local database has no account with transactions");
+    test.skip(!user, "No account has a 2026 expense carrying two or more labels");
     await guardAndRevealAmounts(page);
     await signIn(page, user!);
   });
@@ -145,17 +160,15 @@ test.describe("label breakdown counts multi-labelled transactions in full", () =
       _sum: { amount: true },
     });
     const listed = labels.reduce((sum, l) => sum + l.amount, 0);
-    if (await mostOverlappingLabel(u)) {
-      expect(listed, "overlapping labels should add past the period total").toBeGreaterThan(
-        (total._sum.amount ?? 0) + 0.005
-      );
-    }
+    expect(listed, "overlapping labels should add past the period total").toBeGreaterThan(
+      (total._sum.amount ?? 0) + 0.005
+    );
   });
 
   test("the card shows the full amount, the note, and a drill-down to the same rows", async ({ page }) => {
     const u = user!;
     const target = await mostOverlappingLabel(u);
-    test.skip(!target, "No multi-labelled transactions in the window");
+    expect(target, "the selected account has no multi-labelled expense in the window").not.toBeNull();
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/analytics?period=custom&from=${FROM}&to=${TO}&type=EXPENSE&tab=reports`, {
