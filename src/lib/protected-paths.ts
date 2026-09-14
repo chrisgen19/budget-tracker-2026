@@ -27,6 +27,8 @@ export const PROTECTED_PAGE_PATHS = [
   "/quick-log",
   "/transactions",
   "/bills",
+  // Credit cards: balances, statement lines and payments.
+  "/cards",
   "/categories",
   "/labels",
   "/profile",

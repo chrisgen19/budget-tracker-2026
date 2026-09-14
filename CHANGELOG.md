@@ -2,6 +2,30 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-14 - Credit cards: the Cards pages
+
+The screens for the card data model. **Cards** sits in the sidebar after Bills and in the mobile
+More menu.
+
+- `/cards` lists each card with what it owes, how much of its limit is used and its due day, plus
+  the total owed across active cards. Archived cards are one toggle away. A failed read says so
+  rather than rendering as "No cards yet"
+- `/cards/[id]` shows one card for one month:
+  - what it owes overall, and what was charged, refunded and paid that month
+  - "Where it went": the month's charges by category, net of refunds. This is the only place card
+    spending is broken down by category, since the dashboard sees only the payment
+  - one list of charges and payments. A payment links to its transaction, where it is edited
+- Add Charges takes several statement lines at once, with a running total to check against the
+  statement before saving. It never offers the Credit Card Payment category. After saving, the page
+  jumps to the month the lines landed in
+- Delete archives a card that has any history, and the page says which happened
+- `/cards` is on the service worker's denylist (`PROTECTED_PAGE_PATHS`)
+- `CARD_PAYMENT_CATEGORY_NAME` moved to `src/lib/card-payment-category.ts`, a module with no
+  imports, so the charge form can use it without pulling `@prisma/client` into the browser bundle
+
+Still to come: recording a payment against a card from the transaction form, and linking a card
+to its reminder bill.
+
 ## 2026-09-14 - Credit cards as debts: data model and API
 
 A credit card could only be logged as ordinary expenses, so every swipe counted as spending the
