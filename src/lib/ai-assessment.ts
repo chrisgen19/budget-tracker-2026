@@ -23,16 +23,9 @@ const summarySchema = z.object({
   transactionCount: z.number(),
 });
 
-const subScoreSchema = z.object({
-  score: z.number(),
-  label: z.string(),
-  trend: z.string(),
-});
-
 /* Bounds on the client-supplied payload so a crafted request can't blow up the
  * prompt size / token cost. The snapshot only uses the top handful anyway. */
 const NAME = z.string().max(120);
-const LABEL = z.string().max(60);
 
 /** The slice of AnalyticsData the AI needs, sent by the client for the selected period. */
 export const assessmentPayloadSchema = z.object({
@@ -42,19 +35,6 @@ export const assessmentPayloadSchema = z.object({
   previousPeriodLabel: z.string().max(120).default(""),
   summary: summarySchema,
   previousSummary: summarySchema,
-  healthScore: z.object({
-    overallScore: z.number(),
-    overallLabel: LABEL,
-    overallTrend: LABEL,
-    savingsRate: z.number().nullable(),
-    subScores: z.object({
-      savingsRate: subScoreSchema,
-      expenseTrend: subScoreSchema,
-      incomeStability: subScoreSchema,
-      diversification: subScoreSchema,
-      consistency: subScoreSchema,
-    }),
-  }),
   // All-types only — the Reports type filter must not skew the assessment, and the
   // cache key is type-independent, so type-filtered fields (labels, top transactions)
   // are intentionally excluded. The statistics block below carries the all-types highlights.
@@ -154,9 +134,15 @@ const extractSources = (response: { candidates?: Array<{ groundingMetadata?: { g
 
 /** Compact, numbers-included snapshot the model reasons over. */
 const buildDataSnapshot = (p: AssessmentPayload, bills: UpcomingBillsContext): string => {
-  const h = p.healthScore;
   const topExpenseCats = p.categoryBreakdown.filter((c) => c.type === "EXPENSE").slice(0, 8);
-  const subs = h.subScores;
+  const previousHasData = p.previousSummary.transactionCount > 0;
+  const percentageChange = (current: number, previous: number): number | null =>
+    previousHasData && previous !== 0
+      ? Math.round(((current - previous) / previous) * 100)
+      : null;
+  const incomeKept = p.summary.totalIncome > 0
+    ? Math.round((p.summary.netCashFlow / p.summary.totalIncome) * 100)
+    : null;
   return JSON.stringify({
     currency: p.currency,
     period: p.periodLabel,
@@ -173,18 +159,17 @@ const buildDataSnapshot = (p: AssessmentPayload, bills: UpcomingBillsContext): s
       expenses: p.previousSummary.totalExpenses,
       net: p.previousSummary.netCashFlow,
     },
-    healthScore: {
-      overall: h.overallScore,
-      label: h.overallLabel,
-      trend: h.overallTrend,
-      savingsRatePct: h.savingsRate === null ? null : Math.round(h.savingsRate * 100),
-      subScores: {
-        savingsRate: { score: subs.savingsRate.score, trend: subs.savingsRate.trend },
-        expenseTrend: { score: subs.expenseTrend.score, trend: subs.expenseTrend.trend },
-        incomeStability: { score: subs.incomeStability.score, trend: subs.incomeStability.trend },
-        diversification: { score: subs.diversification.score, trend: subs.diversification.trend },
-        consistency: { score: subs.consistency.score, trend: subs.consistency.trend },
-      },
+    cashFlowSignals: {
+      net: p.summary.netCashFlow,
+      incomeKeptPct: incomeKept,
+      expenseChangePct: percentageChange(
+        p.summary.totalExpenses,
+        p.previousSummary.totalExpenses,
+      ),
+      incomeChangePct: percentageChange(
+        p.summary.totalIncome,
+        p.previousSummary.totalIncome,
+      ),
     },
     topExpenseCategories: topExpenseCats.map((c) => ({
       name: c.name,
@@ -369,15 +354,17 @@ RULES:
   missed for two months, that goes first and the savings rate waits.
 - Separate accuracy problems from money problems. Most findings above are about the numbers being
   wrong; saying so is more useful than inventing frugality advice.
-- Give credit where the figures earn it. A healthy savings rate with every month net-positive is a
-  good result -- say so plainly and move on to what needs attention.
+- Give credit where the figures earn it. Positive cash flow with every trustworthy month net-positive
+  is a good result -- say so plainly and move on to what needs attention.
+- Do not assign or imply an overall financial health grade. This ledger does not contain account
+  balances, liquid savings, assets, debt, goals, insurance or the user's broader circumstances.
 - Every claim must trace to a figure in the data above. Do not invent a category, a bill or a trend.
   If the findings are thin, write less rather than filling space.
 - Be specific: use the user's real category, bill and merchant names.
 
 SECTIONS:
 - "summary": 2-3 sentences, leading with the most consequential finding.
-- "scoreCommentary": what the health score and its sub-scores actually mean here.
+- "cashFlowCommentary": what the descriptive cash-flow signals mean, without turning them into a grade.
 - "outlook": 1-2 sentences on the next few weeks, given bills due and the current run rate.
 - "patterns": 2-4 things that went wrong or unusually in this period, each traced to an anomaly or
   bill finding above, with a severity of "high" | "medium" | "low".
@@ -393,7 +380,7 @@ SECTIONS:
 - "quickActions": 3-5 short next steps, the first being the highest-leverage thing to do this week.
 
 Respond with ONLY valid JSON (no markdown), shape:
-{"summary": string, "scoreCommentary": string, "outlook": string, "patterns": [{"title": string, "detail": string, "severity": "high"|"medium"|"low"}], "trends": [{"title": string, "detail": string, "direction": "up"|"down"|"new"|"stable"}], "dataQuality": [{"title": string, "detail": string, "fix": string}], "watchList": [{"title": string, "detail": string, "severity": "high"|"medium"|"low"}], "cutBack": [{"title": string, "reason": string, "suggestion": string, "estimatedMonthlySaving": number|null}], "boostSavings": [{"title": string, "detail": string}], "earnIdeas": [{"title": string, "detail": string}], "quickActions": [string]}`;
+{"summary": string, "cashFlowCommentary": string, "outlook": string, "patterns": [{"title": string, "detail": string, "severity": "high"|"medium"|"low"}], "trends": [{"title": string, "detail": string, "direction": "up"|"down"|"new"|"stable"}], "dataQuality": [{"title": string, "detail": string, "fix": string}], "watchList": [{"title": string, "detail": string, "severity": "high"|"medium"|"low"}], "cutBack": [{"title": string, "reason": string, "suggestion": string, "estimatedMonthlySaving": number|null}], "boostSavings": [{"title": string, "detail": string}], "earnIdeas": [{"title": string, "detail": string}], "quickActions": [string]}`;
 
   const response = await generateContentWithRetry({
     model: GEMINI_MODEL,
@@ -407,7 +394,7 @@ Respond with ONLY valid JSON (no markdown), shape:
   }
   const r = parsed.data;
   const isEmpty =
-    !r.summary && !r.scoreCommentary && !r.outlook &&
+    !r.summary && !r.cashFlowCommentary && !r.outlook &&
     r.patterns.length === 0 && r.trends.length === 0 && r.dataQuality.length === 0 &&
     r.watchList.length === 0 && r.cutBack.length === 0 &&
     r.boostSavings.length === 0 && r.earnIdeas.length === 0 && r.quickActions.length === 0;
