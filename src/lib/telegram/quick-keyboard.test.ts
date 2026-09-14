@@ -179,6 +179,12 @@ describe("Frequent on the keyboard", () => {
     expect(labels).toEqual(["Office", "Home UV", "A", "B", "C", "D"]);
   });
 
+  // A failed saved-tile read is not "no saved tiles". Filling then would skip the text check, and a
+  // Frequent "Coffee" could carry a saved "Coffee" tile's text and log as that tile later.
+  it("fills nothing when the saved tiles could not be read", () => {
+    expect(keyboardButtons(null, [frequent("Coffee", 120)], PESO)).toEqual([]);
+  });
+
   it("adds nothing when the saved buttons already fill the keyboard", () => {
     const buttons = keyboardButtons(TILES, [frequent("A", 1)], PESO);
     expect(buttons).toHaveLength(KEYBOARD_TILE_LIMIT);

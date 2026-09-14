@@ -111,10 +111,15 @@ export const frequentAsTile = (entry: KeyboardFrequent): KeyboardTile => ({
  * buttons ever given the same text, which would make the second unreachable.
  */
 export const keyboardButtons = (
-  tiles: KeyboardTile[],
+  tiles: KeyboardTile[] | null,
   frequent: KeyboardFrequent[],
   symbol: string
 ): KeyboardTile[] => {
+  // Null is a saved-tile read that failed, and it fills nothing. The text check below can only
+  // keep a Frequent button off a saved tile's text when it can see the tiles; without them one
+  // could carry that text, and once the read recovers a tap on it would log the tile instead.
+  if (tiles === null) return [];
+
   const buttons = tiles.slice(0, KEYBOARD_TILE_LIMIT);
   const taken = new Set(tiles.map((t) => tileButtonText(t, symbol)));
 

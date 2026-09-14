@@ -1380,12 +1380,13 @@ async function sendQuickKeyboard(
 
   let msg = text;
   if (tiles === null) {
-    msg += "\n\nI couldn't load your saved quick-log buttons just now, so they are missing here.";
+    msg += "\n\nI couldn't load your quick-log buttons just now, so only the commands are showing.";
   } else if (tiles.length === 0 && !frequent?.length) {
     msg += "\n\nYou have no quick-log buttons yet. Add them on the Quick Log page in the app.";
   }
 
-  const buttons = keyboardButtons(tiles ?? [], frequent ?? [], SYMBOL);
+  // `tiles` stays null through to `keyboardButtons`, which fills nothing without them.
+  const buttons = keyboardButtons(tiles, frequent ?? [], SYMBOL);
   await sendMessage(chatId, msg, "Markdown", quickKeyboard(buttons, SYMBOL));
 }
 
@@ -1593,9 +1594,10 @@ async function handleMessage(message: TelegramMessage, updateId: number) {
     }
 
     // Saved tiles first, then the Frequent entries that fill the rest of the keyboard. Read only
-    // after the tiles miss, so a tap on a saved button costs no second call. `keyboardButtons`
-    // never gives a Frequent entry a saved tile's text, so this order cannot shadow one.
-    const frequent = await loadFrequentEntries();
+    // after the tiles miss, so a tap on a saved button costs no second call. Never after the tile
+    // read *failed*: this text may be a saved button's, and matching it against Frequent instead
+    // would log a different purchase under the same words.
+    const frequent = tiles === null ? null : await loadFrequentEntries();
     const entry = frequent ? matchFrequentButton(text, frequent, SYMBOL) : null;
 
     if (entry) {
