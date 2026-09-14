@@ -61,14 +61,21 @@ const TILE_SEPARATOR = " · ";
 const ASK_MARK = "?";
 
 /**
- * A tile's amount as a button shows it: `38`, `37.50`.
+ * A tile's amount as a button shows it: `38`, `37.50`, and `38.999` when that is what is stored.
+ *
+ * Never rounded. A tap logs the stored `amount`, and the Mini App's editor saves whatever precision
+ * was typed (only the web form bounds it to two decimals), so rounding here would show `₱39.00` on a
+ * button that writes `38.999`. Two decimals are used only when they represent the value exactly.
  *
  * No thousands separator. A comma is an entry separator to `parseShorthandEntries`, and although a
  * button is matched before shorthand is tried, the text should not depend on that ordering to be
  * safe.
  */
-const formatTileAmount = (amount: number): string =>
-  Number.isInteger(amount) ? String(amount) : amount.toFixed(2);
+const formatTileAmount = (amount: number): string => {
+  if (Number.isInteger(amount)) return String(amount);
+  const cents = amount.toFixed(2);
+  return Number(cents) === amount ? cents : String(amount);
+};
 
 /** The exact text a tile's button carries, and therefore the exact text a tap sends back. */
 export const tileButtonText = (tile: KeyboardTile, symbol: string): string =>
@@ -114,7 +121,8 @@ export const looksLikeTileButton = (text: string, symbol: string): boolean => {
   const marker = `${TILE_SEPARATOR}${symbol}`;
   const at = trimmed.lastIndexOf(marker);
   if (at <= 0) return false;
-  return /^(\?|\d+(\.\d{2})?)$/.test(trimmed.slice(at + marker.length));
+  // Any number of decimals, because `formatTileAmount` shows an unrounded amount in full.
+  return /^(\?|\d+(\.\d+)?)$/.test(trimmed.slice(at + marker.length));
 };
 
 /**

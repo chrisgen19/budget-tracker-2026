@@ -1421,8 +1421,11 @@ async function logAskedTile(
 
   if (tiles === null) {
     // Transient, and the number is still good. Put the prompt back so resending it works, rather
-    // than making the user tap the button again for a failure that was not theirs.
-    putPendingAmount(chatId, prompt);
+    // than making the user tap the button again for a failure that was not theirs. With a fresh
+    // `createdAt`: restoring the original meant an answer near the end of the window came back
+    // already expired, so the resend this reply asks for was silently dropped. Still bounded,
+    // since each renewal needs another number from the user and another failed read.
+    putPendingAmount(chatId, { ...prompt, createdAt: Date.now() });
     await sendMessage(
       chatId,
       `I couldn't load your quick-log buttons, so nothing was logged for ${prompt.label}. ` +

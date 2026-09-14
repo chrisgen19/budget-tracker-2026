@@ -44,6 +44,16 @@ describe("tileButtonText", () => {
     expect(tileButtonText(tile("Jeep", 13.5), PESO)).toBe(`Jeep · ${PESO}13.50`);
   });
 
+  // A tap logs the stored amount, and the Mini App editor saves any precision. A rounded label
+  // would show one figure and write another.
+  it("never rounds an amount the button would log unrounded", () => {
+    const precise = tile("Fare", 38.999);
+    const text = tileButtonText(precise, PESO);
+    expect(text).toBe(`Fare · ${PESO}38.999`);
+    expect(looksLikeTileButton(text, PESO)).toBe(true);
+    expect(matchTileButton(text, [precise], PESO)).toBe(precise);
+  });
+
   it("marks a button that asks for its amount", () => {
     expect(tileButtonText(tile("Grab", null), PESO)).toBe(`Grab · ${PESO}?`);
   });
