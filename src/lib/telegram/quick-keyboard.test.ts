@@ -9,6 +9,10 @@ import {
   removeQuickKeyboard,
   tileButtonText,
   wantsKeyboardOff,
+  frequentAsTile,
+  keyboardButtons,
+  matchFrequentButton,
+  type KeyboardFrequent,
   type KeyboardTile,
 } from "@/lib/telegram/quick-keyboard";
 import { resolveCommand } from "@/lib/telegram/commands";
@@ -149,6 +153,56 @@ describe("matchTileButton", () => {
     const sent = tileButtonText(tile("Office", 38), PESO);
     expect(matchTileButton(sent, [tile("Office", 40)], PESO)).toBeNull();
     expect(matchTileButton(sent, [tile("To office", 38)], PESO)).toBeNull();
+  });
+});
+
+const frequent = (
+  description: string,
+  amount: number | null,
+  amountIsStable = true
+): KeyboardFrequent => ({ key: description.toLowerCase(), description, amount, amountIsStable });
+
+describe("Frequent on the keyboard", () => {
+  it("shows a stable amount, and asks when the amount is not stable", () => {
+    expect(tileButtonText(frequentAsTile(frequent("Jollibee", 180)), PESO)).toBe(
+      `Jollibee · ${PESO}180`
+    );
+    // The user may assert a fixed amount; the system may never infer one.
+    expect(tileButtonText(frequentAsTile(frequent("Lunch", 150, false)), PESO)).toBe(
+      `Lunch · ${PESO}?`
+    );
+  });
+
+  it("fills only the slots the saved buttons leave, saved buttons first", () => {
+    const fill = ["A", "B", "C", "D", "E"].map((d, i) => frequent(d, i + 1));
+    const labels = keyboardButtons(TILES.slice(0, 2), fill, PESO).map((b) => b.label);
+    expect(labels).toEqual(["Office", "Home UV", "A", "B", "C", "D"]);
+  });
+
+  // A failed saved-tile read is not "no saved tiles". Filling then would skip the text check, and a
+  // Frequent "Coffee" could carry a saved "Coffee" tile's text and log as that tile later.
+  it("fills nothing when the saved tiles could not be read", () => {
+    expect(keyboardButtons(null, [frequent("Coffee", 120)], PESO)).toEqual([]);
+  });
+
+  it("adds nothing when the saved buttons already fill the keyboard", () => {
+    const buttons = keyboardButtons(TILES, [frequent("A", 1)], PESO);
+    expect(buttons).toHaveLength(KEYBOARD_TILE_LIMIT);
+    expect(buttons.map((b) => b.label)).not.toContain("A");
+  });
+
+  // A tap is matched against saved tiles first, so a Frequent button sharing a saved tile's text
+  // would log the tile instead of what it showed.
+  it("skips a Frequent entry whose button text a saved tile already carries", () => {
+    const buttons = keyboardButtons([tile("Taxi", null)], [frequent("Taxi", 200, false)], PESO);
+    expect(buttons.map((b) => b.id)).toEqual(["Taxi"]);
+  });
+
+  it("matches the entry a button was built from, and misses once its amount stops being stable", () => {
+    const entry = frequent("Jollibee", 180);
+    const text = tileButtonText(frequentAsTile(entry), PESO);
+    expect(matchFrequentButton(text, [entry], PESO)).toBe(entry);
+    expect(matchFrequentButton(text, [frequent("Jollibee", 180, false)], PESO)).toBeNull();
   });
 });
 

@@ -21,6 +21,26 @@ use `cashFlowCommentary` and are explicitly forbidden from implying an overall g
 with the old `scoreCommentary` field remain readable through a one-way compatibility normalization;
 no database migration is required.
 
+## 2026-09-14 - The Telegram keyboard fills spare spots from Frequent
+
+With fewer than six saved Quick Log buttons, `/keyboard` used to leave the spare spots empty. It
+now fills them with **Frequent** entries, the same "what you log most often" the Mini App grid
+shows, after your saved buttons.
+
+- A Frequent button shows its usual amount only when that amount is stable, `Jollibee · ₱180`, and
+  logs in one tap. Otherwise it shows `Lunch · ₱?` and asks how much, like a saved button with no
+  amount
+- It logs with the entry's usual category and no labels, so your label schedules decide, exactly as
+  a Mini App tap on the same entry does
+- Frequent entries move as your habits change. Tapping one that has dropped out or changed its
+  usual amount logs nothing and replies with the current keyboard
+- Anything a saved button already covers is left out, and a Frequent button never takes a saved
+  button's text
+- New read-only MCP tool `get_frequent_tiles` (`budget:read` + `transactions:read`, both in the
+  default grant)
+
+No schema or data change. Send `/keyboard` once after deploying.
+
 ## 2026-09-14 - The Telegram keyboard is your Quick Log buttons
 
 `/keyboard` used to pin three hardcoded fares. It now pins the first six Quick Log buttons, in the
