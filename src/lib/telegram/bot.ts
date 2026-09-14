@@ -445,11 +445,6 @@ async function handleBills(chatId: number) {
   await sendMessage(chatId, msg);
 }
 
-/** Rows fetched for the total, and rows actually listed. Fetching wider makes the total real
- *  without turning the reply into a wall of text. The fetch limit is the tool's own ceiling:
- *  asking for more is rejected outright, which returns nothing rather than more. */
-const SEARCH_SUM_LIMIT = 100;
-
 /** How far back bill history can be asked for. Beyond this the answer is "I cannot check",
  *  never "it was not paid". */
 const MAX_HISTORY_MONTHS = 60;
@@ -459,6 +454,8 @@ const HISTORY_PAGE = 100;
 
 /** Receipt line items fetched per call. How many are listed back lives with the renderer. */
 const RECEIPT_ITEM_PAGE = 200;
+
+/** Search rows listed in a reply, and so also fetched: the count and total come from `totals`. */
 const SEARCH_SHOW_LIMIT = 10;
 
 /**
@@ -489,7 +486,6 @@ async function handleSearch(
       localDate: string;
       categoryName: string;
       type: string;
-      labels: { name: string }[];
     }[];
     period: ReportedPeriod | null;
     totals: { count: number; income: number; expenses: number };
@@ -507,9 +503,9 @@ async function handleSearch(
     ...(month && { month }),
     ...(filters.from && { from: filters.from }),
     ...(filters.to && { to: filters.to }),
-    // Still fetched wider than shown, but no longer to make the total right: `totals` covers
-    // every match. The extra rows are what the shared-label note below is counted from.
-    limit: SEARCH_SUM_LIMIT,
+    // Only the rows the reply lists. The match count and the total come from `totals`, which the
+    // database aggregates over every match, so fetching wider changes neither.
+    limit: SEARCH_SHOW_LIMIT,
     sortBy: "date",
     sortDir: "desc",
     compact: true,
