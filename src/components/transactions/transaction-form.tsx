@@ -211,20 +211,24 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scheduledLabelId, hideLabelPicker]);
 
-  // Strip incompatible labels when the transaction type changes
-  useEffect(() => {
-    if (hideLabelPicker || allLabels.length === 0) return;
-    const currentIds = getValues("labelIds") ?? [];
-    if (currentIds.length === 0) return;
-    const compatible = currentIds.filter((id) => {
-      const label = allLabels.find((l) => l.id === id);
-      return !label || label.applicableTo === "BOTH" || label.applicableTo === selectedType;
-    });
-    if (compatible.length !== currentIds.length) {
-      setValue("labelIds", compatible);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedType]);
+  // Incompatible labels are KEPT when the type changes, and marked by `LabelPicker` rather than
+  // removed here. See #305.
+  //
+  // This used to strip them. Two problems with that. The visible one: a chip vanished with no
+  // explanation, and the picker's own design is the opposite -- it keeps a label already on a
+  // record and grandfathers it, because one disappearing because the type was flipped later reads
+  // as data loss. The forms and the picker disagreed, and the forms won by running first.
+  //
+  // The subtle one: the effect early-returned while `allLabels` was still loading and its
+  // dependency list was `[selectedType]` alone, so it never re-ran once the labels arrived. Flip
+  // the type fast enough and the strip was skipped permanently -- the label survived to save and
+  // was dropped there with nothing saying so, which is the bug #305 describes.
+  //
+  // Safe to keep because `createTransactionBatch`/`updateTransactions` treat an incompatible type
+  // as a REPORT, not a refusal: the label is dropped and named in `droppedLabels`
+  // (transaction-writes.ts:706). `QuickTileForm` deliberately still clears, because
+  // `quick-tile-writes.ts` answers `LABELS_UNUSABLE` -- there, keeping one turns a clean clear
+  // into a failed save.
 
   return (
     <AnimatePresence mode="wait" initial={false}>
@@ -495,6 +499,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
             {/* Labels */}
             {!hideLabelPicker && (
               <LabelPicker
+                categoryId={watchedCategoryId}
                 selectedIds={watchedLabelIds}
                 onChange={(ids) => {
                   userTouchedLabels.current = true;

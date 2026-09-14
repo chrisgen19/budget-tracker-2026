@@ -97,25 +97,24 @@ describe("analyticsReturnTarget", () => {
     ).toBe("/analytics?period=custom&from=2026-07-01&to=2026-09-30&type=ALL&tab=reports");
   });
 
-  it("names the period it actually returns to", () => {
-    // The label travels with the href so a caller cannot pair one with a period the
-    // other does not go to — which is what a heatmap drill-down would otherwise do,
-    // naming the single filtered day while the link returns to the whole span.
+  it("returns to the whole span a day drill-down came from, not the day", () => {
+    // The one property the label used to demonstrate, asserted on the href itself:
+    // the link goes to the analytics span, which is deliberately not the single day
+    // the ledger is filtered to.
     const target = analyticsReturnTarget(
       "period=custom&from=2026-07-01&to=2026-09-30&type=EXPENSE&tab=reports",
       MANILA,
     );
-    expect(target?.periodLabel).toContain("Jul");
-    expect(target?.periodLabel).toContain("Sep");
-    expect(target?.periodLabel).not.toContain("Sep 12");
+    expect(target?.href).toContain("from=2026-07-01");
+    expect(target?.href).toContain("to=2026-09-30");
   });
 
-  it("names a month period the way the picker does", () => {
+  it("carries nothing but the href, so nothing can name a period the link misses", () => {
     const target = analyticsReturnTarget(
       "period=monthly&from=2026-09-01&to=2026-09-30&type=EXPENSE&tab=reports",
       MANILA,
     );
-    expect(target?.periodLabel).toBe("September 2026");
+    expect(Object.keys(target!)).toEqual(["href"]);
   });
 
   it("has no way to send the visitor off-site", () => {

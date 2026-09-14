@@ -104,10 +104,21 @@ const makePrisma = ({
         labels.filter((l) => where.id.in.includes(l.id))
       ),
     },
+    // Two raw statements now share this stub, and they are told apart by their bound values: the
+    // transaction row lock takes none, while the category lock binds the id array first.
+    //
     // `SELECT ... FOR UPDATE`. A stub cannot take a real row lock, so what these tests pin is
     // that the statement is issued and issued *first*; that it actually blocks a concurrent
     // writer is a property of Postgres and is covered by `scripts/verify-transaction-update.ts`.
-    $queryRaw: vi.fn(async () => {
+    // The category lock is covered the same way by `scripts/verify-category-lock.ts`.
+    $queryRaw: vi.fn(async (sql: unknown, ...values: unknown[]) => {
+      // Both statements bind an id array, so they are told apart by the table they name.
+      const text = Array.isArray(sql) ? sql.join("?") : String(sql);
+      if (text.includes("categories")) {
+        calls.push("lockCategories");
+        const [ids] = values as [string[]];
+        return categories.filter((c) => ids.includes(c.id));
+      }
       calls.push("lock");
       return [];
     }),

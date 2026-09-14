@@ -5,6 +5,7 @@ import {
 } from "@tanstack/react-query";
 import type { LabelInput } from "@/lib/validations";
 import { analyticsKeys } from "@/hooks/use-analytics";
+import { quickTileKeys } from "@/hooks/use-quick-tiles";
 import type { LabelWithCountAndSchedules } from "@/types";
 import { usePreferencesQuery, preferencesKeys } from "@/hooks/use-preferences";
 
@@ -12,9 +13,11 @@ import { usePreferencesQuery, preferencesKeys } from "@/hooks/use-preferences";
 /*  Query key factory                                                  */
 /* ------------------------------------------------------------------ */
 
-export const labelKeys = {
-  all: ["labels"] as const,
-};
+// Defined in its own module so `use-quick-tiles.ts` can import it without closing an import cycle
+// back through this file. Re-exported here so existing importers are unaffected.
+import { labelKeys } from "@/hooks/label-keys";
+
+export { labelKeys };
 
 /* ------------------------------------------------------------------ */
 /*  Fetch helpers                                                      */
@@ -129,6 +132,11 @@ export function useUpdateLabel() {
       // figure. Neither was invalidated, so both kept showing the old grouping
       // until something else happened to refresh them.
       queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
+      // A tile's pins carry an `applies` flag computed server-side from the label's type, so
+      // narrowing `applicableTo` leaves the cached grid showing a pin as active that the next
+      // tap will filter out. Deleting a label cascades its pins away outright, which the cache
+      // is just as blind to.
+      queryClient.invalidateQueries({ queryKey: quickTileKeys.all });
     },
   });
 }
@@ -154,6 +162,11 @@ export function useDeleteLabel() {
       // figure. Neither was invalidated, so both kept showing the old grouping
       // until something else happened to refresh them.
       queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
+      // A tile's pins carry an `applies` flag computed server-side from the label's type, so
+      // narrowing `applicableTo` leaves the cached grid showing a pin as active that the next
+      // tap will filter out. Deleting a label cascades its pins away outright, which the cache
+      // is just as blind to.
+      queryClient.invalidateQueries({ queryKey: quickTileKeys.all });
     },
   });
 }

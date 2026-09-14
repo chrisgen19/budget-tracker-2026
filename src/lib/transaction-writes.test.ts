@@ -43,6 +43,14 @@ const makePrisma = ({
           .map((id) => ({ id, type: categoryType }))
       ),
     },
+    // The locking category re-check inside the write transaction. A stub cannot take a row lock,
+    // so what it answers is the same set the unlocked read would -- the lock's real behaviour is
+    // proved against a live Postgres by `scripts/verify-category-lock.ts`.
+    $queryRaw: vi.fn(async (_sql: unknown, ids: string[]) =>
+      (ids ?? [])
+        .filter((id) => usableCategoryIds.includes(id))
+        .map((id) => ({ id, type: categoryType }))
+    ),
     label: {
       findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
         ownedLabels.filter((l) => where.id.in.includes(l.id))

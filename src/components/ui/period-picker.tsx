@@ -17,7 +17,7 @@ import {
   type PeriodSelection,
   type PeriodType,
 } from "@/lib/analytics-period";
-import { cn } from "@/lib/utils";
+import { cn, TOUCH_HIT_AREA } from "@/lib/utils";
 
 /**
  * The period control shared by the ledger and analytics.
@@ -344,6 +344,15 @@ export interface PeriodPickerProps {
   /** Analytics cannot offer All time: its API requires a bounded window. */
   allowAllTime?: boolean;
   presentation?: "popover" | "dialog";
+  /**
+   * Shrinks the control to a 36px chip for the transactions toolbar's filter rail,
+   * where it sits beside other chips and a 48px pill sets the height of the whole
+   * row. The visual box shrinks; the touch target does not. Each button keeps a
+   * 44px hit area through a pseudo-element, the same way the dashboard's month
+   * arrows do, because the alternative is a row half again as tall to fix a
+   * finger-sized problem.
+   */
+  dense?: boolean;
   className?: string;
 }
 
@@ -354,6 +363,7 @@ export function PeriodPicker({
   label,
   allowAllTime = false,
   presentation = "dialog",
+  dense = false,
   className,
 }: PeriodPickerProps) {
   const [open, setOpen] = useState(false);
@@ -427,14 +437,26 @@ export function PeriodPicker({
     <PeriodPickerPanel value={value} tz={tz} allowAllTime={allowAllTime} onSelect={select} />
   );
 
+  // Dense keeps the 44px target as an invisible pseudo-element rather than as the
+  // button's own box, so the row is 36px tall and the finger still lands.
+  const height = dense ? `h-8 ${TOUCH_HIT_AREA}` : "min-h-11";
+
   return (
     <div ref={containerRef} className={cn("relative", className)}>
-      <div className="flex items-center justify-between rounded-xl border border-cream-200 bg-cream-50/60 p-0.5">
+      <div
+        className={cn(
+          "flex items-center justify-between rounded-xl border border-cream-200 bg-cream-50/60 p-0.5",
+          dense && "rounded-lg",
+        )}
+      >
         <button
           type="button"
           onClick={() => navigate("prev")}
           aria-label="Previous period"
-          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-warm-400 transition-colors hover:bg-white hover:text-warm-700"
+          className={cn(
+            "relative flex min-w-11 items-center justify-center rounded-lg text-warm-400 transition-colors hover:bg-white hover:text-warm-700",
+            height,
+          )}
         >
           <ChevronLeft className="h-4 w-4" />
         </button>
@@ -445,16 +467,28 @@ export function PeriodPicker({
           aria-label={`Choose period, currently ${resolvedLabel}`}
           aria-haspopup="dialog"
           aria-expanded={open}
-          className="relative flex min-h-11 min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-1 text-sm font-semibold text-warm-600 transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/20 sm:min-w-32"
+          className={cn(
+            "relative flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-1 text-sm font-semibold text-warm-600 transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/20 sm:min-w-32",
+            height,
+          )}
         >
-          <CalendarDays aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-warm-400" />
+          {/* Dropped when dense: in the filter rail the label is the chip's whole
+              identity, and the icon costs 20px that decides whether the rail fits
+              a 360px screen without scrolling. The arrows either side already say
+              this is a period control. */}
+          {!dense && (
+            <CalendarDays aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-warm-400" />
+          )}
           <span className="min-w-0 select-none truncate text-center">{resolvedLabel}</span>
         </button>
         <button
           type="button"
           onClick={() => navigate("next")}
           aria-label="Next period"
-          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-warm-400 transition-colors hover:bg-white hover:text-warm-700"
+          className={cn(
+            "relative flex min-w-11 items-center justify-center rounded-lg text-warm-400 transition-colors hover:bg-white hover:text-warm-700",
+            height,
+          )}
         >
           <ChevronRight className="h-4 w-4" />
         </button>

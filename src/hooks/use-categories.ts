@@ -5,6 +5,7 @@ import {
 } from "@tanstack/react-query";
 import type { CategoryInput } from "@/lib/validations";
 import type { Category } from "@/types";
+import { quickTileKeys } from "@/hooks/use-quick-tiles";
 import { usePreferencesQuery, preferencesKeys } from "@/hooks/use-preferences";
 
 /* ------------------------------------------------------------------ */
@@ -122,6 +123,9 @@ export function useDeleteCategory() {
     onSuccess: () => {
       // Invalidate all category queries
       queryClient.invalidateQueries({ queryKey: categoryKeys.all });
+      // Tiles hold `categoryId` with `onDelete: SetNull`, so a deleted category changes where a
+      // button files and whether its pins still apply.
+      queryClient.invalidateQueries({ queryKey: quickTileKeys.all });
     },
   });
 }

@@ -56,6 +56,12 @@ const makeWritePrisma = () => {
       }),
       findMany: vi.fn(async () => []),
     },
+    // The locking category re-check the write path takes before inserting. A stub cannot hold a
+    // row lock; `scripts/verify-category-lock.ts` proves that half against a real Postgres.
+    $queryRaw: vi.fn(async (_sql: unknown, ...values: unknown[]) => {
+      const [ids] = values as [string[]];
+      return (ids ?? []).map((id) => ({ id, type: "EXPENSE" }));
+    }),
     $transaction: vi.fn(async (arg: unknown) =>
       Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => unknown)(client)
     ),
@@ -530,7 +536,13 @@ describe("update_transactions warnings", () => {
       // `updateTransactions` locks the rows it is about to edit with `SELECT ... FOR UPDATE`
       // (#233). Nothing here reads the result; the ordering it enforces is asserted in
       // `transaction-updates.test.ts` and exercised for real in `verify-transaction-update.ts`.
-      $queryRaw: vi.fn(async () => []),
+      // The category lock shares this stub and is answered from the same category list.
+      $queryRaw: vi.fn(async (sql: unknown, ...values: unknown[]) => {
+        const text = Array.isArray(sql) ? sql.join("?") : String(sql);
+        if (!text.includes("categories")) return [];
+        const [ids] = values as [string[]];
+        return (ids ?? []).map((id) => ({ id, type: "EXPENSE" }));
+      }),
       $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(client)),
     };
 
@@ -616,7 +628,13 @@ describe("update_transactions date rendering", () => {
       // `updateTransactions` locks the rows it is about to edit with `SELECT ... FOR UPDATE`
       // (#233). Nothing here reads the result; the ordering it enforces is asserted in
       // `transaction-updates.test.ts` and exercised for real in `verify-transaction-update.ts`.
-      $queryRaw: vi.fn(async () => []),
+      // The category lock shares this stub and is answered from the same category list.
+      $queryRaw: vi.fn(async (sql: unknown, ...values: unknown[]) => {
+        const text = Array.isArray(sql) ? sql.join("?") : String(sql);
+        if (!text.includes("categories")) return [];
+        const [ids] = values as [string[]];
+        return (ids ?? []).map((id) => ({ id, type: "EXPENSE" }));
+      }),
       $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(client)),
     };
 

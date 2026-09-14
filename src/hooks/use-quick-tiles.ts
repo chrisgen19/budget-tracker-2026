@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { analyticsKeys } from "@/hooks/use-analytics";
+import { labelKeys } from "@/hooks/label-keys";
 import type { FrequentTile } from "@/lib/telegram/frequent-tiles";
 import type { QuickTileView } from "@/lib/telegram/tile-queries";
 import type { TelegramQuickTileInput, TelegramQuickTilePatchInput } from "@/lib/validations";
@@ -212,6 +213,10 @@ export function useLogQuickTile() {
       queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
       // And the Frequent list, since a logged row moves the counts it is derived from.
       queryClient.invalidateQueries({ queryKey: quickTileKeys.frequent });
+      // The label list is derived from those counts too: a tile carries pinned labels, so a tap
+      // writes a labelled transaction and moves both `_count.transactions` and the per-category
+      // counts the picker ranks and groups by.
+      queryClient.invalidateQueries({ queryKey: labelKeys.all });
     },
   });
 }

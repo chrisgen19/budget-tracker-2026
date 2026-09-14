@@ -62,17 +62,34 @@ vi.mock("@/hooks/use-categories", () => {
   };
 });
 
-vi.mock("@/hooks/use-labels", () => ({
-  useLabelsQuery: () => ({ data: [] }),
-}));
+vi.mock("@/hooks/use-labels", () => {
+  // A real EXPENSE-only label, not an empty list. The stripper this form used to run early-returned
+  // on `allLabels.length === 0`, so an empty mock would have made the retention tests below pass
+  // against the stripping code too -- asserting nothing.
+  const data = [
+    { id: "label-1", name: "Expense Only", color: "#F5A623", applicableTo: "EXPENSE" },
+  ];
+  return { useLabelsQuery: () => ({ data }) };
+});
 
 vi.mock("@/hooks/use-scheduled-label", () => ({
   useScheduledLabel: scheduledLabelMocks.useScheduledLabel,
 }));
 
 vi.mock("@/components/transactions/label-picker", () => ({
-  LabelPicker: ({ onChange }: { onChange: (ids: string[]) => void }) => (
+  // `selectedIds` is rendered, not just accepted: the form's job here is to hand the picker what
+  // the user chose and leave it alone across a type flip, and that is only assertable if the test
+  // can see the value going in. Marking incompatible ones is the picker's own concern and has its
+  // own tests.
+  LabelPicker: ({
+    onChange,
+    selectedIds,
+  }: {
+    onChange: (ids: string[]) => void;
+    selectedIds: string[];
+  }) => (
     <div>
+      <span data-testid="picker-selected-ids">{selectedIds.join(",")}</span>
       <button type="button" onClick={() => onChange(["label-1"])}>
         Select test label
       </button>
@@ -457,6 +474,45 @@ describe("TransactionForm plain add flow", () => {
       type: "EXPENSE",
       categoryId: "food",
     });
+  });
+
+  /**
+   * #305. The picker grandfathers a label already on a record and the write path reports rather
+   * than refuses an incompatible type, but the FORM used to strip the selection out from under
+   * both -- so the marker the picker renders was removed before it could be read.
+   *
+   * These assert at the form level on purpose. The picker's own tests render it in isolation and
+   * would pass regardless of what the form does to the value it is handed, which is exactly how
+   * the first attempt at this shipped without working.
+   */
+  it("keeps selected labels when the transaction type changes", async () => {
+    render(<TransactionForm onSubmit={vi.fn()} onCancel={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Select test label" }));
+    expect(screen.getByTestId("picker-selected-ids").textContent).toBe("label-1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Income" }));
+
+    // Still there, and still the form's problem to hand over rather than to silently edit. The
+    // write path drops it and names it in `droppedLabels`; the picker marks it meanwhile.
+    await waitFor(() =>
+      expect(screen.getByTestId("picker-selected-ids").textContent).toBe("label-1"),
+    );
+  });
+
+  it("submits a retained label rather than stripping it first", async () => {
+    const onSubmit = vi.fn((_data: TransactionInput) => Promise.resolve());
+    render(<TransactionForm onSubmit={onSubmit} onCancel={() => {}} />);
+
+    enterAmount("12");
+    fireEvent.click(tile("Food"));
+    fireEvent.click(screen.getByRole("button", { name: "Select test label" }));
+    fireEvent.click(screen.getByRole("button", { name: "Income" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Salary" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Transaction" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0].labelIds).toEqual(["label-1"]);
   });
 
   it("drops a category that does not apply to the new type", async () => {

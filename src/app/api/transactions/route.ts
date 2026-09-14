@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { transactionSchema } from "@/lib/validations";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
+import { categoriesAreUsable, categoriesAreUsableForWrite } from "@/lib/transaction-writes";
 import {
   buildTransactionOrderBy,
   buildTransactionWhere,
@@ -58,6 +59,24 @@ export async function POST(request: Request) {
     const body = await request.json();
     const validated = transactionSchema.parse(body);
 
+    // The category has to be one this caller may use, which nothing here checked.
+    //
+    // `createTransactionBatch` runs `categoriesAreUsable` and the sibling `PUT` route runs it too;
+    // this route is the browser's single-row create and simply wrote the id it was given. A caller
+    // could therefore file their own transaction under another account's category (CWE-639), and
+    // the response includes `category`, so it handed that category's name, icon and colour
+    // straight back. It also let the category and type disagree, which is the state
+    // `PUT /api/categories/[id]` goes to some length to keep out of the database.
+    //
+    // Unconditional here, unlike on an edit: every field of a create is new, so there is no stored
+    // pair to preserve and nothing already mismatched to keep editable.
+    if (!(await categoriesAreUsable(prisma, userId, [validated]))) {
+      return NextResponse.json(
+        { error: "That category does not exist, or its type does not match the transaction's" },
+        { status: 400 }
+      );
+    }
+
     // Validate label ownership and type compatibility before writing
     const verifiedLabelIds: string[] = [];
     if (validated.labelIds && validated.labelIds.length > 0) {
@@ -90,6 +109,11 @@ export async function POST(request: Request) {
     }
 
     const result = await prisma.$transaction(async (tx) => {
+      // Re-checked under a row lock, because the pre-flight read above takes none and a concurrent
+      // type flip can commit between it and the insert. Returning null rather than throwing keeps
+      // the refusal a 400 instead of reaching the catch as a 500.
+      if (!(await categoriesAreUsableForWrite(tx, userId, [validated]))) return null;
+
       const transaction = await tx.transaction.create({
         data: {
           amount: validated.amount,
@@ -115,6 +139,13 @@ export async function POST(request: Request) {
         include: { category: true, bill: true, labels: { include: { label: true } } },
       });
     });
+
+    if (result === null) {
+      return NextResponse.json(
+        { error: "That category does not exist, or its type does not match the transaction's" },
+        { status: 400 }
+      );
+    }
 
     return NextResponse.json(result, { status: 201 });
   } catch (error) {

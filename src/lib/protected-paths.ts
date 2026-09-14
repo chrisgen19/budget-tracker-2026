@@ -14,15 +14,23 @@
  *
  * The list stays a denylist rather than becoming an allowlist of public paths only because
  * inverting it is a behaviour change to every existing route and belongs in its own PR. Until
- * then, `protected-paths.test.ts` is what makes an omission loud.
+ * then, `protected-paths.test.ts` is what makes an omission loud -- and specifically the check that
+ * reads the routes off disk, not the one pinning this list as a literal. The literal pins *edits*;
+ * it compares the list to a copy of itself and cannot see a page that exists and was never added.
+ * That distinction is not academic: `/analytics`, `/labels` and `/preferences` each arrived with
+ * their own feature and sat outside this list until #308, with the literal assertion green
+ * throughout.
  */
 export const PROTECTED_PAGE_PATHS = [
   "/dashboard",
+  "/analytics",
   "/quick-log",
   "/transactions",
   "/bills",
   "/categories",
+  "/labels",
   "/profile",
+  "/preferences",
   "/admin",
   // The Telegram Mini App. It has no NextAuth session -- it authenticates with `initData` -- so
   // nothing above notices that it is every bit as user-specific as `/transactions`.
