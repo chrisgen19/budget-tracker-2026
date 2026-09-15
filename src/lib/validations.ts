@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { grantsWrite, mcpScopeSchema } from "@/lib/mcp/scopes";
 import { MAX_BREAKDOWN_GROUPS, MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
+import {
+  analyticsRangeDays,
+  countAnalyticsBuckets,
+  MAX_ANALYTICS_BUCKETS,
+  MAX_ANALYTICS_RANGE_DAYS,
+} from "@/lib/analytics-limits";
 
 export const loginSchema = z.object({
   email: z.string().email("Please enter a valid email"),
@@ -309,9 +315,31 @@ export const analyticsQuerySchema = z.object({
   to: validDateString,
   tz: timezoneOffsetParam,
   type: z.enum(["ALL", "INCOME", "EXPENSE"]).default("ALL"),
-}).refine((data) => data.from <= data.to, {
-  message: "from must not be after to",
-  path: ["from"],
+}).superRefine((data, context) => {
+  if (data.from > data.to) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "from must not be after to",
+      path: ["from"],
+    });
+    return;
+  }
+
+  if (analyticsRangeDays(data.from, data.to) > MAX_ANALYTICS_RANGE_DAYS) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Date range cannot exceed ${MAX_ANALYTICS_RANGE_DAYS.toLocaleString()} days`,
+      path: ["to"],
+    });
+  }
+
+  if (countAnalyticsBuckets(data.from, data.to, data.granularity) > MAX_ANALYTICS_BUCKETS) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Date range produces more than ${MAX_ANALYTICS_BUCKETS} ${data.granularity} buckets`,
+      path: ["granularity"],
+    });
+  }
 });
 
 export type AnalyticsQueryInput = z.infer<typeof analyticsQuerySchema>;

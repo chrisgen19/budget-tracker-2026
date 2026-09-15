@@ -99,6 +99,28 @@ describe("GET /api/analytics partial-period comparison", () => {
     expect(mocks.findMany).not.toHaveBeenCalled();
   });
 
+  it("rejects a range over the documented maximum before querying", async () => {
+    const response = await GET(new Request(
+      `http://localhost/api/analytics?granularity=yearly&from=2000-01-01&to=2011-01-01&tz=${MANILA}&type=ALL`,
+    ));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.to).toContain("Date range cannot exceed 3,660 days");
+    expect(mocks.findMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects an excessive bucket count before querying", async () => {
+    const response = await GET(new Request(
+      `http://localhost/api/analytics?granularity=weekly&from=2020-01-01&to=2025-01-01&tz=${MANILA}&type=ALL`,
+    ));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.granularity).toContain("Date range produces more than 260 weekly buckets");
+    expect(mocks.findMany).not.toHaveBeenCalled();
+  });
+
   it("filters only category, label, and top-transaction breakdowns", async () => {
     const salary = { id: "salary", name: "Salary", color: "#0a0", icon: "Wallet" };
     const mixedRows = [
