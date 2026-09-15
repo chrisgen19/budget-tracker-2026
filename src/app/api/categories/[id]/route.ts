@@ -97,9 +97,14 @@ export async function PUT(request: Request, { params }: RouteParams) {
         billCount > 0 ? `${billCount} bill(s)` : null,
         budgetAllocationCount > 0 ? `${budgetAllocationCount} budget plan revision(s)` : null,
       ].filter(Boolean);
+      // A plan revision cannot be edited, so unlike a transaction or a bill there is nothing to
+      // move. Telling someone to move it sends them looking for a control that does not exist.
+      const advice = budgetAllocationCount > 0
+        ? "Budget plan revisions keep the category they were saved with, so create a new category for the other type instead."
+        : "Move them to another category first.";
       return NextResponse.json(
         {
-          error: `Cannot change type: ${parts.join(" and ")} use this category. Move them to another category first.`,
+          error: `Cannot change type: ${parts.join(" and ")} use this category. ${advice}`,
           transactionCount,
           billCount,
           budgetAllocationCount,

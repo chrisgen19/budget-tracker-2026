@@ -9,6 +9,10 @@ and expense amounts by category, classify expense allocations as Fixed, Flexible
 choose which categories explicitly roll their remaining amount into the next month. Every save is
 an immutable revision; the report names the exact revision and save time used.
 
+What rolls into a month is derived on every read from the earlier months' plans and what was
+actually spent in them, never stored. A plan is usually saved before the month it follows has
+ended, and a remainder frozen at that moment would never see the rest of that month's spending.
+
 The report shows planned, actual, remaining, variance percentage, projected month-end actual, and
 rollover in/out for every allocation. Flexible spending is projected from its average across the
 same elapsed calendar days introduced by the partial-period analytics fix; fixed costs and savings
@@ -18,9 +22,11 @@ reconcile with the ledger.
 
 Safe-to-spend guidance reserves Fixed and Savings allocations, subtracts unbudgeted expenses, and
 spreads only the remaining Flexible pool over the days left. When an active scheduled income falls
-inside the month it also shows the proportional allowance until that date. The UI states how
-refunds, reimbursements, transfers, and savings contributions are treated, and all amounts,
-including editor inputs, honor Hide Amounts.
+inside the month it also shows the proportional allowance until that date, counted from the first
+of the month when the month has not started. The UI states how refunds, reimbursements, transfers,
+and savings contributions are treated, and all amounts, including editor inputs, honor Hide
+Amounts. The editor accepts thousands separators, and an amount it cannot read stops the save and
+names the category rather than being left out of the revision.
 
 ## 2026-09-15 - Analytics compares only periods that can be compared
 

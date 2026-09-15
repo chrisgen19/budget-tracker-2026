@@ -39,6 +39,16 @@ const initialDraft = (
   }));
 };
 
+/**
+ * A typed amount, forgiving thousands separators. Blank is `null`, which leaves the category out of
+ * the plan; anything unreadable comes back as NaN so the save can refuse it by name instead of
+ * dropping the line and reporting success.
+ */
+const parseDraftAmount = (value: string): number | null => {
+  const compact = value.replace(/[,\s]/g, "");
+  return compact === "" ? null : Number(compact);
+};
+
 function AllocationInput({
   category,
   value,
@@ -59,12 +69,12 @@ function AllocationInput({
         <label className="min-w-0 flex-1 text-sm font-medium text-warm-700" htmlFor={`budget-${category.id}`}>
           {category.name}
         </label>
+        {/* Text rather than number: a number input reports "" for anything it cannot read, so a
+            typo would be indistinguishable from a category deliberately left blank. */}
         <input
           id={`budget-${category.id}`}
           inputMode="decimal"
-          type={hideAmounts ? "password" : "number"}
-          min="0"
-          step="0.01"
+          type={hideAmounts ? "password" : "text"}
           value={value.amount}
           onChange={(event) => onChange({ ...value, amount: event.target.value })}
           placeholder="0"
@@ -114,10 +124,18 @@ export function BudgetPlanEditor(props: BudgetPlanEditorProps) {
   ]), [categories]);
 
   const handleSave = async () => {
+    const unreadable = categories.filter((category) => {
+      const amount = parseDraftAmount(draft[category.id]?.amount ?? "");
+      return amount !== null && !(Number.isFinite(amount) && amount >= 0);
+    });
+    if (unreadable.length > 0) {
+      showToast(`Check the amount for ${unreadable.map((category) => category.name).join(", ")}`, "error");
+      return;
+    }
     const allocations = categories.flatMap((category) => {
       const row = draft[category.id];
-      const amount = Number(row?.amount);
-      if (!row || !Number.isFinite(amount) || amount <= 0) return [];
+      const amount = parseDraftAmount(row?.amount ?? "");
+      if (!row || amount === null || amount === 0) return [];
       return [{
         categoryId: category.id,
         amount,

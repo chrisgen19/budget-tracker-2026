@@ -20,7 +20,6 @@ CREATE TABLE "budget_allocations" (
     "amount" DECIMAL(14,2) NOT NULL,
     "kind" "BudgetAllocationKind" NOT NULL,
     "rollover_enabled" BOOLEAN NOT NULL DEFAULT false,
-    "rollover_carry_in" DECIMAL(14,2) NOT NULL DEFAULT 0,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "budget_allocations_pkey" PRIMARY KEY ("id")

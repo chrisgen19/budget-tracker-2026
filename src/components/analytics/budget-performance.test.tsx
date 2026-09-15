@@ -128,4 +128,41 @@ describe("BudgetPerformance", () => {
 
     expect(screen.getByLabelText("Food").getAttribute("type")).toBe("password");
   });
+
+  it("shows spending against nothing available as over budget, not as an empty bar", () => {
+    mocks.useBudgetPerformance.mockReturnValue({
+      data: {
+        ...data,
+        allocations: [{ ...data.allocations[0], planned: 500, rolloverCarryIn: -600, available: -100, actual: 50, remaining: -150 }],
+      },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    render(<BudgetPerformance month="2026-09" timezoneOffset={-480} currency="PHP" hideAmounts={false} returnTo="period=monthly&tab=budget" />);
+
+    const fill = screen.getByLabelText("Food: over budget, nothing available").firstElementChild as HTMLElement;
+    expect(fill.className).toContain("bg-expense");
+    expect(fill.style.width).toBe("100%");
+  });
+
+  it("reads thousands separators in a masked amount", () => {
+    render(<BudgetPerformance month="2026-09" timezoneOffset={-480} currency="PHP" hideAmounts returnTo="period=monthly&tab=budget" />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit plan" }));
+    fireEvent.change(screen.getByLabelText("Food"), { target: { value: "7,000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save revision" }));
+
+    expect(mocks.saveBudgetPlan).toHaveBeenCalledWith({
+      allocations: [{ categoryId: "food", amount: 7000, kind: "FLEXIBLE", rolloverEnabled: true }],
+    });
+  });
+
+  it("refuses to save an amount it cannot read instead of leaving the category out", () => {
+    render(<BudgetPerformance month="2026-09" timezoneOffset={-480} currency="PHP" hideAmounts={false} returnTo="period=monthly&tab=budget" />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit plan" }));
+    fireEvent.change(screen.getByLabelText("Food"), { target: { value: "7k" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save revision" }));
+
+    expect(mocks.saveBudgetPlan).not.toHaveBeenCalled();
+  });
 });

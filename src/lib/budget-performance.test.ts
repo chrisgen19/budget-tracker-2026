@@ -5,6 +5,8 @@ import {
   buildSafeToSpend,
   budgetForecastStatus,
   calculateRolloverCarryIn,
+  deriveRolloverCarryIn,
+  rolloverChain,
 } from "@/lib/budget-performance";
 
 const progress = { isPartial: true, daysElapsed: 15, daysInMonth: 30 };
@@ -92,5 +94,34 @@ describe("budget performance", () => {
     expect(calculateRolloverCarryIn({ planned: 5_000, rolloverCarryIn: 500, rolloverEnabled: true }, 4_000)).toBe(1_500);
     expect(calculateRolloverCarryIn({ planned: 5_000, rolloverCarryIn: 0, rolloverEnabled: true }, 6_000)).toBe(-1_000);
     expect(calculateRolloverCarryIn({ planned: 5_000, rolloverCarryIn: 500, rolloverEnabled: false }, 4_000)).toBe(0);
+  });
+
+  it("walks a remainder forward through consecutive rolling months", () => {
+    const august = { month: "2026-08", allocations: [{ categoryId: "food", planned: 5_000 }] };
+    const september = { month: "2026-09", allocations: [{ categoryId: "food", planned: 10_000 }] };
+    const actual = new Map([
+      ["2026-08", new Map([["food", 4_000]])],
+      ["2026-09", new Map([["food", 12_000]])],
+    ]);
+
+    // August leaves 1,000; September then overspends it: 1,000 + 10,000 - 12,000.
+    expect(deriveRolloverCarryIn([august, september], actual).get("food")).toBe(-1_000);
+  });
+
+  it("builds the rollover chain back to a month with no plan or nothing rolling", () => {
+    const plan = (month: string, rolling = true) => ({
+      month,
+      allocations: rolling ? [{ categoryId: "food", planned: 1 }] : [],
+    });
+    const plans = new Map([
+      ["2026-09", plan("2026-09")],
+      ["2026-08", plan("2026-08")],
+      ["2026-07", plan("2026-07", false)],
+      ["2026-06", plan("2026-06")],
+    ]);
+
+    expect(rolloverChain("2026-10", plans).map((entry) => entry.month)).toEqual(["2026-08", "2026-09"]);
+    expect(rolloverChain("2026-12", plans)).toEqual([]);
+    expect(rolloverChain("2026-01", new Map([["2025-12", plan("2025-12")]])).map((entry) => entry.month)).toEqual(["2025-12"]);
   });
 });

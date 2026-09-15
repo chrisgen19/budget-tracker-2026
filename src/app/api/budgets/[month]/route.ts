@@ -1,11 +1,7 @@
 import { NextResponse } from "next/server";
 import { BudgetPlanError, saveBudgetPlan } from "@/lib/budget-plans";
 import { getAuthUserId } from "@/lib/session";
-import {
-  budgetPlanInputSchema,
-  calendarMonth,
-  timezoneOffsetParam,
-} from "@/lib/validations";
+import { budgetPlanInputSchema, calendarMonth } from "@/lib/validations";
 
 export async function PUT(
   request: Request,
@@ -15,16 +11,13 @@ export async function PUT(
   if (userId instanceof NextResponse) return userId;
 
   const { month } = await params;
-  const parsedMonth = calendarMonth.safeParse(month);
-  const url = new URL(request.url);
-  const parsedTz = timezoneOffsetParam.safeParse(url.searchParams.get("tz"));
-  if (!parsedMonth.success || !parsedTz.success) {
-    return NextResponse.json({ error: "Invalid month or timezone" }, { status: 400 });
+  if (!calendarMonth.safeParse(month).success) {
+    return NextResponse.json({ error: "Invalid month" }, { status: 400 });
   }
 
   try {
     const input = budgetPlanInputSchema.parse(await request.json());
-    const plan = await saveBudgetPlan(userId, month, parsedTz.data, input);
+    const plan = await saveBudgetPlan(userId, month, input);
     return NextResponse.json({ id: plan.id, revision: plan.revision }, { status: 201 });
   } catch (error) {
     if (error instanceof BudgetPlanError) {

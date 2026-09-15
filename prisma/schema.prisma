@@ -254,11 +254,11 @@ model BudgetAllocation {
   category        Category             @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   amount          Decimal              @db.Decimal(14, 2)
   kind            BudgetAllocationKind
+  /// No carry-in column: what rolls in is derived on every read from the earlier months' plans
+  /// and actual spending (`deriveRolloverCarryIn`). Stored at save time, it froze a previous
+  /// month that had not ended yet.
   rolloverEnabled Boolean              @default(false) @map("rollover_enabled")
-  /// Signed amount carried from the previous month's latest revision at save time.
-  /// Snapshotting it keeps this revision explainable even if the prior plan changes later.
-  rolloverCarryIn Decimal              @default(0) @map("rollover_carry_in") @db.Decimal(14, 2)
-  createdAt       DateTime             @default(now()) @map("created_at")
+  createdAt      DateTime             @default(now()) @map("created_at")
 
   @@unique([planId, categoryId])
   @@index([categoryId])

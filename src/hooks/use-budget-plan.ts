@@ -34,7 +34,7 @@ export function useSaveBudgetPlan(month: string, timezoneOffset: number) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: BudgetPlanInput) => {
-      const response = await fetch(`/api/budgets/${month}?tz=${timezoneOffset}`, {
+      const response = await fetch(`/api/budgets/${month}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),

@@ -819,7 +819,7 @@ AppSettings (per role: FREE, PAID)
 - **ScanLog** — id, userId, createdAt (tracks scan usage for monthly limits)
 - **VerificationToken** — id, token, type (EMAIL_VERIFY/PASSWORD_RESET), userId, expiresAt
 - **McpToken** - id, name, prefix, tokenHash (SHA-256; the plaintext is never stored), scopes, source (MCP/TELEGRAM, stamped onto rows the token writes), expiresAt, revokedAt, lastUsedAt, rate-limit window
-- **BudgetPlan / BudgetAllocation** — immutable monthly plan revisions with category amount, Income/Fixed/Flexible/Savings classification, and snapshotted rollover carry-in
+- **BudgetPlan / BudgetAllocation** — immutable monthly plan revisions with category amount, Income/Fixed/Flexible/Savings classification, and a rollover switch (the carry-in is derived on read, never stored)
 
 ## Analytics Roadmap
 

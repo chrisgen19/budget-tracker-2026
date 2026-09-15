@@ -157,7 +157,7 @@ describe("PUT /api/categories/[id]", () => {
 
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({
-      error: "Cannot change type: 3 budget plan revision(s) use this category. Move them to another category first.",
+      error: "Cannot change type: 3 budget plan revision(s) use this category. Budget plan revisions keep the category they were saved with, so create a new category for the other type instead.",
       budgetAllocationCount: 3,
     });
     expect(mocks.categoryUpdate).not.toHaveBeenCalled();

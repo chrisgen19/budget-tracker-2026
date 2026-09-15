@@ -5,7 +5,9 @@ import {
   buildBudgetTotals,
   buildSafeToSpend,
   budgetForecastStatus,
-  calculateRolloverCarryIn,
+  deriveRolloverCarryIn,
+  rolloverChain,
+  type RolloverPlanMonth,
 } from "@/lib/budget-performance";
 import {
   daysInCalendarMonth,
@@ -32,12 +34,6 @@ const monthRange = (month: string, timezoneOffset: number) => {
   };
 };
 
-const previousMonth = (month: string): string => {
-  const [year, number] = month.split("-").map(Number);
-  const date = new Date(Date.UTC(year, number - 2, 1));
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
-};
-
 const amountsByCategory = (
   rows: Array<{ categoryId: string; amount: number }>,
 ): Map<string, number> => {
@@ -46,35 +42,71 @@ const amountsByCategory = (
   return amounts;
 };
 
+/** The plan in force for every month before `month`: the newest revision of each. */
+const earlierRolloverPlans = async (
+  userId: string,
+  month: string,
+): Promise<Map<string, RolloverPlanMonth>> => {
+  const plans = await prisma.budgetPlan.findMany({
+    where: { userId, month: { lt: month } },
+    orderBy: [{ month: "desc" }, { revision: "desc" }],
+    select: {
+      month: true,
+      allocations: {
+        where: { rolloverEnabled: true, category: { type: "EXPENSE" } },
+        select: { categoryId: true, amount: true },
+      },
+    },
+  });
+  const plansByMonth = new Map<string, RolloverPlanMonth>();
+  plans.forEach((plan) => {
+    if (plansByMonth.has(plan.month)) return;
+    plansByMonth.set(plan.month, {
+      month: plan.month,
+      allocations: plan.allocations.map((allocation) => ({
+        categoryId: allocation.categoryId,
+        planned: Number(allocation.amount),
+      })),
+    });
+  });
+  return plansByMonth;
+};
+
+/**
+ * Carry-in for each rolling expense category of `month`, derived on every read from the earlier
+ * months' plans and what was actually spent in them, the way card balances are. It was stored at
+ * save time once, which froze a month still in progress: an October plan saved on 15 September
+ * kept September's half-spent remainder for good.
+ */
 const carryInByCategory = async (
   userId: string,
   month: string,
   timezoneOffset: number,
 ): Promise<Map<string, number>> => {
-  const priorMonth = previousMonth(month);
-  const priorPlan = await prisma.budgetPlan.findFirst({
-    where: { userId, month: priorMonth },
-    orderBy: { revision: "desc" },
-    include: PLAN_INCLUDE,
-  });
-  if (!priorPlan) return new Map();
+  const chain = rolloverChain(month, await earlierRolloverPlans(userId, month));
+  if (chain.length === 0) return new Map();
 
-  const range = monthRange(priorMonth, timezoneOffset);
-  const transactions = await prisma.transaction.findMany({
-    where: { userId, type: "EXPENSE", date: { gte: range.start, lte: range.end } },
-    select: { categoryId: true, amount: true },
+  const categoryIds = new Set(chain.flatMap((plan) => plan.allocations.map((allocation) => allocation.categoryId)));
+  const rows = await prisma.transaction.findMany({
+    where: {
+      userId,
+      type: "EXPENSE",
+      categoryId: { in: [...categoryIds] },
+      date: {
+        gte: monthRange(chain[0].month, timezoneOffset).start,
+        lte: monthRange(chain[chain.length - 1].month, timezoneOffset).end,
+      },
+    },
+    select: { categoryId: true, amount: true, date: true },
   });
-  const actual = amountsByCategory(transactions);
-  return new Map(priorPlan.allocations
-    .filter((allocation) => allocation.category.type === "EXPENSE")
-    .map((allocation) => [
-      allocation.categoryId,
-      calculateRolloverCarryIn({
-        planned: Number(allocation.amount),
-        rolloverCarryIn: Number(allocation.rolloverCarryIn),
-        rolloverEnabled: allocation.rolloverEnabled,
-      }, actual.get(allocation.categoryId) ?? 0),
-    ]));
+  const actualByMonth = new Map<string, Map<string, number>>();
+  rows.forEach((row) => {
+    const rowMonth = localCalendarDay(row.date, timezoneOffset).slice(0, 7);
+    const amounts = actualByMonth.get(rowMonth) ?? new Map<string, number>();
+    amounts.set(row.categoryId, (amounts.get(row.categoryId) ?? 0) + row.amount);
+    actualByMonth.set(rowMonth, amounts);
+  });
+  return deriveRolloverCarryIn(chain, actualByMonth);
 };
 
 const validateAllocations = async (userId: string, input: BudgetPlanInput) => {
@@ -100,11 +132,9 @@ const validateAllocations = async (userId: string, input: BudgetPlanInput) => {
 export const saveBudgetPlan = async (
   userId: string,
   month: string,
-  timezoneOffset: number,
   input: BudgetPlanInput,
 ): Promise<PlanWithAllocations> => {
   await validateAllocations(userId, input);
-  const carry = await carryInByCategory(userId, month, timezoneOffset);
 
   return prisma.$transaction(async (tx) => {
     const latest = await tx.budgetPlan.findFirst({
@@ -123,7 +153,6 @@ export const saveBudgetPlan = async (
             amount: allocation.amount,
             kind: allocation.kind,
             rolloverEnabled: allocation.rolloverEnabled,
-            rolloverCarryIn: allocation.rolloverEnabled ? (carry.get(allocation.categoryId) ?? 0) : 0,
           })),
         },
       },
@@ -132,7 +161,13 @@ export const saveBudgetPlan = async (
   }, { isolationLevel: "Serializable" });
 };
 
-const planSources = (plan: PlanWithAllocations | null) => (plan?.allocations ?? []).map((allocation) => ({
+const rollsOver = (allocation: PlanWithAllocations["allocations"][number]): boolean =>
+  allocation.rolloverEnabled && allocation.category.type === "EXPENSE";
+
+const planSources = (
+  plan: PlanWithAllocations | null,
+  carryIn: ReadonlyMap<string, number>,
+) => (plan?.allocations ?? []).map((allocation) => ({
   categoryId: allocation.categoryId,
   categoryName: allocation.category.name,
   categoryIcon: allocation.category.icon,
@@ -141,7 +176,7 @@ const planSources = (plan: PlanWithAllocations | null) => (plan?.allocations ?? 
   kind: allocation.kind as BudgetAllocationKind,
   planned: Number(allocation.amount),
   rolloverEnabled: allocation.rolloverEnabled,
-  rolloverCarryIn: Number(allocation.rolloverCarryIn),
+  rolloverCarryIn: rollsOver(allocation) ? (carryIn.get(allocation.categoryId) ?? 0) : 0,
 }));
 
 const nextIncomeDate = async (userId: string, from: string, to: string): Promise<string | null> => {
@@ -170,6 +205,8 @@ export const getBudgetPerformance = async (
   const effectiveTo = progress.effectiveTo
     ? new Date(Date.parse(`${progress.effectiveTo}T23:59:59.999Z`) + timezoneOffset * 60_000)
     : null;
+  // A month that has not started counts its safe-to-spend days from its own first day.
+  const countFrom = today < range.from ? range.from : today;
 
   const [plan, revisions, transactions, incomeDate] = await Promise.all([
     prisma.budgetPlan.findFirst({ where: { userId, month }, orderBy: { revision: "desc" }, include: PLAN_INCLUDE }),
@@ -182,17 +219,20 @@ export const getBudgetPerformance = async (
       where: { userId, date: { gte: range.start, lte: effectiveTo! } },
       select: { categoryId: true, amount: true, type: true },
     }) : Promise.resolve([]),
-    nextIncomeDate(userId, today < range.from ? range.from : today, range.to),
+    nextIncomeDate(userId, countFrom, range.to),
   ]);
 
+  const carryIn = plan?.allocations.some(rollsOver)
+    ? await carryInByCategory(userId, month, timezoneOffset)
+    : new Map<string, number>();
   const plannedType = new Map((plan?.allocations ?? []).map((allocation) => [allocation.categoryId, allocation.category.type]));
   const actualByCategory = amountsByCategory(transactions.filter((row) => plannedType.get(row.categoryId) === row.type));
   const sourceProgress = { isPartial: progress.isPartial, daysElapsed: progress.daysElapsed, daysInMonth: progress.daysInPeriod };
-  const allocations = buildBudgetAllocations(planSources(plan), actualByCategory, sourceProgress);
+  const allocations = buildBudgetAllocations(planSources(plan, carryIn), actualByCategory, sourceProgress);
   const actualIncome = transactions.filter((row) => row.type === "INCOME").reduce((sum, row) => sum + row.amount, 0);
   const actualExpenses = transactions.filter((row) => row.type === "EXPENSE").reduce((sum, row) => sum + row.amount, 0);
   const totals = buildBudgetTotals(allocations, actualIncome, actualExpenses, sourceProgress);
-  const safeToSpend = buildSafeToSpend(allocations, totals.unbudgetedExpenses, sourceProgress, today, incomeDate);
+  const safeToSpend = buildSafeToSpend(allocations, totals.unbudgetedExpenses, sourceProgress, countFrom, incomeDate);
 
   return {
     month,

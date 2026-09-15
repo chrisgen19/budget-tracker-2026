@@ -14,7 +14,7 @@ vi.mock("@/lib/budget-plans", () => ({
 
 import { PUT } from "@/app/api/budgets/[month]/route";
 
-const request = (body: unknown, tz = -480) => new Request(`http://localhost/api/budgets/2026-09?tz=${tz}`, {
+const request = (body: unknown) => new Request("http://localhost/api/budgets/2026-09", {
   method: "PUT",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body),
@@ -33,7 +33,7 @@ describe("PUT /api/budgets/[month]", () => {
 
     expect(response.status).toBe(201);
     expect(await response.json()).toEqual({ id: "plan-2", revision: 2 });
-    expect(mocks.saveBudgetPlan).toHaveBeenCalledWith("user-1", "2026-09", -480, body);
+    expect(mocks.saveBudgetPlan).toHaveBeenCalledWith("user-1", "2026-09", body);
   });
 
   it("rejects duplicate categories without writing", async () => {

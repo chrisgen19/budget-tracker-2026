@@ -33,6 +33,55 @@ export const calculateRolloverCarryIn = (
   ? money(previous.planned + previous.rolloverCarryIn - previousActual)
   : 0;
 
+const previousCalendarMonth = (month: string): string => {
+  const [year, number] = month.split("-").map(Number);
+  const date = new Date(Date.UTC(year, number - 2, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+};
+
+/** One month's plan in force, reduced to the expense allocations that roll their remainder on. */
+export interface RolloverPlanMonth {
+  month: string;
+  allocations: Array<{ categoryId: string; planned: number }>;
+}
+
+/**
+ * The unbroken run of rolling months that ends the month before `month`, oldest first. It stops at
+ * a month with no plan or nothing rolling, since no remainder can cross that month.
+ */
+export const rolloverChain = (
+  month: string,
+  plansByMonth: ReadonlyMap<string, RolloverPlanMonth>,
+): RolloverPlanMonth[] => {
+  const chain: RolloverPlanMonth[] = [];
+  let plan = plansByMonth.get(previousCalendarMonth(month));
+  while (plan && plan.allocations.length > 0) {
+    chain.unshift(plan);
+    plan = plansByMonth.get(previousCalendarMonth(plan.month));
+  }
+  return chain;
+};
+
+/**
+ * Carry-in for the month after the newest plan in `chain`, walked forward from the oldest.
+ *
+ * Derived rather than stored: a plan is usually saved before the month it follows has ended, and a
+ * remainder frozen at that moment never sees the rest of that month's spending.
+ */
+export const deriveRolloverCarryIn = (
+  chain: RolloverPlanMonth[],
+  actualByMonth: ReadonlyMap<string, ReadonlyMap<string, number>>,
+): Map<string, number> => chain.reduce(
+  (carry, plan) => new Map(plan.allocations.map((allocation): [string, number] => [
+    allocation.categoryId,
+    calculateRolloverCarryIn(
+      { planned: allocation.planned, rolloverCarryIn: carry.get(allocation.categoryId) ?? 0, rolloverEnabled: true },
+      actualByMonth.get(plan.month)?.get(allocation.categoryId) ?? 0,
+    ),
+  ])),
+  new Map<string, number>(),
+);
+
 const projectedActual = (
   actual: number,
   kind: BudgetAllocationKind,
@@ -121,11 +170,18 @@ export const budgetForecastStatus = (
   return actualExpenses === 0 ? "no-activity" : "available";
 };
 
+/**
+ * Flexible money left to spend, per day and until the next scheduled income.
+ *
+ * `countFrom` is the first day the allowance covers: today, or the first of the month when the
+ * month has not started. Counting a future month's payday from today would spread the daily figure
+ * over days that belong to the month before.
+ */
 export const buildSafeToSpend = (
   allocations: BudgetPerformanceAllocation[],
   unbudgetedExpenses: number,
   progress: BudgetProgressSource,
-  today: string,
+  countFrom: string,
   nextIncomeDate: string | null,
 ): BudgetSafeToSpend => {
   const flexibleRemaining = allocations
@@ -139,7 +195,7 @@ export const buildSafeToSpend = (
       : 0;
   const perDay = spendingDaysRemaining > 0 ? money(remainingFlexible / spendingDaysRemaining) : null;
   const daysUntilNextIncome = nextIncomeDate && perDay !== null
-    ? Math.max(0, Math.round((Date.parse(`${nextIncomeDate}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000))
+    ? Math.max(0, Math.round((Date.parse(`${nextIncomeDate}T00:00:00Z`) - Date.parse(`${countFrom}T00:00:00Z`)) / 86_400_000))
     : null;
 
   return {

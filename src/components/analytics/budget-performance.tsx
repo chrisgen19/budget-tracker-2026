@@ -44,7 +44,12 @@ function AllocationRow({ row, month, effectiveTo, currency, hideAmounts, returnT
   returnTo: string;
 }) {
   const range = fullMonthRange(month);
-  const used = row.available > 0 ? Math.max(0, Math.round((row.actual / row.available) * 100)) : 0;
+  // A negative carry-in can leave nothing available, and then any spending at all is over budget.
+  // A share of zero means nothing, so the bar reads full and red rather than empty.
+  const used = row.available > 0 ? Math.max(0, Math.round((row.actual / row.available) * 100)) : null;
+  const overBudget = row.actual > 0 && row.actual > row.available;
+  const barWidth = used === null ? (overBudget ? 100 : 0) : Math.min(used, 100);
+  const barLabel = used === null ? (overBudget ? "over budget, nothing available" : "nothing available") : `${used}% used`;
   const remainingFavorable = row.type === "INCOME" ? row.remaining <= 0 : row.remaining >= 0;
   const varianceFavorable = row.varianceAmount >= 0;
   const query = filterSearchParams({
@@ -85,8 +90,8 @@ function AllocationRow({ row, month, effectiveTo, currency, hideAmounts, returnT
         <span className="text-warm-400">Rollover <strong className="block text-warm-600">{row.rolloverEnabled ? `In ${maskCurrency(row.rolloverCarryIn, currency, hideAmounts)} · Out ${maskCurrency(row.rolloverCarryOut ?? 0, currency, hideAmounts)}` : "Off"}</strong></span>
       </div>
       {row.type === "EXPENSE" && (
-        <div className="mt-3 ml-12 h-2 rounded-full bg-cream-100 overflow-hidden" aria-label={`${row.categoryName}: ${used}% used`}>
-          <div className={cn("h-full rounded-full", used > 100 ? "bg-expense" : used >= 80 ? "bg-amber-500" : "bg-income")} style={{ width: `${Math.min(used, 100)}%` }} />
+        <div className="mt-3 ml-12 h-2 rounded-full bg-cream-100 overflow-hidden" aria-label={`${row.categoryName}: ${barLabel}`}>
+          <div className={cn("h-full rounded-full", overBudget ? "bg-expense" : (used ?? 0) >= 80 ? "bg-amber-500" : "bg-income")} style={{ width: `${barWidth}%` }} />
         </div>
       )}
     </div>
