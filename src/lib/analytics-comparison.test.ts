@@ -98,4 +98,22 @@ describe("buildAnalyticsPeriodContext", () => {
     expect(context.comparisonStatus).toBe("low-coverage");
     expect(context.currentCoveragePct).toBe(20);
   });
+
+  it("withholds fractional coverage that would round up to the threshold", () => {
+    const longPeriods = resolveAnalyticsPeriods(
+      { from: "2026-09-01", to: "2026-10-22" },
+      "2026-10-22",
+    );
+    const currentDays = Array.from({ length: 31 }, (_, index) => `current-${index}`);
+    const previousDays = Array.from({ length: 32 }, (_, index) => `previous-${index}`);
+    const context = buildAnalyticsPeriodContext(
+      longPeriods,
+      currentDays,
+      previousDays,
+      previousDays.length,
+    );
+
+    expect(context.currentCoveragePct).toBe(59);
+    expect(context.comparisonStatus).toBe("low-coverage");
+  });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   coveragePercent,
+  describeCoverage,
   describePeriodProgress,
   localCalendarDay,
 } from "@/lib/period-progress";
@@ -26,5 +27,14 @@ describe("describePeriodProgress", () => {
 describe("coveragePercent", () => {
   it("counts distinct logged days against days that could have data", () => {
     expect(coveragePercent(["2026-09-01", "2026-09-01", "2026-09-02"], 4)).toBe(50);
+  });
+
+  it("does not round fractional coverage up across the trust threshold", () => {
+    const loggedDays = Array.from({ length: 31 }, (_, index) => `day-${index}`);
+
+    expect(describeCoverage(loggedDays, 52)).toEqual({
+      percent: 59,
+      sufficient: false,
+    });
   });
 });

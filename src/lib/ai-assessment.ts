@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { buildAssessmentComparisonSignals } from "@/lib/assessment-comparison";
 import {
   GEMINI_MODEL,
   GEMINI_TIMEOUT_MS,
@@ -147,11 +148,7 @@ const extractSources = (response: { candidates?: Array<{ groundingMetadata?: { g
 /** Compact, numbers-included snapshot the model reasons over. */
 const buildDataSnapshot = (p: AssessmentPayload, bills: UpcomingBillsContext): string => {
   const topExpenseCats = p.categoryBreakdown.filter((c) => c.type === "EXPENSE").slice(0, 8);
-  const previousHasData = p.previousSummary.transactionCount > 0;
-  const percentageChange = (current: number, previous: number): number | null =>
-    previousHasData && previous !== 0
-      ? Math.round(((current - previous) / previous) * 100)
-      : null;
+  const comparisonSignals = buildAssessmentComparisonSignals(p);
   const incomeKept = p.summary.totalIncome > 0
     ? Math.round((p.summary.netCashFlow / p.summary.totalIncome) * 100)
     : null;
@@ -175,14 +172,8 @@ const buildDataSnapshot = (p: AssessmentPayload, bills: UpcomingBillsContext): s
     cashFlowSignals: {
       net: p.summary.netCashFlow,
       incomeKeptPct: incomeKept,
-      expenseChangePct: percentageChange(
-        p.summary.totalExpenses,
-        p.previousSummary.totalExpenses,
-      ),
-      incomeChangePct: percentageChange(
-        p.summary.totalIncome,
-        p.previousSummary.totalIncome,
-      ),
+      expenseChangePct: comparisonSignals.expenseChangePct,
+      incomeChangePct: comparisonSignals.incomeChangePct,
     },
     topExpenseCategories: topExpenseCats.map((c) => ({
       name: c.name,

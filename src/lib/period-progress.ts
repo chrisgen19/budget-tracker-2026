@@ -62,7 +62,31 @@ export const describePeriodProgress = (
   };
 };
 
-export const coveragePercent = (loggedDays: Iterable<string>, daysInWindow: number): number => {
-  if (daysInWindow <= 0) return 0;
-  return Math.round((new Set(loggedDays).size / daysInWindow) * 100);
+export interface CoverageDescription {
+  percent: number;
+  sufficient: boolean;
+}
+
+/**
+ * Describe logging coverage without rounding a value up across the trust gate.
+ *
+ * The integer percentage is presentation data. Sufficiency is evaluated from
+ * the exact ratio so 31 of 52 days (59.6%) cannot become trustworthy merely
+ * because its display value rounds to 60%.
+ */
+export const describeCoverage = (
+  loggedDays: Iterable<string>,
+  daysInWindow: number,
+  thresholdPct = MIN_COVERAGE_PCT,
+): CoverageDescription => {
+  if (daysInWindow <= 0) return { percent: 0, sufficient: false };
+  const loggedDayCount = new Set(loggedDays).size;
+  const rawPercent = (loggedDayCount / daysInWindow) * 100;
+  return {
+    percent: Math.floor(rawPercent),
+    sufficient: rawPercent >= thresholdPct,
+  };
 };
+
+export const coveragePercent = (loggedDays: Iterable<string>, daysInWindow: number): number =>
+  describeCoverage(loggedDays, daysInWindow).percent;

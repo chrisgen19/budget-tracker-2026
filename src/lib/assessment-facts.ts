@@ -27,6 +27,7 @@ import {
   MIN_COVERAGE_PCT,
   daysBetweenCalendarDays as daysBetween,
   daysInCalendarMonth as daysInMonth,
+  describeCoverage,
   describePeriodProgress,
   parseCalendarDay as parseDay,
 } from "@/lib/period-progress";
@@ -269,17 +270,17 @@ export const computeCoverage = (
   return months.map((month) => {
     const b = byMonth.get(month)!;
     const total = daysInMonth(month);
-    const coveragePct = Math.round((b.days.size / total) * 100);
+    const monthCoverage = describeCoverage(b.days, total);
     return {
       month,
       label: monthLabel(month),
       daysLogged: b.days.size,
       daysInMonth: total,
-      coveragePct,
+      coveragePct: monthCoverage.percent,
       transactionCount: b.count,
       income: round(b.income),
       expenses: round(b.expenses),
-      status: month >= currentMonth ? "partial" : coveragePct < MIN_COVERAGE_PCT ? "low-coverage" : "ok",
+      status: month >= currentMonth ? "partial" : monthCoverage.sufficient ? "ok" : "low-coverage",
     };
   });
 };
@@ -321,14 +322,17 @@ export const computeConfidence = (
   const coverage = computeCoverage(transactions, months, monthOf(today));
   const inPeriod = transactions.filter((t) => t.localDate >= period.from && t.localDate <= period.to);
   const progress = describePeriodProgress(period.from, period.to, today);
-  const loggedInPeriod = new Set(inPeriod.map((t) => t.localDate)).size;
+  const periodCoverage = describeCoverage(
+    inPeriod.map((t) => t.localDate),
+    progress.daysElapsed,
+  );
 
   return {
     months: coverage,
     trustworthyMonths: coverage.filter((m) => m.status === "ok").map((m) => m.month),
     excludedMonths: coverage.filter((m) => m.status === "low-coverage").map((m) => m.month),
     gaps: findLoggingGaps(transactions, period),
-    periodCoveragePct: progress.daysElapsed === 0 ? 0 : Math.round((loggedInPeriod / progress.daysElapsed) * 100),
+    periodCoveragePct: periodCoverage.percent,
     periodIsPartial: progress.isPartial,
     periodDaysElapsed: progress.daysElapsed,
     periodDaysTotal: progress.daysInPeriod,

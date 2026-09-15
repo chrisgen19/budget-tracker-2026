@@ -1,6 +1,6 @@
 import {
   MIN_COVERAGE_PCT,
-  coveragePercent,
+  describeCoverage,
   describePeriodProgress,
   daysBetweenCalendarDays,
   daysInCalendarMonth,
@@ -96,16 +96,15 @@ export const buildAnalyticsPeriodContext = (
     periods.previous.from,
     periods.previous.to,
   ) + 1;
-  const currentCoveragePct = coveragePercent(currentLoggedDays, periods.progress.daysElapsed);
-  const previousCoveragePct = coveragePercent(previousLoggedDays, previousDays);
+  const currentCoverage = describeCoverage(currentLoggedDays, periods.progress.daysElapsed);
+  const previousCoverage = describeCoverage(previousLoggedDays, previousDays);
 
   let comparisonStatus: AnalyticsPeriodContext["comparisonStatus"] = "available";
   if (!periods.current) comparisonStatus = "not-started";
   else if (previousTransactionCount === 0) comparisonStatus = "no-previous-data";
-  else if (
-    currentCoveragePct < MIN_COVERAGE_PCT ||
-    previousCoveragePct < MIN_COVERAGE_PCT
-  ) comparisonStatus = "low-coverage";
+  else if (!currentCoverage.sufficient || !previousCoverage.sufficient) {
+    comparisonStatus = "low-coverage";
+  }
 
   return {
     requestedFrom: periods.requested.from,
@@ -114,8 +113,8 @@ export const buildAnalyticsPeriodContext = (
     isPartial: periods.progress.isPartial,
     daysElapsed: periods.progress.daysElapsed,
     daysInPeriod: periods.progress.daysInPeriod,
-    currentCoveragePct,
-    previousCoveragePct,
+    currentCoveragePct: currentCoverage.percent,
+    previousCoveragePct: previousCoverage.percent,
     comparisonStatus,
     coverageThresholdPct: MIN_COVERAGE_PCT,
   };
