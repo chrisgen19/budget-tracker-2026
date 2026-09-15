@@ -2,6 +2,26 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-15 - Monthly Budget Plan and Budget vs Actual
+
+Analytics now has a Budget Performance tab for calendar months. A user can assign planned income
+and expense amounts by category, classify expense allocations as Fixed, Flexible, or Savings, and
+choose which categories explicitly roll their remaining amount into the next month. Every save is
+an immutable revision; the report names the exact revision and save time used.
+
+The report shows planned, actual, remaining, variance percentage, projected month-end actual, and
+rollover in/out for every allocation. Flexible spending is projected from its average across the
+same elapsed calendar days introduced by the partial-period analytics fix; fixed costs and savings
+contributions are never multiplied as though they recur daily. Actual amounts link to the exact
+category/month transaction ledger, and totals separately identify unbudgeted spending so they
+reconcile with the ledger.
+
+Safe-to-spend guidance reserves Fixed and Savings allocations, subtracts unbudgeted expenses, and
+spreads only the remaining Flexible pool over the days left. When an active scheduled income falls
+inside the month it also shows the proportional allowance until that date. The UI states how
+refunds, reimbursements, transfers, and savings contributions are treated, and all amounts,
+including editor inputs, honor Hide Amounts.
+
 ## 2026-09-15 - Analytics compares only periods that can be compared
 
 An in-progress month used to put its first few days beside the whole preceding month. September

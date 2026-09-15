@@ -10,6 +10,8 @@ paths:
 - `GET/POST /api/transactions` — list (filters/pagination/timezone) + create
 - `GET/PUT/DELETE /api/transactions/[id]` — load one transaction for editing, update, or delete (ownership check). `PUT` writes nothing at all when the save moves neither a scalar nor a label, so pressing Update with no edits cannot rewrite the audit trail or `updated_at`
 - `GET /api/analytics` — analytics data (income/expenses, category/label breakdowns, cash flow) with granularity, date range, timezone, and type filter params
+- `GET /api/budgets` — latest immutable budget-plan revision and computed Budget vs Actual performance for `month=YYYY-MM&tz=...`, including elapsed-period pace, projections, rollover, unbudgeted spending, and safe-to-spend guidance
+- `PUT /api/budgets/[month]` — save a complete monthly allocation snapshot as the next immutable revision. Validates category visibility/type and snapshots signed carry-in only when both consecutive plans explicitly enable rollover
 - `GET /api/assessment` — cached AI Assessment report for a period (`granularity`/`from`/`to`); returns `{ report | null, generatedAt, model }`, re-validated through `assessmentReportSchema` so a row cached before a section existed still renders
 - `GET /api/assessment/facts` — the computed half of the assessment for a period: coverage, missed bills, bill accuracy, category movement, recurring spend, duplicates and anomalies. Live, never cached
 - `POST /api/assessment/generate` — generate/refresh the AI report for a period (Gemini structured analysis + grounded web tips); caches it and enforces a per-day cap
@@ -59,4 +61,3 @@ paths:
 - `GET/POST /api/mcp/tokens`: list + mint MCP tokens (NextAuth session); the plaintext is returned once and never stored
 - `DELETE /api/mcp/tokens/[id]`: revoke a token (marks `revoked_at`, keeps the row for after-the-fact audit). `?permanent=true` deletes the row instead, and is refused with 409 on a token that is not already revoked, so removing a working credential takes two deliberate steps. Deleting cascades nothing: `transactions.mcp_token_id` is not a foreign key, so the rows a token wrote keep their provenance and only the name behind the id is lost
 - `GET /api/health` — container liveness probe for the Coolify/Docker healthcheck; unauthenticated and deliberately touches no database (a deep check would restart every app on the shared Postgres during one blip)
-

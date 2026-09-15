@@ -271,6 +271,38 @@ export const validDateString = z
  */
 export const timezoneOffsetParam = z.coerce.number().int().min(-840).max(840);
 
+export const calendarMonth = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Invalid month (YYYY-MM)");
+
+export const budgetPlanQuerySchema = z.object({
+  month: calendarMonth,
+  tz: timezoneOffsetParam,
+});
+
+export const budgetAllocationInputSchema = z.object({
+  categoryId: z.string().min(1).max(100),
+  amount: z.number().positive().max(999_999_999_999.99),
+  kind: z.enum(["INCOME", "FIXED", "FLEXIBLE", "SAVINGS"]),
+  rolloverEnabled: z.boolean().default(false),
+});
+
+export const budgetPlanInputSchema = z.object({
+  allocations: z.array(budgetAllocationInputSchema).max(100),
+}).superRefine((value, context) => {
+  const seen = new Set<string>();
+  value.allocations.forEach((allocation, index) => {
+    if (seen.has(allocation.categoryId)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Each category can appear only once",
+        path: ["allocations", index, "categoryId"],
+      });
+    }
+    seen.add(allocation.categoryId);
+  });
+});
+
+export type BudgetPlanInput = z.infer<typeof budgetPlanInputSchema>;
+
 export const analyticsQuerySchema = z.object({
   granularity: z.enum(["weekly", "monthly", "yearly"]),
   from: validDateString,

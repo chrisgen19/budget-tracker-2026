@@ -3,7 +3,7 @@ import { parsePeriodParams } from "@/lib/transaction-period-url";
 import type { AnalyticsTypeFilter } from "@/types";
 
 /** The analytics tabs, in the order the tab bar presents them. */
-export const ANALYTICS_TAB_IDS = ["reports", "statistics", "health", "ai-assessment"] as const;
+export const ANALYTICS_TAB_IDS = ["reports", "budget", "statistics", "health", "ai-assessment"] as const;
 
 export type AnalyticsTab = (typeof ANALYTICS_TAB_IDS)[number];
 

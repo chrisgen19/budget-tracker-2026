@@ -12,6 +12,15 @@ enum TransactionType {
   EXPENSE
 }
 
+/// The role an allocation plays in a monthly plan. Income is explicit so planned
+/// cash coming in never gets mixed into the three ways expense money is assigned.
+enum BudgetAllocationKind {
+  INCOME
+  FIXED
+  FLEXIBLE
+  SAVINGS
+}
+
 enum UserRole {
   ADMIN
   FREE
@@ -145,6 +154,7 @@ model User {
   telegramQuickTiles         TelegramQuickTile[]
   creditAccounts             CreditAccount[]
   creditPayments             CreditPayment[]
+  budgetPlans                BudgetPlan[]
   createdAt                  DateTime               @default(now()) @map("created_at")
   updatedAt                  DateTime               @updatedAt @map("updated_at")
 
@@ -206,6 +216,7 @@ model Category {
   transactions          Transaction[]
   scheduledTransactions ScheduledTransaction[]
   telegramQuickTiles    TelegramQuickTile[]
+  budgetAllocations     BudgetAllocation[]
   createdAt             DateTime               @default(now()) @map("created_at")
 
   // NOTE: this constraint does NOT cover defaults. Their userId is NULL, and Postgres treats
@@ -215,6 +226,43 @@ model Category {
   // constraint is authoritative; do not assume this line is the whole story.
   @@unique([name, type, userId])
   @@map("categories")
+}
+
+/// An immutable revision of one user's plan for one calendar month.
+///
+/// Editing creates a new row instead of rewriting this one, so a historical report
+/// can always name the exact revision and timestamp it is comparing against.
+model BudgetPlan {
+  id          String             @id @default(cuid())
+  userId      String             @map("user_id")
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  month       String
+  revision    Int
+  allocations BudgetAllocation[]
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  @@unique([userId, month, revision])
+  @@index([userId, month, createdAt])
+  @@map("budget_plans")
+}
+
+model BudgetAllocation {
+  id              String               @id @default(cuid())
+  planId          String               @map("plan_id")
+  plan            BudgetPlan           @relation(fields: [planId], references: [id], onDelete: Cascade)
+  categoryId      String               @map("category_id")
+  category        Category             @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  amount          Decimal              @db.Decimal(14, 2)
+  kind            BudgetAllocationKind
+  rolloverEnabled Boolean              @default(false) @map("rollover_enabled")
+  /// Signed amount carried from the previous month's latest revision at save time.
+  /// Snapshotting it keeps this revision explainable even if the prior plan changes later.
+  rolloverCarryIn Decimal              @default(0) @map("rollover_carry_in") @db.Decimal(14, 2)
+  createdAt       DateTime             @default(now()) @map("created_at")
+
+  @@unique([planId, categoryId])
+  @@index([categoryId])
+  @@map("budget_allocations")
 }
 
 model Transaction {

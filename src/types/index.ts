@@ -10,6 +10,7 @@ import type {
   LabelSchedule,
   TransactionLabel,
   BillLabel,
+  BudgetAllocationKind,
 } from "@prisma/client";
 
 export type {
@@ -24,6 +25,7 @@ export type {
   LabelSchedule,
   TransactionLabel,
   BillLabel,
+  BudgetAllocationKind,
 };
 
 /** Transaction with its category (and optional bill) relation */
@@ -358,6 +360,79 @@ export interface AnalyticsData {
   categoryTrends: AnalyticsCategoryTrends;
   /** Largest transactions in the period (respects the type filter) */
   topTransactions: AnalyticsTopTransaction[];
+}
+
+/* ------------------------------------------------------------------ */
+/*  Monthly budget plans                                               */
+/* ------------------------------------------------------------------ */
+
+export type BudgetForecastStatus = "available" | "no-activity" | "not-started";
+
+export interface BudgetPerformanceAllocation {
+  categoryId: string;
+  categoryName: string;
+  categoryIcon: string;
+  categoryColor: string;
+  type: "INCOME" | "EXPENSE";
+  kind: BudgetAllocationKind;
+  planned: number;
+  rolloverEnabled: boolean;
+  rolloverCarryIn: number;
+  available: number;
+  actual: number;
+  remaining: number;
+  varianceAmount: number;
+  variancePct: number | null;
+  projectedActual: number | null;
+  forecastToExceed: boolean;
+  projectionBasis: string;
+  rolloverCarryOut: number | null;
+}
+
+export interface BudgetPerformanceTotals {
+  plannedIncome: number;
+  actualIncome: number;
+  plannedExpenses: number;
+  availableExpenses: number;
+  actualExpenses: number;
+  unbudgetedExpenses: number;
+  remainingExpenses: number;
+  projectedExpenses: number | null;
+  projectedVariance: number | null;
+}
+
+export interface BudgetSafeToSpend {
+  remainingFlexible: number;
+  perDay: number | null;
+  perWeek: number | null;
+  untilNextIncome: number | null;
+  nextIncomeDate: string | null;
+  daysUntilNextIncome: number | null;
+  basis: string;
+}
+
+export interface BudgetPerformanceData {
+  month: string;
+  periodLabel: string;
+  progress: {
+    isPartial: boolean;
+    daysElapsed: number;
+    daysInMonth: number;
+    percentElapsed: number;
+    effectiveTo: string | null;
+  };
+  plan: null | {
+    id: string;
+    revision: number;
+    revisionCount: number;
+    createdAt: string;
+    history: Array<{ id: string; revision: number; createdAt: string }>;
+  };
+  allocations: BudgetPerformanceAllocation[];
+  totals: BudgetPerformanceTotals;
+  safeToSpend: BudgetSafeToSpend;
+  forecastStatus: BudgetForecastStatus;
+  treatmentNotes: string[];
 }
 
 /* ------------------------------------------------------------------ */
