@@ -43,8 +43,8 @@ const SECONDARY_BUTTON =
 const errorMessage = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
 
-/** The month as a day range, for the Transactions link. */
-export const monthDayRange = (month: string) => {
+/** The month as a day range, for the Transactions link. Not exported: a page file may only export what Next.js allows. */
+const monthDayRange = (month: string) => {
   const [year, monthNumber] = month.split("-").map(Number);
   const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
   return { from: `${month}-01`, to: `${month}-${String(lastDay).padStart(2, "0")}` };
