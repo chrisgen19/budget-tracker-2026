@@ -4,9 +4,12 @@ const mocks = vi.hoisted(() => ({
   getAuthUserId: vi.fn(),
   categoryFindFirst: vi.fn(),
   categoryUpdate: vi.fn(),
+  categoryDelete: vi.fn(),
   transactionCount: vi.fn(),
   billCount: vi.fn(),
+  budgetAllocationCount: vi.fn(),
   queryRaw: vi.fn(),
+  executeRaw: vi.fn(),
   /** Call order across the mocked client, so "locked before counting" is assertable. */
   calls: [] as string[],
 }));
@@ -21,17 +24,20 @@ vi.mock("@/lib/prisma", () => {
     category: {
       findFirst: mocks.categoryFindFirst,
       update: track("update", mocks.categoryUpdate),
+      delete: track("delete", mocks.categoryDelete),
     },
     transaction: { count: track("countTransactions", mocks.transactionCount) },
     scheduledTransaction: { count: track("countBills", mocks.billCount) },
+    budgetAllocation: { count: track("countBudgetAllocations", mocks.budgetAllocationCount) },
     $queryRaw: track("lock", mocks.queryRaw),
+    $executeRaw: track("clearQuickCategories", mocks.executeRaw),
     $transaction: (run: (tx: unknown) => unknown) => run(client),
   };
   return { prisma: client };
 });
 vi.mock("@/lib/session", () => ({ getAuthUserId: mocks.getAuthUserId }));
 
-import { PUT } from "@/app/api/categories/[id]/route";
+import { DELETE, PUT } from "@/app/api/categories/[id]/route";
 
 const context = (id: string) => ({ params: Promise.resolve({ id }) });
 
@@ -66,6 +72,9 @@ describe("PUT /api/categories/[id]", () => {
     });
     mocks.transactionCount.mockResolvedValue(0);
     mocks.billCount.mockResolvedValue(0);
+    mocks.budgetAllocationCount.mockResolvedValue(0);
+    mocks.executeRaw.mockResolvedValue(1);
+    mocks.categoryDelete.mockResolvedValue({ id: "cat-1" });
     mocks.categoryUpdate.mockResolvedValue({ id: "cat-1" });
   });
 
@@ -105,6 +114,7 @@ describe("PUT /api/categories/[id]", () => {
         "Cannot change type: 12 transaction(s) use this category. Move them to another category first.",
       transactionCount: 12,
       billCount: 0,
+      budgetAllocationCount: 0,
     });
     expect(mocks.categoryUpdate).not.toHaveBeenCalled();
   });
@@ -123,6 +133,7 @@ describe("PUT /api/categories/[id]", () => {
         "Cannot change type: 1 bill(s) use this category. Move them to another category first.",
       transactionCount: 0,
       billCount: 1,
+      budgetAllocationCount: 0,
     });
     expect(mocks.categoryUpdate).not.toHaveBeenCalled();
   });
@@ -139,13 +150,32 @@ describe("PUT /api/categories/[id]", () => {
     );
   });
 
+  it("refuses a type flip that would reinterpret immutable budget history", async () => {
+    mocks.budgetAllocationCount.mockResolvedValue(3);
+
+    const response = await put(body({ type: "INCOME" }));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: "Cannot change type: 3 budget plan revision(s) use this category. Budget plan revisions keep the category they were saved with, so create a new category for the other type instead.",
+      budgetAllocationCount: 3,
+    });
+    expect(mocks.categoryUpdate).not.toHaveBeenCalled();
+  });
+
   // Counting and then updating are two snapshots: a transaction inserted between them commits
   // against the old type while the flip commits after it, recreating the very mismatch this
   // refuses. The row lock has to be taken before the counts are read, not merely at the write.
   it("locks the category row before counting, and holds it through the update", async () => {
     await put(body({ type: "INCOME" }));
 
-    expect(mocks.calls).toEqual(["lock", "countTransactions", "countBills", "update"]);
+    expect(mocks.calls).toEqual([
+      "lock",
+      "countTransactions",
+      "countBills",
+      "countBudgetAllocations",
+      "update",
+    ]);
   });
 
   it("404s a category that is not the caller's, or is a default", async () => {
@@ -156,5 +186,29 @@ describe("PUT /api/categories/[id]", () => {
     expect(response.status).toBe(404);
     expect(mocks.transactionCount).not.toHaveBeenCalled();
     expect(mocks.categoryUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("DELETE /api/categories/[id]", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.calls.length = 0;
+    mocks.getAuthUserId.mockResolvedValue("user-1");
+    mocks.categoryFindFirst.mockResolvedValue({ id: "cat-1", userId: "user-1", isDefault: false });
+    mocks.transactionCount.mockResolvedValue(0);
+    mocks.billCount.mockResolvedValue(0);
+    mocks.budgetAllocationCount.mockResolvedValue(0);
+  });
+
+  it("preserves a category referenced by immutable budget history", async () => {
+    mocks.budgetAllocationCount.mockResolvedValue(2);
+
+    const response = await DELETE(new Request("http://localhost/api/categories/cat-1", { method: "DELETE" }), context("cat-1"));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "Cannot delete: 2 budget plan revision(s) use this category",
+    });
+    expect(mocks.categoryDelete).not.toHaveBeenCalled();
   });
 });

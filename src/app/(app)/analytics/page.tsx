@@ -21,6 +21,7 @@ import {
   Sparkles,
   Tags,
   Trophy,
+  WalletCards,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
@@ -48,6 +49,7 @@ import { AnalyticsHeroSkeleton, AnalyticsContentSkeleton } from "@/components/an
 import { RecordsStatistics } from "@/components/analytics/records-statistics";
 import { CashFlowSignals } from "@/components/analytics/cash-flow-signals";
 import { PeriodComparisonNote } from "@/components/analytics/period-comparison-note";
+import { BudgetPerformance } from "@/components/analytics/budget-performance";
 import { AiAssessmentReport } from "@/components/analytics/ai-assessment-report";
 import { stagger, fadeUp } from "@/components/analytics/motion-variants";
 import type { AnalyticsTypeFilter } from "@/types";
@@ -56,6 +58,7 @@ type AnalyticsTab = AnalyticsTabId;
 
 const ANALYTICS_TABS = [
   { id: "reports" as const, label: "Reports", shortLabel: "Reports", icon: BarChart3 },
+  { id: "budget" as const, label: "Budget Performance", shortLabel: "Budget", icon: WalletCards },
   { id: "statistics" as const, label: "Records & Statistics", shortLabel: "Stats", icon: Trophy },
   { id: "health" as const, label: "Cash Flow Signals", shortLabel: "Signals", icon: Gauge },
   { id: "ai-assessment" as const, label: "AI Assessment", shortLabel: "AI", icon: Sparkles },
@@ -145,7 +148,7 @@ function AnalyticsTabBar({
     <div
       role="tablist"
       className={cn(
-        "grid grid-cols-4 w-full gap-1 p-1 bg-cream-100 rounded-xl sm:flex sm:w-fit",
+        "grid grid-cols-5 w-full gap-1 p-1 bg-cream-100 rounded-xl sm:flex sm:w-fit",
         className
       )}
     >
@@ -510,6 +513,29 @@ export default function AnalyticsPage() {
                   comparisonAvailable={data.periodContext.comparisonStatus === "available"}
                 />
               </motion.div>
+            </motion.div>
+          )}
+
+          {/* Budget Performance Tab */}
+          {activeTab === "budget" && (
+            <motion.div key="budget" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+              {period.periodType === "monthly" ? (
+                <BudgetPerformance
+                  month={period.from.slice(0, 7)}
+                  timezoneOffset={tz}
+                  currency={currency}
+                  hideAmounts={hideAmounts}
+                  returnTo={returnParam}
+                />
+              ) : (
+                <div className="card p-10 text-center">
+                  <WalletCards className="mx-auto w-10 h-10 text-amber-500" />
+                  <h3 className="mt-3 font-serif text-lg text-warm-700">Choose a calendar month</h3>
+                  <p className="mx-auto mt-2 max-w-md text-sm text-warm-400">
+                    Budget plans are monthly snapshots. Use the period picker above and select Monthly to create or review one.
+                  </p>
+                </div>
+              )}
             </motion.div>
           )}
 

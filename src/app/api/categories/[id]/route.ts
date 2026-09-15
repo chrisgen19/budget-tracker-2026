@@ -44,11 +44,10 @@ export async function PUT(request: Request, { params }: RouteParams) {
     // category (a destructive move behind a confirm). Neither is worth doing on the user's
     // behalf when they can recategorise the rows themselves, or make a second category.
     //
-    // Counts bills as well as transactions: `ScheduledTransaction.categoryId` is the same
-    // NOT NULL reference, and a bill left pointing at a mismatched category writes a wrong-typed
-    // transaction every time it is paid.
+    // Counts bills and immutable budget revisions as well as transactions. Each derives meaning
+    // from the category type, so changing that type would silently reinterpret historical rows.
     type Outcome =
-      | { conflict: { transactionCount: number; billCount: number }; category?: undefined }
+      | { conflict: { transactionCount: number; billCount: number; budgetAllocationCount: number }; category?: undefined }
       | { conflict?: undefined; category: Awaited<ReturnType<typeof prisma.category.update>> };
 
     const outcome: Outcome = await prisma.$transaction(async (tx): Promise<Outcome> => {
@@ -71,9 +70,10 @@ export async function PUT(request: Request, { params }: RouteParams) {
 
         const transactionCount = await tx.transaction.count({ where: { categoryId: id } });
         const billCount = await tx.scheduledTransaction.count({ where: { categoryId: id } });
+        const budgetAllocationCount = await tx.budgetAllocation.count({ where: { categoryId: id } });
 
-        if (transactionCount + billCount > 0) {
-          return { conflict: { transactionCount, billCount } };
+        if (transactionCount + billCount + budgetAllocationCount > 0) {
+          return { conflict: { transactionCount, billCount, budgetAllocationCount } };
         }
       }
 
@@ -91,16 +91,23 @@ export async function PUT(request: Request, { params }: RouteParams) {
     });
 
     if (outcome.conflict) {
-      const { transactionCount, billCount } = outcome.conflict;
+      const { transactionCount, billCount, budgetAllocationCount } = outcome.conflict;
       const parts = [
         transactionCount > 0 ? `${transactionCount} transaction(s)` : null,
         billCount > 0 ? `${billCount} bill(s)` : null,
+        budgetAllocationCount > 0 ? `${budgetAllocationCount} budget plan revision(s)` : null,
       ].filter(Boolean);
+      // A plan revision cannot be edited, so unlike a transaction or a bill there is nothing to
+      // move. Telling someone to move it sends them looking for a control that does not exist.
+      const advice = budgetAllocationCount > 0
+        ? "Budget plan revisions keep the category they were saved with, so create a new category for the other type instead."
+        : "Move them to another category first.";
       return NextResponse.json(
         {
-          error: `Cannot change type: ${parts.join(" and ")} use this category. Move them to another category first.`,
+          error: `Cannot change type: ${parts.join(" and ")} use this category. ${advice}`,
           transactionCount,
           billCount,
+          budgetAllocationCount,
         },
         { status: 409 }
       );
@@ -134,10 +141,13 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
     );
   }
 
-  // Check if category has transactions
-  const transactionCount = await prisma.transaction.count({
-    where: { categoryId: id },
-  });
+  // Every historical ledger or plan reference is Restrict: those rows keep the category identity
+  // they were recorded with, so deleting it would either fail generically or falsify history.
+  const [transactionCount, billCount, budgetAllocationCount] = await Promise.all([
+    prisma.transaction.count({ where: { categoryId: id } }),
+    prisma.scheduledTransaction.count({ where: { categoryId: id } }),
+    prisma.budgetAllocation.count({ where: { categoryId: id } }),
+  ]);
 
   if (transactionCount > 0) {
     return NextResponse.json(
@@ -146,6 +156,19 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
     );
   }
 
+  if (billCount > 0) {
+    return NextResponse.json(
+      { error: `Cannot delete: ${billCount} bill(s) use this category` },
+      { status: 400 }
+    );
+  }
+
+  if (budgetAllocationCount > 0) {
+    return NextResponse.json(
+      { error: `Cannot delete: ${budgetAllocationCount} budget plan revision(s) use this category` },
+      { status: 400 }
+    );
+  }
   try {
     // The quick-pick arrays are plain String[], not foreign keys, so deleting a category leaves a
     // dangling id behind. That id still counts toward the four-slot limit in QuickCategoryPicker,

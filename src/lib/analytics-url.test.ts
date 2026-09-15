@@ -72,6 +72,7 @@ describe("analyticsSearchParams", () => {
     atSeptember();
     for (const state of [
       { period: { periodType: "monthly" as const, from: "2026-09-01", to: "2026-09-30" }, type: "EXPENSE" as const, tab: "reports" as const },
+      { period: { periodType: "monthly" as const, from: "2026-09-01", to: "2026-09-30" }, type: "EXPENSE" as const, tab: "budget" as const },
       { period: { periodType: "custom" as const, from: "2026-07-01", to: "2026-09-30" }, type: "ALL" as const, tab: "health" as const },
       { period: { periodType: "yearly" as const, from: "2026-01-01", to: "2026-12-31" }, type: "INCOME" as const, tab: "ai-assessment" as const },
     ]) {
@@ -154,6 +155,7 @@ describe("the mirror cannot mistake its own write for a navigation", () => {
       { period: { periodType: "monthly" as const, from: "2026-09-01", to: "2026-09-30" }, type: "EXPENSE" as const, tab: "reports" as const },
       { period: { periodType: "custom" as const, from: "2026-07-01", to: "2026-09-30" }, type: "ALL" as const, tab: "statistics" as const },
       { period: { periodType: "weekly" as const, from: "2026-08-31", to: "2026-09-06" }, type: "INCOME" as const, tab: "health" as const },
+      { period: { periodType: "monthly" as const, from: "2026-09-01", to: "2026-09-30" }, type: "ALL" as const, tab: "budget" as const },
       { period: { periodType: "yearly" as const, from: "2026-01-01", to: "2026-12-31" }, type: "EXPENSE" as const, tab: "ai-assessment" as const },
     ];
 
