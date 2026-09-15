@@ -23,6 +23,14 @@ import { MONTH_NAMES } from "@/lib/analytics-buckets";
 import { computeNextDueDate } from "@/lib/bill-utils";
 import { utcDayStart, utcDayKey } from "@/lib/bill-dates";
 import { buildEstimateSamples, estimateBillAmount } from "@/lib/bill-estimate";
+import {
+  MIN_COVERAGE_PCT,
+  daysBetweenCalendarDays as daysBetween,
+  daysInCalendarMonth as daysInMonth,
+  describeCoverage,
+  describePeriodProgress,
+  parseCalendarDay as parseDay,
+} from "@/lib/period-progress";
 import type {
   AiWatchSeverity,
   AssessmentAnomaly,
@@ -119,8 +127,7 @@ export interface FactsInput {
 /*  worth telling someone, and a magic number in a condition hides that.*/
 /* ------------------------------------------------------------------ */
 
-/** Below this share of a month's days logged, the month is a gap and not a result. */
-export const MIN_COVERAGE_PCT = 60;
+export { MIN_COVERAGE_PCT };
 /** A stretch this long with nothing logged is reported as a gap. */
 const MIN_GAP_DAYS = 4;
 /** Charged in at least this many distinct months to count as recurring. */
@@ -151,19 +158,6 @@ const PACE_OVERSHOOT = 1.15;
 /* ------------------------------------------------------------------ */
 
 const monthOf = (day: string): string => day.slice(0, 7);
-
-const parseDay = (day: string): Date => {
-  const [y, m, d] = day.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d));
-};
-
-const daysBetween = (from: string, to: string): number =>
-  Math.round((parseDay(to).getTime() - parseDay(from).getTime()) / 86_400_000);
-
-const daysInMonth = (month: string): number => {
-  const [y, m] = month.split("-").map(Number);
-  return new Date(Date.UTC(y, m, 0)).getUTCDate();
-};
 
 const monthLabel = (month: string): string => {
   const [y, m] = month.split("-").map(Number);
@@ -276,17 +270,17 @@ export const computeCoverage = (
   return months.map((month) => {
     const b = byMonth.get(month)!;
     const total = daysInMonth(month);
-    const coveragePct = Math.round((b.days.size / total) * 100);
+    const monthCoverage = describeCoverage(b.days, total);
     return {
       month,
       label: monthLabel(month),
       daysLogged: b.days.size,
       daysInMonth: total,
-      coveragePct,
+      coveragePct: monthCoverage.percent,
       transactionCount: b.count,
       income: round(b.income),
       expenses: round(b.expenses),
-      status: month >= currentMonth ? "partial" : coveragePct < MIN_COVERAGE_PCT ? "low-coverage" : "ok",
+      status: month >= currentMonth ? "partial" : monthCoverage.sufficient ? "ok" : "low-coverage",
     };
   });
 };
@@ -327,20 +321,21 @@ export const computeConfidence = (
 ): AssessmentDataConfidence => {
   const coverage = computeCoverage(transactions, months, monthOf(today));
   const inPeriod = transactions.filter((t) => t.localDate >= period.from && t.localDate <= period.to);
-  const periodDaysTotal = daysBetween(period.from, period.to) + 1;
-  const periodEnd = period.to < today ? period.to : today;
-  const periodDaysElapsed = Math.max(0, Math.min(periodDaysTotal, daysBetween(period.from, periodEnd) + 1));
-  const loggedInPeriod = new Set(inPeriod.map((t) => t.localDate)).size;
+  const progress = describePeriodProgress(period.from, period.to, today);
+  const periodCoverage = describeCoverage(
+    inPeriod.map((t) => t.localDate),
+    progress.daysElapsed,
+  );
 
   return {
     months: coverage,
     trustworthyMonths: coverage.filter((m) => m.status === "ok").map((m) => m.month),
     excludedMonths: coverage.filter((m) => m.status === "low-coverage").map((m) => m.month),
     gaps: findLoggingGaps(transactions, period),
-    periodCoveragePct: periodDaysElapsed === 0 ? 0 : Math.round((loggedInPeriod / periodDaysElapsed) * 100),
-    periodIsPartial: period.to > today,
-    periodDaysElapsed,
-    periodDaysTotal,
+    periodCoveragePct: periodCoverage.percent,
+    periodIsPartial: progress.isPartial,
+    periodDaysElapsed: progress.daysElapsed,
+    periodDaysTotal: progress.daysInPeriod,
   };
 };
 

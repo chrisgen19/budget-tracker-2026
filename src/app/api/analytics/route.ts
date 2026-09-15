@@ -14,6 +14,11 @@ import type {
 import { MONTH_NAMES, MONTH_FULL, toBucketKey, toBucketLabel, generateBucketKeys } from "@/lib/analytics-buckets";
 import { computeCategoryTrends, selectTopTransactions } from "@/lib/analytics-compute";
 import { computeCashFlowSignals } from "@/lib/analytics-signals";
+import {
+  buildAnalyticsPeriodContext,
+  resolveAnalyticsPeriods,
+} from "@/lib/analytics-comparison";
+import { localCalendarDay } from "@/lib/period-progress";
 import { buildLabelBreakdown } from "@/lib/budget-queries";
 
 /** Generate a human-readable label for a period's from/to range. */
@@ -101,6 +106,7 @@ const computeStatistics = (
   startDate: Date,
   endDate: Date,
   tzMs: number,
+  totalDaysInPeriod: number,
 ): { statistics: AnalyticsStatistics; daily: AnalyticsDailyItem[] } => {
   const toLocalDate = (d: Date) => {
     const local = new Date(d.getTime() - tzMs);
@@ -161,9 +167,6 @@ const computeStatistics = (
       mostExpensiveDay = { date: multiYear ? `${dayLabel}, ${y}` : dayLabel, total: day.expenses, count: day.count };
     }
   }
-
-  // Days in period
-  const totalDaysInPeriod = Math.round((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)) + 1;
 
   // Spending streak: longest consecutive days with expenses
   const expenseDays = new Set<string>();
@@ -240,44 +243,21 @@ export async function GET(request: Request) {
   const { granularity, from, to, tz, type } = parsed.data;
   const tzMs = tz * 60 * 1000;
 
-  // Compute timezone-adjusted date boundaries
+  const today = localCalendarDay(new Date(), tz);
+  const periods = resolveAnalyticsPeriods({ from, to }, today);
+  const currentTo = periods.current?.to ?? from;
+  const prevFrom = periods.previous.from;
+  const prevTo = periods.previous.to;
+
+  // Compute timezone-adjusted date boundaries for the windows that have
+  // actually elapsed. A future current range uses an inverted predicate and
+  // therefore returns no rows without inventing an effective day.
   const fromDate = new Date(from + "T00:00:00.000Z");
-  const toDate = new Date(to + "T23:59:59.999Z");
+  const currentToDate = new Date(currentTo + "T23:59:59.999Z");
   const startDate = new Date(fromDate.getTime() + tzMs);
-  const endDate = new Date(toDate.getTime() + tzMs);
-
-  // Compute previous period (calendar-aware shift)
-  const [fY, fM, fD] = from.split("-").map(Number);
-  const [tY, tM, tD] = to.split("-").map(Number);
-
-  let prevFrom: string;
-  let prevTo: string;
-
-  const lastDayOfFromMonth = new Date(fY, fM, 0).getDate();
-  if (fD === 1 && fY === tY && fM === tM && tD === lastDayOfFromMonth) {
-    // Monthly (full month only): shift back one calendar month
-    const pm = fM - 1 === 0 ? 12 : fM - 1;
-    const py = fM - 1 === 0 ? fY - 1 : fY;
-    const lastDay = new Date(py, pm, 0).getDate();
-    prevFrom = `${py}-${String(pm).padStart(2, "0")}-01`;
-    prevTo = `${py}-${String(pm).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
-  } else if (fM === 1 && fD === 1 && tM === 12 && tD === 31 && fY === tY) {
-    // Yearly: shift back one calendar year
-    prevFrom = `${fY - 1}-01-01`;
-    prevTo = `${fY - 1}-12-31`;
-  } else {
-    // Weekly or custom: shift by exact day span
-    const fromD = new Date(fY, fM - 1, fD);
-    const toD = new Date(tY, tM - 1, tD);
-    const spanDays = Math.round((toD.getTime() - fromD.getTime()) / (24 * 60 * 60 * 1000)) + 1;
-    const pFrom = new Date(fY, fM - 1, fD - spanDays);
-    const pTo = new Date(tY, tM - 1, tD - spanDays);
-    const fmtD = (d: Date) =>
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    prevFrom = fmtD(pFrom);
-    prevTo = fmtD(pTo);
-  }
-
+  const endDate = periods.current
+    ? new Date(currentToDate.getTime() + tzMs)
+    : new Date(startDate.getTime() - 1);
   const prevFromDate = new Date(prevFrom + "T00:00:00.000Z");
   const prevToDate = new Date(prevTo + "T23:59:59.999Z");
   const prevStartDate = new Date(prevFromDate.getTime() + tzMs);
@@ -296,7 +276,9 @@ export async function GET(request: Request) {
   ]);
 
   // --- Current period: time series ---
-  const bucketKeys = generateBucketKeys(startDate, endDate, granularity, tzMs);
+  const bucketKeys = periods.current
+    ? generateBucketKeys(startDate, endDate, granularity, tzMs)
+    : [];
 
   const periodMap = new Map<string, { income: number; expenses: number }>();
   for (const key of bucketKeys) {
@@ -317,7 +299,7 @@ export async function GET(request: Request) {
 
   for (const key of bucketKeys) {
     const bucket = periodMap.get(key)!;
-    const periodLabel = toBucketLabel(key, granularity, fromDate, toDate);
+    const periodLabel = toBucketLabel(key, granularity, fromDate, currentToDate);
     const net = bucket.income - bucket.expenses;
     cumulativeNet += net;
 
@@ -352,14 +334,42 @@ export async function GET(request: Request) {
   const topTransactions = selectTopTransactions(filteredForLabel, tzMs, multiYear);
 
   // --- Statistics + daily series ---
-  const { statistics, daily } = computeStatistics(transactions, allCategoryBreakdown, summary, startDate, endDate, tzMs);
+  const { statistics, daily } = computeStatistics(
+    transactions,
+    allCategoryBreakdown,
+    summary,
+    startDate,
+    endDate,
+    tzMs,
+    periods.progress.daysElapsed,
+  );
+
+  const toLoggedDays = (rows: typeof transactions): string[] =>
+    rows.map((transaction) => localCalendarDay(transaction.date, tz));
+  const periodContext = buildAnalyticsPeriodContext(
+    periods,
+    toLoggedDays(transactions),
+    toLoggedDays(prevTransactions),
+    previousSummary.transactionCount,
+  );
 
   // These signals describe only what the transaction ledger can support. They
   // deliberately avoid turning spending patterns into an overall health grade.
-  const cashFlowSignals = computeCashFlowSignals(summary, previousSummary, statistics);
+  const cashFlowSignals = computeCashFlowSignals(
+    summary,
+    previousSummary,
+    statistics,
+    periodContext.comparisonStatus === "available",
+  );
 
   // --- Period labels ---
-  const periodLabel = formatPeriodLabel(from, to);
+  const periodLabel = `${formatPeriodLabel(from, to)}${
+    periodContext.comparisonStatus === "not-started"
+      ? " · not started"
+      : periodContext.isPartial
+        ? " so far"
+        : ""
+  }`;
   const previousPeriodLabel = formatPeriodLabel(prevFrom, prevTo);
 
   return NextResponse.json({
@@ -375,6 +385,7 @@ export async function GET(request: Request) {
     previousPeriodLabel,
     statistics,
     cashFlowSignals,
+    periodContext,
     daily,
     categoryTrends,
     topTransactions,

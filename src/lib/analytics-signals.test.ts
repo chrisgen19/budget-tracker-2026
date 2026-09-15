@@ -29,7 +29,7 @@ describe("computeCashFlowSignals", () => {
       incomeChange: 0.25,
       expenseDays: 18,
       totalDaysInPeriod: 30,
-      hasPreviousData: true,
+      hasComparableData: true,
     });
     expect(signals).not.toHaveProperty("overallScore");
     expect(signals).not.toHaveProperty("diversification");
@@ -43,7 +43,7 @@ describe("computeCashFlowSignals", () => {
       { expenseDays: 2, totalDaysInPeriod: 7 },
     );
 
-    expect(signals.hasPreviousData).toBe(true);
+    expect(signals.hasComparableData).toBe(true);
     expect(signals.previousSavingsRate).toBeNull();
     expect(signals.savingsRateChange).toBeNull();
     expect(signals.expenseChange).toBeNull();
@@ -57,11 +57,25 @@ describe("computeCashFlowSignals", () => {
       { expenseDays: 5, totalDaysInPeriod: 14 },
     );
 
-    expect(signals.hasPreviousData).toBe(false);
+    expect(signals.hasComparableData).toBe(false);
     expect(signals.previousSavingsRate).toBeNull();
     expect(signals.savingsRateChange).toBeNull();
     expect(signals.expenseChange).toBeNull();
     expect(signals.incomeChange).toBeNull();
+  });
+
+  it("withholds deltas when the coverage gate rejects the comparison", () => {
+    const signals = computeCashFlowSignals(
+      summary(1_000, 600),
+      summary(800, 500),
+      { expenseDays: 5, totalDaysInPeriod: 14 },
+      false,
+    );
+
+    expect(signals.hasComparableData).toBe(false);
+    expect(signals.expenseChange).toBeNull();
+    expect(signals.incomeChange).toBeNull();
+    expect(signals.savingsRateChange).toBeNull();
   });
 
   it("reports no savings rate when no income is logged", () => {

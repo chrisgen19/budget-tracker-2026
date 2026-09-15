@@ -8,7 +8,7 @@ import { cn, formatCurrency, getCurrencySymbol } from "@/lib/utils";
 import { DeltaBadge } from "@/components/analytics/delta-badge";
 import { fadeIn } from "@/components/analytics/motion-variants";
 import { INCOME_COLOR, EXPENSE_COLOR } from "@/components/analytics/chart-theme";
-import type { AnalyticsSummary, AnalyticsCashFlowItem } from "@/types";
+import type { AnalyticsSummary, AnalyticsCashFlowItem, AnalyticsPeriodContext } from "@/types";
 
 interface AnalyticsHeroProps {
   summary: AnalyticsSummary;
@@ -16,6 +16,7 @@ interface AnalyticsHeroProps {
   cashFlow: AnalyticsCashFlowItem[];
   periodLabel: string;
   previousPeriodLabel: string;
+  periodContext: AnalyticsPeriodContext;
   currency: string;
   hideAmounts: boolean;
 }
@@ -86,10 +87,12 @@ function SecondaryStats({
   summary,
   previousSummary,
   fmt,
+  comparisonAvailable,
 }: {
   summary: AnalyticsSummary;
   previousSummary: AnalyticsSummary;
   fmt: (v: number) => string;
+  comparisonAvailable: boolean;
 }) {
   return (
     <div className="card p-5 divide-y divide-cream-100">
@@ -98,21 +101,21 @@ function SecondaryStats({
         tint="bg-income-light text-income"
         label="Income"
         value={fmt(summary.totalIncome)}
-        delta={<DeltaBadge current={summary.totalIncome} previous={previousSummary.totalIncome} />}
+        delta={<DeltaBadge current={summary.totalIncome} previous={previousSummary.totalIncome} available={comparisonAvailable} />}
       />
       <StatRow
         icon={TrendingDown}
         tint="bg-expense-light text-expense"
         label="Expenses"
         value={fmt(summary.totalExpenses)}
-        delta={<DeltaBadge current={summary.totalExpenses} previous={previousSummary.totalExpenses} invert />}
+        delta={<DeltaBadge current={summary.totalExpenses} previous={previousSummary.totalExpenses} available={comparisonAvailable} invert />}
       />
       <StatRow
         icon={Hash}
         tint="bg-cream-100 text-warm-500"
         label="Transactions"
         value={summary.transactionCount.toLocaleString()}
-        delta={<DeltaBadge current={summary.transactionCount} previous={previousSummary.transactionCount} neutral />}
+        delta={<DeltaBadge current={summary.transactionCount} previous={previousSummary.transactionCount} available={comparisonAvailable} neutral />}
       />
     </div>
   );
@@ -124,13 +127,14 @@ export function AnalyticsHero({
   cashFlow,
   periodLabel,
   previousPeriodLabel,
+  periodContext,
   currency,
   hideAmounts,
 }: AnalyticsHeroProps) {
   const sym = getCurrencySymbol(currency);
   const fmt = (v: number) => (hideAmounts ? `${sym} ••••••` : formatCurrency(v, currency));
 
-  const hasPrevious = previousSummary.transactionCount > 0;
+  const comparisonAvailable = periodContext.comparisonStatus === "available";
   const isPositive = summary.netCashFlow >= 0;
 
   return (
@@ -145,9 +149,9 @@ export function AnalyticsHero({
             <span className={cn("font-serif text-3xl lg:text-4xl", isPositive ? "text-income" : "text-expense")}>
               {fmt(summary.netCashFlow)}
             </span>
-            <DeltaBadge current={summary.netCashFlow} previous={previousSummary.netCashFlow} />
+            <DeltaBadge current={summary.netCashFlow} previous={previousSummary.netCashFlow} available={comparisonAvailable} />
           </div>
-          {hasPrevious && (
+          {comparisonAvailable && (
             <p className="text-xs text-warm-300 mt-1">vs {previousPeriodLabel}</p>
           )}
         </div>
@@ -156,7 +160,12 @@ export function AnalyticsHero({
         )}
       </div>
 
-      <SecondaryStats summary={summary} previousSummary={previousSummary} fmt={fmt} />
+      <SecondaryStats
+        summary={summary}
+        previousSummary={previousSummary}
+        fmt={fmt}
+        comparisonAvailable={comparisonAvailable}
+      />
     </div>
   );
 }

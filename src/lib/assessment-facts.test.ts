@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildAssessmentFacts,
+  computeConfidence,
   computeCoverage,
   computeCategoryMovements,
   computeRecurring,
@@ -72,6 +73,24 @@ describe("computeCoverage", () => {
     // Three days into September, 90% of the month is simply in the future.
     const coverage = computeCoverage(spread("2026-09", 3), ["2026-09"], "2026-09");
     expect(coverage[0].status).toBe("partial");
+  });
+});
+
+describe("computeConfidence", () => {
+  it("does not promote 59.6% period coverage to the trust threshold", () => {
+    const rows = [
+      ...spread("2026-09", 30),
+      ...spread("2026-10", 1),
+    ];
+    const confidence = computeConfidence(
+      rows,
+      ["2026-09", "2026-10"],
+      { from: "2026-09-01", to: "2026-10-22" },
+      "2026-10-22",
+    );
+
+    expect(confidence.periodCoveragePct).toBe(59);
+    expect(confidence.periodCoveragePct).toBeLessThan(MIN_COVERAGE_PCT);
   });
 });
 

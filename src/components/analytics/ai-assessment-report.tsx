@@ -44,6 +44,7 @@ const buildPayload = (data: AnalyticsData, currency: string, granularity: string
     previousPeriodLabel: data.previousPeriodLabel,
     summary: data.summary,
     previousSummary: data.previousSummary,
+    periodContext: data.periodContext,
     categoryBreakdown: data.allCategoryBreakdown.map((c) => ({
       name: c.name, type: c.type, amount: c.amount, percentage: c.percentage, transactionCount: c.transactionCount,
     })),

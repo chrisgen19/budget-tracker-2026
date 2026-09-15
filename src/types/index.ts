@@ -313,7 +313,28 @@ export interface AnalyticsCashFlowSignals {
   incomeChange: number | null;
   expenseDays: number;
   totalDaysInPeriod: number;
-  hasPreviousData: boolean;
+  hasComparableData: boolean;
+}
+
+export type AnalyticsComparisonStatus =
+  | "available"
+  | "low-coverage"
+  | "no-previous-data"
+  | "not-started"
+  | "too-early";
+
+/** How the selected window and automatic previous-period comparison were resolved. */
+export interface AnalyticsPeriodContext {
+  requestedFrom: string;
+  requestedTo: string;
+  effectiveTo: string | null;
+  isPartial: boolean;
+  daysElapsed: number;
+  daysInPeriod: number;
+  currentCoveragePct: number;
+  previousCoveragePct: number;
+  comparisonStatus: AnalyticsComparisonStatus;
+  coverageThresholdPct: number;
 }
 
 /** Full analytics API response */
@@ -331,6 +352,7 @@ export interface AnalyticsData {
   previousPeriodLabel: string;
   statistics: AnalyticsStatistics;
   cashFlowSignals: AnalyticsCashFlowSignals;
+  periodContext: AnalyticsPeriodContext;
   /** Dense per-day series for the spending heatmap */
   daily: AnalyticsDailyItem[];
   /** Top expense categories per time bucket */

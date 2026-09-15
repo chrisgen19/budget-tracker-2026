@@ -10,13 +10,14 @@ import {
 import { motion } from "framer-motion";
 import { maskCurrency } from "@/lib/utils";
 import { stagger, fadeUp } from "@/components/analytics/motion-variants";
-import type { AnalyticsCashFlowSignals } from "@/types";
+import type { AnalyticsCashFlowSignals, AnalyticsComparisonStatus } from "@/types";
 
 interface CashFlowSignalsProps {
   signals: AnalyticsCashFlowSignals;
   previousPeriodLabel: string;
   currency: string;
   hideAmounts: boolean;
+  comparisonStatus: AnalyticsComparisonStatus;
 }
 
 interface SignalCardProps {
@@ -59,10 +60,17 @@ export function CashFlowSignals({
   previousPeriodLabel,
   currency,
   hideAmounts,
+  comparisonStatus,
 }: CashFlowSignalsProps) {
-  const comparisonDetail = signals.hasPreviousData
+  const comparisonDetail = signals.hasComparableData
     ? `Compared with ${previousPeriodLabel}`
-    : `No transactions in ${previousPeriodLabel}`;
+    : comparisonStatus === "low-coverage"
+      ? "Comparison hidden because coverage is low"
+      : comparisonStatus === "not-started"
+        ? "This period has not started"
+        : comparisonStatus === "too-early"
+          ? "Comparison starts once today has transactions"
+          : `No transactions in ${previousPeriodLabel}`;
 
   return (
     <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-4">

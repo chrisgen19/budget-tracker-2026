@@ -6,6 +6,8 @@ import { cn } from "@/lib/utils";
 interface DeltaBadgeProps {
   current: number;
   previous: number;
+  /** False when either period failed the shared logged-day coverage gate. */
+  available?: boolean;
   /** Flip good/bad semantics — an increase in expenses is bad */
   invert?: boolean;
   /** No good/bad coloring (e.g. transaction counts) */
@@ -13,8 +15,12 @@ interface DeltaBadgeProps {
 }
 
 /** Period-over-period % change pill. Percentages are relative, so they stay visible under hideAmounts. */
-export function DeltaBadge({ current, previous, invert = false, neutral = false }: DeltaBadgeProps) {
+export function DeltaBadge({ current, previous, available = true, invert = false, neutral = false }: DeltaBadgeProps) {
   const base = "inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-medium tabular-nums";
+
+  if (!available) {
+    return <span className={cn(base, "bg-cream-200 text-warm-400")} aria-label="Comparison unavailable">—</span>;
+  }
 
   if (previous === 0) {
     if (current === 0) {

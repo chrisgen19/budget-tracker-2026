@@ -18,12 +18,13 @@ import { motion } from "framer-motion";
 import { cn, formatCurrency, getCurrencySymbol } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { stagger, fadeUp } from "@/components/analytics/motion-variants";
-import type { AnalyticsStatistics, AnalyticsTopRecord } from "@/types";
+import type { AnalyticsPeriodContext, AnalyticsStatistics, AnalyticsTopRecord } from "@/types";
 
 interface RecordsStatisticsProps {
   statistics: AnalyticsStatistics;
   currency: string;
   hideAmounts: boolean;
+  periodContext: AnalyticsPeriodContext;
 }
 
 /** Prominent tile for a notable transaction record (Biggest Expense / Income). */
@@ -100,7 +101,7 @@ function MetricRow({
   );
 }
 
-export function RecordsStatistics({ statistics: s, currency, hideAmounts }: RecordsStatisticsProps) {
+export function RecordsStatistics({ statistics: s, currency, hideAmounts, periodContext }: RecordsStatisticsProps) {
   const sym = getCurrencySymbol(currency);
   const fmt = (v: number | null) =>
     v === null ? "—" : hideAmounts ? `${sym} ••••••` : formatCurrency(v, currency);
@@ -110,7 +111,9 @@ export function RecordsStatistics({ statistics: s, currency, hideAmounts }: Reco
       {/* Top Records — featured tiles + priciest-day banner */}
       <motion.div variants={fadeUp} className="card p-4 sm:p-5">
         <h2 className="font-serif text-lg text-warm-700">Top Records</h2>
-        <p className="text-xs text-warm-300 mb-3">Notable transactions this period</p>
+        <p className="text-xs text-warm-300 mb-3">
+          Notable transactions {periodContext.isPartial ? "logged so far" : "this period"}
+        </p>
         <div className="grid grid-cols-2 gap-3">
           <FeaturedRecord icon={ArrowDownRight} iconColor="text-expense" iconBg="bg-expense-light" label="Biggest Expense" record={s.biggestExpense} currency={currency} hideAmounts={hideAmounts} />
           <FeaturedRecord icon={ArrowUpRight} iconColor="text-income" iconBg="bg-income-light" label="Biggest Income" record={s.biggestIncome} currency={currency} hideAmounts={hideAmounts} />
@@ -136,7 +139,7 @@ export function RecordsStatistics({ statistics: s, currency, hideAmounts }: Reco
         <h2 className="font-serif text-lg text-warm-700">Averages</h2>
         <p className="text-xs text-warm-300 mb-1">Per-day and per-transaction averages</p>
         <div className="divide-y divide-cream-200/70">
-          <MetricRow icon={Calculator} iconColor="text-expense" iconBg="bg-expense-light" label="Daily Spend" value={fmt(s.avgDailySpend)} subtitle={s.avgDailySpend !== null ? `Over ${s.totalDaysInPeriod} days` : undefined} />
+          <MetricRow icon={Calculator} iconColor="text-expense" iconBg="bg-expense-light" label="Daily Spend" value={fmt(s.avgDailySpend)} subtitle={s.avgDailySpend !== null ? `Across ${s.totalDaysInPeriod} elapsed days` : undefined} />
           <MetricRow icon={Receipt} iconColor="text-warm-500" iconBg="bg-cream-100" label="Per Expense" value={fmt(s.avgExpenseSize)} />
           <MetricRow icon={Coins} iconColor="text-income" iconBg="bg-income-light" label="Per Income" value={fmt(s.avgIncomeSize)} />
         </div>

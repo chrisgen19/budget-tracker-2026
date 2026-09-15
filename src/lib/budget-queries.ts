@@ -13,6 +13,11 @@ import { formatLocalDate } from "@/lib/validations";
 // so a due date cannot be truncated one way going in and another coming out.
 import { utcDayStart } from "@/lib/bill-dates";
 import { estimateBillAmount, buildEstimateSamples } from "@/lib/bill-estimate";
+import {
+  daysBetweenCalendarDays as daysBetween,
+  daysInCalendarMonth as daysInMonth,
+  describePeriodProgress,
+} from "@/lib/period-progress";
 import type {
   PrismaClient,
   SpendingByCategoryParams,
@@ -128,21 +133,6 @@ const parseLocalDay = (day: string, tzOffset: number, endOfDay: boolean): Date =
   return new Date(base + tzOffset * 60 * 1000);
 };
 
-/** Calendar days in a "YYYY-MM" month. Day 0 of the next month is the last day of this one. */
-const daysInMonth = (month: string): number => {
-  const [year, m] = month.split("-").map(Number);
-  return new Date(Date.UTC(year, m, 0)).getUTCDate();
-};
-
-/** Whole days from `a` to `b`, both YYYY-MM-DD. Negative when `b` precedes `a`. */
-const daysBetween = (a: string, b: string): number => {
-  const parse = (d: string) => {
-    const [y, m, day] = d.split("-").map(Number);
-    return Date.UTC(y, m - 1, day);
-  };
-  return Math.round((parse(b) - parse(a)) / 86400000);
-};
-
 /**
  * How much of a window has actually happened, in the user's own calendar.
  *
@@ -160,9 +150,18 @@ const describeCompleteness = (
 ): Pick<ResolvedPeriod, "isPartial" | "daysInPeriod" | "daysElapsed"> => {
   const today = dayKey(toLocal(new Date(), tzOffset));
 
+  if (from && to) {
+    const progress = describePeriodProgress(from, to, today);
+    return {
+      isPartial: progress.isPartial,
+      daysInPeriod: progress.daysInPeriod,
+      daysElapsed: progress.daysElapsed,
+    };
+  }
+
   return {
     isPartial: to === null || to >= today,
-    daysInPeriod: from && to ? daysBetween(from, to) + 1 : null,
+    daysInPeriod: null,
     // Clipped at both ends: never past the window's own last day, and never below zero for a
     // window that has not started. `to` open means the window runs to today.
     daysElapsed: from
