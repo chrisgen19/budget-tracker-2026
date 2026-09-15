@@ -88,6 +88,7 @@ describe("AnalyticsReports", () => {
     expect(within(breakdowns).getByRole("heading", { name: "By Category" })).toBeDefined();
     expect(within(breakdowns).getByRole("heading", { name: "By Label" })).toBeDefined();
     expect(within(breakdowns).getByRole("heading", { name: "Top Transactions" })).toBeDefined();
+    expect(within(breakdowns).getByRole("button", { name: "All" }).className).toContain("min-w-11");
 
     const expensePatterns = screen.getByRole("region", { name: "Expense patterns" });
     expect(within(expensePatterns).queryByRole("group", { name: /filter transaction breakdowns/i })).toBeNull();
