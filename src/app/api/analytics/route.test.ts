@@ -15,15 +15,21 @@ import { GET } from "@/app/api/analytics/route";
 
 const MANILA = -480;
 
-const transaction = (localDay: string, amount: number) => ({
-  id: `${localDay}-${amount}`,
+const transaction = (
+  localDay: string,
+  amount: number,
+  type: "EXPENSE" | "INCOME" = "EXPENSE",
+  category = { id: "food", name: "Food", color: "#000", icon: "Utensils" },
+  labels: Array<{ labelId: string; label: { name: string; color: string } }> = [],
+) => ({
+  id: `${localDay}-${amount}-${type}`,
   amount,
-  type: "EXPENSE",
+  type,
   description: "Daily expense",
-  categoryId: "food",
+  categoryId: category.id,
   date: new Date(`${localDay}T04:00:00.000Z`),
-  category: { id: "food", name: "Food", color: "#000", icon: "Utensils" },
-  labels: [],
+  category,
+  labels,
 });
 
 const localDay = (date: Date): string =>
@@ -91,5 +97,33 @@ describe("GET /api/analytics partial-period comparison", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.findMany).not.toHaveBeenCalled();
+  });
+
+  it("filters only category, label, and top-transaction breakdowns", async () => {
+    const salary = { id: "salary", name: "Salary", color: "#0a0", icon: "Wallet" };
+    const mixedRows = [
+      transaction("2026-09-01", 100),
+      transaction("2026-09-02", 1_000, "INCOME", salary, [
+        { labelId: "payroll", label: { name: "Payroll", color: "#0a0" } },
+      ]),
+    ];
+    mocks.findMany.mockImplementation(async ({ where }: {
+      where: { date: { gte: Date; lte: Date } };
+    }) => mixedRows.filter((row) => row.date >= where.date.gte && row.date <= where.date.lte));
+
+    const response = await GET(new Request(
+      `http://localhost/api/analytics?granularity=weekly&from=2026-09-01&to=2026-09-30&tz=${MANILA}&type=INCOME`,
+    ));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.categoryBreakdown.map((item: { type: string }) => item.type)).toEqual(["INCOME"]);
+    expect(body.labelBreakdown.map((item: { name: string }) => item.name)).toEqual(["Payroll"]);
+    expect(body.topTransactions.map((item: { type: string }) => item.type)).toEqual(["INCOME"]);
+
+    expect(body.summary).toMatchObject({ totalIncome: 1_000, totalExpenses: 100, transactionCount: 2 });
+    expect(body.cashFlow.reduce((sum: number, item: { expenses: number }) => sum + item.expenses, 0)).toBe(100);
+    expect(body.daily.find((item: { date: string }) => item.date === "2026-09-01").expenses).toBe(100);
+    expect(body.categoryTrends.series.map((item: { name: string }) => item.name)).toEqual(["Food"]);
   });
 });
