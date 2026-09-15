@@ -8,7 +8,7 @@ interface TransactionRowBadgesProps {
   billId?: string | null;
   /** Where the row was created, from `transactions.created_via`. */
   createdVia?: TransactionSource;
-  /** The credit card this row pays down, when it is a card payment. */
+  /** The credit card this purchase was paid with. A card payment is never a transaction. */
   creditAccount?: { name: string; color: string } | null;
 }
 

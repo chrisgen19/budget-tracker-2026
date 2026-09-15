@@ -65,7 +65,9 @@ export interface DashboardStats {
   runningBalance: number; // cumulative all-time net up to end of selected month
   /**
    * What the credit cards owe together at the end of the selected month, archived ones included, or
-   * null when there is nothing to show. Cash in the bank = runningBalance + this.
+   * null when there is nothing to show: what is still to be paid to the banks. Not simply the gap to
+   * cash in the bank, since a card's opening balance is debt from before tracking that was never
+   * logged as spending: cash in the bank = runningBalance + this - the cards' opening balances.
    */
   owedOnCards: number | null;
   transactionCount: number;

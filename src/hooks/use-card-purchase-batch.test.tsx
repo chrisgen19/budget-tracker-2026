@@ -55,7 +55,7 @@ describe("useCardPurchaseBatch", () => {
     await act(async () => {
       outcome = await result.current.submit([purchase(1111)]);
     });
-    expect(outcome).toEqual({ outcome: "unconfirmed" });
+    expect(outcome).toEqual({ outcome: "unconfirmed", firstDate: "2026-08-25T04:00:00.000Z" });
     expect(result.current.unconfirmed).toEqual([purchase(1111)]);
 
     fetchMock.mockResolvedValueOnce(respond(200, { transactions: [{ id: "tx-1" }] }));
@@ -76,7 +76,29 @@ describe("useCardPurchaseBatch", () => {
     await act(async () => {
       outcome = await result.current.submit([purchase(1111)]);
     });
-    expect(outcome).toEqual({ outcome: "unconfirmed" });
+    expect(outcome).toMatchObject({ outcome: "unconfirmed" });
+  });
+
+  // A server that stays down must not leave the card's Add Purchases stuck on the retry screen.
+  it("discards a pinned batch, and saves what is entered next under a new key", async () => {
+    const { result } = setup();
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await act(async () => {
+      await result.current.submit([purchase(1111)]);
+    });
+    expect(result.current.unconfirmed).not.toBeNull();
+
+    act(() => {
+      result.current.discard();
+    });
+    expect(result.current.unconfirmed).toBeNull();
+
+    fetchMock.mockResolvedValueOnce(respond(201, { transactions: [{ id: "tx-2" }] }));
+    await act(async () => {
+      await result.current.submit([purchase(1111)]);
+    });
+    const [abandoned, reentered] = sentBodies();
+    expect(reentered.clientBatchId).not.toBe(abandoned.clientBatchId);
   });
 
   it("leaves the lines editable after a refusal, with the server's reason", async () => {

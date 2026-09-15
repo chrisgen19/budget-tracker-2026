@@ -360,7 +360,7 @@ export function useCreateTransaction() {
       // use-bills.ts already imports from this module, and importing back would
       // make the cycle.
       queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] });
-      // A payment linked to a card moves that card's balance.
+      // A purchase paid with a card moves that card's balance and its month.
       queryClient.invalidateQueries({ queryKey: creditAccountKeys.all });
     },
   });
@@ -410,7 +410,7 @@ export function useUpdateTransaction() {
       // use-bills.ts already imports from this module, and importing back would
       // make the cycle.
       queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] });
-      // A payment linked to a card moves that card's balance.
+      // A purchase paid with a card moves that card's balance and its month.
       queryClient.invalidateQueries({ queryKey: creditAccountKeys.all });
     },
   });
@@ -729,7 +729,7 @@ export function useRemoveTransactionLabel() {
       // use-bills.ts already imports from this module, and importing back would
       // make the cycle.
       queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] });
-      // A payment linked to a card moves that card's balance.
+      // A purchase paid with a card moves that card's balance and its month.
       queryClient.invalidateQueries({ queryKey: creditAccountKeys.all });
     },
     onError: () => {

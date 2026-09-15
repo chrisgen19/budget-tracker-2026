@@ -243,8 +243,9 @@ export default function DashboardPage() {
                 </div>
               </div>
               {displayAmount(stats.runningBalance, stats.runningBalance >= 0 ? "text-income" : "text-expense")}
-              {/* A card purchase lowers the balance the day it is made, while the money only leaves the
-                  bank when the card is paid. This is that gap, so cash in the bank = balance + owed. */}
+              {/* What is still to be paid to the banks. A card purchase lowers the balance the day it is
+                  made, while the money only leaves the bank when the card is paid. Cash in the bank is
+                  balance + owed - the cards' opening balances, which were never logged as spending. */}
               {stats.owedOnCards !== null && stats.owedOnCards !== undefined && (
                 <Link href="/cards" className="mt-2 inline-flex min-h-11 items-center text-xs text-warm-400 hover:text-warm-600">
                   Owed on cards:{" "}

@@ -164,7 +164,9 @@ Active tasks:
   `transactions` entirely so no expense query needs a filter to avoid counting the money twice. What
   a card owes is `opening_balance + purchases - payments - credits`, derived on every read
   (`src/lib/credit-account-queries.ts`). The dashboard's Running Balance falls when a purchase is
-  made; its "Owed on cards" line is the gap to cash in the bank. The one rule for linking a row to a
+  made; its "Owed on cards" line (up to the end of the month shown) is what is left to pay the banks,
+  so cash in the bank is that balance plus it, less the cards' opening balances, which were never
+  logged as spending. The one rule for linking a row to a
   card is `checkCardPurchases` (`src/lib/card-purchase-rule.ts`): an expense, on the caller's own
   card, and an archived card takes no new purchases while its existing ones stay editable.
   This replaced a first version (#318) that kept statement lines in `credit_charges` and counted

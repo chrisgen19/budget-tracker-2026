@@ -197,10 +197,11 @@ export const getCreditAccountSummaries = async (
 /**
  * What the user's cards owe together as of `asOf`, archived ones included. See `sumOwedOnCards`.
  *
- * The gap between the dashboard's Running Balance and cash in the bank: a purchase on a card lowers
- * the running balance the day it is made, while the money only leaves the bank when the card is paid.
- * The running balance stops at the end of the month shown, so this has to stop there too, or a past
- * month would pair its balance with today's debt.
+ * What is still to be paid to the banks. A purchase on a card lowers the dashboard's Running Balance
+ * the day it is made, while the money only leaves the bank when the card is paid, so this explains
+ * the gap to cash in the bank, less any opening balance: that debt predates tracking and was never
+ * logged as spending. The running balance stops at the end of the month shown, so this has to stop
+ * there too, or a past month would pair its balance with today's debt.
  */
 export const getOwedOnCards = async (
   prisma: PrismaClient,

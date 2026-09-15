@@ -30,10 +30,13 @@ interface CardsContentProps {
   retrying: boolean;
   onRetry: () => void;
   accounts: CreditAccountView[];
+  /** True when the list is empty only because archived cards are hidden. */
+  archivedHidden: boolean;
   onAdd: () => void;
+  onShowArchived: () => void;
 }
 
-function CardsContent({ loading, failed, retrying, onRetry, accounts, onAdd }: CardsContentProps) {
+function CardsContent({ loading, failed, retrying, onRetry, accounts, archivedHidden, onAdd, onShowArchived }: CardsContentProps) {
   if (loading) {
     return (
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -61,6 +64,24 @@ function CardsContent({ loading, failed, retrying, onRetry, accounts, onAdd }: C
           {retrying ? "Retrying…" : "Retry"}
         </button>
       </div>
+    );
+  }
+
+  // Not "no cards": the header can still show what an archived card owes, and Add Card would be the
+  // wrong way back to it.
+  if (accounts.length === 0 && archivedHidden) {
+    return (
+      <EmptyState
+        icon={Archive}
+        title="All your cards are archived"
+        description="Archived cards keep their purchases and payments, and anything they still owe counts in the total above."
+        action={
+          <button type="button" onClick={onShowArchived} className={PRIMARY_BUTTON}>
+            <Archive className="h-4 w-4" />
+            Show archived cards
+          </button>
+        }
+      />
     );
   }
 
@@ -138,7 +159,9 @@ export default function CardsPage() {
         retrying={isFetching}
         onRetry={() => void refetch()}
         accounts={shownAccounts}
+        archivedHidden={!showArchived && accounts.some((account) => !account.isActive)}
         onAdd={() => setShowForm(true)}
+        onShowArchived={() => setShowArchived(true)}
       />
 
       {!isLoading && !isError && (

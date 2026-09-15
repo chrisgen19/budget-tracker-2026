@@ -334,7 +334,7 @@ describe("PUT /api/transactions/[id]", () => {
     expect(mocks.transactionLabelDeleteMany).not.toHaveBeenCalled();
   });
 
-  describe("credit card payments", () => {
+  describe("purchases paid with a credit card", () => {
     const stored = (over: Record<string, unknown> = {}) => ({
       id: "tx-1",
       userId: "user-1",

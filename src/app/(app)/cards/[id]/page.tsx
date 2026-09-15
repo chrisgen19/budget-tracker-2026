@@ -99,6 +99,8 @@ export default function CardDetailPage() {
       showToast(result.message, "error");
     } else {
       showToast("Couldn't confirm the purchases were saved", "error");
+      // The month they would land in, so the list behind the notice is the one to check.
+      setMonth(accountMonthKey(result.firstDate, user.timezoneOffset));
     }
   };
 
@@ -252,6 +254,10 @@ export default function CardDetailPage() {
             purchases={purchaseBatch.unconfirmed}
             retrying={purchaseBatch.saving}
             onRetry={() => void purchaseBatch.retry().then(settlePurchases)}
+            onDiscard={() => {
+              purchaseBatch.discard();
+              setAddingPurchases(false);
+            }}
             onClose={() => setAddingPurchases(false)}
           />
         ) : (
