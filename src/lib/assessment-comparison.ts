@@ -2,7 +2,8 @@ export type AssessmentComparisonStatus =
   | "available"
   | "low-coverage"
   | "no-previous-data"
-  | "not-started";
+  | "not-started"
+  | "too-early";
 
 interface AssessmentComparisonInput {
   summary: {
@@ -12,6 +13,7 @@ interface AssessmentComparisonInput {
   previousSummary: {
     totalIncome: number;
     totalExpenses: number;
+    netCashFlow: number;
     transactionCount: number;
   };
   periodContext?: {
@@ -24,13 +26,26 @@ export interface AssessmentComparisonSignals {
   incomeChangePct: number | null;
 }
 
+export interface AssessmentPreviousTotals {
+  income: number;
+  expenses: number;
+  net: number;
+}
+
+/**
+ * Whether the previous period is a fair baseline. Payloads sent before Analytics
+ * carried a status fall back to "the previous period has any transactions".
+ */
+export const hasComparablePeriods = (payload: AssessmentComparisonInput): boolean =>
+  payload.periodContext
+    ? payload.periodContext.comparisonStatus === "available"
+    : payload.previousSummary.transactionCount > 0;
+
 /** Keep model-visible comparisons behind the same confidence gate as Analytics. */
 export const buildAssessmentComparisonSignals = (
   payload: AssessmentComparisonInput,
 ): AssessmentComparisonSignals => {
-  const hasComparableData = payload.periodContext
-    ? payload.periodContext.comparisonStatus === "available"
-    : payload.previousSummary.transactionCount > 0;
+  const hasComparableData = hasComparablePeriods(payload);
   const percentageChange = (current: number, previous: number): number | null =>
     hasComparableData && previous !== 0
       ? Math.round(((current - previous) / previous) * 100)
@@ -47,3 +62,18 @@ export const buildAssessmentComparisonSignals = (
     ),
   };
 };
+
+/**
+ * The previous period's totals, withheld along with the percentages. Handed both
+ * sets of totals, the model can work out the very change the gate just hid.
+ */
+export const buildAssessmentPreviousTotals = (
+  payload: AssessmentComparisonInput,
+): AssessmentPreviousTotals | null =>
+  hasComparablePeriods(payload)
+    ? {
+      income: payload.previousSummary.totalIncome,
+      expenses: payload.previousSummary.totalExpenses,
+      net: payload.previousSummary.netCashFlow,
+    }
+    : null;

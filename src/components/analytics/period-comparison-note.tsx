@@ -29,6 +29,8 @@ export function PeriodComparisonNote({
     detail += ` Changes are hidden because logged-day coverage is below ${context.coverageThresholdPct}% (${context.currentCoveragePct}% current, ${context.previousCoveragePct}% previous).`;
   } else if (context.comparisonStatus === "no-previous-data") {
     detail += ` Changes are hidden because ${previousPeriodLabel} has no transactions.`;
+  } else if (context.comparisonStatus === "too-early") {
+    detail += " Changes appear once today has transactions.";
   } else {
     detail = "This period has not started, so there are no actuals or comparisons yet.";
   }

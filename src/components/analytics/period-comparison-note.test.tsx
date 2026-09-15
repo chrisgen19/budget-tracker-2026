@@ -34,4 +34,22 @@ describe("PeriodComparisonNote", () => {
     expect(screen.getByText(/Changes are hidden/)).toBeTruthy();
     expect(screen.getByText(/20% current, 87% previous/)).toBeTruthy();
   });
+
+  it("tells a first day with nothing logged that it is early, not under-logged", () => {
+    render(
+      <PeriodComparisonNote
+        context={{
+          ...context,
+          effectiveTo: "2026-09-01",
+          daysElapsed: 1,
+          currentCoveragePct: 0,
+          comparisonStatus: "too-early",
+        }}
+        previousPeriodLabel="Aug 1, 2026"
+      />,
+    );
+
+    expect(screen.getByText(/Changes appear once today has transactions/)).toBeTruthy();
+    expect(screen.queryByText(/coverage is below/)).toBeNull();
+  });
 });

@@ -21,6 +21,13 @@ implementation now backs Analytics, Assessment Facts and the MCP budget-query la
 Actual can build on one definition of elapsed days. Analytics also reuses the bounded timezone
 validator instead of accepting offsets outside UTC-14 through UTC+14.
 
+Today joins the coverage window only once something has been logged on it, since the day is still
+under way. Counted regardless, someone who logs every evening read as 50% covered on the morning of
+the 2nd (or a Tuesday, in the weekly view) and lost every comparison to an amber warning. A first
+day with nothing logged yet gets a new `too-early` status and a neutral note instead. The AI
+Assessment snapshot also withholds the previous period's totals along with the percentages whenever
+the comparison is withheld, so the model cannot work out the change the page is hiding.
+
 ## 2026-09-15 - Credit cards: purchases are spending, and the Cards pages
 
 The first card model (below) counted only the payment as an expense and kept what the card bought

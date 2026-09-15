@@ -82,8 +82,9 @@ describe("buildAnalyticsPeriodContext", () => {
       3,
     );
 
+    // Today (the 5th) has nothing logged yet, so the window is the 4 finished days.
     expect(context.comparisonStatus).toBe("available");
-    expect(context.currentCoveragePct).toBe(60);
+    expect(context.currentCoveragePct).toBe(75);
     expect(context.previousCoveragePct).toBe(60);
   });
 
@@ -96,7 +97,7 @@ describe("buildAnalyticsPeriodContext", () => {
     );
 
     expect(context.comparisonStatus).toBe("low-coverage");
-    expect(context.currentCoveragePct).toBe(20);
+    expect(context.currentCoveragePct).toBe(25);
   });
 
   it("withholds fractional coverage that would round up to the threshold", () => {
@@ -104,7 +105,11 @@ describe("buildAnalyticsPeriodContext", () => {
       { from: "2026-09-01", to: "2026-10-22" },
       "2026-10-22",
     );
-    const currentDays = Array.from({ length: 31 }, (_, index) => `current-${index}`);
+    // Today is logged, so the window is all 52 days: 31 of 52 is 59.6%.
+    const currentDays = [
+      ...Array.from({ length: 30 }, (_, index) => `current-${index}`),
+      "2026-10-22",
+    ];
     const previousDays = Array.from({ length: 32 }, (_, index) => `previous-${index}`);
     const context = buildAnalyticsPeriodContext(
       longPeriods,
@@ -114,6 +119,58 @@ describe("buildAnalyticsPeriodContext", () => {
     );
 
     expect(context.currentCoveragePct).toBe(59);
+    expect(context.comparisonStatus).toBe("low-coverage");
+  });
+
+  const september = { from: "2026-09-01", to: "2026-09-30" };
+  const days = (month: string, count: number): string[] =>
+    Array.from({ length: count }, (_, index) => `${month}-${String(index + 1).padStart(2, "0")}`);
+
+  it("leaves an unlogged today out of the coverage window", () => {
+    const context = buildAnalyticsPeriodContext(
+      resolveAnalyticsPeriods(september, "2026-09-02"),
+      ["2026-09-01"],
+      days("2026-08", 2),
+      2,
+    );
+
+    expect(context.currentCoveragePct).toBe(100);
+    expect(context.comparisonStatus).toBe("available");
+  });
+
+  it("counts today once it has transactions", () => {
+    const context = buildAnalyticsPeriodContext(
+      resolveAnalyticsPeriods(september, "2026-09-02"),
+      ["2026-09-02"],
+      days("2026-08", 2),
+      2,
+    );
+
+    expect(context.currentCoveragePct).toBe(50);
+    expect(context.comparisonStatus).toBe("low-coverage");
+  });
+
+  it("calls an unlogged first day too early rather than low coverage", () => {
+    const context = buildAnalyticsPeriodContext(
+      resolveAnalyticsPeriods(september, "2026-09-01"),
+      [],
+      ["2026-08-01"],
+      1,
+    );
+
+    expect(context.comparisonStatus).toBe("too-early");
+  });
+
+  it("keeps the last day of a finished period in the coverage window", () => {
+    const context = buildAnalyticsPeriodContext(
+      resolveAnalyticsPeriods({ from: "2026-08-01", to: "2026-08-31" }, "2026-09-15"),
+      days("2026-08", 18),
+      days("2026-07", 31),
+      31,
+    );
+
+    // 18 of 31 days; dropping the 31st would make it 18 of 30 and pass the gate.
+    expect(context.currentCoveragePct).toBe(58);
     expect(context.comparisonStatus).toBe("low-coverage");
   });
 });

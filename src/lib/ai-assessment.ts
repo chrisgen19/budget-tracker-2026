@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { buildAssessmentComparisonSignals } from "@/lib/assessment-comparison";
+import {
+  buildAssessmentComparisonSignals,
+  buildAssessmentPreviousTotals,
+} from "@/lib/assessment-comparison";
 import {
   GEMINI_MODEL,
   GEMINI_TIMEOUT_MS,
@@ -45,7 +48,7 @@ export const assessmentPayloadSchema = z.object({
     daysInPeriod: z.number().int().positive(),
     currentCoveragePct: z.number().min(0).max(100),
     previousCoveragePct: z.number().min(0).max(100),
-    comparisonStatus: z.enum(["available", "low-coverage", "no-previous-data", "not-started"]),
+    comparisonStatus: z.enum(["available", "low-coverage", "no-previous-data", "not-started", "too-early"]),
     coverageThresholdPct: z.number().min(0).max(100),
   }).optional(),
   // All-types only — the Reports type filter must not skew the assessment, and the
@@ -163,11 +166,7 @@ const buildDataSnapshot = (p: AssessmentPayload, bills: UpcomingBillsContext): s
       net: p.summary.netCashFlow,
       transactions: p.summary.transactionCount,
     },
-    previousTotals: {
-      income: p.previousSummary.totalIncome,
-      expenses: p.previousSummary.totalExpenses,
-      net: p.previousSummary.netCashFlow,
-    },
+    previousTotals: buildAssessmentPreviousTotals(p),
     periodContext: p.periodContext ?? null,
     cashFlowSignals: {
       net: p.summary.netCashFlow,
@@ -327,6 +326,9 @@ COMPUTED FINDINGS (JSON) -- these were calculated from the user's database. They
 ${facts}
 
 HOW TO READ THE FINDINGS:
+- \`periodContext.comparisonStatus\` (in PERIOD DATA): anything other than \`available\` means the
+  previous period is not a fair baseline, so \`previousTotals\` and both change percentages are null.
+  Say the comparison was withheld and why; never work one out from other figures.
 - \`dataConfidence\`: months listed in \`excludedForLowCoverage\` have missing rows, NOT low spending.
   Never describe a fall in an excluded or partial month as thrift or improvement. A period marked
   \`periodIsPartial\` is incomplete by definition -- it is never a trend.

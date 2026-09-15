@@ -70,7 +70,8 @@ describe("GET /api/analytics partial-period comparison", () => {
       daysElapsed: 15,
       daysInPeriod: 30,
       comparisonStatus: "available",
-      currentCoveragePct: 60,
+      // 9 logged days of the 14 finished ones: today (the 15th) has nothing yet.
+      currentCoveragePct: 64,
       previousCoveragePct: 60,
     });
     expect(body.cashFlowSignals.expenseChange).toBe(1);

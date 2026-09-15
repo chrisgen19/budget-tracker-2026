@@ -96,12 +96,20 @@ export const buildAnalyticsPeriodContext = (
     periods.previous.from,
     periods.previous.to,
   ) + 1;
-  const currentCoverage = describeCoverage(currentLoggedDays, periods.progress.daysElapsed);
+  // Today is still under way, so it joins the coverage window only once something
+  // has been logged on it. Counted regardless, someone who logs every evening reads
+  // as 50% covered on the morning of the 2nd and loses every comparison.
+  const loggedCurrentDays = new Set(currentLoggedDays);
+  const { isPartial, effectiveTo, daysElapsed } = periods.progress;
+  const todayStillOpen = isPartial && effectiveTo !== null && !loggedCurrentDays.has(effectiveTo);
+  const currentDays = todayStillOpen ? daysElapsed - 1 : daysElapsed;
+  const currentCoverage = describeCoverage(loggedCurrentDays, currentDays);
   const previousCoverage = describeCoverage(previousLoggedDays, previousDays);
 
   let comparisonStatus: AnalyticsPeriodContext["comparisonStatus"] = "available";
   if (!periods.current) comparisonStatus = "not-started";
   else if (previousTransactionCount === 0) comparisonStatus = "no-previous-data";
+  else if (currentDays === 0) comparisonStatus = "too-early";
   else if (!currentCoverage.sufficient || !previousCoverage.sufficient) {
     comparisonStatus = "low-coverage";
   }

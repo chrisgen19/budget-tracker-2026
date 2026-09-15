@@ -320,7 +320,8 @@ export type AnalyticsComparisonStatus =
   | "available"
   | "low-coverage"
   | "no-previous-data"
-  | "not-started";
+  | "not-started"
+  | "too-early";
 
 /** How the selected window and automatic previous-period comparison were resolved. */
 export interface AnalyticsPeriodContext {

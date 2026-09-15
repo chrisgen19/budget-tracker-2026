@@ -68,7 +68,9 @@ export function CashFlowSignals({
       ? "Comparison hidden because coverage is low"
       : comparisonStatus === "not-started"
         ? "This period has not started"
-        : `No transactions in ${previousPeriodLabel}`;
+        : comparisonStatus === "too-early"
+          ? "Comparison starts once today has transactions"
+          : `No transactions in ${previousPeriodLabel}`;
 
   return (
     <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-4">
