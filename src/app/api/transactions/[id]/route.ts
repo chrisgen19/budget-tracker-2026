@@ -4,7 +4,9 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { transactionSchema } from "@/lib/validations";
 import { categoriesAreUsable } from "@/lib/transaction-writes";
-import { CARD_PAYMENT_REFUSAL_MESSAGES, checkCardPayments } from "@/lib/card-payment-rule";
+import { CARD_PURCHASE_REFUSAL_MESSAGES, checkCardPurchases } from "@/lib/card-purchase-rule";
+import { userCanUseCreditCards } from "@/lib/credit-card-access";
+import { creditCardsUnavailableResponse } from "@/lib/credit-account-http";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -21,7 +23,12 @@ export async function GET(_request: Request, { params }: RouteParams) {
     const id = transactionIdSchema.parse(rawId);
     const transaction = await prisma.transaction.findFirst({
       where: { id, userId },
-      include: { category: true, bill: true, labels: { include: { label: true } } },
+      include: {
+        category: true,
+        bill: true,
+        labels: { include: { label: true } },
+        creditAccount: { select: { id: true, name: true, color: true } },
+      },
     });
 
     if (!transaction) {
@@ -81,19 +88,28 @@ export async function PUT(request: Request, { params }: RouteParams) {
       );
     }
 
-    // The credit card this row pays, if any. Absent keeps what is stored: the transaction form
-    // predates cards and does not send the field, so reading its absence as "unlink" would quietly
-    // stop a payment counting against its card on any edit. `null` is the explicit way to unlink.
+    // The card this purchase was paid with. Absent keeps what is stored: not every caller sends the
+    // field, and reading its absence as "unlink" would quietly move spending off a card on any
+    // edit. `null` is the explicit way to unlink.
     const creditAccountId =
       validated.creditAccountId === undefined ? existing.creditAccountId : validated.creditAccountId;
 
-    // Judged only when the link or the pair moves, for the same reason the category check above is:
-    // a payment on a card archived since must stay editable, down to a typo in its description.
-    if (creditAccountId !== existing.creditAccountId || reclassifies) {
-      const refusal = await checkCardPayments(prisma, userId, [{ ...validated, creditAccountId }]);
+    // Putting a row on a card is for users the /admin/settings switch allows. Clearing a card, or
+    // editing a purchase that already carries one, is not: losing access must not lock their data.
+    const linksNewCard = !!creditAccountId && creditAccountId !== existing.creditAccountId;
+    if (linksNewCard && !(await userCanUseCreditCards(prisma, userId))) {
+      return creditCardsUnavailableResponse();
+    }
+
+    // Judged only when the link or the type moves, for the same reason the category check above is:
+    // a purchase on a card archived since must stay editable, down to a typo in its description.
+    if (creditAccountId !== existing.creditAccountId || validated.type !== existing.type) {
+      const refusal = await checkCardPurchases(prisma, userId, [
+        { creditAccountId, type: validated.type, storedCreditAccountId: existing.creditAccountId },
+      ]);
       if (refusal) {
         return NextResponse.json(
-          { error: CARD_PAYMENT_REFUSAL_MESSAGES[refusal], code: refusal },
+          { error: CARD_PURCHASE_REFUSAL_MESSAGES[refusal], code: refusal },
           { status: 400 }
         );
       }
@@ -194,7 +210,12 @@ export async function PUT(request: Request, { params }: RouteParams) {
 
       return tx.transaction.findUniqueOrThrow({
         where: { id },
-        include: { category: true, bill: true, labels: { include: { label: true } } },
+        include: {
+        category: true,
+        bill: true,
+        labels: { include: { label: true } },
+        creditAccount: { select: { id: true, name: true, color: true } },
+      },
       });
     });
 

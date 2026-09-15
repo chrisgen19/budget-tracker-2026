@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
+import { getOwedOnCards } from "@/lib/credit-account-queries";
+import { userCanUseCreditCards } from "@/lib/credit-card-access";
 
 export async function GET(request: Request) {
   const userId = await getAuthUserId();
@@ -56,6 +58,7 @@ export async function GET(request: Request) {
     runningIncome,
     runningExpenses,
     trendWindowTx,
+    owedOnCards,
   ] = await Promise.all([
     // Current month transactions for stats
     prisma.transaction.findMany({
@@ -107,6 +110,12 @@ export async function GET(request: Request) {
       select: { amount: true, type: true, date: true },
       orderBy: { date: "asc" },
     }),
+
+    // Up to the end of the selected month, like the running balance beside it (see `owedOnCards` in
+    // DashboardStats for how the two relate). Null for a user the /admin/settings switch keeps from cards.
+    userCanUseCreditCards(prisma, userId).then((allowed) =>
+      allowed ? getOwedOnCards(prisma, userId, endDate) : null
+    ),
   ]);
 
   // Calculate monthly totals (selected month only)
@@ -197,6 +206,7 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.json({
+    owedOnCards,
     totalIncome,
     totalExpenses,
     balance: totalIncome - totalExpenses, // monthly net (income - expenses for selected month)

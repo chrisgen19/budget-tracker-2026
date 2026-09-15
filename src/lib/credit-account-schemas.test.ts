@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   batchTransactionSchema,
+  cardPurchaseLineSchema,
   creditAccountPatchSchema,
-  creditChargePatchSchema,
-  creditChargeSchema,
+  creditPaymentPatchSchema,
+  creditPaymentSchema,
   transactionSchema,
 } from "./validations";
 
-const TX = { amount: 5000, description: "BPI payment", type: "EXPENSE", date: "2026-09-05", categoryId: "cat-pay" };
+const TX = { amount: 1111, description: "Google One", type: "EXPENSE", date: "2026-08-25", categoryId: "cat-subs" };
 
 describe("creditAccountId on transactions", () => {
   it("is accepted by the single-row schema, as a string or an explicit null", () => {
@@ -16,55 +17,47 @@ describe("creditAccountId on transactions", () => {
     expect(transactionSchema.parse(TX)).not.toHaveProperty("creditAccountId");
   });
 
-  // The batch schema feeds the batch route, the MCP tool and Telegram, none of which may link a
-  // payment to a card. Stripped here, no writer behind it can be handed one.
-  it("is stripped by the batch schema", () => {
-    expect(batchTransactionSchema.parse({ ...TX, creditAccountId: "card-1" })).not.toHaveProperty(
-      "creditAccountId"
-    );
+  // The card page adds a statement's purchases through the batch route, so the field has to survive it.
+  it("is kept by the batch schema", () => {
+    expect(batchTransactionSchema.parse({ ...TX, creditAccountId: "card-1" }).creditAccountId).toBe("card-1");
   });
 });
 
-describe("creditChargeSchema", () => {
-  const charge = { amount: 385, date: "2026-08-25", categoryId: "cat-shop" };
-
-  it("defaults to a charge with an empty description", () => {
-    expect(creditChargeSchema.parse(charge)).toMatchObject({ kind: "CHARGE", description: "" });
+describe("creditPaymentSchema", () => {
+  it("defaults to a payment with an empty note", () => {
+    expect(creditPaymentSchema.parse({ amount: 5000, date: "2026-09-05" })).toEqual({
+      kind: "PAYMENT",
+      amount: 5000,
+      description: "",
+      date: "2026-09-05",
+    });
   });
 
   it("refuses a day that does not exist rather than rolling it into March", () => {
-    expect(creditChargeSchema.safeParse({ ...charge, date: "2026-02-31" }).success).toBe(false);
+    expect(creditPaymentSchema.safeParse({ amount: 1, date: "2026-02-31" }).success).toBe(false);
   });
 
-  it("refuses a time of day, since a statement line has none", () => {
-    expect(creditChargeSchema.safeParse({ ...charge, date: "2026-08-25T10:00" }).success).toBe(false);
-  });
-
-  it("upper-cases the foreign currency", () => {
-    const parsed = creditChargeSchema.parse({ ...charge, originalAmount: 22.4, originalCurrency: "usd" });
-    expect(parsed.originalCurrency).toBe("USD");
-  });
-
-  it("refuses a foreign amount without its currency", () => {
-    expect(creditChargeSchema.safeParse({ ...charge, originalAmount: 22.4 }).success).toBe(false);
+  // `.partial()` over fields with defaults must not re-apply them, or correcting an amount would
+  // quietly turn a refund back into a payment.
+  it("does not fill defaults into a patch", () => {
+    expect(creditPaymentPatchSchema.parse({ amount: 10 })).toEqual({ amount: 10 });
+    expect(creditPaymentPatchSchema.safeParse({}).success).toBe(false);
   });
 });
 
-describe("patch schemas", () => {
-  it("refuses an empty card patch", () => {
+describe("cardPurchaseLineSchema", () => {
+  it("needs a category and an amount above 0", () => {
+    expect(cardPurchaseLineSchema.safeParse({ date: "2026-08-25", categoryId: "", amount: 0 }).success).toBe(false);
+  });
+
+  it("defaults to no labels", () => {
+    expect(cardPurchaseLineSchema.parse({ date: "2026-08-25", categoryId: "cat-subs", amount: 1 }).labelIds).toEqual([]);
+  });
+});
+
+describe("creditAccountPatchSchema", () => {
+  it("refuses an empty patch and fills no defaults into one", () => {
     expect(creditAccountPatchSchema.safeParse({}).success).toBe(false);
-  });
-
-  // `.partial()` over fields with defaults must not re-apply them, or archiving a card would also
-  // reset its colour and opening balance.
-  it("does not fill defaults into a card patch", () => {
     expect(creditAccountPatchSchema.parse({ isActive: false })).toEqual({ isActive: false });
-  });
-
-  it("refuses a charge patch naming only half the foreign amount", () => {
-    expect(creditChargePatchSchema.safeParse({ originalCurrency: "USD" }).success).toBe(false);
-    expect(
-      creditChargePatchSchema.safeParse({ originalAmount: null, originalCurrency: null }).success
-    ).toBe(true);
   });
 });

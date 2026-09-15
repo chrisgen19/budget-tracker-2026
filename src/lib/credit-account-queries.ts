@@ -1,28 +1,30 @@
-import type { CreditAccount, CreditChargeKind, Prisma } from "@prisma/client";
+import type { CreditAccount, CreditPayment, CreditPaymentKind, Prisma } from "@prisma/client";
 import type { PrismaClient } from "@/lib/budget-query-types";
+import { buildLabelBreakdown } from "@/lib/budget-queries";
+import { sumOwedOnCards } from "@/lib/card-owed";
 
 const round2 = (value: number): number => Math.round(value * 100) / 100;
 
-/** Rows returned per list on a card's detail read. A statement month is tens of lines, not hundreds. */
+/** Rows returned per list on a card's detail read. A card's month is tens of rows, not hundreds. */
 export const MAX_CARD_PERIOD_ROWS = 500;
 
 export interface LedgerTotals {
-  /** Purchases, fees and interest: what the card added to the debt. */
-  charges: number;
-  /** Refunds and reversals: what the card took back off it. */
-  credits: number;
-  /** Expense transactions linked to the card: what was paid from the bank. */
+  /** Expenses paid with the card: what was bought on it. */
+  purchases: number;
+  /** Money sent to the card from the bank. */
   payments: number;
+  /** Refunds and reversals the card issued. */
+  credits: number;
 }
 
-const emptyTotals = (): LedgerTotals => ({ charges: 0, credits: 0, payments: 0 });
+const emptyTotals = (): LedgerTotals => ({ purchases: 0, payments: 0, credits: 0 });
 
 /**
  * What is owed on a card. Positive is debt. Negative means the card holds a credit, which an
  * overpayment or a refund after payment legitimately produces, so it is not clamped away.
  */
 export const computeAccountBalance = (openingBalance: number, totals: LedgerTotals): number =>
-  round2(openingBalance + totals.charges - totals.credits - totals.payments);
+  round2(openingBalance + totals.purchases - totals.payments - totals.credits);
 
 export interface DateWindow {
   start: Date;
@@ -59,68 +61,72 @@ export const readTimezoneOffset = async (prisma: PrismaClient, userId: string): 
   return user?.timezoneOffset ?? 0;
 };
 
-interface ChargeGroup {
-  accountId: string;
-  kind: CreditChargeKind;
+interface PurchaseGroup {
+  creditAccountId: string | null;
   _sum: { amount: number | null };
 }
 
 interface PaymentGroup {
-  creditAccountId: string | null;
+  accountId: string;
+  kind: CreditPaymentKind;
   _sum: { amount: number | null };
 }
 
 /** Folds grouped sums into per-card totals. Pure, so the arithmetic is testable without a database. */
 export const foldLedgerGroups = (
   accountIds: readonly string[],
-  chargeGroups: readonly ChargeGroup[],
+  purchaseGroups: readonly PurchaseGroup[],
   paymentGroups: readonly PaymentGroup[]
 ): Map<string, LedgerTotals> => {
   const totals = new Map(accountIds.map((id) => [id, emptyTotals()]));
 
-  for (const group of chargeGroups) {
+  for (const group of purchaseGroups) {
+    const entry = group.creditAccountId ? totals.get(group.creditAccountId) : undefined;
+    if (entry) entry.purchases += group._sum.amount ?? 0;
+  }
+  for (const group of paymentGroups) {
     const entry = totals.get(group.accountId);
     if (!entry) continue;
     if (group.kind === "CREDIT") entry.credits += group._sum.amount ?? 0;
-    else entry.charges += group._sum.amount ?? 0;
-  }
-  for (const group of paymentGroups) {
-    const entry = group.creditAccountId ? totals.get(group.creditAccountId) : undefined;
-    if (entry) entry.payments += group._sum.amount ?? 0;
+    else entry.payments += group._sum.amount ?? 0;
   }
 
   for (const entry of totals.values()) {
-    entry.charges = round2(entry.charges);
-    entry.credits = round2(entry.credits);
+    entry.purchases = round2(entry.purchases);
     entry.payments = round2(entry.payments);
+    entry.credits = round2(entry.credits);
   }
   return totals;
 };
 
-/** Every card's ledger in two grouped queries, rather than two per card. */
+/**
+ * Every card's ledger in two grouped queries, rather than two per card. Bounded to a month's window,
+ * or to everything up to `asOf`, or neither for all time.
+ */
 const sumLedgers = async (
   prisma: PrismaClient,
   userId: string,
   accountIds: string[],
-  window?: DateWindow
+  window?: DateWindow,
+  asOf?: Date
 ): Promise<Map<string, LedgerTotals>> => {
   if (accountIds.length === 0) return new Map();
-  const date = window ? { gte: window.start, lte: window.end } : undefined;
+  const date = window ? { gte: window.start, lte: window.end } : asOf ? { lte: asOf } : undefined;
 
-  const [chargeGroups, paymentGroups] = await Promise.all([
-    prisma.creditCharge.groupBy({
-      by: ["accountId", "kind"],
-      where: { userId, accountId: { in: accountIds }, ...(date && { date }) },
-      _sum: { amount: true },
-    }),
+  const [purchaseGroups, paymentGroups] = await Promise.all([
     prisma.transaction.groupBy({
       by: ["creditAccountId"],
       where: { userId, type: "EXPENSE", creditAccountId: { in: accountIds }, ...(date && { date }) },
       _sum: { amount: true },
     }),
+    prisma.creditPayment.groupBy({
+      by: ["accountId", "kind"],
+      where: { userId, accountId: { in: accountIds }, ...(date && { date }) },
+      _sum: { amount: true },
+    }),
   ]);
 
-  return foldLedgerGroups(accountIds, chargeGroups, paymentGroups);
+  return foldLedgerGroups(accountIds, purchaseGroups, paymentGroups);
 };
 
 export interface CreditAccountSummary {
@@ -134,7 +140,7 @@ export interface CreditAccountSummary {
   openingBalanceDate: Date;
   isActive: boolean;
   billId: string | null;
-  /** What is owed right now, across the card's whole history. */
+  /** What is owed across the card's whole history, or up to `asOf` when one was asked for. */
   balance: number;
   /** Limit minus balance, or null with no limit recorded. Not clamped: being over it is worth seeing. */
   availableCredit: number | null;
@@ -142,8 +148,18 @@ export interface CreditAccountSummary {
   totals: LedgerTotals;
 }
 
-const toSummary = (account: CreditAccount, totals: LedgerTotals): CreditAccountSummary => {
-  const balance = computeAccountBalance(account.openingBalance, totals);
+/**
+ * The opening balance as it stood at `asOf`. It is what the card owed on its opening date, so a
+ * period that ended before that date knows nothing of it.
+ */
+export const openingBalanceAsOf = (
+  account: { openingBalance: number; openingBalanceDate: Date },
+  asOf?: Date
+): number =>
+  !asOf || account.openingBalanceDate.getTime() <= asOf.getTime() ? account.openingBalance : 0;
+
+const toSummary = (account: CreditAccount, totals: LedgerTotals, asOf?: Date): CreditAccountSummary => {
+  const balance = computeAccountBalance(openingBalanceAsOf(account, asOf), totals);
   return {
     id: account.id,
     name: account.name,
@@ -161,19 +177,38 @@ const toSummary = (account: CreditAccount, totals: LedgerTotals): CreditAccountS
   };
 };
 
-/** The user's cards with what each one owes. Archived cards only when asked for. */
+/**
+ * The user's cards with what each one owes. Archived cards only when asked for. `asOf` counts only
+ * what had happened by that instant, for a view of a month that has already ended.
+ */
 export const getCreditAccountSummaries = async (
   prisma: PrismaClient,
   userId: string,
-  { includeArchived = false }: { includeArchived?: boolean } = {}
+  { includeArchived = false, asOf }: { includeArchived?: boolean; asOf?: Date } = {}
 ): Promise<CreditAccountSummary[]> => {
   const accounts = await prisma.creditAccount.findMany({
     where: { userId, ...(includeArchived ? {} : { isActive: true }) },
     orderBy: [{ isActive: "desc" }, { name: "asc" }],
   });
-  const totals = await sumLedgers(prisma, userId, accounts.map((account) => account.id));
-  return accounts.map((account) => toSummary(account, totals.get(account.id) ?? emptyTotals()));
+  const totals = await sumLedgers(prisma, userId, accounts.map((account) => account.id), undefined, asOf);
+  return accounts.map((account) => toSummary(account, totals.get(account.id) ?? emptyTotals(), asOf));
 };
+
+/**
+ * What the user's cards owe together as of `asOf`, archived ones included. See `sumOwedOnCards`.
+ *
+ * What is still to be paid to the banks. A purchase on a card lowers the dashboard's Running Balance
+ * the day it is made, while the money only leaves the bank when the card is paid, so this explains
+ * the gap to cash in the bank, less any opening balance: that debt predates tracking and was never
+ * logged as spending. The running balance stops at the end of the month shown, so this has to stop
+ * there too, or a past month would pair its balance with today's debt.
+ */
+export const getOwedOnCards = async (
+  prisma: PrismaClient,
+  userId: string,
+  asOf?: Date
+): Promise<number | null> =>
+  sumOwedOnCards(await getCreditAccountSummaries(prisma, userId, { includeArchived: true, asOf }));
 
 export interface CardCategorySpend {
   categoryId: string;
@@ -184,30 +219,13 @@ export interface CardCategorySpend {
   percentage: number;
 }
 
-interface CategoryChargeGroup {
-  categoryId: string;
-  kind: CreditChargeKind;
-  _sum: { amount: number | null };
-}
-
-/**
- * What the card was spent on in a period, net of refunds.
- *
- * A category a refund fully cancels is dropped rather than shown at zero, and one it overshoots is
- * dropped too: a negative slice has no meaning in a breakdown of spending.
- */
+/** What the card was spent on in a period, largest first. */
 export const buildCardCategoryBreakdown = (
-  groups: readonly CategoryChargeGroup[],
+  groups: readonly { categoryId: string; _sum: { amount: number | null } }[],
   categories: ReadonlyMap<string, { name: string; icon: string; color: string }>
 ): CardCategorySpend[] => {
-  const net = new Map<string, number>();
-  for (const group of groups) {
-    const signed = (group.kind === "CREDIT" ? -1 : 1) * (group._sum.amount ?? 0);
-    net.set(group.categoryId, (net.get(group.categoryId) ?? 0) + signed);
-  }
-
-  const rows = [...net.entries()]
-    .map(([categoryId, amount]) => ({ categoryId, amount: round2(amount) }))
+  const rows = groups
+    .map((group) => ({ categoryId: group.categoryId, amount: round2(group._sum.amount ?? 0) }))
     .filter((row) => row.amount > 0 && categories.has(row.categoryId))
     .sort((a, b) => b.amount - a.amount);
   const total = rows.reduce((sum, row) => sum + row.amount, 0);
@@ -219,38 +237,39 @@ export const buildCardCategoryBreakdown = (
   }));
 };
 
-/** The shape a charge is returned in, by reads and writes alike. */
-export const CHARGE_ROW_INCLUDE = {
-  category: { select: { id: true, name: true, icon: true, color: true } },
+const LABEL_LINKS_SELECT = {
+  select: { labelId: true, label: { select: { name: true, color: true } } },
 } as const;
 
-export type CreditChargeRow = Prisma.CreditChargeGetPayload<{ include: typeof CHARGE_ROW_INCLUDE }>;
-
-const PAYMENT_ROW_SELECT = {
+/** The shape a purchase is listed in on a card's page. */
+export const PURCHASE_ROW_SELECT = {
   id: true,
   amount: true,
   description: true,
   date: true,
-  billId: true,
+  categoryId: true,
+  category: { select: { id: true, name: true, icon: true, color: true } },
+  labels: LABEL_LINKS_SELECT,
 } as const;
 
-export type CardPaymentRow = Prisma.TransactionGetPayload<{ select: typeof PAYMENT_ROW_SELECT }>;
+export type CardPurchaseRow = Prisma.TransactionGetPayload<{ select: typeof PURCHASE_ROW_SELECT }>;
 
 export interface CreditAccountDetail {
   account: CreditAccountSummary;
   period: { month: string; start: Date; end: Date; totals: LedgerTotals };
-  charges: CreditChargeRow[];
-  payments: CardPaymentRow[];
-  /** True when either list hit `MAX_CARD_PERIOD_ROWS`. Totals and the breakdown stay complete. */
+  purchases: CardPurchaseRow[];
+  payments: CreditPayment[];
+  /** True when either list hit `MAX_CARD_PERIOD_ROWS`. Totals and both breakdowns stay complete. */
   truncated: boolean;
   categoryBreakdown: CardCategorySpend[];
+  /** Same arithmetic as analytics: a purchase counts in full under every label it carries. */
+  labelBreakdown: ReturnType<typeof buildLabelBreakdown>;
 }
 
 /**
- * One card for one month: what it owes overall, and what moved in that month.
+ * One card for one month: what it owes overall, and what was bought and paid in that month.
  *
- * The breakdown is grouped in SQL rather than folded from the row list, so it stays whole even when
- * a list is capped.
+ * Both breakdowns read every purchase in the month, not the capped list, so they stay whole.
  */
 export const getCreditAccountDetail = async (
   prisma: PrismaClient,
@@ -264,44 +283,34 @@ export const getCreditAccountDetail = async (
 
   const window = monthWindow(month, timezoneOffset);
   const date = { gte: window.start, lte: window.end };
+  const purchaseWhere = { userId, type: "EXPENSE" as const, creditAccountId: account.id, date };
   const order = [{ date: "desc" as const }, { createdAt: "desc" as const }];
 
-  const [allTime, inPeriod, charges, payments, categoryGroups] = await Promise.all([
+  const [allTime, inPeriod, purchases, payments, categoryGroups, labelRows] = await Promise.all([
     sumLedgers(prisma, userId, [account.id]),
     sumLedgers(prisma, userId, [account.id], window),
-    prisma.creditCharge.findMany({
-      where: { userId, accountId: account.id, date },
-      include: CHARGE_ROW_INCLUDE,
-      orderBy: order,
-      take: MAX_CARD_PERIOD_ROWS,
-    }),
-    prisma.transaction.findMany({
-      where: { userId, type: "EXPENSE", creditAccountId: account.id, date },
-      select: PAYMENT_ROW_SELECT,
-      orderBy: order,
-      take: MAX_CARD_PERIOD_ROWS,
-    }),
-    prisma.creditCharge.groupBy({
-      by: ["categoryId", "kind"],
-      where: { userId, accountId: account.id, date },
-      _sum: { amount: true },
-    }),
+    prisma.transaction.findMany({ where: purchaseWhere, select: PURCHASE_ROW_SELECT, orderBy: order, take: MAX_CARD_PERIOD_ROWS }),
+    prisma.creditPayment.findMany({ where: { userId, accountId: account.id, date }, orderBy: order, take: MAX_CARD_PERIOD_ROWS }),
+    prisma.transaction.groupBy({ by: ["categoryId"], where: purchaseWhere, _sum: { amount: true } }),
+    prisma.transaction.findMany({ where: purchaseWhere, select: { amount: true, labels: LABEL_LINKS_SELECT } }),
   ]);
 
   const categories = await prisma.category.findMany({
-    where: { id: { in: [...new Set(categoryGroups.map((group) => group.categoryId))] } },
+    where: { id: { in: categoryGroups.map((group) => group.categoryId) } },
     select: { id: true, name: true, icon: true, color: true },
   });
+  const monthTotal = labelRows.reduce((sum, row) => sum + row.amount, 0);
 
   return {
     account: toSummary(account, allTime.get(account.id) ?? emptyTotals()),
     period: { month, ...window, totals: inPeriod.get(account.id) ?? emptyTotals() },
-    charges,
+    purchases,
     payments,
-    truncated: charges.length === MAX_CARD_PERIOD_ROWS || payments.length === MAX_CARD_PERIOD_ROWS,
+    truncated: purchases.length === MAX_CARD_PERIOD_ROWS || payments.length === MAX_CARD_PERIOD_ROWS,
     categoryBreakdown: buildCardCategoryBreakdown(
       categoryGroups,
       new Map(categories.map(({ id, ...meta }) => [id, meta]))
     ),
+    labelBreakdown: buildLabelBreakdown(labelRows, monthTotal),
   };
 };

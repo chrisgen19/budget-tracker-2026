@@ -22,6 +22,7 @@ import { useUser } from "@/components/user-provider";
 import { useCategoriesQuery, useQuickPreferencesQuery } from "@/hooks/use-categories";
 import { LabelPicker } from "@/components/transactions/label-picker";
 import { TransactionDateTimeField } from "@/components/transactions/transaction-date-time-field";
+import { PaidWithField } from "@/components/transactions/paid-with-field";
 import { useScheduledLabel } from "@/hooks/use-scheduled-label";
 import { useLabelsQuery } from "@/hooks/use-labels";
 import type { TransactionWithCategory } from "@/types";
@@ -33,6 +34,8 @@ export interface InitialTransactionData {
   date?: string;
   categoryId?: string;
   labelIds?: string[];
+  /** The credit card a prefilled expense was paid with. */
+  creditAccountId?: string | null;
 }
 
 interface TransactionFormProps {
@@ -103,6 +106,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
           : formatAccountDateInput(new Date(), user.timezoneOffset),
       categoryId: transaction?.categoryId ?? initialData?.categoryId ?? "",
       labelIds: transaction?.labels?.map((tl) => tl.labelId) ?? initialData?.labelIds ?? [],
+      creditAccountId: transaction?.creditAccountId ?? initialData?.creditAccountId ?? null,
     },
   });
 
@@ -140,6 +144,8 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
 
   const selectedCategory = categories.find((c) => c.id === watchedCategoryId);
 
+  const watchedCreditAccountId = watch("creditAccountId") ?? null;
+
   // Resolve personalized quick categories from prefs. Shared with the categories page so the tiles
   // shown here cannot disagree with the ones the picker there offers.
   const prefIds =
@@ -168,6 +174,11 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
       setValue("categoryId", "");
     }
   }, [categories, selectedType, setValue, transaction, initialData]);
+
+  // Income cannot be paid with a credit card, so switching to it drops the card.
+  useEffect(() => {
+    if (selectedType === "INCOME" && getValues("creditAccountId")) setValue("creditAccountId", null);
+  }, [selectedType, getValues, setValue]);
 
   // Auto-apply or remove scheduled label when date changes
   useEffect(() => {
@@ -306,10 +317,19 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
         >
           <form
             onSubmit={handleSubmit((data) => {
-              const { labelIds, ...rest } = data;
+              const { labelIds, creditAccountId, ...rest } = data;
               const payload = {
                 ...rest,
                 date: resolveTransactionDate(data.date, user.timezoneOffset),
+                // Sent only when it means something: the card an expense was paid with, or an explicit
+                // null clearing a card the row came in with (a saved row, or a scanned one picked
+                // earlier in review). Every other save leaves the field out, so the many flows sharing
+                // this form post exactly what they did before cards existed.
+                ...(creditAccountId
+                  ? { creditAccountId }
+                  : (transaction?.creditAccountId ?? initialData?.creditAccountId)
+                    ? { creditAccountId: null }
+                    : {}),
               };
               // Omit labelIds when:
               // - the picker is hidden (server should auto-apply), OR
@@ -495,6 +515,14 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                 <p className="text-expense text-sm mt-1.5">{errors.categoryId.message}</p>
               )}
             </div>
+
+            {selectedType === "EXPENSE" && user.creditCardsEnabled && (
+              <PaidWithField
+                value={watchedCreditAccountId}
+                onChange={(id) => setValue("creditAccountId", id, { shouldDirty: true })}
+                linkedCardName={transaction?.creditAccount?.name}
+              />
+            )}
 
             {/* Labels */}
             {!hideLabelPicker && (

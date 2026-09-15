@@ -10,7 +10,12 @@ const mocks = vi.hoisted(() => ({
   update: vi.fn(),
   findUniqueOrThrow: vi.fn(),
   creditAccountFindMany: vi.fn(),
+  canUseCreditCards: vi.fn(),
 }));
+
+// The /admin/settings switch, stubbed at its own seam rather than through the user and settings
+// reads beneath it, which `credit-card-access.test.ts` already covers.
+vi.mock("@/lib/credit-card-access", () => ({ userCanUseCreditCards: mocks.canUseCreditCards }));
 
 // `categoriesAreUsable` is deliberately left unmocked: it is the shared predicate under test, so
 // the PUT cases below exercise the real one against a mocked `category.findMany` rather than a
@@ -103,6 +108,7 @@ describe("PUT /api/transactions/[id]", () => {
     mocks.update.mockResolvedValue({ id: "tx-1" });
     mocks.findUniqueOrThrow.mockResolvedValue({ id: "tx-1", categoryId: "cat-1" });
     mocks.creditAccountFindMany.mockResolvedValue([{ id: "card-1", isActive: true }]);
+    mocks.canUseCreditCards.mockResolvedValue(true);
   });
 
   it("writes when the category is the caller's own and matches the type", async () => {
@@ -328,12 +334,12 @@ describe("PUT /api/transactions/[id]", () => {
     expect(mocks.transactionLabelDeleteMany).not.toHaveBeenCalled();
   });
 
-  describe("credit card payments", () => {
+  describe("purchases paid with a credit card", () => {
     const stored = (over: Record<string, unknown> = {}) => ({
       id: "tx-1",
       userId: "user-1",
       amount: 5000,
-      description: "BPI payment",
+      description: "Google One",
       type: "EXPENSE",
       date: new Date("2026-09-07T02:00:00.000Z"),
       categoryId: "cat-1",
@@ -342,11 +348,11 @@ describe("PUT /api/transactions/[id]", () => {
       ...over,
     });
     const payment = (over: Record<string, unknown> = {}) =>
-      body({ amount: 5000, description: "BPI payment", date: "2026-09-07T02:00:00.000Z", ...over });
+      body({ amount: 5000, description: "Google One", date: "2026-09-07T02:00:00.000Z", ...over });
 
-    // The transaction form predates cards and never sends the field. Reading its absence as
-    // "unlink" would quietly stop a payment counting against its card on any edit.
-    it("keeps a payment's card when the edit does not mention it", async () => {
+    // Not every caller sends the field. Reading its absence as "unlink" would quietly move
+    // spending off a card on any edit.
+    it("keeps a purchase's card when the edit does not mention it", async () => {
       mocks.findFirst.mockResolvedValue(stored({ creditAccountId: "card-1" }));
 
       const response = await put(payment({ amount: 5500 }));
@@ -370,7 +376,7 @@ describe("PUT /api/transactions/[id]", () => {
       );
     });
 
-    it("links a payment filed under the payment category", async () => {
+    it("links an expense in any category to a card", async () => {
       mocks.findFirst.mockResolvedValue(stored());
 
       const response = await put(payment({ creditAccountId: "card-1" }));
@@ -381,19 +387,46 @@ describe("PUT /api/transactions/[id]", () => {
       );
     });
 
-    it("refuses a link under any other category, and writes nothing", async () => {
+    it("refuses to turn a card purchase into income, and writes nothing", async () => {
+      mocks.findFirst.mockResolvedValue(stored({ creditAccountId: "card-1" }));
+      mocks.categoryFindMany.mockResolvedValue([{ id: "cat-salary", type: "INCOME" }]);
+
+      const response = await put(payment({ type: "INCOME", categoryId: "cat-salary" }));
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ code: "NOT_AN_EXPENSE" });
+      expect(mocks.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses to put a row on a card for a user the switch keeps from cards", async () => {
       mocks.findFirst.mockResolvedValue(stored());
-      // `category.findMany` also answers the ownership check; only the payment-category lookup,
-      // which filters by name, comes back empty.
-      mocks.categoryFindMany.mockImplementation(async ({ where }: { where: { name?: string } }) =>
-        where.name ? [] : [{ id: "cat-1", type: "EXPENSE" }],
-      );
+      mocks.canUseCreditCards.mockResolvedValue(false);
 
       const response = await put(payment({ creditAccountId: "card-1" }));
 
-      expect(response.status).toBe(400);
-      expect(await response.json()).toMatchObject({ code: "NOT_PAYMENT_CATEGORY" });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ code: "FEATURE_DISABLED" });
       expect(mocks.update).not.toHaveBeenCalled();
+    });
+
+    // Losing access must not lock someone out of their own data.
+    it("still lets that user edit a purchase that is already on a card", async () => {
+      mocks.findFirst.mockResolvedValue(stored({ creditAccountId: "card-1" }));
+      mocks.canUseCreditCards.mockResolvedValue(false);
+
+      const response = await put(payment({ amount: 5500 }));
+
+      expect(response.status).toBe(200);
+      expect(mocks.canUseCreditCards).not.toHaveBeenCalled();
+    });
+
+    it("keeps a purchase on an archived card editable", async () => {
+      mocks.findFirst.mockResolvedValue(stored({ creditAccountId: "card-1" }));
+      mocks.creditAccountFindMany.mockResolvedValue([{ id: "card-1", isActive: false }]);
+
+      const response = await put(payment({ description: "typo fixed", creditAccountId: "card-1" }));
+
+      expect(response.status).toBe(200);
     });
 
     it("refuses a card that is not the caller's", async () => {

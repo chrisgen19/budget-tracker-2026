@@ -4,7 +4,9 @@ import { getAuthUserId } from "@/lib/session";
 import { transactionSchema } from "@/lib/validations";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 import { categoriesAreUsable, categoriesAreUsableForWrite } from "@/lib/transaction-writes";
-import { CARD_PAYMENT_REFUSAL_MESSAGES, checkCardPayments } from "@/lib/card-payment-rule";
+import { CARD_PURCHASE_REFUSAL_MESSAGES, checkCardPurchases } from "@/lib/card-purchase-rule";
+import { userCanUseCreditCards } from "@/lib/credit-card-access";
+import { creditCardsUnavailableResponse } from "@/lib/credit-account-http";
 import {
   buildTransactionOrderBy,
   buildTransactionWhere,
@@ -27,7 +29,12 @@ export async function GET(request: Request) {
     const [transactions, total] = await Promise.all([
       prisma.transaction.findMany({
         where,
-        include: { category: true, bill: true, labels: { include: { label: true } } },
+        include: {
+          category: true,
+          bill: true,
+          labels: { include: { label: true } },
+          creditAccount: { select: { id: true, name: true, color: true } },
+        },
         orderBy,
         skip: (page - 1) * limit,
         take: limit,
@@ -78,11 +85,16 @@ export async function POST(request: Request) {
       );
     }
 
-    // A payment to a credit card: an expense under the payment category, on a card the caller owns.
-    const paymentRefusal = await checkCardPayments(prisma, userId, [validated]);
-    if (paymentRefusal) {
+    // Paid with a credit card: only for someone the /admin/settings switch lets use cards.
+    if (validated.creditAccountId && !(await userCanUseCreditCards(prisma, userId))) {
+      return creditCardsUnavailableResponse();
+    }
+
+    // Paid with a credit card: only an expense, on an active card the caller owns.
+    const cardRefusal = await checkCardPurchases(prisma, userId, [validated]);
+    if (cardRefusal) {
       return NextResponse.json(
-        { error: CARD_PAYMENT_REFUSAL_MESSAGES[paymentRefusal], code: paymentRefusal },
+        { error: CARD_PURCHASE_REFUSAL_MESSAGES[cardRefusal], code: cardRefusal },
         { status: 400 }
       );
     }
@@ -147,7 +159,12 @@ export async function POST(request: Request) {
 
       return tx.transaction.findUniqueOrThrow({
         where: { id: transaction.id },
-        include: { category: true, bill: true, labels: { include: { label: true } } },
+        include: {
+          category: true,
+          bill: true,
+          labels: { include: { label: true } },
+          creditAccount: { select: { id: true, name: true, color: true } },
+        },
       });
     });
 

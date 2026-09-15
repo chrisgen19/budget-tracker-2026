@@ -24,8 +24,8 @@ export const transactionSchema = z.object({
   date: z.string().min(1, "Date is required"),
   categoryId: z.string().min(1, "Category is required"),
   labelIds: z.array(z.string()).optional(),
-  /** The credit card this row pays down. On an edit, omitted keeps the stored link and null removes
-   *  it. Validated by `checkCardPayments`. */
+  /** The credit card this purchase was paid with. On an edit, omitted keeps the stored link and null
+   *  removes it. Validated by `checkCardPurchases`. */
   creditAccountId: z.string().min(1).max(100).nullable().optional(),
 });
 
@@ -58,13 +58,7 @@ export const receiptBreakdownMetaSchema = z
   })
   .strict();
 
-/**
- * `creditAccountId` is left out on purpose, so the batch route, the MCP tool and the Telegram paths
- * that share `createTransactionBatch` cannot link a payment to a card: a card payment is recorded
- * one at a time, from the transaction form or by paying the card's bill. Omitted rather than
- * ignored, so the field is stripped at the schema and no writer can be handed it by accident.
- */
-export const batchTransactionSchema = transactionSchema.omit({ creditAccountId: true }).extend({
+export const batchTransactionSchema = transactionSchema.extend({
   receiptGroupId: z.string().optional(),
   receiptBreakdown: receiptBreakdownMetaSchema.optional(),
 });
@@ -719,9 +713,6 @@ const calendarDaySchema = z
 
 const dayOfMonthSchema = z.number().int().min(1).max(31);
 
-/** Ceiling on the charges one request may add: a whole statement, with room to spare. */
-export const MAX_CREDIT_CHARGES = 100;
-
 export const creditAccountSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(50),
   color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Invalid color format").default("#8B7E6A"),
@@ -741,52 +732,44 @@ export const creditAccountPatchSchema = creditAccountSchema
     message: "Nothing to update",
   });
 
-const creditChargeFields = z.object({
-  kind: z.enum(["CHARGE", "CREDIT"]).default("CHARGE"),
+/**
+ * A payment to a card from the bank (`PAYMENT`), or a refund or reversal the card issued (`CREDIT`).
+ * Neither is spending: both only lower what the card owes.
+ */
+export const creditPaymentSchema = z.object({
+  kind: z.enum(["PAYMENT", "CREDIT"]).default("PAYMENT"),
   amount: z.number().positive("Amount must be greater than 0"),
   description: z.string().trim().max(255).default(""),
   date: calendarDaySchema,
-  categoryId: z.string().min(1, "Category is required"),
-  originalAmount: z.number().positive().nullable().optional(),
-  originalCurrency: z
-    .string()
-    .trim()
-    .toUpperCase()
-    .regex(/^[A-Z]{3}$/, "Use a 3-letter currency code, e.g. USD")
-    .nullable()
-    .optional(),
 });
 
-/** A foreign amount means nothing without its currency, and the reverse, so they travel together. */
-const FOREIGN_AMOUNT_UNPAIRED = {
-  message: "Send the original amount and its currency together",
-  path: ["originalCurrency"],
-};
-
-export const creditChargeSchema = creditChargeFields.refine(
-  (charge) => (charge.originalAmount == null) === (charge.originalCurrency == null),
-  FOREIGN_AMOUNT_UNPAIRED
-);
-
-export const createCreditChargesSchema = z.object({
-  charges: z.array(creditChargeSchema).min(1, "Add at least one charge").max(MAX_CREDIT_CHARGES),
-});
-
-/** Editing one charge. A patch naming either foreign-amount field must name both, with both set
- *  or both null, so the stored pair cannot end up half cleared. */
-export const creditChargePatchSchema = creditChargeFields
+/** Correcting one payment. `.partial()` does not re-apply the defaults, so an omitted kind is left alone. */
+export const creditPaymentPatchSchema = creditPaymentSchema
   .partial()
   .refine((patch) => Object.values(patch).some((value) => value !== undefined), {
     message: "Nothing to update",
-  })
-  .refine(
-    (patch) =>
-      (patch.originalAmount === undefined) === (patch.originalCurrency === undefined) &&
-      (patch.originalAmount === null) === (patch.originalCurrency === null),
-    FOREIGN_AMOUNT_UNPAIRED
-  );
+  });
 
 export type CreditAccountInput = z.infer<typeof creditAccountSchema>;
 export type CreditAccountPatch = z.infer<typeof creditAccountPatchSchema>;
-export type CreditChargeInput = z.infer<typeof creditChargeSchema>;
-export type CreditChargePatch = z.infer<typeof creditChargePatchSchema>;
+export type CreditPaymentInput = z.infer<typeof creditPaymentSchema>;
+export type CreditPaymentPatch = z.infer<typeof creditPaymentPatchSchema>;
+
+/**
+ * One line of the card page's "Add purchases" form. Each becomes an ordinary EXPENSE transaction
+ * paid with the card, so this is the transaction shape narrowed to what a statement line has: a day
+ * rather than a time, and labels chosen explicitly, never by schedule.
+ */
+export const cardPurchaseLineSchema = z.object({
+  date: calendarDaySchema,
+  description: z.string().trim().max(255).default(""),
+  categoryId: z.string().min(1, "Category is required"),
+  amount: z.number({ invalid_type_error: "Enter an amount above 0" }).positive("Enter an amount above 0"),
+  labelIds: z.array(z.string()).default([]),
+});
+
+export const cardPurchasesFormSchema = z.object({
+  lines: z.array(cardPurchaseLineSchema).min(1).max(MAX_BATCH_TRANSACTIONS),
+});
+
+export type CardPurchaseLine = z.infer<typeof cardPurchaseLineSchema>;

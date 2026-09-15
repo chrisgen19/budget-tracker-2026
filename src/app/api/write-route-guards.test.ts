@@ -242,19 +242,17 @@ describe("routes that write a caller-supplied categoryId verify it", () => {
 });
 
 /**
- * Two rules that live outside the transaction and bill writers, so the checks above cannot see them.
+ * A rule that lives outside the category and label checks above, so they cannot see it.
  *
- * A credit card charge carries a caller-supplied `categoryId` exactly as a transaction does, but it
- * is written through `credit-account-writes.ts`, which none of the write patterns above match. And a
- * transaction linked to a card only makes sense as an expense under the payment category, a rule a
- * sibling route could forget the way #298 forgot category ownership.
+ * A transaction paid with a credit card has to be an expense on a card the caller owns, a rule a
+ * sibling route could forget the way #298 forgot category ownership. The batch route delegates to
+ * `createTransactionBatch`, which applies it, so only the two routes that write the link themselves
+ * are named here.
  */
-describe("credit card writes reach their shared rules", () => {
+describe("card purchase writes reach their shared rule", () => {
   it.each([
-    ["src/app/api/credit-accounts/[id]/charges/route.ts", "createCreditCharges"],
-    ["src/app/api/credit-accounts/[id]/charges/[chargeId]/route.ts", "updateCreditCharge"],
-    ["src/app/api/transactions/route.ts", "checkCardPayments"],
-    ["src/app/api/transactions/[id]/route.ts", "checkCardPayments"],
+    ["src/app/api/transactions/route.ts", "checkCardPurchases"],
+    ["src/app/api/transactions/[id]/route.ts", "checkCardPurchases"],
   ])("%s calls %s", (file, guard) => {
     expect(routeFiles).toContain(file);
     expect(executableText(file)).toContain(guard);

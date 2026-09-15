@@ -34,7 +34,7 @@ const account = (over: Partial<CreditAccountView> = {}): CreditAccountView => ({
   billId: null,
   balance: 2295.28,
   availableCredit: null,
-  totals: { charges: 7295.28, credits: 0, payments: 5000 },
+  totals: { purchases: 7295.28, payments: 5000, credits: 0 },
   ...over,
 });
 

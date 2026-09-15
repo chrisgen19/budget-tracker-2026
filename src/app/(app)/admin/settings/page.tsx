@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ScanLine, ImagePlus, CalendarClock, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CreditCardsAccessCard } from "@/components/admin/credit-cards-access-card";
 import type { UserRole } from "@prisma/client";
 
 interface RoleSettings {
@@ -105,6 +106,8 @@ export default function AdminSettingsPage() {
 
   return (
     <div className="space-y-4">
+      <CreditCardsAccessCard />
+
       {error && (
         <div className="bg-expense-light border border-expense/20 text-expense rounded-xl px-4 py-3 text-sm">
           {error}

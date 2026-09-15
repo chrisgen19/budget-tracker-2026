@@ -12,6 +12,7 @@ import { AssessmentProvider } from "@/components/assessment-provider";
 import { countScansUsed, monthStartForUser } from "@/lib/scan-quota";
 
 import { telegramPromptOwnerId } from "@/lib/telegram/prompt-owner";
+import { canUseCreditCards, readCreditCardsAccess } from "@/lib/credit-card-access";
 export default async function AppLayout({
   children,
 }: {
@@ -50,6 +51,9 @@ export default async function AppLayout({
   // the bot writes into exactly one budget. Everyone else never sees the toggle, so they cannot
   // switch on a message that would be sent to somebody else's chat.
   const telegramPromptAvailable = (await telegramPromptOwnerId(prisma)) === session.user.id;
+
+  // Admins always see credit cards; everyone else follows the switch on /admin/settings.
+  const creditCardsEnabled = canUseCreditCards(userRole, await readCreditCardsAccess(prisma));
 
   // ADMIN users are always unrestricted; others follow their role's AppSettings
   let roleScanEnabled = true;
@@ -97,6 +101,7 @@ export default async function AppLayout({
           maxUploadFiles,
           monthlyScanLimit,
           scansUsedThisMonth,
+          creditCardsEnabled,
         }}
       >
         {/* ToastProvider sits outside PrivacyProvider so the latter can report a failed save.

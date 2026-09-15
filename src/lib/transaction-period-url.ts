@@ -25,6 +25,8 @@ export interface FilterParams extends PeriodParams {
   type: "ALL" | "INCOME" | "EXPENSE";
   categoryId: string | null;
   labelId: string | null;
+  /** Paid with this credit card. Linkable from a card's page, so it has to round-trip here. */
+  creditAccountId: string | null;
   search: string;
   /**
    * Where the visitor came from, as an opaque query string for that page.
@@ -122,6 +124,7 @@ export const parseFilterParams = (
   type: asType(params.get("type")),
   categoryId: asFilterId(params.get("categoryId")),
   labelId: asFilterId(params.get("labelId")),
+  creditAccountId: asFilterId(params.get("creditAccountId")),
   search: (params.get("search") ?? "").slice(0, MAX_TRANSACTION_SEARCH_LENGTH),
   ret: params.get("ret")?.slice(0, MAX_RETURN_LENGTH) || null,
 });
@@ -142,6 +145,7 @@ export const filterSearchParams = (filters: Partial<FilterParams>): string => {
   if (filters.type && filters.type !== "ALL") params.set("type", filters.type);
   if (filters.categoryId) params.set("categoryId", filters.categoryId);
   if (filters.labelId) params.set("labelId", filters.labelId);
+  if (filters.creditAccountId) params.set("creditAccountId", filters.creditAccountId);
   if (filters.search) params.set("search", filters.search);
   if (filters.ret) params.set("ret", filters.ret);
   return params.toString();

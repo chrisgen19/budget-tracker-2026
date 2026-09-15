@@ -29,6 +29,7 @@ import {
   type LucideProps,
 } from "lucide-react";
 import { usePrivacy } from "@/components/privacy-provider";
+import { useUser } from "@/components/user-provider";
 import { cn } from "@/lib/utils";
 
 interface MenuItem {
@@ -68,6 +69,8 @@ interface BuildMenuItemsArgs {
   hideAmounts: boolean;
   router: Pick<ReturnType<typeof useRouter>, "push">;
   toggleHideAmounts: () => void;
+  /** Whether the /admin/settings switch gives this user credit cards. Hidden when absent. */
+  cardsEnabled?: boolean;
 }
 
 /** Builds the shared menu item list (data only — no rendering). */
@@ -76,6 +79,7 @@ export const buildMenuItems = ({
   hideAmounts,
   router,
   toggleHideAmounts,
+  cardsEnabled = false,
 }: BuildMenuItemsArgs): MenuItem[] => [
   { key: "profile", label: "My Profile", icon: User, onSelect: () => router.push("/profile") },
   {
@@ -92,13 +96,17 @@ export const buildMenuItems = ({
     onSelect: () => router.push("/bills"),
     mobileOnly: true,
   },
-  {
-    key: "cards",
-    label: "Cards",
-    icon: CreditCard,
-    onSelect: () => router.push("/cards"),
-    mobileOnly: true,
-  },
+  ...(cardsEnabled
+    ? [
+        {
+          key: "cards",
+          label: "Cards",
+          icon: CreditCard,
+          onSelect: () => router.push("/cards"),
+          mobileOnly: true,
+        },
+      ]
+    : []),
   {
     key: "categories",
     label: "Categories",
@@ -189,7 +197,14 @@ export function ProfileMenu({
   const router = useRouter();
   const { hideAmounts, toggleHideAmounts } = usePrivacy();
 
-  const items = buildMenuItems({ isAdmin, hideAmounts, router, toggleHideAmounts });
+  const { user } = useUser();
+  const items = buildMenuItems({
+    isAdmin,
+    hideAmounts,
+    router,
+    toggleHideAmounts,
+    cardsEnabled: user.creditCardsEnabled,
+  });
 
   const handleSelect = (item: MenuItem) => {
     item.onSelect();

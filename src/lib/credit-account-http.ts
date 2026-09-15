@@ -1,6 +1,26 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { prisma } from "@/lib/prisma";
+import { getAuthUserId } from "@/lib/session";
+import { userCanUseCreditCards } from "@/lib/credit-card-access";
 import { CREDIT_WRITE_FAILURES, type CreditWriteFailureReason } from "@/lib/credit-account-writes";
+
+/** The 403 for a user the /admin/settings switch keeps from credit cards. Their data is untouched. */
+export const creditCardsUnavailableResponse = (): NextResponse =>
+  NextResponse.json(
+    { error: "Credit cards are not available on this account", code: "FEATURE_DISABLED" },
+    { status: 403 }
+  );
+
+/**
+ * `getAuthUserId`, plus the credit cards switch. Every card route opens with this, so switching the
+ * feature to admin only closes the API as well as hiding the pages.
+ */
+export const requireCreditCardsUser = async (): Promise<string | NextResponse> => {
+  const userId = await getAuthUserId();
+  if (userId instanceof NextResponse) return userId;
+  return (await userCanUseCreditCards(prisma, userId)) ? userId : creditCardsUnavailableResponse();
+};
 
 /** Path ids for the credit card routes. Bounded so a junk segment never reaches a query. */
 export const creditRouteIdSchema = z.string().trim().min(1).max(100);

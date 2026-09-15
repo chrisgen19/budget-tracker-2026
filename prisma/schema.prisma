@@ -32,12 +32,12 @@ enum BillOccurrenceStatus {
   SNOOZED
 }
 
-/// Which way a credit card statement line moves the debt. `amount` is always positive, so the
-/// direction lives here and a sum cannot be corrupted by a sign typed the wrong way round.
-enum CreditChargeKind {
-  /// A purchase, fee or interest: adds to what is owed.
-  CHARGE
-  /// A refund or reversal: takes it back off.
+/// What a card payment record is. Neither kind is spending: the purchases were counted when they
+/// were made, so these only lower what the card owes.
+enum CreditPaymentKind {
+  /// Money sent to the card from the bank.
+  PAYMENT
+  /// A refund or reversal the card issued.
   CREDIT
 }
 
@@ -74,6 +74,12 @@ enum ScanStatus {
   PENDING
   SUCCESS
   FAILED
+}
+
+/// Who a feature is switched on for. Admins always have every feature; this decides everyone else.
+enum FeatureAccess {
+  ADMIN
+  EVERYONE
 }
 
 model User {
@@ -138,7 +144,7 @@ model User {
   telegramPromptLogs         TelegramPromptLog[]
   telegramQuickTiles         TelegramQuickTile[]
   creditAccounts             CreditAccount[]
-  creditCharges              CreditCharge[]
+  creditPayments             CreditPayment[]
   createdAt                  DateTime               @default(now()) @map("created_at")
   updatedAt                  DateTime               @updatedAt @map("updated_at")
 
@@ -200,7 +206,6 @@ model Category {
   transactions          Transaction[]
   scheduledTransactions ScheduledTransaction[]
   telegramQuickTiles    TelegramQuickTile[]
-  creditCharges         CreditCharge[]
   createdAt             DateTime               @default(now()) @map("created_at")
 
   // NOTE: this constraint does NOT cover defaults. Their userId is NULL, and Postgres treats
@@ -248,10 +253,10 @@ model Transaction {
   updatedByMcpTokenId String?               @map("updated_by_mcp_token_id")
   billId              String?               @map("bill_id")
   bill                ScheduledTransaction? @relation(fields: [billId], references: [id], onDelete: SetNull)
-  /// Set when this row pays down a credit card. The row stays an ordinary expense and is counted
-  /// everywhere expenses are; the link only lowers the card's derived balance. What may carry one
-  /// is decided in `src/lib/card-payment-rule.ts`. Restrict, so a card with payments can only be
-  /// archived: deleting it would leave these rows claiming to pay nothing.
+  /// The credit card this purchase was paid with. The row is an ordinary expense, counted
+  /// everywhere expenses are on the day it was bought; the link adds it to what the card owes.
+  /// Only an EXPENSE may carry one (`src/lib/card-purchase-rule.ts`). Restrict, so a card with
+  /// purchases can only be archived: deleting it would leave them naming a card that is gone.
   creditAccountId     String?               @map("credit_account_id")
   creditAccount       CreditAccount?        @relation(fields: [creditAccountId], references: [id], onDelete: Restrict)
   labels              TransactionLabel[]
@@ -356,16 +361,15 @@ model ScheduledTransaction {
   @@map("scheduled_transactions")
 }
 
-/// A credit card, tracked as a debt rather than as spending.
+/// A credit card: what was bought with it, and what is still owed on it.
 ///
-/// Swiping the card is not money leaving the bank, so its statement lines live in
-/// `credit_charges` and never reach `transactions`. Every expense total in the app (dashboard,
-/// analytics, assessment, MCP) reads `transactions` alone, so keeping charges out of that table is
-/// what keeps them out of the totals, with no filter for any of those queries to forget. Paying the
-/// card is the expense: an ordinary transaction carrying `credit_account_id`.
+/// A purchase on the card is an ordinary EXPENSE transaction carrying `credit_account_id`, so it
+/// reaches every category and label report on the day it was made. Paying the card is not spending
+/// and is kept out of `transactions` entirely, in `credit_payments`, so no expense query needs a
+/// filter to avoid counting the same money twice.
 ///
-/// There is no balance column. What is owed is derived from the ledger on every read
-/// (`computeAccountBalance`), so it cannot drift from the rows it summarises.
+/// There is no balance column. What is owed is derived on every read (`computeAccountBalance`):
+/// opening balance, plus purchases, less payments and credits.
 model CreditAccount {
   id                 String                @id @default(cuid())
   name               String
@@ -375,20 +379,21 @@ model CreditAccount {
   statementDay       Int?                  @map("statement_day")
   /// Day of the month payment is due, 1-31. The linked bill is what actually reminds.
   dueDay             Int?                  @map("due_day")
-  /// What was already owed when tracking began. Charges and payments are counted on top of it
+  /// What was already owed when tracking began. Purchases and payments are counted on top of it
   /// whatever their date, so log only what this figure does not already include.
   openingBalance     Float                 @default(0) @map("opening_balance")
   openingBalanceDate DateTime              @map("opening_balance_date")
-  /// Archived rather than deleted once any charge or payment exists, so a past payment never
-  /// loses the card it paid.
+  /// Archived rather than deleted once any purchase or payment exists, so history never loses
+  /// the card it belongs to.
   isActive           Boolean               @default(true) @map("is_active")
-  /// The recurring bill that reminds you to pay this card. At most one per card.
+  /// Reserved for a payment reminder bill, at most one per card. Nothing links it yet: paying a
+  /// reminder would have to write a `credit_payments` row, which bills do not know how to do.
   billId             String?               @unique @map("bill_id")
   bill               ScheduledTransaction? @relation(fields: [billId], references: [id], onDelete: SetNull)
   userId             String                @map("user_id")
   user               User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  charges            CreditCharge[]
-  payments           Transaction[]
+  purchases          Transaction[]
+  payments           CreditPayment[]
   createdAt          DateTime              @default(now()) @map("created_at")
   updatedAt          DateTime              @updatedAt @map("updated_at")
 
@@ -396,37 +401,28 @@ model CreditAccount {
   @@map("credit_accounts")
 }
 
-/// One line on a card statement: a purchase, fee or interest (`CHARGE`), or a refund or reversal
-/// (`CREDIT`). Never an expense on its own; the payment that settles it is.
-///
-/// The category is kept so the card page can say *what* the card was spent on, which the payment
-/// alone cannot: one 5,000 payment settles subscriptions, shopping and interest at once.
-model CreditCharge {
-  id               String            @id @default(cuid())
-  kind             CreditChargeKind  @default(CHARGE)
-  /// Always positive. `kind` carries the direction.
-  amount           Float
-  description      String            @default("")
-  /// The statement's calendar day, stored as the start of that day in the user's timezone.
-  date             DateTime
-  /// The charge as billed abroad, e.g. USD 22.40. Display only: `amount` is what the card charged
-  /// in the account's own currency, and is the only figure any total reads.
-  originalAmount   Float?            @map("original_amount")
-  originalCurrency String?           @map("original_currency")
-  accountId        String            @map("account_id")
-  account          CreditAccount     @relation(fields: [accountId], references: [id], onDelete: Restrict)
-  categoryId       String            @map("category_id")
-  category         Category          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  userId           String            @map("user_id")
-  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdVia       TransactionSource @default(APP) @map("created_via")
-  createdAt        DateTime          @default(now()) @map("created_at")
-  updatedAt        DateTime          @updatedAt @map("updated_at")
+/// Money that lowered what a card owes without being spending: a payment from the bank, or a
+/// refund or reversal the card issued. Kept out of `transactions` on purpose, so no expense total
+/// counts it; the purchases it pays for were already counted when they were made.
+model CreditPayment {
+  id          String            @id @default(cuid())
+  kind        CreditPaymentKind @default(PAYMENT)
+  /// Always positive. Every kind lowers the balance.
+  amount      Float
+  description String            @default("")
+  /// The calendar day, stored as the start of that day in the user's timezone.
+  date        DateTime
+  accountId   String            @map("account_id")
+  account     CreditAccount     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  userId      String            @map("user_id")
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdVia  TransactionSource @default(APP) @map("created_via")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
 
   @@index([accountId, date])
   @@index([userId, date])
-  @@index([categoryId])
-  @@map("credit_charges")
+  @@map("credit_payments")
 }
 
 model ScheduledTransactionLog {
@@ -641,4 +637,19 @@ model TelegramQuickTileLabel {
   @@index([tileId])
   @@index([labelId])
   @@map("telegram_quick_tile_labels")
+}
+
+/// App-wide switches an admin flips on /admin/settings.
+///
+/// One row, id 1, created on the first write. A missing row reads as every default, so a fresh
+/// database needs no seed. Separate from `AppSettings`, which holds one row per role: these switches
+/// are not per role.
+model SiteSettings {
+  id                Int           @id @default(1)
+  /// Who can use credit cards. Admin only until switched on. A user who loses access keeps their
+  /// data, since their card purchases are ordinary expenses, so flipping it back is always safe.
+  creditCardsAccess FeatureAccess @default(ADMIN) @map("credit_cards_access")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  @@map("site_settings")
 }

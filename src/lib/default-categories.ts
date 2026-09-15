@@ -1,9 +1,4 @@
 import { TransactionType } from "@prisma/client";
-// Relative rather than `@/lib`, because `prisma/seed.ts` runs this file under `tsx` with no path
-// aliases.
-import { CARD_PAYMENT_CATEGORY_NAME } from "./card-payment-category";
-
-export { CARD_PAYMENT_CATEGORY_NAME };
 
 /**
  * The categories every account starts with, seeded by `prisma/seed.ts` as `isDefault: true`
@@ -30,7 +25,6 @@ export const DEFAULT_CATEGORIES = [
   { name: "Healthcare", type: TransactionType.EXPENSE, icon: "Heart", color: "#FF6B6B" },
   { name: "Fun", type: TransactionType.EXPENSE, icon: "Gift", color: "#45B7D1" },
   { name: "Personal Care", type: TransactionType.EXPENSE, icon: "Sparkles", color: "#C8702A" },
-  { name: CARD_PAYMENT_CATEGORY_NAME, type: TransactionType.EXPENSE, icon: "CreditCard", color: "#5B6B8C" },
   { name: "Other Expense", type: TransactionType.EXPENSE, icon: "MoreHorizontal", color: "#8B7E6A" },
 
   // Income categories

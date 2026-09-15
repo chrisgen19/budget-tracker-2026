@@ -10,6 +10,7 @@ import type { TransactionWithCategory, DashboardStats } from "@/types";
 import type { TransactionFilters } from "@/components/transactions/transaction-filters";
 import { labelKeys } from "@/hooks/use-labels";
 import { analyticsKeys } from "@/hooks/use-analytics";
+import { creditAccountKeys } from "@/hooks/use-credit-accounts";
 import type { TransactionSelectionItem } from "@/lib/transaction-bulk";
 
 /* ------------------------------------------------------------------ */
@@ -91,6 +92,7 @@ export const buildTransactionFilterParams = (filters: TransactionFilters, tz: nu
   if (filters.search) params.set("search", filters.search);
   if (filters.categoryId) params.set("categoryId", filters.categoryId);
   if (filters.labelId) params.set("labelId", filters.labelId);
+  if (filters.creditAccountId) params.set("creditAccountId", filters.creditAccountId);
   if (filters.createdVia !== "ALL") params.set("createdVia", filters.createdVia);
   if (filters.amountMin !== null) params.set("amountMin", String(filters.amountMin));
   if (filters.amountMax !== null) params.set("amountMax", String(filters.amountMax));
@@ -358,6 +360,8 @@ export function useCreateTransaction() {
       // use-bills.ts already imports from this module, and importing back would
       // make the cycle.
       queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] });
+      // A purchase paid with a card moves that card's balance and its month.
+      queryClient.invalidateQueries({ queryKey: creditAccountKeys.all });
     },
   });
 }
@@ -406,6 +410,8 @@ export function useUpdateTransaction() {
       // use-bills.ts already imports from this module, and importing back would
       // make the cycle.
       queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] });
+      // A purchase paid with a card moves that card's balance and its month.
+      queryClient.invalidateQueries({ queryKey: creditAccountKeys.all });
     },
   });
 }
@@ -441,6 +447,7 @@ export function useDeleteTransaction() {
         queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
         queryClient.invalidateQueries({ queryKey: labelKeys.all }),
         queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] }),
+        queryClient.invalidateQueries({ queryKey: creditAccountKeys.all }),
       ]);
     },
   });
@@ -487,6 +494,7 @@ export function useBulkDeleteTransactions() {
         queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
         queryClient.invalidateQueries({ queryKey: labelKeys.all }),
         queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] }),
+        queryClient.invalidateQueries({ queryKey: creditAccountKeys.all }),
       ]);
     },
   });
@@ -562,6 +570,7 @@ export function useBulkUpdateTransactions() {
         queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
         queryClient.invalidateQueries({ queryKey: labelKeys.all }),
         queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] }),
+        queryClient.invalidateQueries({ queryKey: creditAccountKeys.all }),
       ]);
     },
   });
@@ -670,6 +679,8 @@ export function useBatchCreateTransactions() {
       // per-category counts the picker ranks and groups by -- so the cached label list is now
       // behind. Every sibling create/update/delete above already invalidates it.
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
+      // A reviewed receipt can be paid with a card, which moves that card's balance and month.
+      queryClient.invalidateQueries({ queryKey: creditAccountKeys.all });
     },
   });
 }
@@ -718,6 +729,8 @@ export function useRemoveTransactionLabel() {
       // use-bills.ts already imports from this module, and importing back would
       // make the cycle.
       queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] });
+      // A purchase paid with a card moves that card's balance and its month.
+      queryClient.invalidateQueries({ queryKey: creditAccountKeys.all });
     },
     onError: () => {
       // Refetch to restore consistent state (pill stays visible since cache

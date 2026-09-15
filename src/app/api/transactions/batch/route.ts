@@ -18,6 +18,8 @@ import {
   bulkTransactionMutationSchema,
 } from "@/lib/transaction-bulk";
 import { removeTransactionLabels } from "@/lib/label-writes";
+import { userCanUseCreditCards } from "@/lib/credit-card-access";
+import { creditCardsUnavailableResponse } from "@/lib/credit-account-http";
 import { bodyTooLargeResponse, readJsonWithinLimit } from "@/lib/request-size";
 
 /**
@@ -132,6 +134,15 @@ export async function POST(request: Request) {
 
     const { transactions, clientBatchId } = batchSchema.parse(body);
 
+    // Paid with a credit card: only for someone the /admin/settings switch lets use cards. Refused
+    // under the same replay guard as every other 4xx here, since a 4xx reads as "nothing written".
+    if (
+      transactions.some((t) => t.creditAccountId) &&
+      !(await userCanUseCreditCards(prisma, userId))
+    ) {
+      return rejectUnlessAlreadySaved(userId, clientBatchId, creditCardsUnavailableResponse());
+    }
+
     const result = await createTransactionBatch({
       prisma,
       userId,
@@ -147,7 +158,9 @@ export async function POST(request: Request) {
       const message =
         result.reason === "LABELS_NOT_OWNED"
           ? "One or more labels are invalid or do not belong to you"
-          : "One or more categories are invalid or do not belong to you";
+          : result.reason === "CARD_NOT_USABLE"
+            ? "A card is not yours, is archived, or was used on an income"
+            : "One or more categories are invalid or do not belong to you";
       return rejectUnlessAlreadySaved(
         userId,
         clientBatchId,

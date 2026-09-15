@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { AlertTriangle, ArchiveRestore, ArrowLeft, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, ArchiveRestore, ArrowLeft, Banknote, ListFilter, Pencil, Plus, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
@@ -11,21 +11,29 @@ import { useToast } from "@/components/ui/toast";
 import { useUser } from "@/components/user-provider";
 import { MonthSwitcher } from "@/components/credit-accounts/month-switcher";
 import { CardSummary } from "@/components/credit-accounts/card-summary";
-import { CardCategoryBreakdown } from "@/components/credit-accounts/card-category-breakdown";
+import { CardBreakdownTabs } from "@/components/credit-accounts/card-breakdown-tabs";
 import { CardLedgerList } from "@/components/credit-accounts/card-ledger-list";
 import { CreditAccountForm } from "@/components/credit-accounts/credit-account-form";
-import { chargeToInput, CreditChargeForm } from "@/components/credit-accounts/credit-charge-form";
+import { CardPurchasesForm } from "@/components/credit-accounts/card-purchases-form";
+import { CardPaymentForm } from "@/components/credit-accounts/card-payment-form";
+import { UnconfirmedPurchases } from "@/components/credit-accounts/unconfirmed-purchases";
+import { useCardPurchaseBatch, type PurchaseBatchResult } from "@/hooks/use-card-purchase-batch";
 import {
-  useCreateCreditCharges,
+  useCreateCreditPayment,
   useCreditAccountDetailQuery,
   useDeleteCreditAccount,
-  useDeleteCreditCharge,
+  useDeleteCreditPayment,
   useUpdateCreditAccount,
-  useUpdateCreditCharge,
-  type CreditChargeView,
+  useUpdateCreditPayment,
+  type CreditPaymentView,
 } from "@/hooks/use-credit-accounts";
-import { accountMonthKey } from "@/lib/account-time";
-import type { CreditAccountInput, CreditChargeInput } from "@/lib/validations";
+import { accountDateKey, accountMonthKey } from "@/lib/account-time";
+import {
+  resolveTransactionDate,
+  type CardPurchaseLine,
+  type CreditAccountInput,
+  type CreditPaymentInput,
+} from "@/lib/validations";
 
 const PRIMARY_BUTTON =
   "inline-flex min-h-11 items-center gap-2 rounded-xl bg-amber px-4 text-sm font-medium text-white shadow-soft transition-colors hover:bg-amber-dark";
@@ -34,6 +42,13 @@ const SECONDARY_BUTTON =
 
 const errorMessage = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
+
+/** The month as a day range, for the Transactions link. Not exported: a page file may only export what Next.js allows. */
+const monthDayRange = (month: string) => {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  return { from: `${month}-01`, to: `${month}-${String(lastDay).padStart(2, "0")}` };
+};
 
 /**
  * One card, one month. Longer than the component guideline because it owns every modal on the page;
@@ -45,16 +60,18 @@ export default function CardDetailPage() {
   const { user } = useUser();
   const { showToast } = useToast();
   const [month, setMonth] = useState(() => accountMonthKey(new Date(), user.timezoneOffset));
-  const [addingCharges, setAddingCharges] = useState(false);
-  const [editingCharge, setEditingCharge] = useState<CreditChargeView | null>(null);
-  const [deletingCharge, setDeletingCharge] = useState<CreditChargeView | null>(null);
+  const [addingPurchases, setAddingPurchases] = useState(false);
+  const [paying, setPaying] = useState(false);
+  const [editingPayment, setEditingPayment] = useState<CreditPaymentView | null>(null);
+  const [deletingPayment, setDeletingPayment] = useState<CreditPaymentView | null>(null);
   const [editingCard, setEditingCard] = useState(false);
   const [deletingCard, setDeletingCard] = useState(false);
 
   const detail = useCreditAccountDetailQuery(id, month);
-  const createCharges = useCreateCreditCharges();
-  const updateCharge = useUpdateCreditCharge();
-  const deleteCharge = useDeleteCreditCharge();
+  const purchaseBatch = useCardPurchaseBatch();
+  const createPayment = useCreateCreditPayment();
+  const updatePayment = useUpdateCreditPayment();
+  const deletePayment = useDeleteCreditPayment();
   const updateCard = useUpdateCreditAccount();
   const deleteCard = useDeleteCreditAccount();
 
@@ -70,25 +87,57 @@ export default function CardDetailPage() {
     }
   };
 
-  const handleAddCharges = async (charges: CreditChargeInput[]) => {
-    const count = `${charges.length} ${charges.length === 1 ? "line" : "lines"}`;
-    if (await attempt(() => createCharges.mutateAsync({ accountId: id, charges }), `Added ${count}`, "Failed to add charges")) {
-      setAddingCharges(false);
-      // Show the month the lines landed in, or a statement entered on the 2nd vanishes from view.
-      setMonth(charges[0].date.slice(0, 7));
+  /** A save closes the form; a refusal leaves the lines to correct; an unconfirmed save pins them. */
+  const settlePurchases = (result: PurchaseBatchResult | null) => {
+    if (!result) return;
+    if (result.outcome === "saved") {
+      showToast(`Added ${result.count} ${result.count === 1 ? "purchase" : "purchases"}`, "success");
+      setAddingPurchases(false);
+      // Show the month the purchases landed in, or a statement entered on the 2nd vanishes from view.
+      setMonth(accountMonthKey(result.firstDate, user.timezoneOffset));
+    } else if (result.outcome === "refused") {
+      showToast(result.message, "error");
+    } else {
+      showToast("Couldn't confirm the purchases were saved", "error");
+      // The month they would land in, so the list behind the notice is the one to check.
+      setMonth(accountMonthKey(result.firstDate, user.timezoneOffset));
     }
   };
 
-  const handleSaveCharge = async ([patch]: CreditChargeInput[]) => {
-    if (!editingCharge) return;
-    const write = () => updateCharge.mutateAsync({ accountId: id, chargeId: editingCharge.id, patch });
-    if (await attempt(write, "Charge updated", "Failed to update charge")) setEditingCharge(null);
+  const handleAddPurchases = async (lines: CardPurchaseLine[]) => {
+    // Noon on the statement day: a real time, so the row sorts sensibly within its day, and far
+    // from midnight, so no timezone reading can move it to a neighbouring one.
+    const transactions = lines.map((line) => ({
+      amount: line.amount,
+      description: line.description,
+      type: "EXPENSE" as const,
+      date: resolveTransactionDate(`${line.date}T12:00`, user.timezoneOffset),
+      categoryId: line.categoryId,
+      // Explicit, even when empty, so label schedules never guess on a backdated purchase.
+      labelIds: line.labelIds,
+      creditAccountId: id,
+    }));
+    settlePurchases(await purchaseBatch.submit(transactions));
   };
 
-  const handleDeleteCharge = async () => {
-    if (!deletingCharge) return;
-    const write = () => deleteCharge.mutateAsync({ accountId: id, chargeId: deletingCharge.id });
-    if (await attempt(write, "Charge deleted", "Failed to delete charge")) setDeletingCharge(null);
+  const handleRecordPayment = async (input: CreditPaymentInput) => {
+    const label = input.kind === "CREDIT" ? "Refund recorded" : "Payment recorded";
+    if (await attempt(() => createPayment.mutateAsync({ accountId: id, input }), label, "Failed to record the payment")) {
+      setPaying(false);
+      setMonth(input.date.slice(0, 7));
+    }
+  };
+
+  const handleSavePayment = async (patch: CreditPaymentInput) => {
+    if (!editingPayment) return;
+    const write = () => updatePayment.mutateAsync({ accountId: id, paymentId: editingPayment.id, patch });
+    if (await attempt(write, "Payment updated", "Failed to update the payment")) setEditingPayment(null);
+  };
+
+  const handleDeletePayment = async () => {
+    if (!deletingPayment) return;
+    const write = () => deletePayment.mutateAsync({ accountId: id, paymentId: deletingPayment.id });
+    if (await attempt(write, "Payment deleted", "Failed to delete the payment")) setDeletingPayment(null);
   };
 
   const handleSaveCard = async (input: CreditAccountInput) => {
@@ -108,7 +157,7 @@ export default function CardDetailPage() {
         showToast("Card deleted", "success");
         router.push("/cards");
       } else {
-        showToast("Card archived. Its charges and payments are kept.", "success");
+        showToast("Card archived. Its purchases and payments are kept.", "success");
       }
     } catch (error) {
       showToast(errorMessage(error, "Failed to delete card"), "error");
@@ -126,7 +175,9 @@ export default function CardDetailPage() {
     );
   }
 
-  const { account, period, charges, payments, categoryBreakdown, truncated } = detail.data;
+  const { account, period, purchases, payments, categoryBreakdown, labelBreakdown, truncated } = detail.data;
+  const { from, to } = monthDayRange(month);
+  const transactionsHref = `/transactions?creditAccountId=${account.id}&period=custom&from=${from}&to=${to}`;
 
   return (
     <div>
@@ -146,10 +197,16 @@ export default function CardDetailPage() {
 
       <div className="mb-6 flex flex-wrap gap-2">
         {account.isActive ? (
-          <button type="button" onClick={() => setAddingCharges(true)} className={PRIMARY_BUTTON}>
-            <Plus className="h-4 w-4" />
-            Add Charges
-          </button>
+          <>
+            <button type="button" onClick={() => setAddingPurchases(true)} className={PRIMARY_BUTTON}>
+              <Plus className="h-4 w-4" />
+              Add Purchases
+            </button>
+            <button type="button" onClick={() => setPaying(true)} className={SECONDARY_BUTTON}>
+              <Banknote className="h-4 w-4" />
+              Pay
+            </button>
+          </>
         ) : (
           <button type="button" onClick={() => void handleRestore()} className={PRIMARY_BUTTON}>
             <ArchiveRestore className="h-4 w-4" />
@@ -169,32 +226,60 @@ export default function CardDetailPage() {
       <div className="grid gap-4 lg:grid-cols-5">
         <section className="card p-5 lg:col-span-2">
           <h2 className="mb-4 font-serif text-lg text-warm-700">Where it went</h2>
-          <CardCategoryBreakdown rows={categoryBreakdown} />
+          <CardBreakdownTabs categories={categoryBreakdown} labels={labelBreakdown} />
         </section>
         <section className="card p-5 lg:col-span-3">
-          <h2 className="mb-2 font-serif text-lg text-warm-700">Charges and payments</h2>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h2 className="font-serif text-lg text-warm-700">Purchases and payments</h2>
+            <Link href={transactionsHref} className="inline-flex min-h-11 items-center gap-1.5 text-sm font-medium text-amber-dark">
+              <ListFilter className="h-4 w-4" />
+              View in Transactions
+            </Link>
+          </div>
           {truncated && (
             <p className="mb-2 text-xs text-warm-400">Showing the latest 500 of each. The totals above include everything.</p>
           )}
           <CardLedgerList
-            charges={charges}
+            purchases={purchases}
             payments={payments}
-            onEditCharge={setEditingCharge}
-            onDeleteCharge={setDeletingCharge}
+            onEditPayment={setEditingPayment}
+            onDeletePayment={setDeletingPayment}
           />
         </section>
       </div>
 
-      <Modal open={addingCharges} onClose={() => setAddingCharges(false)} title="Add Charges">
-        <CreditChargeForm onSubmit={handleAddCharges} onCancel={() => setAddingCharges(false)} />
+      <Modal open={addingPurchases} onClose={() => setAddingPurchases(false)} title="Add Purchases">
+        {purchaseBatch.unconfirmed ? (
+          <UnconfirmedPurchases
+            purchases={purchaseBatch.unconfirmed}
+            retrying={purchaseBatch.saving}
+            onRetry={() => void purchaseBatch.retry().then(settlePurchases)}
+            onDiscard={() => {
+              purchaseBatch.discard();
+              setAddingPurchases(false);
+            }}
+            onClose={() => setAddingPurchases(false)}
+          />
+        ) : (
+          <CardPurchasesForm onSubmit={handleAddPurchases} onCancel={() => setAddingPurchases(false)} />
+        )}
       </Modal>
 
-      <Modal open={!!editingCharge} onClose={() => setEditingCharge(null)} title="Edit Charge">
-        {editingCharge && (
-          <CreditChargeForm
-            initial={chargeToInput(editingCharge, user.timezoneOffset)}
-            onSubmit={handleSaveCharge}
-            onCancel={() => setEditingCharge(null)}
+      <Modal open={paying} onClose={() => setPaying(false)} title="Pay Card">
+        <CardPaymentForm defaultAmount={account.balance} onSubmit={handleRecordPayment} onCancel={() => setPaying(false)} />
+      </Modal>
+
+      <Modal open={!!editingPayment} onClose={() => setEditingPayment(null)} title="Edit Payment">
+        {editingPayment && (
+          <CardPaymentForm
+            initial={{
+              kind: editingPayment.kind,
+              amount: editingPayment.amount,
+              description: editingPayment.description,
+              date: accountDateKey(editingPayment.date, user.timezoneOffset),
+            }}
+            onSubmit={handleSavePayment}
+            onCancel={() => setEditingPayment(null)}
           />
         )}
       </Modal>
@@ -204,12 +289,12 @@ export default function CardDetailPage() {
       </Modal>
 
       <ConfirmModal
-        open={!!deletingCharge}
-        onClose={() => setDeletingCharge(null)}
-        onConfirm={() => void handleDeleteCharge()}
-        title="Delete Charge"
-        message={<p>Delete &ldquo;{deletingCharge?.description || deletingCharge?.category.name}&rdquo;? What you owe on this card will go down by its amount.</p>}
-        loading={deleteCharge.isPending}
+        open={!!deletingPayment}
+        onClose={() => setDeletingPayment(null)}
+        onConfirm={() => void handleDeletePayment()}
+        title="Delete Payment"
+        message={<p>Delete this {deletingPayment?.kind === "CREDIT" ? "refund" : "payment"}? What you owe on this card will go back up by its amount.</p>}
+        loading={deletePayment.isPending}
       />
 
       <ConfirmModal
@@ -217,7 +302,7 @@ export default function CardDetailPage() {
         onClose={() => setDeletingCard(false)}
         onConfirm={() => void handleDeleteCard()}
         title="Delete Card"
-        message={<p>Delete &ldquo;{account.name}&rdquo;? A card with any charges or payments is archived instead, so its history is kept.</p>}
+        message={<p>Delete &ldquo;{account.name}&rdquo;? A card with any purchases or payments is archived instead, so its history is kept.</p>}
         loading={deleteCard.isPending}
       />
     </div>

@@ -1,4 +1,4 @@
-import { CalendarClock, Receipt, Send, Sparkles } from "lucide-react";
+import { CalendarClock, CreditCard, Receipt, Send, Sparkles } from "lucide-react";
 import type { TransactionSource } from "@prisma/client";
 
 interface TransactionRowBadgesProps {
@@ -8,6 +8,8 @@ interface TransactionRowBadgesProps {
   billId?: string | null;
   /** Where the row was created, from `transactions.created_via`. */
   createdVia?: TransactionSource;
+  /** The credit card this purchase was paid with. A card payment is never a transaction. */
+  creditAccount?: { name: string; color: string } | null;
 }
 
 /**
@@ -27,6 +29,7 @@ export function TransactionRowBadges({
   receiptGroupId,
   billId,
   createdVia,
+  creditAccount,
 }: TransactionRowBadgesProps) {
   return (
     <>
@@ -40,6 +43,16 @@ export function TransactionRowBadges({
         <span className="shrink-0 inline-flex items-center gap-0.5 bg-income-light text-income text-[10px] font-medium px-1.5 py-0.5 rounded">
           <CalendarClock className="w-2.5 h-2.5" />
           Bill
+        </span>
+      )}
+      {/* Names the card the purchase was made on, since a card chip alone does not say which. */}
+      {creditAccount && (
+        <span
+          title={`Paid with ${creditAccount.name}`}
+          className="shrink-0 inline-flex max-w-[9rem] items-center gap-0.5 bg-cream-100 text-warm-500 text-[10px] font-medium px-1.5 py-0.5 rounded"
+        >
+          <CreditCard className="w-2.5 h-2.5 shrink-0" style={{ color: creditAccount.color }} />
+          <span className="truncate">{creditAccount.name}</span>
         </span>
       )}
       {createdVia === "MCP" && (
