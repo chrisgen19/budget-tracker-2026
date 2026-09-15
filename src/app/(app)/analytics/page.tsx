@@ -10,16 +10,10 @@ import {
 } from "@/lib/analytics-url";
 import { motion, useIsomorphicLayoutEffect } from "framer-motion";
 import {
-  Activity,
   AlertTriangle,
-  ArrowLeftRight,
   BarChart3,
-  CalendarDays,
   Gauge,
-  Layers,
-  PieChart,
   Sparkles,
-  Tags,
   Trophy,
   WalletCards,
 } from "lucide-react";
@@ -33,17 +27,9 @@ import {
   formatPeriodLabel,
   chartGranularity,
 } from "@/lib/analytics-period";
-import { CardHeader } from "@/components/ui/card-header";
 import { PageHeader } from "@/components/ui/page-header";
 import { PeriodPicker } from "@/components/ui/period-picker";
-import { TypeFilter } from "@/components/analytics/type-filter";
-import { IncomeExpensesReport } from "@/components/analytics/income-expenses-report";
-import { CashFlowChart } from "@/components/analytics/cash-flow-chart";
-import { CategoryBreakdownChart } from "@/components/analytics/category-breakdown-chart";
-import { CategoryTrendsChart } from "@/components/analytics/category-trends-chart";
-import { LabelBreakdownChart } from "@/components/analytics/label-breakdown-chart";
-import { SpendingHeatmap } from "@/components/analytics/spending-heatmap";
-import { TopTransactions } from "@/components/analytics/top-transactions";
+import { AnalyticsReports } from "@/components/analytics/analytics-reports";
 import { AnalyticsHero } from "@/components/analytics/analytics-hero";
 import { AnalyticsHeroSkeleton, AnalyticsContentSkeleton } from "@/components/analytics/analytics-skeleton";
 import { RecordsStatistics } from "@/components/analytics/records-statistics";
@@ -444,76 +430,15 @@ export default function AnalyticsPage() {
         <>
           {/* Reports Tab */}
           {activeTab === "reports" && (
-            <motion.div
-              key="reports"
-              variants={stagger}
-              initial="hidden"
-              animate="show"
-              className="space-y-4"
-            >
-              {/* Cash Flow */}
-              <motion.div variants={fadeUp} className="card p-5">
-                <CardHeader
-                  icon={Activity}
-                  title="Cash Flow"
-                  subtitle="Net flow per period with cumulative trend"
-                />
-                <CashFlowChart data={data.cashFlow} currency={currency} hideAmounts={hideAmounts} />
-              </motion.div>
-
-              {/* Breakdowns */}
-              <motion.div variants={fadeUp} className="flex items-center justify-between mb-1">
-                <h2 className="font-serif text-lg text-warm-700">Breakdowns</h2>
-                <TypeFilter value={typeFilter} onChange={setTypeFilter} />
-              </motion.div>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <motion.div variants={fadeUp} className="card p-5">
-                  <CardHeader icon={PieChart} title="By Category" subtitle="Where is my money going?" />
-                  <CategoryBreakdownChart data={data.categoryBreakdown} currency={currency} hideAmounts={hideAmounts} range={dateRange} returnTo={returnParam} />
-                </motion.div>
-
-                <motion.div variants={fadeUp} className="card p-5">
-                  <CardHeader icon={Layers} title="Category Trends" subtitle="Top spending categories over time" />
-                  <CategoryTrendsChart data={data.categoryTrends} currency={currency} hideAmounts={hideAmounts} />
-                </motion.div>
-
-                <motion.div variants={fadeUp} className="card p-5">
-                  <CardHeader icon={CalendarDays} title="Spending Heatmap" subtitle="Which days do you spend most?" />
-                  <SpendingHeatmap data={data.daily} currency={currency} hideAmounts={hideAmounts} returnTo={returnParam} />
-                </motion.div>
-
-                <motion.div variants={fadeUp} className="card p-5">
-                  <CardHeader icon={Trophy} title="Top Transactions" subtitle="Largest transactions this period" />
-                  <TopTransactions data={data.topTransactions} currency={currency} hideAmounts={hideAmounts} />
-                </motion.div>
-              </div>
-
-              {/* Label Breakdown */}
-              <motion.div variants={fadeUp} className="card p-5">
-                <CardHeader icon={Tags} title="By Label" subtitle="Spending by label tags" />
-                <LabelBreakdownChart data={data.labelBreakdown} currency={currency} hideAmounts={hideAmounts} range={dateRange} type={typeFilter} returnTo={returnParam} />
-              </motion.div>
-
-              {/* Income & Expenses Report */}
-              <motion.div variants={fadeUp} className="card p-5">
-                <CardHeader
-                  icon={ArrowLeftRight}
-                  title="Incomes & Expenses Report"
-                  subtitle="Current vs previous period by category"
-                />
-                <IncomeExpensesReport
-                  periodLabel={data.periodLabel}
-                  previousPeriodLabel={data.previousPeriodLabel}
-                  summary={data.summary}
-                  previousSummary={data.previousSummary}
-                  categoryBreakdown={data.allCategoryBreakdown}
-                  previousCategoryBreakdown={data.allPreviousCategoryBreakdown}
-                  currency={currency}
-                  hideAmounts={hideAmounts}
-                  comparisonAvailable={data.periodContext.comparisonStatus === "available"}
-                />
-              </motion.div>
-            </motion.div>
+            <AnalyticsReports
+              data={data}
+              currency={currency}
+              hideAmounts={hideAmounts}
+              dateRange={dateRange}
+              returnTo={returnParam}
+              typeFilter={typeFilter}
+              onTypeFilterChange={setTypeFilter}
+            />
           )}
 
           {/* Budget Performance Tab */}

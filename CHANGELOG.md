@@ -2,6 +2,15 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-16 - Analytics makes the transaction-type filter's scope explicit
+
+The Income / Expense / All control now sits inside a **Transaction breakdowns** section containing
+only the three reports it changes: By Category, By Label, and Top Transactions. Category Trends and
+the Spending Heatmap have moved into a separate **Expense patterns** section marked **Expenses
+only**, while Cash Flow and the period comparison state that they continue to use all transaction
+types. The filter buttons also expose their selected state to assistive technology and retain a
+44px touch target.
+
 ## 2026-09-15 - Monthly Budget Plan and Budget vs Actual
 
 Analytics now has a Budget Performance tab for calendar months. A user can assign planned income
