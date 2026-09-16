@@ -2,6 +2,14 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-16 - Analytics Watchlist makes measured findings always available
+
+Analytics now has a **Watchlist** tab that surfaces live deterministic findings without requiring
+an AI generation: missed bills, possible duplicates, logging gaps, unusual transactions, spending
+pace, cash-flow, income, and category changes. Every finding explains why it appeared, names its
+severity, and offers a link to the selected period's transactions. This first slice is discovery
+and drill-down only; persistent resolve/snooze state will follow on a dedicated alert model.
+
 ## 2026-09-16 - Analytics route telemetry is privacy-safe and measurable
 
 Every Analytics API request now emits one allowlisted JSON record to the application log. It records
