@@ -1,6 +1,13 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef, useEffect, type RefObject } from "react";
+import {
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+  useEffect,
+  type RefObject,
+} from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   analyticsSearchParams,
@@ -14,6 +21,7 @@ import {
   Gauge,
   Sparkles,
   Trophy,
+  ClipboardCheck,
   WalletCards,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -31,12 +39,16 @@ import { PeriodPicker } from "@/components/ui/period-picker";
 import { AnalyticsLoadError } from "@/components/analytics/analytics-load-error";
 import { AnalyticsReports } from "@/components/analytics/analytics-reports";
 import { AnalyticsHero } from "@/components/analytics/analytics-hero";
-import { AnalyticsHeroSkeleton, AnalyticsContentSkeleton } from "@/components/analytics/analytics-skeleton";
+import {
+  AnalyticsHeroSkeleton,
+  AnalyticsContentSkeleton,
+} from "@/components/analytics/analytics-skeleton";
 import { RecordsStatistics } from "@/components/analytics/records-statistics";
 import { CashFlowSignals } from "@/components/analytics/cash-flow-signals";
 import { PeriodComparisonNote } from "@/components/analytics/period-comparison-note";
 import { BudgetPerformance } from "@/components/analytics/budget-performance";
 import { AiAssessmentReport } from "@/components/analytics/ai-assessment-report";
+import { Watchlist } from "@/components/analytics/watchlist";
 import { stagger, fadeUp } from "@/components/analytics/motion-variants";
 import type { AnalyticsTypeFilter } from "@/types";
 import { MAX_ANALYTICS_RANGE_DAYS } from "@/lib/analytics-limits";
@@ -44,11 +56,42 @@ import { MAX_ANALYTICS_RANGE_DAYS } from "@/lib/analytics-limits";
 type AnalyticsTab = AnalyticsTabId;
 
 const ANALYTICS_TABS = [
-  { id: "reports" as const, label: "Reports", shortLabel: "Reports", icon: BarChart3 },
-  { id: "budget" as const, label: "Budget Performance", shortLabel: "Budget", icon: WalletCards },
-  { id: "statistics" as const, label: "Records & Statistics", shortLabel: "Stats", icon: Trophy },
-  { id: "health" as const, label: "Cash Flow Signals", shortLabel: "Signals", icon: Gauge },
-  { id: "ai-assessment" as const, label: "AI Assessment", shortLabel: "AI", icon: Sparkles },
+  {
+    id: "reports" as const,
+    label: "Reports",
+    shortLabel: "Reports",
+    icon: BarChart3,
+  },
+  {
+    id: "budget" as const,
+    label: "Budget Performance",
+    shortLabel: "Budget",
+    icon: WalletCards,
+  },
+  {
+    id: "watchlist" as const,
+    label: "Watchlist",
+    shortLabel: "Watch",
+    icon: ClipboardCheck,
+  },
+  {
+    id: "statistics" as const,
+    label: "Records & Statistics",
+    shortLabel: "Stats",
+    icon: Trophy,
+  },
+  {
+    id: "health" as const,
+    label: "Cash Flow Signals",
+    shortLabel: "Signals",
+    icon: Gauge,
+  },
+  {
+    id: "ai-assessment" as const,
+    label: "AI Assessment",
+    shortLabel: "AI",
+    icon: Sparkles,
+  },
 ];
 
 /**
@@ -89,7 +132,10 @@ function useVisibleBelowOffset<T extends Element>(
     measure();
     window.addEventListener("scroll", schedule, { passive: true });
     window.addEventListener("resize", schedule);
-    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(schedule) : null;
+    const ro =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(schedule)
+        : null;
     ro?.observe(document.documentElement);
 
     return () => {
@@ -135,8 +181,8 @@ export function AnalyticsTabBar({
     <div
       role="tablist"
       className={cn(
-        "grid grid-cols-5 w-full gap-1 p-1 bg-cream-100 rounded-xl sm:flex sm:w-fit",
-        className
+        "grid grid-cols-3 w-full gap-1 p-1 bg-cream-100 rounded-xl sm:flex sm:w-fit",
+        className,
       )}
     >
       {ANALYTICS_TABS.map((tab) => (
@@ -152,7 +198,9 @@ export function AnalyticsTabBar({
             // the text grows. The height comes from the minimum, not the padding,
             // so the compact `sm:py-1.5` look is unchanged on a pointer device.
             "relative flex items-center justify-center gap-1 sm:gap-1.5 min-h-11 min-w-0 px-2 sm:px-3 py-2.5 sm:py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors",
-            activeTab === tab.id ? "text-warm-700" : "text-warm-400 hover:text-warm-500"
+            activeTab === tab.id
+              ? "text-warm-700"
+              : "text-warm-400 hover:text-warm-500",
           )}
         >
           {activeTab === tab.id && (
@@ -188,11 +236,13 @@ export default function AnalyticsPage() {
   );
   const { period, type: typeFilter, tab: activeTab } = view;
   const setPeriod = useCallback(
-    (next: PeriodSelection) => setView((current) => ({ ...current, period: next })),
+    (next: PeriodSelection) =>
+      setView((current) => ({ ...current, period: next })),
     [],
   );
   const setTypeFilter = useCallback(
-    (next: AnalyticsTypeFilter) => setView((current) => ({ ...current, type: next })),
+    (next: AnalyticsTypeFilter) =>
+      setView((current) => ({ ...current, type: next })),
     [],
   );
   const setActiveTab = useCallback(
@@ -241,24 +291,41 @@ export default function AnalyticsPage() {
   const returnParam = analyticsQuery;
 
   // Client-side label used for the picker before API data arrives
-  const clientPeriodLabel = formatPeriodLabel(period.periodType, period.from, period.to);
-  const granularity = chartGranularity(period.periodType, period.from, period.to);
+  const clientPeriodLabel = formatPeriodLabel(
+    period.periodType,
+    period.from,
+    period.to,
+  );
+  const granularity = chartGranularity(
+    period.periodType,
+    period.from,
+    period.to,
+  );
 
-  const params: AnalyticsParams = useMemo(() => ({
-    granularity,
-    from: period.from,
-    to: period.to,
-    type: typeFilter,
-  }), [granularity, period.from, period.to, typeFilter]);
+  const params: AnalyticsParams = useMemo(
+    () => ({
+      granularity,
+      from: period.from,
+      to: period.to,
+      type: typeFilter,
+    }),
+    [granularity, period.from, period.to, typeFilter],
+  );
 
-  const { data, isLoading, isError, error, refetch } = useAnalyticsQuery(params, tz);
+  const { data, isLoading, isError, error, refetch } = useAnalyticsQuery(
+    params,
+    tz,
+  );
 
   // Drill-downs must cover the rows behind the displayed actual, not the future
   // tail of the picker range that the API deliberately clipped away.
-  const dateRange = useMemo(() => ({
-    from: period.from,
-    to: data?.periodContext.effectiveTo ?? period.to,
-  }), [data?.periodContext.effectiveTo, period.from, period.to]);
+  const dateRange = useMemo(
+    () => ({
+      from: period.from,
+      to: data?.periodContext.effectiveTo ?? period.to,
+    }),
+    [data?.periodContext.effectiveTo, period.from, period.to],
+  );
 
   // Use API-provided label once loaded (authoritative), fall back to client-derived
   const periodLabel = data?.periodLabel ?? clientPeriodLabel;
@@ -274,7 +341,10 @@ export default function AnalyticsPage() {
   // Seed the offset from the current viewport so the first (synchronous) measure
   // already uses the right value on mobile, before the resize listener runs.
   const [topOffset, setTopOffset] = useState(() =>
-    typeof window !== "undefined" && !window.matchMedia("(min-width: 1024px)").matches ? 64 : 0,
+    typeof window !== "undefined" &&
+    !window.matchMedia("(min-width: 1024px)").matches
+      ? 64
+      : 0,
   );
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1024px)");
@@ -286,7 +356,11 @@ export default function AnalyticsPage() {
   // Re-measure when the active tab or load state changes — switching to a shorter
   // tab collapses the page and clamps the scroll, bringing the in-page controls back.
   const recomputeToken = `${activeTab}:${isLoading}`;
-  const periodNavInView = useVisibleBelowOffset(periodNavRef, topOffset, recomputeToken);
+  const periodNavInView = useVisibleBelowOffset(
+    periodNavRef,
+    topOffset,
+    recomputeToken,
+  );
 
   // Distance from the sticky bar's top to the bottom of the pinned period row
   // (its offsetTop within the fixed bar + its height, so the bar's own padding is
@@ -311,7 +385,11 @@ export default function AnalyticsPage() {
   }, []);
   // When the period row is pinned, the tab bar must clear below it; otherwise just the header.
   const tabTopOffset = topOffset + (periodNavInView ? 0 : periodRowExtent);
-  const tabBarInView = useVisibleBelowOffset(tabBarRef, tabTopOffset, recomputeToken);
+  const tabBarInView = useVisibleBelowOffset(
+    tabBarRef,
+    tabTopOffset,
+    recomputeToken,
+  );
 
   // Each in-page control is inert exactly when its sticky row is shown; derived
   // directly from visibility so it can never get stuck. The bar itself is active
@@ -351,7 +429,9 @@ export default function AnalyticsPage() {
         aria-hidden={!stickyActive}
         className={cn(
           "fixed top-16 lg:top-0 left-0 right-0 lg:left-64 z-30 bg-cream-100/90 backdrop-blur-md border-b border-cream-300/60 transition-[opacity,transform] duration-200",
-          stickyActive ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2 pointer-events-none"
+          stickyActive
+            ? "opacity-100 translate-y-0"
+            : "opacity-0 -translate-y-2 pointer-events-none",
         )}
       >
         <div className="max-w-6xl mx-auto px-4 lg:px-8 py-2.5 space-y-2">
@@ -368,7 +448,9 @@ export default function AnalyticsPage() {
               maxCustomRangeDays={MAX_ANALYTICS_RANGE_DAYS}
             />
           </div>
-          <div className={cn("justify-center", tabBarInView ? "hidden" : "flex")}>
+          <div
+            className={cn("justify-center", tabBarInView ? "hidden" : "flex")}
+          >
             <AnalyticsTabBar
               activeTab={activeTab}
               onSelect={setActiveTab}
@@ -386,7 +468,12 @@ export default function AnalyticsPage() {
           <AnalyticsHeroSkeleton />
         </div>
       ) : isError || !data ? null : (
-        <motion.div variants={stagger} initial="hidden" animate="show" className="mb-6">
+        <motion.div
+          variants={stagger}
+          initial="hidden"
+          animate="show"
+          className="mb-6"
+        >
           <PeriodComparisonNote
             context={data.periodContext}
             previousPeriodLabel={data.previousPeriodLabel}
@@ -437,7 +524,11 @@ export default function AnalyticsPage() {
 
           {/* Budget Performance Tab */}
           {activeTab === "budget" && (
-            <motion.div key="budget" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+            <motion.div
+              key="budget"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+            >
               {period.periodType === "monthly" ? (
                 <BudgetPerformance
                   month={period.from.slice(0, 7)}
@@ -449,18 +540,43 @@ export default function AnalyticsPage() {
               ) : (
                 <div className="card p-10 text-center">
                   <WalletCards className="mx-auto w-10 h-10 text-amber-500" />
-                  <h3 className="mt-3 font-serif text-lg text-warm-700">Choose a calendar month</h3>
+                  <h3 className="mt-3 font-serif text-lg text-warm-700">
+                    Choose a calendar month
+                  </h3>
                   <p className="mx-auto mt-2 max-w-md text-sm text-warm-400">
-                    Budget plans are monthly snapshots. Use the period picker above and select Monthly to create or review one.
+                    Budget plans are monthly snapshots. Use the period picker
+                    above and select Monthly to create or review one.
                   </p>
                 </div>
               )}
             </motion.div>
           )}
 
+          {/* Watchlist Tab */}
+          {activeTab === "watchlist" && (
+            <motion.div
+              key="watchlist"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+            >
+              <Watchlist
+                period={{
+                  granularity: params.granularity,
+                  from: params.from,
+                  to: params.to,
+                }}
+                returnTo={returnParam}
+              />
+            </motion.div>
+          )}
+
           {/* Records & Statistics Tab */}
           {activeTab === "statistics" && (
-            <motion.div key="statistics" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+            <motion.div
+              key="statistics"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+            >
               <RecordsStatistics
                 statistics={data.statistics}
                 currency={currency}
@@ -472,7 +588,11 @@ export default function AnalyticsPage() {
 
           {/* Keep the `health` URL id so existing bookmarked analytics links still work. */}
           {activeTab === "health" && (
-            <motion.div key="health" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+            <motion.div
+              key="health"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+            >
               <CashFlowSignals
                 signals={data.cashFlowSignals}
                 previousPeriodLabel={data.previousPeriodLabel}
@@ -485,10 +605,18 @@ export default function AnalyticsPage() {
 
           {/* AI Assessment Tab */}
           {activeTab === "ai-assessment" && (
-            <motion.div key="ai-assessment" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+            <motion.div
+              key="ai-assessment"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+            >
               <AiAssessmentReport
                 data={data}
-                period={{ granularity: params.granularity, from: params.from, to: params.to }}
+                period={{
+                  granularity: params.granularity,
+                  from: params.from,
+                  to: params.to,
+                }}
                 currency={currency}
                 hideAmounts={hideAmounts}
               />

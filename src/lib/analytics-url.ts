@@ -3,7 +3,14 @@ import { parsePeriodParams } from "@/lib/transaction-period-url";
 import type { AnalyticsTypeFilter } from "@/types";
 
 /** The analytics tabs, in the order the tab bar presents them. */
-export const ANALYTICS_TAB_IDS = ["reports", "budget", "statistics", "health", "ai-assessment"] as const;
+export const ANALYTICS_TAB_IDS = [
+  "reports",
+  "budget",
+  "watchlist",
+  "statistics",
+  "health",
+  "ai-assessment",
+] as const;
 
 export type AnalyticsTab = (typeof ANALYTICS_TAB_IDS)[number];
 
@@ -23,10 +30,14 @@ export interface AnalyticsUrlState {
 const MAX_RETURN_PARAM_LENGTH = 200;
 
 const asType = (value: string | null): AnalyticsTypeFilter =>
-  value === "INCOME" || value === "EXPENSE" || value === "ALL" ? value : "EXPENSE";
+  value === "INCOME" || value === "EXPENSE" || value === "ALL"
+    ? value
+    : "EXPENSE";
 
 const asTab = (value: string | null): AnalyticsTab =>
-  ANALYTICS_TAB_IDS.includes(value as AnalyticsTab) ? (value as AnalyticsTab) : "reports";
+  ANALYTICS_TAB_IDS.includes(value as AnalyticsTab)
+    ? (value as AnalyticsTab)
+    : "reports";
 
 /**
  * Read the analytics view out of a query string.
@@ -62,7 +73,11 @@ export function parseAnalyticsParams(
 /** Serialize the analytics view for the address bar. Defaults are still written,
  *  since this string is also what a return link carries and a missing value there
  *  would be indistinguishable from a link that predates the param. */
-export function analyticsSearchParams({ period, type, tab }: AnalyticsUrlState): string {
+export function analyticsSearchParams({
+  period,
+  type,
+  tab,
+}: AnalyticsUrlState): string {
   return new URLSearchParams({
     period: period.periodType,
     from: period.from,

@@ -8,7 +8,8 @@ import {
 /** UTC+8. 20:00 UTC on Aug 31 is already September here. */
 const MANILA = -480;
 
-const parse = (query: string) => parseAnalyticsParams(new URLSearchParams(query), MANILA);
+const parse = (query: string) =>
+  parseAnalyticsParams(new URLSearchParams(query), MANILA);
 
 afterEach(() => vi.useRealTimers());
 
@@ -19,7 +20,11 @@ const atSeptember = () => {
 
 describe("parseAnalyticsParams", () => {
   it("reads the view a return link describes", () => {
-    expect(parse("period=custom&from=2026-07-01&to=2026-09-30&type=INCOME&tab=statistics")).toEqual({
+    expect(
+      parse(
+        "period=custom&from=2026-07-01&to=2026-09-30&type=INCOME&tab=statistics",
+      ),
+    ).toEqual({
       period: { periodType: "custom", from: "2026-07-01", to: "2026-09-30" },
       type: "INCOME",
       tab: "statistics",
@@ -50,7 +55,11 @@ describe("parseAnalyticsParams", () => {
 
   it("falls back for a window it cannot trust", () => {
     atSeptember();
-    const currentMonth = { periodType: "monthly", from: "2026-09-01", to: "2026-09-30" };
+    const currentMonth = {
+      periodType: "monthly",
+      from: "2026-09-01",
+      to: "2026-09-30",
+    };
     for (const query of [
       "period=custom&from=2026-07-01", // half a window
       "period=custom&from=2026-09-30&to=2026-09-02", // backwards
@@ -63,7 +72,10 @@ describe("parseAnalyticsParams", () => {
 
   it("ignores a type or tab it does not recognise", () => {
     atSeptember();
-    expect(parse("type=TRANSFER&tab=evil")).toMatchObject({ type: "EXPENSE", tab: "reports" });
+    expect(parse("type=TRANSFER&tab=evil")).toMatchObject({
+      type: "EXPENSE",
+      tab: "reports",
+    });
   });
 });
 
@@ -71,10 +83,51 @@ describe("analyticsSearchParams", () => {
   it("round-trips every view", () => {
     atSeptember();
     for (const state of [
-      { period: { periodType: "monthly" as const, from: "2026-09-01", to: "2026-09-30" }, type: "EXPENSE" as const, tab: "reports" as const },
-      { period: { periodType: "monthly" as const, from: "2026-09-01", to: "2026-09-30" }, type: "EXPENSE" as const, tab: "budget" as const },
-      { period: { periodType: "custom" as const, from: "2026-07-01", to: "2026-09-30" }, type: "ALL" as const, tab: "health" as const },
-      { period: { periodType: "yearly" as const, from: "2026-01-01", to: "2026-12-31" }, type: "INCOME" as const, tab: "ai-assessment" as const },
+      {
+        period: {
+          periodType: "monthly" as const,
+          from: "2026-09-01",
+          to: "2026-09-30",
+        },
+        type: "EXPENSE" as const,
+        tab: "reports" as const,
+      },
+      {
+        period: {
+          periodType: "monthly" as const,
+          from: "2026-09-01",
+          to: "2026-09-30",
+        },
+        type: "EXPENSE" as const,
+        tab: "budget" as const,
+      },
+      {
+        period: {
+          periodType: "monthly" as const,
+          from: "2026-09-01",
+          to: "2026-09-30",
+        },
+        type: "ALL" as const,
+        tab: "watchlist" as const,
+      },
+      {
+        period: {
+          periodType: "custom" as const,
+          from: "2026-07-01",
+          to: "2026-09-30",
+        },
+        type: "ALL" as const,
+        tab: "health" as const,
+      },
+      {
+        period: {
+          periodType: "yearly" as const,
+          from: "2026-01-01",
+          to: "2026-12-31",
+        },
+        type: "INCOME" as const,
+        tab: "ai-assessment" as const,
+      },
     ]) {
       expect(parse(analyticsSearchParams(state))).toEqual(state);
     }
@@ -83,19 +136,28 @@ describe("analyticsSearchParams", () => {
   it("writes the defaults rather than omitting them", () => {
     // This string is also what a return link carries, where an absent value cannot
     // be told apart from a link written before the param existed.
-    expect(analyticsSearchParams({
-      period: { periodType: "monthly", from: "2026-09-01", to: "2026-09-30" },
-      type: "EXPENSE",
-      tab: "reports",
-    })).toBe("period=monthly&from=2026-09-01&to=2026-09-30&type=EXPENSE&tab=reports");
+    expect(
+      analyticsSearchParams({
+        period: { periodType: "monthly", from: "2026-09-01", to: "2026-09-30" },
+        type: "EXPENSE",
+        tab: "reports",
+      }),
+    ).toBe(
+      "period=monthly&from=2026-09-01&to=2026-09-30&type=EXPENSE&tab=reports",
+    );
   });
 });
 
 describe("analyticsReturnTarget", () => {
   it("builds an analytics href from a return blob", () => {
     expect(
-      analyticsReturnTarget("period=custom&from=2026-07-01&to=2026-09-30&type=ALL&tab=reports", MANILA)?.href,
-    ).toBe("/analytics?period=custom&from=2026-07-01&to=2026-09-30&type=ALL&tab=reports");
+      analyticsReturnTarget(
+        "period=custom&from=2026-07-01&to=2026-09-30&type=ALL&tab=reports",
+        MANILA,
+      )?.href,
+    ).toBe(
+      "/analytics?period=custom&from=2026-07-01&to=2026-09-30&type=ALL&tab=reports",
+    );
   });
 
   it("returns to the whole span a day drill-down came from, not the day", () => {
@@ -152,11 +214,60 @@ describe("the mirror cannot mistake its own write for a navigation", () => {
   it("is a fixed point for every view the page can hold", () => {
     atSeptember();
     const views = [
-      { period: { periodType: "monthly" as const, from: "2026-09-01", to: "2026-09-30" }, type: "EXPENSE" as const, tab: "reports" as const },
-      { period: { periodType: "custom" as const, from: "2026-07-01", to: "2026-09-30" }, type: "ALL" as const, tab: "statistics" as const },
-      { period: { periodType: "weekly" as const, from: "2026-08-31", to: "2026-09-06" }, type: "INCOME" as const, tab: "health" as const },
-      { period: { periodType: "monthly" as const, from: "2026-09-01", to: "2026-09-30" }, type: "ALL" as const, tab: "budget" as const },
-      { period: { periodType: "yearly" as const, from: "2026-01-01", to: "2026-12-31" }, type: "EXPENSE" as const, tab: "ai-assessment" as const },
+      {
+        period: {
+          periodType: "monthly" as const,
+          from: "2026-09-01",
+          to: "2026-09-30",
+        },
+        type: "EXPENSE" as const,
+        tab: "reports" as const,
+      },
+      {
+        period: {
+          periodType: "custom" as const,
+          from: "2026-07-01",
+          to: "2026-09-30",
+        },
+        type: "ALL" as const,
+        tab: "statistics" as const,
+      },
+      {
+        period: {
+          periodType: "weekly" as const,
+          from: "2026-08-31",
+          to: "2026-09-06",
+        },
+        type: "INCOME" as const,
+        tab: "health" as const,
+      },
+      {
+        period: {
+          periodType: "monthly" as const,
+          from: "2026-09-01",
+          to: "2026-09-30",
+        },
+        type: "ALL" as const,
+        tab: "budget" as const,
+      },
+      {
+        period: {
+          periodType: "custom" as const,
+          from: "2026-07-01",
+          to: "2026-09-30",
+        },
+        type: "EXPENSE" as const,
+        tab: "watchlist" as const,
+      },
+      {
+        period: {
+          periodType: "yearly" as const,
+          from: "2026-01-01",
+          to: "2026-12-31",
+        },
+        type: "EXPENSE" as const,
+        tab: "ai-assessment" as const,
+      },
     ];
 
     for (const view of views) {
@@ -175,8 +286,10 @@ describe("the mirror cannot mistake its own write for a navigation", () => {
     atSeptember();
     const fromBare = parseAnalyticsParams(new URLSearchParams(""), MANILA);
     const written = analyticsSearchParams(fromBare);
-    expect(analyticsSearchParams(parseAnalyticsParams(new URLSearchParams(written), MANILA))).toBe(
-      written,
-    );
+    expect(
+      analyticsSearchParams(
+        parseAnalyticsParams(new URLSearchParams(written), MANILA),
+      ),
+    ).toBe(written);
   });
 });
