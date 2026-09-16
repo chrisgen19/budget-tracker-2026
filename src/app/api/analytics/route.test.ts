@@ -1,14 +1,19 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NextResponse } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getAuthUserId: vi.fn(),
   findMany: vi.fn(),
+  logAnalyticsRequest: vi.fn(),
 }));
 
 vi.mock("@/lib/session", () => ({ getAuthUserId: mocks.getAuthUserId }));
 vi.mock("@/lib/prisma", () => ({
   prisma: { transaction: { findMany: mocks.findMany } },
+}));
+vi.mock("@/lib/analytics-observability", () => ({
+  logAnalyticsRequest: mocks.logAnalyticsRequest,
 }));
 
 import { GET } from "@/app/api/analytics/route";
@@ -88,6 +93,13 @@ describe("GET /api/analytics partial-period comparison", () => {
     ]);
     expect(queriedWindows).toContainEqual(["2026-09-01", "2026-09-15"]);
     expect(queriedWindows).toContainEqual(["2026-08-01", "2026-08-15"]);
+    expect(mocks.logAnalyticsRequest).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: "success",
+      fetchedRowCount: 18,
+      bucketCount: body.cashFlow.length,
+      responseBytes: expect.any(Number),
+      databaseDurationMs: expect.any(Number),
+    }));
   });
 
   it("rejects an impossible timezone before querying", async () => {
@@ -97,6 +109,36 @@ describe("GET /api/analytics partial-period comparison", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.findMany).not.toHaveBeenCalled();
+    expect(mocks.logAnalyticsRequest).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: "invalid_request",
+      errorCode: "INVALID_QUERY",
+    }));
+  });
+
+  it("records an unauthenticated request without querying", async () => {
+    mocks.getAuthUserId.mockResolvedValue(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
+
+    const response = await GET(new Request("http://localhost/api/analytics"));
+
+    expect(response.status).toBe(401);
+    expect(mocks.findMany).not.toHaveBeenCalled();
+    expect(mocks.logAnalyticsRequest).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: "unauthenticated",
+      errorCode: "AUTH_REQUIRED",
+    }));
+  });
+
+  it("records an unexpected query failure before rethrowing it", async () => {
+    mocks.findMany.mockRejectedValueOnce(new Error("database unavailable"));
+
+    await expect(GET(new Request(
+      `http://localhost/api/analytics?granularity=weekly&from=2026-09-01&to=2026-09-30&tz=${MANILA}&type=ALL`,
+    ))).rejects.toThrow("database unavailable");
+
+    expect(mocks.logAnalyticsRequest).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: "error",
+      errorCode: "INTERNAL_ERROR",
+    }));
   });
 
   it("rejects a range over the documented maximum before querying", async () => {

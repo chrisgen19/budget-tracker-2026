@@ -20,6 +20,7 @@ import {
 } from "@/lib/analytics-comparison";
 import { localCalendarDay } from "@/lib/period-progress";
 import { buildLabelBreakdown } from "@/lib/budget-queries";
+import { logAnalyticsRequest } from "@/lib/analytics-observability";
 
 /** Generate a human-readable label for a period's from/to range. */
 const formatPeriodLabel = (from: string, to: string): string => {
@@ -224,47 +225,63 @@ const computeStatistics = (
 };
 
 export async function GET(request: Request) {
-  const userId = await getAuthUserId();
-  if (userId instanceof NextResponse) return userId;
+  const startedAt = performance.now();
 
-  const { searchParams } = new URL(request.url);
-  const parsed = analyticsQuerySchema.safeParse({
-    granularity: searchParams.get("granularity"),
-    from: searchParams.get("from"),
-    to: searchParams.get("to"),
-    tz: searchParams.get("tz"),
-    type: searchParams.get("type") || "ALL",
-  });
+  try {
+    const userId = await getAuthUserId();
+    if (userId instanceof NextResponse) {
+      logAnalyticsRequest({
+        outcome: "unauthenticated",
+        durationMs: performance.now() - startedAt,
+        errorCode: "AUTH_REQUIRED",
+      });
+      return userId;
+    }
 
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 });
-  }
+    const { searchParams } = new URL(request.url);
+    const parsed = analyticsQuerySchema.safeParse({
+      granularity: searchParams.get("granularity"),
+      from: searchParams.get("from"),
+      to: searchParams.get("to"),
+      tz: searchParams.get("tz"),
+      type: searchParams.get("type") || "ALL",
+    });
 
-  const { granularity, from, to, tz, type } = parsed.data;
-  const tzMs = tz * 60 * 1000;
+    if (!parsed.success) {
+      logAnalyticsRequest({
+        outcome: "invalid_request",
+        durationMs: performance.now() - startedAt,
+        errorCode: "INVALID_QUERY",
+      });
+      return NextResponse.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 });
+    }
 
-  const today = localCalendarDay(new Date(), tz);
-  const periods = resolveAnalyticsPeriods({ from, to }, today);
-  const currentTo = periods.current?.to ?? from;
-  const prevFrom = periods.previous.from;
-  const prevTo = periods.previous.to;
+    const { granularity, from, to, tz, type } = parsed.data;
+    const tzMs = tz * 60 * 1000;
+
+    const today = localCalendarDay(new Date(), tz);
+    const periods = resolveAnalyticsPeriods({ from, to }, today);
+    const currentTo = periods.current?.to ?? from;
+    const prevFrom = periods.previous.from;
+    const prevTo = periods.previous.to;
 
   // Compute timezone-adjusted date boundaries for the windows that have
   // actually elapsed. A future current range uses an inverted predicate and
   // therefore returns no rows without inventing an effective day.
-  const fromDate = new Date(from + "T00:00:00.000Z");
-  const currentToDate = new Date(currentTo + "T23:59:59.999Z");
-  const startDate = new Date(fromDate.getTime() + tzMs);
-  const endDate = periods.current
+    const fromDate = new Date(from + "T00:00:00.000Z");
+    const currentToDate = new Date(currentTo + "T23:59:59.999Z");
+    const startDate = new Date(fromDate.getTime() + tzMs);
+    const endDate = periods.current
     ? new Date(currentToDate.getTime() + tzMs)
     : new Date(startDate.getTime() - 1);
-  const prevFromDate = new Date(prevFrom + "T00:00:00.000Z");
-  const prevToDate = new Date(prevTo + "T23:59:59.999Z");
-  const prevStartDate = new Date(prevFromDate.getTime() + tzMs);
-  const prevEndDate = new Date(prevToDate.getTime() + tzMs);
+    const prevFromDate = new Date(prevFrom + "T00:00:00.000Z");
+    const prevToDate = new Date(prevTo + "T23:59:59.999Z");
+    const prevStartDate = new Date(prevFromDate.getTime() + tzMs);
+    const prevEndDate = new Date(prevToDate.getTime() + tzMs);
 
   // Fetch current + previous period transactions in parallel
-  const [transactions, prevTransactions] = await Promise.all([
+    const databaseStartedAt = performance.now();
+    const [transactions, prevTransactions] = await Promise.all([
     prisma.transaction.findMany({
       where: { userId, date: { gte: startDate, lte: endDate } },
       include: { category: true, labels: { include: { label: true } } },
@@ -273,68 +290,69 @@ export async function GET(request: Request) {
       where: { userId, date: { gte: prevStartDate, lte: prevEndDate } },
       include: { category: true, labels: { include: { label: true } } },
     }),
-  ]);
+    ]);
+    const databaseDurationMs = performance.now() - databaseStartedAt;
 
-  // --- Current period: time series ---
-  const bucketKeys = periods.current
+    // --- Current period: time series ---
+    const bucketKeys = periods.current
     ? generateBucketKeys(startDate, endDate, granularity, tzMs)
     : [];
 
-  const periodMap = new Map<string, { income: number; expenses: number }>();
-  for (const key of bucketKeys) {
+    const periodMap = new Map<string, { income: number; expenses: number }>();
+    for (const key of bucketKeys) {
     periodMap.set(key, { income: 0, expenses: 0 });
-  }
+    }
 
-  for (const t of transactions) {
+    for (const t of transactions) {
     const key = toBucketKey(new Date(t.date), granularity, tzMs);
     const bucket = periodMap.get(key);
     if (bucket) {
       if (t.type === "INCOME") bucket.income += t.amount;
       else bucket.expenses += t.amount;
     }
-  }
+    }
 
-  const cashFlow: AnalyticsCashFlowItem[] = [];
-  let cumulativeNet = 0;
+    const cashFlow: AnalyticsCashFlowItem[] = [];
+    let cumulativeNet = 0;
 
-  for (const key of bucketKeys) {
+    for (const key of bucketKeys) {
     const bucket = periodMap.get(key)!;
     const periodLabel = toBucketLabel(key, granularity, fromDate, currentToDate);
     const net = bucket.income - bucket.expenses;
     cumulativeNet += net;
 
     cashFlow.push({ period: key, periodLabel, income: bucket.income, expenses: bucket.expenses, net, cumulativeNet });
-  }
+    }
 
-  // --- Category trends (top expense categories per bucket) ---
-  const bucketLabels = new Map(cashFlow.map((item) => [item.period, item.periodLabel]));
-  const categoryTrends = computeCategoryTrends(transactions, bucketKeys, bucketLabels, granularity, tzMs);
+    // --- Category trends (top expense categories per bucket) ---
+    const bucketLabels = new Map(cashFlow.map((item) => [item.period, item.periodLabel]));
+    const categoryTrends = computeCategoryTrends(transactions, bucketKeys, bucketLabels, granularity, tzMs);
 
-  // --- Compute unfiltered (ALL) first, then derive filtered if needed ---
-  const { summary, categoryBreakdown: allCategoryBreakdown } = computePeriodData(transactions, "ALL");
-  const { summary: previousSummary, categoryBreakdown: allPreviousCategoryBreakdown } = computePeriodData(prevTransactions, "ALL");
+    // --- Compute unfiltered (ALL) first, then derive filtered if needed ---
+    const { summary, categoryBreakdown: allCategoryBreakdown } = computePeriodData(transactions, "ALL");
+    const { summary: previousSummary, categoryBreakdown: allPreviousCategoryBreakdown } = computePeriodData(prevTransactions, "ALL");
 
-  // Only need the filtered breakdown; summary comes from ALL above
-  const categoryBreakdown = type === "ALL"
+    // Only need the filtered breakdown; summary comes from ALL above
+    const categoryBreakdown = type === "ALL"
     ? allCategoryBreakdown
     : computePeriodData(transactions, type).categoryBreakdown;
-  const previousCategoryBreakdown = type === "ALL"
+    const previousCategoryBreakdown = type === "ALL"
     ? allPreviousCategoryBreakdown
     : computePeriodData(prevTransactions, type).categoryBreakdown;
 
-  // --- Label Breakdown (current period only) ---
-  // Shared with MCP and Telegram: a multi-labelled transaction counts in full under each label.
-  const filteredForLabel = type === "ALL" ? transactions : transactions.filter((t) => t.type === type);
-  const totalForLabelPct = filteredForLabel.reduce((sum, t) => sum + t.amount, 0);
-  const labelBreakdown: AnalyticsLabelItem[] = buildLabelBreakdown(filteredForLabel, totalForLabelPct);
+    // --- Label Breakdown (current period only) ---
+    // Shared with MCP and Telegram: a multi-labelled transaction counts in full under each label.
+    const filteredForLabel = type === "ALL" ? transactions : transactions.filter((t) => t.type === type);
+    const totalForLabelPct = filteredForLabel.reduce((sum, t) => sum + t.amount, 0);
+    const labelBreakdown: AnalyticsLabelItem[] = buildLabelBreakdown(filteredForLabel, totalForLabelPct);
 
-  // --- Top transactions (respects the type filter, like the breakdowns) ---
-  const multiYear =
+    // --- Top transactions (respects the type filter, like the breakdowns) ---
+    const multiYear =
     new Date(startDate.getTime() - tzMs).getUTCFullYear() !== new Date(endDate.getTime() - tzMs).getUTCFullYear();
-  const topTransactions = selectTopTransactions(filteredForLabel, tzMs, multiYear);
+    const topTransactions = selectTopTransactions(filteredForLabel, tzMs, multiYear);
 
-  // --- Statistics + daily series ---
-  const { statistics, daily } = computeStatistics(
+    // --- Statistics + daily series ---
+    const { statistics, daily } = computeStatistics(
     transactions,
     allCategoryBreakdown,
     summary,
@@ -342,37 +360,37 @@ export async function GET(request: Request) {
     endDate,
     tzMs,
     periods.progress.daysElapsed,
-  );
+    );
 
-  const toLoggedDays = (rows: typeof transactions): string[] =>
+    const toLoggedDays = (rows: typeof transactions): string[] =>
     rows.map((transaction) => localCalendarDay(transaction.date, tz));
-  const periodContext = buildAnalyticsPeriodContext(
+    const periodContext = buildAnalyticsPeriodContext(
     periods,
     toLoggedDays(transactions),
     toLoggedDays(prevTransactions),
     previousSummary.transactionCount,
-  );
+    );
 
-  // These signals describe only what the transaction ledger can support. They
-  // deliberately avoid turning spending patterns into an overall health grade.
-  const cashFlowSignals = computeCashFlowSignals(
+    // These signals describe only what the transaction ledger can support. They
+    // deliberately avoid turning spending patterns into an overall health grade.
+    const cashFlowSignals = computeCashFlowSignals(
     summary,
     previousSummary,
     statistics,
     periodContext.comparisonStatus === "available",
-  );
+    );
 
-  // --- Period labels ---
-  const periodLabel = `${formatPeriodLabel(from, to)}${
+    // --- Period labels ---
+    const periodLabel = `${formatPeriodLabel(from, to)}${
     periodContext.comparisonStatus === "not-started"
       ? " · not started"
       : periodContext.isPartial
         ? " so far"
         : ""
   }`;
-  const previousPeriodLabel = formatPeriodLabel(prevFrom, prevTo);
+    const previousPeriodLabel = formatPeriodLabel(prevFrom, prevTo);
 
-  return NextResponse.json({
+    const responseBody = {
     categoryBreakdown,
     allCategoryBreakdown,
     labelBreakdown,
@@ -389,5 +407,23 @@ export async function GET(request: Request) {
     daily,
     categoryTrends,
     topTransactions,
-  });
+    };
+    const responseBytes = new TextEncoder().encode(JSON.stringify(responseBody)).byteLength;
+    logAnalyticsRequest({
+      outcome: "success",
+      durationMs: performance.now() - startedAt,
+      databaseDurationMs,
+      fetchedRowCount: transactions.length + prevTransactions.length,
+      bucketCount: bucketKeys.length,
+      responseBytes,
+    });
+    return NextResponse.json(responseBody);
+  } catch (error) {
+    logAnalyticsRequest({
+      outcome: "error",
+      durationMs: performance.now() - startedAt,
+      errorCode: "INTERNAL_ERROR",
+    });
+    throw error;
+  }
 }

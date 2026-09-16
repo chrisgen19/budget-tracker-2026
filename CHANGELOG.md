@@ -2,6 +2,14 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-16 - Analytics route telemetry is privacy-safe and measurable
+
+Every Analytics API request now emits one allowlisted JSON record to the application log. It records
+the route and database durations, fetched-row and chart-bucket counts, response size, and a coarse
+outcome/error code. It deliberately excludes user identifiers, dates, amounts, descriptions,
+categories, labels, balances, and response content. The app stores and forwards none of it; Coolify
+log retention controls its lifetime. See [analytics telemetry](docs/analytics-telemetry.md).
+
 ## 2026-09-16 - Analytics API rejects oversized reports before querying
 
 `GET /api/analytics` now accepts at most 3,660 inclusive calendar days (about ten years) and 260
