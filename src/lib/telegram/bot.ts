@@ -97,6 +97,11 @@ import {
   requestShutdown,
   shouldStop,
 } from "@/lib/telegram/shutdown";
+import {
+  newConflictStreak,
+  recordPollingError,
+  recordPollingSuccess,
+} from "@/lib/telegram/polling-error";
 import { GEMINI_ENABLED, classifyMessage } from "@/lib/telegram/classify";
 import { findOtherCategory, matchCategory } from "@/lib/telegram/category-match";
 /**
@@ -2364,6 +2369,9 @@ export async function startTelegramBot(): Promise<void> {
   let offset = 0;
 
   const shutdown = newShutdownState();
+
+  // Consecutive 409s, so a deploy handover can be told from a second poller holding the token.
+  const conflicts = newConflictStreak();
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.once(signal, () => {
       const outcome = requestShutdown(shutdown);
@@ -2389,6 +2397,9 @@ export async function startTelegramBot(): Promise<void> {
         }
       );
       shutdown.abortIdlePoll = undefined;
+      // Ends a conflict run only once they have actually stopped -- a success while a second
+      // poller is still alternating with us proves nothing. See polling-error.ts.
+      recordPollingSuccess(conflicts, Date.now());
 
       for (const update of updates) {
         // Between updates, never inside one. A half-finished update is exactly the state that
@@ -2478,7 +2489,11 @@ export async function startTelegramBot(): Promise<void> {
         await confirmProcessed(offset);
         return;
       }
-      console.error("[telegram] polling error:", err.message);
+      // A 409 is the expected shape of a deploy handover and clears itself, so it is classified
+      // rather than printed: see polling-error.ts for why the two cases had to be separated.
+      const log = recordPollingError(conflicts, err.message, Date.now());
+      if (log?.level === "error") console.error("[telegram]", log.message);
+      else if (log) console.info("[telegram]", log.message);
       await new Promise((r) => setTimeout(r, 3000));
     }
 
