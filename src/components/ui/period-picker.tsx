@@ -5,6 +5,7 @@ import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { useDismissOnOutside } from "@/components/ui/dropdown-button";
 import { MONTH_NAMES } from "@/lib/analytics-buckets";
+import { analyticsRangeDays } from "@/lib/analytics-limits";
 import {
   ALL_TIME_LABEL,
   DATE_PRESETS,
@@ -116,11 +117,12 @@ interface PanelProps {
   value: PeriodSelection;
   tz: number;
   allowAllTime: boolean;
+  maxCustomRangeDays?: number;
   onSelect: (next: PeriodSelection) => void;
 }
 
 /** Tabs, quick ranges, the active grid, and the All time / This month footer. */
-export function PeriodPickerPanel({ value, tz, allowAllTime, onSelect }: PanelProps) {
+export function PeriodPickerPanel({ value, tz, allowAllTime, maxCustomRangeDays, onSelect }: PanelProps) {
   const anchor = value.from || getCurrentMonth(tz).from;
   const [activeTab, setActiveTab] = useState<Exclude<PeriodType, "all">>(
     value.periodType === "all" ? "monthly" : value.periodType,
@@ -129,6 +131,7 @@ export function PeriodPickerPanel({ value, tz, allowAllTime, onSelect }: PanelPr
   const [displayMonth, setDisplayMonth] = useState(() => Number(anchor.slice(5, 7)) - 1);
   const [customFrom, setCustomFrom] = useState(value.from);
   const [customTo, setCustomTo] = useState(value.to);
+  const [customRangeError, setCustomRangeError] = useState<string | null>(null);
 
   // The prev/next arrows stay reachable while the popover is open, so the selection
   // can move underneath this panel. Seeded state alone leaves the grid on the year it
@@ -141,6 +144,7 @@ export function PeriodPickerPanel({ value, tz, allowAllTime, onSelect }: PanelPr
     setDisplayMonth(Number(value.from.slice(5, 7)) - 1);
     setCustomFrom(value.from);
     setCustomTo(value.to);
+    setCustomRangeError(null);
   }, [value.from, value.to]);
 
   // The tab follows the controlled type, but only when that type actually changes.
@@ -170,6 +174,11 @@ export function PeriodPickerPanel({ value, tz, allowAllTime, onSelect }: PanelPr
     if (!customFrom || !customTo) return;
     // Accept a range entered backwards rather than rejecting the user's input.
     const [from, to] = customFrom <= customTo ? [customFrom, customTo] : [customTo, customFrom];
+    if (maxCustomRangeDays && analyticsRangeDays(from, to) > maxCustomRangeDays) {
+      setCustomRangeError(`Choose a range of ${maxCustomRangeDays.toLocaleString()} days or fewer.`);
+      return;
+    }
+    setCustomRangeError(null);
     choose("custom", { from, to });
   };
 
@@ -284,7 +293,12 @@ export function PeriodPickerPanel({ value, tz, allowAllTime, onSelect }: PanelPr
             <input
               type="date"
               value={customFrom}
-              onChange={(event) => setCustomFrom(event.target.value)}
+              onChange={(event) => {
+                setCustomFrom(event.target.value);
+                setCustomRangeError(null);
+              }}
+              aria-invalid={customRangeError ? true : undefined}
+              aria-describedby={customRangeError ? "custom-range-error" : undefined}
               className="min-h-11 w-full min-w-0 appearance-none rounded-xl border border-cream-200 bg-white px-3 text-sm text-warm-600 outline-none focus:border-amber focus:ring-2 focus:ring-amber/20"
             />
           </label>
@@ -293,7 +307,12 @@ export function PeriodPickerPanel({ value, tz, allowAllTime, onSelect }: PanelPr
             <input
               type="date"
               value={customTo}
-              onChange={(event) => setCustomTo(event.target.value)}
+              onChange={(event) => {
+                setCustomTo(event.target.value);
+                setCustomRangeError(null);
+              }}
+              aria-invalid={customRangeError ? true : undefined}
+              aria-describedby={customRangeError ? "custom-range-error" : undefined}
               className="min-h-11 w-full min-w-0 appearance-none rounded-xl border border-cream-200 bg-white px-3 text-sm text-warm-600 outline-none focus:border-amber focus:ring-2 focus:ring-amber/20"
             />
           </label>
@@ -305,6 +324,7 @@ export function PeriodPickerPanel({ value, tz, allowAllTime, onSelect }: PanelPr
           >
             Apply range
           </button>
+          {customRangeError && <p id="custom-range-error" role="alert" className="text-sm text-expense">{customRangeError}</p>}
         </div>
       )}
 
@@ -343,6 +363,8 @@ export interface PeriodPickerProps {
   label?: string;
   /** Analytics cannot offer All time: its API requires a bounded window. */
   allowAllTime?: boolean;
+  /** Optional inclusive day cap for custom ranges on callers with bounded APIs. */
+  maxCustomRangeDays?: number;
   presentation?: "popover" | "dialog";
   /**
    * Shrinks the control to a 36px chip for the transactions toolbar's filter rail,
@@ -362,6 +384,7 @@ export function PeriodPicker({
   tz,
   label,
   allowAllTime = false,
+  maxCustomRangeDays,
   presentation = "dialog",
   dense = false,
   className,
@@ -434,7 +457,13 @@ export function PeriodPicker({
     onChange(navigatePeriod(value.periodType, value.from, value.to, direction, tz));
 
   const panel = (
-    <PeriodPickerPanel value={value} tz={tz} allowAllTime={allowAllTime} onSelect={select} />
+    <PeriodPickerPanel
+      value={value}
+      tz={tz}
+      allowAllTime={allowAllTime}
+      maxCustomRangeDays={maxCustomRangeDays}
+      onSelect={select}
+    />
   );
 
   // Dense keeps the 44px target as an invisible pseudo-element rather than as the
