@@ -502,6 +502,21 @@ describe("buildAssessmentFacts", () => {
     expect(facts().bills.missed[0].missedDueDates).toEqual(["2026-07-05", "2026-08-05", "2026-09-05"]);
   });
 
+  /**
+   * Bills are judged against their own full payment history rather than the window, so a missed
+   * bill is true *now* rather than true of the period. Every other finding either filters on
+   * `inPeriod` or compares the period against baseline months. Carrying that distinction is what
+   * stopped the Watchlist dating a live overdue bill to whatever period was on screen (#340).
+   */
+  it("marks the missed bill as outstanding and everything else as period-scoped", () => {
+    const anomalies = facts().anomalies;
+    expect(anomalies.length).toBeGreaterThan(1);
+
+    for (const a of anomalies) {
+      expect(a.scope, `${a.kind} scope`).toBe(a.kind === "missed-bill" ? "outstanding" : "period");
+    }
+  });
+
   it("measures a month in progress against the same days of the months before it", () => {
     const pace = facts().anomalies.find((a) => a.kind === "pace");
     // September has spent 15,000 in its first six days; the baseline months had

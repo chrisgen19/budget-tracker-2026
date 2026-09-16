@@ -242,8 +242,12 @@ const buildFactsDigest = (f: AssessmentFacts): string =>
       periodDaysTotal: f.confidence.periodDaysTotal,
       loggingGapsInPeriod: f.confidence.gaps.filter((g) => g.inPeriod).map((g) => ({ from: g.from, to: g.to, days: g.days })),
     },
+    // `scope` travels with each one because the prompt asks for patterns "in this period", and an
+    // outstanding finding is not one -- a missed bill is judged against its own payment history,
+    // so writing it up as something that happened this period dates it wrongly (#340).
     anomalies: f.anomalies.map((a) => ({
-      kind: a.kind, severity: a.severity, title: a.title, detail: a.detail, changePct: a.changePct,
+      kind: a.kind, scope: a.scope, severity: a.severity, title: a.title, detail: a.detail,
+      changePct: a.changePct,
     })),
     bills: {
       asOf: f.bills.asOf,
@@ -372,8 +376,12 @@ SECTIONS:
 - "summary": 2-3 sentences, leading with the most consequential finding.
 - "cashFlowCommentary": what the descriptive cash-flow signals mean, without turning them into a grade.
 - "outlook": 1-2 sentences on the next few weeks, given bills due and the current run rate.
-- "patterns": 2-4 things that went wrong or unusually in this period, each traced to an anomaly or
+- "patterns": 2-4 things that went wrong or unusually, each traced to an anomaly or
   bill finding above, with a severity of "high" | "medium" | "low".
+  Each anomaly carries a "scope". "period" means it was measured inside the dates of this period and
+  may be described as having happened in it. "outstanding" means it is true as of today and the
+  period does not bound it -- a missed bill is judged against its own payment history, so do not
+  date it to this period or imply it happened during it.
 - "trends": 2-4 categories heading somewhere, each with a direction of "up" | "down" | "new" | "stable".
   Only use the trustworthy months as the baseline.
 - "dataQuality": 1-3 accuracy problems (logging gaps, duplicates, unlinked bill payments, unlabeled

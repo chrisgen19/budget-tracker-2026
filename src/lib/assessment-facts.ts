@@ -34,6 +34,8 @@ import {
 import type {
   AiWatchSeverity,
   AssessmentAnomaly,
+  AssessmentAnomalyKind,
+  AssessmentAnomalyScope,
   AssessmentHeadline,
   AssessmentBillAccuracy,
   AssessmentBillFacts,
@@ -941,6 +943,31 @@ const median = (xs: number[]): number => {
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 };
 
+/**
+ * Whether the selected period bounds each kind of finding.
+ *
+ * A `Record` over the kinds rather than an argument to `anomaly()` with a default: adding a kind
+ * to `AssessmentAnomalyKind` without deciding its scope will not compile, where a default would
+ * quietly label the next standing condition as belonging to whatever period is on screen. That is
+ * the mistake #340 fixed, and the map is here so it cannot be made a second time.
+ *
+ * Only `missed-bill` is outstanding. Every other producer either filters on `inPeriod`
+ * (`duplicate`, `logging-gap`) or measures the period against baseline months, while bills are
+ * judged against their own full payment history — see `buildAssessmentFacts`.
+ */
+const ANOMALY_SCOPE: Record<AssessmentAnomalyKind, AssessmentAnomalyScope> = {
+  "category-spike": "period",
+  "new-category": "period",
+  "outlier-transaction": "period",
+  overspend: "period",
+  "savings-drop": "period",
+  pace: "period",
+  "missing-income": "period",
+  duplicate: "period",
+  "logging-gap": "period",
+  "missed-bill": "outstanding",
+};
+
 const anomaly = (
   kind: AssessmentAnomaly["kind"],
   severity: AiWatchSeverity,
@@ -949,6 +976,7 @@ const anomaly = (
   metrics: { current?: number | null; baseline?: number | null; changePct?: number | null } = {},
 ): AssessmentAnomaly => ({
   kind,
+  scope: ANOMALY_SCOPE[kind],
   title,
   detail,
   severity,

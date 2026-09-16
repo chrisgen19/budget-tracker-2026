@@ -908,6 +908,9 @@ const anomaly = z.object({
     "logging-gap",
     "missed-bill",
   ]),
+  // "outstanding" means the selected period does not bound the finding - a missed bill is judged
+  // against its own payment history, so it is true now rather than true of the window.
+  scope: z.enum(["period", "outstanding"]),
   title: z.string(),
   detail: z.string(),
   severity: z.enum(["high", "medium", "low"]),
