@@ -28,7 +28,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      # `write`, not `read`: posting an inline comment is a write. With `read` the
+      # job ran green and silently posted nothing - see the claude_args note below.
+      pull-requests: write
       issues: read
       id-token: write
 
@@ -46,6 +48,29 @@ jobs:
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'
+
+          # Post a tracking comment before the review starts. Without it a `pull_request`
+          # run that ends early leaves no trace on the PR at all - the job goes green and
+          # the page looks as though nothing was ever triggered, which is how two broken
+          # configs went unnoticed across #328, #330 and #332. The checklist is also the
+          # diagnostic: it shows which step the review reached.
+          track_progress: true
+
+          # `claude_args --allowedTools` ADDS to the base tools the action always
+          # provides; it does not replace them. The base set covers the GitHub tools but
+          # not Bash, and not `Task`, and every step of this command begins "Launch a
+          # ... agent" - so the very first call was denied and the command's "stop and do
+          # not proceed" branch ended the run. Both attempts looked identical: 5 turns,
+          # ~15s, `permission_denials_count: 1`, nothing posted, job green, because a
+          # denied tool is not an error.
+          #
+          # The `Bash(gh ...)` entries mirror the `allowed-tools:` frontmatter of the
+          # command itself (anthropics/claude-code,
+          # plugins/code-review/commands/code-review.md). That frontmatter is additive to
+          # an interactive session's defaults, so it does not mention what it takes for
+          # granted: `Task` to fan out to the review subagents, and Read/Glob/Grep for the
+          # step that locates the CLAUDE.md files each subagent is judged against.
+          claude_args: >-
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Task,Read,Glob,Grep,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*)"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
