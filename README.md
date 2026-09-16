@@ -169,6 +169,12 @@ Open [http://localhost:3111](http://localhost:3111), register an account, and st
 | `pnpm db:seed` | Seed default categories + set admin role |
 | `pnpm db:studio` | Open Prisma Studio (database GUI) |
 
+## Operations
+
+The Analytics API emits privacy-safe request metrics to standard output for operational monitoring.
+See [Analytics telemetry](docs/analytics-telemetry.md) for the allowlisted fields and Coolify log
+retention/deletion guidance.
+
 ## MCP Server
 
 A [Model Context Protocol](https://modelcontextprotocol.io/) server that lets you ask about your

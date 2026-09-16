@@ -1,14 +1,19 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NextResponse } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getAuthUserId: vi.fn(),
   findMany: vi.fn(),
+  logAnalyticsRequest: vi.fn(),
 }));
 
 vi.mock("@/lib/session", () => ({ getAuthUserId: mocks.getAuthUserId }));
 vi.mock("@/lib/prisma", () => ({
   prisma: { transaction: { findMany: mocks.findMany } },
+}));
+vi.mock("@/lib/analytics-observability", () => ({
+  logAnalyticsRequest: mocks.logAnalyticsRequest,
 }));
 
 import { GET } from "@/app/api/analytics/route";
@@ -20,7 +25,10 @@ const transaction = (
   amount: number,
   type: "EXPENSE" | "INCOME" = "EXPENSE",
   category = { id: "food", name: "Food", color: "#000", icon: "Utensils" },
-  labels: Array<{ labelId: string; label: { name: string; color: string } }> = [],
+  labels: Array<{
+    labelId: string;
+    label: { name: string; color: string };
+  }> = [],
 ) => ({
   id: `${localDay}-${amount}-${type}`,
   amount,
@@ -37,8 +45,12 @@ const localDay = (date: Date): string =>
 
 describe("GET /api/analytics partial-period comparison", () => {
   const rows = [
-    ...Array.from({ length: 9 }, (_, index) => transaction(`2026-09-${String(index + 1).padStart(2, "0")}`, 100)),
-    ...Array.from({ length: 9 }, (_, index) => transaction(`2026-08-${String(index + 1).padStart(2, "0")}`, 50)),
+    ...Array.from({ length: 9 }, (_, index) =>
+      transaction(`2026-09-${String(index + 1).padStart(2, "0")}`, 100),
+    ),
+    ...Array.from({ length: 9 }, (_, index) =>
+      transaction(`2026-08-${String(index + 1).padStart(2, "0")}`, 50),
+    ),
     transaction("2026-09-20", 9_000),
     transaction("2026-08-20", 8_000),
   ];
@@ -47,9 +59,12 @@ describe("GET /api/analytics partial-period comparison", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-15T04:00:00.000Z"));
     mocks.getAuthUserId.mockResolvedValue("user-1");
-    mocks.findMany.mockImplementation(async ({ where }: {
-      where: { date: { gte: Date; lte: Date } };
-    }) => rows.filter((row) => row.date >= where.date.gte && row.date <= where.date.lte));
+    mocks.findMany.mockImplementation(
+      async ({ where }: { where: { date: { gte: Date; lte: Date } } }) =>
+        rows.filter(
+          (row) => row.date >= where.date.gte && row.date <= where.date.lte,
+        ),
+    );
   });
 
   afterEach(() => {
@@ -58,9 +73,11 @@ describe("GET /api/analytics partial-period comparison", () => {
   });
 
   it("clips both queries, daily averages and labels to matching elapsed windows", async () => {
-    const response = await GET(new Request(
-      `http://localhost/api/analytics?granularity=weekly&from=2026-09-01&to=2026-09-30&tz=${MANILA}&type=ALL`,
-    ));
+    const response = await GET(
+      new Request(
+        `http://localhost/api/analytics?granularity=weekly&from=2026-09-01&to=2026-09-30&tz=${MANILA}&type=ALL`,
+      ),
+    );
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -88,15 +105,70 @@ describe("GET /api/analytics partial-period comparison", () => {
     ]);
     expect(queriedWindows).toContainEqual(["2026-09-01", "2026-09-15"]);
     expect(queriedWindows).toContainEqual(["2026-08-01", "2026-08-15"]);
+    expect(mocks.logAnalyticsRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "success",
+        fetchedRowCount: 18,
+        bucketCount: body.cashFlow.length,
+        responseBytes: expect.any(Number),
+        databaseDurationMs: expect.any(Number),
+      }),
+    );
   });
 
   it("rejects an impossible timezone before querying", async () => {
-    const response = await GET(new Request(
-      "http://localhost/api/analytics?granularity=weekly&from=2026-09-01&to=2026-09-30&tz=900&type=ALL",
-    ));
+    const response = await GET(
+      new Request(
+        "http://localhost/api/analytics?granularity=weekly&from=2026-09-01&to=2026-09-30&tz=900&type=ALL",
+      ),
+    );
 
     expect(response.status).toBe(400);
     expect(mocks.findMany).not.toHaveBeenCalled();
+    expect(mocks.logAnalyticsRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "invalid_request",
+        errorCode: "INVALID_QUERY",
+      }),
+    );
+  });
+
+  it("records an unauthenticated request without querying", async () => {
+    mocks.getAuthUserId.mockResolvedValue(
+      NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    );
+
+    const response = await GET(new Request("http://localhost/api/analytics"));
+
+    expect(response.status).toBe(401);
+    expect(mocks.findMany).not.toHaveBeenCalled();
+    expect(mocks.logAnalyticsRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "unauthenticated",
+        errorCode: "AUTH_REQUIRED",
+      }),
+    );
+  });
+
+  it("records an unexpected query failure and returns a generic error", async () => {
+    mocks.findMany.mockRejectedValueOnce(new Error("database unavailable"));
+
+    const response = await GET(
+      new Request(
+        `http://localhost/api/analytics?granularity=weekly&from=2026-09-01&to=2026-09-30&tz=${MANILA}&type=ALL`,
+      ),
+    );
+
+    expect(mocks.logAnalyticsRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "error",
+        errorCode: "INTERNAL_ERROR",
+      }),
+    );
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: "Failed to load analytics",
+    });
   });
 
   it("rejects a range over the documented maximum before querying", async () => {
@@ -122,30 +194,60 @@ describe("GET /api/analytics partial-period comparison", () => {
   });
 
   it("filters only category, label, and top-transaction breakdowns", async () => {
-    const salary = { id: "salary", name: "Salary", color: "#0a0", icon: "Wallet" };
+    const salary = {
+      id: "salary",
+      name: "Salary",
+      color: "#0a0",
+      icon: "Wallet",
+    };
     const mixedRows = [
       transaction("2026-09-01", 100),
       transaction("2026-09-02", 1_000, "INCOME", salary, [
         { labelId: "payroll", label: { name: "Payroll", color: "#0a0" } },
       ]),
     ];
-    mocks.findMany.mockImplementation(async ({ where }: {
-      where: { date: { gte: Date; lte: Date } };
-    }) => mixedRows.filter((row) => row.date >= where.date.gte && row.date <= where.date.lte));
+    mocks.findMany.mockImplementation(
+      async ({ where }: { where: { date: { gte: Date; lte: Date } } }) =>
+        mixedRows.filter(
+          (row) => row.date >= where.date.gte && row.date <= where.date.lte,
+        ),
+    );
 
-    const response = await GET(new Request(
-      `http://localhost/api/analytics?granularity=weekly&from=2026-09-01&to=2026-09-30&tz=${MANILA}&type=INCOME`,
-    ));
+    const response = await GET(
+      new Request(
+        `http://localhost/api/analytics?granularity=weekly&from=2026-09-01&to=2026-09-30&tz=${MANILA}&type=INCOME`,
+      ),
+    );
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.categoryBreakdown.map((item: { type: string }) => item.type)).toEqual(["INCOME"]);
-    expect(body.labelBreakdown.map((item: { name: string }) => item.name)).toEqual(["Payroll"]);
-    expect(body.topTransactions.map((item: { type: string }) => item.type)).toEqual(["INCOME"]);
+    expect(
+      body.categoryBreakdown.map((item: { type: string }) => item.type),
+    ).toEqual(["INCOME"]);
+    expect(
+      body.labelBreakdown.map((item: { name: string }) => item.name),
+    ).toEqual(["Payroll"]);
+    expect(
+      body.topTransactions.map((item: { type: string }) => item.type),
+    ).toEqual(["INCOME"]);
 
-    expect(body.summary).toMatchObject({ totalIncome: 1_000, totalExpenses: 100, transactionCount: 2 });
-    expect(body.cashFlow.reduce((sum: number, item: { expenses: number }) => sum + item.expenses, 0)).toBe(100);
-    expect(body.daily.find((item: { date: string }) => item.date === "2026-09-01").expenses).toBe(100);
-    expect(body.categoryTrends.series.map((item: { name: string }) => item.name)).toEqual(["Food"]);
+    expect(body.summary).toMatchObject({
+      totalIncome: 1_000,
+      totalExpenses: 100,
+      transactionCount: 2,
+    });
+    expect(
+      body.cashFlow.reduce(
+        (sum: number, item: { expenses: number }) => sum + item.expenses,
+        0,
+      ),
+    ).toBe(100);
+    expect(
+      body.daily.find((item: { date: string }) => item.date === "2026-09-01")
+        .expenses,
+    ).toBe(100);
+    expect(
+      body.categoryTrends.series.map((item: { name: string }) => item.name),
+    ).toEqual(["Food"]);
   });
 });
