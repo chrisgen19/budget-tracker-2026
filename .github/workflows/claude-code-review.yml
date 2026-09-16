@@ -26,6 +26,8 @@ jobs:
     #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
 
     runs-on: ubuntu-latest
+    # A full review takes a few minutes. The ceiling caps what a stuck run can bill.
+    timeout-minutes: 30
     permissions:
       contents: read
       # `write`, not `read`: posting an inline comment is a write. With `read` the
@@ -43,34 +45,165 @@ jobs:
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@v1
+        env:
+          # Keeps the review subagents in the foreground, so the session cannot end
+          # while they are still working. On #335 the agents were sent to the
+          # background, the session finished, and the PR was left with "Review agents
+          # are running in the background, will update shortly" and no findings.
+          # Documented at https://code.claude.com/docs/en/code-review#run-in-the-foreground
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
 
-          # Post a tracking comment before the review starts. Without it a `pull_request`
-          # run that ends early leaves no trace on the PR at all - the job goes green and
-          # the page looks as though nothing was ever triggered, which is how two broken
-          # configs went unnoticed across #328, #330 and #332. The checklist is also the
-          # diagnostic: it shows which step the review reached.
-          track_progress: true
+          # No `track_progress`. It forces the action into tag mode (src/modes/detector.ts),
+          # and tag mode does not run `prompt` as a command: it pastes it into the
+          # `@claude` mention prompt as `<custom_instructions>`. That prompt tells Claude
+          # to install, lint and test, and to write only into its own tracking comment,
+          # none of which this job allows (#334's review says its package-manager
+          # commands were refused). #334's "full review" was that generic tag-mode
+          # review, not this command: the checklist and "Fix this" link are tag mode's
+          # output. The tracking comment also trips the command's first step, which
+          # stops when "Claude has already commented on this PR". Without it the action
+          # runs in agent mode, which passes `prompt` straight to Claude Code, so the
+          # command really runs. The last step below does the job the tracking comment
+          # was added for.
 
-          # `claude_args --allowedTools` ADDS to the base tools the action always
-          # provides; it does not replace them. The base set covers the GitHub tools but
-          # not Bash, and not `Task`, and every step of this command begins "Launch a
-          # ... agent" - so the very first call was denied and the command's "stop and do
-          # not proceed" branch ended the run. Both attempts looked identical: 5 turns,
-          # ~15s, `permission_denials_count: 1`, nothing posted, job green, because a
-          # denied tool is not an error.
-          #
-          # The `Bash(gh ...)` entries mirror the `allowed-tools:` frontmatter of the
-          # command itself (anthropics/claude-code,
-          # plugins/code-review/commands/code-review.md). That frontmatter is additive to
-          # an interactive session's defaults, so it does not mention what it takes for
-          # granted: `Task` to fan out to the review subagents, and Read/Glob/Grep for the
-          # step that locates the CLAUDE.md files each subagent is judged against.
+          # `claude_args --allowedTools` adds to the tools the action already allows.
+          # Agent (formerly Task), Read, Glob, Grep, TodoWrite, `grep` and read-only `git`
+          # need no permission at all (https://code.claude.com/docs/en/tools-reference),
+          # so Bash is what needs listing. The `Bash(gh ...)` entries match the
+          # `allowed-tools:` frontmatter of the command (anthropics/claude-code,
+          # plugins/code-review/commands/code-review.md), and still have to be repeated:
+          # #331 traced #330's one denial to `gh pr view`, which the frontmatter lists.
+          # The likely reason is that the command makes that call inside a subagent,
+          # which the frontmatter does not reach. Broadening to `Bash(gh api:*)` or
+          # `Bash(gh:*)` is not a small step: `gh` runs with the Claude app's token,
+          # which can write to the repository.
           claude_args: >-
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Task,Read,Glob,Grep,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*)"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
+
+      # A denied tool is not an error, so a review that gave up still ended green, and
+      # the log only printed how many calls were denied, never which. This step reads
+      # the result message from the transcript the action leaves on the runner and
+      # prints the denied calls: the tool name, and for Bash only the first three words
+      # of the command. Nothing else from the transcript is printed, since it also holds
+      # every tool output, which is why the action hides it (`show_full_output` would
+      # publish all of it in this public repo's logs). The step then fails the job if
+      # this run left nothing on the PR. With `--comment`, the command always posts
+      # either inline findings or a "No issues found" comment, so an empty PR means it
+      # did not finish.
+      #
+      # "This run" is taken from the transcript, not from the PR's comment list. Every
+      # `@claude` job posts as the same `claude[bot]`, and the list API's `since`
+      # filters on last update, so a manual review running on the same PR at the same
+      # time (which keeps editing its progress comment) would count as this job's
+      # output and hide the very failure this step is here to catch.
+      - name: Report what the review did
+        if: ${{ !cancelled() && steps.claude-review.outcome != 'skipped' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXECUTION_FILE: ${{ steps.claude-review.outputs.execution_file }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # No transcript means Claude never started. The action skips itself on a PR
+          # that edits this file (it will not run a reviewer the PR has changed), and a
+          # setup failure has already failed the step above.
+          if [ -z "${EXECUTION_FILE:-}" ] || [ ! -s "$EXECUTION_FILE" ]; then
+            echo "::notice title=Claude review did not run::No transcript, so there is nothing to report."
+            exit 0
+          fi
+
+          result=$(jq -c '[.[] | select(.type == "result")] | last // {}' "$EXECUTION_FILE")
+          turns=$(jq -r '.num_turns // "?"' <<<"$result")
+          cost=$(jq -r '(.total_cost_usd // 0) * 100 | round / 100' <<<"$result")
+          denied=$(jq -r '.permission_denials // [] | length' <<<"$result")
+          # One line per distinct call, most frequent first. Control characters are
+          # dropped so a command's text cannot start a workflow command of its own.
+          denials=$(jq -r '
+            (.permission_denials // [])[]
+            | if .tool_name == "Bash" then
+                (.tool_input.command // "") as $cmd
+                | "Bash(" + ([$cmd | splits("[[:space:]]+")] | map(select(. != "")) | .[0:3] | join(" ")) + " ...)"
+                  + (if ($cmd | test("[|;&<>\n]")) then " compound" else "" end)
+              elif .tool_name == "Skill" then "Skill(" + (.tool_input.skill // "?" | tostring) + ")"
+              else .tool_name
+              end
+            | gsub("[[:cntrl:]]"; "") | .[0:120]
+          ' <<<"$result" | sort | uniq -c | sort -rn | sed 's/^ *//')
+
+          # The comments this run created: the ids its own successful posting calls got
+          # back, as "<kind> <id>" lines. The inline tool answers with JSON carrying
+          # `comment_id`, and `gh pr comment` prints the new comment's URL. Those two
+          # outputs are searched for an id and nothing more. An inline comment sent
+          # without `confirmed: true` is only buffered, returns no id, and is posted by
+          # the action after the session, so it is not counted. The command always
+          # confirms, and a miss fails the job loudly rather than passing it silently.
+          created=$(jq -r '
+            ([.[] | select(.type == "assistant") | .message.content[]?
+              | select(.type == "tool_use")
+              | if .name == "mcp__github_inline_comment__create_inline_comment" then {key: .id, value: "pulls"}
+                elif .name == "Bash" and ((.input.command // "") | test("\\bgh\\s+pr\\s+comment\\b")) then {key: .id, value: "issues"}
+                else empty
+                end
+            ] | from_entries) as $calls
+            | .[] | select(.type == "user") | .message.content[]?
+            | select(.type == "tool_result" and $calls[.tool_use_id] != null and .is_error != true)
+            | $calls[.tool_use_id] as $kind
+            | (if (.content | type) == "string" then .content else [.content[]? | .text? // empty] | join("\n") end)
+            | if $kind == "pulls" then capture("\"comment_id\":\\s*(?<id>[0-9]+)") else capture("#issuecomment-(?<id>[0-9]+)") end
+            | "\($kind) \(.id)"
+          ' "$EXECUTION_FILE")
+
+          # Each id still has to exist, on this PR. A comment sent to another PR by
+          # mistake does not count.
+          summary_comments=0
+          inline_comments=0
+          while read -r kind id; do
+            [ -n "${id:-}" ] || continue
+            if [ "$kind" = pulls ]; then field=pull_request_url; else field=issue_url; fi
+            parent=$(gh api "repos/$REPO/$kind/comments/$id" --jq ".$field" || true)
+            case "$parent" in
+              */"$PR_NUMBER") ;;
+              *) continue ;;
+            esac
+            if [ "$kind" = pulls ]; then
+              inline_comments=$((inline_comments + 1))
+            else
+              summary_comments=$((summary_comments + 1))
+            fi
+          done <<<"$created"
+
+          {
+            echo "### Claude Code Review"
+            echo
+            echo "| Turns | Cost (USD) | Denied calls | Summary comments | Inline comments |"
+            echo "|---|---|---|---|---|"
+            echo "| $turns | $cost | $denied | $summary_comments | $inline_comments |"
+            if [ -n "$denials" ]; then
+              echo
+              echo "Denied calls, with how many times each was attempted:"
+              echo
+              echo '```'
+              echo "$denials"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -n "$denials" ]; then
+            while read -r times call; do
+              echo "::warning title=Claude review was denied a tool::${times}x ${call}"
+            done <<<"$denials"
+          fi
+
+          if [ $((summary_comments + inline_comments)) -eq 0 ]; then
+            echo "::error title=Claude review posted nothing::The review ended after $turns turns without a comment of its own on this PR (comments from other @claude jobs do not count). With no denied calls it most likely stopped on purpose: the command skips a PR it judges trivial, or one Claude has already commented on. Otherwise the warnings above name what it was refused. Comment '@claude review this PR' for a manual review."
+            exit 1
+          fi
