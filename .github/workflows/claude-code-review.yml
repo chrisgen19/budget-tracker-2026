@@ -2,7 +2,10 @@ name: Claude Code Review
 
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+    # One automated review per PR: when it is opened, or when a draft is
+    # marked ready. Deliberately no `synchronize` - that re-reviews on every
+    # push. Comment `@claude review this` (claude.yml) to ask for another.
+    types: [opened, ready_for_review]
     # Optional: Only run on specific file changes
     # paths:
     #   - "src/**/*.ts"
@@ -12,6 +15,10 @@ on:
 
 jobs:
   claude-review:
+    # A PR opened as a draft still fires `opened`, so skip it and wait for
+    # `ready_for_review` instead.
+    if: github.event.pull_request.draft == false
+
     # Optional: Filter by PR author
     # if: |
     #   github.event.pull_request.user.login == 'external-contributor' ||
@@ -42,4 +49,3 @@ jobs:
           claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
-
