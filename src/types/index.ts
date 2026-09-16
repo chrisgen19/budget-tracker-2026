@@ -807,13 +807,13 @@ export type AssessmentAnomalyKind =
  * that the period does not bound.
  *
  * Nearly everything is `"period"`: the producers filter on `inPeriod`, or compare the period
- * against baseline months. `missed-bill` is the exception and deliberately so — bills are judged
+ * against baseline months. `missed-bill` is the exception, and deliberately so: bills are judged
  * against their own full payment history rather than the window, which is what makes "no payment
  * recorded since June" sayable at all.
  *
  * It is carried on the finding because the consumer cannot infer it. The Watchlist rendered every
  * anomaly under "findings from this period" and so attributed a live overdue bill to whatever
- * period was selected — on February 2019, a month with no transactions, it reported a 2026 bill
+ * period was selected: on February 2019, a month with no transactions, it reported a 2026 bill
  * (#340).
  *
  * Assigned from `ANOMALY_SCOPE`, an exhaustive `Record` over the kinds rather than an argument

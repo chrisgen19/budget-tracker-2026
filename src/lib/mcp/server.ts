@@ -1526,7 +1526,10 @@ export const createBudgetMcpServer = ({
         "month logged on 16 of its 31 days is a logging gap, not a cheap month, and every rate, " +
         "average and trend here already excludes those months. A comparison built from raw " +
         "aggregates cannot see that and will report a gap as an improvement. Read " +
-        "`confidence.excludedMonths` and say so when a month was left out. Costs no AI call.",
+        "`confidence.excludedMonths` and say so when a month was left out. Each anomaly's " +
+        "`scope` is `period` when it was measured inside the requested dates and `outstanding` " +
+        "when it is true as of today whatever they are (a missed bill), so never describe an " +
+        "outstanding one as having happened in the period asked about. Costs no AI call.",
       inputSchema: {
         // Same pattern as the six other month-taking tools here, and it has to be: `\d{2}` accepts
         // `2026-00` and `2026-13`, which `parseMonth` hands to `Date.UTC` unguarded. Those

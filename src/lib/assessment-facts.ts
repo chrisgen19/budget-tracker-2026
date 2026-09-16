@@ -953,7 +953,11 @@ const median = (xs: number[]): number => {
  *
  * Only `missed-bill` is outstanding. Every other producer either filters on `inPeriod`
  * (`duplicate`, `logging-gap`) or measures the period against baseline months, while bills are
- * judged against their own full payment history — see `buildAssessmentFacts`.
+ * judged against their own full payment history (see `buildAssessmentFacts`).
+ *
+ * An outstanding kind is grouped apart in the Watchlist and left out of the AI tab's "What changed
+ * this period" card entirely, since the missed bill has `MissedBillsCard` there. A second
+ * outstanding kind needs a home of its own on that tab, or it will not appear on it.
  */
 const ANOMALY_SCOPE: Record<AssessmentAnomalyKind, AssessmentAnomalyScope> = {
   "category-spike": "period",
