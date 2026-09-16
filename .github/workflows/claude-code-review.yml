@@ -28,7 +28,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      # `write`, not `read`: posting an inline comment is a write. With `read` the
+      # job ran green and silently posted nothing - see the claude_args note below.
+      pull-requests: write
       issues: read
       id-token: write
 
@@ -46,6 +48,15 @@ jobs:
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'
+          # This list must mirror the `allowed-tools:` frontmatter of the plugin's own
+          # command (anthropics/claude-code, plugins/code-review/commands/code-review.md).
+          # `claude_args` narrows the set rather than adding to it, so listing only the
+          # inline-comment tool left the review with no way to read the PR: step 1 of the
+          # command runs `gh pr view --comments`, that call was denied, and the command's
+          # "stop and do not proceed" branch ended the run in 21s having posted nothing.
+          # The job still reported success, because a denied tool is not an error. It also
+          # could not fall back to the "no issues found" summary, which needs `gh pr comment`.
+          claude_args: >-
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*)"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
