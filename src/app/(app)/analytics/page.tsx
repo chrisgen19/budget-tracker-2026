@@ -120,7 +120,7 @@ function useVisibleBelowOffset<T extends Element>(
  * sticky copies are mounted at once, and a shared id would make the active pill
  * animate across the two bars.
  */
-function AnalyticsTabBar({
+export function AnalyticsTabBar({
   activeTab,
   onSelect,
   layoutId,
@@ -146,7 +146,12 @@ function AnalyticsTabBar({
           aria-selected={activeTab === tab.id}
           onClick={() => onSelect(tab.id)}
           className={cn(
-            "relative flex items-center justify-center gap-1 sm:gap-1.5 min-w-0 px-2 sm:px-3 py-2.5 sm:py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors",
+            // min-h-11 is the 44px touch target, same as the type filter's buttons
+            // (#212, and 397da22 for that control). Without it these are 36px on
+            // mobile and 32px from `sm:` up, where the padding shrinks faster than
+            // the text grows. The height comes from the minimum, not the padding,
+            // so the compact `sm:py-1.5` look is unchanged on a pointer device.
+            "relative flex items-center justify-center gap-1 sm:gap-1.5 min-h-11 min-w-0 px-2 sm:px-3 py-2.5 sm:py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors",
             activeTab === tab.id ? "text-warm-700" : "text-warm-400 hover:text-warm-500"
           )}
         >
