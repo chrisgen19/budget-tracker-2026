@@ -90,11 +90,22 @@ export const newConflictStreak = (): ConflictStreak => ({
 });
 
 /**
- * Telegram phrases this as "Conflict: terminated by other getUpdates request". Matched on the
- * word rather than the whole sentence, since the wording is theirs to change and the
- * classification should survive it.
+ * Whether a failure is *another poller holding the token* -- the one case this file exists to
+ * classify, and the only one that self-heals.
+ *
+ * Matched on "terminated by other", not on the word "conflict". 409 Conflict is not one error:
+ * Telegram also answers "Conflict: can't use getUpdates method while webhook is active", which is
+ * permanent, is fixed by `deleteWebhook`, and has nothing to do with a second poller. Matching the
+ * bare word swept that in, reported it as a deploy handover, and then sent the operator hunting
+ * for a second deployment -- while discarding the one message that said what was actually wrong.
+ *
+ * So the ceiling on how loosely this may match is set by the *other* things 409 can mean, not by
+ * how stable Telegram's wording is. Anything not matched here falls through to the generic branch,
+ * which logs the original text on every occurrence, which is the right treatment for a failure
+ * that does not clear itself.
  */
-export const isConflictError = (message: string): boolean => /\bconflict\b/i.test(message);
+export const isCompetingPollerError = (message: string): boolean =>
+  /terminated by other/i.test(message);
 
 /** End the run outright, so a later handover is judged on its own duration. */
 export const clearConflictStreak = (streak: ConflictStreak): void => {
@@ -130,7 +141,7 @@ export function recordPollingError(
   message: string,
   now: number,
 ): PollingErrorLog | null {
-  if (!isConflictError(message)) {
+  if (!isCompetingPollerError(message)) {
     clearConflictStreak(streak);
     return { level: "error", message: `polling error: ${message}` };
   }
@@ -166,6 +177,9 @@ export function recordPollingError(
       `another poller has held this bot token for ${Math.round(elapsed / 1000)}s, longer than a ` +
       "deploy handover. Only one getUpdates per token is allowed, so this bot is receiving an " +
       "arbitrary share of updates. Look for a second deployment on the same TELEGRAM_BOT_TOKEN, " +
-      "or a machine running the bot with TELEGRAM_BOT_ENABLED=true.",
+      // Telegram's own words are carried rather than replaced. The advice above is inferred from
+      // a phrase match, so if their wording ever shifts under it the operator can still see what
+      // was actually returned instead of only what this file concluded from it.
+      `or a machine running the bot with TELEGRAM_BOT_ENABLED=true. Telegram said: ${message}`,
   };
 }

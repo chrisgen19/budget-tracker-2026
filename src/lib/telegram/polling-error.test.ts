@@ -4,7 +4,7 @@ import {
   CONFLICT_QUIET_MS,
   CONFLICT_REPEAT_EVERY,
   clearConflictStreak,
-  isConflictError,
+  isCompetingPollerError,
   newConflictStreak,
   recordPollingError,
   recordPollingSuccess,
@@ -18,21 +18,29 @@ import {
 const CONFLICT =
   "Conflict: terminated by other getUpdates request; make sure that only one bot instance is running";
 
+/** The other 409. Permanent, and the fix is deleteWebhook rather than finding a second poller. */
+const WEBHOOK_CONFLICT = "Conflict: can't use getUpdates method while webhook is active";
+
 /** The loop's own backoff, so a streak advances at the rate production does. */
 const BACKOFF_MS = 3000;
 
-describe("isConflictError", () => {
-  it("matches Telegram's wording", () => {
-    expect(isConflictError(CONFLICT)).toBe(true);
+describe("isCompetingPollerError", () => {
+  it("matches the competing-poller conflict", () => {
+    expect(isCompetingPollerError(CONFLICT)).toBe(true);
   });
 
-  it("matches on the word alone, so a reworded message still classifies", () => {
-    expect(isConflictError("409 conflict")).toBe(true);
+  /**
+   * 409 is not one error. This one is permanent, is fixed by deleteWebhook, and has nothing to do
+   * with a second poller -- matching the bare word "conflict" swept it in and reported it as a
+   * deploy handover.
+   */
+  it("does NOT match the webhook conflict, which is a different 409", () => {
+    expect(isCompetingPollerError(WEBHOOK_CONFLICT)).toBe(false);
   });
 
   it("does not match unrelated failures", () => {
-    expect(isConflictError("socket hang up")).toBe(false);
-    expect(isConflictError("Unauthorized")).toBe(false);
+    expect(isCompetingPollerError("socket hang up")).toBe(false);
+    expect(isCompetingPollerError("Unauthorized")).toBe(false);
   });
 });
 
@@ -144,6 +152,46 @@ describe("recordPollingError: everything else", () => {
 
     expect(log?.level).toBe("info");
     expect(streak.count).toBe(1);
+  });
+});
+
+/**
+ * The webhook 409 is the reason this file matches a phrase and not the word "conflict". It never
+ * clears, `deleteWebhook` is the fix, and the advice the competing-poller branch gives would send
+ * an operator looking for a second deployment that does not exist.
+ */
+describe("recordPollingError: the webhook conflict is not a handover", () => {
+  it("is reported as an error immediately, not as an expected handover", () => {
+    const streak = newConflictStreak();
+    const log = recordPollingError(streak, WEBHOOK_CONFLICT, 0);
+
+    expect(log?.level).toBe("error");
+    expect(log?.message).not.toContain("deploy hands over");
+    expect(log?.message).not.toContain("TELEGRAM_BOT_ENABLED");
+  });
+
+  it("keeps Telegram's own text, which names the fix", () => {
+    const streak = newConflictStreak();
+    const log = recordPollingError(streak, WEBHOOK_CONFLICT, 0);
+
+    expect(log?.message).toContain("webhook is active");
+  });
+
+  it("logs on every retry, since it does not resolve itself", () => {
+    const streak = newConflictStreak();
+
+    for (const t of [0, BACKOFF_MS, BACKOFF_MS * 2, BACKOFF_MS * 3]) {
+      expect(recordPollingError(streak, WEBHOOK_CONFLICT, t)?.level).toBe("error");
+    }
+    // It never becomes a conflict run, so it can never be silenced by one.
+    expect(streak.count).toBe(0);
+  });
+
+  it("does not escalate into the wrong advice after the handover window", () => {
+    const streak = newConflictStreak();
+    const log = recordPollingError(streak, WEBHOOK_CONFLICT, CONFLICT_HANDOVER_MS * 3);
+
+    expect(log?.message).not.toContain("second deployment");
   });
 });
 
