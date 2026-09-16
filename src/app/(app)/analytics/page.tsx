@@ -16,14 +16,7 @@ import {
   type AnalyticsUrlState,
 } from "@/lib/analytics-url";
 import { motion, useIsomorphicLayoutEffect } from "framer-motion";
-import {
-  BarChart3,
-  Gauge,
-  Sparkles,
-  Trophy,
-  ClipboardCheck,
-  WalletCards,
-} from "lucide-react";
+import { WalletCards } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
 import { usePrivacy } from "@/components/privacy-provider";
@@ -39,10 +32,7 @@ import { PeriodPicker } from "@/components/ui/period-picker";
 import { AnalyticsLoadError } from "@/components/analytics/analytics-load-error";
 import { AnalyticsReports } from "@/components/analytics/analytics-reports";
 import { AnalyticsHero } from "@/components/analytics/analytics-hero";
-import {
-  AnalyticsTabBar,
-  ANALYTICS_TABS,
-} from "@/components/analytics/analytics-tab-bar";
+import { AnalyticsTabBar } from "@/components/analytics/analytics-tab-bar";
 import {
   AnalyticsHeroSkeleton,
   AnalyticsContentSkeleton,
@@ -58,7 +48,6 @@ import type { AnalyticsTypeFilter } from "@/types";
 import { MAX_ANALYTICS_RANGE_DAYS } from "@/lib/analytics-limits";
 
 type AnalyticsTab = AnalyticsTabId;
-
 
 /**
  * Tracks whether `ref` is visible below a `topOffset` (px) from the viewport top —
@@ -126,7 +115,6 @@ function useVisibleBelowOffset<T extends Element>(
 
   return inView;
 }
-
 
 export default function AnalyticsPage() {
   const { user } = useUser();

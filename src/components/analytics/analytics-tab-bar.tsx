@@ -12,7 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { AnalyticsTab } from "@/lib/analytics-url";
 
-export const ANALYTICS_TABS = [
+const ANALYTICS_TABS = [
   {
     id: "reports" as const,
     label: "Reports",
