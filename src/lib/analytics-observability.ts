@@ -1,4 +1,8 @@
-export type AnalyticsRequestOutcome = "success" | "unauthenticated" | "invalid_request" | "error";
+export type AnalyticsRequestOutcome =
+  | "success"
+  | "unauthenticated"
+  | "invalid_request"
+  | "error";
 
 export type AnalyticsRequestMetrics = {
   outcome: AnalyticsRequestOutcome;
@@ -10,7 +14,8 @@ export type AnalyticsRequestMetrics = {
   errorCode?: "AUTH_REQUIRED" | "INVALID_QUERY" | "INTERNAL_ERROR";
 };
 
-const roundMilliseconds = (value: number): number => Math.max(0, Math.round(value));
+const roundMilliseconds = (value: number): number =>
+  Math.max(0, Math.round(value));
 
 /**
  * Emits the allowlisted operational fields for one analytics request.
@@ -20,14 +25,30 @@ const roundMilliseconds = (value: number): number => Math.max(0, Math.round(valu
  */
 export const logAnalyticsRequest = (metrics: AnalyticsRequestMetrics): void => {
   try {
-    console.info(JSON.stringify({
-      event: "analytics_request",
-      ...metrics,
-      durationMs: roundMilliseconds(metrics.durationMs),
-      ...(metrics.databaseDurationMs === undefined
-        ? {}
-        : { databaseDurationMs: roundMilliseconds(metrics.databaseDurationMs) }),
-    }));
+    console.info(
+      JSON.stringify({
+        event: "analytics_request",
+        outcome: metrics.outcome,
+        durationMs: roundMilliseconds(metrics.durationMs),
+        ...(metrics.databaseDurationMs === undefined
+          ? {}
+          : {
+              databaseDurationMs: roundMilliseconds(metrics.databaseDurationMs),
+            }),
+        ...(metrics.fetchedRowCount === undefined
+          ? {}
+          : { fetchedRowCount: metrics.fetchedRowCount }),
+        ...(metrics.bucketCount === undefined
+          ? {}
+          : { bucketCount: metrics.bucketCount }),
+        ...(metrics.responseBytes === undefined
+          ? {}
+          : { responseBytes: metrics.responseBytes }),
+        ...(metrics.errorCode === undefined
+          ? {}
+          : { errorCode: metrics.errorCode }),
+      }),
+    );
   } catch {
     // Observability must never change the request outcome.
   }
