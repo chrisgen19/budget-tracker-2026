@@ -44,6 +44,53 @@ const SEVERITY_STYLE: Record<
   low: { label: "For awareness", className: "bg-cream-200 text-warm-500" },
 };
 
+/**
+ * The two groups, in the order they are shown.
+ *
+ * Outstanding findings are listed second because the period is what the user selected and is
+ * therefore what they came to read. They are listed *separately* because the panel used to claim
+ * every finding was measured inside the period, which is false for a missed bill: opening a month
+ * with no transactions in it still reported a live overdue bill, dated to that month (#340).
+ */
+const SCOPE_SECTIONS = [
+  {
+    scope: "period",
+    heading: "In this period",
+    blurb: "Measured inside the dates shown.",
+  },
+  {
+    scope: "outstanding",
+    heading: "Outstanding",
+    blurb: "True as of today, whichever period is shown.",
+  },
+] as const;
+
+/** One finding. Extracted so the grouping above stays readable inside `Watchlist`. */
+function Finding({ finding }: { finding: AssessmentAnomaly }) {
+  const severity = SEVERITY_STYLE[finding.severity];
+  return (
+    <li className="p-4 sm:p-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          className={cn(
+            "rounded-full px-2.5 py-1 text-[11px] font-medium",
+            severity.className,
+          )}
+        >
+          {severity.label}
+        </span>
+        <span className="text-[11px] font-medium uppercase tracking-wider text-warm-400">
+          {KIND_LABEL[finding.kind]}
+        </span>
+      </div>
+      <h3 className="mt-2 text-sm font-medium text-warm-700">
+        {finding.title}
+      </h3>
+      <p className="mt-1 text-sm leading-6 text-warm-500">{finding.detail}</p>
+    </li>
+  );
+}
+
 const transactionHref = (
   period: AssessmentPeriod,
   returnTo: string,
@@ -109,8 +156,8 @@ export function Watchlist({ period, returnTo }: WatchlistProps) {
           <div>
             <h2 className="font-serif text-xl text-warm-700">Watchlist</h2>
             <p className="mt-1 text-sm text-warm-400">
-              Live, measured findings from this period. No AI generation is
-              needed.
+              Live, measured findings. No AI generation is needed. Each is
+              labelled with whether the period shown bounds it.
             </p>
           </div>
         </div>
@@ -123,39 +170,30 @@ export function Watchlist({ period, returnTo }: WatchlistProps) {
             Nothing needs attention
           </h3>
           <p className="mx-auto mt-1 max-w-md text-sm text-warm-400">
-            This period has no unusual patterns, missed bills, possible
-            duplicates, or logging gaps to review.
+            No unusual patterns, possible duplicates or logging gaps in this
+            period, and no bills outstanding today.
           </p>
         </div>
       ) : (
-        <ul className="divide-y divide-cream-200/80">
-          {findings.map((finding, index) => {
-            const severity = SEVERITY_STYLE[finding.severity];
-            return (
-              <li key={`${finding.kind}-${index}`} className="p-4 sm:p-5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span
-                    className={cn(
-                      "rounded-full px-2.5 py-1 text-[11px] font-medium",
-                      severity.className,
-                    )}
-                  >
-                    {severity.label}
-                  </span>
-                  <span className="text-[11px] font-medium uppercase tracking-wider text-warm-400">
-                    {KIND_LABEL[finding.kind]}
-                  </span>
-                </div>
-                <h3 className="mt-2 text-sm font-medium text-warm-700">
-                  {finding.title}
+        SCOPE_SECTIONS.map(({ scope, heading, blurb }) => {
+          const inScope = findings.filter((f) => f.scope === scope);
+          if (inScope.length === 0) return null;
+          return (
+            <section key={scope} aria-label={heading}>
+              <div className="border-b border-cream-200 bg-cream-50/50 px-4 py-2 sm:px-5">
+                <h3 className="text-[11px] font-medium uppercase tracking-wider text-warm-500">
+                  {heading}
                 </h3>
-                <p className="mt-1 text-sm leading-6 text-warm-500">
-                  {finding.detail}
-                </p>
-              </li>
-            );
-          })}
-        </ul>
+                <p className="text-xs text-warm-400">{blurb}</p>
+              </div>
+              <ul className="divide-y divide-cream-200/80">
+                {inScope.map((finding, index) => (
+                  <Finding key={`${finding.kind}-${index}`} finding={finding} />
+                ))}
+              </ul>
+            </section>
+          );
+        })
       )}
 
       <div className="border-t border-cream-200 bg-cream-50/50 p-3 sm:px-5">

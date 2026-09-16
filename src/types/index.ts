@@ -802,8 +802,30 @@ export type AssessmentAnomalyKind =
   | "logging-gap"
   | "missed-bill";
 
+/**
+ * Whether a finding is measured inside the selected period, or describes a standing condition
+ * that the period does not bound.
+ *
+ * Nearly everything is `"period"`: the producers filter on `inPeriod`, or compare the period
+ * against baseline months. `missed-bill` is the exception and deliberately so — bills are judged
+ * against their own full payment history rather than the window, which is what makes "no payment
+ * recorded since June" sayable at all.
+ *
+ * It is carried on the finding because the consumer cannot infer it. The Watchlist rendered every
+ * anomaly under "findings from this period" and so attributed a live overdue bill to whatever
+ * period was selected — on February 2019, a month with no transactions, it reported a 2026 bill
+ * (#340).
+ *
+ * Assigned from `ANOMALY_SCOPE`, an exhaustive `Record` over the kinds rather than an argument
+ * with a default: a default is the shape that silently mislabels the next unscoped finding
+ * somebody adds, where a missing entry in the map will not compile.
+ */
+export type AssessmentAnomalyScope = "period" | "outstanding";
+
 export interface AssessmentAnomaly {
   kind: AssessmentAnomalyKind;
+  /** Whether the selected period bounds this finding. See `AssessmentAnomalyScope`. */
+  scope: AssessmentAnomalyScope;
   title: string;
   /** Relative/percentage prose — amounts travel in the numeric fields so the UI can mask them. */
   detail: string;
