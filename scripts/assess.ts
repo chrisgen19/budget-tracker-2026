@@ -166,12 +166,21 @@ const printAnomalies = (f: AssessmentFacts, currency: string) => {
   h1("8. WHAT CHANGED THIS PERIOD");
   console.log("    Measured against the trustworthy months. A month still running is compared");
   console.log("    against the same days of those months, never scaled up.\n");
-  if (f.anomalies.length === 0) none();
-  for (const a of f.anomalies) {
+  const print = (a: AssessmentFacts["anomalies"][number]) => {
     const figures = a.current === null ? "" : `  [${money(a.current, currency)}${a.baseline === null ? "" : ` vs ${money(a.baseline, currency)}`}]`;
     console.log(`  [${a.severity}] ${a.kind}: ${a.title}${figures}`);
     console.log(`      ${a.detail}`);
-  }
+  };
+  const inPeriod = f.anomalies.filter((a) => a.scope === "period");
+  if (inPeriod.length === 0) none();
+  inPeriod.forEach(print);
+
+  // A missed bill is judged against its own payment history, so it is not something this period
+  // did, and a report that lists it above would date it to the period (#340).
+  h2("outstanding as of today, whatever the period");
+  const outstanding = f.anomalies.filter((a) => a.scope !== "period");
+  if (outstanding.length === 0) none();
+  outstanding.forEach(print);
 };
 
 async function main() {

@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -12,7 +13,7 @@ import {
   type AssessmentPeriod,
 } from "@/hooks/use-assessment";
 import { cn } from "@/lib/utils";
-import type { AssessmentAnomaly } from "@/types";
+import type { AssessmentAnomaly, AssessmentAnomalyScope } from "@/types";
 
 interface WatchlistProps {
   period: AssessmentPeriod;
@@ -44,28 +45,48 @@ const SEVERITY_STYLE: Record<
   low: { label: "For awareness", className: "bg-cream-200 text-warm-500" },
 };
 
+interface ScopeSectionCopy {
+  scope: AssessmentAnomalyScope;
+  heading: string;
+  blurb: string;
+  /** Shown when the group has no findings, or `null` to leave the group out entirely. */
+  empty: string | null;
+}
+
 /**
  * The two groups, in the order they are shown.
  *
- * Outstanding findings are listed second because the period is what the user selected and is
- * therefore what they came to read. They are listed *separately* because the panel used to claim
- * every finding was measured inside the period, which is false for a missed bill: opening a month
- * with no transactions in it still reported a live overdue bill, dated to that month (#340).
+ * The panel used to put every finding under "findings from this period", which is false for a
+ * missed bill: bills are judged against their own payment history, so opening February 2019, a
+ * month with no transactions, reported a live 2026 overdue bill as though it belonged there
+ * (#340).
+ *
+ * The period group comes first because it is what the user selected, and it is shown even when
+ * empty: with an outstanding bill on the account the panel is never empty as a whole, so without
+ * its own message a clean period would only be implied by a missing heading.
  */
-const SCOPE_SECTIONS = [
+const SCOPE_SECTIONS: readonly ScopeSectionCopy[] = [
   {
     scope: "period",
     heading: "In this period",
     blurb: "Measured inside the dates shown.",
+    empty: "No unusual spending, possible duplicates or logging gaps in these dates.",
   },
   {
     scope: "outstanding",
     heading: "Outstanding",
-    blurb: "True as of today, whichever period is shown.",
+    blurb: "Still open today, whichever period is shown.",
+    empty: null,
   },
-] as const;
+];
 
-/** One finding. Extracted so the grouping above stays readable inside `Watchlist`. */
+/**
+ * Which group a finding belongs in. Anything not positively marked as period-scoped goes to
+ * Outstanding, so a finding is never dropped and never claimed for a period it was not measured in.
+ */
+const groupOf = (finding: AssessmentAnomaly): AssessmentAnomalyScope =>
+  finding.scope === "period" ? "period" : "outstanding";
+
 function Finding({ finding }: { finding: AssessmentAnomaly }) {
   const severity = SEVERITY_STYLE[finding.severity];
   return (
@@ -83,11 +104,44 @@ function Finding({ finding }: { finding: AssessmentAnomaly }) {
           {KIND_LABEL[finding.kind]}
         </span>
       </div>
-      <h3 className="mt-2 text-sm font-medium text-warm-700">
+      <h4 className="mt-2 text-sm font-medium text-warm-700">
         {finding.title}
-      </h3>
+      </h4>
       <p className="mt-1 text-sm leading-6 text-warm-500">{finding.detail}</p>
     </li>
+  );
+}
+
+function ScopeSection({
+  id,
+  copy,
+  findings,
+}: {
+  id: string;
+  copy: ScopeSectionCopy;
+  findings: AssessmentAnomaly[];
+}) {
+  return (
+    <section aria-labelledby={id}>
+      <div className="border-b border-cream-200 bg-cream-50/50 px-4 py-2 sm:px-5">
+        <h3
+          id={id}
+          className="text-[11px] font-medium uppercase tracking-wider text-warm-500"
+        >
+          {copy.heading}
+        </h3>
+        <p className="text-xs text-warm-400">{copy.blurb}</p>
+      </div>
+      {findings.length === 0 ? (
+        <p className="p-4 text-sm text-warm-400 sm:p-5">{copy.empty}</p>
+      ) : (
+        <ul className="divide-y divide-cream-200/80">
+          {findings.map((finding, index) => (
+            <Finding key={`${finding.kind}-${index}`} finding={finding} />
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -111,6 +165,7 @@ const transactionHref = (
  * slice.
  */
 export function Watchlist({ period, returnTo }: WatchlistProps) {
+  const sectionId = useId();
   const facts = useAssessmentFactsQuery(period);
   const findings = facts.data?.facts.anomalies ?? [];
   const href = transactionHref(period, returnTo);
@@ -156,8 +211,7 @@ export function Watchlist({ period, returnTo }: WatchlistProps) {
           <div>
             <h2 className="font-serif text-xl text-warm-700">Watchlist</h2>
             <p className="mt-1 text-sm text-warm-400">
-              Live, measured findings. No AI generation is needed. Each is
-              labelled with whether the period shown bounds it.
+              Live, measured findings. No AI generation is needed.
             </p>
           </div>
         </div>
@@ -170,30 +224,25 @@ export function Watchlist({ period, returnTo }: WatchlistProps) {
             Nothing needs attention
           </h3>
           <p className="mx-auto mt-1 max-w-md text-sm text-warm-400">
-            No unusual patterns, possible duplicates or logging gaps in this
+            No unusual spending, possible duplicates or logging gaps in this
             period, and no bills outstanding today.
           </p>
         </div>
       ) : (
-        SCOPE_SECTIONS.map(({ scope, heading, blurb }) => {
-          const inScope = findings.filter((f) => f.scope === scope);
-          if (inScope.length === 0) return null;
-          return (
-            <section key={scope} aria-label={heading}>
-              <div className="border-b border-cream-200 bg-cream-50/50 px-4 py-2 sm:px-5">
-                <h3 className="text-[11px] font-medium uppercase tracking-wider text-warm-500">
-                  {heading}
-                </h3>
-                <p className="text-xs text-warm-400">{blurb}</p>
-              </div>
-              <ul className="divide-y divide-cream-200/80">
-                {inScope.map((finding, index) => (
-                  <Finding key={`${finding.kind}-${index}`} finding={finding} />
-                ))}
-              </ul>
-            </section>
-          );
-        })
+        <div className="divide-y divide-cream-200">
+          {SCOPE_SECTIONS.map((copy) => {
+            const inGroup = findings.filter((f) => groupOf(f) === copy.scope);
+            if (inGroup.length === 0 && copy.empty === null) return null;
+            return (
+              <ScopeSection
+                key={copy.scope}
+                id={`${sectionId}-${copy.scope}`}
+                copy={copy}
+                findings={inGroup}
+              />
+            );
+          })}
+        </div>
       )}
 
       <div className="border-t border-cream-200 bg-cream-50/50 p-3 sm:px-5">

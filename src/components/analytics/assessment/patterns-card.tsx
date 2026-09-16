@@ -14,8 +14,14 @@ const IS_ACCURACY: ReadonlySet<AssessmentAnomaly["kind"]> = new Set(["duplicate"
  * Computed, not written by the model: each row is arithmetic against the
  * trustworthy months, so the figure beside it can be checked. The AI's reading
  * of these appears separately, under "What stood out".
+ *
+ * Only period-scoped findings belong under this title. A missed bill is judged
+ * against its own payment history, so listing it here dated a live overdue bill
+ * to whichever period was open (#340); it has its own card, `MissedBillsCard`,
+ * which says what date it is true as of.
  */
-export function PatternsCard({ anomalies, fmt }: { anomalies: AssessmentAnomaly[]; fmt: Money }) {
+export function PatternsCard({ anomalies: all, fmt }: { anomalies: AssessmentAnomaly[]; fmt: Money }) {
+  const anomalies = all.filter((a) => a.scope === "period");
   return (
     <Section
       icon={Activity}

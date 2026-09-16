@@ -2,6 +2,17 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-17 - Watchlist no longer dates an overdue bill to the period on screen
+
+The Watchlist listed every finding under "findings from this period", but a missed bill is judged
+against the bill's own payment history, not the selected dates. Opening February 2019, a month with
+no transactions, reported a live 2026 overdue bill as though it belonged there. Findings now carry
+a `scope` (`period` or `outstanding`) and the Watchlist groups them under **In this period** and
+**Outstanding**. The period group is always shown, so a clean period says so even while a bill is
+overdue. The AI Assessment tab's "What changed this period" card had the same fault and now lists
+only period findings; the bill stays on that tab in **Missed bills**. The AI prompt,
+`get_assessment_facts` (MCP) and `scripts/assess.ts` all carry the distinction too.
+
 ## 2026-09-16 - Analytics Watchlist makes measured findings always available
 
 Analytics now has a **Watchlist** tab that surfaces live deterministic findings without requiring
