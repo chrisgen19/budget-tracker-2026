@@ -98,9 +98,9 @@ import {
   shouldStop,
 } from "@/lib/telegram/shutdown";
 import {
-  clearConflictStreak,
   newConflictStreak,
   recordPollingError,
+  recordPollingSuccess,
 } from "@/lib/telegram/polling-error";
 import { GEMINI_ENABLED, classifyMessage } from "@/lib/telegram/classify";
 import { findOtherCategory, matchCategory } from "@/lib/telegram/category-match";
@@ -2397,8 +2397,9 @@ export async function startTelegramBot(): Promise<void> {
         }
       );
       shutdown.abortIdlePoll = undefined;
-      // The token is ours again. Any later conflict is a new run, timed from its own start.
-      clearConflictStreak(conflicts);
+      // Ends a conflict run only once they have actually stopped -- a success while a second
+      // poller is still alternating with us proves nothing. See polling-error.ts.
+      recordPollingSuccess(conflicts, Date.now());
 
       for (const update of updates) {
         // Between updates, never inside one. A half-finished update is exactly the state that

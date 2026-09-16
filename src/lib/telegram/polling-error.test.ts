@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   CONFLICT_HANDOVER_MS,
+  CONFLICT_QUIET_MS,
   CONFLICT_REPEAT_EVERY,
   clearConflictStreak,
   isConflictError,
   newConflictStreak,
   recordPollingError,
+  recordPollingSuccess,
 } from "@/lib/telegram/polling-error";
 
 /**
@@ -142,5 +144,71 @@ describe("recordPollingError: everything else", () => {
 
     expect(log?.level).toBe("info");
     expect(streak.count).toBe(1);
+  });
+});
+
+/**
+ * Two pollers alternate rather than one simply losing: Telegram terminates the *earlier*
+ * `getUpdates`, so each side's call is live for the length of the other's backoff and an update
+ * landing there succeeds while the competitor is still running. A success is therefore not proof
+ * of ownership, and treating it as one suppressed the escalation exactly when traffic was flowing.
+ */
+describe("recordPollingSuccess", () => {
+  it("does not end a run while conflicts are still arriving", () => {
+    const streak = newConflictStreak();
+    recordPollingError(streak, CONFLICT, 0);
+
+    // An update got through 7s later, while the other poller is mid-backoff.
+    expect(recordPollingSuccess(streak, 7_000)).toBe(false);
+    expect(streak.count).toBe(1);
+  });
+
+  it("still escalates when successes interleave with a sustained conflict", () => {
+    const streak = newConflictStreak();
+    let now = 0;
+    let escalations = 0;
+    let handoverLines = 0;
+
+    // ~10 minutes: a conflict every 7s, a success every tenth iteration.
+    for (let i = 0; i < 90; i += 1) {
+      now += 7_000;
+      const log = recordPollingError(streak, CONFLICT, now);
+      if (log?.level === "error") escalations += 1;
+      if (log?.level === "info") handoverLines += 1;
+      if (i % 10 === 9) recordPollingSuccess(streak, now + 1_000);
+    }
+
+    // Before the quiet rule this was 9 handover lines and no escalation at all.
+    expect(handoverLines).toBe(1);
+    expect(escalations).toBeGreaterThan(0);
+  });
+
+  it("ends the run once conflicts have been quiet long enough", () => {
+    const streak = newConflictStreak();
+    recordPollingError(streak, CONFLICT, 0);
+
+    expect(recordPollingSuccess(streak, CONFLICT_QUIET_MS - 1)).toBe(false);
+    expect(recordPollingSuccess(streak, CONFLICT_QUIET_MS)).toBe(true);
+    expect(streak.count).toBe(0);
+  });
+
+  it("clears a finished handover, so the next unrelated conflict is judged fresh", () => {
+    const streak = newConflictStreak();
+    // A handover: conflicts for ~28s, then the old container stops.
+    for (const t of [0, 7_000, 14_000, 21_000, 28_000]) recordPollingError(streak, CONFLICT, t);
+
+    // Idle polls return an empty array every ~20s; the third is past the quiet window.
+    recordPollingSuccess(streak, 48_000);
+    recordPollingSuccess(streak, 68_000);
+    expect(recordPollingSuccess(streak, 88_000)).toBe(true);
+
+    // Hours later, the next deploy. Timed from its own start, so it does not escalate.
+    const log = recordPollingError(streak, CONFLICT, 88_000 + 4 * 3_600_000);
+    expect(log?.level).toBe("info");
+  });
+
+  it("is a no-op when there is no run", () => {
+    const streak = newConflictStreak();
+    expect(recordPollingSuccess(streak, 500_000)).toBe(false);
   });
 });
