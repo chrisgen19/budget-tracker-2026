@@ -150,6 +150,18 @@ describe("PeriodPicker panel", () => {
       to: "2026-09-30",
     });
   });
+
+  it("keeps an analytics custom range within its API limit", () => {
+    const { onChange } = renderPicker({ maxCustomRangeDays: 3_660 });
+    openPanel();
+    fireEvent.click(screen.getByRole("button", { name: "Custom" }));
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2015-01-01" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-01-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply range" }));
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toBe("Choose a range of 3,660 days or fewer.");
+  });
 });
 
 describe("PeriodPicker panel follows the selection", () => {

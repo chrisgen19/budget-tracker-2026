@@ -2,6 +2,14 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-16 - Analytics API rejects oversized reports before querying
+
+`GET /api/analytics` now accepts at most 3,660 inclusive calendar days (about ten years) and 260
+chart buckets. The limits are checked after request validation and before either transaction query,
+so a direct caller cannot turn a dense daily series or an overly granular chart into an unbounded
+database read. The picker blocks custom ranges over the day limit, and the API rejects excessive
+bucket counts.
+
 ## 2026-09-16 - Analytics makes the transaction-type filter's scope explicit
 
 The Income / Expense / All control now sits inside a **Transaction breakdowns** section containing

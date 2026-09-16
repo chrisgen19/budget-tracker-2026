@@ -10,7 +10,6 @@ import {
 } from "@/lib/analytics-url";
 import { motion, useIsomorphicLayoutEffect } from "framer-motion";
 import {
-  AlertTriangle,
   BarChart3,
   Gauge,
   Sparkles,
@@ -29,6 +28,7 @@ import {
 } from "@/lib/analytics-period";
 import { PageHeader } from "@/components/ui/page-header";
 import { PeriodPicker } from "@/components/ui/period-picker";
+import { AnalyticsLoadError } from "@/components/analytics/analytics-load-error";
 import { AnalyticsReports } from "@/components/analytics/analytics-reports";
 import { AnalyticsHero } from "@/components/analytics/analytics-hero";
 import { AnalyticsHeroSkeleton, AnalyticsContentSkeleton } from "@/components/analytics/analytics-skeleton";
@@ -39,6 +39,7 @@ import { BudgetPerformance } from "@/components/analytics/budget-performance";
 import { AiAssessmentReport } from "@/components/analytics/ai-assessment-report";
 import { stagger, fadeUp } from "@/components/analytics/motion-variants";
 import type { AnalyticsTypeFilter } from "@/types";
+import { MAX_ANALYTICS_RANGE_DAYS } from "@/lib/analytics-limits";
 
 type AnalyticsTab = AnalyticsTabId;
 
@@ -245,7 +246,7 @@ export default function AnalyticsPage() {
     type: typeFilter,
   }), [granularity, period.from, period.to, typeFilter]);
 
-  const { data, isLoading, isError, refetch } = useAnalyticsQuery(params, tz);
+  const { data, isLoading, isError, error, refetch } = useAnalyticsQuery(params, tz);
 
   // Drill-downs must cover the rows behind the displayed actual, not the future
   // tail of the picker range that the API deliberately clipped away.
@@ -329,6 +330,7 @@ export default function AnalyticsPage() {
               tz={tz}
               label={periodLabel}
               presentation="popover"
+              maxCustomRangeDays={MAX_ANALYTICS_RANGE_DAYS}
             />
           </div>
         }
@@ -358,6 +360,7 @@ export default function AnalyticsPage() {
               tz={tz}
               label={periodLabel}
               presentation="popover"
+              maxCustomRangeDays={MAX_ANALYTICS_RANGE_DAYS}
             />
           </div>
           <div className={cn("justify-center", tabBarInView ? "hidden" : "flex")}>
@@ -411,21 +414,7 @@ export default function AnalyticsPage() {
       {isLoading ? (
         <AnalyticsContentSkeleton />
       ) : isError || !data ? (
-        <div className="card p-8 flex flex-col items-center gap-3 text-center">
-          <div className="w-12 h-12 rounded-xl bg-red-50 flex items-center justify-center">
-            <AlertTriangle className="w-6 h-6 text-red-400" />
-          </div>
-          <h3 className="font-serif text-lg text-warm-700">Failed to load analytics</h3>
-          <p className="text-sm text-warm-400 max-w-sm">
-            Something went wrong while fetching your data. Please try again.
-          </p>
-          <button
-            onClick={() => refetch()}
-            className="mt-2 px-4 py-2 rounded-lg bg-amber-50 text-amber-700 text-sm font-medium hover:bg-amber-100 transition-colors"
-          >
-            Try again
-          </button>
-        </div>
+        <AnalyticsLoadError error={error} onRetry={() => refetch()} />
       ) : (
         <>
           {/* Reports Tab */}
