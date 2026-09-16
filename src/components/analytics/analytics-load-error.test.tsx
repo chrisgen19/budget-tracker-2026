@@ -15,7 +15,9 @@ describe("AnalyticsLoadError", () => {
     const onRetry = vi.fn();
     render(<AnalyticsLoadError error={new Error("Failed to fetch analytics")} onRetry={onRetry} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    const retry = screen.getByRole("button", { name: "Try again" });
+    expect(retry.className).toContain("min-h-11");
+    fireEvent.click(retry);
     expect(onRetry).toHaveBeenCalledOnce();
   });
 });
