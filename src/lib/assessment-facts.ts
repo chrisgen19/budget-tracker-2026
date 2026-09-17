@@ -30,6 +30,7 @@ import {
   describeCoverage,
   describePeriodProgress,
   parseCalendarDay as parseDay,
+  shiftCalendarDay as addDays,
 } from "@/lib/period-progress";
 import type {
   AiWatchSeverity,
@@ -152,6 +153,17 @@ const SEASONAL_SWING = 2;
 const BILL_VARIANCE_PCT = 15;
 /** A projected overshoot below this is inside the noise of a partial month. */
 const PACE_OVERSHOOT = 1.15;
+/** A recurring charge due inside this many days is worth a heads-up before it lands. */
+const RECURRING_RENEWAL_DAYS = 7;
+/**
+ * Overdue by this many of its own cycles before a recurring charge is called stopped.
+ *
+ * One whole extra cycle, not a fixed number of days: a weekly charge four days late is simply
+ * late, while a yearly one four days late is not news at all.
+ */
+const RECURRING_LAPSE_CYCLES = 1;
+/** A recurring charge moving this far from its own average is a price change rather than noise. */
+const RECURRING_AMOUNT_CHANGE_PCT = 20;
 
 /* ------------------------------------------------------------------ */
 /*  Calendar-day helpers                                               */
@@ -190,6 +202,31 @@ const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
 const round = (n: number): number => Math.round(n * 100) / 100;
 const pct = (part: number, whole: number): number | null =>
   whole === 0 ? null : Math.round((part / whole) * 100);
+
+const median = (xs: number[]): number => {
+  if (xs.length === 0) return 0;
+  const sorted = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+};
+
+/**
+ * The cadence of a repeating charge, as the median gap between the days it landed on.
+ *
+ * Median rather than mean because a single missed or double-logged cycle would otherwise move the
+ * answer permanently, and cadence is the basis of both "renews soon" and "seems to have stopped" —
+ * two claims that a drifting figure would make at the wrong times for months.
+ *
+ * Days are deduplicated first: two rows on one day are a double submit far more often than a real
+ * second charge, and a zero-day gap dragged the median toward nothing.
+ */
+const chargeIntervalDays = (days: string[]): number | null => {
+  const distinct = [...new Set(days)].sort();
+  if (distinct.length < 2) return null;
+  const gaps = distinct.slice(1).map((day, index) => daysBetween(distinct[index], day));
+  const value = Math.round(median(gaps));
+  return value > 0 ? value : null;
+};
 
 /**
  * Descriptions are compared folded: "Netflix " and "netflix" are one thing, and
@@ -517,15 +554,17 @@ export const computeRecurring = (
    */
   historyFirstSeen: ReadonlyMap<string, string> = new Map(),
 ): AssessmentRecurringFacts => {
-  const groups = new Map<string, { months: Set<string>; amounts: number[]; days: string[]; label: string }>();
+  // Day and amount travel together. They used to be two parallel arrays, one of
+  // which was then sorted in place: any figure read by position after that
+  // belonged to a different charge than the date beside it.
+  const groups = new Map<string, { months: Set<string>; charges: Array<{ day: string; amount: number }>; label: string }>();
   for (const t of transactions) {
     if (t.type !== "EXPENSE") continue;
     const key = foldDescription(t.description);
     if (!key) continue;
-    const g = groups.get(key) ?? { months: new Set<string>(), amounts: [], days: [], label: t.description.trim() };
+    const g = groups.get(key) ?? { months: new Set<string>(), charges: [], label: t.description.trim() };
     g.months.add(monthOf(t.localDate));
-    g.amounts.push(t.amount);
-    g.days.push(t.localDate);
+    g.charges.push({ day: t.localDate, amount: t.amount });
     groups.set(key, g);
   }
 
@@ -536,24 +575,34 @@ export const computeRecurring = (
 
   const items: AssessmentRecurringItem[] = [];
   for (const [key, g] of groups) {
-    const days = g.days.sort();
+    const charges = [...g.charges].sort((a, b) => a.day.localeCompare(b.day));
+    const amounts = charges.map((c) => c.amount);
+    const days = charges.map((c) => c.day);
     const firstSeen = historyFirstSeen.get(key) ?? days[0];
-    const monthlyCost = sum(g.amounts) / g.months.size;
+    const lastSeen = days[days.length - 1];
+    const monthlyCost = sum(amounts) / g.months.size;
     const isNew = daysBetween(firstSeen, today) <= NEW_RECURRING_DAYS && monthlyCost >= materialMonthly;
     // Two sightings inside four months is a habit forming; four months is an
     // established one. A new charge should not have to wait a third of a year
     // to be noticed, which is the whole point of watching for creep.
     const established = g.months.size >= RECURRING_MIN_MONTHS;
     if (!established && !(isNew && g.months.size >= 2)) continue;
+    const intervalDays = chargeIntervalDays(days);
+    const expectedNextDate = intervalDays === null ? null : addDays(lastSeen, intervalDays);
     items.push({
       description: g.label,
       months: g.months.size,
-      occurrences: g.amounts.length,
-      avgAmount: round(sum(g.amounts) / g.amounts.length),
-      total: round(sum(g.amounts)),
+      occurrences: amounts.length,
+      avgAmount: round(sum(amounts) / amounts.length),
+      total: round(sum(amounts)),
       isNew,
       firstSeen,
-      lastSeen: days[days.length - 1],
+      lastSeen,
+      intervalDays,
+      expectedNextDate,
+      daysOverdue: expectedNextDate === null ? 0 : Math.max(0, daysBetween(expectedNextDate, today)),
+      latestAmount: round(amounts[amounts.length - 1]),
+      priorAvgAmount: amounts.length < 2 ? null : round(sum(amounts.slice(0, -1)) / (amounts.length - 1)),
     });
   }
 
@@ -916,12 +965,21 @@ export const computeBillFacts = (
 
 interface AnomalyContext {
   period: { from: string; to: string };
+  /**
+   * The user's own calendar day.
+   *
+   * Outstanding findings are measured against it rather than against the period, which is the
+   * whole of what makes them outstanding: a subscription renewing on Friday does not renew
+   * differently because a 2019 report is open.
+   */
+  today: string;
   /** The period's calendar month, or null when it spans more than one. */
   periodMonth: string | null;
   periodTx: FactTransaction[];
   windowTx: FactTransaction[];
   confidence: AssessmentDataConfidence;
   bills: AssessmentBillFacts;
+  recurring: AssessmentRecurringFacts;
   hygiene: AssessmentHygieneFacts;
   /** Trustworthy months excluding the period's own — what "normal" is measured against. */
   baselineMonths: string[];
@@ -938,13 +996,6 @@ interface AnomalyContext {
   periodIncome: number;
   periodExpenses: number;
 }
-
-const median = (xs: number[]): number => {
-  if (xs.length === 0) return 0;
-  const sorted = [...xs].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-};
 
 /**
  * Whether the selected period bounds each kind of finding.
@@ -975,6 +1026,13 @@ const ANOMALY_SCOPE: Record<AssessmentAnomalyKind, AssessmentAnomalyScope> = {
   duplicate: "period",
   "logging-gap": "period",
   "missed-bill": "outstanding",
+  // Recurring charges are judged against their own history and against today's date, never
+  // against the selected window: a subscription that renews on Friday renews on Friday whether
+  // the report on screen is this month's or one from 2019.
+  "recurring-new": "outstanding",
+  "recurring-ended": "outstanding",
+  "recurring-amount-change": "outstanding",
+  "recurring-renews-soon": "outstanding",
 };
 
 const anomaly = (
@@ -1245,6 +1303,91 @@ const detectCashFlowAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
   return out;
 };
 
+/**
+ * Changes to the fixed base underneath the discretionary spending.
+ *
+ * Four questions about a repeating charge, and all four are asked of today rather than of the
+ * selected period — which is why every kind here is `outstanding`. A subscription that renews on
+ * Friday renews on Friday whichever month's report happens to be open.
+ *
+ * Only *established* charges are judged for lapse, renewal and price: a charge seen twice has no
+ * cadence worth trusting, and reporting that it "seems to have stopped" after one skipped fortnight
+ * would be noise. A charge that is new has its own finding, which is the one thing worth saying
+ * about a habit that has not settled yet.
+ */
+const detectRecurringAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
+  const out: AssessmentAnomaly[] = [];
+  const chargeDrillDown = (item: AssessmentRecurringItem): AssessmentAnomalyDrillDown => ({
+    destination: "transactions",
+    type: "EXPENSE",
+    search: item.description || undefined,
+    from: item.firstSeen,
+    to: ctx.today,
+  });
+  // Identity is the charge and the question asked about it, never the figures: a snoozed "renews
+  // soon" must stay snoozed as the date moves nearer, and a resolved price change must not return
+  // because one more month shifted the average by a peso.
+  const stateKey = (item: AssessmentRecurringItem, question: string) =>
+    `recurring:${foldDescription(item.description)}:${question}`;
+
+  for (const item of ctx.recurring.newItems.slice(0, 3)) {
+    out.push(anomaly("recurring-new", "low",
+      `${item.description} is a new recurring charge`,
+      `First seen on ${item.firstSeen} and charged in ${item.months} months since. It now costs about ${item.intervalDays ? `one payment every ${item.intervalDays} days` : "one payment a month"} and did not exist in the earlier months of the window.`,
+      {
+        current: item.avgAmount,
+        drillDown: chargeDrillDown(item),
+        stateKey: stateKey(item, "new"),
+        findingKeyEvidence: JSON.stringify({ firstSeen: item.firstSeen, occurrences: item.occurrences }),
+      }));
+  }
+
+  for (const item of ctx.recurring.items) {
+    if (item.isNew || item.months < RECURRING_MIN_MONTHS || item.intervalDays === null) continue;
+
+    if (item.daysOverdue > item.intervalDays * RECURRING_LAPSE_CYCLES) {
+      out.push(anomaly("recurring-ended", "low",
+        `${item.description} has stopped charging`,
+        `It was charged about every ${item.intervalDays} days, and the last one was on ${item.lastSeen} — ${item.daysOverdue} days past when the next was due. Either it was cancelled, or the payment was not logged.`,
+        {
+          current: item.avgAmount,
+          drillDown: chargeDrillDown(item),
+          stateKey: stateKey(item, "ended"),
+        }));
+      continue;
+    }
+
+    if (item.expectedNextDate !== null && item.daysOverdue === 0
+      && daysBetween(ctx.today, item.expectedNextDate) <= RECURRING_RENEWAL_DAYS) {
+      out.push(anomaly("recurring-renews-soon", "low",
+        `${item.description} renews around ${item.expectedNextDate}`,
+        `It has been charged every ${item.intervalDays} days or so, and the next one is due within ${RECURRING_RENEWAL_DAYS} days. Cancel it before then if it is not being used.`,
+        {
+          current: item.avgAmount,
+          drillDown: chargeDrillDown(item),
+          stateKey: stateKey(item, "renews-soon"),
+        }));
+    }
+
+    const prior = item.priorAvgAmount;
+    if (prior === null || prior === 0) continue;
+    const change = pct(item.latestAmount - prior, prior);
+    if (change === null || Math.abs(change) < RECURRING_AMOUNT_CHANGE_PCT) continue;
+    out.push(anomaly("recurring-amount-change", change > 0 ? "medium" : "low",
+      `${item.description} now costs ${Math.abs(change)}% ${change > 0 ? "more" : "less"}`,
+      `The charge on ${item.lastSeen} is ${Math.abs(change)}% ${change > 0 ? "above" : "below"} the average of the ${item.occurrences - 1} before it. A price rise on a charge that repeats costs that much every cycle from here.`,
+      {
+        current: item.latestAmount,
+        baseline: prior,
+        changePct: change,
+        drillDown: chargeDrillDown(item),
+        stateKey: stateKey(item, "amount-change"),
+        findingKeyEvidence: JSON.stringify({ lastSeen: item.lastSeen, latestAmount: item.latestAmount }),
+      }));
+  }
+  return out;
+};
+
 /** Findings about the data itself: missed bills, duplicates, days with nothing logged. */
 const detectHygieneAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
   const out: AssessmentAnomaly[] = [];
@@ -1303,6 +1446,7 @@ export const detectAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] =>
     ...detectCashFlowAnomalies(ctx),
     ...detectCategorySpikes(ctx),
     ...detectOutlierTransactions(ctx),
+    ...detectRecurringAnomalies(ctx),
   ].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
 
 /* ------------------------------------------------------------------ */
@@ -1373,6 +1517,7 @@ export const buildAssessmentFacts = (input: FactsInput): AssessmentFacts => {
 
   const anomalies = detectAnomalies({
     period,
+    today,
     periodMonth,
     // Only clip when the period is a single month still running; a completed one
     // is compared whole, and a multi-month period has no day to clip to.
@@ -1382,6 +1527,7 @@ export const buildAssessmentFacts = (input: FactsInput): AssessmentFacts => {
     windowTx: transactions,
     confidence,
     bills: billFacts,
+    recurring,
     hygiene,
     baselineMonths,
     baselineBurn,

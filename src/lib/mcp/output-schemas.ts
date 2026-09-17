@@ -847,6 +847,11 @@ const recurringItem = z.object({
   isNew: z.boolean(),
   firstSeen: z.string(),
   lastSeen: z.string(),
+  intervalDays: z.number().nullable(),
+  expectedNextDate: z.string().nullable(),
+  daysOverdue: z.number(),
+  latestAmount: z.number(),
+  priorAvgAmount: z.number().nullable(),
 });
 assertExact<z.infer<typeof recurringItem>, AssessmentRecurringItem>(true);
 
@@ -910,6 +915,10 @@ const anomaly = z.object({
     "duplicate",
     "logging-gap",
     "missed-bill",
+    "recurring-new",
+    "recurring-ended",
+    "recurring-amount-change",
+    "recurring-renews-soon",
   ]),
   // "outstanding" means the selected period does not bound the finding - a missed bill is judged
   // against its own payment history, so it is true now rather than true of the window.

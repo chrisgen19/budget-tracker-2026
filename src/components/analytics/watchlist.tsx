@@ -42,6 +42,10 @@ const KIND_LABEL: Record<AssessmentAnomaly["kind"], string> = {
   duplicate: "Possible duplicate",
   "logging-gap": "Data coverage",
   "missed-bill": "Bill follow-up",
+  "recurring-new": "New recurring charge",
+  "recurring-ended": "Recurring charge stopped",
+  "recurring-amount-change": "Recurring charge changed",
+  "recurring-renews-soon": "Renews soon",
 };
 
 const SEVERITY_STYLE: Record<
