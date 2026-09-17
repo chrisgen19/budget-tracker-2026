@@ -21,6 +21,7 @@ import {
   type FactBill,
   type FactTransaction,
 } from "./assessment-facts";
+import { watchlistFindingKey } from "./watchlist-findings";
 import type { BudgetPerformanceData } from "@/types";
 
 let seq = 0;
@@ -1236,8 +1237,30 @@ describe("bill-behaviour findings", () => {
       bill({ nextDueDate: new Date(Date.UTC(2026, 8, 11)) }),
       bill({ id: "b2", description: "Maynilad", nextDueDate: new Date(Date.UTC(2026, 8, 12)) }),
     ]);
-    expect(one?.stateKey).toBeUndefined();
+    expect(one?.stateKey).toBe("bill:due-soon:b1@2026-09-11");
+    expect(one?.stateKey).not.toBe(two?.stateKey);
     expect(one?.findingKeyEvidence).not.toBe(two?.findingKeyEvidence);
+  });
+
+  /**
+   * ...and it is the set and nothing else. Without an explicit `stateKey` the finding key folds in
+   * `current`, which is `dueSoonTotal`, and a variable bill's share of that is re-derived from its
+   * payment history on every run. Correcting a typo'd payment moved the total while the set of
+   * bills stood still, and the resolve or snooze taken over it was silently lost.
+   */
+  it("survives a correction to a variable bill's payment history", () => {
+    const due = new Date(Date.UTC(2026, 8, 11));
+    const variable = (amount: number) => bill({
+      isVariable: true,
+      nextDueDate: due,
+      payments: [{ id: "p1", date: new Date(Date.UTC(2026, 7, 10)), amount }],
+    });
+    const before = findingOf("bill-due-soon", [variable(8000)]);
+    const after = findingOf("bill-due-soon", [variable(8200)]);
+    const period = { from: "2026-09-01", to: "2026-09-30" };
+
+    expect(before?.current).not.toBe(after?.current);
+    expect(watchlistFindingKey(before!, period)).toBe(watchlistFindingKey(after!, period));
   });
 
   it("reports an occurrence that has been deferred three times and still not settled", () => {

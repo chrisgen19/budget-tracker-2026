@@ -1142,13 +1142,14 @@ interface AnomalyContext {
  * quietly label the next standing condition as belonging to whatever period is on screen. That is
  * the mistake #340 fixed, and the map is here so it cannot be made a second time.
  *
- * Only `missed-bill` is outstanding. Every other producer either filters on `inPeriod`
- * (`duplicate`, `logging-gap`) or measures the period against baseline months, while bills are
- * judged against their own full payment history (see `buildAssessmentFacts`).
+ * `missed-bill` was once the only outstanding kind; the recurring-charge and bill-behaviour
+ * families join it here. Every other producer either filters on `inPeriod` (`duplicate`,
+ * `logging-gap`) or measures the period against baseline months, while bills and repeating charges
+ * are judged against their own full history (see `buildAssessmentFacts`).
  *
  * An outstanding kind is grouped apart in the Watchlist and left out of the AI tab's "What changed
- * this period" card entirely, since the missed bill has `MissedBillsCard` there. A second
- * outstanding kind needs a home of its own on that tab, or it will not appear on it.
+ * this period" card entirely, so it needs a home of its own on that tab or it will not appear on
+ * it at all. `MissedBillsCard` is that home for `missed-bill`; `OutstandingCard` holds the rest.
  */
 const ANOMALY_SCOPE: Record<AssessmentAnomalyKind, AssessmentAnomalyScope> = {
   "budget-threshold": "period",
@@ -1471,8 +1472,14 @@ const detectBillAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
       {
         current: ctx.bills.dueSoonTotal,
         drillDown: { destination: "bills" },
-        // No `stateKey`: the identity is the set of bills, so a newly due bill is a new finding
-        // rather than one silently covered by a snooze taken over a different bill last week.
+        // The identity is the *set* of bills, so a newly due bill is a new finding rather than one
+        // silently covered by a snooze taken over a different bill last week. It has to be a
+        // `stateKey` and not the default hash: that hash folds in `current`, which is
+        // `dueSoonTotal`, and a variable bill's share of it is re-derived by `estimateBillAmount`
+        // on every run. Correcting a typo'd payment or logging an out-of-order one would move the
+        // total while the set of bills stood still, re-raising a finding already dealt with --
+        // the same hazard `bill-under-budgeted` keys around two blocks below.
+        stateKey: `bill:due-soon:${dueSoon.map((b) => `${b.id}@${b.dueDate}`).join(",")}`,
         findingKeyEvidence: JSON.stringify(dueSoon.map((b) => [b.id, b.dueDate])),
       }));
   }
