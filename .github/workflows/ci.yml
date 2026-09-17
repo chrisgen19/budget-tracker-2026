@@ -47,6 +47,36 @@ jobs:
       - name: Type check
         run: pnpm type-check
 
+      # `next build` is the only thing in this pipeline that validates a page module's exports,
+      # and nothing here ran it until #337. #332 exported a component from
+      # src/app/(app)/analytics/page.tsx so a test could reach it; `next typegen` and
+      # `tsc --noEmit` both accept that, and the deploy then failed with
+      # `"AnalyticsTabBar" is not a valid Page export field`. Two merges reached main green and
+      # left production building the previous image for 22 minutes. The build is also the only
+      # check here that exercises the serwist service-worker bundling and route collection.
+      #
+      # `pnpm build`, never `pnpm build:deploy`. That one runs `prisma migrate deploy`, and the
+      # whole of #192 is that migrating must never live behind a name a CI provider might call by
+      # convention. `scripts/build-scripts.test.ts` asserts that split, and this step is the
+      # reason it has to keep asserting it.
+      #
+      # GEMINI_API_KEY here is a placeholder and not a secret. `src/lib/gemini.ts` constructs
+      # `GoogleGenAI` at module scope, so collecting page data for /api/assessment/daily-tip
+      # throws "API key must be set when using the Gemini API" without one; nothing calls Gemini
+      # during a build. Measured against a clean environment with no `.env`: this is the *only*
+      # variable the build needs -- not DATABASE_URL, not NEXTAUTH_SECRET. Lazily constructing
+      # that client would remove even this, and is its own change.
+      #
+      # Deliberately no `.next/cache` restore, against the Next.js CI guidance, because the
+      # numbers here do not support it: measured on this repo a cold build is 94s and a warm one
+      # 63s, while `.next/cache` is 564MB. Moving that much through the Actions cache costs more
+      # wall clock than the 31s it saves, and it would crowd the shared 10GB budget that
+      # setup-node's pnpm store already draws on. Worth revisiting if the build grows.
+      - name: Build
+        run: pnpm build
+        env:
+          GEMINI_API_KEY: ci-build-placeholder-not-a-real-key
+
       - name: Test
         run: pnpm test
 
