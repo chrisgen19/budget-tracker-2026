@@ -517,6 +517,19 @@ describe("buildAssessmentFacts", () => {
     }
   });
 
+  it("attaches the narrowest useful follow-up destination to each finding", () => {
+    const anomalies = facts().anomalies;
+    expect(anomalies.find((a) => a.kind === "missed-bill")?.drillDown).toEqual({
+      destination: "bills",
+    });
+    expect(anomalies.find((a) => a.kind === "pace")?.drillDown).toEqual({
+      destination: "transactions",
+      type: "EXPENSE",
+      from: "2026-09-01",
+      to: "2026-09-30",
+    });
+  });
+
   it("measures a month in progress against the same days of the months before it", () => {
     const pace = facts().anomalies.find((a) => a.kind === "pace");
     // September has spent 15,000 in its first six days; the baseline months had

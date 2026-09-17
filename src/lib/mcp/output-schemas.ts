@@ -917,6 +917,14 @@ const anomaly = z.object({
   current: z.number().nullable(),
   baseline: z.number().nullable(),
   changePct: z.number().nullable(),
+  drillDown: z.object({
+    destination: z.enum(["transactions", "bills"]),
+    type: transactionType.optional(),
+    categoryId: z.string().optional(),
+    from: z.string().optional(),
+    to: z.string().optional(),
+    search: z.string().optional(),
+  }).optional(),
 });
 assertExact<z.infer<typeof anomaly>, AssessmentAnomaly>(true);
 

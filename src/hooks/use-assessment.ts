@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUser } from "@/components/user-provider";
 import { analyticsKeys } from "@/hooks/use-analytics";
 import type { AiAssessmentResponse, AiDailyTipResponse, AssessmentFactsResponse } from "@/types";
@@ -109,5 +109,22 @@ export function useAssessmentFactsQuery(p: AssessmentPeriod) {
     queryKey: assessmentKeys.facts(user.email, p),
     queryFn: () => fetchFacts(p),
     staleTime: 5 * 60_000,
+  });
+}
+
+export function useWatchlistFindingAction() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ findingKey, action }: { findingKey: string; action: "RESOLVED" | "SNOOZED" }) => {
+      const response = await fetch("/api/watchlist/findings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ findingKey, action }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Failed to save Watchlist action");
+      return body as { status: "RESOLVED" | "SNOOZED"; snoozedUntil: string | null };
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
   });
 }
