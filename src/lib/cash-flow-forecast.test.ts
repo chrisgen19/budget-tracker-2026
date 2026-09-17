@@ -58,6 +58,7 @@ describe("scheduledForecastEvents", () => {
     }], "2026-09-01", "2026-09-03", -480);
     expect(events).toMatchObject([
       { date: "2026-09-01", description: "Overdue: Rent" },
+      { date: "2026-09-01", description: "Overdue: Rent" },
       { date: "2026-09-01", description: "Rent" },
     ]);
   });

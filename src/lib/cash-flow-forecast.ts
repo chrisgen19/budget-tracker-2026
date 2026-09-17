@@ -41,16 +41,38 @@ export const scheduledForecastEvents = (schedules: ForecastSchedule[], from: str
       };
     };
 
-    // `nextDueDate` is the schedule's authoritative outstanding obligation. Put it on the first
-    // forecast day when overdue, then advance to ordinary in-window recurrences. Repeating every
-    // missed daily occurrence here would turn a stale schedule into hundreds of day-one events.
-    let includedOverdue = false;
+    const aggregateDailyOverdue = schedule.frequency === "DAILY" ||
+      (schedule.frequency === "CUSTOM" && schedule.customIntervalDays === 1);
+    let overdueCount = 0;
+    let overdueAmount = 0;
+    let overdueIsEstimated = false;
+
+    // Every missed weekly, monthly, and annual bill is still owed. Daily (including every-day
+    // custom) backlogs are aggregated so a long-stale schedule does not create hundreds of rows.
     while (due < fromDay && (!schedule.endDate || due <= schedule.endDate)) {
-      if (!includedOverdue && schedule.type === "EXPENSE" && !settledDates.has(key(due))) {
-        events.push(eventForDue(due, true));
-        includedOverdue = true;
+      if (schedule.type === "EXPENSE" && !settledDates.has(key(due))) {
+        const overdueEvent = eventForDue(due, true);
+        if (aggregateDailyOverdue) {
+          overdueCount += 1;
+          overdueAmount += overdueEvent.amount;
+          overdueIsEstimated ||= overdueEvent.estimated;
+        } else {
+          events.push(overdueEvent);
+        }
       }
       due = utcDayStart(computeNextDueDate(due, schedule.frequency, originalDay, schedule.customIntervalDays));
+    }
+
+    if (overdueCount > 0) {
+      events.push({
+        date: from,
+        amount: money(overdueAmount),
+        kind: "bill",
+        sourceId: schedule.id,
+        description: `Overdue: ${schedule.description || "Scheduled bill"} (${overdueCount} occurrences)`,
+        estimated: overdueIsEstimated,
+        assumption: `${overdueCount} overdue daily occurrence${overdueCount === 1 ? "" : "s"} included on the first forecast day.`,
+      });
     }
 
     while (due <= toDay && (!schedule.endDate || due <= schedule.endDate)) {
