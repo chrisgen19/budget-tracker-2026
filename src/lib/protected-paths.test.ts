@@ -60,6 +60,7 @@ describe("PROTECTED_PAGE_PATHS", () => {
       "/quick-log",
       "/transactions",
       "/bills",
+      "/goals",
       "/cards",
       "/categories",
       "/labels",

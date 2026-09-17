@@ -41,6 +41,23 @@ enum BillOccurrenceStatus {
   SNOOZED
 }
 
+/// What a savings target is for. The arithmetic is identical; the two differ in what being "off
+/// pace" means, which is why the distinction is stored rather than left to the name.
+///
+/// A GOAL is a one-off sum to reach by a date - a deposit, a laptop, a trip. A SINKING_FUND is an
+/// expense that recurs on a long cycle and is saved for a slice at a time, so it refills after
+/// every withdrawal rather than completing once.
+enum SavingsGoalKind {
+  GOAL
+  SINKING_FUND
+}
+
+enum SavingsGoalStatus {
+  ACTIVE
+  ACHIEVED
+  ARCHIVED
+}
+
 /// What a card payment record is. Neither kind is spending: the purchases were counted when they
 /// were made, so these only lower what the card owes.
 enum CreditPaymentKind {
@@ -162,6 +179,7 @@ model User {
   creditPayments             CreditPayment[]
   budgetPlans                BudgetPlan[]
   watchlistFindingStates     WatchlistFindingState[]
+  savingsGoals               SavingsGoal[]
   createdAt                  DateTime               @default(now()) @map("created_at")
   updatedAt                  DateTime               @updatedAt @map("updated_at")
 
@@ -294,6 +312,66 @@ model WatchlistFindingState {
   @@unique([userId, findingHash])
   @@index([userId, status, snoozedUntil])
   @@map("watchlist_finding_states")
+}
+
+/**
+ * A sum the user is deliberately putting aside, and by when.
+ *
+ * The point of the model is the word deliberately. A positive net cash flow is money that happened
+ * not to be spent, which is a different thing from money assigned to a deposit on a house, and
+ * every report here could previously only see the first. Funded amounts therefore come from
+ * explicit `SavingsGoalContribution` rows and never from a residual: a month where nothing was
+ * spent must not read as a month where the goal advanced.
+ *
+ * `targetDate` is stored at UTC midnight and read as a calendar day, the way every bill date in
+ * this schema is - it is a day in the user's own calendar, not an instant.
+ */
+model SavingsGoal {
+  id            String                     @id @default(cuid())
+  userId        String                     @map("user_id")
+  user          User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name          String
+  kind          SavingsGoalKind            @default(GOAL)
+  targetAmount  Float                      @map("target_amount")
+  /// The day it should be funded by, or null for a goal with no deadline. Pace is only
+  /// computable against a date, so a goal without one reports progress and never "off track".
+  targetDate    DateTime?                  @map("target_date")
+  status        SavingsGoalStatus          @default(ACTIVE)
+  notes         String?
+  contributions SavingsGoalContribution[]
+  createdAt     DateTime                   @default(now()) @map("created_at")
+  updatedAt     DateTime                   @updatedAt @map("updated_at")
+
+  @@unique([userId, name])
+  @@index([userId, status])
+  @@map("savings_goals")
+}
+
+/**
+ * Money put into a goal, or taken back out of it.
+ *
+ * One signed column rather than a kind enum and a positive amount: funded is the sum of the
+ * column, which is the figure every other number here derives from, and a sign cannot disagree
+ * with a status the way two fields can. A withdrawal is a negative row.
+ *
+ * Deliberately *not* a `Transaction`. Moving money into savings is not spending it, and a
+ * contribution written as an EXPENSE would land in every category report, the assessment and the
+ * budget as though the money were gone - the same reasoning that keeps `CreditPayment` out of the
+ * transactions table.
+ */
+model SavingsGoalContribution {
+  id        String      @id @default(cuid())
+  goalId    String      @map("goal_id")
+  goal      SavingsGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  /// Positive puts money in, negative takes it back out. Never zero.
+  amount    Float
+  /// The calendar day it was assigned, at UTC midnight.
+  date      DateTime
+  note      String?
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  @@index([goalId, date])
+  @@map("savings_goal_contributions")
 }
 
 model Transaction {
