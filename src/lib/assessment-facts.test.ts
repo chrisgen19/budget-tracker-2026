@@ -963,6 +963,22 @@ describe("recurring-charge findings", () => {
     expect(found).toMatchObject({ severity: "medium", current: 699, baseline: 499, changePct: 40 });
   });
 
+  /**
+   * The threshold is on the absolute change, so a drop reaches this finding too. Every other part
+   * of it already branched on the direction -- only the closing sentence was written as though a
+   * charge could only ever go up, so a drop read "is 30% below ... A price rise ... costs that much".
+   */
+  it("says a price drop dropped, not rose", () => {
+    const found = factsOn("2026-08-10", charges(
+      ["2026-04-03", "2026-05-03", "2026-06-03", "2026-07-03", "2026-08-03"],
+      [499, 499, 499, 499, 349],
+    )).anomalies.find((a) => a.kind === "recurring-amount-change");
+    expect(found).toMatchObject({ severity: "low", current: 349, baseline: 499 });
+    expect(found?.detail).toContain("below");
+    expect(found?.detail).toContain("A price drop");
+    expect(found?.detail).not.toContain("A price rise");
+  });
+
   it("leaves a charge that moved less than a fifth alone", () => {
     expect(kinds("2026-08-10", charges(
       ["2026-04-03", "2026-05-03", "2026-06-03", "2026-07-03", "2026-08-03"],
@@ -975,6 +991,18 @@ describe("recurring-charge findings", () => {
       .anomalies.find((a) => a.kind === "recurring-new");
     expect(found).toMatchObject({ scope: "outstanding" });
     expect(found?.title).toContain("Netflix");
+  });
+
+  /**
+   * The Watchlist tab card renders `title` and `detail` and nothing else, so a sentence that
+   * promises a cost has to state one or stop promising. It said "costs about one payment every 31
+   * days", which is a cadence; the amount only ever travelled in `current`.
+   */
+  it("describes a new charge's cadence without claiming to state its cost", () => {
+    const found = factsOn("2026-08-10", charges(["2026-07-03", "2026-08-03"]))
+      .anomalies.find((a) => a.kind === "recurring-new");
+    expect(found?.detail).toContain("bills about every 31 days");
+    expect(found?.detail).not.toContain("costs about");
   });
 
   /**

@@ -1333,7 +1333,7 @@ const detectRecurringAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
   for (const item of ctx.recurring.newItems.slice(0, 3)) {
     out.push(anomaly("recurring-new", "low",
       `${item.description} is a new recurring charge`,
-      `First seen on ${item.firstSeen} and charged in ${item.months} months since. It now costs about ${item.intervalDays ? `one payment every ${item.intervalDays} days` : "one payment a month"} and did not exist in the earlier months of the window.`,
+      `First seen on ${item.firstSeen} and charged in ${item.months} months since. It bills about ${item.intervalDays ? `every ${item.intervalDays} days` : "once a month"} and did not exist in the earlier months of the window.`,
       {
         current: item.avgAmount,
         drillDown: chargeDrillDown(item),
@@ -1375,7 +1375,7 @@ const detectRecurringAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
     if (change === null || Math.abs(change) < RECURRING_AMOUNT_CHANGE_PCT) continue;
     out.push(anomaly("recurring-amount-change", change > 0 ? "medium" : "low",
       `${item.description} now costs ${Math.abs(change)}% ${change > 0 ? "more" : "less"}`,
-      `The charge on ${item.lastSeen} is ${Math.abs(change)}% ${change > 0 ? "above" : "below"} the average of the ${item.occurrences - 1} before it. A price rise on a charge that repeats costs that much every cycle from here.`,
+      `The charge on ${item.lastSeen} is ${Math.abs(change)}% ${change > 0 ? "above" : "below"} the average of the ${item.occurrences - 1} before it. ${change > 0 ? "A price rise" : "A price drop"} on a charge that repeats ${change > 0 ? "costs" : "saves"} that much every cycle from here.`,
       {
         current: item.latestAmount,
         baseline: prior,
