@@ -31,6 +31,7 @@ src/
 │   │   ├── transactions/   # Transaction list + CRUD
 │   │   ├── categories/     # Category management
 │   │   ├── bills/          # Recurring bills management
+│   │   ├── goals/          # Savings goals and sinking funds: targets, contributions, pace
 │   │   ├── cards/          # Credit cards: list, and one card's month (balance, purchases, payments)
 │   │   ├── quick-log/      # Quick Log: CRUD + one-tap logging for the quick-log buttons
 │   │   ├── profile/        # User profile + feature settings
@@ -45,6 +46,7 @@ src/
 │   ├── labels/             # LabelForm (with schedule config)
 │   ├── categories/         # Category form
 │   ├── bills/              # BillForm, BillReminderBanner, BillReminderProvider
+│   ├── goals/              # GoalForm, ContributionForm, GoalCard, GoalsSummaryBar
 │   ├── credit-accounts/    # CreditAccountForm, CardPurchasesForm (multi-line), CardPaymentForm, CardLedgerList, CardBreakdownTabs
 │   ├── pwa/                # InstallPromptBanner, OfflineBanner, InstallBannerContext
 │   ├── telegram/           # Mini App: TelegramApp shell, TileGrid, AmountSheet, TileEditor
@@ -65,6 +67,7 @@ src/
 │   ├── tokens.ts           # Verification/reset token helpers
 │   ├── session.ts          # Session utilities
 │   ├── bill-utils.ts       # Bill due-date advancement logic
+│   ├── savings-goals.ts    # Goal funding, pace and projected completion (pure + loader)
 │   ├── quick-tile-writes.ts   # Quick-log button rules, shared by /api/tg/* and /api/quick-tiles/*
 │   ├── scan-quota.ts       # Receipt scan credit reservation, refund, and rate limit
 │   ├── receipt-guard.ts    # Shared upload validation + permission gate for receipt routes
@@ -95,7 +98,7 @@ other agent tools do not load them, so open the file directly when you need the 
 - **[.claude/rules/transactions.md](.claude/rules/transactions.md)**: the shared create and update paths, the shared label-removal path, request body ceilings, idempotent batch saves, and label schedules and type restrictions. Loads on `src/lib/transaction-writes.ts`, `src/lib/label-writes.ts`, `src/lib/request-size.ts`, `src/app/api/transactions/**`, `src/app/api/labels/**`, `src/lib/schedule-matching.ts`, `src/lib/schedule-server.ts`, `src/hooks/use-scheduled-label.ts`, `src/hooks/use-transactions.ts`, `src/hooks/use-multi-scan.ts`, `src/lib/receipt-limits.ts`, `src/components/transactions/**`, `src/lib/mcp/server.ts`, `src/lib/telegram/confirm-scan.ts`, `src/lib/telegram/bot.ts`, `src/app/api/mcp/**`.
 - **[.claude/rules/bills.md](.claude/rules/bills.md)**: `settleBill` and the occurrence guard, `createBill`/`updateBill`, variable-amount forecasting, and why every bill date is UTC calendar-day arithmetic. Loads on `src/lib/bill-dates.ts`, `src/lib/bill-writes.ts`, `src/lib/bill-utils.ts`, `src/lib/bill-estimate.ts`, `src/app/api/bills/**`, `src/components/bills/**`, `src/lib/budget-queries.ts`, `src/lib/budget-query-types.ts`, `src/lib/pending-bills.ts`, `src/app/(app)/bills/**`, `src/app/api/cron/bill-reminders/**`, `src/hooks/use-bills.ts`, `src/components/dashboard/upcoming-bill-row.tsx`, `src/lib/mcp/server.ts`.
 - **[.claude/rules/testing.md](.claude/rules/testing.md)**: the Vitest setup, the Node floor, and what each `scripts/verify-*.ts` proves that a stubbed test cannot. Loads on `scripts/**`, `**/*.test.ts`, `**/*.test.tsx`, `e2e/**`, `vitest.config.mts`, `vitest.setup.ts`, `package.json`, `pnpm-lock.yaml`.
-- **[.claude/rules/assessment.md](.claude/rules/assessment.md)**: the deterministic facts half and the AI half, the coverage gate, and `AI_ASSESSMENT_DAILY_LIMIT`. Loads on `src/lib/assessment-facts.ts`, `src/lib/assessment-facts-query.ts`, `src/lib/ai-assessment.ts`, `src/app/api/assessment/**`, `scripts/assess.ts`, `scripts/refresh-local-mirror.ts`, `src/lib/validations.ts`, `src/components/analytics/assessment/**`, `src/components/analytics/ai-assessment-report.tsx`.
+- **[.claude/rules/assessment.md](.claude/rules/assessment.md)**: the deterministic facts half and the AI half, the coverage gate, the Watchlist's alert families and the three thresholds that are user settings, savings-goal pace, the directional cash forecast, and `AI_ASSESSMENT_DAILY_LIMIT`. Loads on `src/lib/assessment-facts.ts`, `src/lib/assessment-facts-query.ts`, `src/lib/ai-assessment.ts`, `src/lib/savings-goals.ts`, `src/app/api/assessment/**`, `src/app/api/goals/**`, `src/components/goals/**`, `src/components/profile/watchlist-form.tsx`, `src/components/analytics/watchlist.tsx`, `scripts/assess.ts`, `scripts/refresh-local-mirror.ts`, `src/lib/validations.ts`, `src/components/analytics/assessment/**`, `src/components/analytics/ai-assessment-report.tsx`.
 - **[.claude/rules/api-routes.md](.claude/rules/api-routes.md)**: the full API Routes Reference, every route the app exposes. Loads on `src/app/api/**`.
 - **[.claude/rules/receipts.md](.claude/rules/receipts.md)**: scanning and itemization, the scan-credit quota, receipt year repair, EXIF capture dates, and captions as hints. Loads on `src/lib/receipt-scan.ts`, `src/lib/receipt-date.ts`, `src/lib/receipt-guard.ts`, `src/lib/scan-quota.ts`, `src/lib/exif-date.ts`, `src/app/api/receipts/**`, `src/components/scan-receipt-sheet.tsx`, `src/components/multi-scan-review.tsx`, `src/components/scan-provider.tsx`, `src/components/profile/features-form.tsx`, `src/app/api/preferences/**`, `src/lib/telegram/bot.ts`.
 - **[.claude/rules/gemini.md](.claude/rules/gemini.md)**: the model, fallback, thinking and timeout variables that govern every AI call. Loads on `src/lib/gemini.ts`, `src/lib/receipt-scan.ts`, `src/lib/ai-assessment.ts`, `src/lib/gemini-limits.ts`, `src/app/api/receipts/**`, `src/lib/telegram/classify.ts`.
@@ -157,6 +160,20 @@ Active tasks:
   keeps `isDefault: true`, and `DELETE /api/categories/[id]` filters on `isDefault: false`, so it
   cannot be removed through the app. The seed reports these (`findOrphanedDefaults`) rather than
   repairing them: renaming one preserves its id and its transactions, but also relabels real spending
+- **Money put aside on purpose is not money left over.** A `SavingsGoalContribution` is deliberately
+  **not** a `Transaction`: moving money into savings is not spending it, and a row written as an
+  EXPENSE would land in every category report, the assessment and the budget as though the money
+  were gone - the same reasoning that keeps `CreditPayment` out of `transactions`, applied to the
+  other direction. A goal's funded amount is therefore the **signed sum of its contribution rows**
+  and never a residual, so a month where nothing was spent cannot read as a month where the deposit
+  got closer. One signed column rather than a kind enum and a positive number: funded is that sum,
+  which every other figure derives from, and a sign cannot disagree with a status the way two fields
+  can. A withdrawal is a negative row. Pace lives in `src/lib/savings-goals.ts` and is measured from
+  a goal's **first contribution**, not from when it was created - a goal set up in January and first
+  funded in June has been running one month, and dividing by six condemns a saver who is on track.
+  A goal with no `target_date` reports progress and no pace at all: pace against no deadline is a
+  category error, not a conservative estimate. Deleting a goal cascades to its contributions, so the
+  UI only offers delete for one with none and archiving is the answer for the rest
 - **A card purchase is spending; paying the card is not.** A purchase is an ordinary EXPENSE
   transaction carrying `credit_account_id` ("Paid with" on the form), so it reaches every category
   and label report, search, the assessment and MCP on the day it was bought, with no card-specific
@@ -179,8 +196,8 @@ Active tasks:
   but deletes nothing. Not yet: card due reminders, and "Paid with" on Telegram, receipt scans,
   quick-log tiles and MCP
 - Users can create custom categories on top of defaults
-- Key models: `User`, `Category`, `Transaction`, `ScheduledTransaction` (recurring bills; `@@map("scheduled_transactions")` — there is no `Bill` model), `ScheduledTransactionLog` (per-occurrence PAID/SKIPPED/SNOOZED), `BillEmailLog`, `Label`, `LabelSchedule`, `TransactionLabel`, `BillLabel`, `VerificationToken`, `ScanLog`, `AiAssessment`, `AiUsageLog`, `McpToken`, `AppSettings`, `TelegramPromptLog`, `TelegramQuickTile`, `TelegramQuickTileLabel`, `CreditAccount` (a credit card; balance derived, never stored), `CreditPayment` (payments and refunds on a card; never in `transactions`, so in no expense total)
-- Notable columns: `users.hide_amounts`, `users.timezone_offset`, `users.telegram_user_id` (the Mini App's identity half; set by hand with `scripts/link-telegram-user.ts`, so a restored database loses it), `users.email_verified`, `users.default_label_type`, `transactions.receipt_group_id`, `transactions.receipt_breakdown`, `transactions.bill_id`, `transactions.client_batch_id`, `transactions.created_via`, `transactions.mcp_token_id`, `transactions.updated_via`, `transactions.updated_by_mcp_token_id`, `users.mcp_writes_enabled_until`, `mcp_tokens.source`, `transactions.credit_account_id` (the credit card an expense was paid with; only an EXPENSE may carry it, see `src/lib/card-purchase-rule.ts`)
+- Key models: `User`, `Category`, `Transaction`, `ScheduledTransaction` (recurring bills; `@@map("scheduled_transactions")` — there is no `Bill` model), `ScheduledTransactionLog` (per-occurrence PAID/SKIPPED/SNOOZED), `BillEmailLog`, `Label`, `LabelSchedule`, `TransactionLabel`, `BillLabel`, `VerificationToken`, `ScanLog`, `AiAssessment`, `AiUsageLog`, `McpToken`, `AppSettings`, `TelegramPromptLog`, `TelegramQuickTile`, `TelegramQuickTileLabel`, `CreditAccount` (a credit card; balance derived, never stored), `CreditPayment` (payments and refunds on a card; never in `transactions`, so in no expense total), `BudgetPlan`/`BudgetAllocation`, `WatchlistFindingState` (a resolve or snooze, stored as a SHA-256 hash of the finding key and never its text), `SavingsGoal`/`SavingsGoalContribution`
+- Notable columns: `users.hide_amounts`, `users.timezone_offset`, `users.telegram_user_id` (the Mini App's identity half; set by hand with `scripts/link-telegram-user.ts`, so a restored database loses it), `users.email_verified`, `users.default_label_type`, `transactions.receipt_group_id`, `transactions.receipt_breakdown`, `transactions.bill_id`, `transactions.client_batch_id`, `transactions.created_via`, `transactions.mcp_token_id`, `transactions.updated_via`, `transactions.updated_by_mcp_token_id`, `users.mcp_writes_enabled_until`, `mcp_tokens.source`, `transactions.credit_account_id` (the credit card an expense was paid with; only an EXPENSE may carry it, see `src/lib/card-purchase-rule.ts`), `users.watchlist_outlier_ratio` / `users.watchlist_large_amount` / `users.watchlist_duplicate_alerts` (the only three Watchlist rules that are preferences rather than arithmetic; defaults match the constants the detectors shipped with)
 - `Label.applicable_to` restricts labels to "EXPENSE", "INCOME", or "BOTH" (default); filters LabelPicker, schedule auto-labeling, and retroactive apply
 - `LabelSchedule` stores per-label auto-apply rules: `days` (int[]), `startTime`/`endTime` (HH:mm), linked to `Label` via `labelId`
 

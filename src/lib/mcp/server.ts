@@ -1528,8 +1528,12 @@ export const createBudgetMcpServer = ({
         "aggregates cannot see that and will report a gap as an improvement. Read " +
         "`confidence.excludedMonths` and say so when a month was left out. Each anomaly's " +
         "`scope` is `period` when it was measured inside the requested dates and `outstanding` " +
-        "when it is true as of today whatever they are (a missed bill), so never describe an " +
-        "outstanding one as having happened in the period asked about. Costs no AI call.",
+        "when it is true as of today whatever they are -- a missed bill, a subscription that " +
+        "stopped, a bill due next week, a deposit that never arrived, a savings goal behind pace, " +
+        "or the projected cash shortfall in `forecast` -- so never describe an outstanding one as " +
+        "having happened in the period asked about. `forecast` is directional: its opening figure " +
+        "is every income logged minus every expense, not a bank balance, so say so rather than " +
+        "quoting it as one. Costs no AI call.",
       inputSchema: {
         // Same pattern as the six other month-taking tools here, and it has to be: `\d{2}` accepts
         // `2026-00` and `2026-13`, which `parseMonth` hands to `Date.UTC` unguarded. Those

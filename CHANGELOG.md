@@ -2,6 +2,93 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-17 - Unusual-charge rules can be set per account
+
+Three settings under **Profile > Preferences**: how many times a category's typical charge counts
+as unusual, an absolute figure that is a lot of money whatever the category has cost before, and
+whether possible duplicates are worth a Watchlist row at all. These are the only Watchlist rules
+that are preferences rather than arithmetic - everything else is measured against your own history.
+The defaults are the figures the detectors already used, so nothing changes until you change it.
+The duplicate switch turns off the *alert*, not the detection: duplicates are still found and still
+listed in the assessment's data-quality card.
+
+## 2026-09-17 - Watchlist warns when the balance is projected to run short
+
+The tracked balance is now projected forward day by day to the next expected deposit, subtracting
+the bills and recurring charges due in between, and a finding appears when the low point crosses
+zero. It is walked in date order rather than netted, because three bills in one week and a deposit
+the week after net out to comfortable and still bounce.
+
+**This is directional and the finding says so in its own words.** The opening figure is every
+income logged minus every expense - not a bank balance. It knows nothing about money in the account
+before tracking began, anything spent without being logged, or a card's opening balance. With no
+opening balance available it stays silent rather than assuming zero.
+
+## 2026-09-17 - Savings goals and sinking funds
+
+A new **Goals** page for money set aside on purpose. Each goal has a target, an optional deadline,
+and contributions you log deliberately - putting money in, or taking it back out. A contribution is
+never written as a transaction, so saving is not counted as spending anywhere in the app, and a
+quiet month is not mistaken for a month where the deposit got closer.
+
+Each goal shows what is funded, what is left, the rate it needs, the rate it is actually getting,
+and where that rate lands it. The observed rate is measured from the **first contribution**, not
+from when the goal was created: a goal set up in January and first funded in June has been running
+one month. A goal with no deadline shows progress and stays honest about not knowing its pace.
+
+Goals behind their required rate, and goals with a deadline and nothing in them yet, appear on the
+Watchlist with a link to the page. Funded and overdue goals stay quiet - an alert no amount of
+saving can act on is one you learn to ignore. Delete is offered only for a goal with no
+contributions; archiving is the answer for one with history.
+
+## 2026-09-17 - Watchlist says when the data is too thin to conclude anything
+
+Two new findings. **Data coverage** appears when most of the days in the selected period have
+nothing logged: the totals are a floor and the budget, pace and forecast readings are not worth
+acting on. **Not enough history** appears when fewer than three earlier months are logged well
+enough to form a baseline, since two months have no notion of what is ordinary.
+
+The coverage gate has always been enforced and was always silent unless the missing days happened
+to fall in one long run. Thirty days each missing half their rows produced no warning at all.
+Coverage is measured against days *elapsed*, so a month three days old is not reported as 90%
+missing. The existing logging-gap finding no longer escalates itself: it is the evidence and stays
+informational, and the coverage finding carries the weight.
+
+## 2026-09-17 - Watchlist chases an expected deposit that was never logged
+
+"No income logged this period" only fired when a period had *no* income at all. A month with one of
+three expected deposits recorded passed that check and was still short by two.
+
+The Watchlist now tracks each income source's own rhythm and says when one is overdue by name and
+by date: "Acme Payroll has not been logged since 15 July". The allowance scales with how often the
+deposit normally arrives, so a monthly salary is not chased because payday fell on a Sunday, and a
+weekly wage is not ignored for a fortnight.
+
+## 2026-09-17 - Watchlist covers bill behaviour beyond missed occurrences
+
+Three new findings, all from figures the app already computed and showed nowhere:
+
+- **Due soon** - what is committed in the next 14 days, before anything discretionary. Aggregated
+  into one row, since five bills in a fortnight is one trip to the Bills page.
+- **Put off repeatedly** - one occurrence snoozed three times or more and still neither paid nor
+  skipped. Counted per occurrence, so a bill snoozed once a month for a year is not flagged; an
+  occurrence later paid or skipped drops out however many times it was deferred first.
+- **Costs more than budgeted** - a bill whose payments run consistently above its configured
+  figure, which quietly shortens every forecast that reads it. Seasonal bills are excluded, as they
+  already are on the Bill Accuracy card.
+
+## 2026-09-17 - Watchlist covers recurring-charge changes
+
+Four new findings about repeating charges: one that has just appeared, one that has stopped
+charging, one that renews within a week, and one whose price has moved by a fifth or more against
+its own average.
+
+Each charge's cadence is measured from the gaps between the days it actually landed on, not assumed
+to be monthly, and a lapse is counted in cycles - a yearly charge four days late is not news, a
+weekly one is. All four are grouped under **Outstanding**, since a subscription renewing on Friday
+renews on Friday whichever month's report is open. The AI Assessment tab gained an **Open, whichever
+period is shown** card so these appear there too.
+
 ## 2026-09-17 - Watchlist findings can be resolved or snoozed
 
 Each live Watchlist finding now has **View transactions** (or **Go to Bills**), **Resolve**, and

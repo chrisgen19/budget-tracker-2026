@@ -21,6 +21,10 @@ paths:
 - `GET /api/dashboard` — aggregated stats, category breakdown, monthly trends
 - `GET/POST /api/categories` — list (defaults + custom) + create
 - `PUT/DELETE /api/categories/[id]` — update/delete (custom only)
+- `GET/POST /api/goals` — list savings goals with funded amount and pace, + create. `?includeArchived=true` widens the list. A duplicate name is a 409, not a 500: `@@unique([userId, name])` exists because two goals called "House" are indistinguishable in every list the app shows
+- `GET/PATCH/DELETE /api/goals/[id]` — one goal. `PATCH` takes `status` to archive, restore or mark achieved; an explicit `targetDate: null` clears the deadline, where omitting it leaves the column alone. `DELETE` cascades to the contributions, so the UI only offers it for a goal with none — archiving is the answer for one with history
+- `POST /api/goals/[id]/contributions` — assign money to a goal, or take it back out with a negative amount. **Never writes a `Transaction`**: moving money into savings is not spending it, and a row written as an EXPENSE would land in every category report, the assessment and the budget as though the money were gone
+- `DELETE /api/goals/[id]/contributions/[contributionId]` — remove one. Scoped through the goal's own `userId` in a single statement, never a read-then-check
 - `GET/POST /api/bills` — list + create bills
 - `PUT/DELETE /api/bills/[id]` — update/deactivate bills
 - `GET/POST /api/credit-accounts` — list credit cards with what each owes, derived from purchases and payments on every read and never stored (`?includeArchived=true` adds archived cards), + create one. 409 when an active card already has the name, compared without case
