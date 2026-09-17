@@ -929,6 +929,7 @@ const anomaly = z.object({
     search: z.string().optional(),
   }).optional(),
   findingKeyEvidence: z.string().optional(),
+  stateKey: z.string().optional(),
 });
 assertExact<z.infer<typeof anomaly>, AssessmentAnomaly>(true);
 

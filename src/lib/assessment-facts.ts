@@ -988,6 +988,7 @@ const anomaly = (
     changePct?: number | null;
     drillDown?: AssessmentAnomalyDrillDown;
     findingKeyEvidence?: string;
+    stateKey?: string;
   } = {},
 ): AssessmentAnomaly => ({
   kind,
@@ -1000,6 +1001,7 @@ const anomaly = (
   changePct: metrics.changePct ?? null,
   drillDown: metrics.drillDown,
   findingKeyEvidence: metrics.findingKeyEvidence,
+  stateKey: metrics.stateKey,
 });
 
 const periodDrillDown = (
@@ -1019,6 +1021,7 @@ const budgetMonthEnd = (month: string): string => {
 
 const thresholdSeverity = (threshold: number): AiWatchSeverity =>
   threshold >= 100 ? "high" : threshold >= 80 ? "medium" : "low";
+const MIN_BUDGET_FORECAST_DAYS = 5;
 
 /** Budget alerts use the same available/actual/projection figures as Budget Performance. */
 export const detectBudgetWatchlistAnomalies = (
@@ -1028,7 +1031,7 @@ export const detectBudgetWatchlistAnomalies = (
   if (!plan || budget.progress.daysElapsed === 0) return [];
   const to = budget.progress.effectiveTo ?? budgetMonthEnd(budget.month);
   return budget.allocations.flatMap((allocation) => {
-    if (allocation.type !== "EXPENSE" || allocation.available <= 0) return [];
+    if (allocation.type !== "EXPENSE" || allocation.kind !== "FLEXIBLE" || allocation.available <= 0) return [];
     const usedPct = (allocation.actual / allocation.available) * 100;
     const reached = [100, 80, 50].find((threshold) => usedPct >= threshold);
     const drillDown = {
@@ -1051,9 +1054,9 @@ export const detectBudgetWatchlistAnomalies = (
       thresholdSeverity(reached),
       `${allocation.categoryName} has reached ${reached}% of its budget`,
       `${Math.floor(usedPct)}% of this month's available budget is logged. Available includes any rollover carried into the month.`,
-      { current: allocation.actual, baseline: allocation.available, changePct: usedPct, drillDown, findingKeyEvidence: evidence },
+      { current: allocation.actual, baseline: allocation.available, changePct: usedPct, drillDown, findingKeyEvidence: evidence, stateKey: `budget:${plan.id}:${plan.revision}:${allocation.categoryId}:${reached}` },
     )];
-    if (allocation.forecastToExceed && allocation.actual <= allocation.available && allocation.projectedActual !== null) {
+    if (budget.progress.daysElapsed >= MIN_BUDGET_FORECAST_DAYS && allocation.forecastToExceed && allocation.actual <= allocation.available && allocation.projectedActual !== null) {
       findings.push(anomaly(
         "budget-forecast",
         "medium",
@@ -1065,6 +1068,7 @@ export const detectBudgetWatchlistAnomalies = (
           changePct: (allocation.projectedActual / allocation.available) * 100,
           drillDown,
           findingKeyEvidence: evidence,
+          stateKey: `budget:${plan.id}:${plan.revision}:${allocation.categoryId}:forecast`,
         },
       ));
     }
@@ -1290,6 +1294,8 @@ const detectHygieneAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
 };
 
 const SEVERITY_RANK: Record<AiWatchSeverity, number> = { high: 0, medium: 1, low: 2 };
+export const sortAssessmentAnomalies = (findings: AssessmentAnomaly[]): AssessmentAnomaly[] =>
+  [...findings].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
 
 export const detectAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] =>
   [

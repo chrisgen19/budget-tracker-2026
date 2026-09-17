@@ -13,13 +13,16 @@ import type { PrismaClient } from "@prisma/client";
 import { formatLocalDate } from "@/lib/validations";
 import {
   buildAssessmentFacts,
+  detectBudgetWatchlistAnomalies,
   foldDescription,
   longestToken,
   resolveFactsWindow,
   DEFAULT_HISTORY_MONTHS,
   type FactBill,
   type FactTransaction,
+  sortAssessmentAnomalies,
 } from "@/lib/assessment-facts";
+import { getBudgetPerformance } from "@/lib/budget-plans";
 import type { AssessmentFacts, TransactionType } from "@/types";
 
 export interface FactsParams {
@@ -29,6 +32,15 @@ export interface FactsParams {
   periodLabel: string;
   historyMonths?: number;
 }
+
+const isCalendarMonth = (from: string, to: string): boolean => {
+  const month = from.slice(0, 7);
+  const [, monthNumber] = month.split("-").map(Number);
+  if (!Number.isInteger(monthNumber) || monthNumber < 1 || monthNumber > 12 || from !== `${month}-01`) return false;
+  const [year] = month.split("-").map(Number);
+  const end = String(new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()).padStart(2, "0");
+  return to === `${month}-${end}`;
+};
 
 /** The UTC instant a user-local calendar day starts at. `Date.UTC(...) + tzOffset*60000`, app-wide. */
 const localDayStart = (day: string, tzMs: number): Date => new Date(new Date(`${day}T00:00:00.000Z`).getTime() + tzMs);
@@ -204,7 +216,7 @@ export const collectAssessmentFacts = async (
   const totalOf = (type: "INCOME" | "EXPENSE") =>
     allTime.find((row) => row.type === type)?._sum.amount ?? 0;
 
-  return buildAssessmentFacts({
+  const facts = buildAssessmentFacts({
     currency: user?.currency ?? "PHP",
     period: { from: params.from, to: params.to, label: params.periodLabel, granularity: params.granularity },
     today,
@@ -216,4 +228,9 @@ export const collectAssessmentFacts = async (
     allTimeTotals: { income: totalOf("INCOME"), expenses: totalOf("EXPENSE") },
     unlinkedCandidates,
   });
+  if (params.granularity === "monthly" && isCalendarMonth(params.from, params.to)) {
+    const budget = await getBudgetPerformance(userId, params.from.slice(0, 7), tzOffset);
+    facts.anomalies = sortAssessmentAnomalies([...facts.anomalies, ...detectBudgetWatchlistAnomalies(budget)]);
+  }
+  return facts;
 };

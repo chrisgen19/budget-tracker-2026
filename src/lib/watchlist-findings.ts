@@ -16,11 +16,8 @@ export const watchlistFindingKey = (
   finding.scope,
   finding.kind,
   finding.scope === "period" ? `${period.from}:${period.to}` : "standing",
-  finding.title,
-  finding.detail,
-  finding.current,
-  finding.baseline,
-  finding.changePct,
-  finding.drillDown,
-  finding.findingKeyEvidence,
+  ...(finding.stateKey ? [finding.stateKey] : [
+    finding.title, finding.detail, finding.current, finding.baseline, finding.changePct,
+    finding.drillDown, finding.findingKeyEvidence,
+  ]),
 ].map(encodeKeyPart).join(":")}`;

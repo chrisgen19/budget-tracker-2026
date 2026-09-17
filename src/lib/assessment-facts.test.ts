@@ -244,6 +244,18 @@ describe("detectBudgetWatchlistAnomalies", () => {
     expect(findings.map((finding) => finding.kind)).toEqual(["budget-forecast"]);
     expect(findings[0].detail).toContain("Current average daily spend");
   });
+
+  it("does not alert when expected fixed or savings allocations are fully funded", () => {
+    const fixed = budget(1000);
+    fixed.allocations[0].kind = "FIXED";
+    expect(detectBudgetWatchlistAnomalies(fixed)).toEqual([]);
+  });
+
+  it("waits for five elapsed days before making a pace forecast", () => {
+    const early = budget(40, 1200);
+    early.progress.daysElapsed = 1;
+    expect(detectBudgetWatchlistAnomalies(early)).toEqual([]);
+  });
 });
 
 describe("findMissedOccurrences", () => {
