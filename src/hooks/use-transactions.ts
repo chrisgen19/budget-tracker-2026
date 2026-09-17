@@ -11,6 +11,7 @@ import type { TransactionFilters } from "@/components/transactions/transaction-f
 import { labelKeys } from "@/hooks/use-labels";
 import { analyticsKeys } from "@/hooks/use-analytics";
 import { creditAccountKeys } from "@/hooks/use-credit-accounts";
+import { cashFlowForecastKeys } from "@/hooks/use-cash-flow-forecast";
 import type { TransactionSelectionItem } from "@/lib/transaction-bulk";
 
 /* ------------------------------------------------------------------ */
@@ -352,6 +353,7 @@ export function useCreateTransaction() {
         queryKey: queryKeys.dashboard.all,
       });
       queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
+      queryClient.invalidateQueries({ queryKey: cashFlowForecastKeys.all });
 
       // Invalidate label counts
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
@@ -402,6 +404,7 @@ export function useUpdateTransaction() {
         queryKey: queryKeys.dashboard.all,
       });
       queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
+      queryClient.invalidateQueries({ queryKey: cashFlowForecastKeys.all });
 
       // Invalidate label counts
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
@@ -445,6 +448,7 @@ export function useDeleteTransaction() {
         queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
         queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
+        queryClient.invalidateQueries({ queryKey: cashFlowForecastKeys.all }),
         queryClient.invalidateQueries({ queryKey: labelKeys.all }),
         queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] }),
         queryClient.invalidateQueries({ queryKey: creditAccountKeys.all }),
@@ -492,6 +496,7 @@ export function useBulkDeleteTransactions() {
         queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
         queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
+        queryClient.invalidateQueries({ queryKey: cashFlowForecastKeys.all }),
         queryClient.invalidateQueries({ queryKey: labelKeys.all }),
         queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] }),
         queryClient.invalidateQueries({ queryKey: creditAccountKeys.all }),
@@ -568,6 +573,7 @@ export function useBulkUpdateTransactions() {
         queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
         queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
+        queryClient.invalidateQueries({ queryKey: cashFlowForecastKeys.all }),
         queryClient.invalidateQueries({ queryKey: labelKeys.all }),
         queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] }),
         queryClient.invalidateQueries({ queryKey: creditAccountKeys.all }),
@@ -674,6 +680,7 @@ export function useBatchCreateTransactions() {
         queryKey: queryKeys.dashboard.all,
       });
       queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
+      queryClient.invalidateQueries({ queryKey: cashFlowForecastKeys.all });
       // The only mutation in this file that was missing this. A receipt batch can carry labels, and
       // `GET /api/labels` reports per-label transaction counts -- `_count.transactions`, and the
       // per-category counts the picker ranks and groups by -- so the cached label list is now

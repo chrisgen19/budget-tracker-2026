@@ -24,21 +24,38 @@ export const scheduledForecastEvents = (schedules: ForecastSchedule[], from: str
   for (const schedule of schedules) {
     let due = utcDayStart(schedule.nextDueDate);
     const originalDay = schedule.startDate.getUTCDate();
-    for (let i = 0; i < 500 && due <= toDay; i += 1) {
-      if (!schedule.endDate || due <= schedule.endDate) {
-        if (due >= fromDay) {
-          const estimate = schedule.isVariable && schedule.type === "EXPENSE"
-            ? estimateBillAmount(buildEstimateSamples(schedule.payments, schedule.occurrences, timezoneOffset), due.getUTCMonth() + 1, due.getUTCFullYear(), schedule.amount)
-            : null;
-          events.push({
-            date: key(due), amount: estimate?.amount ?? schedule.amount,
-            kind: schedule.type === "INCOME" ? "scheduled-income" : "bill",
-            sourceId: schedule.id,
-            description: schedule.description || (schedule.type === "INCOME" ? "Scheduled income" : "Scheduled bill"),
-            estimated: estimate !== null,
-            assumption: estimate ? `Variable bill estimate: ${describeEstimateBasis(estimate)}.` : "Scheduled amount set on this recurring item.",
-          });
-        }
+    const settledDates = new Set(schedule.occurrences.map((occurrence) => key(occurrence.dueDate)));
+    const eventForDue = (date: Date, overdue = false): ForecastEvent => {
+      const estimate = schedule.isVariable && schedule.type === "EXPENSE"
+        ? estimateBillAmount(buildEstimateSamples(schedule.payments, schedule.occurrences, timezoneOffset), date.getUTCMonth() + 1, date.getUTCFullYear(), schedule.amount)
+        : null;
+      return {
+        date: overdue ? from : key(date), amount: estimate?.amount ?? schedule.amount,
+        kind: schedule.type === "INCOME" ? "scheduled-income" : "bill",
+        sourceId: schedule.id,
+        description: `${overdue ? "Overdue: " : ""}${schedule.description || (schedule.type === "INCOME" ? "Scheduled income" : "Scheduled bill")}`,
+        estimated: estimate !== null,
+        assumption: overdue
+          ? `Overdue since ${key(date)}; included on the first forecast day.`
+          : estimate ? `Variable bill estimate: ${describeEstimateBasis(estimate)}.` : "Scheduled amount set on this recurring item.",
+      };
+    };
+
+    // `nextDueDate` is the schedule's authoritative outstanding obligation. Put it on the first
+    // forecast day when overdue, then advance to ordinary in-window recurrences. Repeating every
+    // missed daily occurrence here would turn a stale schedule into hundreds of day-one events.
+    let includedOverdue = false;
+    while (due < fromDay && (!schedule.endDate || due <= schedule.endDate)) {
+      if (!includedOverdue && schedule.type === "EXPENSE" && !settledDates.has(key(due))) {
+        events.push(eventForDue(due, true));
+        includedOverdue = true;
+      }
+      due = utcDayStart(computeNextDueDate(due, schedule.frequency, originalDay, schedule.customIntervalDays));
+    }
+
+    while (due <= toDay && (!schedule.endDate || due <= schedule.endDate)) {
+      if (!settledDates.has(key(due))) {
+        events.push(eventForDue(due));
       }
       due = utcDayStart(computeNextDueDate(due, schedule.frequency, originalDay, schedule.customIntervalDays));
     }

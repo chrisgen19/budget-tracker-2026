@@ -30,4 +30,35 @@ describe("scheduledForecastEvents", () => {
     expect(events[0]).toMatchObject({ date: "2026-09-05", amount: 700, estimated: true });
     expect(events[0].assumption).toContain("Variable bill estimate");
   });
+
+  it("omits a paid occurrence even when its transaction was recorded on another day", () => {
+    const events = scheduledForecastEvents([{
+      id: "salary", amount: 1000, description: "Salary", type: "INCOME", frequency: "MONTHLY", customIntervalDays: null,
+      startDate: new Date("2026-01-01T00:00:00Z"), endDate: null, nextDueDate: new Date("2026-10-01T00:00:00Z"), isVariable: false,
+      payments: [{ id: "payment", amount: 1000, date: new Date("2026-09-17T00:00:00Z") }],
+      occurrences: [{ dueDate: new Date("2026-10-01T00:00:00Z"), transactionId: "payment" }],
+    }], "2026-09-17", "2026-10-16", -480);
+    expect(events).toEqual([]);
+  });
+
+  it("reaches the forecast window for a daily schedule more than 500 days overdue", () => {
+    const events = scheduledForecastEvents([{
+      id: "daily", amount: 10, description: "Daily", type: "EXPENSE", frequency: "DAILY", customIntervalDays: null,
+      startDate: new Date("2024-01-01T00:00:00Z"), endDate: null, nextDueDate: new Date("2024-01-01T00:00:00Z"), isVariable: false,
+      payments: [], occurrences: [],
+    }], "2026-09-01", "2026-09-03", -480);
+    expect(events.filter((event) => !event.description.startsWith("Overdue:")).map((event) => event.date)).toEqual(["2026-09-01", "2026-09-02", "2026-09-03"]);
+  });
+
+  it("puts outstanding overdue bill occurrences on the first forecast day", () => {
+    const events = scheduledForecastEvents([{
+      id: "rent", amount: 100, description: "Rent", type: "EXPENSE", frequency: "MONTHLY", customIntervalDays: null,
+      startDate: new Date("2026-01-01T00:00:00Z"), endDate: null, nextDueDate: new Date("2026-07-01T00:00:00Z"), isVariable: false,
+      payments: [], occurrences: [],
+    }], "2026-09-01", "2026-09-03", -480);
+    expect(events).toMatchObject([
+      { date: "2026-09-01", description: "Overdue: Rent" },
+      { date: "2026-09-01", description: "Rent" },
+    ]);
+  });
 });

@@ -10,6 +10,10 @@ a SHA-256 digest rather than a description, amount, or other financial detail. R
 same finding until its evidence changes; snoozes return automatically after seven days. Per-finding
 transaction links use the narrowest available category, type, date, or search filter.
 
+## 2026-09-17 - Cash-flow forecast calendar
+
+Analytics now includes a 30-, 60-, or 90-day projection from a user-entered, dated tracked-balance baseline. It combines future transactions, settled recurring occurrences, active scheduled income and bills, and daily flexible/savings budget pace, while clearly identifying estimates and assumptions. It is a directional ledger forecast, not a reconciled account balance.
+
 ## 2026-09-17 - Watchlist links each group to where it is acted on
 
 **View transactions in this period** moved from the foot of the Watchlist into the **In this

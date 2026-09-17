@@ -399,7 +399,11 @@ export default function AnalyticsPage() {
         />
       </div>
 
-      {isLoading ? (
+      {activeTab === "forecast" ? (
+        <motion.div key="forecast" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+          <CashFlowForecast timezoneOffset={tz} currency={currency} hideAmounts={hideAmounts} />
+        </motion.div>
+      ) : isLoading ? (
         <AnalyticsContentSkeleton />
       ) : isError || !data ? (
         <AnalyticsLoadError error={error} onRetry={() => refetch()} />
@@ -445,12 +449,6 @@ export default function AnalyticsPage() {
                   </p>
                 </div>
               )}
-            </motion.div>
-          )}
-
-          {activeTab === "forecast" && (
-            <motion.div key="forecast" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-              <CashFlowForecast timezoneOffset={tz} currency={currency} hideAmounts={hideAmounts} />
             </motion.div>
           )}
 
