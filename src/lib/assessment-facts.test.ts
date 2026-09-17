@@ -13,6 +13,7 @@ import {
   computeHeadline,
   computeHygiene,
   detectBudgetWatchlistAnomalies,
+  DEFAULT_WATCHLIST_THRESHOLDS,
   foldDescription,
   longestToken,
   monthRange,
@@ -1730,6 +1731,77 @@ describe("cash forecast", () => {
     const { forecast } = factsFor(stale, [], { income: 160_000, expenses: 100_000 });
     expect(forecast.nextIncomeDate).not.toBeNull();
     expect(forecast.nextIncomeDate! > TODAY).toBe(true);
+  });
+});
+
+/**
+ * The two Watchlist settings that are genuinely preferences rather than arithmetic.
+ *
+ * How lumpy a household's spending normally is, and what a large amount means in their currency,
+ * are facts about them that no baseline can infer. The defaults are the constants the detectors
+ * shipped with, so an account that changes nothing behaves exactly as it did.
+ */
+describe("configurable detection thresholds", () => {
+  const spend = (amounts: number[], month = "2026-08"): FactTransaction[] =>
+    amounts.map((amount, i) =>
+      tx({ localDate: `${month}-${String(i + 1).padStart(2, "0")}`, amount, description: "Groceries" }));
+
+  const factsFor = (transactions: FactTransaction[], thresholds?: Parameters<typeof buildAssessmentFacts>[0]["thresholds"]) =>
+    buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: "2026-08-01", to: "2026-08-31", label: "August 2026", granularity: "monthly" },
+      today: "2026-09-06",
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions,
+      bills: [],
+      thresholds,
+    });
+
+  const kinds = (...args: Parameters<typeof factsFor>) =>
+    factsFor(...args).anomalies.map((a) => a.kind);
+
+  /** Eleven ordinary charges and one ten times the size of them. */
+  const lumpy = spend([...Array.from({ length: 11 }, () => 500), 5_000]);
+
+  it("uses the shipped constants when the caller names no thresholds", () => {
+    expect(kinds(lumpy)).toContain("outlier-transaction");
+  });
+
+  it("goes quiet about a charge below a raised threshold", () => {
+    expect(kinds(lumpy, { ...DEFAULT_WATCHLIST_THRESHOLDS, outlierRatio: 15 }))
+      .not.toContain("outlier-transaction");
+  });
+
+  it("flags more when the threshold is lowered", () => {
+    const mild = spend([...Array.from({ length: 11 }, () => 500), 1_000]);
+    expect(kinds(mild)).not.toContain("outlier-transaction");
+    expect(kinds(mild, { ...DEFAULT_WATCHLIST_THRESHOLDS, outlierRatio: 1.5 }))
+      .toContain("outlier-transaction");
+  });
+
+  /**
+   * The absolute floor exists precisely for the month where one enormous charge makes everything
+   * else look immaterial beside it, so it has to reach a row the relative rule never considers.
+   */
+  it("flags a charge over the absolute figure even where the ratio would not", () => {
+    const evenly = spend([50_000, 50_000, 50_000, 50_000]);
+    expect(kinds(evenly)).not.toContain("outlier-transaction");
+    expect(kinds(evenly, { ...DEFAULT_WATCHLIST_THRESHOLDS, largeAmount: 10_000 }))
+      .toContain("outlier-transaction");
+  });
+
+  /** The switch suppresses the finding; the fact stays, and the assessment's card still lists it. */
+  it("stops alerting on duplicates without stopping detecting them", () => {
+    const doubled = [
+      tx({ localDate: "2026-08-04", amount: 1_200, description: "Watsons" }),
+      tx({ localDate: "2026-08-04", amount: 1_200, description: "Watsons" }),
+    ];
+    expect(kinds(doubled)).toContain("duplicate");
+
+    const off = factsFor(doubled, { ...DEFAULT_WATCHLIST_THRESHOLDS, duplicateAlerts: false });
+    expect(off.anomalies.map((a) => a.kind)).not.toContain("duplicate");
+    expect(off.hygiene.duplicates).toHaveLength(1);
   });
 });
 

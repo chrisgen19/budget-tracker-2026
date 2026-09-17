@@ -18,6 +18,7 @@ import {
   longestToken,
   resolveFactsWindow,
   DEFAULT_HISTORY_MONTHS,
+  DEFAULT_WATCHLIST_THRESHOLDS,
   detectGoalAnomalies,
   type FactBill,
   type FactTransaction,
@@ -62,7 +63,13 @@ export const collectAssessmentFacts = async (
 ): Promise<AssessmentFacts> => {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { timezoneOffset: true, currency: true },
+    select: {
+      timezoneOffset: true,
+      currency: true,
+      watchlistOutlierRatio: true,
+      watchlistLargeAmount: true,
+      watchlistDuplicateAlerts: true,
+    },
   });
   const tzOffset = user?.timezoneOffset ?? 0;
   const tzMs = tzOffset * 60_000;
@@ -229,6 +236,16 @@ export const collectAssessmentFacts = async (
     historyFirstSeen,
     allTimeTotals: { income: totalOf("INCOME"), expenses: totalOf("EXPENSE") },
     unlinkedCandidates,
+    // Falls back to the shipped defaults rather than to zeroes: a user row that could not be read
+    // must produce the behaviour the app had before any of this was configurable, not a silently
+    // disabled detector.
+    thresholds: user
+      ? {
+          outlierRatio: user.watchlistOutlierRatio,
+          largeAmount: user.watchlistLargeAmount,
+          duplicateAlerts: user.watchlistDuplicateAlerts,
+        }
+      : DEFAULT_WATCHLIST_THRESHOLDS,
   });
   // Goals are outstanding findings and so are read for every period, unlike the budget below: a
   // deposit due in March is behind whichever report is open, while a budget plan belongs to one

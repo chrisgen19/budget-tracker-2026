@@ -17,6 +17,7 @@ import { PersonalInfoForm } from "@/components/profile/personal-info-form";
 import { PasswordForm } from "@/components/profile/password-form";
 import { FeaturesForm } from "@/components/profile/features-form";
 import { PreferencesForm } from "@/components/profile/preferences-form";
+import { WatchlistForm } from "@/components/profile/watchlist-form";
 import { McpTokensForm } from "@/components/profile/mcp-tokens-form";
 
 type Tab = "personal" | "password" | "features" | "preferences" | "mcp";
@@ -217,9 +218,11 @@ export default function ProfilePage() {
           </div>
 
           <div className={cn(
+            "space-y-6",
             activeTab !== "preferences" && "lg:hidden"
           )}>
             <PreferencesForm />
+            <WatchlistForm />
           </div>
 
           <div className={cn(

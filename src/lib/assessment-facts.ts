@@ -99,6 +99,24 @@ export interface FactBill {
   occurrences: Array<{ dueDate: Date; status: BillOccurrenceStatus; transactionId: string | null; snoozeUntil: Date | null }>;
 }
 
+/**
+ * The judgements about what is worth telling somebody that only they can make.
+ *
+ * Everything else in this file is arithmetic over their rows. These three are preferences: how
+ * lumpy their spending normally is, what counts as a large charge in their currency, and whether
+ * they want to hear about duplicates at all. Passed in rather than read, like every other input
+ * here, so the analyses stay pure.
+ */
+export interface WatchlistThresholds {
+  /** Multiples of a category's typical charge before a single expense is unusual. */
+  outlierRatio: number;
+  /** An absolute figure that is unusual whatever the category's history, or null for ratio only. */
+  largeAmount: number | null;
+  /** Whether possible duplicates are raised as a finding. The facts are computed either way. */
+  duplicateAlerts: boolean;
+}
+
+
 export interface FactsInput {
   currency: string;
   period: { from: string; to: string; label: string; granularity: string };
@@ -128,6 +146,8 @@ export interface FactsInput {
    * window still left that schedule wrong.
    */
   unlinkedCandidates?: FactTransaction[];
+  /** Omitted falls back to the shipped defaults, so a test or a caller without a user still works. */
+  thresholds?: WatchlistThresholds;
 }
 
 /* ------------------------------------------------------------------ */
@@ -160,8 +180,22 @@ const NEW_RECURRING_MIN_SHARE = 0.01;
 const SPIKE_RATIO = 1.4;
 /** …and the increase has to be worth this share of the baseline month's spending. */
 const MATERIAL_SHARE = 0.05;
-/** A single expense this many times its category's typical size is an outlier. */
-const OUTLIER_RATIO = 3;
+/**
+ * A single expense this many times its category's typical size is an outlier.
+ *
+ * The *default* only. `WatchlistThresholds` carries the figure actually used, because what counts
+ * as unusual is a fact about a household rather than about the arithmetic: spending that is
+ * naturally lumpy trips this every month, and somebody in that position needs to raise it without
+ * losing every other finding.
+ */
+export const DEFAULT_OUTLIER_RATIO = 3;
+
+/** What every analysis here used before any of it was configurable. */
+export const DEFAULT_WATCHLIST_THRESHOLDS: WatchlistThresholds = {
+  outlierRatio: DEFAULT_OUTLIER_RATIO,
+  largeAmount: null,
+  duplicateAlerts: true,
+};
 /** Payments swinging this much mark a metered bill rather than a misconfigured one. */
 const SEASONAL_SWING = 2;
 /** Average paid this far from budgeted is a figure worth fixing. */
@@ -1371,6 +1405,7 @@ interface AnomalyContext {
   throughDay: number;
   periodIncome: number;
   periodExpenses: number;
+  thresholds: WatchlistThresholds;
 }
 
 /**
@@ -1709,10 +1744,16 @@ const detectOutlierTransactions = (ctx: AnomalyContext): AssessmentAnomaly[] => 
     if (t.type !== "EXPENSE") continue;
     byCategory.set(t.categoryName, [...(byCategory.get(t.categoryName) ?? []), t]);
   }
+  const { outlierRatio, largeAmount } = ctx.thresholds;
+  // A charge is worth judging if it is a material share of the period, or if it clears the user's
+  // own "this is a lot of money" figure. Either, not both: the absolute floor exists precisely for
+  // the month where one enormous charge makes everything else look immaterial beside it.
   const material = ctx.periodExpenses * MATERIAL_SHARE;
+  const worthJudging = (amount: number) =>
+    amount >= material || (largeAmount !== null && amount >= largeAmount);
 
   return ctx.periodTx
-    .filter((t) => t.type === "EXPENSE" && t.amount >= material)
+    .filter((t) => t.type === "EXPENSE" && worthJudging(t.amount))
     .map((t) => {
       const peers = (byCategory.get(t.categoryName) ?? []).filter((other) => other.id !== t.id);
       const ownHistory = peers.filter((other) => foldDescription(other.description) === foldDescription(t.description));
@@ -1720,7 +1761,7 @@ const detectOutlierTransactions = (ctx: AnomalyContext): AssessmentAnomaly[] => 
       const typical = median(basis.map((other) => other.amount));
       return { t, typical, ratio: typical === 0 ? 0 : t.amount / typical };
     })
-    .filter((x) => x.ratio >= OUTLIER_RATIO)
+    .filter((x) => x.ratio >= outlierRatio || (largeAmount !== null && x.t.amount >= largeAmount))
     .sort((a, b) => b.t.amount - a.t.amount)
     .slice(0, 3)
     .map(({ t, typical, ratio }) =>
@@ -2076,7 +2117,10 @@ const detectHygieneAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
       }));
   }
 
-  const dupes = ctx.hygiene.duplicates.filter((d) => d.inPeriod);
+  // The switch suppresses the *finding*, never the fact. `computeHygiene` still detects these and
+  // the assessment's data-quality card still lists them; what somebody turns off here is being
+  // told about them every time they open the page.
+  const dupes = ctx.thresholds.duplicateAlerts ? ctx.hygiene.duplicates.filter((d) => d.inPeriod) : [];
   if (dupes.length > 0) {
     out.push(anomaly("duplicate", "medium", `${dupes.length} possible duplicate entr${dupes.length > 1 ? "ies" : "y"}`,
       `Same day, same description and same amount — usually a double submit. Check ${dupes.slice(0, 2).map((d) => `"${d.description}" on ${d.date}`).join(" and ")}.`,
@@ -2219,6 +2263,7 @@ export const buildAssessmentFacts = (input: FactsInput): AssessmentFacts => {
     baselineBurn,
     periodIncome: round(sum(periodTx.filter((t) => t.type === "INCOME").map((t) => t.amount))),
     periodExpenses: round(sum(periodTx.filter((t) => t.type === "EXPENSE").map((t) => t.amount))),
+    thresholds: input.thresholds ?? DEFAULT_WATCHLIST_THRESHOLDS,
   });
 
   return {

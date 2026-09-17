@@ -795,6 +795,19 @@ const dayOfMonthSchema = z.number().int().min(1).max(31);
  * `targetDate` is optional and explicitly nullable: a goal with no deadline is a real thing people
  * have, and the pace arithmetic says so rather than inventing one.
  */
+/**
+ * How lumpy a household's spending normally is, before "unusual" means anything.
+ *
+ * Bounded at both ends. Below 1.5 nearly every charge is an outlier against its own category's
+ * median and the finding becomes a list of the month's transactions; above 20 nothing short of a
+ * house deposit qualifies and the detector may as well be off - which is a state the switch beside
+ * it should express, not one reached by dragging a number until the alerts stop.
+ */
+export const watchlistOutlierRatioSchema = z.number().min(1.5).max(20);
+
+/** An absolute "this is a lot of money" figure, or null to judge on the ratio alone. */
+export const watchlistLargeAmountSchema = z.number().positive().max(1_000_000_000).nullable();
+
 export const savingsGoalSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(60),
   kind: z.enum(["GOAL", "SINKING_FUND"]).default("GOAL"),

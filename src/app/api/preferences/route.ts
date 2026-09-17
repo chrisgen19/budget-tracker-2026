@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
-import { HH_MM, mcpWriteLeaseSchema, quickPickIdsSchema } from "@/lib/validations";
+import {
+  HH_MM,
+  mcpWriteLeaseSchema,
+  quickPickIdsSchema,
+  watchlistLargeAmountSchema,
+  watchlistOutlierRatioSchema,
+} from "@/lib/validations";
 import { MAX_QUICK_CATEGORIES } from "@/lib/quick-categories";
 import { MAX_QUICK_LABELS } from "@/lib/quick-labels";
 
@@ -26,6 +32,9 @@ export async function GET() {
       telegramDailyPrompt: true,
       telegramDailyPromptTime: true,
       mcpWritesEnabledUntil: true,
+      watchlistOutlierRatio: true,
+      watchlistLargeAmount: true,
+      watchlistDuplicateAlerts: true,
     },
   });
 
@@ -44,6 +53,9 @@ export async function GET() {
     telegramDailyPrompt: user?.telegramDailyPrompt ?? false,
     telegramDailyPromptTime: user?.telegramDailyPromptTime ?? "20:00",
     mcpWritesEnabledUntil: user?.mcpWritesEnabledUntil?.toISOString() ?? null,
+    watchlistOutlierRatio: user?.watchlistOutlierRatio ?? 3,
+    watchlistLargeAmount: user?.watchlistLargeAmount ?? null,
+    watchlistDuplicateAlerts: user?.watchlistDuplicateAlerts ?? true,
   });
 }
 
@@ -125,6 +137,29 @@ export async function PATCH(request: Request) {
 
   if ("showDayName" in body) {
     data.showDayName = Boolean(body.showDayName);
+  }
+
+  // Refused rather than clamped. A value outside the range means the client sent something the
+  // user did not choose, and silently substituting a different threshold would leave the page
+  // showing one figure while the detector used another.
+  if ("watchlistOutlierRatio" in body) {
+    const parsed = watchlistOutlierRatioSchema.safeParse(body.watchlistOutlierRatio);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "watchlistOutlierRatio must be between 1.5 and 20" }, { status: 400 });
+    }
+    data.watchlistOutlierRatio = parsed.data;
+  }
+
+  if ("watchlistLargeAmount" in body) {
+    const parsed = watchlistLargeAmountSchema.safeParse(body.watchlistLargeAmount);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "watchlistLargeAmount must be a positive amount or null" }, { status: 400 });
+    }
+    data.watchlistLargeAmount = parsed.data;
+  }
+
+  if ("watchlistDuplicateAlerts" in body) {
+    data.watchlistDuplicateAlerts = Boolean(body.watchlistDuplicateAlerts);
   }
 
   if ("emailBillReminders" in body) {

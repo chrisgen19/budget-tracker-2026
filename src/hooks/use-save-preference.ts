@@ -21,7 +21,10 @@ export type SavablePreference =
   | "defaultLabelType"
   | "emailBillReminders"
   | "telegramDailyPrompt"
-  | "telegramDailyPromptTime";
+  | "telegramDailyPromptTime"
+  | "watchlistOutlierRatio"
+  | "watchlistLargeAmount"
+  | "watchlistDuplicateAlerts";
 
 /**
  * Save one preference optimistically, and say so when it does not stick.

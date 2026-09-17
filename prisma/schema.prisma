@@ -165,6 +165,18 @@ model User {
   /// baseline from which the cash-flow forecast applies ledger activity.
   forecastOpeningBalance     Float?                 @map("forecast_opening_balance")
   forecastOpeningBalanceDate DateTime?              @map("forecast_opening_balance_date")
+  /// How many times its category's typical charge a single expense has to be before the Watchlist
+  /// calls it unusual. The default is the constant the detector shipped with; raising it is how
+  /// somebody whose spending is naturally lumpy quiets the finding without losing the rest.
+  watchlistOutlierRatio      Float                  @default(3) @map("watchlist_outlier_ratio")
+  /// An absolute figure above which a single expense is unusual whatever its category's history,
+  /// or null to judge on the ratio alone. Nullable rather than 0: zero would make every charge
+  /// unusual, which is the opposite of what an unset field should mean.
+  watchlistLargeAmount       Float?                 @map("watchlist_large_amount")
+  /// Whether possible duplicates are raised as a Watchlist finding. The duplicates themselves are
+  /// still computed and still shown in the assessment's data-quality card - this is about the
+  /// alert, not about the detection.
+  watchlistDuplicateAlerts   Boolean                @default(true) @map("watchlist_duplicate_alerts")
   /// Lease, not a flag: MCP writes are permitted only while this is in the future. A boolean
   /// would depend on remembering to switch it back off, and the failure that matters is leaving
   /// writes on for days, which fails silently. Null means writes are off.
