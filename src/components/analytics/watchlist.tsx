@@ -50,6 +50,8 @@ const KIND_LABEL: Record<AssessmentAnomaly["kind"], string> = {
   "bill-snoozed": "Bill put off",
   "bill-under-budgeted": "Bill costs more than budgeted",
   "missing-expected-income": "Expected income not logged",
+  "low-coverage": "Data coverage",
+  "insufficient-history": "Not enough history",
 };
 
 const SEVERITY_STYLE: Record<

@@ -890,7 +890,9 @@ export type AssessmentAnomalyKind =
   | "bill-due-soon"
   | "bill-snoozed"
   | "bill-under-budgeted"
-  | "missing-expected-income";
+  | "missing-expected-income"
+  | "low-coverage"
+  | "insufficient-history";
 
 /**
  * Whether a finding is measured inside the selected period, or describes a standing condition

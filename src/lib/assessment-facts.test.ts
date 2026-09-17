@@ -1497,3 +1497,105 @@ describe("missing-expected-income findings", () => {
     expect(sources.every((s) => !s.isNew)).toBe(true);
   });
 });
+
+/**
+ * Whether the figures on the page are worth drawing a conclusion from.
+ *
+ * The coverage gate has always been enforced and has always been silent unless the missing days
+ * happened to fall in one run long enough to be a `logging-gap`. Thirty days each missing half
+ * their rows produce no gap and no trustworthy months either, and the report reads as though it
+ * knows something.
+ */
+describe("data-confidence findings", () => {
+  const factsFor = (
+    transactions: FactTransaction[],
+    period = { from: "2026-08-01", to: "2026-08-31" },
+    today = "2026-09-06",
+  ) =>
+    buildAssessmentFacts({
+      currency: "PHP",
+      period: { ...period, label: "period", granularity: "monthly" },
+      today,
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions,
+      bills: [],
+    });
+
+  const find = (kind: string, ...args: Parameters<typeof factsFor>) =>
+    factsFor(...args).anomalies.find((a) => a.kind === kind);
+
+  /** Six months logged on most days: a baseline that exists and a period that is covered. */
+  const wellLogged = ["2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08"]
+    .flatMap((month) => spread(month, 28));
+
+  it("says plainly when most of the period has nothing logged", () => {
+    const found = find("low-coverage", spread("2026-08", 5));
+    expect(found).toMatchObject({ scope: "period", severity: "high", baseline: MIN_COVERAGE_PCT });
+    expect(found?.detail).toContain("floor rather than a figure");
+  });
+
+  /**
+   * Days missing one at a time never form a run long enough to be a gap, which is exactly the case
+   * that used to pass in silence.
+   */
+  it("catches scattered missing days that never form a reportable gap", () => {
+    const everyOtherDay = Array.from({ length: 10 }, (_, i) =>
+      tx({ localDate: `2026-08-${String(i * 3 + 1).padStart(2, "0")}`, amount: 100 }));
+    const anomalies = factsFor(everyOtherDay).anomalies.map((a) => a.kind);
+    expect(anomalies).toContain("low-coverage");
+    expect(anomalies).not.toContain("logging-gap");
+  });
+
+  /** A month three days old has not failed to log the other twenty-eight. */
+  it("measures coverage against the days elapsed, not the days in the period", () => {
+    expect(find(
+      "low-coverage",
+      spread("2026-09", 3),
+      { from: "2026-09-01", to: "2026-09-30" },
+      "2026-09-03",
+    )).toBeUndefined();
+  });
+
+  it("leaves a well-logged period alone", () => {
+    expect(find("low-coverage", wellLogged)).toBeUndefined();
+  });
+
+  /**
+   * Two months make a line through two points, which has no notion of what is ordinary - yet the
+   * spike and pace detectors quote either as "what the trustworthy months say to expect".
+   */
+  it("warns when there is too little history behind the baseline", () => {
+    const twoMonths = ["2026-07", "2026-08"].flatMap((month) => spread(month, 28));
+    const found = find("insufficient-history", twoMonths);
+    expect(found).toMatchObject({ scope: "period", severity: "low", current: 1, baseline: 3 });
+  });
+
+  it("raises the tone when there is no baseline at all", () => {
+    expect(find("insufficient-history", spread("2026-08", 28))).toMatchObject({ severity: "medium" });
+  });
+
+  it("says nothing about the baseline once there are three trustworthy months behind it", () => {
+    expect(find("insufficient-history", wellLogged)).toBeUndefined();
+  });
+
+  /** Telling someone their baseline is thin as well as their period empty is true and useless. */
+  it("does not pile the thin-baseline finding on top of an unlogged period", () => {
+    const kinds = factsFor(spread("2026-08", 2)).anomalies.map((a) => a.kind);
+    expect(kinds).toContain("low-coverage");
+    expect(kinds).not.toContain("insufficient-history");
+  });
+
+  /** Two findings of different severities about the same days is one finding too many. */
+  it("keeps the gap itself informational and lets the coverage finding carry the weight", () => {
+    const anomalies = factsFor([
+      tx({ localDate: "2026-08-01", amount: 100 }),
+      tx({ localDate: "2026-08-02", amount: 100 }),
+      // `findLoggingGaps` reports the stretch *between* two logged days, so the gap needs a day on
+      // the far side of it to exist at all.
+      tx({ localDate: "2026-08-20", amount: 100 }),
+    ]).anomalies;
+    expect(anomalies.find((a) => a.kind === "logging-gap")?.severity).toBe("low");
+    expect(anomalies.find((a) => a.kind === "low-coverage")?.severity).toBe("high");
+  });
+});

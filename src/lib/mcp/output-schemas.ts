@@ -952,6 +952,8 @@ const anomaly = z.object({
     "bill-snoozed",
     "bill-under-budgeted",
     "missing-expected-income",
+    "low-coverage",
+    "insufficient-history",
   ]),
   // "outstanding" means the selected period does not bound the finding - a missed bill is judged
   // against its own payment history, so it is true now rather than true of the window.

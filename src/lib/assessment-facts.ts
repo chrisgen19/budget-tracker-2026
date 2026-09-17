@@ -235,6 +235,14 @@ const MIN_INCOME_GRACE_DAYS = 3;
  * before anything could be said about one going missing.
  */
 const MIN_INCOME_OCCURRENCES = 4;
+/**
+ * Trustworthy months a baseline needs before a trend or a forecast rests on it.
+ *
+ * Three. Two months make a line through two points, which has no notion of what is ordinary, and
+ * one makes nothing at all - yet `detectCategorySpikes` and the pace projection will happily
+ * quote either as "what the trustworthy months say to expect".
+ */
+const MIN_BASELINE_MONTHS = 3;
 
 /* ------------------------------------------------------------------ */
 /*  Calendar-day helpers                                               */
@@ -1265,6 +1273,10 @@ const ANOMALY_SCOPE: Record<AssessmentAnomalyKind, AssessmentAnomalyScope> = {
   // which asks whether the *period* saw any income at all, stays period-scoped and is a different
   // question: a month with one of three expected deposits logged passes it and is still short.
   "missing-expected-income": "outstanding",
+  // Both describe the data behind *this* report. Change the period and the window moves with it,
+  // so a different set of months is being judged and the answer can legitimately differ.
+  "low-coverage": "period",
+  "insufficient-history": "period",
 };
 
 const anomaly = (
@@ -1536,6 +1548,46 @@ const detectCashFlowAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
 };
 
 /**
+ * Whether the figures on the page are worth drawing a conclusion from at all.
+ *
+ * The coverage gate has always existed and has always been enforced - silently. A month logged on
+ * fewer than 60% of its days is excluded from every rate and average, and nothing on screen said
+ * so unless the missing days happened to fall in one run long enough to be a `logging-gap`. Thirty
+ * days each missing half their rows produce no gap finding and no trustworthy months either, and
+ * the report reads as though it knows something.
+ *
+ * `logging-gap` is the evidence and stays informational; these two are the conclusion and carry
+ * the weight. It used to raise itself to "high" on low coverage, which put two findings of
+ * different severities on screen saying the same thing about the same days.
+ */
+const detectConfidenceAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
+  const out: AssessmentAnomaly[] = [];
+  const { periodCoveragePct, periodDaysElapsed, periodIsPartial } = ctx.confidence;
+
+  // Days *elapsed*, never days in the period: a month three days old has not failed to log the
+  // other twenty-eight, and reporting 10% coverage on the 3rd would fire this every month.
+  if (periodDaysElapsed > 0 && periodCoveragePct < MIN_COVERAGE_PCT) {
+    out.push(anomaly("low-coverage", "high",
+      `Only ${periodCoveragePct}% of these days have anything logged`,
+      `${periodDaysElapsed} day${periodDaysElapsed > 1 ? "s" : ""} of this period ${periodIsPartial ? "have passed" : "were in it"} and most of them hold no transactions. Every total here is a floor rather than a figure, and the budget, pace and forecast readings are not worth acting on until the gaps are filled.`,
+      { current: periodCoveragePct, baseline: MIN_COVERAGE_PCT, drillDown: periodDrillDown(ctx) }));
+  }
+
+  // A period with no logging of its own is already the finding above; saying its baseline is thin
+  // as well is true and useless.
+  if (periodCoveragePct >= MIN_COVERAGE_PCT && ctx.baselineMonths.length < MIN_BASELINE_MONTHS) {
+    const have = ctx.baselineMonths.length;
+    out.push(anomaly("insufficient-history", have === 0 ? "medium" : "low",
+      have === 0
+        ? "Nothing to compare this period against"
+        : `Only ${have} earlier month${have > 1 ? "s" : ""} to compare against`,
+      `A baseline needs ${MIN_BASELINE_MONTHS} months logged well enough to trust before "usual" means anything. ${have === 0 ? "Category spikes, spending pace and forecast-to-exceed are all silent until there are." : "Treat the trends and the pace on this page as provisional until there are more."}`,
+      { current: have, baseline: MIN_BASELINE_MONTHS, drillDown: periodDrillDown(ctx) }));
+  }
+  return out;
+};
+
+/**
  * Deposits that arrive on a rhythm and have not arrived.
  *
  * The blunter `missing-income` asks whether the period saw any income at all; a month with one of
@@ -1801,10 +1853,13 @@ const detectHygieneAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
       }));
   }
 
+  // Left at "low" whatever the coverage is. It is the evidence; `low-coverage` is the conclusion
+  // and carries the weight, and escalating both put two findings of different severities on screen
+  // saying the same thing about the same days.
   const gaps = ctx.confidence.gaps.filter((g) => g.inPeriod);
   if (gaps.length > 0) {
     const worst = gaps[0];
-    out.push(anomaly("logging-gap", ctx.confidence.periodCoveragePct < MIN_COVERAGE_PCT ? "high" : "low",
+    out.push(anomaly("logging-gap", "low",
       `${worst.days} days with nothing logged`,
       `Nothing was recorded between ${worst.from} and ${worst.to}, so this period's totals are a floor rather than the whole picture. Coverage is ${ctx.confidence.periodCoveragePct}% of the days elapsed.`,
       { current: ctx.confidence.periodCoveragePct, drillDown: periodDrillDown(ctx) }));
@@ -1825,6 +1880,7 @@ export const detectAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] =>
     ...detectRecurringAnomalies(ctx),
     ...detectBillAnomalies(ctx),
     ...detectMissingExpectedIncome(ctx),
+    ...detectConfidenceAnomalies(ctx),
   ].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
 
 /* ------------------------------------------------------------------ */
