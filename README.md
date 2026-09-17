@@ -37,7 +37,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **Timezone-Aware Dates** — All date queries respect the user's local timezone offset for accurate day boundaries and month grouping
 - **MCP Server** - [Model Context Protocol](https://modelcontextprotocol.io/) access to your budget data in natural language, over stdio (local) or HTTP with a scoped bearer token (remote); 12 read-only tools (spending by category, top expenses, monthly summary, spending trends, search transactions, budget overview, upcoming bills, category list, label breakdown, label list, bill history, receipt items) plus two write tools — `create_transactions` and `update_transactions` — both behind the `transactions:write` scope, a time-limited write lease, and provenance columns recording which credential created and which last edited every row; nothing can delete; shared query library reusable for future in-app AI chat
 - **Telegram Bot** - Log spending by messaging a personal Telegram bot (`100 breakfast`, `spent 350 for groceries yesterday`) and ask for summaries, recent transactions, or upcoming bills; runs inside the app on boot; talks to the app as an MCP client, so it inherits the token scope, write lease, rate limit, and audit trail rather than touching the database; Gemini only classifies each message, so every figure it reports comes from real data
-- **Analytics** — Dedicated reporting page with monthly Budget vs Actual plans, safe-to-spend pace, deterministic forecasts, rollover, income vs expenses, category and label breakdowns, like-for-like partial-period comparisons with coverage warnings, records, transparent cash-flow signals, and flexible time range controls (weekly/monthly/yearly/custom)
+- **Analytics** - Dedicated reporting page with monthly Budget vs Actual plans, safe-to-spend pace, deterministic forecasts, rollover, income vs expenses, category and label breakdowns, like-for-like partial-period comparisons with coverage warnings, records, transparent cash-flow signals, and flexible time range controls (weekly/monthly/yearly/custom); a Watchlist tab shows live findings (missed bills, possible duplicates, logging gaps, spending spikes, unusual transactions) without an AI run, grouped into "In this period" and "Outstanding" so an overdue bill is never passed off as part of an old period
 - **Design** — Warm paper-ledger aesthetic with Young Serif + Outfit fonts, Plus Jakarta Sans for currency amounts, amber accents, and Framer Motion animations
 
 ## Tech Stack
@@ -832,10 +832,12 @@ AppSettings (per role: FREE, PAID)
 | Phase | Feature | Status |
 |-------|---------|--------|
 | 1 | Income & Expenses Report, Category Breakdown, Label Breakdown, Cash Flow, Time Range Controls | Done |
-| 2 | Period Comparison — elapsed-window matching, coverage gate, and preceding range | Done |
-| 3 | Records & Statistics — biggest expense, avg daily spend, most used category, streaks | Done |
-| 4 | Cash Flow Signals — income kept, income/expense changes, net flow, and expense days | Done |
-| 5 | Monthly Budget Plan — Budget vs Actual, rollover, pace forecast, safe-to-spend, and drill-down | Done |
+| 2a | Automatic Period Comparison: each period against the one before it, with elapsed-window matching and a coverage gate | Done |
+| 2b | Side-by-Side Comparison: pick any two periods and compare them ([#50](https://github.com/chrisgen19/budget-tracker-2026/issues/50)) | Planned |
+| 3 | Records & Statistics: biggest expense, avg daily spend, most used category, streaks | Done |
+| 4 | Cash Flow Signals: income kept, income/expense changes, net flow, and expense days | Done |
+| 5 | Monthly Budget Plan: Budget vs Actual, rollover, pace forecast, safe-to-spend, and drill-down | Done |
+| 6 | Watchlist: live deterministic findings without an AI run, grouped into "In this period" and "Outstanding", with drill-down to the period's transactions and a Bills link for missed bills | Done |
 
 ## Changelog
 
