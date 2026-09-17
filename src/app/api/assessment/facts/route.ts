@@ -16,6 +16,7 @@ const querySchema = z.object({
   to: z.string().regex(DAY),
 });
 
+
 /**
  * GET /api/assessment/facts?granularity&from&to
  *

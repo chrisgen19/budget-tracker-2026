@@ -30,6 +30,8 @@ interface WatchlistProps {
 }
 
 const KIND_LABEL: Record<AssessmentAnomaly["kind"], string> = {
+  "budget-threshold": "Budget threshold",
+  "budget-forecast": "Budget forecast",
   "category-spike": "Category change",
   "new-category": "New spending",
   "outlier-transaction": "Unusual transaction",

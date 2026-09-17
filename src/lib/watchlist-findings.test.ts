@@ -55,4 +55,12 @@ describe("watchlistFindingKey", () => {
       }, period),
     );
   });
+
+  it("keeps a budget action stable while a daily projection changes", () => {
+    const period = { from: "2026-09-01", to: "2026-09-30" };
+    const original = finding({ stateKey: "budget:plan:2:food:80", current: 800, changePct: 80 });
+    expect(watchlistFindingKey(original, period)).toBe(
+      watchlistFindingKey({ ...original, current: 800, changePct: 75, drillDown: { destination: "transactions", to: "2026-09-21" } }, period),
+    );
+  });
 });

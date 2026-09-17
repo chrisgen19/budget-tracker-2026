@@ -793,6 +793,8 @@ export interface AssessmentHygieneFacts {
 
 /** A pattern in the assessed period that the baseline says should not be there. */
 export type AssessmentAnomalyKind =
+  | "budget-threshold"
+  | "budget-forecast"
   | "category-spike"
   | "new-category"
   | "outlier-transaction"
@@ -851,6 +853,8 @@ export interface AssessmentAnomaly {
   drillDown?: AssessmentAnomalyDrillDown;
   /** Exact deterministic evidence used only to decide whether a saved action still applies. */
   findingKeyEvidence?: string;
+  /** Stable identity for an actionable finding whose display metrics change with time. */
+  stateKey?: string;
 }
 
 /** Everything the assessment knows for certain, computed from the database rather than inferred. */

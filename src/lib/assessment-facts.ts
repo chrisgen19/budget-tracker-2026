@@ -40,6 +40,7 @@ import type {
   AssessmentHeadline,
   AssessmentBillAccuracy,
   AssessmentBillFacts,
+  BudgetPerformanceData,
   AssessmentCategoryMovement,
   AssessmentDataConfidence,
   AssessmentDuplicateGroup,
@@ -962,6 +963,8 @@ const median = (xs: number[]): number => {
  * outstanding kind needs a home of its own on that tab, or it will not appear on it.
  */
 const ANOMALY_SCOPE: Record<AssessmentAnomalyKind, AssessmentAnomalyScope> = {
+  "budget-threshold": "period",
+  "budget-forecast": "period",
   "category-spike": "period",
   "new-category": "period",
   "outlier-transaction": "period",
@@ -985,6 +988,7 @@ const anomaly = (
     changePct?: number | null;
     drillDown?: AssessmentAnomalyDrillDown;
     findingKeyEvidence?: string;
+    stateKey?: string;
   } = {},
 ): AssessmentAnomaly => ({
   kind,
@@ -997,6 +1001,7 @@ const anomaly = (
   changePct: metrics.changePct ?? null,
   drillDown: metrics.drillDown,
   findingKeyEvidence: metrics.findingKeyEvidence,
+  stateKey: metrics.stateKey,
 });
 
 const periodDrillDown = (
@@ -1008,6 +1013,68 @@ const periodDrillDown = (
   from: ctx.period.from,
   to: ctx.period.to,
 });
+
+const budgetMonthEnd = (month: string): string => {
+  const [year, monthNumber] = month.split("-").map(Number);
+  return `${month}-${String(new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()).padStart(2, "0")}`;
+};
+
+const thresholdSeverity = (threshold: number): AiWatchSeverity =>
+  threshold >= 100 ? "high" : threshold >= 80 ? "medium" : "low";
+const MIN_BUDGET_FORECAST_DAYS = 5;
+
+/** Budget alerts use the same available/actual/projection figures as Budget Performance. */
+export const detectBudgetWatchlistAnomalies = (
+  budget: BudgetPerformanceData,
+): AssessmentAnomaly[] => {
+  const plan = budget.plan;
+  if (!plan || budget.progress.daysElapsed === 0) return [];
+  const to = budget.progress.effectiveTo ?? budgetMonthEnd(budget.month);
+  return budget.allocations.flatMap((allocation) => {
+    if (allocation.type !== "EXPENSE" || allocation.kind !== "FLEXIBLE" || allocation.available <= 0) return [];
+    const usedPct = (allocation.actual / allocation.available) * 100;
+    const reached = [100, 80, 50].find((threshold) => usedPct >= threshold);
+    const drillDown = {
+      destination: "transactions" as const,
+      type: "EXPENSE" as const,
+      categoryId: allocation.categoryId,
+      from: `${budget.month}-01`,
+      to,
+    };
+    const evidence = JSON.stringify({
+      plan: plan.id,
+      revision: plan.revision,
+      categoryId: allocation.categoryId,
+      available: allocation.available,
+      actual: allocation.actual,
+      projectedActual: allocation.projectedActual,
+    });
+    const findings: AssessmentAnomaly[] = reached === undefined ? [] : [anomaly(
+      "budget-threshold",
+      thresholdSeverity(reached),
+      `${allocation.categoryName} has reached ${reached}% of its budget`,
+      `${Math.floor(usedPct)}% of this month's available budget is logged. Available includes any rollover carried into the month.`,
+      { current: allocation.actual, baseline: allocation.available, changePct: usedPct, drillDown, findingKeyEvidence: evidence, stateKey: `budget:${plan.id}:${plan.revision}:${allocation.categoryId}:${reached}` },
+    )];
+    if (budget.progress.daysElapsed >= MIN_BUDGET_FORECAST_DAYS && allocation.forecastToExceed && allocation.actual <= allocation.available && allocation.projectedActual !== null) {
+      findings.push(anomaly(
+        "budget-forecast",
+        "medium",
+        `${allocation.categoryName} is forecast to exceed its budget`,
+        `At the current pace, this month's projected spending is above the available budget. ${allocation.projectionBasis}`,
+        {
+          current: allocation.projectedActual,
+          baseline: allocation.available,
+          changePct: (allocation.projectedActual / allocation.available) * 100,
+          drillDown,
+          findingKeyEvidence: evidence,
+          stateKey: `budget:${plan.id}:${plan.revision}:${allocation.categoryId}:forecast`,
+        },
+      ));
+    }
+    return findings;
+  });
+};
 
 /** A same-named custom/default category cannot be represented by one ledger filter. */
 const categoryDrillDown = (ctx: AnomalyContext, category: string): AssessmentAnomalyDrillDown => {
@@ -1227,6 +1294,8 @@ const detectHygieneAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
 };
 
 const SEVERITY_RANK: Record<AiWatchSeverity, number> = { high: 0, medium: 1, low: 2 };
+export const sortAssessmentAnomalies = (findings: AssessmentAnomaly[]): AssessmentAnomaly[] =>
+  [...findings].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
 
 export const detectAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] =>
   [

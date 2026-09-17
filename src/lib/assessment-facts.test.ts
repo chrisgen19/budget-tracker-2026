@@ -12,6 +12,7 @@ import {
   findUnlinkedBillPayments,
   computeHeadline,
   computeHygiene,
+  detectBudgetWatchlistAnomalies,
   foldDescription,
   longestToken,
   monthRange,
@@ -20,6 +21,7 @@ import {
   type FactBill,
   type FactTransaction,
 } from "./assessment-facts";
+import type { BudgetPerformanceData } from "@/types";
 
 let seq = 0;
 const tx = (over: Partial<FactTransaction> & { localDate: string; amount: number }): FactTransaction => ({
@@ -52,6 +54,23 @@ const bill = (over: Partial<FactBill> = {}): FactBill => ({
   payments: [],
   occurrences: [],
   ...over,
+});
+
+const budget = (actual: number, projectedActual: number | null = actual): BudgetPerformanceData => ({
+  month: "2026-09",
+  periodLabel: "September 2026",
+  progress: { isPartial: true, daysElapsed: 10, daysInMonth: 30, percentElapsed: 33, effectiveTo: "2026-09-10" },
+  plan: { id: "plan-1", revision: 2, revisionCount: 2, createdAt: "2026-09-01T00:00:00.000Z", history: [] },
+  allocations: [{
+    categoryId: "food", categoryName: "Food", categoryIcon: "utensils", categoryColor: "amber", type: "EXPENSE",
+    kind: "FLEXIBLE", planned: 1000, rolloverEnabled: false, rolloverCarryIn: 0, available: 1000,
+    actual, remaining: 1000 - actual, varianceAmount: 1000 - actual, variancePct: null, projectedActual,
+    forecastToExceed: projectedActual !== null && projectedActual > 1000, projectionBasis: "Current average daily spend across 10 elapsed calendar days.", rolloverCarryOut: null,
+  }],
+  totals: { plannedIncome: 0, actualIncome: 0, plannedExpenses: 1000, availableExpenses: 1000, actualExpenses: actual, unbudgetedExpenses: 0, remainingExpenses: 1000 - actual, projectedExpenses: projectedActual, projectedVariance: null },
+  safeToSpend: { remainingFlexible: 0, perDay: null, perWeek: null, untilNextIncome: null, nextIncomeDate: null, daysUntilNextIncome: null, basis: "" },
+  forecastStatus: "available",
+  treatmentNotes: [],
 });
 
 describe("computeCoverage", () => {
@@ -206,6 +225,36 @@ describe("findDuplicates", () => {
     const dupes = findDuplicates(rows, { from: "2026-08-01", to: "2026-08-31" });
     expect(dupes).toHaveLength(1);
     expect(dupes[0]).toMatchObject({ copies: 2, transactionIds: [rows[0].id, rows[1].id], inPeriod: true });
+  });
+});
+
+describe("detectBudgetWatchlistAnomalies", () => {
+  it.each([
+    [500, "Food has reached 50% of its budget"],
+    [800, "Food has reached 80% of its budget"],
+    [1000, "Food has reached 100% of its budget"],
+  ])("reports only the highest reached threshold", (actual, title) => {
+    const findings = detectBudgetWatchlistAnomalies(budget(actual));
+    expect(findings.filter((finding) => finding.kind === "budget-threshold")).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ title, drillDown: { categoryId: "food", to: "2026-09-10" } });
+  });
+
+  it("adds a separate pace forecast before actual spending reaches the budget", () => {
+    const findings = detectBudgetWatchlistAnomalies(budget(400, 1200));
+    expect(findings.map((finding) => finding.kind)).toEqual(["budget-forecast"]);
+    expect(findings[0].detail).toContain("Current average daily spend");
+  });
+
+  it("does not alert when expected fixed or savings allocations are fully funded", () => {
+    const fixed = budget(1000);
+    fixed.allocations[0].kind = "FIXED";
+    expect(detectBudgetWatchlistAnomalies(fixed)).toEqual([]);
+  });
+
+  it("waits for five elapsed days before making a pace forecast", () => {
+    const early = budget(40, 1200);
+    early.progress.daysElapsed = 1;
+    expect(detectBudgetWatchlistAnomalies(early)).toEqual([]);
   });
 });
 
