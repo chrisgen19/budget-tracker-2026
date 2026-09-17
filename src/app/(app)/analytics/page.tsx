@@ -41,6 +41,7 @@ import { RecordsStatistics } from "@/components/analytics/records-statistics";
 import { CashFlowSignals } from "@/components/analytics/cash-flow-signals";
 import { PeriodComparisonNote } from "@/components/analytics/period-comparison-note";
 import { BudgetPerformance } from "@/components/analytics/budget-performance";
+import { CashFlowForecast } from "@/components/analytics/cash-flow-forecast";
 import { AiAssessmentReport } from "@/components/analytics/ai-assessment-report";
 import { Watchlist } from "@/components/analytics/watchlist";
 import { stagger, fadeUp } from "@/components/analytics/motion-variants";
@@ -398,7 +399,11 @@ export default function AnalyticsPage() {
         />
       </div>
 
-      {isLoading ? (
+      {activeTab === "forecast" ? (
+        <motion.div key="forecast" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+          <CashFlowForecast timezoneOffset={tz} currency={currency} hideAmounts={hideAmounts} />
+        </motion.div>
+      ) : isLoading ? (
         <AnalyticsContentSkeleton />
       ) : isError || !data ? (
         <AnalyticsLoadError error={error} onRetry={() => refetch()} />

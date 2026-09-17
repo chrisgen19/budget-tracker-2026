@@ -143,6 +143,11 @@ model User {
   /// `TELEGRAM_ALLOWED_IDS`, so revoking access there revokes it for the Mini App too.
   telegramUserId             String?                @unique @map("telegram_user_id")
   timezoneOffset             Int                    @default(-480) @map("timezone_offset")
+  /// A user-entered balance at the *start* of `forecastOpeningBalanceDate`. This is deliberately
+  /// not called a bank balance: until accounts/reconciliation exist it is only the tracked
+  /// baseline from which the cash-flow forecast applies ledger activity.
+  forecastOpeningBalance     Float?                 @map("forecast_opening_balance")
+  forecastOpeningBalanceDate DateTime?              @map("forecast_opening_balance_date")
   /// Lease, not a flag: MCP writes are permitted only while this is in the future. A boolean
   /// would depend on remembering to switch it back off, and the failure that matters is leaving
   /// writes on for days, which fails silently. Null means writes are off.

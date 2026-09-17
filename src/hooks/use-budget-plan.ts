@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { analyticsKeys } from "@/hooks/use-analytics";
+import { cashFlowForecastKeys } from "@/hooks/use-cash-flow-forecast";
 import type { BudgetPerformanceData } from "@/types";
 import type { BudgetPlanInput } from "@/lib/validations";
 
@@ -47,6 +48,7 @@ export function useSaveBudgetPlan(month: string, timezoneOffset: number) {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: budgetPlanKeys.month(month, timezoneOffset) }),
         queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
+        queryClient.invalidateQueries({ queryKey: cashFlowForecastKeys.all }),
       ]);
     },
   });

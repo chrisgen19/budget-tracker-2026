@@ -8,6 +8,7 @@ import {
   Sparkles,
   Trophy,
   WalletCards,
+  CalendarDays,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AnalyticsTab } from "@/lib/analytics-url";
@@ -24,6 +25,12 @@ const ANALYTICS_TABS = [
     label: "Budget Performance",
     shortLabel: "Budget",
     icon: WalletCards,
+  },
+  {
+    id: "forecast" as const,
+    label: "Forecast",
+    shortLabel: "Forecast",
+    icon: CalendarDays,
   },
   {
     id: "watchlist" as const,

@@ -8,6 +8,7 @@ import { useCallback } from "react";
 import { queryKeys } from "@/hooks/use-transactions";
 import { analyticsKeys } from "@/hooks/use-analytics";
 import { labelKeys } from "@/hooks/use-labels";
+import { cashFlowForecastKeys } from "@/hooks/use-cash-flow-forecast";
 import type { ScheduledTransactionInput, BillActionInput } from "@/lib/validations";
 import type { ScheduledTransactionWithCategory, PendingReminder } from "@/types";
 import type { ScheduledTransactionLog } from "@prisma/client";
@@ -211,6 +212,7 @@ export function useCreateBill() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: billKeys.all });
+      queryClient.invalidateQueries({ queryKey: cashFlowForecastKeys.all });
     },
   });
 }
@@ -233,6 +235,7 @@ export function useUpdateBill() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: billKeys.all });
+      queryClient.invalidateQueries({ queryKey: cashFlowForecastKeys.all });
     },
   });
 }
@@ -251,6 +254,7 @@ export function useDeleteBill() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: billKeys.all });
+      queryClient.invalidateQueries({ queryKey: cashFlowForecastKeys.all });
     },
   });
 }
@@ -270,6 +274,7 @@ export function useReactivateBill() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: billKeys.all });
       queryClient.invalidateQueries({ queryKey: billKeys.pendingAll });
+      queryClient.invalidateQueries({ queryKey: cashFlowForecastKeys.all });
     },
   });
 }
@@ -288,6 +293,7 @@ export function useInvalidateBillPayment() {
         queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
         queryClient.invalidateQueries({ queryKey: analyticsKeys.all }),
+        queryClient.invalidateQueries({ queryKey: cashFlowForecastKeys.all }),
         // Settling a bill writes a transaction carrying the bill's labels (bill-writes.ts:422), so
         // the cached label list's per-label and per-category counts are now behind.
         queryClient.invalidateQueries({ queryKey: labelKeys.all }),
@@ -319,6 +325,7 @@ export function useBillAction() {
 
       queryClient.invalidateQueries({ queryKey: billKeys.all });
       queryClient.invalidateQueries({ queryKey: billKeys.pendingAll });
+      queryClient.invalidateQueries({ queryKey: cashFlowForecastKeys.all });
 
       // If paid, also invalidate transactions, dashboard, and analytics
       if (variables.input.action === "pay" || variables.input.action === "pay_existing") {

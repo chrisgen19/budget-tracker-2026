@@ -5,6 +5,7 @@ import type {
   CreditPaymentInput,
   CreditPaymentPatch,
 } from "@/lib/validations";
+import { cashFlowForecastKeys } from "@/hooks/use-cash-flow-forecast";
 
 /* ------------------------------------------------------------------ */
 /*  Wire types                                                         */
@@ -107,7 +108,7 @@ export const creditAccountKeys = {
  * `creditAccountKeys`, so importing its key factories back would close a cycle. These are the
  * roots those factories use.
  */
-const SPENDING_KEYS = [["transactions"], ["dashboard"], ["analytics"], ["labels"]] as const;
+const SPENDING_KEYS = [["transactions"], ["dashboard"], ["analytics"], ["labels"], cashFlowForecastKeys.all] as const;
 /** The dashboard shows what cards owe, so a payment changes it too. */
 const DASHBOARD_KEY = [["dashboard"]] as const;
 
