@@ -11,6 +11,8 @@ export interface TransactionDrillDown {
   type?: "ALL" | "INCOME" | "EXPENSE";
   categoryId?: string | null;
   labelId?: string | null;
+  /** A transaction description search, for a finding tied to one entry. */
+  search?: string | null;
   /** Inclusive calendar days. A single day passes the same value to both. */
   from?: string | null;
   to?: string | null;
@@ -61,6 +63,7 @@ export function buildTransactionsHref(drillDown: TransactionDrillDown): string {
     type: drillDown.type,
     categoryId: drillDown.categoryId,
     labelId: drillDown.labelId,
+    search: drillDown.search ?? undefined,
     ret: drillDown.ret,
     // "custom" rather than the analytics period's own name: what reaches the list
     // is a pair of days, and calling it "monthly" would invite a later reader to

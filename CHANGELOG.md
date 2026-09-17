@@ -2,6 +2,14 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-17 - Watchlist findings can be resolved or snoozed
+
+Each live Watchlist finding now has **View transactions** (or **Go to Bills**), **Resolve**, and
+**Snooze 7 days** actions. Decisions are stored separately from the deterministic facts, keyed by
+a SHA-256 digest rather than a description, amount, or other financial detail. Resolving hides the
+same finding until its evidence changes; snoozes return automatically after seven days. Per-finding
+transaction links use the narrowest available category, type, date, or search filter.
+
 ## 2026-09-17 - Watchlist links each group to where it is acted on
 
 **View transactions in this period** moved from the foot of the Watchlist into the **In this
@@ -25,9 +33,8 @@ only period findings; the bill stays on that tab in **Missed bills**. The AI pro
 
 Analytics now has a **Watchlist** tab that surfaces live deterministic findings without requiring
 an AI generation: missed bills, possible duplicates, logging gaps, unusual transactions, spending
-pace, cash-flow, income, and category changes. Every finding explains why it appeared, names its
-severity, and offers a link to the selected period's transactions. This first slice is discovery
-and drill-down only; persistent resolve/snooze state will follow on a dedicated alert model.
+pace, cash-flow, income, and category changes. Every finding explains why it appeared and names
+its severity.
 
 ## 2026-09-16 - Analytics route telemetry is privacy-safe and measurable
 

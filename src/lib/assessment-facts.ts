@@ -34,6 +34,7 @@ import {
 import type {
   AiWatchSeverity,
   AssessmentAnomaly,
+  AssessmentAnomalyDrillDown,
   AssessmentAnomalyKind,
   AssessmentAnomalyScope,
   AssessmentHeadline,
@@ -589,6 +590,7 @@ export const findDuplicates = (
       description: g.label,
       amount: round(g.rows[0].amount),
       copies: g.rows.length,
+      transactionIds: g.rows.map((row) => row.id).sort(),
       inPeriod: g.rows[0].localDate >= period.from && g.rows[0].localDate <= period.to,
     }))
     .sort((a, b) => (Number(b.inPeriod) - Number(a.inPeriod)) || b.amount - a.amount)
@@ -977,7 +979,13 @@ const anomaly = (
   severity: AiWatchSeverity,
   title: string,
   detail: string,
-  metrics: { current?: number | null; baseline?: number | null; changePct?: number | null } = {},
+  metrics: {
+    current?: number | null;
+    baseline?: number | null;
+    changePct?: number | null;
+    drillDown?: AssessmentAnomalyDrillDown;
+    findingKeyEvidence?: string;
+  } = {},
 ): AssessmentAnomaly => ({
   kind,
   scope: ANOMALY_SCOPE[kind],
@@ -987,7 +995,33 @@ const anomaly = (
   current: metrics.current ?? null,
   baseline: metrics.baseline ?? null,
   changePct: metrics.changePct ?? null,
+  drillDown: metrics.drillDown,
+  findingKeyEvidence: metrics.findingKeyEvidence,
 });
+
+const periodDrillDown = (
+  ctx: AnomalyContext,
+  type?: "INCOME" | "EXPENSE",
+): AssessmentAnomalyDrillDown => ({
+  destination: "transactions",
+  type,
+  from: ctx.period.from,
+  to: ctx.period.to,
+});
+
+/** A same-named custom/default category cannot be represented by one ledger filter. */
+const categoryDrillDown = (ctx: AnomalyContext, category: string): AssessmentAnomalyDrillDown => {
+  const categoryIds = [...new Set(ctx.periodTx
+    .filter((transaction) => transaction.categoryName === category)
+    .map((transaction) => transaction.categoryId))].sort();
+  return {
+    ...periodDrillDown(ctx, "EXPENSE"),
+    ...(categoryIds.length === 1 ? { categoryId: categoryIds[0] } : {}),
+  };
+};
+
+const categoryFindingEvidence = (category: string, series: Map<string, number>): string =>
+  JSON.stringify({ category, months: [...series.entries()].sort(([a], [b]) => a.localeCompare(b)) });
 
 /** Categories spending materially more than the baseline months, plus categories that are new. */
 const detectCategorySpikes = (ctx: AnomalyContext): AssessmentAnomaly[] => {
@@ -1008,7 +1042,12 @@ const detectCategorySpikes = (ctx: AnomalyContext): AssessmentAnomaly[] => {
     if (baseline === 0) {
       out.push(anomaly("new-category", "medium", `${category} is new this period`,
         `Nothing was spent on ${category} in the previous ${ctx.baselineMonths.length} months${soFar}, and it is now ${pct(current, ctx.periodExpenses) ?? 0}% of the period's spending.`,
-        { current: round(current), baseline: 0 }));
+        {
+          current: round(current),
+          baseline: 0,
+          drillDown: categoryDrillDown(ctx, category),
+          findingKeyEvidence: categoryFindingEvidence(category, series),
+        }));
       continue;
     }
     if (current / baseline < SPIKE_RATIO) continue;
@@ -1016,7 +1055,13 @@ const detectCategorySpikes = (ctx: AnomalyContext): AssessmentAnomaly[] => {
     out.push(anomaly("category-spike", change !== null && change >= 100 ? "high" : "medium",
       `${category} is running ${change}% above its usual`,
       `${category} is ${change}% above what the trustworthy months had spent on it${soFar}, and it is ${pct(current, ctx.periodExpenses) ?? 0}% of this period's spending.`,
-      { current: round(current), baseline: round(baseline), changePct: change }));
+      {
+        current: round(current),
+        baseline: round(baseline),
+        changePct: change,
+        drillDown: categoryDrillDown(ctx, category),
+        findingKeyEvidence: categoryFindingEvidence(category, series),
+      }));
   }
   // Ranked by money moved, so a small category that doubled cannot outrank a
   // large one that rose by a third.
@@ -1067,7 +1112,16 @@ const detectOutlierTransactions = (ctx: AnomalyContext): AssessmentAnomaly[] => 
     .map(({ t, typical, ratio }) =>
       anomaly("outlier-transaction", "medium", `One-off ${t.categoryName} charge on ${t.localDate}`,
         `"${t.description || t.categoryName}" is about ${Math.round(ratio)}x the typical ${t.categoryName} charge and ${pct(t.amount, ctx.periodExpenses) ?? 0}% of the period's spending. Worth confirming it is not a mistyped amount.`,
-        { current: round(t.amount), baseline: round(typical), changePct: pct(t.amount - typical, typical) }));
+        {
+          current: round(t.amount),
+          baseline: round(typical),
+          changePct: pct(t.amount - typical, typical),
+          drillDown: {
+            ...periodDrillDown(ctx, "EXPENSE"),
+            categoryId: t.categoryId,
+            search: t.description || undefined,
+          },
+        }));
 };
 
 /** Overspending, a savings rate falling away from the baseline, missing income, and run-rate. */
@@ -1078,7 +1132,7 @@ const detectCashFlowAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
   if (net < 0 && ctx.periodExpenses > 0) {
     out.push(anomaly("overspend", "high", "Spending is ahead of income this period",
       `Expenses are ${pct(ctx.periodExpenses - ctx.periodIncome, Math.max(ctx.periodIncome, 1)) ?? 0}% more than what came in, so the shortfall is coming out of savings.`,
-      { current: round(ctx.periodExpenses), baseline: round(ctx.periodIncome) }));
+      { current: round(ctx.periodExpenses), baseline: round(ctx.periodIncome), drillDown: periodDrillDown(ctx) }));
   }
 
   // Only worth raising when the earlier months actually *had* income to compare
@@ -1092,7 +1146,8 @@ const detectCashFlowAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
     out.push(anomaly("missing-income", all ? "medium" : "low", "No income logged this period",
       all
         ? `All ${earnedBefore.length} earlier months in the window have income recorded. This is usually an unlogged deposit rather than a month without earnings.`
-        : `${earnedBefore.length} of the ${ctx.baselineMonths.length} earlier months in the window have income recorded, so this may be an unlogged deposit — or simply how the pay dates fall.`));
+        : `${earnedBefore.length} of the ${ctx.baselineMonths.length} earlier months in the window have income recorded, so this may be an unlogged deposit — or simply how the pay dates fall.`,
+      { drillDown: periodDrillDown(ctx, "INCOME") }));
   }
 
   // Run rate, only for a month still in progress: three days into a month,
@@ -1112,7 +1167,12 @@ const detectCashFlowAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
       const ahead = Math.round((ratio - 1) * 100);
       out.push(anomaly("pace", "high", "Ahead of a normal month's pace",
         `${periodDaysElapsed} of ${periodDaysTotal} days in, spending is ${ahead}% above where the trustworthy months stood by this day. At this rate the month lands near the projected figure rather than the usual one.`,
-        { current: round(ctx.baselineBurn * ratio), baseline: round(ctx.baselineBurn), changePct: ahead }));
+        {
+          current: round(ctx.baselineBurn * ratio),
+          baseline: round(ctx.baselineBurn),
+          changePct: ahead,
+          drillDown: periodDrillDown(ctx, "EXPENSE"),
+        }));
     }
   }
   return out;
@@ -1127,14 +1187,32 @@ const detectHygieneAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
     out.push(anomaly("missed-bill", "high",
       `${missed.length} bill${missed.length > 1 ? "s" : ""} with no payment recorded`,
       `${missed.map((b) => b.description).slice(0, 3).join(", ")}${missed.length > 3 ? " and others" : ""} — ${occurrences} due date${occurrences > 1 ? "s" : ""} passed without a payment, skip or snooze. Either the payment was never logged, or the bill really is unpaid.`,
-      { current: round(sum(missed.map((b) => b.estimatedArrears))) }));
+      {
+        current: round(sum(missed.map((b) => b.estimatedArrears))),
+        drillDown: { destination: "bills" },
+      }));
   }
 
   const dupes = ctx.hygiene.duplicates.filter((d) => d.inPeriod);
   if (dupes.length > 0) {
     out.push(anomaly("duplicate", "medium", `${dupes.length} possible duplicate entr${dupes.length > 1 ? "ies" : "y"}`,
       `Same day, same description and same amount — usually a double submit. Check ${dupes.slice(0, 2).map((d) => `"${d.description}" on ${d.date}`).join(" and ")}.`,
-      { current: round(sum(dupes.map((d) => d.amount * (d.copies - 1)))) }));
+      {
+        current: round(sum(dupes.map((d) => d.amount * (d.copies - 1)))),
+        drillDown: {
+          destination: "transactions",
+          from: dupes[0].date,
+          to: dupes[0].date,
+          search: dupes[0].description,
+        },
+        findingKeyEvidence: JSON.stringify(dupes.map(({ date, description, amount, copies, transactionIds }) => ({
+          date,
+          description,
+          amount,
+          copies,
+          transactionIds,
+        }))),
+      }));
   }
 
   const gaps = ctx.confidence.gaps.filter((g) => g.inPeriod);
@@ -1143,7 +1221,7 @@ const detectHygieneAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
     out.push(anomaly("logging-gap", ctx.confidence.periodCoveragePct < MIN_COVERAGE_PCT ? "high" : "low",
       `${worst.days} days with nothing logged`,
       `Nothing was recorded between ${worst.from} and ${worst.to}, so this period's totals are a floor rather than the whole picture. Coverage is ${ctx.confidence.periodCoveragePct}% of the days elapsed.`,
-      { current: ctx.confidence.periodCoveragePct }));
+      { current: ctx.confidence.periodCoveragePct, drillDown: periodDrillDown(ctx) }));
   }
   return out;
 };

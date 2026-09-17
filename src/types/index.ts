@@ -759,6 +759,8 @@ export interface AssessmentDuplicateGroup {
   description: string;
   amount: number;
   copies: number;
+  /** Source rows, so a replacement duplicate is a new finding even if its prose is unchanged. */
+  transactionIds: string[];
   inPeriod: boolean;
 }
 
@@ -822,6 +824,16 @@ export type AssessmentAnomalyKind =
  */
 export type AssessmentAnomalyScope = "period" | "outstanding";
 
+/** The most focused destination available for a Watchlist finding. */
+export interface AssessmentAnomalyDrillDown {
+  destination: "transactions" | "bills";
+  type?: TransactionType;
+  categoryId?: string;
+  from?: string;
+  to?: string;
+  search?: string;
+}
+
 export interface AssessmentAnomaly {
   kind: AssessmentAnomalyKind;
   /** Whether the selected period bounds this finding. See `AssessmentAnomalyScope`. */
@@ -835,6 +847,10 @@ export interface AssessmentAnomaly {
   /** What the trustworthy months said to expect. */
   baseline: number | null;
   changePct: number | null;
+  /** Optional narrowing for the Watchlist's per-finding follow-up link. */
+  drillDown?: AssessmentAnomalyDrillDown;
+  /** Exact deterministic evidence used only to decide whether a saved action still applies. */
+  findingKeyEvidence?: string;
 }
 
 /** Everything the assessment knows for certain, computed from the database rather than inferred. */
@@ -857,4 +873,6 @@ export interface AssessmentFacts {
 /** GET /api/assessment/facts response. */
 export interface AssessmentFactsResponse {
   facts: AssessmentFacts;
+  /** Only decisions that currently suppress a finding; missing means active. */
+  findingStates: Record<string, "RESOLVED" | "SNOOZED">;
 }

@@ -863,6 +863,7 @@ const duplicateGroup = z.object({
   description: z.string(),
   amount: z.number(),
   copies: z.number(),
+  transactionIds: z.array(z.string()),
   inPeriod: z.boolean(),
 });
 assertExact<z.infer<typeof duplicateGroup>, AssessmentDuplicateGroup>(true);
@@ -917,6 +918,15 @@ const anomaly = z.object({
   current: z.number().nullable(),
   baseline: z.number().nullable(),
   changePct: z.number().nullable(),
+  drillDown: z.object({
+    destination: z.enum(["transactions", "bills"]),
+    type: transactionType.optional(),
+    categoryId: z.string().optional(),
+    from: z.string().optional(),
+    to: z.string().optional(),
+    search: z.string().optional(),
+  }).optional(),
+  findingKeyEvidence: z.string().optional(),
 });
 assertExact<z.infer<typeof anomaly>, AssessmentAnomaly>(true);
 

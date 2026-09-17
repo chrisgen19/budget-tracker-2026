@@ -1,16 +1,29 @@
 import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Watchlist } from "@/components/analytics/watchlist";
+import { watchlistFindingKey } from "@/lib/watchlist-findings";
 
 const mocks = vi.hoisted(() => ({
   useAssessmentFactsQuery: vi.fn(),
+  mutateAsync: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("@/hooks/use-assessment", () => ({
   useAssessmentFactsQuery: mocks.useAssessmentFactsQuery,
+  useWatchlistFindingAction: () => ({ isPending: false, mutateAsync: mocks.mutateAsync }),
+}));
+
+vi.mock("@/components/ui/toast", () => ({
+  useToast: () => ({ showToast: mocks.showToast }),
 }));
 
 const period = { granularity: "monthly", from: "2026-09-01", to: "2026-09-30" };
+
+beforeEach(() => {
+  mocks.mutateAsync.mockReset().mockResolvedValue({});
+  mocks.showToast.mockReset();
+});
 
 describe("Watchlist", () => {
   it("shows deterministic findings and a drill-down for the selected period", () => {
@@ -74,6 +87,65 @@ describe("Watchlist", () => {
 
     screen.getByRole("button", { name: "Try again" }).click();
     expect(refetch).toHaveBeenCalledOnce();
+  });
+
+  it("persists resolve and snooze actions for an individual finding", async () => {
+    const finding = {
+      kind: "duplicate" as const,
+      scope: "period" as const,
+      severity: "medium" as const,
+      title: "2 possible duplicate entries",
+      detail: "Same day, same description and same amount.",
+      current: null,
+      baseline: null,
+      changePct: null,
+    };
+    mocks.useAssessmentFactsQuery.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: { facts: { anomalies: [finding] } },
+    });
+
+    render(<Watchlist period={period} returnTo="period=monthly" />);
+
+    screen.getByRole("button", { name: "Resolve" }).click();
+    expect(mocks.mutateAsync).toHaveBeenCalledWith({
+      findingKey: watchlistFindingKey(finding, period),
+      action: "RESOLVED",
+    });
+
+    screen.getByRole("button", { name: /Snooze 7 days/ }).click();
+    expect(mocks.mutateAsync).toHaveBeenLastCalledWith({
+      findingKey: watchlistFindingKey(finding, period),
+      action: "SNOOZED",
+    });
+  });
+
+  it("hides only a finding with an active persisted state", () => {
+    const resolved = {
+      kind: "duplicate" as const,
+      scope: "period" as const,
+      severity: "medium" as const,
+      title: "Resolved duplicate",
+      detail: "Same day and amount.",
+      current: null,
+      baseline: null,
+      changePct: null,
+    };
+    const changed = { ...resolved, title: "A changed duplicate" };
+    mocks.useAssessmentFactsQuery.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        facts: { anomalies: [resolved, changed] },
+        findingStates: { [watchlistFindingKey(resolved, period)]: "RESOLVED" },
+      },
+    });
+
+    render(<Watchlist period={period} returnTo="period=monthly" />);
+
+    expect(screen.queryByText("Resolved duplicate")).toBeNull();
+    expect(screen.getByText("A changed duplicate")).toBeTruthy();
   });
 });
 
@@ -284,5 +356,52 @@ describe("Watchlist links", () => {
     expect(screen.getByText("Nothing needs attention")).toBeTruthy();
     expect(screen.getByRole("link", { name: periodLinkName }).getAttribute("href")).toContain("from=2026-09-01");
     expect(screen.queryByRole("region", { name: "In this period" })).toBeNull();
+  });
+
+  it("uses a finding's focused category drill-down instead of the broad period link", () => {
+    renderWith([
+      finding({
+        kind: "category-spike",
+        scope: "period",
+        title: "Groceries is running 80% above its usual",
+        drillDown: {
+          destination: "transactions",
+          type: "EXPENSE",
+          categoryId: "groceries",
+          from: "2026-09-03",
+          to: "2026-09-10",
+        },
+      }),
+    ]);
+
+    const href = new URL(
+      screen.getByRole("link", { name: "View transactions" }).getAttribute("href")!,
+      "http://x",
+    );
+    expect(href.searchParams.get("categoryId")).toBe("groceries");
+    expect(href.searchParams.get("from")).toBe("2026-09-03");
+    expect(href.searchParams.get("to")).toBe("2026-09-10");
+  });
+
+  it("keeps a finding's transaction search in its focused drill-down", () => {
+    renderWith([
+      finding({
+        kind: "outlier-transaction",
+        scope: "period",
+        drillDown: {
+          destination: "transactions",
+          type: "EXPENSE",
+          from: "2026-09-08",
+          to: "2026-09-08",
+          search: "Weekend market",
+        },
+      }),
+    ]);
+
+    const href = new URL(
+      screen.getByRole("link", { name: "View transactions" }).getAttribute("href")!,
+      "http://x",
+    );
+    expect(href.searchParams.get("search")).toBe("Weekend market");
   });
 });

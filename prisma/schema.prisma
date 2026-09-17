@@ -85,6 +85,12 @@ enum ScanStatus {
   FAILED
 }
 
+/** A user's decision about a live, deterministic Watchlist finding. */
+enum WatchlistFindingStatus {
+  RESOLVED
+  SNOOZED
+}
+
 /// Who a feature is switched on for. Admins always have every feature; this decides everyone else.
 enum FeatureAccess {
   ADMIN
@@ -155,6 +161,7 @@ model User {
   creditAccounts             CreditAccount[]
   creditPayments             CreditPayment[]
   budgetPlans                BudgetPlan[]
+  watchlistFindingStates     WatchlistFindingState[]
   createdAt                  DateTime               @default(now()) @map("created_at")
   updatedAt                  DateTime               @updatedAt @map("updated_at")
 
@@ -263,6 +270,30 @@ model BudgetAllocation {
   @@unique([planId, categoryId])
   @@index([categoryId])
   @@map("budget_allocations")
+}
+
+/**
+ * A resolve/snooze decision for one current Watchlist finding.
+ *
+ * `findingHash` is the SHA-256 of the client-visible finding key, never the
+ * key itself: a state row must not become another store of descriptions or
+ * monetary facts. A changed deterministic finding produces a different key and
+ * correctly returns to the Watchlist for review.
+ */
+model WatchlistFindingState {
+  id           String                 @id @default(cuid())
+  userId       String                 @map("user_id")
+  user         User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  findingHash  String                 @map("finding_hash")
+  status       WatchlistFindingStatus
+  snoozedUntil DateTime?              @map("snoozed_until")
+  resolvedAt   DateTime?              @map("resolved_at")
+  createdAt    DateTime               @default(now()) @map("created_at")
+  updatedAt    DateTime               @updatedAt @map("updated_at")
+
+  @@unique([userId, findingHash])
+  @@index([userId, status, snoozedUntil])
+  @@map("watchlist_finding_states")
 }
 
 model Transaction {

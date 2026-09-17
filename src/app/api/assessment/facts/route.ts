@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { collectAssessmentFacts } from "@/lib/assessment-facts-query";
 import { formatPeriodLabel, type PeriodType } from "@/lib/analytics-period";
+import { getSuppressingWatchlistStates } from "@/lib/watchlist-finding-states";
+import { watchlistFindingKey } from "@/lib/watchlist-findings";
 import type { AssessmentFactsResponse } from "@/types";
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -49,7 +51,12 @@ export async function GET(request: Request) {
       granularity,
       periodLabel: formatPeriodLabel(granularity as PeriodType, from, to),
     });
-    const body: AssessmentFactsResponse = { facts };
+    const findingStates = await getSuppressingWatchlistStates(
+      prisma,
+      userId,
+      facts.anomalies.map((finding) => watchlistFindingKey(finding, facts.period)),
+    );
+    const body: AssessmentFactsResponse = { facts, findingStates };
     return NextResponse.json(body);
   } catch (error) {
     console.error("[assessment/facts] failed:", error instanceof Error ? error.message : error);

@@ -14,6 +14,7 @@ paths:
 - `PUT /api/budgets/[month]` — save a complete monthly allocation snapshot as the next immutable revision. Validates category visibility/type. Stores no carry-in: `GET /api/budgets` derives it on every read, walking back through consecutive months whose plans enable rollover and subtracting what was actually spent
 - `GET /api/assessment` — cached AI Assessment report for a period (`granularity`/`from`/`to`); returns `{ report | null, generatedAt, model }`, re-validated through `assessmentReportSchema` so a row cached before a section existed still renders
 - `GET /api/assessment/facts` — the computed half of the assessment for a period: coverage, missed bills, bill accuracy, category movement, recurring spend, duplicates and anomalies. Live, never cached
+- `PATCH /api/watchlist/findings` — persist a resolve or seven-day snooze decision for one versioned live Watchlist finding. The database stores only a SHA-256 finding hash, never the underlying description or amounts
 - `POST /api/assessment/generate` — generate/refresh the AI report for a period (Gemini structured analysis + grounded web tips); caches it and enforces a per-day cap
 - `GET /api/assessment/daily-tip` — today's lightweight AI save/earn tip (lazily generated + cached per local day)
 - `GET /api/dashboard` — aggregated stats, category breakdown, monthly trends

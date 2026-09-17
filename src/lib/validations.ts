@@ -35,6 +35,12 @@ export const transactionSchema = z.object({
   creditAccountId: z.string().min(1).max(100).nullable().optional(),
 });
 
+/** A Resolve or Snooze action is allowed only for a versioned, bounded finding key. */
+export const watchlistFindingActionSchema = z.object({
+  findingKey: z.string().max(2_000).startsWith("watchlist:v1:", "Invalid finding"),
+  action: z.enum(["RESOLVED", "SNOOZED"]),
+});
+
 export const receiptBreakdownLineItemSchema = z.object({
   name: z.string().max(255),
   amount: z.number().positive(),

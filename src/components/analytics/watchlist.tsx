@@ -5,17 +5,22 @@ import Link from "next/link";
 import {
   AlertTriangle,
   ArrowRight,
+  Check,
   ClipboardCheck,
+  Clock3,
   RefreshCw,
 } from "lucide-react";
 import {
   useAssessmentFactsQuery,
+  useWatchlistFindingAction,
   type AssessmentPeriod,
 } from "@/hooks/use-assessment";
+import { useToast } from "@/components/ui/toast";
+import { buildTransactionsHref } from "@/lib/transaction-filter-url";
 import { cn } from "@/lib/utils";
+import { watchlistFindingKey } from "@/lib/watchlist-findings";
 import type {
   AssessmentAnomaly,
-  AssessmentAnomalyKind,
   AssessmentAnomalyScope,
 } from "@/types";
 
@@ -91,15 +96,21 @@ const SCOPE_SECTIONS: readonly ScopeSectionCopy[] = [
 const groupOf = (finding: AssessmentAnomaly): AssessmentAnomalyScope =>
   finding.scope === "period" ? "period" : "outstanding";
 
-/**
- * Where a finding is acted on, for the kinds whose fix is not in the period's transactions. A
- * missed bill is paid, skipped or snoozed on the Bills page, and its due date is usually outside
- * the period on screen, so the period drill-down cannot help with it.
- */
-const KIND_ACTION: Partial<
-  Record<AssessmentAnomalyKind, { href: string; label: string }>
-> = {
-  "missed-bill": { href: "/bills", label: "Go to Bills" },
+const findingHref = (
+  finding: AssessmentAnomaly,
+  period: AssessmentPeriod,
+  returnTo: string,
+): string => {
+  const drillDown = finding.drillDown;
+  if (drillDown?.destination === "bills" || finding.kind === "missed-bill") return "/bills";
+  return buildTransactionsHref({
+    type: drillDown?.type,
+    categoryId: drillDown?.categoryId,
+    search: drillDown?.search,
+    from: drillDown?.from ?? period.from,
+    to: drillDown?.to ?? period.to,
+    ret: returnTo,
+  });
 };
 
 function ActionLink({
@@ -125,9 +136,27 @@ function ActionLink({
   );
 }
 
-function Finding({ finding }: { finding: AssessmentAnomaly }) {
+function Finding({
+  finding,
+  period,
+  returnTo,
+}: {
+  finding: AssessmentAnomaly;
+  period: AssessmentPeriod;
+  returnTo: string;
+}) {
   const severity = SEVERITY_STYLE[finding.severity];
-  const action = KIND_ACTION[finding.kind];
+  const findingAction = useWatchlistFindingAction();
+  const { showToast } = useToast();
+  const key = watchlistFindingKey(finding, period);
+  const saveAction = async (nextAction: "RESOLVED" | "SNOOZED") => {
+    try {
+      await findingAction.mutateAsync({ findingKey: key, action: nextAction });
+      showToast(nextAction === "RESOLVED" ? "Finding resolved" : "Finding snoozed for 7 days");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Failed to save Watchlist action", "error");
+    }
+  };
   return (
     <li className="p-4 sm:p-5">
       <div className="flex flex-wrap items-center gap-2">
@@ -147,11 +176,32 @@ function Finding({ finding }: { finding: AssessmentAnomaly }) {
         {finding.title}
       </h4>
       <p className="mt-1 text-sm leading-6 text-warm-500">{finding.detail}</p>
-      {action && (
-        <ActionLink href={action.href} className="-mb-2 -ml-2 mt-1">
-          {action.label}
+      <div className="mt-1 flex flex-wrap gap-1">
+        <ActionLink
+          href={findingHref(finding, period, returnTo)}
+          className="-mb-2 -ml-2"
+        >
+          {finding.drillDown?.destination === "bills" || finding.kind === "missed-bill"
+            ? "Go to Bills"
+            : "View transactions"}
         </ActionLink>
-      )}
+        <button
+          type="button"
+          onClick={() => void saveAction("RESOLVED")}
+          disabled={findingAction.isPending}
+          className="inline-flex min-h-11 items-center gap-1.5 rounded-xl px-3 text-sm font-medium text-income hover:bg-income-light disabled:opacity-50"
+        >
+          <Check className="h-4 w-4" /> Resolve
+        </button>
+        <button
+          type="button"
+          onClick={() => void saveAction("SNOOZED")}
+          disabled={findingAction.isPending}
+          className="inline-flex min-h-11 items-center gap-1.5 rounded-xl px-3 text-sm font-medium text-warm-600 hover:bg-cream-100 disabled:opacity-50"
+        >
+          <Clock3 className="h-4 w-4" /> Snooze 7 days
+        </button>
+      </div>
     </li>
   );
 }
@@ -161,12 +211,16 @@ function ScopeSection({
   copy,
   findings,
   footer,
+  period,
+  returnTo,
 }: {
   id: string;
   copy: ScopeSectionCopy;
   findings: AssessmentAnomaly[];
   /** A link that belongs to this group rather than to the whole panel. */
   footer?: ReactNode;
+  period: AssessmentPeriod;
+  returnTo: string;
 }) {
   return (
     <section aria-labelledby={id}>
@@ -184,7 +238,12 @@ function ScopeSection({
       ) : (
         <ul className="divide-y divide-cream-200/80">
           {findings.map((finding, index) => (
-            <Finding key={`${finding.kind}-${index}`} finding={finding} />
+            <Finding
+              key={`${finding.kind}-${index}`}
+              finding={finding}
+              period={period}
+              returnTo={returnTo}
+            />
           ))}
         </ul>
       )}
@@ -212,14 +271,18 @@ const transactionHref = (
 
 /**
  * Always-available, deterministic findings that used to be visible only inside
- * the AI Assessment tab. They are live aggregates, not notifications: resolving
- * and snoozing them needs a persisted alert-state model and follows in a later
- * slice.
+ * the AI Assessment tab. They are live aggregates; Resolve and Snooze keep
+ * their state separately, without mutating the underlying facts.
  */
 export function Watchlist({ period, returnTo }: WatchlistProps) {
   const sectionId = useId();
   const facts = useAssessmentFactsQuery(period);
   const findings = facts.data?.facts.anomalies ?? [];
+  const factsPeriod = facts.data?.facts.period ?? period;
+  const findingStates = facts.data?.findingStates ?? {};
+  const activeFindings = findings.filter(
+    (finding) => findingStates[watchlistFindingKey(finding, factsPeriod)] === undefined,
+  );
   // The drill-down opens the selected dates, so it sits with the findings measured inside them.
   // At the bottom of the panel it also read as the way to act on an outstanding bill, and on a
   // month with nothing logged it opened an empty list.
@@ -276,22 +339,22 @@ export function Watchlist({ period, returnTo }: WatchlistProps) {
         </div>
       </div>
 
-      {findings.length === 0 ? (
+      {activeFindings.length === 0 ? (
         <div className="p-8 text-center">
           <ClipboardCheck className="mx-auto h-10 w-10 text-income" />
           <h3 className="mt-3 font-serif text-lg text-warm-700">
             Nothing needs attention
           </h3>
           <p className="mx-auto mt-1 max-w-md text-sm text-warm-400">
-            No unusual spending, possible duplicates or logging gaps in this
-            period, and no bills outstanding today.
+            No active unusual spending, possible duplicates or logging gaps in
+            this period, and no bills outstanding today.
           </p>
           <div className="mt-3">{periodLink}</div>
         </div>
       ) : (
         <div className="divide-y divide-cream-200">
           {SCOPE_SECTIONS.map((copy) => {
-            const inGroup = findings.filter((f) => groupOf(f) === copy.scope);
+            const inGroup = activeFindings.filter((f) => groupOf(f) === copy.scope);
             if (inGroup.length === 0 && copy.empty === null) return null;
             return (
               <ScopeSection
@@ -300,6 +363,8 @@ export function Watchlist({ period, returnTo }: WatchlistProps) {
                 copy={copy}
                 findings={inGroup}
                 footer={copy.scope === "period" ? periodLink : undefined}
+                period={factsPeriod}
+                returnTo={returnTo}
               />
             );
           })}
