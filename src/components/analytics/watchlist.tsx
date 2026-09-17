@@ -1,6 +1,6 @@
 "use client";
 
-import { useId } from "react";
+import { useId, type ReactNode } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -13,7 +13,11 @@ import {
   type AssessmentPeriod,
 } from "@/hooks/use-assessment";
 import { cn } from "@/lib/utils";
-import type { AssessmentAnomaly, AssessmentAnomalyScope } from "@/types";
+import type {
+  AssessmentAnomaly,
+  AssessmentAnomalyKind,
+  AssessmentAnomalyScope,
+} from "@/types";
 
 interface WatchlistProps {
   period: AssessmentPeriod;
@@ -87,8 +91,43 @@ const SCOPE_SECTIONS: readonly ScopeSectionCopy[] = [
 const groupOf = (finding: AssessmentAnomaly): AssessmentAnomalyScope =>
   finding.scope === "period" ? "period" : "outstanding";
 
+/**
+ * Where a finding is acted on, for the kinds whose fix is not in the period's transactions. A
+ * missed bill is paid, skipped or snoozed on the Bills page, and its due date is usually outside
+ * the period on screen, so the period drill-down cannot help with it.
+ */
+const KIND_ACTION: Partial<
+  Record<AssessmentAnomalyKind, { href: string; label: string }>
+> = {
+  "missed-bill": { href: "/bills", label: "Go to Bills" },
+};
+
+function ActionLink({
+  href,
+  children,
+  className,
+}: {
+  href: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "inline-flex min-h-11 items-center gap-2 rounded-xl px-2 text-sm font-medium text-amber-dark transition-colors hover:bg-amber-light",
+        className,
+      )}
+    >
+      {children}
+      <ArrowRight className="h-4 w-4" aria-hidden="true" />
+    </Link>
+  );
+}
+
 function Finding({ finding }: { finding: AssessmentAnomaly }) {
   const severity = SEVERITY_STYLE[finding.severity];
+  const action = KIND_ACTION[finding.kind];
   return (
     <li className="p-4 sm:p-5">
       <div className="flex flex-wrap items-center gap-2">
@@ -108,6 +147,11 @@ function Finding({ finding }: { finding: AssessmentAnomaly }) {
         {finding.title}
       </h4>
       <p className="mt-1 text-sm leading-6 text-warm-500">{finding.detail}</p>
+      {action && (
+        <ActionLink href={action.href} className="-mb-2 -ml-2 mt-1">
+          {action.label}
+        </ActionLink>
+      )}
     </li>
   );
 }
@@ -116,10 +160,13 @@ function ScopeSection({
   id,
   copy,
   findings,
+  footer,
 }: {
   id: string;
   copy: ScopeSectionCopy;
   findings: AssessmentAnomaly[];
+  /** A link that belongs to this group rather than to the whole panel. */
+  footer?: ReactNode;
 }) {
   return (
     <section aria-labelledby={id}>
@@ -140,6 +187,11 @@ function ScopeSection({
             <Finding key={`${finding.kind}-${index}`} finding={finding} />
           ))}
         </ul>
+      )}
+      {footer && (
+        <div className="border-t border-cream-200/80 px-2 py-1 sm:px-3">
+          {footer}
+        </div>
       )}
     </section>
   );
@@ -168,7 +220,14 @@ export function Watchlist({ period, returnTo }: WatchlistProps) {
   const sectionId = useId();
   const facts = useAssessmentFactsQuery(period);
   const findings = facts.data?.facts.anomalies ?? [];
-  const href = transactionHref(period, returnTo);
+  // The drill-down opens the selected dates, so it sits with the findings measured inside them.
+  // At the bottom of the panel it also read as the way to act on an outstanding bill, and on a
+  // month with nothing logged it opened an empty list.
+  const periodLink = (
+    <ActionLink href={transactionHref(period, returnTo)}>
+      View transactions in this period
+    </ActionLink>
+  );
 
   if (facts.isLoading) {
     return (
@@ -227,6 +286,7 @@ export function Watchlist({ period, returnTo }: WatchlistProps) {
             No unusual spending, possible duplicates or logging gaps in this
             period, and no bills outstanding today.
           </p>
+          <div className="mt-3">{periodLink}</div>
         </div>
       ) : (
         <div className="divide-y divide-cream-200">
@@ -239,21 +299,13 @@ export function Watchlist({ period, returnTo }: WatchlistProps) {
                 id={`${sectionId}-${copy.scope}`}
                 copy={copy}
                 findings={inGroup}
+                footer={copy.scope === "period" ? periodLink : undefined}
               />
             );
           })}
         </div>
       )}
 
-      <div className="border-t border-cream-200 bg-cream-50/50 p-3 sm:px-5">
-        <Link
-          href={href}
-          className="inline-flex min-h-11 items-center gap-2 rounded-xl px-2 text-sm font-medium text-amber-dark transition-colors hover:bg-amber-light"
-        >
-          View transactions in this period
-          <ArrowRight className="h-4 w-4" />
-        </Link>
-      </div>
     </section>
   );
 }
