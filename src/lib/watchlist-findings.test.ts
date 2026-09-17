@@ -15,6 +15,10 @@ const finding = (over: Partial<AssessmentAnomaly> = {}): AssessmentAnomaly => ({
 });
 
 describe("watchlistFindingKey", () => {
+  it("keeps its version prefix literal so the action API accepts it", () => {
+    expect(watchlistFindingKey(finding(), { from: "2026-09-01", to: "2026-09-30" })).toMatch(/^watchlist:v1:/);
+  });
+
   it("keeps a period finding scoped to the report it was measured in", () => {
     expect(watchlistFindingKey(finding(), { from: "2026-09-01", to: "2026-09-30" })).not.toBe(
       watchlistFindingKey(finding(), { from: "2026-10-01", to: "2026-10-31" }),
@@ -32,6 +36,23 @@ describe("watchlistFindingKey", () => {
     const period = { from: "2026-09-01", to: "2026-09-30" };
     expect(watchlistFindingKey(finding(), period)).not.toBe(
       watchlistFindingKey(finding({ detail: "A different duplicate is now present." }), period),
+    );
+  });
+
+  it("changes for non-display evidence that otherwise rounds to the same prose", () => {
+    const period = { from: "2026-09-01", to: "2026-09-30" };
+    const original = finding({
+      current: 1_200,
+      drillDown: { destination: "transactions", search: "first duplicate" },
+      findingKeyEvidence: "duplicate-rows:a,b",
+    });
+    expect(watchlistFindingKey(original, period)).not.toBe(
+      watchlistFindingKey({
+        ...original,
+        current: 1_201,
+        drillDown: { destination: "transactions", search: "replacement duplicate" },
+        findingKeyEvidence: "duplicate-rows:a,c",
+      }, period),
     );
   });
 });

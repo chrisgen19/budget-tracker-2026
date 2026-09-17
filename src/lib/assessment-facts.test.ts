@@ -205,7 +205,7 @@ describe("findDuplicates", () => {
     ];
     const dupes = findDuplicates(rows, { from: "2026-08-01", to: "2026-08-31" });
     expect(dupes).toHaveLength(1);
-    expect(dupes[0]).toMatchObject({ copies: 2, inPeriod: true });
+    expect(dupes[0]).toMatchObject({ copies: 2, transactionIds: [rows[0].id, rows[1].id], inPeriod: true });
   });
 });
 
@@ -527,6 +527,48 @@ describe("buildAssessmentFacts", () => {
       type: "EXPENSE",
       from: "2026-09-01",
       to: "2026-09-30",
+    });
+  });
+
+  it("does not narrow a same-name category finding to only one contributing category", () => {
+    const f = buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: "2026-09-01", to: "2026-09-30", label: "September 2026", granularity: "monthly" },
+      today: "2026-09-06",
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions: [
+        ...history,
+        tx({ localDate: "2026-09-06", amount: 3000, categoryId: "custom-food", categoryName: "Food & Dining" }),
+      ],
+      bills: [],
+    });
+
+    const categoryFinding = f.anomalies.find((anomaly) =>
+      anomaly.kind === "category-spike" && anomaly.title.startsWith("Food & Dining"));
+    expect(categoryFinding?.drillDown).not.toHaveProperty("categoryId");
+  });
+
+  it("leaves duplicate drill-downs type-neutral so income duplicates remain visible", () => {
+    const duplicates = [
+      tx({ localDate: "2026-09-06", amount: 1000, type: "INCOME", categoryName: "Salary", description: "Bonus" }),
+      tx({ localDate: "2026-09-06", amount: 1000, type: "INCOME", categoryName: "Salary", description: "Bonus" }),
+    ];
+    const f = buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: "2026-09-01", to: "2026-09-30", label: "September 2026", granularity: "monthly" },
+      today: "2026-09-06",
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions: [...history, ...duplicates],
+      bills: [],
+    });
+
+    expect(f.anomalies.find((anomaly) => anomaly.kind === "duplicate")?.drillDown).toEqual({
+      destination: "transactions",
+      from: "2026-09-06",
+      to: "2026-09-06",
+      search: "Bonus",
     });
   });
 

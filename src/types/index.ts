@@ -759,6 +759,8 @@ export interface AssessmentDuplicateGroup {
   description: string;
   amount: number;
   copies: number;
+  /** Source rows, so a replacement duplicate is a new finding even if its prose is unchanged. */
+  transactionIds: string[];
   inPeriod: boolean;
 }
 
@@ -847,6 +849,8 @@ export interface AssessmentAnomaly {
   changePct: number | null;
   /** Optional narrowing for the Watchlist's per-finding follow-up link. */
   drillDown?: AssessmentAnomalyDrillDown;
+  /** Exact deterministic evidence used only to decide whether a saved action still applies. */
+  findingKeyEvidence?: string;
 }
 
 /** Everything the assessment knows for certain, computed from the database rather than inferred. */

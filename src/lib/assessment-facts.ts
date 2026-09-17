@@ -590,6 +590,7 @@ export const findDuplicates = (
       description: g.label,
       amount: round(g.rows[0].amount),
       copies: g.rows.length,
+      transactionIds: g.rows.map((row) => row.id).sort(),
       inPeriod: g.rows[0].localDate >= period.from && g.rows[0].localDate <= period.to,
     }))
     .sort((a, b) => (Number(b.inPeriod) - Number(a.inPeriod)) || b.amount - a.amount)
@@ -983,6 +984,7 @@ const anomaly = (
     baseline?: number | null;
     changePct?: number | null;
     drillDown?: AssessmentAnomalyDrillDown;
+    findingKeyEvidence?: string;
   } = {},
 ): AssessmentAnomaly => ({
   kind,
@@ -994,6 +996,7 @@ const anomaly = (
   baseline: metrics.baseline ?? null,
   changePct: metrics.changePct ?? null,
   drillDown: metrics.drillDown,
+  findingKeyEvidence: metrics.findingKeyEvidence,
 });
 
 const periodDrillDown = (
@@ -1005,6 +1008,20 @@ const periodDrillDown = (
   from: ctx.period.from,
   to: ctx.period.to,
 });
+
+/** A same-named custom/default category cannot be represented by one ledger filter. */
+const categoryDrillDown = (ctx: AnomalyContext, category: string): AssessmentAnomalyDrillDown => {
+  const categoryIds = [...new Set(ctx.periodTx
+    .filter((transaction) => transaction.categoryName === category)
+    .map((transaction) => transaction.categoryId))].sort();
+  return {
+    ...periodDrillDown(ctx, "EXPENSE"),
+    ...(categoryIds.length === 1 ? { categoryId: categoryIds[0] } : {}),
+  };
+};
+
+const categoryFindingEvidence = (category: string, series: Map<string, number>): string =>
+  JSON.stringify({ category, months: [...series.entries()].sort(([a], [b]) => a.localeCompare(b)) });
 
 /** Categories spending materially more than the baseline months, plus categories that are new. */
 const detectCategorySpikes = (ctx: AnomalyContext): AssessmentAnomaly[] => {
@@ -1028,10 +1045,8 @@ const detectCategorySpikes = (ctx: AnomalyContext): AssessmentAnomaly[] => {
         {
           current: round(current),
           baseline: 0,
-          drillDown: {
-            ...periodDrillDown(ctx, "EXPENSE"),
-            categoryId: ctx.periodTx.find((t) => t.categoryName === category)?.categoryId,
-          },
+          drillDown: categoryDrillDown(ctx, category),
+          findingKeyEvidence: categoryFindingEvidence(category, series),
         }));
       continue;
     }
@@ -1044,10 +1059,8 @@ const detectCategorySpikes = (ctx: AnomalyContext): AssessmentAnomaly[] => {
         current: round(current),
         baseline: round(baseline),
         changePct: change,
-        drillDown: {
-          ...periodDrillDown(ctx, "EXPENSE"),
-          categoryId: ctx.periodTx.find((t) => t.categoryName === category)?.categoryId,
-        },
+        drillDown: categoryDrillDown(ctx, category),
+        findingKeyEvidence: categoryFindingEvidence(category, series),
       }));
   }
   // Ranked by money moved, so a small category that doubled cannot outrank a
@@ -1188,11 +1201,17 @@ const detectHygieneAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
         current: round(sum(dupes.map((d) => d.amount * (d.copies - 1)))),
         drillDown: {
           destination: "transactions",
-          type: "EXPENSE",
           from: dupes[0].date,
           to: dupes[0].date,
           search: dupes[0].description,
         },
+        findingKeyEvidence: JSON.stringify(dupes.map(({ date, description, amount, copies, transactionIds }) => ({
+          date,
+          description,
+          amount,
+          copies,
+          transactionIds,
+        }))),
       }));
   }
 
