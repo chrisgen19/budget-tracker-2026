@@ -41,6 +41,8 @@ import type {
   AssessmentHeadline,
   AssessmentBillAccuracy,
   AssessmentBillFacts,
+  AssessmentCashClaim,
+  AssessmentCashForecast,
   BudgetPerformanceData,
   AssessmentCategoryMovement,
   AssessmentDataConfidence,
@@ -244,6 +246,14 @@ const MIN_INCOME_OCCURRENCES = 4;
  * quote either as "what the trustworthy months say to expect".
  */
 const MIN_BASELINE_MONTHS = 3;
+/**
+ * How far the cash projection will look when no deposit is expected inside it.
+ *
+ * The question is "will the balance run short before money comes in", so the projection normally
+ * ends at the next expected deposit. With no income source that has a rhythm there is no such day,
+ * and projecting to the end of time turns every account into a shortfall eventually.
+ */
+const FORECAST_HORIZON_DAYS = 45;
 
 /* ------------------------------------------------------------------ */
 /*  Calendar-day helpers                                               */
@@ -1182,6 +1192,131 @@ export const computeBillFacts = (
 };
 
 /* ------------------------------------------------------------------ */
+/*  5. Cash forecast — where the tracked balance is headed             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * When a repeating deposit is next expected, rolled forward past any it has already missed.
+ *
+ * A salary three weeks late does not mean money is expected three weeks ago; it means the cycle it
+ * belongs to has passed and the next one is what the projection can lean on. `missing-expected-income`
+ * is the finding about the one that never arrived - this is only about when to stop projecting.
+ */
+const nextExpectedIncomeDay = (
+  income: AssessmentRecurringItem[],
+  today: string,
+): string | null => {
+  const days = income.flatMap((source) => {
+    if (source.occurrences < MIN_INCOME_OCCURRENCES || source.intervalDays === null) return [];
+    let day = source.expectedNextDate;
+    if (day === null) return [];
+    // Bounded by the horizon rather than by a `while (true)`: a source whose interval is somehow
+    // zero would otherwise spin, and a cadence longer than the horizon cannot inform it anyway.
+    for (let i = 0; day <= today && i <= FORECAST_HORIZON_DAYS; i += 1) {
+      day = addDays(day, source.intervalDays);
+    }
+    return day > today ? [day] : [];
+  });
+  return days.length === 0 ? null : days.sort()[0];
+};
+
+/**
+ * Every claim on cash between tomorrow and `through`.
+ *
+ * Bills come from their own schedules. Recurring charges are added on their measured cadence,
+ * except where the charge matches a bill by name: a bill payment is an ordinary transaction, so it
+ * is already in `computeRecurring`'s groups, and counting it on both sides would forecast a
+ * shortfall that exists only in the arithmetic.
+ */
+const collectCashClaims = (
+  bills: FactBill[],
+  recurring: AssessmentRecurringItem[],
+  today: string,
+  through: string,
+  timezoneOffset: number,
+): AssessmentCashClaim[] => {
+  const todayDate = parseDay(today);
+  const throughDate = parseDay(through);
+  const claims: AssessmentCashClaim[] = [];
+  const billNames = new Set(bills.map((bill) => foldDescription(bill.description)));
+
+  for (const bill of bills) {
+    const start = utcDayStart(bill.nextDueDate) > todayDate ? utcDayStart(bill.nextDueDate) : todayDate;
+    const derived = bill.isVariable
+      ? estimateBillAmount(
+          buildEstimateSamples(bill.payments, bill.occurrences.filter((o) => o.status === "PAID"), timezoneOffset),
+          start.getUTCMonth() + 1,
+          start.getUTCFullYear(),
+          bill.amount,
+        )
+      : null;
+    const amount = derived ? derived.amount : bill.amount;
+    // `occurrencesBetween` is exclusive of its end, so the window reaches one day past `through`
+    // to keep a bill falling due on the last day of the projection.
+    for (const due of occurrencesBetween(bill, start, new Date(throughDate.getTime() + 86_400_000))) {
+      if (due < todayDate) continue;
+      claims.push({ date: utcDayKey(due), label: bill.description, amount: round(amount), source: "bill" });
+    }
+  }
+
+  for (const item of recurring) {
+    if (item.months < RECURRING_MIN_MONTHS || item.intervalDays === null || item.expectedNextDate === null) continue;
+    if (billNames.has(foldDescription(item.description))) continue;
+    let day = item.expectedNextDate;
+    while (day <= through) {
+      if (day >= today) {
+        claims.push({ date: day, label: item.description, amount: item.avgAmount, source: "recurring" });
+      }
+      day = addDays(day, item.intervalDays);
+    }
+  }
+
+  return claims.sort((a, b) => a.date.localeCompare(b.date));
+};
+
+/**
+ * Where the tracked balance is headed before money next comes in.
+ *
+ * Directional by construction and labelled that way everywhere it surfaces. The opening figure is
+ * every income logged minus every expense, which knows nothing about money in the account before
+ * tracking began and nothing about anything spent without being logged. It is the only balance the
+ * app has until accounts and opening balances exist, and a projection from it is worth having as
+ * long as nothing dresses it up as a statement.
+ */
+export const computeCashForecast = (
+  bills: FactBill[],
+  recurring: AssessmentRecurringFacts,
+  openingBalance: number | null,
+  today: string,
+  timezoneOffset: number,
+): AssessmentCashForecast => {
+  const nextIncomeDate = nextExpectedIncomeDay(recurring.income, today);
+  const horizon = addDays(today, FORECAST_HORIZON_DAYS);
+  const through = nextIncomeDate !== null && nextIncomeDate < horizon ? nextIncomeDate : horizon;
+  const claims = collectCashClaims(bills, recurring.items, today, through, timezoneOffset);
+  const committed = round(sum(claims.map((c) => c.amount)));
+
+  if (openingBalance === null) {
+    return { openingBalance: null, through, nextIncomeDate, lowestBalance: null, lowestOn: null, claims, committed };
+  }
+
+  // Walked in date order rather than netted, because *when* the balance dips matters: three bills
+  // in one week and a big deposit the week after net out to comfortable and still bounce.
+  let balance = openingBalance;
+  let lowestBalance = openingBalance;
+  let lowestOn = today;
+  for (const claim of claims) {
+    balance = round(balance - claim.amount);
+    if (balance < lowestBalance) {
+      lowestBalance = balance;
+      lowestOn = claim.date;
+    }
+  }
+
+  return { openingBalance: round(openingBalance), through, nextIncomeDate, lowestBalance, lowestOn, claims, committed };
+};
+
+/* ------------------------------------------------------------------ */
 /*  6. Anomalies — the patterns the baseline says should not be there   */
 /* ------------------------------------------------------------------ */
 
@@ -1201,6 +1336,7 @@ interface AnomalyContext {
   windowTx: FactTransaction[];
   confidence: AssessmentDataConfidence;
   bills: AssessmentBillFacts;
+  forecast: AssessmentCashForecast;
   recurring: AssessmentRecurringFacts;
   /**
    * Every established recurring charge, uncapped.
@@ -1282,6 +1418,9 @@ const ANOMALY_SCOPE: Record<AssessmentAnomalyKind, AssessmentAnomalyScope> = {
   // less behind, and would not have made it behind any earlier.
   "goal-off-pace": "outstanding",
   "goal-stalled": "outstanding",
+  // A projection forward from today. It says nothing about the period on screen, and would be
+  // actively wrong attached to one: the bills it counts are ahead of *now*, not ahead of March.
+  "cash-shortfall": "outstanding",
 };
 
 const anomaly = (
@@ -1381,6 +1520,44 @@ export const detectBudgetWatchlistAnomalies = (
     }
     return findings;
   });
+};
+
+/**
+ * The tracked balance running out before money next comes in.
+ *
+ * **Directional, and the copy says so in its own sentence rather than in a footnote.** The opening
+ * figure is every income logged minus every expense: it knows nothing about money in the account
+ * before tracking began, nothing about anything spent without being logged, and nothing about a
+ * card's opening balance. Until accounts and opening balances are modelled that is the only
+ * balance the app has, and the honest form of this finding is "on the figures logged here", not a
+ * claim about a bank account.
+ *
+ * Silent without an opening balance rather than assuming zero. A balance of nothing and a balance
+ * nobody supplied render identically, and one of them would report every account as about to
+ * bounce - the same rule `computeHeadline` applies to `runningBalance` itself.
+ */
+const detectCashShortfall = (ctx: AnomalyContext): AssessmentAnomaly[] => {
+  const { forecast } = ctx;
+  if (forecast.openingBalance === null || forecast.lowestBalance === null) return [];
+  if (forecast.lowestBalance >= 0) return [];
+
+  const horizon = forecast.nextIncomeDate === null
+    ? `in the next ${FORECAST_HORIZON_DAYS} days, and no regular deposit is expected in that time`
+    : `before the next expected deposit around ${forecast.nextIncomeDate}`;
+  const named = forecast.claims.slice(0, 3).map((claim) => `${claim.label} on ${claim.date}`).join(", ");
+
+  return [anomaly("cash-shortfall", "high",
+    `Tracked balance runs short around ${forecast.lowestOn}`,
+    `${forecast.claims.length} scheduled ${forecast.claims.length === 1 ? "charge" : "charges"} fall due ${horizon}: ${named}${forecast.claims.length > 3 ? " and others" : ""}. On the figures logged here that puts the balance under zero. This is a direction, not a bank balance — it counts only what has been recorded, so anything held outside the app is not in it.`,
+    {
+      current: forecast.lowestBalance,
+      baseline: forecast.openingBalance,
+      drillDown: { destination: "bills" },
+      // The day it happens and what is claimed by then. A charge appearing or being paid changes
+      // the answer and should return the finding for review; the opening balance moving by a
+      // hundred pesos should not.
+      stateKey: `cash:shortfall:${forecast.lowestOn}:${forecast.claims.length}`,
+    })];
 };
 
 /**
@@ -1939,6 +2116,7 @@ export const detectAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] =>
     ...detectBillAnomalies(ctx),
     ...detectMissingExpectedIncome(ctx),
     ...detectConfidenceAnomalies(ctx),
+    ...detectCashShortfall(ctx),
   ].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
 
 /* ------------------------------------------------------------------ */
@@ -2001,6 +2179,7 @@ export const buildAssessmentFacts = (input: FactsInput): AssessmentFacts => {
   // a caller that has only the window still gets an answer -- a narrower one,
   // never a wrong one.
   const billFacts = computeBillFacts(bills, input.unlinkedCandidates ?? transactions, today, input.timezoneOffset);
+  const forecast = computeCashForecast(bills, recurring, headline.runningBalance, today, input.timezoneOffset);
 
   const periodTx = transactions.filter((t) => t.localDate >= period.from && t.localDate <= period.to);
   const periodMonth = monthOf(period.from) === monthOf(period.to) ? monthOf(period.from) : null;
@@ -2022,6 +2201,7 @@ export const buildAssessmentFacts = (input: FactsInput): AssessmentFacts => {
     windowTx: transactions,
     confidence,
     bills: billFacts,
+    forecast,
     recurring,
     recurringAll,
     hygiene,
@@ -2039,6 +2219,7 @@ export const buildAssessmentFacts = (input: FactsInput): AssessmentFacts => {
     confidence,
     headline,
     bills: billFacts,
+    forecast,
     trends,
     recurring,
     hygiene,

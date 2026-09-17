@@ -940,6 +940,47 @@ export interface SavingsGoalSummary {
   pace: SavingsGoalPace;
 }
 
+/** One claim on cash between today and the next expected deposit. */
+export interface AssessmentCashClaim {
+  /** "YYYY-MM-DD" in the user's own calendar. */
+  date: string;
+  label: string;
+  amount: number;
+  /**
+   * A scheduled bill, or a charge that simply keeps coming back.
+   *
+   * A recurring charge that matches a bill by name is left out entirely: bill payments are
+   * ordinary transactions, so the same money is already in the schedule and counting both would
+   * forecast a shortfall that only exists in the arithmetic.
+   */
+  source: "bill" | "recurring";
+}
+
+/**
+ * Where the tracked balance is headed before money next comes in.
+ *
+ * **Directional, and the wording everywhere says so.** `openingBalance` is `headline.runningBalance`
+ * - every income the user has logged minus every expense - which is not a bank balance: it knows
+ * nothing about the money that was in the account before tracking began, nothing about anything
+ * spent without being logged, and nothing about a card's opening balance. It is the only balance
+ * the app has until accounts and opening balances are modelled, and a forecast built on it is
+ * worth having as long as it is never dressed up as a statement.
+ */
+export interface AssessmentCashForecast {
+  /** Null when the caller supplied no all-time totals; deliberately not zero. */
+  openingBalance: number | null;
+  /** The last day of the projection: the next expected deposit, or the horizon cap. */
+  through: string;
+  /** When money is next expected in, or null when no source has a rhythm to project from. */
+  nextIncomeDate: string | null;
+  /** The lowest the tracked balance is projected to reach, and the day it happens. */
+  lowestBalance: number | null;
+  lowestOn: string | null;
+  /** Everything claimed against the balance before `through`, soonest first. */
+  claims: AssessmentCashClaim[];
+  committed: number;
+}
+
 /** A pattern in the assessed period that the baseline says should not be there. */
 export type AssessmentAnomalyKind =
   | "budget-threshold"
@@ -965,7 +1006,8 @@ export type AssessmentAnomalyKind =
   | "low-coverage"
   | "insufficient-history"
   | "goal-off-pace"
-  | "goal-stalled";
+  | "goal-stalled"
+  | "cash-shortfall";
 
 /**
  * Whether a finding is measured inside the selected period, or describes a standing condition
@@ -1028,6 +1070,8 @@ export interface AssessmentFacts {
   confidence: AssessmentDataConfidence;
   headline: AssessmentHeadline;
   bills: AssessmentBillFacts;
+  /** Where the tracked balance is headed before money next comes in. Directional, never a promise. */
+  forecast: AssessmentCashForecast;
   trends: AssessmentTrendFacts;
   recurring: AssessmentRecurringFacts;
   hygiene: AssessmentHygieneFacts;

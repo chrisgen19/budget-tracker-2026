@@ -47,6 +47,8 @@ import type {
   AssessmentRecurringItem,
   AssessmentDueSoonBill,
   AssessmentSnoozedBill,
+  AssessmentCashClaim,
+  AssessmentCashForecast,
   AssessmentTrendFacts,
   AssessmentUnlinkedBillPayment,
 } from "@/types";
@@ -834,6 +836,25 @@ const billFacts = z.object({
 });
 assertExact<z.infer<typeof billFacts>, AssessmentBillFacts>(true);
 
+const cashClaim = z.object({
+  date: z.string(),
+  label: z.string(),
+  amount: z.number(),
+  source: z.enum(["bill", "recurring"]),
+});
+assertExact<z.infer<typeof cashClaim>, AssessmentCashClaim>(true);
+
+const cashForecast = z.object({
+  openingBalance: z.number().nullable(),
+  through: z.string(),
+  nextIncomeDate: z.string().nullable(),
+  lowestBalance: z.number().nullable(),
+  lowestOn: z.string().nullable(),
+  claims: z.array(cashClaim),
+  committed: z.number(),
+});
+assertExact<z.infer<typeof cashForecast>, AssessmentCashForecast>(true);
+
 const categoryMovement = z.object({
   category: z.string(),
   type: transactionType,
@@ -956,6 +977,7 @@ const anomaly = z.object({
     "insufficient-history",
     "goal-off-pace",
     "goal-stalled",
+    "cash-shortfall",
   ]),
   // "outstanding" means the selected period does not bound the finding - a missed bill is judged
   // against its own payment history, so it is true now rather than true of the window.
@@ -992,6 +1014,7 @@ export const assessmentFactsOutput = {
   confidence: dataConfidence,
   headline: headline,
   bills: billFacts,
+  forecast: cashForecast,
   trends: trendFacts,
   recurring: recurringFacts,
   hygiene: hygieneFacts,

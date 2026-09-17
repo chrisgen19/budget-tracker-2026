@@ -54,6 +54,7 @@ const KIND_LABEL: Record<AssessmentAnomaly["kind"], string> = {
   "insufficient-history": "Not enough history",
   "goal-off-pace": "Savings goal",
   "goal-stalled": "Savings goal",
+  "cash-shortfall": "Cash shortfall risk",
 };
 
 const SEVERITY_STYLE: Record<
