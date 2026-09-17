@@ -1732,3 +1732,65 @@ describe("cash forecast", () => {
     expect(forecast.nextIncomeDate! > TODAY).toBe(true);
   });
 });
+
+/**
+ * Two ways the projection invented a charge, both found reading it back.
+ *
+ * Kept in their own block because each is a claim about a *specific* wrong row appearing, which is
+ * what makes them fail on revert - a test that only checked the balance would still pass, since the
+ * arithmetic over the wrong claims is perfectly correct.
+ */
+describe("cash forecast - claims it must not invent", () => {
+  const TODAY = "2026-09-06";
+  const salary = ["2026-05-15", "2026-06-15", "2026-07-15", "2026-08-15"].map((localDate) =>
+    tx({ localDate, amount: 40_000, type: "INCOME", description: "Acme Payroll", categoryName: "Salary" }));
+
+  const forecastFor = (transactions: FactTransaction[], bills: FactBill[]) =>
+    buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: "2026-09-01", to: "2026-09-30", label: "September 2026", granularity: "monthly" },
+      today: TODAY,
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions,
+      bills,
+      allTimeTotals: { income: 160_000, expenses: 100_000 },
+    }).forecast;
+
+  /**
+   * `occurrencesBetween` pushes whatever day it is handed as the first occurrence, so an overdue
+   * bill started at today produced a charge dated today that no schedule ever said was due.
+   */
+  it("does not invent a charge today for a bill whose cursor is already behind", () => {
+    const overdue = bill({
+      description: "Rent",
+      amount: 20_000,
+      startDate: new Date(Date.UTC(2026, 0, 10)),
+      nextDueDate: new Date(Date.UTC(2026, 7, 10)),
+    });
+    const { claims } = forecastFor(salary, [overdue]);
+    expect(claims.some((claim) => claim.date === TODAY)).toBe(false);
+    // The occurrence the schedule really does reach next, and nothing before it.
+    expect(claims.map((claim) => claim.date)).toEqual(["2026-09-10"]);
+  });
+
+  const netflix = (days: string[]): FactTransaction[] =>
+    days.map((localDate) => tx({ localDate, amount: 499, description: "Netflix", categoryName: "Entertainment" }));
+
+  /**
+   * A cancelled subscription is money that is never going to leave.
+   *
+   * No salary in these two, so the projection runs to its full horizon rather than stopping at a
+   * deposit a week away - otherwise a monthly charge's next cycle falls outside the window and the
+   * assertion would hold for a reason that has nothing to do with the guard.
+   */
+  it("stops projecting a recurring charge that has lapsed a whole cycle", () => {
+    const { claims } = forecastFor(netflix(["2026-03-08", "2026-04-08", "2026-05-08", "2026-06-08"]), []);
+    expect(claims.some((claim) => claim.label === "Netflix")).toBe(false);
+  });
+
+  it("keeps projecting one that is merely a few days late", () => {
+    const { claims } = forecastFor(netflix(["2026-05-01", "2026-06-01", "2026-07-01", "2026-08-01"]), []);
+    expect(claims.some((claim) => claim.label === "Netflix")).toBe(true);
+  });
+});

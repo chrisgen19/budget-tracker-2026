@@ -1241,7 +1241,12 @@ const collectCashClaims = (
   const billNames = new Set(bills.map((bill) => foldDescription(bill.description)));
 
   for (const bill of bills) {
-    const start = utcDayStart(bill.nextDueDate) > todayDate ? utcDayStart(bill.nextDueDate) : todayDate;
+    // Walked from the bill's own cursor, never from today. `occurrencesBetween` pushes whatever
+    // day it is handed as the first occurrence, so starting an overdue bill at today invents a
+    // charge due today. Occurrences already behind us are dropped below instead: unpaid ones are
+    // arrears, which `missed-bill` reports, and conflating "you owe back rent" with "you will run
+    // short" would double the alarm and halve the meaning of both.
+    const start = utcDayStart(bill.nextDueDate);
     const derived = bill.isVariable
       ? estimateBillAmount(
           buildEstimateSamples(bill.payments, bill.occurrences.filter((o) => o.status === "PAID"), timezoneOffset),
@@ -1262,6 +1267,11 @@ const collectCashClaims = (
   for (const item of recurring) {
     if (item.months < RECURRING_MIN_MONTHS || item.intervalDays === null || item.expectedNextDate === null) continue;
     if (billNames.has(foldDescription(item.description))) continue;
+    // A charge a whole cycle past due has stopped - the same rule `recurring-ended` reports it by.
+    // Without this a cancelled subscription keeps being projected as an upcoming claim forever,
+    // and the forecast warns about money that is never going to leave. It also bounds the loop
+    // below, which otherwise starts at a date that could be years in the past.
+    if (item.daysOverdue > item.intervalDays * RECURRING_LAPSE_CYCLES) continue;
     let day = item.expectedNextDate;
     while (day <= through) {
       if (day >= today) {
