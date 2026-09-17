@@ -573,6 +573,7 @@ describe("buildAssessmentFacts", () => {
       "bill-due-soon",
       "bill-snoozed",
       "bill-under-budgeted",
+      "missing-expected-income",
     ]);
     const anomalies = facts().anomalies;
     expect(anomalies.length).toBeGreaterThan(1);
@@ -1417,5 +1418,82 @@ describe("bill-behaviour findings", () => {
         { id: "p2", date: new Date(Date.UTC(2026, 6, 5)), amount: 5200 },
       ],
     })])).toBeUndefined();
+  });
+});
+
+/**
+ * A deposit that arrives on a rhythm and has not arrived.
+ *
+ * Distinct from `missing-income`, which asks whether the *period* saw any income at all. A month
+ * with one of three expected deposits logged passes that check and is still short by two, and it
+ * was the only income finding the layer had.
+ */
+describe("missing-expected-income findings", () => {
+  const salary = (days: string[], amount = 40_000): FactTransaction[] =>
+    days.map((localDate) =>
+      tx({ localDate, amount, type: "INCOME", description: "Acme Payroll", categoryName: "Salary" }));
+
+  const factsOn = (today: string, transactions: FactTransaction[]) =>
+    buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: `${today.slice(0, 7)}-01`, to: `${today.slice(0, 7)}-28`, label: "period", granularity: "monthly" },
+      today,
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions,
+      bills: [],
+    });
+
+  const found = (today: string, transactions: FactTransaction[]) =>
+    factsOn(today, transactions).anomalies.find((a) => a.kind === "missing-expected-income");
+
+  const MONTHLY = ["2026-04-15", "2026-05-15", "2026-06-15", "2026-07-15"];
+
+  it("measures an income source's cadence the same way it measures a charge's", () => {
+    const [source] = factsOn("2026-07-20", salary(MONTHLY)).recurring.income;
+    expect(source).toMatchObject({ description: "Acme Payroll", months: 4, intervalDays: 30, isNew: false });
+  });
+
+  it("chases a deposit that is well past its own rhythm", () => {
+    const late = found("2026-08-30", salary(MONTHLY));
+    expect(late).toMatchObject({ scope: "outstanding", severity: "high", current: 40_000 });
+    expect(late?.title).toContain("has not been logged since 2026-07-15");
+  });
+
+  /** Pay dates slip over weekends; chasing a salary the Monday after is how an alert gets ignored. */
+  it("allows a monthly deposit to land a few days late", () => {
+    expect(found("2026-08-17", salary(MONTHLY))).toBeUndefined();
+  });
+
+  /** Five days is nothing for a monthly salary and most of a cycle for a weekly one. */
+  it("scales the grace period to the cadence rather than fixing it in days", () => {
+    const weekly = ["2026-07-03", "2026-07-10", "2026-07-17", "2026-07-24", "2026-08-07", "2026-08-14"];
+    expect(found("2026-08-26", salary(weekly, 6000))).toMatchObject({ kind: "missing-expected-income" });
+  });
+
+  it("says nothing about a source seen too few times to have a rhythm", () => {
+    expect(found("2026-08-30", salary(["2026-05-15", "2026-06-15"]))).toBeUndefined();
+  });
+
+  it("points the follow-up at the income side of the ledger", () => {
+    expect(found("2026-08-30", salary(MONTHLY))?.drillDown).toEqual({
+      destination: "transactions",
+      type: "INCOME",
+      search: "Acme Payroll",
+      from: "2026-04-15",
+      to: "2026-08-30",
+    });
+  });
+
+  /** A snooze taken on Tuesday has to still hold on Thursday, so the day count is not the identity. */
+  it("keys the finding on the occurrence rather than on how late it is", () => {
+    expect(found("2026-08-30", salary(MONTHLY))?.stateKey)
+      .toBe(found("2026-09-02", salary(MONTHLY))?.stateKey);
+  });
+
+  /** Creep is a question about spending; a new income source is good news nobody needs alerting to. */
+  it("never marks an income source as new", () => {
+    const sources = factsOn("2026-08-10", salary(["2026-07-15", "2026-08-01"])).recurring.income;
+    expect(sources.every((s) => !s.isNew)).toBe(true);
   });
 });

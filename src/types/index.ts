@@ -821,6 +821,14 @@ export interface AssessmentRecurringFacts {
   /** Monthly cost of everything recurring, as a share of average monthly spend. */
   monthlyBase: number;
   monthlyBasePct: number | null;
+  /**
+   * Deposits that arrive on a rhythm, largest first - a salary, an allowance, a standing transfer.
+   *
+   * The same shape and the same cadence arithmetic as the expense side, asked of the other half of
+   * the ledger. `isNew` is always false here: a new income source is good news nobody needs an
+   * alert about.
+   */
+  income: AssessmentRecurringItem[];
 }
 
 /** Two rows the same day, description and amount — almost always a double submit. */
@@ -881,7 +889,8 @@ export type AssessmentAnomalyKind =
   | "recurring-renews-soon"
   | "bill-due-soon"
   | "bill-snoozed"
-  | "bill-under-budgeted";
+  | "bill-under-budgeted"
+  | "missing-expected-income";
 
 /**
  * Whether a finding is measured inside the selected period, or describes a standing condition

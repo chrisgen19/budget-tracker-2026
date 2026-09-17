@@ -49,6 +49,7 @@ const KIND_LABEL: Record<AssessmentAnomaly["kind"], string> = {
   "bill-due-soon": "Bill due soon",
   "bill-snoozed": "Bill put off",
   "bill-under-budgeted": "Bill costs more than budgeted",
+  "missing-expected-income": "Expected income not logged",
 };
 
 const SEVERITY_STYLE: Record<

@@ -888,6 +888,7 @@ const recurringFacts = z.object({
   newItems: z.array(recurringItem),
   monthlyBase: z.number(),
   monthlyBasePct: z.number().nullable(),
+  income: z.array(recurringItem),
 });
 assertExact<z.infer<typeof recurringFacts>, AssessmentRecurringFacts>(true);
 
@@ -950,6 +951,7 @@ const anomaly = z.object({
     "bill-due-soon",
     "bill-snoozed",
     "bill-under-budgeted",
+    "missing-expected-income",
   ]),
   // "outstanding" means the selected period does not bound the finding - a missed bill is judged
   // against its own payment history, so it is true now rather than true of the window.

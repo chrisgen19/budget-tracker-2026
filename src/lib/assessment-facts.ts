@@ -217,6 +217,24 @@ const DUE_IMMINENT_DAYS = 3;
  * finding that fires on it would fire on almost every bill almost every month.
  */
 const REPEATED_SNOOZES = 3;
+/**
+ * How far past its rhythm an expected deposit has to be before it is called missing.
+ *
+ * A share of the gap rather than a fixed number of days, for the reason the bill lapse is counted
+ * in cycles: five days late is nothing for a monthly salary and most of a cycle for a weekly one.
+ * Pay dates slip over weekends and holidays, so the floor keeps a monthly deposit from being
+ * chased the moment a payday lands on a Sunday.
+ */
+const INCOME_GRACE_SHARE = 0.2;
+const MIN_INCOME_GRACE_DAYS = 3;
+/**
+ * Deposits from one source before its rhythm is worth chasing against.
+ *
+ * Counted in occurrences, not in months as the expense side is. `RECURRING_MIN_MONTHS` is a
+ * monthly-shaped gate, and a weekly wage would have had to run for four months - sixteen payments -
+ * before anything could be said about one going missing.
+ */
+const MIN_INCOME_OCCURRENCES = 4;
 
 /* ------------------------------------------------------------------ */
 /*  Calendar-day helpers                                               */
@@ -598,32 +616,39 @@ export type RecurringComputation = AssessmentRecurringFacts & {
 };
 
 /**
- * Charges seen in most months of the window — the fixed base under the
- * discretionary spending, and the place a subscription quietly joins.
+ * Group one side of the ledger by folded description and measure each group's cadence.
  *
- * Read across the whole window rather than the trustworthy months only. An
- * excluded month is missing rows, not carrying wrong ones: filtering it would
- * understate recurrence, and a subscription hidden by a logging gap is exactly
- * the one worth surfacing.
+ * Shared by the expense pass and the income one. They ask different questions — a repeating
+ * expense is creep to watch, a repeating income is a deposit to chase when it fails to arrive —
+ * but "what repeats, how often, and how much" is one piece of arithmetic, and two copies of it
+ * would answer that question two ways within a release or so.
  */
-export const computeRecurring = (
+const buildRecurringItems = (
   transactions: FactTransaction[],
+  type: TransactionType,
   today: string,
-  avgMonthlyBurn: number | null,
+  materialMonthly: number,
+  historyFirstSeen: ReadonlyMap<string, string>,
   /**
-   * Earliest sighting of each folded description across the user's *whole*
-   * history, not just the window. Without it every charge older than the window
-   * is reported as new, because the window's own first row is all there is to
-   * see -- a subscription running for two years looked 120 days old.
+   * Whether "this is new" is a question worth asking of this side of the ledger.
+   *
+   * It is on the expense side, where a charge that did not exist four months ago is creep to
+   * notice. It is not on the income side: a new income source is good news nobody needs an alert
+   * about, and with no materiality floor to apply every deposit first seen inside 120 days would
+   * be marked new - a flag the MCP consumer would then read as meaning something.
+   *
+   * It also decides what gets in at all. An expense has to be new *and* seen twice to qualify
+   * before it is established; an income source only has to be seen twice, because the rhythm is
+   * the whole point and a long-standing salary is the most important row in the list.
    */
-  historyFirstSeen: ReadonlyMap<string, string> = new Map(),
-): RecurringComputation => {
+  trackNew: boolean,
+): AssessmentRecurringItem[] => {
   // Day and amount travel together. They used to be two parallel arrays, one of
   // which was then sorted in place: any figure read by position after that
   // belonged to a different charge than the date beside it.
   const groups = new Map<string, { months: Set<string>; charges: Array<{ day: string; amount: number }>; label: string }>();
   for (const t of transactions) {
-    if (t.type !== "EXPENSE") continue;
+    if (t.type !== type) continue;
     const key = foldDescription(t.description);
     if (!key) continue;
     const g = groups.get(key) ?? { months: new Set<string>(), charges: [], label: t.description.trim() };
@@ -631,11 +656,6 @@ export const computeRecurring = (
     g.charges.push({ day: t.localDate, amount: t.amount });
     groups.set(key, g);
   }
-
-  // A charge costing less than this a month is not creep worth reporting. Kept
-  // relative rather than a currency figure: the list was otherwise led by bananas
-  // and jeepney fares, which repeat faithfully and decide nothing.
-  const materialMonthly = avgMonthlyBurn === null ? 0 : avgMonthlyBurn * NEW_RECURRING_MIN_SHARE;
 
   const items: AssessmentRecurringItem[] = [];
   for (const [key, g] of groups) {
@@ -645,12 +665,15 @@ export const computeRecurring = (
     const firstSeen = historyFirstSeen.get(key) ?? days[0];
     const lastSeen = days[days.length - 1];
     const monthlyCost = sum(amounts) / g.months.size;
-    const isNew = daysBetween(firstSeen, today) <= NEW_RECURRING_DAYS && monthlyCost >= materialMonthly;
     // Two sightings inside four months is a habit forming; four months is an
     // established one. A new charge should not have to wait a third of a year
     // to be noticed, which is the whole point of watching for creep.
+    const emerging = g.months.size >= 2;
+    const isNew = trackNew && emerging
+      && daysBetween(firstSeen, today) <= NEW_RECURRING_DAYS
+      && monthlyCost >= materialMonthly;
     const established = g.months.size >= RECURRING_MIN_MONTHS;
-    if (!established && !(isNew && g.months.size >= 2)) continue;
+    if (!established && !(trackNew ? isNew : emerging)) continue;
     const intervalDays = chargeIntervalDays(days);
     const expectedNextDate = intervalDays === null ? null : addDays(lastSeen, intervalDays);
     // Walk back over the unbroken run at the newest amount. Compared rounded, because that is what
@@ -675,8 +698,55 @@ export const computeRecurring = (
       latestAmountSince: charges[runStart].day,
     });
   }
+  return items.sort((a, b) => b.total - a.total);
+};
 
-  items.sort((a, b) => b.total - a.total);
+/**
+ * Deposits that arrive on a rhythm — a salary, an allowance, a recurring transfer in.
+ *
+ * The same cadence arithmetic as the expense side, asked of the other half of the ledger, and the
+ * only thing that makes "the pay that normally lands on the 15th has not" sayable at all. The
+ * period-level `missing-income` finding answers a much blunter question: whether *anything* came in
+ * at all. A month with one of three expected deposits logged passes that check and is still short.
+ *
+ * No materiality floor and no `historyFirstSeen`: an income source too small to matter is not a
+ * thing people have, and `isNew` is not asked of the income side — a new source is good news
+ * nobody needs an alert about.
+ */
+export const computeRecurringIncome = (
+  transactions: FactTransaction[],
+  today: string,
+): AssessmentRecurringItem[] => buildRecurringItems(transactions, "INCOME", today, 0, new Map(), false);
+
+/**
+ * Charges seen in most months of the window — the fixed base under the
+ * discretionary spending, and the place a subscription quietly joins.
+ *
+ * Read across the whole window rather than the trustworthy months only. An
+ * excluded month is missing rows, not carrying wrong ones: filtering it would
+ * understate recurrence, and a subscription hidden by a logging gap is exactly
+ * the one worth surfacing.
+ */
+export const computeRecurring = (
+  transactions: FactTransaction[],
+  today: string,
+  avgMonthlyBurn: number | null,
+  /**
+   * Earliest sighting of each folded description across the user's *whole*
+   * history, not just the window. Without it every charge older than the window
+   * is reported as new, because the window's own first row is all there is to
+   * see -- a subscription running for two years looked 120 days old.
+   */
+  historyFirstSeen: ReadonlyMap<string, string> = new Map(),
+): RecurringComputation => {
+  // Day and amount travel together. They used to be two parallel arrays, one of
+  // which was then sorted in place: any figure read by position after that
+  // belonged to a different charge than the date beside it.
+  // A charge costing less than this a month is not creep worth reporting. Kept
+  // relative rather than a currency figure: the list was otherwise led by bananas
+  // and jeepney fares, which repeat faithfully and decide nothing.
+  const materialMonthly = avgMonthlyBurn === null ? 0 : avgMonthlyBurn * NEW_RECURRING_MIN_SHARE;
+  const items = buildRecurringItems(transactions, "EXPENSE", today, materialMonthly, historyFirstSeen, true);
   const established = items.filter((i) => i.months >= RECURRING_MIN_MONTHS);
   const monthlyBase = round(sum(established.map((i) => i.total / i.months)));
   return {
@@ -685,6 +755,7 @@ export const computeRecurring = (
     monthlyBase,
     monthlyBasePct: avgMonthlyBurn ? pct(monthlyBase, avgMonthlyBurn) : null,
     allItems: items,
+    income: computeRecurringIncome(transactions, today).slice(0, 10),
   };
 };
 
@@ -1190,6 +1261,10 @@ const ANOMALY_SCOPE: Record<AssessmentAnomalyKind, AssessmentAnomalyScope> = {
   "bill-due-soon": "outstanding",
   "bill-snoozed": "outstanding",
   "bill-under-budgeted": "outstanding",
+  // An expected deposit is late as of today, measured against its own rhythm. `missing-income`,
+  // which asks whether the *period* saw any income at all, stays period-scoped and is a different
+  // question: a month with one of three expected deposits logged passes it and is still short.
+  "missing-expected-income": "outstanding",
 };
 
 const anomaly = (
@@ -1461,6 +1536,43 @@ const detectCashFlowAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
 };
 
 /**
+ * Deposits that arrive on a rhythm and have not arrived.
+ *
+ * The blunter `missing-income` asks whether the period saw any income at all; a month with one of
+ * three expected deposits logged passes that and is still short by two. This asks the question per
+ * source, against that source's own cadence, which is the form the answer is actually useful in:
+ * "the 15th-of-the-month salary has not been recorded" names both the deposit and the date.
+ *
+ * High severity by default, and not because it is necessarily bad news - an unlogged deposit makes
+ * every balance, runway and forecast figure on the page wrong, which is worse than a number being
+ * low.
+ */
+const detectMissingExpectedIncome = (ctx: AnomalyContext): AssessmentAnomaly[] =>
+  ctx.recurring.income
+    .filter((source) => {
+      if (source.occurrences < MIN_INCOME_OCCURRENCES || source.intervalDays === null) return false;
+      const grace = Math.max(MIN_INCOME_GRACE_DAYS, Math.round(source.intervalDays * INCOME_GRACE_SHARE));
+      return source.daysOverdue > grace;
+    })
+    .slice(0, 3)
+    .map((source) => anomaly("missing-expected-income", "high",
+      `${source.description} has not been logged since ${source.lastSeen}`,
+      `It has arrived every ${source.intervalDays} days or so across ${source.occurrences} deposits, and the next one was due around ${source.expectedNextDate} — ${source.daysOverdue} days ago. Until it is recorded, the balance, runway and every forecast on this page are short by it.`,
+      {
+        current: source.avgAmount,
+        drillDown: {
+          destination: "transactions",
+          type: "INCOME",
+          search: source.description || undefined,
+          from: source.firstSeen,
+          to: ctx.today,
+        },
+        // The source and the occurrence it is late for. Not the day count, which climbs every
+        // morning: a snooze taken on Tuesday has to still hold on Thursday.
+        stateKey: `income:missing:${foldDescription(source.description)}:${source.expectedNextDate}`,
+      }));
+
+/**
  * What the bills themselves are doing, beyond the occurrences nobody paid.
  *
  * Three questions, all asked of today rather than of the period, which is why all three kinds are
@@ -1712,6 +1824,7 @@ export const detectAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] =>
     ...detectOutlierTransactions(ctx),
     ...detectRecurringAnomalies(ctx),
     ...detectBillAnomalies(ctx),
+    ...detectMissingExpectedIncome(ctx),
   ].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
 
 /* ------------------------------------------------------------------ */
