@@ -44,6 +44,7 @@ import type {
   BudgetPerformanceData,
   AssessmentCategoryMovement,
   AssessmentDataConfidence,
+  AssessmentDueSoonBill,
   AssessmentDuplicateGroup,
   AssessmentFacts,
   AssessmentFragmentation,
@@ -53,6 +54,7 @@ import type {
   AssessmentMonthCoverage,
   AssessmentRecurringFacts,
   AssessmentRecurringItem,
+  AssessmentSnoozedBill,
   AssessmentTrendFacts,
   AssessmentUnlinkedBillPayment,
   BillFrequency,
@@ -204,6 +206,17 @@ const RECURRING_AMOUNT_CHANGE_PCT = 20;
 const RECURRING_FINDINGS_PER_KIND = 15;
 /** New charges are creep to skim, not a list to work through. */
 const RECURRING_NEW_FINDINGS = 3;
+/** Bills falling due inside this many days are a claim on cash worth seeing coming. */
+const DUE_SOON_DAYS = 14;
+/** ...and inside this many, the reminder stops being informational. */
+const DUE_IMMINENT_DAYS = 3;
+/**
+ * Deferrals of one occurrence before it stops being a deferral and starts being avoidance.
+ *
+ * Three, not two: snoozing twice is an ordinary week where the money was not there yet, and a
+ * finding that fires on it would fire on almost every bill almost every month.
+ */
+const REPEATED_SNOOZES = 3;
 
 /* ------------------------------------------------------------------ */
 /*  Calendar-day helpers                                               */
@@ -965,6 +978,51 @@ export const findUnlinkedBillPayments = (
     .sort((a, b) => b.total - a.total);
 };
 
+/**
+ * Occurrences of one bill that were deferred over and over rather than settled.
+ *
+ * A snooze is a decision the user made and is not a miss, which is why `settledDays` treats a live
+ * one as settled - but the same charge pushed back three times running is a different statement
+ * from the same charge pushed back once, and nothing was reading the difference.
+ *
+ * An occurrence that was eventually paid or skipped is dropped however many times it was deferred
+ * first: the question is what is still unresolved, and telling someone they hesitated over a bill
+ * they have since paid is noise with a number attached.
+ */
+const findRepeatedSnoozes = (
+  bill: FactBill,
+  today: Date,
+  estimate: { amount: number; isEstimate: boolean },
+): AssessmentSnoozedBill[] => {
+  const byDueDate = new Map<string, { snoozes: number; snoozedUntil: Date | null; resolved: boolean }>();
+  for (const occurrence of bill.occurrences) {
+    const day = utcDayKey(occurrence.dueDate);
+    const entry = byDueDate.get(day) ?? { snoozes: 0, snoozedUntil: null, resolved: false };
+    if (occurrence.status === "PAID" || occurrence.status === "SKIPPED") entry.resolved = true;
+    else if (occurrence.status === "SNOOZED") {
+      entry.snoozes += 1;
+      const until = occurrence.snoozeUntil ? utcDayStart(occurrence.snoozeUntil) : null;
+      if (until && (!entry.snoozedUntil || until > entry.snoozedUntil)) entry.snoozedUntil = until;
+    }
+    byDueDate.set(day, entry);
+  }
+
+  return [...byDueDate.entries()]
+    .filter(([, entry]) => !entry.resolved && entry.snoozes >= REPEATED_SNOOZES)
+    .map(([dueDate, entry]) => ({
+      id: bill.id,
+      description: bill.description,
+      categoryName: bill.categoryName,
+      dueDate,
+      snoozes: entry.snoozes,
+      // Only a deferral still running is reported as one. A lapsed `snoozeUntil` is a date in the
+      // past, and printing it beside "snoozed until" would read as a deferral that is still in force.
+      snoozedUntil: entry.snoozedUntil && entry.snoozedUntil > today ? utcDayKey(entry.snoozedUntil) : null,
+      amount: round(estimate.amount),
+      isEstimate: estimate.isEstimate,
+    }));
+};
+
 export const computeBillFacts = (
   bills: FactBill[],
   unlinkedCandidates: FactTransaction[],
@@ -975,7 +1033,8 @@ export const computeBillFacts = (
   const dueSoonCutoff = new Date(todayDate.getTime() + 14 * 86_400_000);
 
   const missed: AssessmentMissedBill[] = [];
-  let dueSoonCount = 0;
+  const dueSoon: AssessmentDueSoonBill[] = [];
+  const repeatedlySnoozed: AssessmentSnoozedBill[] = [];
   let dueSoonTotal = 0;
   let dueSoonIsEstimate = false;
 
@@ -998,10 +1057,20 @@ export const computeBillFacts = (
     if (miss) missed.push(miss);
 
     if (dueDate >= todayDate && dueDate <= dueSoonCutoff) {
-      dueSoonCount += 1;
+      dueSoon.push({
+        id: bill.id,
+        description: bill.description,
+        categoryName: bill.categoryName,
+        dueDate: utcDayKey(dueDate),
+        daysUntilDue: daysBetween(today, utcDayKey(dueDate)),
+        amount: round(estimate.amount),
+        isEstimate: estimate.isEstimate,
+      });
       dueSoonTotal += estimate.amount;
       dueSoonIsEstimate = dueSoonIsEstimate || estimate.isEstimate;
     }
+
+    repeatedlySnoozed.push(...findRepeatedSnoozes(bill, todayDate, estimate));
   }
 
   return {
@@ -1011,9 +1080,11 @@ export const computeBillFacts = (
       .map((bill) => assessBillAccuracy(bill, timezoneOffset))
       .sort((a, b) => Math.abs(b.variancePct ?? 0) - Math.abs(a.variancePct ?? 0)),
     unlinkedPayments: findUnlinkedBillPayments(bills, unlinkedCandidates),
-    dueSoonCount,
+    dueSoon: dueSoon.sort((a, b) => a.daysUntilDue - b.daysUntilDue),
+    dueSoonCount: dueSoon.length,
     dueSoonTotal: round(dueSoonTotal),
     dueSoonIsEstimate,
+    repeatedlySnoozed: repeatedlySnoozed.sort((a, b) => b.snoozes - a.snoozes),
   };
 };
 
@@ -1099,6 +1170,12 @@ const ANOMALY_SCOPE: Record<AssessmentAnomalyKind, AssessmentAnomalyScope> = {
   "recurring-ended": "outstanding",
   "recurring-amount-change": "outstanding",
   "recurring-renews-soon": "outstanding",
+  // Bills are judged against their own schedule and payment history, as `missed-bill` already was.
+  // A bill due on Friday is due on Friday whichever report is open, and a budgeted figure that has
+  // been wrong for a year is not wrong *in September*.
+  "bill-due-soon": "outstanding",
+  "bill-snoozed": "outstanding",
+  "bill-under-budgeted": "outstanding",
 };
 
 const anomaly = (
@@ -1370,6 +1447,71 @@ const detectCashFlowAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
 };
 
 /**
+ * What the bills themselves are doing, beyond the occurrences nobody paid.
+ *
+ * Three questions, all asked of today rather than of the period, which is why all three kinds are
+ * `outstanding`. `missed-bill` already covered the fourth; these are the ones that were computed
+ * into the facts and then read by nothing.
+ *
+ * `bill-due-soon` aggregates the way `missed-bill` does, and deliberately: five bills falling due
+ * in a fortnight is one trip to /bills, and five rows on the Watchlist for it would bury every
+ * other finding under a list the Bills page already shows better. The other two are per bill,
+ * because each names a different bill to go and change.
+ */
+const detectBillAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
+  const out: AssessmentAnomaly[] = [];
+  const dueSoon = ctx.bills.dueSoon;
+
+  if (dueSoon.length > 0) {
+    const imminent = dueSoon[0].daysUntilDue <= DUE_IMMINENT_DAYS;
+    const named = dueSoon.slice(0, 3).map((b) => `${b.description} on ${b.dueDate}`).join(", ");
+    out.push(anomaly("bill-due-soon", imminent ? "medium" : "low",
+      `${dueSoon.length} bill${dueSoon.length > 1 ? "s" : ""} due in the next ${DUE_SOON_DAYS} days`,
+      `${named}${dueSoon.length > 3 ? " and others" : ""}. That is a claim on cash already committed, before anything discretionary this month.${ctx.bills.dueSoonIsEstimate ? " Variable bills are estimated from what they have cost before." : ""}`,
+      {
+        current: ctx.bills.dueSoonTotal,
+        drillDown: { destination: "bills" },
+        // No `stateKey`: the identity is the set of bills, so a newly due bill is a new finding
+        // rather than one silently covered by a snooze taken over a different bill last week.
+        findingKeyEvidence: JSON.stringify(dueSoon.map((b) => [b.id, b.dueDate])),
+      }));
+  }
+
+  for (const snoozed of ctx.bills.repeatedlySnoozed.slice(0, 3)) {
+    out.push(anomaly("bill-snoozed", "medium",
+      `${snoozed.description} has been put off ${snoozed.snoozes} times`,
+      `The occurrence due ${snoozed.dueDate} has been snoozed ${snoozed.snoozes} times and is still neither paid nor skipped${snoozed.snoozedUntil ? `, deferred again until ${snoozed.snoozedUntil}` : ""}. If it is not going to be paid, skipping it keeps the schedule honest.`,
+      {
+        current: snoozed.amount,
+        drillDown: { destination: "bills" },
+        // The count is part of the identity: a fourth deferral is a fresh decision, not the same
+        // finding drifting, so resolving the third must not suppress it.
+        stateKey: `bill:snoozed:${snoozed.id}:${snoozed.dueDate}:${snoozed.snoozes}`,
+      }));
+  }
+
+  const underBudgeted = ctx.bills.accuracy.filter(
+    (a) => a.verdict === "under-budgeted" && a.avgPaid !== null && (a.variancePct ?? 0) > 0,
+  );
+  for (const bill of underBudgeted.slice(0, 3)) {
+    out.push(anomaly("bill-under-budgeted", "medium",
+      `${bill.description} costs ${bill.variancePct}% more than it is budgeted for`,
+      `Across ${bill.payments} payments it has averaged ${bill.variancePct}% above the figure on the bill. Every forecast and every budget that reads this bill is short by that much, every month.`,
+      {
+        current: bill.avgPaid,
+        baseline: bill.budgeted,
+        changePct: bill.variancePct,
+        drillDown: { destination: "bills" },
+        // Keyed on the budgeted figure, which is the thing being asked for: one more payment
+        // nudging the average must not re-raise a finding the user has already dealt with, but
+        // changing the budget and still being wrong must.
+        stateKey: `bill:under-budgeted:${bill.id}:${bill.budgeted}`,
+      }));
+  }
+  return out;
+};
+
+/**
  * Changes to the fixed base underneath the discretionary spending.
  *
  * Four questions about a repeating charge, and all four are asked of today rather than of the
@@ -1546,6 +1688,7 @@ export const detectAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] =>
     ...detectCategorySpikes(ctx),
     ...detectOutlierTransactions(ctx),
     ...detectRecurringAnomalies(ctx),
+    ...detectBillAnomalies(ctx),
   ].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
 
 /* ------------------------------------------------------------------ */

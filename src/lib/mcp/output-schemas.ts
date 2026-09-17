@@ -45,6 +45,8 @@ import type {
   AssessmentMonthCoverage,
   AssessmentRecurringFacts,
   AssessmentRecurringItem,
+  AssessmentDueSoonBill,
+  AssessmentSnoozedBill,
   AssessmentTrendFacts,
   AssessmentUnlinkedBillPayment,
 } from "@/types";
@@ -796,14 +798,39 @@ const headline = z.object({
 });
 assertExact<z.infer<typeof headline>, AssessmentHeadline>(true);
 
+const dueSoonBill = z.object({
+  id: z.string(),
+  description: z.string(),
+  categoryName: z.string(),
+  dueDate: z.string(),
+  daysUntilDue: z.number(),
+  amount: z.number(),
+  isEstimate: z.boolean(),
+});
+assertExact<z.infer<typeof dueSoonBill>, AssessmentDueSoonBill>(true);
+
+const snoozedBill = z.object({
+  id: z.string(),
+  description: z.string(),
+  categoryName: z.string(),
+  dueDate: z.string(),
+  snoozes: z.number(),
+  snoozedUntil: z.string().nullable(),
+  amount: z.number(),
+  isEstimate: z.boolean(),
+});
+assertExact<z.infer<typeof snoozedBill>, AssessmentSnoozedBill>(true);
+
 const billFacts = z.object({
   asOf: z.string(),
   missed: z.array(missedBill),
   accuracy: z.array(billAccuracy),
   unlinkedPayments: z.array(unlinkedBillPayment),
+  dueSoon: z.array(dueSoonBill),
   dueSoonCount: z.number(),
   dueSoonTotal: z.number(),
   dueSoonIsEstimate: z.boolean(),
+  repeatedlySnoozed: z.array(snoozedBill),
 });
 assertExact<z.infer<typeof billFacts>, AssessmentBillFacts>(true);
 
@@ -920,6 +947,9 @@ const anomaly = z.object({
     "recurring-ended",
     "recurring-amount-change",
     "recurring-renews-soon",
+    "bill-due-soon",
+    "bill-snoozed",
+    "bill-under-budgeted",
   ]),
   // "outstanding" means the selected period does not bound the finding - a missed bill is judged
   // against its own payment history, so it is true now rather than true of the window.
