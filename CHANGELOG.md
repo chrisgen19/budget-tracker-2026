@@ -2,6 +2,14 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-17 - Watchlist links each group to where it is acted on
+
+**View transactions in this period** moved from the foot of the Watchlist into the **In this
+period** group, since it opens the selected dates. Below the **Outstanding** group it read as the
+way to deal with an overdue bill, and on a month with nothing logged it opened an empty list. A
+missed bill now carries its own **Go to Bills** link, where it can be paid, skipped or snoozed.
+The "Nothing needs attention" state keeps the period link.
+
 ## 2026-09-17 - Watchlist no longer dates an overdue bill to the period on screen
 
 The Watchlist listed every finding under "findings from this period", but a missed bill is judged

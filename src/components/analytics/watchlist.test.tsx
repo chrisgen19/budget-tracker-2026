@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { Watchlist } from "@/components/analytics/watchlist";
 
@@ -194,5 +194,95 @@ describe("Watchlist scope grouping", () => {
     for (const figure of ["12345", "12,345", "6789", "6,789", "4321", "4,321"]) {
       expect(text).not.toContain(figure);
     }
+  });
+});
+
+/**
+ * The period drill-down used to sit at the foot of the whole panel, under the Outstanding group.
+ * On a month with nothing logged it was the only link on screen beside a missed bill, and it
+ * opened an empty list for dates that had nothing to do with the bill.
+ */
+describe("Watchlist links", () => {
+  const finding = (over: Record<string, unknown>) => ({
+    severity: "high",
+    title: "t",
+    detail: "d",
+    current: null,
+    baseline: null,
+    changePct: null,
+    ...over,
+  });
+
+  const renderWith = (anomalies: unknown[]) => {
+    mocks.useAssessmentFactsQuery.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: { facts: { anomalies } },
+    });
+    render(
+      <Watchlist
+        period={period}
+        returnTo="period=monthly&from=2026-09-01&to=2026-09-30&type=EXPENSE&tab=watchlist"
+      />,
+    );
+  };
+
+  const periodLinkName = /view transactions in this period/i;
+
+  it("puts the period drill-down inside the period group, with the way back", () => {
+    renderWith([
+      finding({ kind: "duplicate", scope: "period", title: "2 possible duplicate entries" }),
+      finding({ kind: "missed-bill", scope: "outstanding", title: "1 bill with no payment recorded" }),
+    ]);
+
+    const inPeriod = within(screen.getByRole("region", { name: "In this period" }));
+    const outstanding = within(screen.getByRole("region", { name: "Outstanding" }));
+
+    const href = new URL(inPeriod.getByRole("link", { name: periodLinkName }).getAttribute("href")!, "http://x");
+    expect(href.pathname).toBe("/transactions");
+    expect(href.searchParams.get("period")).toBe("custom");
+    expect(href.searchParams.get("from")).toBe("2026-09-01");
+    expect(href.searchParams.get("to")).toBe("2026-09-30");
+    expect(href.searchParams.get("ret")).toBe(
+      "period=monthly&from=2026-09-01&to=2026-09-30&type=EXPENSE&tab=watchlist",
+    );
+    expect(outstanding.queryByRole("link", { name: periodLinkName })).toBeNull();
+    expect(screen.getAllByRole("link", { name: periodLinkName })).toHaveLength(1);
+  });
+
+  it("keeps the drill-down when the period group is clean", () => {
+    renderWith([finding({ kind: "missed-bill", scope: "outstanding", title: "1 bill with no payment recorded" })]);
+
+    const inPeriod = within(screen.getByRole("region", { name: "In this period" }));
+    expect(inPeriod.getByText(/No unusual spending/)).toBeTruthy();
+    expect(inPeriod.getByRole("link", { name: periodLinkName })).toBeTruthy();
+  });
+
+  it("sends a missed bill to the Bills page, where it can be paid, skipped or snoozed", () => {
+    renderWith([finding({ kind: "missed-bill", scope: "outstanding", title: "1 bill with no payment recorded" })]);
+
+    const outstanding = within(screen.getByRole("region", { name: "Outstanding" }));
+    expect(outstanding.getByRole("link", { name: "Go to Bills" }).getAttribute("href")).toBe("/bills");
+    expect(
+      within(screen.getByRole("region", { name: "In this period" })).queryByRole("link", { name: "Go to Bills" }),
+    ).toBeNull();
+  });
+
+  it("gives period findings no Bills link", () => {
+    renderWith([
+      finding({ kind: "duplicate", scope: "period" }),
+      finding({ kind: "logging-gap", scope: "period" }),
+      finding({ kind: "outlier-transaction", scope: "period" }),
+    ]);
+
+    expect(screen.queryByRole("link", { name: "Go to Bills" })).toBeNull();
+  });
+
+  it("still offers the drill-down when nothing needs attention", () => {
+    renderWith([]);
+
+    expect(screen.getByText("Nothing needs attention")).toBeTruthy();
+    expect(screen.getByRole("link", { name: periodLinkName }).getAttribute("href")).toContain("from=2026-09-01");
+    expect(screen.queryByRole("region", { name: "In this period" })).toBeNull();
   });
 });
