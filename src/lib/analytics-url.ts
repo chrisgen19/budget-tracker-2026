@@ -6,6 +6,7 @@ import type { AnalyticsTypeFilter } from "@/types";
 export const ANALYTICS_TAB_IDS = [
   "reports",
   "budget",
+  "forecast",
   "watchlist",
   "statistics",
   "health",

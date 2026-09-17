@@ -290,6 +290,16 @@ export const budgetPlanQuerySchema = z.object({
   tz: timezoneOffsetParam,
 });
 
+export const cashFlowForecastQuerySchema = z.object({
+  days: z.coerce.number().int().refine((value) => [30, 60, 90].includes(value), "Choose 30, 60, or 90 days"),
+  tz: timezoneOffsetParam,
+});
+
+export const forecastOpeningBalanceSchema = z.object({
+  openingBalance: z.number().min(-999_999_999_999.99).max(999_999_999_999.99),
+  openingBalanceDate: validDateString,
+});
+
 export const budgetAllocationInputSchema = z.object({
   categoryId: z.string().min(1).max(100),
   amount: z.number().positive().max(999_999_999_999.99),

@@ -1,0 +1,33 @@
+import { describe, expect, it } from "vitest";
+import { buildCashFlowForecast, scheduledForecastEvents } from "@/lib/cash-flow-forecast";
+
+describe("buildCashFlowForecast", () => {
+  it("carries daily balances and names the first cash crunch", () => {
+    const result = buildCashFlowForecast({
+      openingBalance: 100,
+      from: "2026-09-01",
+      to: "2026-09-03",
+      events: [
+        { date: "2026-09-02", amount: 150, kind: "bill", description: "Rent", estimated: false, assumption: "scheduled" },
+        { date: "2026-09-03", amount: 80, kind: "scheduled-income", description: "Pay", estimated: false, assumption: "scheduled" },
+      ],
+    });
+    expect(result.days.map((item) => item.projectedBalance)).toEqual([100, -50, 30]);
+    expect(result.lowestBalance).toEqual({ date: "2026-09-02", balance: -50 });
+    expect(result.cashCrunches).toEqual([{ date: "2026-09-02", balance: -50 }]);
+  });
+});
+
+describe("scheduledForecastEvents", () => {
+  it("uses an explicitly labeled estimate for a variable bill", () => {
+    const events = scheduledForecastEvents([{
+      id: "utility", amount: 500, description: "Power", type: "EXPENSE", frequency: "MONTHLY", customIntervalDays: null,
+      startDate: new Date("2025-01-05T00:00:00Z"), endDate: null, nextDueDate: new Date("2026-09-05T00:00:00Z"), isVariable: true,
+      payments: [{ id: "payment", amount: 700, date: new Date("2025-09-06T00:00:00Z") }],
+      occurrences: [{ dueDate: new Date("2025-09-05T00:00:00Z"), transactionId: "payment" }],
+    }], "2026-09-01", "2026-09-30", -480);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ date: "2026-09-05", amount: 700, estimated: true });
+    expect(events[0].assumption).toContain("Variable bill estimate");
+  });
+});
