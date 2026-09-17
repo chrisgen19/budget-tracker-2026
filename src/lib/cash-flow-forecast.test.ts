@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCashFlowForecast, scheduledForecastEvents } from "@/lib/cash-flow-forecast";
+import { buildCashFlowForecast, remainingBudgetPaceEvents, scheduledForecastEvents } from "@/lib/cash-flow-forecast";
 
 describe("buildCashFlowForecast", () => {
   it("carries daily balances and names the first cash crunch", () => {
@@ -61,5 +61,20 @@ describe("scheduledForecastEvents", () => {
       { date: "2026-09-01", description: "Overdue: Rent" },
       { date: "2026-09-01", description: "Rent" },
     ]);
+  });
+});
+
+describe("remainingBudgetPaceEvents", () => {
+  it("spreads only the current month's effective remaining allocation", () => {
+    const events = remainingBudgetPaceEvents("2026-09", [{ type: "EXPENSE", kind: "FLEXIBLE", remaining: 500 }], "2026-09-17", "2026-09-30");
+    expect(events).toHaveLength(14);
+    expect(events[0]).toMatchObject({ date: "2026-09-17", amount: 500 / 14 });
+    expect(events.reduce((sum, event) => sum + event.amount, 0)).toBeCloseTo(500);
+  });
+
+  it("keeps a future month's pace based on all of its calendar days", () => {
+    const events = remainingBudgetPaceEvents("2026-10", [{ type: "EXPENSE", kind: "SAVINGS", remaining: 310 }], "2026-09-17", "2026-10-05");
+    expect(events).toHaveLength(5);
+    expect(events[0]).toMatchObject({ date: "2026-10-01", amount: 10 });
   });
 });

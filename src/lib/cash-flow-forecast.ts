@@ -12,6 +12,12 @@ export type ForecastSchedule = {
   occurrences: Array<{ dueDate: Date; transactionId: string | null }>;
 };
 
+export type ForecastBudgetAllocation = {
+  type: string;
+  kind: string;
+  remaining: number;
+};
+
 const key = (date: Date) => date.toISOString().slice(0, 10);
 const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
 const money = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
@@ -83,6 +89,38 @@ export const scheduledForecastEvents = (schedules: ForecastSchedule[], from: str
     }
   }
   return events;
+};
+
+/** Spread only budget money still unspent after actuals and rollover across the usable month. */
+export const remainingBudgetPaceEvents = (
+  month: string,
+  allocations: ForecastBudgetAllocation[],
+  today: string,
+  to: string,
+): ForecastEvent[] => {
+  const monthEnd = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 0)).getUTCDate();
+  const firstDay = month === today.slice(0, 7) ? Number(today.slice(8)) : 1;
+  const allocationDays = monthEnd - firstDay + 1;
+  if (allocationDays <= 0) return [];
+
+  return allocations
+    .filter((row) => row.type === "EXPENSE" && (row.kind === "FLEXIBLE" || row.kind === "SAVINGS"))
+    .flatMap((allocation) => {
+      const remaining = Math.max(0, allocation.remaining);
+      if (remaining === 0) return [];
+      const amount = remaining / allocationDays;
+      return Array.from({ length: monthEnd - firstDay + 1 }, (_, index) => firstDay + index)
+        .map((number) => `${month}-${String(number).padStart(2, "0")}`)
+        .filter((date) => date <= to)
+        .map((date) => ({
+          date,
+          amount,
+          kind: allocation.kind === "SAVINGS" ? "savings-contribution" : "flexible-pace" as const,
+          description: allocation.kind === "SAVINGS" ? "Planned savings contribution" : "Flexible budget pace",
+          estimated: true,
+          assumption: `${allocation.kind === "SAVINGS" ? "Savings" : "Flexible"} budget remaining after logged spending is spread evenly across ${allocationDays} days.`,
+        }));
+    });
 };
 
 export const buildCashFlowForecast = ({ openingBalance, from, to, events }: { openingBalance: number; from: string; to: string; events: ForecastEvent[] }) => {
