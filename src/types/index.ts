@@ -793,6 +793,8 @@ export interface AssessmentHygieneFacts {
 
 /** A pattern in the assessed period that the baseline says should not be there. */
 export type AssessmentAnomalyKind =
+  | "budget-threshold"
+  | "budget-forecast"
   | "category-spike"
   | "new-category"
   | "outlier-transaction"

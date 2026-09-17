@@ -898,6 +898,8 @@ assertExact<z.infer<typeof hygieneFacts>, AssessmentHygieneFacts>(true);
 
 const anomaly = z.object({
   kind: z.enum([
+    "budget-threshold",
+    "budget-forecast",
     "category-spike",
     "new-category",
     "outlier-transaction",
