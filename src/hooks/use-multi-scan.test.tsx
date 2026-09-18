@@ -81,6 +81,9 @@ const createWrapper = () => {
             monthlyScanLimit: 5,
             scansUsedThisMonth: 0,
             creditCardsEnabled: false,
+            watchlistOutlierRatio: 3,
+            watchlistLargeAmount: null,
+            watchlistDuplicateAlerts: true,
           }}
         >
           <ToastProvider>{children}</ToastProvider>
