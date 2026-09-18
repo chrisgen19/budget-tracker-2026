@@ -21,6 +21,7 @@ import {
   type FactBill,
   type FactTransaction,
 } from "./assessment-facts";
+import { watchlistFindingKey } from "./watchlist-findings";
 import type { BudgetPerformanceData } from "@/types";
 
 let seq = 0;
@@ -569,6 +570,9 @@ describe("buildAssessmentFacts", () => {
       "recurring-ended",
       "recurring-amount-change",
       "recurring-renews-soon",
+      "bill-due-soon",
+      "bill-snoozed",
+      "bill-under-budgeted",
     ]);
     const anomalies = facts().anomalies;
     expect(anomalies.length).toBeGreaterThan(1);
@@ -1170,5 +1174,248 @@ describe("recurring-charge findings", () => {
     // below it is what keeps the resulting list narrow.
     expect(found?.drillDown?.search).toBe("Angel");
     expect(rows.every((r) => r.description.includes(found!.drillDown!.search!))).toBe(true);
+  });
+});
+
+/**
+ * What the bills are doing, beyond the occurrences nobody paid.
+ *
+ * Each of these figures was already being computed into `AssessmentBillFacts` and read by nothing:
+ * `dueSoonCount` had no per-bill detail behind it, snoozes were counted only to decide whether an
+ * occurrence was missed, and `under-budgeted` was a verdict on a card. The tests drive
+ * `buildAssessmentFacts` so the facts and the findings cannot drift apart.
+ */
+describe("bill-behaviour findings", () => {
+  const TODAY = "2026-09-06";
+  const factsFor = (bills: FactBill[]) =>
+    buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: "2026-09-01", to: "2026-09-30", label: "September 2026", granularity: "monthly" },
+      today: TODAY,
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions: [],
+      bills,
+    });
+
+  const findingOf = (kind: string, bills: FactBill[]) =>
+    factsFor(bills).anomalies.find((a) => a.kind === kind);
+
+  const snooze = (dueDate: Date, until: Date) => ({
+    dueDate,
+    status: "SNOOZED" as const,
+    transactionId: null,
+    snoozeUntil: until,
+  });
+
+  it("reports the bills already committed for the fortnight ahead", () => {
+    const found = findingOf("bill-due-soon", [
+      bill({ description: "Meralco", amount: 5500, nextDueDate: new Date(Date.UTC(2026, 8, 11)) }),
+      bill({ id: "b2", description: "Maynilad", amount: 900, nextDueDate: new Date(Date.UTC(2026, 8, 18)) }),
+    ]);
+    expect(found).toMatchObject({ scope: "outstanding", severity: "low", current: 6400 });
+    expect(found?.title).toContain("2 bills");
+    expect(found?.detail).toContain("Meralco on 2026-09-11");
+  });
+
+  it("raises the tone once a bill is days away rather than weeks", () => {
+    const found = findingOf("bill-due-soon", [bill({ nextDueDate: new Date(Date.UTC(2026, 8, 8)) })]);
+    expect(found?.severity).toBe("medium");
+  });
+
+  it("says nothing about a bill that is not due for a month", () => {
+    expect(findingOf("bill-due-soon", [bill({ nextDueDate: new Date(Date.UTC(2026, 9, 20)) })])).toBeUndefined();
+  });
+
+  /**
+   * `sort` is stable, so bills tied on `daysUntilDue` keep the order the loader handed them over
+   * in -- and that query has no `orderBy`, so Postgres may return them differently next request.
+   * The identity has to be the set, not the order it arrived in.
+   */
+  it("keys two bills due the same day the same way whichever order they arrive in", () => {
+    const due = new Date(Date.UTC(2026, 8, 11));
+    const meralco = bill({ id: "b1", description: "Meralco", nextDueDate: due });
+    const maynilad = bill({ id: "b2", description: "Maynilad", nextDueDate: due });
+    const one = findingOf("bill-due-soon", [meralco, maynilad]);
+    const two = findingOf("bill-due-soon", [maynilad, meralco]);
+    expect(one?.stateKey).toBe("bill:due-soon:b1@2026-09-11,b2@2026-09-11");
+    expect(two?.stateKey).toBe(one?.stateKey);
+    expect(two?.detail).toBe(one?.detail);
+  });
+
+  /**
+   * The identity is the set of bills, not a fixed string: a bill falling due next week must not be
+   * silently covered by a snooze taken over a different bill last week.
+   */
+  it("keys the due-soon finding on which bills are in it", () => {
+    const one = findingOf("bill-due-soon", [bill({ nextDueDate: new Date(Date.UTC(2026, 8, 11)) })]);
+    const two = findingOf("bill-due-soon", [
+      bill({ nextDueDate: new Date(Date.UTC(2026, 8, 11)) }),
+      bill({ id: "b2", description: "Maynilad", nextDueDate: new Date(Date.UTC(2026, 8, 12)) }),
+    ]);
+    expect(one?.stateKey).toBe("bill:due-soon:b1@2026-09-11");
+    expect(one?.stateKey).not.toBe(two?.stateKey);
+    expect(one?.findingKeyEvidence).not.toBe(two?.findingKeyEvidence);
+  });
+
+  /**
+   * ...and it is the set and nothing else. Without an explicit `stateKey` the finding key folds in
+   * `current`, which is `dueSoonTotal`, and a variable bill's share of that is re-derived from its
+   * payment history on every run. Correcting a typo'd payment moved the total while the set of
+   * bills stood still, and the resolve or snooze taken over it was silently lost.
+   */
+  it("survives a correction to a variable bill's payment history", () => {
+    const due = new Date(Date.UTC(2026, 8, 11));
+    const variable = (amount: number) => bill({
+      isVariable: true,
+      nextDueDate: due,
+      payments: [{ id: "p1", date: new Date(Date.UTC(2026, 7, 10)), amount }],
+    });
+    const before = findingOf("bill-due-soon", [variable(8000)]);
+    const after = findingOf("bill-due-soon", [variable(8200)]);
+    const period = { from: "2026-09-01", to: "2026-09-30" };
+
+    expect(before?.current).not.toBe(after?.current);
+    expect(watchlistFindingKey(before!, period)).toBe(watchlistFindingKey(after!, period));
+  });
+
+  it("reports an occurrence that has been deferred three times and still not settled", () => {
+    const due = new Date(Date.UTC(2026, 7, 5));
+    const found = findingOf("bill-snoozed", [bill({
+      nextDueDate: due,
+      occurrences: [
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 19))),
+        snooze(due, new Date(Date.UTC(2026, 8, 20))),
+      ],
+    })]);
+    expect(found).toMatchObject({ scope: "outstanding", severity: "medium" });
+    expect(found?.title).toContain("3 times");
+    expect(found?.detail).toContain("deferred again until 2026-09-20");
+  });
+
+  /**
+   * The app's snooze button wrote a bare log row with no replay guard until `settleBill` took over,
+   * so a lost-response retry or a double tap left several SNOOZED rows for one decision. This
+   * finding counts decisions, and three copies of one deferral is still one.
+   */
+  it("counts one deferral once however many rows it left behind", () => {
+    const due = new Date(Date.UTC(2026, 7, 5));
+    expect(findingOf("bill-snoozed", [bill({
+      nextDueDate: due,
+      occurrences: [
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+      ],
+    })])).toBeUndefined();
+  });
+
+  /** ...and the real deferrals still count, since each lands on a later day than the last. */
+  it("still reports three deferrals that arrived among duplicate rows", () => {
+    const due = new Date(Date.UTC(2026, 7, 5));
+    const found = findingOf("bill-snoozed", [bill({
+      nextDueDate: due,
+      occurrences: [
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 19))),
+        snooze(due, new Date(Date.UTC(2026, 7, 26))),
+      ],
+    })]);
+    expect(found?.title).toContain("3 times");
+  });
+
+  /** Twice is an ordinary week where the money was not there yet. */
+  it("leaves an occurrence deferred twice alone", () => {
+    const due = new Date(Date.UTC(2026, 7, 5));
+    expect(findingOf("bill-snoozed", [bill({
+      nextDueDate: due,
+      occurrences: [
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 19))),
+      ],
+    })])).toBeUndefined();
+  });
+
+  /** Telling someone they hesitated over a bill they have since paid is noise with a number on it. */
+  it("drops an occurrence that was deferred repeatedly and then paid", () => {
+    const due = new Date(Date.UTC(2026, 7, 5));
+    expect(findingOf("bill-snoozed", [bill({
+      nextDueDate: new Date(Date.UTC(2026, 8, 5)),
+      occurrences: [
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 19))),
+        snooze(due, new Date(Date.UTC(2026, 7, 26))),
+        { dueDate: due, status: "PAID" as const, transactionId: "t1", snoozeUntil: null },
+      ],
+    })])).toBeUndefined();
+  });
+
+  /** A lapsed deferral is a date in the past; printing it as "until" reads as still in force. */
+  it("does not report a lapsed deferral as one still running", () => {
+    const due = new Date(Date.UTC(2026, 6, 5));
+    const found = findingOf("bill-snoozed", [bill({
+      nextDueDate: due,
+      occurrences: [
+        snooze(due, new Date(Date.UTC(2026, 6, 12))),
+        snooze(due, new Date(Date.UTC(2026, 6, 19))),
+        snooze(due, new Date(Date.UTC(2026, 6, 26))),
+      ],
+    })]);
+    expect(found?.detail).not.toContain("deferred again until");
+  });
+
+  /** A fourth deferral is a fresh decision, so resolving the third must not suppress it. */
+  it("counts the deferrals in the finding's identity", () => {
+    const due = new Date(Date.UTC(2026, 7, 5));
+    const found = findingOf("bill-snoozed", [bill({
+      nextDueDate: due,
+      occurrences: [
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 19))),
+        snooze(due, new Date(Date.UTC(2026, 7, 26))),
+      ],
+    })]);
+    expect(found?.stateKey).toBe("bill:snoozed:b1:2026-08-05:3");
+  });
+
+  it("reports a bill whose payments run consistently above its budgeted figure", () => {
+    const found = findingOf("bill-under-budgeted", [bill({
+      amount: 5000,
+      nextDueDate: new Date(Date.UTC(2026, 9, 5)),
+      payments: [
+        { id: "p1", date: new Date(Date.UTC(2026, 5, 5)), amount: 6400 },
+        { id: "p2", date: new Date(Date.UTC(2026, 6, 5)), amount: 6600 },
+        { id: "p3", date: new Date(Date.UTC(2026, 7, 5)), amount: 6500 },
+      ],
+    })]);
+    expect(found).toMatchObject({ scope: "outstanding", current: 6500, baseline: 5000, changePct: 30 });
+    expect(found?.stateKey).toBe("bill:under-budgeted:b1:5000");
+  });
+
+  /** A metered bill whose budget falls inside the range actually paid is seasonal, not wrong. */
+  it("leaves a seasonal bill out of the under-budgeted finding", () => {
+    expect(findingOf("bill-under-budgeted", [bill({
+      amount: 4000,
+      isVariable: true,
+      nextDueDate: new Date(Date.UTC(2026, 9, 5)),
+      payments: [
+        { id: "p1", date: new Date(Date.UTC(2026, 5, 5)), amount: 2000 },
+        { id: "p2", date: new Date(Date.UTC(2026, 6, 5)), amount: 8000 },
+        { id: "p3", date: new Date(Date.UTC(2026, 7, 5)), amount: 7000 },
+      ],
+    })])).toBeUndefined();
+  });
+
+  it("says nothing about a bill budgeted close to what it actually costs", () => {
+    expect(findingOf("bill-under-budgeted", [bill({
+      amount: 5000,
+      nextDueDate: new Date(Date.UTC(2026, 9, 5)),
+      payments: [
+        { id: "p1", date: new Date(Date.UTC(2026, 5, 5)), amount: 5100 },
+        { id: "p2", date: new Date(Date.UTC(2026, 6, 5)), amount: 5200 },
+      ],
+    })])).toBeUndefined();
   });
 });

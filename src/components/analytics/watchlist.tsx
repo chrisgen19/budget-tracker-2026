@@ -46,6 +46,9 @@ const KIND_LABEL: Record<AssessmentAnomaly["kind"], string> = {
   "recurring-ended": "Recurring charge stopped",
   "recurring-amount-change": "Recurring charge changed",
   "recurring-renews-soon": "Renews soon",
+  "bill-due-soon": "Bill due soon",
+  "bill-snoozed": "Bill put off",
+  "bill-under-budgeted": "Bill costs more than budgeted",
 };
 
 const SEVERITY_STYLE: Record<

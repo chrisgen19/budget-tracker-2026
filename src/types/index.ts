@@ -691,16 +691,55 @@ export interface AssessmentHeadline {
   monthsOfRunway: number | null;
 }
 
+/** A bill that has not come due yet but will shortly - a claim on cash, not a problem. */
+export interface AssessmentDueSoonBill {
+  id: string;
+  description: string;
+  categoryName: string;
+  /** "YYYY-MM-DD" in the user's own calendar. */
+  dueDate: string;
+  daysUntilDue: number;
+  /** What it is likely to cost - derived for a variable bill, the stored figure otherwise. */
+  amount: number;
+  isEstimate: boolean;
+}
+
+/**
+ * One occurrence deferred again and again rather than paid or skipped.
+ *
+ * Counted per *occurrence*, not per bill: a bill snoozed once a month for a year is twelve
+ * separate decisions about twelve separate charges, while the same charge deferred four times is
+ * one bill nobody intends to pay. Only the second is worth saying anything about.
+ *
+ * Each fresh snooze of an occurrence writes its own log row (`settleBill` only collapses a retry
+ * against a deferral that has not yet lapsed), so the row count is the decision count.
+ */
+export interface AssessmentSnoozedBill {
+  id: string;
+  description: string;
+  categoryName: string;
+  /** The occurrence being deferred, "YYYY-MM-DD". */
+  dueDate: string;
+  snoozes: number;
+  /** When the current deferral runs out, or null when it already has. */
+  snoozedUntil: string | null;
+  amount: number;
+  isEstimate: boolean;
+}
+
 export interface AssessmentBillFacts {
   /** Resolved against the user's own calendar day, not the server's. */
   asOf: string;
   missed: AssessmentMissedBill[];
   accuracy: AssessmentBillAccuracy[];
   unlinkedPayments: AssessmentUnlinkedBillPayment[];
-  /** Bills due within the next 14 days, as a forward-looking claim on cash. */
+  /** Bills due within the next 14 days, as a forward-looking claim on cash. Soonest first. */
+  dueSoon: AssessmentDueSoonBill[];
   dueSoonCount: number;
   dueSoonTotal: number;
   dueSoonIsEstimate: boolean;
+  /** Occurrences deferred repeatedly, most-deferred first. */
+  repeatedlySnoozed: AssessmentSnoozedBill[];
 }
 
 /** One category's movement between the compared month and the baseline months. */
@@ -839,7 +878,10 @@ export type AssessmentAnomalyKind =
   | "recurring-new"
   | "recurring-ended"
   | "recurring-amount-change"
-  | "recurring-renews-soon";
+  | "recurring-renews-soon"
+  | "bill-due-soon"
+  | "bill-snoozed"
+  | "bill-under-budgeted";
 
 /**
  * Whether a finding is measured inside the selected period, or describes a standing condition
