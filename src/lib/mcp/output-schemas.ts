@@ -852,6 +852,7 @@ const recurringItem = z.object({
   daysOverdue: z.number(),
   latestAmount: z.number(),
   priorAvgAmount: z.number().nullable(),
+  latestAmountSince: z.string(),
 });
 assertExact<z.infer<typeof recurringItem>, AssessmentRecurringItem>(true);
 

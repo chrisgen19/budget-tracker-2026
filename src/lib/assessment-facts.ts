@@ -640,6 +640,11 @@ export const computeRecurring = (
     if (!established && !(isNew && g.months.size >= 2)) continue;
     const intervalDays = chargeIntervalDays(days);
     const expectedNextDate = intervalDays === null ? null : addDays(lastSeen, intervalDays);
+    // Walk back over the unbroken run at the newest amount. Compared rounded, because that is what
+    // `latestAmount` reports and a half-centavo difference is not a price change.
+    const latest = round(amounts[amounts.length - 1]);
+    let runStart = charges.length - 1;
+    while (runStart > 0 && round(charges[runStart - 1].amount) === latest) runStart -= 1;
     items.push({
       description: g.label,
       months: g.months.size,
@@ -652,8 +657,9 @@ export const computeRecurring = (
       intervalDays,
       expectedNextDate,
       daysOverdue: expectedNextDate === null ? 0 : Math.max(0, daysBetween(expectedNextDate, today)),
-      latestAmount: round(amounts[amounts.length - 1]),
+      latestAmount: latest,
       priorAvgAmount: amounts.length < 2 ? null : round(sum(amounts.slice(0, -1)) / (amounts.length - 1)),
+      latestAmountSince: charges[runStart].day,
     });
   }
 
@@ -1466,7 +1472,11 @@ const detectRecurringAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
         baseline: prior,
         changePct: change,
         drillDown: chargeDrillDown(item),
-        stateKey: stateKey(item, "amount-change", item.latestAmount),
+        // The price *episode*, not the price. A charge that goes 499, 699, 499, 699 rises to 699
+        // twice, and keying on the amount alone let the second rise inherit the first's resolution
+        // and never appear. `latestAmountSince` holds still while the charge stays at this amount,
+        // so one more month at 699 still cannot re-raise a rise already dealt with.
+        stateKey: stateKey(item, "amount-change", `${item.latestAmount}@${item.latestAmountSince}`),
       }));
   }
   out.push(

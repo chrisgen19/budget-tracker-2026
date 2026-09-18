@@ -1032,6 +1032,34 @@ describe("recurring-charge findings", () => {
     expect(oct?.stateKey).not.toBe(sep?.stateKey);
   });
 
+  /**
+   * ...and a charge that returns to its old price and rises again is a second episode, not the
+   * first one recurring. 499, 499, 699, 499, 699 reaches 699 twice; keyed on the amount alone both
+   * rises shared `...:amount-change:699`, so resolving the first hid the second for good.
+   */
+  it("gives a repeat of the same price its own key", () => {
+    const base = ["2026-03-03", "2026-04-03", "2026-05-03", "2026-06-03"];
+    const first = factsOn("2026-07-10", charges(base, [499, 499, 499, 699]))
+      .anomalies.find((a) => a.kind === "recurring-amount-change");
+    const again = factsOn("2026-09-10", charges(
+      [...base, "2026-07-03", "2026-08-03"],
+      [499, 499, 499, 699, 499, 699],
+    )).anomalies.find((a) => a.kind === "recurring-amount-change");
+    expect(first?.stateKey).toBe("recurring:netflix:amount-change:699@2026-06-03");
+    expect(again?.stateKey).toBe("recurring:netflix:amount-change:699@2026-08-03");
+  });
+
+  /** But staying at the new price is the same episode, so a resolved rise stays resolved. */
+  it("keeps one key while the charge stays at the new price", () => {
+    const base = ["2026-03-03", "2026-04-03", "2026-05-03", "2026-06-03"];
+    const risen = factsOn("2026-07-10", charges(base, [499, 499, 499, 699]))
+      .anomalies.find((a) => a.kind === "recurring-amount-change");
+    const stillRisen = factsOn("2026-08-10", charges([...base, "2026-07-03"], [499, 499, 499, 699, 699]))
+      .anomalies.find((a) => a.kind === "recurring-amount-change");
+    expect(risen?.stateKey).toBe("recurring:netflix:amount-change:699@2026-06-03");
+    expect(stillRisen?.stateKey).toBe(risen?.stateKey);
+  });
+
   /** Resolving a rise to 699 must not silence a later one to 1299. */
   it("gives a second price episode its own key", () => {
     const first = factsOn("2026-08-10", charges(
@@ -1042,8 +1070,8 @@ describe("recurring-charge findings", () => {
       ["2026-04-03", "2026-05-03", "2026-06-03", "2026-07-03", "2026-08-03", "2026-09-03", "2026-10-03", "2026-11-03"],
       [499, 499, 499, 499, 699, 699, 699, 1299],
     )).anomalies.find((a) => a.kind === "recurring-amount-change");
-    expect(first?.stateKey).toBe("recurring:netflix:amount-change:699");
-    expect(later?.stateKey).toBe("recurring:netflix:amount-change:1299");
+    expect(first?.stateKey).toBe("recurring:netflix:amount-change:699@2026-08-03");
+    expect(later?.stateKey).toBe("recurring:netflix:amount-change:1299@2026-11-03");
   });
 
   /**

@@ -765,6 +765,15 @@ export interface AssessmentRecurringItem {
   latestAmount: number;
   /** Average of every charge before the latest, or null when the latest is the only one. */
   priorAvgAmount: number | null;
+  /**
+   * The day the charge last *became* its current amount: the first of the unbroken run at
+   * `latestAmount`, which is `lastSeen` itself when the newest charge differs from the one before.
+   *
+   * The identity of a price episode, as distinct from the price. A charge that goes 499, 699, 499,
+   * 699 has two separate rises to 699, and keying a finding on the amount alone made the second one
+   * inherit the first one's resolution and vanish.
+   */
+  latestAmountSince: string;
 }
 
 export interface AssessmentRecurringFacts {
