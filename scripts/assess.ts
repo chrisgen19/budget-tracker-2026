@@ -162,8 +162,32 @@ const printIncome = (f: AssessmentFacts, currency: string) => {
   }
 };
 
+/**
+ * Where the tracked balance is headed before money next comes in.
+ *
+ * Printed with its caveat every time. The opening figure is every income logged minus every
+ * expense, which is not a bank balance, and a reader who takes it for one draws exactly the wrong
+ * conclusion from a number that looks precise.
+ */
+const printForecast = (f: AssessmentFacts, currency: string) => {
+  h1("8. CASH FORECAST (directional, from logged rows only)");
+  const { forecast } = f;
+  if (forecast.openingBalance === null) {
+    console.log("    No opening balance available, so nothing to project from.");
+    return;
+  }
+  console.log(`    Tracked balance   ${money(forecast.openingBalance, currency)}`);
+  console.log(`    Projected through ${forecast.through}${forecast.nextIncomeDate ? ` (next expected deposit)` : " (no deposit expected)"}`);
+  console.log(`    Committed by then ${money(forecast.committed, currency)} across ${forecast.claims.length} charge(s)`);
+  console.log(`    Low point         ${money(forecast.lowestBalance ?? 0, currency)} on ${forecast.lowestOn}\n`);
+  if (forecast.claims.length === 0) none();
+  for (const claim of forecast.claims) {
+    console.log(`  ${claim.date}  ${claim.label.padEnd(28)} ${money(claim.amount, currency).padStart(16)}  (${claim.source})`);
+  }
+};
+
 const printAnomalies = (f: AssessmentFacts, currency: string) => {
-  h1("8. WHAT CHANGED THIS PERIOD");
+  h1("9. WHAT CHANGED THIS PERIOD");
   console.log("    Measured against the trustworthy months. A month still running is compared");
   console.log("    against the same days of those months, never scaled up.\n");
   const print = (a: AssessmentFacts["anomalies"][number]) => {
@@ -213,6 +237,7 @@ async function main() {
   printRecurring(facts, user.currency);
   printQuality(facts, user.currency);
   printIncome(facts, user.currency);
+  printForecast(facts, user.currency);
   printAnomalies(facts, user.currency);
 }
 
