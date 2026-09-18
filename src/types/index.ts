@@ -743,6 +743,37 @@ export interface AssessmentRecurringItem {
   isNew: boolean;
   firstSeen: string;
   lastSeen: string;
+  /**
+   * Median days between consecutive charge days — the cadence, not a nominal billing period.
+   *
+   * Measured rather than assumed: a "monthly" subscription billed on the 1st has a cadence of
+   * 28-31 days depending on the months it has run through, and a median is what survives that
+   * without a calendar model nobody maintains. Null with fewer than two charge days, where there
+   * is no gap to measure.
+   */
+  intervalDays: number | null;
+  /** `lastSeen` plus `intervalDays`, or null without a cadence. When the next charge is due. */
+  expectedNextDate: string | null;
+  /** Days past `expectedNextDate`, 0 when it has not arrived yet or is unknown. */
+  daysOverdue: number;
+  /**
+   * The most recent charge's amount.
+   *
+   * One charge, not the day's total: several rows on one day are a double submit far more often
+   * than a genuine price rise, and summing them would report the duplicate as one.
+   */
+  latestAmount: number;
+  /** Average of every charge before the latest, or null when the latest is the only one. */
+  priorAvgAmount: number | null;
+  /**
+   * The day the charge last *became* its current amount: the first of the unbroken run at
+   * `latestAmount`, which is `lastSeen` itself when the newest charge differs from the one before.
+   *
+   * The identity of a price episode, as distinct from the price. A charge that goes 499, 699, 499,
+   * 699 has two separate rises to 699, and keying a finding on the amount alone made the second one
+   * inherit the first one's resolution and vanish.
+   */
+  latestAmountSince: string;
 }
 
 export interface AssessmentRecurringFacts {
@@ -804,7 +835,11 @@ export type AssessmentAnomalyKind =
   | "missing-income"
   | "duplicate"
   | "logging-gap"
-  | "missed-bill";
+  | "missed-bill"
+  | "recurring-new"
+  | "recurring-ended"
+  | "recurring-amount-change"
+  | "recurring-renews-soon";
 
 /**
  * Whether a finding is measured inside the selected period, or describes a standing condition
