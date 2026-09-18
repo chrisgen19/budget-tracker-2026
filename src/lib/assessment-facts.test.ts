@@ -1006,13 +1006,76 @@ describe("recurring-charge findings", () => {
   });
 
   /**
-   * The identity a resolve or snooze is stored against must not move with the figures, or the
-   * finding returns the moment the date it is about gets nearer.
+   * The identity a resolve or snooze is stored against is the charge, the question, and which
+   * occurrence of that question -- never the running figures, which would return the finding the
+   * moment one more month nudged an average.
    */
   it("keys each question about a charge separately from the figures it reports", () => {
     const found = factsOn("2026-08-30", charges(["2026-03-03", "2026-04-03", "2026-05-03", "2026-06-03"]))
       .anomalies.find((a) => a.kind === "recurring-ended");
-    expect(found?.stateKey).toBe("recurring:netflix:ended");
+    expect(found?.stateKey).toBe("recurring:netflix:ended:2026-06-03");
+  });
+
+  /**
+   * A resolve never expires, so a key naming only the charge and the question buried every later
+   * answer to it: resolving September's renewal meant Netflix never raised a renewal finding again.
+   * `expectedNextDate` holds still all cycle and moves when the charge lands, which is exactly the
+   * identity wanted -- a snooze still survives the date drawing nearer.
+   */
+  it("gives each renewal cycle its own key", () => {
+    const sep = factsOn("2026-08-30", charges(["2026-04-03", "2026-05-03", "2026-06-03", "2026-07-03", "2026-08-03"]))
+      .anomalies.find((a) => a.kind === "recurring-renews-soon");
+    const oct = factsOn("2026-09-29", charges(
+      ["2026-04-03", "2026-05-03", "2026-06-03", "2026-07-03", "2026-08-03", "2026-09-03"],
+    )).anomalies.find((a) => a.kind === "recurring-renews-soon");
+    expect(sep?.stateKey).toBe("recurring:netflix:renews-soon:2026-09-03");
+    expect(oct?.stateKey).not.toBe(sep?.stateKey);
+  });
+
+  /** Resolving a rise to 699 must not silence a later one to 1299. */
+  it("gives a second price episode its own key", () => {
+    const first = factsOn("2026-08-10", charges(
+      ["2026-04-03", "2026-05-03", "2026-06-03", "2026-07-03", "2026-08-03"],
+      [499, 499, 499, 499, 699],
+    )).anomalies.find((a) => a.kind === "recurring-amount-change");
+    const later = factsOn("2026-11-10", charges(
+      ["2026-04-03", "2026-05-03", "2026-06-03", "2026-07-03", "2026-08-03", "2026-09-03", "2026-10-03", "2026-11-03"],
+      [499, 499, 499, 499, 699, 699, 699, 1299],
+    )).anomalies.find((a) => a.kind === "recurring-amount-change");
+    expect(first?.stateKey).toBe("recurring:netflix:amount-change:699");
+    expect(later?.stateKey).toBe("recurring:netflix:amount-change:1299");
+  });
+
+  /**
+   * `recurring.items` is cut to 15 for the payload and ordered by total spend, which ranks a daily
+   * coffee above a monthly subscription. Detecting against that list dropped the 16th charge
+   * entirely -- no lapse, renewal or price question was ever asked of it.
+   */
+  it("asks about a charge ranked below the fifteen the payload carries", () => {
+    const rows: FactTransaction[] = [];
+    for (let i = 0; i < 15; i += 1) {
+      for (const day of ["2026-05-10", "2026-06-10", "2026-07-10", "2026-08-10"]) {
+        rows.push(tx({ localDate: day, amount: 5000, description: `Big Charge ${i}`, categoryName: "Entertainment" }));
+      }
+    }
+    for (const day of ["2026-02-05", "2026-03-05", "2026-04-05", "2026-05-05"]) {
+      rows.push(tx({ localDate: day, amount: 149, description: "Tiny Sub", categoryName: "Entertainment" }));
+    }
+    const facts = factsOn("2026-08-20", rows);
+    expect(facts.recurring.items.some((i) => i.description === "Tiny Sub")).toBe(false);
+    expect(facts.anomalies.find((a) => a.kind === "recurring-ended")?.title).toContain("Tiny Sub");
+  });
+
+  /** The cap belongs on what gets said, not on which charges are asked. */
+  it("names at most three charges per recurring question", () => {
+    const rows: FactTransaction[] = [];
+    for (let i = 0; i < 6; i += 1) {
+      for (const day of ["2026-02-05", "2026-03-05", "2026-04-05", "2026-05-05"]) {
+        rows.push(tx({ localDate: day, amount: 500 + i, description: `Gone ${i}`, categoryName: "Entertainment" }));
+      }
+    }
+    const ended = factsOn("2026-08-20", rows).anomalies.filter((a) => a.kind === "recurring-ended");
+    expect(ended).toHaveLength(3);
   });
 
   it("points the follow-up at the charge's own history rather than at the period", () => {

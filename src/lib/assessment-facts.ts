@@ -164,6 +164,15 @@ const RECURRING_RENEWAL_DAYS = 7;
 const RECURRING_LAPSE_CYCLES = 1;
 /** A recurring charge moving this far from its own average is a price change rather than noise. */
 const RECURRING_AMOUNT_CHANGE_PCT = 20;
+/**
+ * How many charges each recurring question may name at once.
+ *
+ * The cap belongs on the findings, not on the charges they are looked for in. `recurring.items` is
+ * cut to 15 for the payload and ordered by total spend, which ranks a daily coffee above a monthly
+ * subscription -- detecting against that list dropped exactly the charges this family exists to
+ * catch. Detection now reads every established charge and caps what it says about them.
+ */
+const RECURRING_FINDINGS_PER_KIND = 3;
 
 /* ------------------------------------------------------------------ */
 /*  Calendar-day helpers                                               */
@@ -534,6 +543,17 @@ export const computeHeadline = (
 /* ------------------------------------------------------------------ */
 
 /**
+ * What `computeRecurring` hands back: the payload facts, plus the charges behind them.
+ *
+ * `items` is capped at 15 and is what ships to the client, the AI prompt and MCP. `allItems` is
+ * every established charge and never leaves this module -- `buildAssessmentFacts` destructures it
+ * straight into `AnomalyContext`, so widening it costs nothing on the wire.
+ */
+export type RecurringComputation = AssessmentRecurringFacts & {
+  allItems: AssessmentRecurringItem[];
+};
+
+/**
  * Charges seen in most months of the window — the fixed base under the
  * discretionary spending, and the place a subscription quietly joins.
  *
@@ -553,7 +573,7 @@ export const computeRecurring = (
    * see -- a subscription running for two years looked 120 days old.
    */
   historyFirstSeen: ReadonlyMap<string, string> = new Map(),
-): AssessmentRecurringFacts => {
+): RecurringComputation => {
   // Day and amount travel together. They used to be two parallel arrays, one of
   // which was then sorted in place: any figure read by position after that
   // belonged to a different charge than the date beside it.
@@ -614,6 +634,7 @@ export const computeRecurring = (
     newItems: items.filter((i) => i.isNew).sort((a, b) => b.avgAmount - a.avgAmount).slice(0, 8),
     monthlyBase,
     monthlyBasePct: avgMonthlyBurn ? pct(monthlyBase, avgMonthlyBurn) : null,
+    allItems: items,
   };
 };
 
@@ -980,6 +1001,14 @@ interface AnomalyContext {
   confidence: AssessmentDataConfidence;
   bills: AssessmentBillFacts;
   recurring: AssessmentRecurringFacts;
+  /**
+   * Every established recurring charge, uncapped.
+   *
+   * `recurring.items` is the presentation cut: 15 rows ordered by total spend. Detection has to
+   * read the whole set, or a charge ranked 16th by total is never asked whether it has stopped,
+   * renewed or changed price -- and total spend ranks a daily coffee above a monthly subscription.
+   */
+  recurringAll: AssessmentRecurringItem[];
   hygiene: AssessmentHygieneFacts;
   /** Trustworthy months excluding the period's own — what "normal" is measured against. */
   baselineMonths: string[];
@@ -1324,48 +1353,65 @@ const detectRecurringAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
     from: item.firstSeen,
     to: ctx.today,
   });
-  // Identity is the charge and the question asked about it, never the figures: a snoozed "renews
-  // soon" must stay snoozed as the date moves nearer, and a resolved price change must not return
-  // because one more month shifted the average by a peso.
-  const stateKey = (item: AssessmentRecurringItem, question: string) =>
-    `recurring:${foldDescription(item.description)}:${question}`;
+  // Identity is the charge, the question asked about it, and *which* occurrence of that question --
+  // never the running figures. Without the third part a resolve, which never expires, buried every
+  // later answer to the same question: resolving September's renewal meant Netflix never raised a
+  // renewal finding again, and resolving a 499 to 699 rise silenced a later 699 to 1299 one.
+  //
+  // What each kind pins is the thing that stands still for one episode and moves for the next.
+  // `expectedNextDate` is `lastSeen + intervalDays`, so it holds all cycle and changes when the
+  // charge lands -- which is what keeps a snoozed "renews soon" snoozed as the date draws nearer,
+  // the property the figures were being kept out of the key to protect. `lastSeen` is the charge a
+  // lapse was measured from, and `latestAmount` is the new price itself, so one more month at 699
+  // cannot re-raise a rise already dealt with while a further rise to 1299 must -- the same
+  // reasoning that keys `bill-under-budgeted` on the budgeted figure rather than the average.
+  const stateKey = (item: AssessmentRecurringItem, question: string, occurrence: string | number) =>
+    `recurring:${foldDescription(item.description)}:${question}:${occurrence}`;
 
-  for (const item of ctx.recurring.newItems.slice(0, 3)) {
+  for (const item of ctx.recurring.newItems.slice(0, RECURRING_FINDINGS_PER_KIND)) {
     out.push(anomaly("recurring-new", "low",
       `${item.description} is a new recurring charge`,
       `First seen on ${item.firstSeen} and charged in ${item.months} months since. It bills about ${item.intervalDays ? `every ${item.intervalDays} days` : "once a month"} and did not exist in the earlier months of the window.`,
       {
         current: item.avgAmount,
         drillDown: chargeDrillDown(item),
-        stateKey: stateKey(item, "new"),
-        findingKeyEvidence: JSON.stringify({ firstSeen: item.firstSeen, occurrences: item.occurrences }),
+        // No `findingKeyEvidence` beside a `stateKey`: `watchlistFindingKey` reads one or the
+        // other, so evidence sitting next to a key is never looked at. `firstSeen` carries the
+        // identity instead, and a charge is only ever new once from that date.
+        stateKey: stateKey(item, "new", item.firstSeen),
       }));
   }
 
-  for (const item of ctx.recurring.items) {
+  // Collected per kind so the cap lands on what gets said rather than on which charges are asked.
+  // Charges arrive ordered by total spend, so a cap that bites keeps the costliest of each kind.
+  const ended: AssessmentAnomaly[] = [];
+  const renewing: AssessmentAnomaly[] = [];
+  const repriced: AssessmentAnomaly[] = [];
+
+  for (const item of ctx.recurringAll) {
     if (item.isNew || item.months < RECURRING_MIN_MONTHS || item.intervalDays === null) continue;
 
     if (item.daysOverdue > item.intervalDays * RECURRING_LAPSE_CYCLES) {
-      out.push(anomaly("recurring-ended", "low",
+      ended.push(anomaly("recurring-ended", "low",
         `${item.description} has stopped charging`,
         `It was charged about every ${item.intervalDays} days, and the last one was on ${item.lastSeen} — ${item.daysOverdue} days past when the next was due. Either it was cancelled, or the payment was not logged.`,
         {
           current: item.avgAmount,
           drillDown: chargeDrillDown(item),
-          stateKey: stateKey(item, "ended"),
+          stateKey: stateKey(item, "ended", item.lastSeen),
         }));
       continue;
     }
 
     if (item.expectedNextDate !== null && item.daysOverdue === 0
       && daysBetween(ctx.today, item.expectedNextDate) <= RECURRING_RENEWAL_DAYS) {
-      out.push(anomaly("recurring-renews-soon", "low",
+      renewing.push(anomaly("recurring-renews-soon", "low",
         `${item.description} renews around ${item.expectedNextDate}`,
         `It has been charged every ${item.intervalDays} days or so, and the next one is due within ${RECURRING_RENEWAL_DAYS} days. Cancel it before then if it is not being used.`,
         {
           current: item.avgAmount,
           drillDown: chargeDrillDown(item),
-          stateKey: stateKey(item, "renews-soon"),
+          stateKey: stateKey(item, "renews-soon", item.expectedNextDate),
         }));
     }
 
@@ -1373,7 +1419,7 @@ const detectRecurringAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
     if (prior === null || prior === 0) continue;
     const change = pct(item.latestAmount - prior, prior);
     if (change === null || Math.abs(change) < RECURRING_AMOUNT_CHANGE_PCT) continue;
-    out.push(anomaly("recurring-amount-change", change > 0 ? "medium" : "low",
+    repriced.push(anomaly("recurring-amount-change", change > 0 ? "medium" : "low",
       `${item.description} now costs ${Math.abs(change)}% ${change > 0 ? "more" : "less"}`,
       `The charge on ${item.lastSeen} is ${Math.abs(change)}% ${change > 0 ? "above" : "below"} the average of the ${item.occurrences - 1} before it. ${change > 0 ? "A price rise" : "A price drop"} on a charge that repeats ${change > 0 ? "costs" : "saves"} that much every cycle from here.`,
       {
@@ -1381,10 +1427,14 @@ const detectRecurringAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
         baseline: prior,
         changePct: change,
         drillDown: chargeDrillDown(item),
-        stateKey: stateKey(item, "amount-change"),
-        findingKeyEvidence: JSON.stringify({ lastSeen: item.lastSeen, latestAmount: item.latestAmount }),
+        stateKey: stateKey(item, "amount-change", item.latestAmount),
       }));
   }
+  out.push(
+    ...ended.slice(0, RECURRING_FINDINGS_PER_KIND),
+    ...renewing.slice(0, RECURRING_FINDINGS_PER_KIND),
+    ...repriced.slice(0, RECURRING_FINDINGS_PER_KIND),
+  );
   return out;
 };
 
@@ -1499,7 +1549,10 @@ export const buildAssessmentFacts = (input: FactsInput): AssessmentFacts => {
   const window = resolveFactsWindow(period, today, input.historyMonths);
   const confidence = computeConfidence(transactions, window.months, period, today);
   const trends = computeTrends(transactions, confidence.months, confidence.trustworthyMonths, period);
-  const recurring = computeRecurring(transactions, today, trends.avgMonthlyBurn, input.historyFirstSeen);
+  // `allItems` is peeled off here and never reaches the returned facts: detection needs every
+  // charge, the payload wants the top 15.
+  const { allItems: recurringAll, ...recurring } =
+    computeRecurring(transactions, today, trends.avgMonthlyBurn, input.historyFirstSeen);
   const hygiene = computeHygiene(transactions, confidence.trustworthyMonths, period);
   const headline = computeHeadline(trends, input.allTimeTotals ?? null);
   // Falls back to the window when the caller supplies no wider set, so a test or
@@ -1528,6 +1581,7 @@ export const buildAssessmentFacts = (input: FactsInput): AssessmentFacts => {
     confidence,
     bills: billFacts,
     recurring,
+    recurringAll,
     hygiene,
     baselineMonths,
     baselineBurn,
