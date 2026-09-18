@@ -2,6 +2,52 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-18 - A finished code review no longer fails its own job
+
+`anthropics/claude-code-action` exits 1 whenever the Claude session ends on `is_error: true`, and
+that says nothing about whether the review happened. On run 35194924893 (PR #353) the four inline
+findings were posted between 07:42:08 and 07:42:30 and the session died at 07:42:31, so a review
+that did its job was reported as a failed one. The action step is now `continue-on-error`, and
+**Report what the review did** decides the job's colour on its own: it already reads the transcript
+for the comment ids this run created and confirms each one exists on this PR. A review that posted
+passes and records the session error as a warning; a review that posted nothing still fails. A
+setup failure, meaning no transcript *and* a failed step, fails too, since `continue-on-error`
+would otherwise have turned a broken action green.
+
+The session error itself was not this repository's doing. Seven PRs opened within 39 seconds
+started seven concurrent sessions on one `CLAUDE_CODE_OAUTH_TOKEN`, and four of them died between
+07:42:17 and 07:42:35 at 14, 14, 32 and 43 turns. Turn counts that far apart ending in the same
+wall-clock second is a shared account limit, not four per-session faults; the two 14-turn sessions
+spent over ten minutes and $7-$10 to reach 14 turns, which is what throttling looks like from the
+inside. Bounding concurrency was considered and rejected: GitHub keeps only one *pending* run per
+concurrency group, so a burst of seven would cancel five reviews outright, and a silently dropped
+review is worse than a red job whose findings are already on the PR.
+
+Denied tool calls, running at 30-48 per review, made that limit likelier by spending turns on calls
+that could never succeed. Every entry added to `--allowedTools` comes from that batch's own denial
+warnings rather than from a guess about how matching works:
+
+- `Skill(code-review:code-review)` was denied in six of the seven runs. The prompt *is* that
+  command, so the first thing each session tried was the one thing it was not allowed to do. The
+  runs that produced findings anyway improvised a review of their own
+- A compound command is checked per sub-command, so an entry only covers a call that is not piped.
+  `Bash(gh pr diff:*)` was already listed and `gh pr diff ... | head` was still denied seven times,
+  because `head` was not. The pager and filter entries exist for the right-hand side of those pipes
+- Read-only `git` is not free after all. `git ls-tree -r` and `git fetch origin` were both denied,
+  so the read-only verbs are listed explicitly, correcting the note that claimed otherwise
+
+`fetch-depth` moved from `1` to `0` for the same reason: with a single commit the reviewer has no
+base to diff against, so it cannot answer "what did this PR change?" from the checkout and goes
+looking for the diff over the network instead, spending denials on `git fetch origin`,
+`gh api .../contents/...`, `curl raw.githubusercontent.com` and `gh pr diff | head`. With the base
+on disk, `git diff` and `git log` answer all of it.
+
+Still deliberately excluded: `Bash(gh api:*)` and `Bash(gh:*)`, since `gh` runs with the Claude
+app's token and that token can write to the repository; `Write` and `Bash(cat:*)`, since a reviewer
+has nothing to write and `cat >` writes; and the package managers, because `pnpm type-check` and
+`npx vitest` were denied several times in that batch and allowing them would not have helped, as no
+step in this job installs dependencies.
+
 ## 2026-09-17 - Watchlist findings can be resolved or snoozed
 
 Each live Watchlist finding now has **View transactions** (or **Go to Bills**), **Resolve**, and
