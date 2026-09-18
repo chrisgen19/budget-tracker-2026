@@ -1791,6 +1791,40 @@ describe("configurable detection thresholds", () => {
       .toContain("outlier-transaction");
   });
 
+  /**
+   * The wording, not just the kind. A row the absolute figure admitted has a ratio *below* the
+   * threshold by definition, so the relative sentence renders "about 1x the typical charge" -- and
+   * "about 0x" where the category has no second row, since `median([])` is 0. Both undercut the
+   * finding they are presenting, and this prose is handed to the model as fact.
+   */
+  const outlierDetail = (...args: Parameters<typeof factsFor>) =>
+    factsFor(...args).anomalies.find((a) => a.kind === "outlier-transaction")?.detail ?? "";
+
+  it("does not claim a multiple it did not measure when the absolute figure admitted the row", () => {
+    const evenly = spend([50_000, 50_000, 50_000, 50_000]);
+    const detail = outlierDetail(evenly, { ...DEFAULT_WATCHLIST_THRESHOLDS, largeAmount: 10_000 });
+    expect(detail).not.toMatch(/\bx the typical\b/);
+    expect(detail).toContain('clears your "always flag" figure');
+  });
+
+  it("says there is nothing to compare a lone charge with rather than calling it 0x", () => {
+    const alone = [
+      tx({ localDate: "2026-08-10", amount: 80_000, categoryName: "Medical", description: "Hospital" }),
+      ...spend([500, 500, 500]),
+    ];
+    const facts = factsFor(alone, { ...DEFAULT_WATCHLIST_THRESHOLDS, largeAmount: 10_000 });
+    const found = facts.anomalies.find((a) => a.kind === "outlier-transaction");
+    expect(found?.detail).toContain("the only Medical charge there is to compare it with");
+    expect(found?.detail).not.toContain("0x");
+    // No peers means no baseline was measured; reporting 0 would read as a measured figure.
+    expect(found?.baseline).toBeNull();
+    expect(found?.changePct).toBeNull();
+  });
+
+  it("still states the multiple when the ratio is what admitted the row", () => {
+    expect(outlierDetail(lumpy)).toMatch(/about 10x the typical Food & Dining charge/);
+  });
+
   /** The switch suppresses the finding; the fact stays, and the assessment's card still lists it. */
   it("stops alerting on duplicates without stopping detecting them", () => {
     const doubled = [

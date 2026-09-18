@@ -1764,19 +1764,31 @@ const detectOutlierTransactions = (ctx: AnomalyContext): AssessmentAnomaly[] => 
     .filter((x) => x.ratio >= outlierRatio || (largeAmount !== null && x.t.amount >= largeAmount))
     .sort((a, b) => b.t.amount - a.t.amount)
     .slice(0, 3)
-    .map(({ t, typical, ratio }) =>
-      anomaly("outlier-transaction", "medium", `One-off ${t.categoryName} charge on ${t.localDate}`,
-        `"${t.description || t.categoryName}" is about ${Math.round(ratio)}x the typical ${t.categoryName} charge and ${pct(t.amount, ctx.periodExpenses) ?? 0}% of the period's spending. Worth confirming it is not a mistyped amount.`,
+    .map(({ t, typical, ratio }) => {
+      // A row admitted only by the absolute figure has `ratio < outlierRatio` by definition, so the
+      // relative wording would undercut the finding it is presenting: "about 1x the typical charge",
+      // or "about 0x" where the category has no other row at all and `median([])` returned 0. Say
+      // what actually admitted the row instead, and report no baseline where none was measured.
+      const share = `${pct(t.amount, ctx.periodExpenses) ?? 0}% of the period's spending`;
+      const against =
+        ratio >= outlierRatio
+          ? `is about ${Math.round(ratio)}x the typical ${t.categoryName} charge and ${share}`
+          : typical === 0
+            ? `is the only ${t.categoryName} charge there is to compare it with, and ${share}`
+            : `clears your "always flag" figure and is ${share}`;
+      return anomaly("outlier-transaction", "medium", `One-off ${t.categoryName} charge on ${t.localDate}`,
+        `"${t.description || t.categoryName}" ${against}. Worth confirming it is not a mistyped amount.`,
         {
           current: round(t.amount),
-          baseline: round(typical),
-          changePct: pct(t.amount - typical, typical),
+          baseline: typical === 0 ? null : round(typical),
+          changePct: typical === 0 ? null : pct(t.amount - typical, typical),
           drillDown: {
             ...periodDrillDown(ctx, "EXPENSE"),
             categoryId: t.categoryId,
             search: t.description || undefined,
           },
-        }));
+        });
+    });
 };
 
 /** Overspending, a savings rate falling away from the baseline, missing income, and run-rate. */
