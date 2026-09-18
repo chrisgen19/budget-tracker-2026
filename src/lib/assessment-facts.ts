@@ -55,6 +55,7 @@ import type {
   AssessmentRecurringFacts,
   AssessmentRecurringItem,
   AssessmentSnoozedBill,
+  SavingsGoalSummary,
   AssessmentTrendFacts,
   AssessmentUnlinkedBillPayment,
   BillFrequency,
@@ -1277,6 +1278,10 @@ const ANOMALY_SCOPE: Record<AssessmentAnomalyKind, AssessmentAnomalyScope> = {
   // so a different set of months is being judged and the answer can legitimately differ.
   "low-coverage": "period",
   "insufficient-history": "period",
+  // A goal is behind as of today, against its own target date. Opening last March does not make it
+  // less behind, and would not have made it behind any earlier.
+  "goal-off-pace": "outstanding",
+  "goal-stalled": "outstanding",
 };
 
 const anomaly = (
@@ -1377,6 +1382,59 @@ export const detectBudgetWatchlistAnomalies = (
     return findings;
   });
 };
+
+/**
+ * Savings goals that will not arrive when they are meant to.
+ *
+ * Two findings rather than one, because they call for different things. `goal-off-pace` is a goal
+ * being funded too slowly: the answer is a bigger transfer, and the finding says how much bigger.
+ * `goal-stalled` is a goal with a deadline and nothing in it, where the answer is to start - or to
+ * admit the date was never real and move it.
+ *
+ * `overdue` and `funded` are deliberately silent. A goal past its date is either already visible
+ * on the goals page as overdue or has been quietly abandoned, and an alert that cannot be acted on
+ * by any amount of saving is one the user learns to ignore; a funded one is good news.
+ *
+ * Goals are passed in rather than read here, the way the budget allocations are: this module holds
+ * no database access, and that is what keeps every analysis in it testable without one.
+ */
+export const detectGoalAnomalies = (goals: SavingsGoalSummary[]): AssessmentAnomaly[] =>
+  goals
+    .filter((goal) => goal.status === "ACTIVE" && (goal.pace.state === "behind" || goal.pace.state === "stalled"))
+    .slice(0, 4)
+    .map((goal) => {
+      const required = goal.pace.requiredMonthly ?? 0;
+      if (goal.pace.state === "stalled") {
+        return anomaly("goal-stalled", "medium",
+          `${goal.name} has nothing put aside yet`,
+          `It is due by ${goal.targetDate}, ${goal.pace.daysRemaining} days away, and no contribution has been recorded. Reaching it from here means putting away about ${required} a month from now until then.`,
+          {
+            current: goal.funded,
+            baseline: goal.targetAmount,
+            drillDown: { destination: "goals" },
+            // The date, not the day count: a snooze taken on Tuesday has to still hold on Thursday.
+            stateKey: `goal:stalled:${goal.id}:${goal.targetDate}`,
+          });
+      }
+      // A goal holding money that has stopped growing is `behind` with no rate to run forward, so
+      // there is no landing date to name. Saying so beats rendering the null into the sentence.
+      const rate = goal.pace.observedMonthly;
+      const trajectory = goal.pace.projectedCompletion === null || rate === null || rate <= 0
+        ? `Nothing has gone in since the first deposit, so on its own it arrives on no date at all.`
+        : `It has been going in at about ${rate} a month and needs ${required}; at the current rate it lands around ${goal.pace.projectedCompletion} rather than ${goal.targetDate}.`;
+      return anomaly("goal-off-pace", "medium",
+        `${goal.name} is behind the pace it needs`,
+        `${goal.fundedPct}% funded with ${goal.pace.daysRemaining} days to go. ${trajectory}`,
+        {
+          current: goal.pace.observedMonthly,
+          baseline: required,
+          changePct: required === 0 ? null : pct((goal.pace.observedMonthly ?? 0) - required, required),
+          drillDown: { destination: "goals" },
+          // Keyed on the goal and its deadline, not on the rate, which moves with every
+          // contribution. Moving the target date is a new decision and re-raises it.
+          stateKey: `goal:off-pace:${goal.id}:${goal.targetDate}`,
+        });
+    });
 
 /** A same-named custom/default category cannot be represented by one ledger filter. */
 const categoryDrillDown = (ctx: AnomalyContext, category: string): AssessmentAnomalyDrillDown => {

@@ -11,6 +11,8 @@ import type {
   TransactionLabel,
   BillLabel,
   BudgetAllocationKind,
+  SavingsGoalKind,
+  SavingsGoalStatus,
 } from "@prisma/client";
 
 export type {
@@ -26,6 +28,8 @@ export type {
   TransactionLabel,
   BillLabel,
   BudgetAllocationKind,
+  SavingsGoalKind,
+  SavingsGoalStatus,
 };
 
 /** Transaction with its category (and optional bill) relation */
@@ -869,6 +873,73 @@ export interface AssessmentHygieneFacts {
   incomeSources: Array<{ source: string; count: number; total: number; pct: number | null }>;
 }
 
+/** One contribution into a goal, or a withdrawal back out of it (a negative amount). */
+export interface SavingsGoalContributionRow {
+  id: string;
+  amount: number;
+  /** "YYYY-MM-DD" in the user's own calendar. */
+  date: string;
+  note: string | null;
+}
+
+/**
+ * Whether a goal will arrive on time, and what it would take.
+ *
+ * `requiredMonthly` answers "what should I be putting in"; `projectedCompletion` runs the rate
+ * actually observed forward and answers "what will happen". The two disagreeing is the finding.
+ */
+export interface SavingsGoalPace {
+  remaining: number;
+  /**
+   * What is left divided by the months left, or null when there is no deadline or it has passed.
+   * Null is not zero: zero would read as "nothing more needed".
+   */
+  requiredMonthly: number | null;
+  /**
+   * The rate this goal has actually been funded at, measured from its **first contribution** and
+   * not from the day it was created - a goal set up in January and first funded in June has been
+   * running one month, and dividing by six condemns a saver who is on track.
+   *
+   * The opening deposit is excluded from the numerator, because it did not accrue over the window
+   * it opens: counting it divides N deposits by the N-1 intervals between them and overstates the
+   * rate by N/(N-1). Null until a second contribution exists on a later day - one deposit is an
+   * amount, not a rate.
+   */
+  observedMonthly: number | null;
+  /** Days to the target date; negative once it has passed, null without one. */
+  daysRemaining: number | null;
+  /** Where the observed rate lands the goal, or null when there is no rate to run forward. */
+  projectedCompletion: string | null;
+  /**
+   * - `funded` - the target is met.
+   * - `on-track` / `behind` - the observed rate against what is required, within a tolerance.
+   * - `stalled` - a deadline, but nothing in yet (or it all came back out).
+   * - `underway` - money is going in, but not from enough days to state a rate. Distinct from
+   *   `stalled`, which asserts the opposite and was being reported for it.
+   * - `overdue` - the date has passed and it is still short.
+   * - `no-deadline` - progress is knowable, pace is not. Not an error and not "fine".
+   */
+  state: "funded" | "on-track" | "behind" | "stalled" | "underway" | "overdue" | "no-deadline";
+}
+
+/** Everything the goals page and the Watchlist read about one goal. */
+export interface SavingsGoalSummary {
+  id: string;
+  name: string;
+  kind: SavingsGoalKind;
+  status: SavingsGoalStatus;
+  targetAmount: number;
+  targetDate: string | null;
+  notes: string | null;
+  /** The signed sum of every contribution - money assigned on purpose, never a residual. */
+  funded: number;
+  /** Clamped to 100 for the progress bar; `funded` keeps the real figure. */
+  fundedPct: number;
+  lastContributedOn: string | null;
+  contributionCount: number;
+  pace: SavingsGoalPace;
+}
+
 /** A pattern in the assessed period that the baseline says should not be there. */
 export type AssessmentAnomalyKind =
   | "budget-threshold"
@@ -892,7 +963,9 @@ export type AssessmentAnomalyKind =
   | "bill-under-budgeted"
   | "missing-expected-income"
   | "low-coverage"
-  | "insufficient-history";
+  | "insufficient-history"
+  | "goal-off-pace"
+  | "goal-stalled";
 
 /**
  * Whether a finding is measured inside the selected period, or describes a standing condition
@@ -916,7 +989,7 @@ export type AssessmentAnomalyScope = "period" | "outstanding";
 
 /** The most focused destination available for a Watchlist finding. */
 export interface AssessmentAnomalyDrillDown {
-  destination: "transactions" | "bills";
+  destination: "transactions" | "bills" | "goals";
   type?: TransactionType;
   categoryId?: string;
   from?: string;

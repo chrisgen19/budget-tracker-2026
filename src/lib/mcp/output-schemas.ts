@@ -954,6 +954,8 @@ const anomaly = z.object({
     "missing-expected-income",
     "low-coverage",
     "insufficient-history",
+    "goal-off-pace",
+    "goal-stalled",
   ]),
   // "outstanding" means the selected period does not bound the finding - a missed bill is judged
   // against its own payment history, so it is true now rather than true of the window.
@@ -965,7 +967,7 @@ const anomaly = z.object({
   baseline: z.number().nullable(),
   changePct: z.number().nullable(),
   drillDown: z.object({
-    destination: z.enum(["transactions", "bills"]),
+    destination: z.enum(["transactions", "bills", "goals"]),
     type: transactionType.optional(),
     categoryId: z.string().optional(),
     from: z.string().optional(),

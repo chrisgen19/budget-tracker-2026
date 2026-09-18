@@ -18,11 +18,13 @@ import {
   longestToken,
   resolveFactsWindow,
   DEFAULT_HISTORY_MONTHS,
+  detectGoalAnomalies,
   type FactBill,
   type FactTransaction,
   sortAssessmentAnomalies,
 } from "@/lib/assessment-facts";
 import { getBudgetPerformance } from "@/lib/budget-plans";
+import { getSavingsGoals } from "@/lib/savings-goals";
 import type { AssessmentFacts, TransactionType } from "@/types";
 
 export interface FactsParams {
@@ -228,9 +230,15 @@ export const collectAssessmentFacts = async (
     allTimeTotals: { income: totalOf("INCOME"), expenses: totalOf("EXPENSE") },
     unlinkedCandidates,
   });
-  if (params.granularity === "monthly" && isCalendarMonth(params.from, params.to)) {
-    const budget = await getBudgetPerformance(userId, params.from.slice(0, 7), tzOffset);
-    facts.anomalies = sortAssessmentAnomalies([...facts.anomalies, ...detectBudgetWatchlistAnomalies(budget)]);
+  // Goals are outstanding findings and so are read for every period, unlike the budget below: a
+  // deposit due in March is behind whichever report is open, while a budget plan belongs to one
+  // calendar month and cannot be compared against a week or a year.
+  const goalFindings = detectGoalAnomalies(await getSavingsGoals(prisma, userId));
+  const budgetFindings = params.granularity === "monthly" && isCalendarMonth(params.from, params.to)
+    ? detectBudgetWatchlistAnomalies(await getBudgetPerformance(userId, params.from.slice(0, 7), tzOffset))
+    : [];
+  if (goalFindings.length > 0 || budgetFindings.length > 0) {
+    facts.anomalies = sortAssessmentAnomalies([...facts.anomalies, ...goalFindings, ...budgetFindings]);
   }
   return facts;
 };
