@@ -60,7 +60,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     if (patch.targetDate !== undefined) {
       data.targetDate = patch.targetDate === null
         ? null
-        : goalDayToInstant(patch.targetDate, user?.timezoneOffset ?? 0);
+        : goalDayToInstant(patch.targetDate);
     }
 
     const { count } = await prisma.savingsGoal.updateMany({ where: { id: (await params).id, userId }, data });
@@ -76,20 +76,40 @@ export async function PATCH(request: Request, { params }: RouteParams) {
 }
 
 /**
- * DELETE removes the goal and its contributions (`onDelete: Cascade`).
+ * DELETE removes a goal that has no contributions. Archiving is what a goal with history gets.
  *
- * Archiving is a PATCH away and is what the UI offers for a goal with history; a delete here is
- * for the one created by mistake five seconds ago, and pretending otherwise would leave rows
- * nobody can reach.
+ * The no-history rule is enforced **in the delete's own `where`**, not by reading first and
+ * checking. `onDelete: Cascade` means a delete that slips through takes the contributions with it,
+ * and "where did my savings record go" is not a question a confirm dialog can un-ask. Only
+ * offering the button for an empty goal is not the rule, it is the hint: the page the button was
+ * rendered on goes stale the moment another tab records a contribution, and a request can arrive
+ * without any page at all.
+ *
+ * `count === 0` is ambiguous between "not this user's goal" and "it has history", so the cause is
+ * resolved with a follow-up read. That read decides a status code and nothing else - the delete
+ * already happened or already did not, atomically, against a condition no caller can race.
  */
 export async function DELETE(_request: Request, { params }: RouteParams) {
   const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
 
   try {
-    const { count } = await prisma.savingsGoal.deleteMany({ where: { id: (await params).id, userId } });
-    if (count === 0) return NextResponse.json({ error: "Goal not found" }, { status: 404 });
-    return NextResponse.json({ ok: true });
+    const goalId = (await params).id;
+    const { count } = await prisma.savingsGoal.deleteMany({
+      where: { id: goalId, userId, contributions: { none: {} } },
+    });
+    if (count > 0) return NextResponse.json({ ok: true });
+
+    const survivor = await prisma.savingsGoal.findFirst({
+      where: { id: goalId, userId },
+      select: { id: true },
+    });
+    return survivor
+      ? NextResponse.json(
+          { error: "This goal has contributions. Archive it instead, so the record is kept." },
+          { status: 409 },
+        )
+      : NextResponse.json({ error: "Goal not found" }, { status: 404 });
   } catch (error) {
     console.error("[goals/id] delete failed:", error instanceof Error ? error.message : error);
     return NextResponse.json({ error: "Failed to delete savings goal" }, { status: 500 });
