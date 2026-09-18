@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { collectAssessmentFacts } from "@/lib/assessment-facts-query";
+import { capFindingsPerKind, WATCHLIST_FINDINGS_PER_KIND } from "@/lib/assessment-facts";
 import { formatPeriodLabel, type PeriodType } from "@/lib/analytics-period";
 import { getSuppressingWatchlistStates } from "@/lib/watchlist-finding-states";
 import { watchlistFindingKey } from "@/lib/watchlist-findings";
@@ -56,6 +57,16 @@ export async function GET(request: Request) {
       prisma,
       userId,
       facts.anomalies.map((finding) => watchlistFindingKey(finding, facts.period)),
+    );
+    // Suppression first, then the cap -- never the other way round. Detection is uncapped so that
+    // resolving the findings on screen *reveals* the ones behind them; capping first spent the
+    // three slots on findings already dealt with, leaving an empty group and hiding the fourth for
+    // good, since a RESOLVED row never expires.
+    facts.anomalies = capFindingsPerKind(
+      facts.anomalies.filter(
+        (finding) => findingStates[watchlistFindingKey(finding, facts.period)] === undefined,
+      ),
+      WATCHLIST_FINDINGS_PER_KIND,
     );
     const body: AssessmentFactsResponse = { facts, findingStates };
     return NextResponse.json(body);

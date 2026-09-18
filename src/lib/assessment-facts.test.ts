@@ -1119,20 +1119,24 @@ describe("recurring-charge findings", () => {
     expect(ended).toHaveLength(6);
   });
 
-  /** ...but a month with nothing logged turns every charge into "stopped" at once, so a bound stays. */
-  it("stops at fifteen stopped charges", () => {
+  /**
+   * ...but a month with nothing logged turns every charge into "stopped" at once, so a bound stays.
+   * It is a payload guard rather than a display cap: what the Watchlist shows is capped by the
+   * route, after suppression, so that resolving the visible ones reveals the rest.
+   */
+  it("bounds the payload without capping it to what is displayed", () => {
     const rows: FactTransaction[] = [];
-    for (let i = 0; i < 20; i += 1) {
+    for (let i = 0; i < 30; i += 1) {
       for (const day of ["2026-02-05", "2026-03-05", "2026-04-05", "2026-05-05"]) {
         rows.push(tx({ localDate: day, amount: 500 + i, description: `Gone ${i}`, categoryName: "Entertainment" }));
       }
     }
     const ended = factsOn("2026-08-20", rows).anomalies.filter((a) => a.kind === "recurring-ended");
-    expect(ended).toHaveLength(15);
+    expect(ended).toHaveLength(25);
   });
 
-  /** New charges keep the smaller cap: creep is a list to skim, not one to work through. */
-  it("still names at most three new charges", () => {
+  /** And no detector caps to three any more -- six new charges are six findings out of this layer. */
+  it("names every new charge, leaving the display cap to the caller", () => {
     const rows: FactTransaction[] = [];
     for (let i = 0; i < 6; i += 1) {
       for (const day of ["2026-07-05", "2026-08-05"]) {
@@ -1140,7 +1144,7 @@ describe("recurring-charge findings", () => {
       }
     }
     const fresh = factsOn("2026-08-20", rows).anomalies.filter((a) => a.kind === "recurring-new");
-    expect(fresh).toHaveLength(3);
+    expect(fresh).toHaveLength(6);
   });
 
   it("points the follow-up at the charge's own history rather than at the period", () => {

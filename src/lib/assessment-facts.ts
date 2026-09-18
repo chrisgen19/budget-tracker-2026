@@ -215,34 +215,6 @@ const RECURRING_RENEWAL_DAYS = 7;
 const RECURRING_LAPSE_CYCLES = 1;
 /** A recurring charge moving this far from its own average is a price change rather than noise. */
 const RECURRING_AMOUNT_CHANGE_PCT = 20;
-/**
- * How many charges each recurring question may name at once.
- *
- * The cap belongs on the findings, not on the charges they are looked for in. `recurring.items` is
- * cut to 15 for the payload and ordered by total spend, which ranks a daily coffee above a monthly
- * subscription -- detecting against that list dropped exactly the charges this family exists to
- * catch. Detection reads every established charge instead, and caps what it says about them.
- *
- * Fifteen, not three, and the number is not a taste call: it is the bound that already existed.
- * The loop used to run over `recurring.items`, so a kind could already emit one finding per item in
- * that 15-long list, and a tighter cap here would have *reduced* coverage in the name of fixing it.
- *
- * It has to stay well clear of what a person will realistically resolve, because the cap is applied
- * before suppression, not after: `/api/assessment/facts` loads saved state only for the anomalies
- * that were emitted, and the Watchlist filters resolved and snoozed ones out client-side. So a cap
- * of three, with three resolved, shows an empty group and hides the fourth charge for good. Fifteen
- * does not make that impossible, only remote. The real fix is to cap after suppression, which is a
- * change to where the cap lives for *every* kind in this file -- `bill-snoozed`,
- * `bill-under-budgeted` and the category findings all slice three the same way -- and belongs in
- * its own change rather than in the one that introduced the recurring family.
- *
- * A charge that is merely *new* is exempt and keeps its own smaller cap. Creep is a list worth
- * keeping short; a month with no logging turns every recurring charge at once into "seems to have
- * stopped", and that is the flood this bound is here for.
- */
-const RECURRING_FINDINGS_PER_KIND = 15;
-/** New charges are creep to skim, not a list to work through. */
-const RECURRING_NEW_FINDINGS = 3;
 /** Bills falling due inside this many days are a claim on cash worth seeing coming. */
 const DUE_SOON_DAYS = 14;
 /** ...and inside this many, the reminder stops being informational. */
@@ -1763,7 +1735,6 @@ const detectOutlierTransactions = (ctx: AnomalyContext): AssessmentAnomaly[] => 
     })
     .filter((x) => x.ratio >= outlierRatio || (largeAmount !== null && x.t.amount >= largeAmount))
     .sort((a, b) => b.t.amount - a.t.amount)
-    .slice(0, 3)
     .map(({ t, typical, ratio }) => {
       // A row admitted only by the absolute figure has `ratio < outlierRatio` by definition, so the
       // relative wording would undercut the finding it is presenting: "about 1x the typical charge",
@@ -1904,7 +1875,6 @@ const detectMissingExpectedIncome = (ctx: AnomalyContext): AssessmentAnomaly[] =
       const grace = Math.max(MIN_INCOME_GRACE_DAYS, Math.round(source.intervalDays * INCOME_GRACE_SHARE));
       return source.daysOverdue > grace;
     })
-    .slice(0, 3)
     .map((source) => anomaly("missing-expected-income", "high",
       `${source.description} has not been logged since ${source.lastSeen}`,
       `It has arrived every ${source.intervalDays} days or so across ${source.occurrences} deposits, and the next one was due around ${source.expectedNextDate} — ${source.daysOverdue} days ago. Until it is recorded, the balance, runway and every forecast on this page are short by it.`,
@@ -1962,7 +1932,7 @@ const detectBillAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
       }));
   }
 
-  for (const snoozed of ctx.bills.repeatedlySnoozed.slice(0, 3)) {
+  for (const snoozed of ctx.bills.repeatedlySnoozed) {
     out.push(anomaly("bill-snoozed", "medium",
       `${snoozed.description} has been put off ${snoozed.snoozes} times`,
       `The occurrence due ${snoozed.dueDate} has been snoozed ${snoozed.snoozes} times and is still neither paid nor skipped${snoozed.snoozedUntil ? `, deferred again until ${snoozed.snoozedUntil}` : ""}. If it is not going to be paid, skipping it keeps the schedule honest.`,
@@ -1978,7 +1948,7 @@ const detectBillAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
   const underBudgeted = ctx.bills.accuracy.filter(
     (a) => a.verdict === "under-budgeted" && a.avgPaid !== null && (a.variancePct ?? 0) > 0,
   );
-  for (const bill of underBudgeted.slice(0, 3)) {
+  for (const bill of underBudgeted) {
     out.push(anomaly("bill-under-budgeted", "medium",
       `${bill.description} costs ${bill.variancePct}% more than it is budgeted for`,
       `Across ${bill.payments} payments it has averaged ${bill.variancePct}% above the figure on the bill. Every forecast and every budget that reads this bill is short by that much, every month.`,
@@ -2040,7 +2010,7 @@ const detectRecurringAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
   const stateKey = (item: AssessmentRecurringItem, question: string, occurrence: string | number) =>
     `recurring:${foldDescription(item.description)}:${question}:${occurrence}`;
 
-  for (const item of ctx.recurring.newItems.slice(0, RECURRING_NEW_FINDINGS)) {
+  for (const item of ctx.recurring.newItems) {
     out.push(anomaly("recurring-new", "low",
       `${item.description} is a new recurring charge`,
       `First seen on ${item.firstSeen} and charged in ${item.months} months since. It bills about ${item.intervalDays ? `every ${item.intervalDays} days` : "once a month"} and did not exist in the earlier months of the window.`,
@@ -2106,11 +2076,7 @@ const detectRecurringAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
         stateKey: stateKey(item, "amount-change", `${item.latestAmount}@${item.latestAmountSince}`),
       }));
   }
-  out.push(
-    ...ended.slice(0, RECURRING_FINDINGS_PER_KIND),
-    ...renewing.slice(0, RECURRING_FINDINGS_PER_KIND),
-    ...repriced.slice(0, RECURRING_FINDINGS_PER_KIND),
-  );
+  out.push(...ended, ...renewing, ...repriced);
   return out;
 };
 
@@ -2172,18 +2138,65 @@ const SEVERITY_RANK: Record<AiWatchSeverity, number> = { high: 0, medium: 1, low
 export const sortAssessmentAnomalies = (findings: AssessmentAnomaly[]): AssessmentAnomaly[] =>
   [...findings].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
 
+/**
+ * Keep at most `perKind` findings of each kind, in the order they arrived.
+ *
+ * Every detector used to do this for itself, with a `slice(0, 3)` on the way out. That put the cap
+ * *before* saved Watchlist state was consulted -- `/api/assessment/facts` computes keys only for
+ * the findings that were emitted, and a resolved one still occupies a slot -- so resolving the
+ * three that were visible produced an empty group rather than revealing the fourth, and a
+ * `RESOLVED` row never expires. Detection is uncapped now and the caller caps what it shows.
+ */
+export const capFindingsPerKind = (
+  findings: AssessmentAnomaly[],
+  perKind: number,
+): AssessmentAnomaly[] => {
+  const seen = new Map<string, number>();
+  return findings.filter((finding) => {
+    const n = (seen.get(finding.kind) ?? 0) + 1;
+    seen.set(finding.kind, n);
+    return n <= perKind;
+  });
+};
+
+/**
+ * What the Watchlist shows of any one kind, applied after suppression rather than before it.
+ *
+ * Three is a reading limit, not a safety one: past it a group stops being a list of things to do
+ * and becomes a wall to scroll. The point of this constant living in the route rather than in the
+ * detectors is that the fourth finding is still *computed*, so resolving the first three surfaces
+ * it instead of burying it.
+ */
+export const WATCHLIST_FINDINGS_PER_KIND = 3;
+
+/**
+ * The bound that keeps the facts payload finite, and nothing to do with what is displayed.
+ *
+ * Detection is uncapped so suppression has something to reveal, but it cannot be *unbounded*: a
+ * month with nothing logged turns every established recurring charge at once into "seems to have
+ * stopped". Generous enough that no realistic account meets it -- a live account measures twelve
+ * findings in total -- and low enough that the pathological one cannot flood the AI prompt, which
+ * reads this same list.
+ */
+const FINDINGS_PAYLOAD_CEILING = 25;
+
 export const detectAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] =>
-  [
-    ...detectHygieneAnomalies(ctx),
-    ...detectCashFlowAnomalies(ctx),
-    ...detectCategorySpikes(ctx),
-    ...detectOutlierTransactions(ctx),
-    ...detectRecurringAnomalies(ctx),
-    ...detectBillAnomalies(ctx),
-    ...detectMissingExpectedIncome(ctx),
-    ...detectConfidenceAnomalies(ctx),
-    ...detectCashShortfall(ctx),
-  ].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
+  // A payload guard, not a display cap -- see `FINDINGS_PAYLOAD_CEILING`. The display cap is
+  // `WATCHLIST_FINDINGS_PER_KIND`, applied by the route once it knows what has been resolved.
+  capFindingsPerKind(
+    [
+      ...detectHygieneAnomalies(ctx),
+      ...detectCashFlowAnomalies(ctx),
+      ...detectCategorySpikes(ctx),
+      ...detectOutlierTransactions(ctx),
+      ...detectRecurringAnomalies(ctx),
+      ...detectBillAnomalies(ctx),
+      ...detectMissingExpectedIncome(ctx),
+      ...detectConfidenceAnomalies(ctx),
+      ...detectCashShortfall(ctx),
+    ].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]),
+    FINDINGS_PAYLOAD_CEILING,
+  );
 
 /* ------------------------------------------------------------------ */
 /*  7. Assembly                                                        */
