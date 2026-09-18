@@ -994,27 +994,34 @@ const findRepeatedSnoozes = (
   today: Date,
   estimate: { amount: number; isEstimate: boolean },
 ): AssessmentSnoozedBill[] => {
-  const byDueDate = new Map<string, { snoozes: number; snoozedUntil: Date | null; resolved: boolean }>();
+  const byDueDate = new Map<string, { deferrals: Set<string>; snoozedUntil: Date | null; resolved: boolean }>();
   for (const occurrence of bill.occurrences) {
     const day = utcDayKey(occurrence.dueDate);
-    const entry = byDueDate.get(day) ?? { snoozes: 0, snoozedUntil: null, resolved: false };
+    const entry = byDueDate.get(day) ?? { deferrals: new Set<string>(), snoozedUntil: null, resolved: false };
     if (occurrence.status === "PAID" || occurrence.status === "SKIPPED") entry.resolved = true;
     else if (occurrence.status === "SNOOZED") {
-      entry.snoozes += 1;
       const until = occurrence.snoozeUntil ? utcDayStart(occurrence.snoozeUntil) : null;
+      // Distinct deferral days, not rows. The app's snooze button wrote a bare log row with no
+      // replay guard from the first bills release until `settleBill` took over, so a lost-response
+      // retry or a double tap left several SNOOZED rows for one decision, and this finding claims
+      // to count decisions. `snoozeUntil` separates the two exactly: the guard only lets an
+      // occurrence be re-snoozed once the previous deferral has lapsed, so a genuine second
+      // decision always lands on a later day while a replay repeats the same one. Compared as a
+      // UTC day because the old route stored the raw local instant.
+      entry.deferrals.add(until ? utcDayKey(until) : "undated");
       if (until && (!entry.snoozedUntil || until > entry.snoozedUntil)) entry.snoozedUntil = until;
     }
     byDueDate.set(day, entry);
   }
 
   return [...byDueDate.entries()]
-    .filter(([, entry]) => !entry.resolved && entry.snoozes >= REPEATED_SNOOZES)
+    .filter(([, entry]) => !entry.resolved && entry.deferrals.size >= REPEATED_SNOOZES)
     .map(([dueDate, entry]) => ({
       id: bill.id,
       description: bill.description,
       categoryName: bill.categoryName,
       dueDate,
-      snoozes: entry.snoozes,
+      snoozes: entry.deferrals.size,
       // Only a deferral still running is reported as one. A lapsed `snoozeUntil` is a date in the
       // past, and printing it beside "snoozed until" would read as a deferral that is still in force.
       snoozedUntil: entry.snoozedUntil && entry.snoozedUntil > today ? utcDayKey(entry.snoozedUntil) : null,
@@ -1080,7 +1087,13 @@ export const computeBillFacts = (
       .map((bill) => assessBillAccuracy(bill, timezoneOffset))
       .sort((a, b) => Math.abs(b.variancePct ?? 0) - Math.abs(a.variancePct ?? 0)),
     unlinkedPayments: findUnlinkedBillPayments(bills, unlinkedCandidates),
-    dueSoon: dueSoon.sort((a, b) => a.daysUntilDue - b.daysUntilDue),
+    // Tie-broken on id, not left to the sort's stability. `sort` is stable, so bills falling due
+    // on the same day keep the order the loader handed them over in -- and that query has no
+    // `orderBy` (`assessment-facts-query.ts`), so Postgres is free to return them differently on
+    // the next request. Several bills on the 1st or the 15th is ordinary, and `nextDueDate` is
+    // rewritten on every settle, which moves rows. Without this the rendered list reorders itself
+    // between refreshes and the finding's identity moves with it.
+    dueSoon: dueSoon.sort((a, b) => a.daysUntilDue - b.daysUntilDue || a.id.localeCompare(b.id)),
     dueSoonCount: dueSoon.length,
     dueSoonTotal: round(dueSoonTotal),
     dueSoonIsEstimate,
@@ -1479,7 +1492,10 @@ const detectBillAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
         // on every run. Correcting a typo'd payment or logging an out-of-order one would move the
         // total while the set of bills stood still, re-raising a finding already dealt with --
         // the same hazard `bill-under-budgeted` keys around two blocks below.
-        stateKey: `bill:due-soon:${dueSoon.map((b) => `${b.id}@${b.dueDate}`).join(",")}`,
+        // Sorted here as well as in the facts, so the identity is the set itself and not the
+        // order something happens to present it in. Belt and braces on purpose: a future change to
+        // how the list is ordered for display must not silently reissue every stored dismissal.
+        stateKey: `bill:due-soon:${dueSoon.map((b) => `${b.id}@${b.dueDate}`).sort().join(",")}`,
         findingKeyEvidence: JSON.stringify(dueSoon.map((b) => [b.id, b.dueDate])),
       }));
   }

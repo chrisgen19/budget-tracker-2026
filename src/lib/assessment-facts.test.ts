@@ -1228,6 +1228,22 @@ describe("bill-behaviour findings", () => {
   });
 
   /**
+   * `sort` is stable, so bills tied on `daysUntilDue` keep the order the loader handed them over
+   * in -- and that query has no `orderBy`, so Postgres may return them differently next request.
+   * The identity has to be the set, not the order it arrived in.
+   */
+  it("keys two bills due the same day the same way whichever order they arrive in", () => {
+    const due = new Date(Date.UTC(2026, 8, 11));
+    const meralco = bill({ id: "b1", description: "Meralco", nextDueDate: due });
+    const maynilad = bill({ id: "b2", description: "Maynilad", nextDueDate: due });
+    const one = findingOf("bill-due-soon", [meralco, maynilad]);
+    const two = findingOf("bill-due-soon", [maynilad, meralco]);
+    expect(one?.stateKey).toBe("bill:due-soon:b1@2026-09-11,b2@2026-09-11");
+    expect(two?.stateKey).toBe(one?.stateKey);
+    expect(two?.detail).toBe(one?.detail);
+  });
+
+  /**
    * The identity is the set of bills, not a fixed string: a bill falling due next week must not be
    * silently covered by a snooze taken over a different bill last week.
    */
@@ -1276,6 +1292,38 @@ describe("bill-behaviour findings", () => {
     expect(found).toMatchObject({ scope: "outstanding", severity: "medium" });
     expect(found?.title).toContain("3 times");
     expect(found?.detail).toContain("deferred again until 2026-09-20");
+  });
+
+  /**
+   * The app's snooze button wrote a bare log row with no replay guard until `settleBill` took over,
+   * so a lost-response retry or a double tap left several SNOOZED rows for one decision. This
+   * finding counts decisions, and three copies of one deferral is still one.
+   */
+  it("counts one deferral once however many rows it left behind", () => {
+    const due = new Date(Date.UTC(2026, 7, 5));
+    expect(findingOf("bill-snoozed", [bill({
+      nextDueDate: due,
+      occurrences: [
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+      ],
+    })])).toBeUndefined();
+  });
+
+  /** ...and the real deferrals still count, since each lands on a later day than the last. */
+  it("still reports three deferrals that arrived among duplicate rows", () => {
+    const due = new Date(Date.UTC(2026, 7, 5));
+    const found = findingOf("bill-snoozed", [bill({
+      nextDueDate: due,
+      occurrences: [
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 19))),
+        snooze(due, new Date(Date.UTC(2026, 7, 26))),
+      ],
+    })]);
+    expect(found?.title).toContain("3 times");
   });
 
   /** Twice is an ordinary week where the money was not there yet. */
