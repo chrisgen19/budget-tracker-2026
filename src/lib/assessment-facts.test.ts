@@ -1089,4 +1089,30 @@ describe("recurring-charge findings", () => {
       to: "2026-08-30",
     });
   });
+
+  /**
+   * A group is keyed on the fold, so both spellings of an apostrophe are one charge and the label
+   * is whichever arrived first. The ledger's own search is a plain case-insensitive `contains` that
+   * knows nothing about the fold, so linking the label sent a finding counting four payments to a
+   * list showing two.
+   */
+  it("follows a folded charge up on a needle that matches every spelling of it", () => {
+    const rows = ["2026-03-17", "2026-04-17", "2026-05-17", "2026-06-17"].map((localDate, i) =>
+      tx({
+        localDate,
+        amount: 12_000,
+        description: i % 2 === 0 ? "Angel\u2019s Rent" : "Angel's Rent",
+        categoryName: "Entertainment",
+      }));
+    const facts = factsOn("2026-08-30", rows);
+    const item = facts.recurring.items.find((i) => i.description.includes("Rent"));
+    const found = facts.anomalies.find((a) => a.kind === "recurring-ended");
+
+    expect(item?.occurrences).toBe(4);
+    // "Angel" over "Angel\u2019s": the apostrophe splits the token, which is the whole point --
+    // the needle now matches rows written either way. Longest of the three, and the date range
+    // below it is what keeps the resulting list narrow.
+    expect(found?.drillDown?.search).toBe("Angel");
+    expect(rows.every((r) => r.description.includes(found!.drillDown!.search!))).toBe(true);
+  });
 });

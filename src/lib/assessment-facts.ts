@@ -135,7 +135,17 @@ export interface FactsInput {
 export { MIN_COVERAGE_PCT };
 /** A stretch this long with nothing logged is reported as a gap. */
 const MIN_GAP_DAYS = 4;
-/** Charged in at least this many distinct months to count as recurring. */
+/**
+ * Charged in at least this many distinct months to count as recurring.
+ *
+ * Distinct *months*, which is a proxy for "seen often enough to have a cadence" and holds only for
+ * a charge that bills monthly or faster. A quarterly charge reaches four distinct months after a
+ * year, so it never establishes inside the default six-month window, and an annual one never
+ * establishes at all: four of them need four years, and `MAX_WINDOW_MONTHS` caps any scan at two.
+ * So lapse, renewal and price findings do not reach slower subscriptions, which is a real gap and
+ * not a deliberate exclusion -- closing it means giving the recurring pass a wider window than the
+ * facts window, the way `historyFirstSeen` already does for first sightings.
+ */
 const RECURRING_MIN_MONTHS = 4;
 /** First seen inside this many days makes a recurring charge a *new* habit. */
 const NEW_RECURRING_DAYS = 120;
@@ -158,8 +168,10 @@ const RECURRING_RENEWAL_DAYS = 7;
 /**
  * Overdue by this many of its own cycles before a recurring charge is called stopped.
  *
- * One whole extra cycle, not a fixed number of days: a weekly charge four days late is simply
- * late, while a yearly one four days late is not news at all.
+ * One whole extra cycle rather than a fixed number of days, so a fortnightly charge four days late
+ * is simply late while a monthly one four days late is barely worth the word. The arithmetic scales
+ * to any cadence, but `RECURRING_MIN_MONTHS` decides which ones it is ever asked about, and today
+ * that is monthly and faster only -- see the note there.
  */
 const RECURRING_LAPSE_CYCLES = 1;
 /** A recurring charge moving this far from its own average is a price change rather than noise. */
@@ -1346,10 +1358,18 @@ const detectCashFlowAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
  */
 const detectRecurringAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
   const out: AssessmentAnomaly[] = [];
+  // Searched on the fold-safe token, not the display spelling. A group is keyed on
+  // `foldDescription`, so "Angel\u2019s Rent" and "Angel's Rent" are one charge and the label is
+  // whichever of them happened to arrive first -- while the ledger's own search is a plain
+  // case-insensitive `contains` that knows nothing about the fold. Linking the label sent a
+  // finding that counted four payments to a list showing two. `longestToken` is the same needle
+  // `assessment-facts-query` already prefilters bill payments with, and it splits on the
+  // apostrophe for exactly this reason. It costs a little selectivity ("Angel" over
+  // "Angel\u2019s"); the date range below is what keeps the list narrow.
   const chargeDrillDown = (item: AssessmentRecurringItem): AssessmentAnomalyDrillDown => ({
     destination: "transactions",
     type: "EXPENSE",
-    search: item.description || undefined,
+    search: item.description ? longestToken(item.description) : undefined,
     from: item.firstSeen,
     to: ctx.today,
   });
