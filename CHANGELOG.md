@@ -48,6 +48,19 @@ has nothing to write and `cat >` writes; and the package managers, because `pnpm
 `npx vitest` were denied several times in that batch and allowing them would not have helped, as no
 step in this job installs dependencies.
 
+`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is now set, which keeps `CLAUDE_CODE_OAUTH_TOKEN` out of the
+environment Claude's Bash calls inherit. That token is the one secret on the runner Claude is not
+handed on purpose, and the only long-lived one; the app token is short-lived and is what
+`gh pr comment` runs on regardless. It matters because the reviewer reads issues, anyone can open
+an issue on a public repository, and `gh pr comment` publishes, so untrusted text has both a way in
+and a way out, and Actions log masking does not cover a PR comment. The action enables the scrub on
+its own only alongside `allowed_non_write_users`, which this job does not set.
+
+Reading `.git/config` was raised as a separate risk and is not one: the action removes the
+credential `actions/checkout` persisted and installs its own, 46 log lines before the session
+starts. Narrowing `git diff` alone was rejected for the same reason - `Read` reaches any file too,
+and it was allowed long before any of this.
+
 ## 2026-09-17 - Watchlist findings can be resolved or snoozed
 
 Each live Watchlist finding now has **View transactions** (or **Go to Bills**), **Resolve**, and

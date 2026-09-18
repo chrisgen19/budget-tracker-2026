@@ -67,6 +67,25 @@ jobs:
           # are running in the background, will update shortly" and no findings.
           # Documented at https://code.claude.com/docs/en/code-review#run-in-the-foreground
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
+
+          # Best-effort scrub of Anthropic, cloud and Actions secrets from the
+          # subprocess environment Claude's Bash calls inherit, plus PID-namespace
+          # isolation where bubblewrap is available (anthropics/claude-code-action,
+          # docs/security.md). It auto-enables only alongside `allowed_non_write_users`,
+          # which this job does not set - run 35194924893 logged the variable empty -
+          # so it is asked for by name.
+          #
+          # What it protects is `CLAUDE_CODE_OAUTH_TOKEN`, which is the one secret on
+          # the runner that Claude is not already handed on purpose, and the only
+          # long-lived one: the app token in `GH_TOKEN` and in `.git/config` is
+          # short-lived and is what `gh pr comment` below runs on anyway. The reviewer
+          # reads issues (`gh issue view`, `gh search`), anyone can open an issue on a
+          # public repository, and `gh pr comment` publishes - so untrusted text has a
+          # way in and a way out, and Actions log masking does not cover a PR comment.
+          #
+          # The docs only document `0` to opt out, so `1` opting in where
+          # `allowed_non_write_users` is unset is unconfirmed. It is inert if ignored.
+          CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
