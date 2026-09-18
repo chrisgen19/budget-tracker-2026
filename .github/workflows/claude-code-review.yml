@@ -40,12 +40,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # `0`, not `1`. With a single commit the reviewer has no base to diff
-          # against, so it cannot answer "what did this PR change?" from the
-          # checkout and goes looking for the diff over the network instead. Run
-          # 35194924893 spent denied calls on `git fetch origin`,
-          # `gh api .../contents/...`, `curl raw.githubusercontent.com` and
-          # `gh pr diff | head`, none of which it needs once the base is on disk.
+          # `0`, not `1`. With a single commit the reviewer has only the PR head, so
+          # every file it wants to read for context has to come over the network:
+          # run 35194924893 spent denied calls on `git fetch origin`,
+          # `gh api .../contents/...` and `curl raw.githubusercontent.com`. With the
+          # whole tree and history on disk, Read/Grep/Glob answer all of it locally.
+          # The diff itself still comes from `gh pr diff` (see the allowlist note),
+          # not from a local `git diff`.
           fetch-depth: 0
 
       - name: Run Claude Code Review
@@ -128,19 +129,34 @@ jobs:
           #     `gh pr diff ... | head` was still denied 7 times, because `head` was
           #     not. The pager and filter entries below are for the right-hand side of
           #     those pipes, not for their own sake.
-          #   * Read-only `git` is not free after all - `git ls-tree -r` and
-          #     `git fetch origin` were both denied - so the read-only verbs are listed
-          #     explicitly. With `fetch-depth: 0` above, `git diff` and `git log`
-          #     answer what `gh api .../contents/...` was being asked for.
+          #   * Read-only `git` is not free after all - `git ls-tree -r` was denied -
+          #     so the read-only *plumbing* verbs are listed. The diff itself comes from
+          #     `gh pr diff`, not `git diff`; see the security note below for why.
           #
-          # Still deliberately absent, and not an oversight: `Bash(gh api:*)` and
-          # `Bash(gh:*)`, since `gh` runs with the Claude app's token, which can write
-          # to the repository; `Write` and `Bash(cat:*)`, since a reviewer has nothing
-          # to write and `cat >` writes; and the package managers - `pnpm type-check`
-          # and `npx vitest` were denied several times in that batch, and allowing them
-          # would not have helped, because no step here installs dependencies.
+          # Two verbs and two filters are deliberately kept out, because a `:*` rule is a
+          # prefix glob and cannot forbid a dangerous flag once the verb is allowed:
+          #
+          #   * `git diff`, `git log` and `git show` all accept `--output=<path>`, which
+          #     writes any file the runner can write, and `--ext-diff`, which runs the
+          #     `[diff "x"] command = ...` from `.git/config`. Chained, and using only
+          #     those two verbs, that is arbitrary command execution: `git log
+          #     --output=.git/config --format=...` plants the driver, `git diff
+          #     --ext-diff` fires it, both under the action's write-capable `GH_TOKEN`.
+          #     This was reproduced end to end (PR #361 review). The reviewer does not
+          #     need them: `gh pr diff` is the diff, and Read/Grep/Glob over the
+          #     `fetch-depth: 0` checkout are the file contents.
+          #   * `sort --output=FILE` and `uniq <in> <out>` also write arbitrary files
+          #     (verified), which is the write primitive the exec chain needs. Dropped
+          #     for the same reason `Write` and `cat >` never were allowed. The kept
+          #     filters - head, tail, wc, cut, nl, ls - have no write-to-file flag.
+          #
+          # Also absent, and not an oversight: `Bash(gh api:*)` and `Bash(gh:*)`, since
+          # `gh` runs with the Claude app's token, which can write to the repository; and
+          # the package managers - `pnpm type-check` and `npx vitest` were denied several
+          # times in that batch, and allowing them would not have helped, because no step
+          # here installs dependencies.
           claude_args: >-
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Skill(code-review:code-review),Task,Read,Glob,Grep,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git ls-tree:*),Bash(git ls-files:*),Bash(git merge-base:*),Bash(git rev-parse:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(cut:*),Bash(nl:*),Bash(ls:*),Bash(sort:*),Bash(uniq:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Skill(code-review:code-review),Task,Read,Glob,Grep,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*),Bash(git ls-tree:*),Bash(git ls-files:*),Bash(git merge-base:*),Bash(git rev-parse:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(cut:*),Bash(nl:*),Bash(ls:*)"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
 

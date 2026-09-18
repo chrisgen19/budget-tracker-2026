@@ -58,8 +58,25 @@ its own only alongside `allowed_non_write_users`, which this job does not set.
 
 Reading `.git/config` was raised as a separate risk and is not one: the action removes the
 credential `actions/checkout` persisted and installs its own, 46 log lines before the session
-starts. Narrowing `git diff` alone was rejected for the same reason - `Read` reaches any file too,
-and it was allowed long before any of this.
+starts.
+
+A second review then found the real problem, and it was one this PR's own earlier commit had
+introduced. `Bash(git diff:*)`, `Bash(git log:*)` and `Bash(git show:*)` each accept
+`--output=<path>`, which writes any file the runner can write, and `--ext-diff`, which runs the
+`command` from a `[diff "name"]` section of `.git/config`. Using only the first two - both of which
+those commits had added - a prompt-injected reviewer can run `git log --output=.git/config
+--format=...` to plant a diff driver and then `git diff --ext-diff` to execute it, as arbitrary
+shell under the action's write-capable `GH_TOKEN`. This was reproduced end to end. `sort --output`
+and `uniq <in> <out>` are the same kind of write primitive and were added in the same commit. All
+five are removed. The exec chain needs a write primitive to seed the config, so removing the file
+writers closes it at the first step, not only at the last.
+
+The reviewer loses nothing it needs: the diff comes from `gh pr diff`, and file contents from
+Read/Grep/Glob over the `fetch-depth: 0` checkout. The read-only git plumbing that was genuinely
+denied in the batch - `ls-tree`, `ls-files`, `merge-base`, `rev-parse` - stays, since none of it
+writes a file or runs a config command, and the kept text filters (head, tail, wc, cut, nl, ls)
+have no write-to-file flag. A `:*` allowlist rule is a prefix glob and cannot forbid a flag once its
+verb is allowed, so the only way to bar `--output` and `--ext-diff` is to not allow the verb.
 
 ## 2026-09-17 - Watchlist findings can be resolved or snoozed
 
