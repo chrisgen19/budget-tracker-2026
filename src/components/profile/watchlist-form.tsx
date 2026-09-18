@@ -16,7 +16,9 @@ const SWITCH_CLASS =
   "before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']";
 
 const INPUT_CLASS =
-  "w-28 rounded-xl border border-cream-300 bg-cream-50/50 px-3 py-2.5 text-right text-sm text-warm-700 focus:border-amber focus:outline-none focus:ring-2 focus:ring-amber/30";
+  // `text-sm` (20px) + `py-2.5` (20px) + the border (2px) lands at 42px, two short of the 44px
+  // touch target. `min-h` rather than more padding: the row is `items-center`, so nothing moves.
+  "min-h-[44px] w-28 rounded-xl border border-cream-300 bg-cream-50/50 px-3 py-2.5 text-right text-sm text-warm-700 focus:border-amber focus:outline-none focus:ring-2 focus:ring-amber/30";
 
 /**
  * What counts as an unusual charge, and whether duplicates are worth being told about.
