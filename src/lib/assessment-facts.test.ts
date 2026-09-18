@@ -1066,8 +1066,12 @@ describe("recurring-charge findings", () => {
     expect(facts.anomalies.find((a) => a.kind === "recurring-ended")?.title).toContain("Tiny Sub");
   });
 
-  /** The cap belongs on what gets said, not on which charges are asked. */
-  it("names at most three charges per recurring question", () => {
+  /**
+   * The cap belongs on what gets said, not on which charges are asked -- and it sits above what a
+   * person will realistically resolve, because it is applied *before* suppression. A cap of three
+   * with three resolved shows an empty group and hides the fourth charge for good.
+   */
+  it("names every stopped charge up to the cap, not merely three", () => {
     const rows: FactTransaction[] = [];
     for (let i = 0; i < 6; i += 1) {
       for (const day of ["2026-02-05", "2026-03-05", "2026-04-05", "2026-05-05"]) {
@@ -1075,7 +1079,31 @@ describe("recurring-charge findings", () => {
       }
     }
     const ended = factsOn("2026-08-20", rows).anomalies.filter((a) => a.kind === "recurring-ended");
-    expect(ended).toHaveLength(3);
+    expect(ended).toHaveLength(6);
+  });
+
+  /** ...but a month with nothing logged turns every charge into "stopped" at once, so a bound stays. */
+  it("stops at fifteen stopped charges", () => {
+    const rows: FactTransaction[] = [];
+    for (let i = 0; i < 20; i += 1) {
+      for (const day of ["2026-02-05", "2026-03-05", "2026-04-05", "2026-05-05"]) {
+        rows.push(tx({ localDate: day, amount: 500 + i, description: `Gone ${i}`, categoryName: "Entertainment" }));
+      }
+    }
+    const ended = factsOn("2026-08-20", rows).anomalies.filter((a) => a.kind === "recurring-ended");
+    expect(ended).toHaveLength(15);
+  });
+
+  /** New charges keep the smaller cap: creep is a list to skim, not one to work through. */
+  it("still names at most three new charges", () => {
+    const rows: FactTransaction[] = [];
+    for (let i = 0; i < 6; i += 1) {
+      for (const day of ["2026-07-05", "2026-08-05"]) {
+        rows.push(tx({ localDate: day, amount: 5000 + i, description: `Fresh ${i}`, categoryName: "Entertainment" }));
+      }
+    }
+    const fresh = factsOn("2026-08-20", rows).anomalies.filter((a) => a.kind === "recurring-new");
+    expect(fresh).toHaveLength(3);
   });
 
   it("points the follow-up at the charge's own history rather than at the period", () => {

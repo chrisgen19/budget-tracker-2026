@@ -182,9 +182,28 @@ const RECURRING_AMOUNT_CHANGE_PCT = 20;
  * The cap belongs on the findings, not on the charges they are looked for in. `recurring.items` is
  * cut to 15 for the payload and ordered by total spend, which ranks a daily coffee above a monthly
  * subscription -- detecting against that list dropped exactly the charges this family exists to
- * catch. Detection now reads every established charge and caps what it says about them.
+ * catch. Detection reads every established charge instead, and caps what it says about them.
+ *
+ * Fifteen, not three, and the number is not a taste call: it is the bound that already existed.
+ * The loop used to run over `recurring.items`, so a kind could already emit one finding per item in
+ * that 15-long list, and a tighter cap here would have *reduced* coverage in the name of fixing it.
+ *
+ * It has to stay well clear of what a person will realistically resolve, because the cap is applied
+ * before suppression, not after: `/api/assessment/facts` loads saved state only for the anomalies
+ * that were emitted, and the Watchlist filters resolved and snoozed ones out client-side. So a cap
+ * of three, with three resolved, shows an empty group and hides the fourth charge for good. Fifteen
+ * does not make that impossible, only remote. The real fix is to cap after suppression, which is a
+ * change to where the cap lives for *every* kind in this file -- `bill-snoozed`,
+ * `bill-under-budgeted` and the category findings all slice three the same way -- and belongs in
+ * its own change rather than in the one that introduced the recurring family.
+ *
+ * A charge that is merely *new* is exempt and keeps its own smaller cap. Creep is a list worth
+ * keeping short; a month with no logging turns every recurring charge at once into "seems to have
+ * stopped", and that is the flood this bound is here for.
  */
-const RECURRING_FINDINGS_PER_KIND = 3;
+const RECURRING_FINDINGS_PER_KIND = 15;
+/** New charges are creep to skim, not a list to work through. */
+const RECURRING_NEW_FINDINGS = 3;
 
 /* ------------------------------------------------------------------ */
 /*  Calendar-day helpers                                               */
@@ -1388,7 +1407,7 @@ const detectRecurringAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
   const stateKey = (item: AssessmentRecurringItem, question: string, occurrence: string | number) =>
     `recurring:${foldDescription(item.description)}:${question}:${occurrence}`;
 
-  for (const item of ctx.recurring.newItems.slice(0, RECURRING_FINDINGS_PER_KIND)) {
+  for (const item of ctx.recurring.newItems.slice(0, RECURRING_NEW_FINDINGS)) {
     out.push(anomaly("recurring-new", "low",
       `${item.description} is a new recurring charge`,
       `First seen on ${item.firstSeen} and charged in ${item.months} months since. It bills about ${item.intervalDays ? `every ${item.intervalDays} days` : "once a month"} and did not exist in the earlier months of the window.`,
