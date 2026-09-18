@@ -7,16 +7,25 @@ import { motion } from "framer-motion";
 import { ProfileMenu } from "@/components/profile-menu";
 import { cn } from "@/lib/utils";
 
-const MOBILE_TABS = [
+export const MOBILE_TABS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
 ];
 
-const MORE_DESTINATIONS = [
+/**
+ * Everything the "More" menu can reach, so the tab lights up on those pages.
+ *
+ * Kept in step with `ProfileMenu`'s own items by `mobile-tab-bar.test.ts`, which also
+ * checks both against the sidebar's `NAV_ITEMS`. The three lists were maintained by hand and drifted
+ * the first time it mattered: `/goals` shipped in the sidebar alone, so on a phone the page was not
+ * merely buried but unreachable, and reaching it by URL left no tab looking active.
+ */
+export const MORE_DESTINATIONS = [
   "/profile",
   "/quick-log",
   "/bills",
+  "/goals",
   "/cards",
   "/categories",
   "/labels",

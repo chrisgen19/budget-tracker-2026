@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildMenuItems } from "./profile-menu";
-import { getNextCompactScrollState, isMobileTabActive } from "./mobile-tab-bar";
+import {
+  MOBILE_TABS,
+  MORE_DESTINATIONS,
+  getNextCompactScrollState,
+  isMobileTabActive,
+} from "./mobile-tab-bar";
+import { NAV_ITEMS } from "./app-shell";
 
 describe("isMobileTabActive", () => {
   it("matches a destination and its nested routes", () => {
@@ -92,5 +98,57 @@ describe("mobile More destinations", () => {
     });
 
     expect(items.some((item) => item.key === "cards")).toBe(false);
+  });
+});
+
+/**
+ * Below `lg` the sidebar does not exist -- it is `hidden lg:flex` -- so everything reachable on a
+ * phone comes from `MOBILE_TABS` or the "More" menu. Those are three hand-kept lists of the same
+ * destinations, and they drifted the first time it mattered: `/goals` shipped in the sidebar alone,
+ * which left the page not merely buried but unreachable on mobile, and reaching it by URL lit no tab
+ * because `MORE_DESTINATIONS` drives the "More" tab's own active state.
+ *
+ * Asserted against the real exported lists rather than a copy, so a page added to the sidebar and
+ * nowhere else fails here instead of shipping.
+ */
+describe("mobile navigation reachability", () => {
+  const destinations = () => {
+    const push = vi.fn();
+    return buildMenuItems({
+      isAdmin: true,
+      hideAmounts: false,
+      router: { push } as unknown as Parameters<typeof buildMenuItems>[0]["router"],
+      toggleHideAmounts: vi.fn(),
+      cardsEnabled: true,
+    })
+      // The two items that act rather than navigate. Invoking them here is not merely pointless:
+      // `logout` calls `signOut()`, which fires a real fetch at a relative URL and throws under
+      // jsdom, and `privacy` writes a preference. Excluded by key so a new *navigating* item is
+      // still picked up automatically.
+      .filter((item) => item.key !== "privacy" && item.key !== "logout")
+      .map((item) => {
+        push.mockClear();
+        item.onSelect?.();
+        return push.mock.calls[0]?.[0] as string | undefined;
+      })
+      .filter((href): href is string => typeof href === "string");
+  };
+
+  it("reaches every sidebar destination from a phone", () => {
+    const reachable = new Set([...MOBILE_TABS.map((t) => t.href), ...destinations()]);
+    const unreachable = NAV_ITEMS.map((item) => item.href).filter((href) => !reachable.has(href));
+    expect(unreachable, "in the sidebar but reachable from no mobile control").toEqual([]);
+  });
+
+  it("lights the More tab on every page that menu can open", () => {
+    const missing = destinations().filter((href) => !MORE_DESTINATIONS.includes(href));
+    expect(missing, "openable from the More menu but leaves no tab active").toEqual([]);
+  });
+
+  it("claims no destination the More menu cannot actually open", () => {
+    const opens = new Set(destinations());
+    // `/admin` is in the menu only for an admin, and `destinations()` asks as one.
+    const stale = MORE_DESTINATIONS.filter((href) => !opens.has(href));
+    expect(stale, "listed as a More destination but nothing there navigates to it").toEqual([]);
   });
 });
