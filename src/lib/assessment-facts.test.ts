@@ -1120,11 +1120,12 @@ describe("recurring-charge findings", () => {
   });
 
   /**
-   * ...but a month with nothing logged turns every charge into "stopped" at once, so a bound stays.
-   * It is a payload guard rather than a display cap: what the Watchlist shows is capped by the
-   * route, after suppression, so that resolving the visible ones reveals the rest.
+   * This layer caps nothing per kind. The payload bound lives at the assembly point in
+   * `collectAssessmentFacts`, where the goal and budget findings have joined, and the display cap
+   * lives in the route, after suppression -- see `watchlist-cap.test.ts`. Thirty stopped charges
+   * are thirty findings out of here, which is what gives suppression something to reveal.
    */
-  it("bounds the payload without capping it to what is displayed", () => {
+  it("emits every stopped charge, capping none of them", () => {
     const rows: FactTransaction[] = [];
     for (let i = 0; i < 30; i += 1) {
       for (const day of ["2026-02-05", "2026-03-05", "2026-04-05", "2026-05-05"]) {
@@ -1132,7 +1133,7 @@ describe("recurring-charge findings", () => {
       }
     }
     const ended = factsOn("2026-08-20", rows).anomalies.filter((a) => a.kind === "recurring-ended");
-    expect(ended).toHaveLength(25);
+    expect(ended).toHaveLength(30);
   });
 
   /** And no detector caps to three any more -- six new charges are six findings out of this layer. */

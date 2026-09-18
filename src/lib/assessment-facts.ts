@@ -1595,7 +1595,10 @@ const detectCashShortfall = (ctx: AnomalyContext): AssessmentAnomaly[] => {
 export const detectGoalAnomalies = (goals: SavingsGoalSummary[]): AssessmentAnomaly[] =>
   goals
     .filter((goal) => goal.status === "ACTIVE" && (goal.pace.state === "behind" || goal.pace.state === "stalled"))
-    .slice(0, 4)
+    // Not capped here either, and this one mattered more: goal findings are merged into
+    // `facts.anomalies` by `collectAssessmentFacts`, *after* `detectAnomalies` has run, so they
+    // reached neither the display cap nor the payload bound. Four, shared across both goal kinds,
+    // spent before suppression, was the original bug intact.
     .map((goal) => {
       const required = goal.pace.requiredMonthly ?? 0;
       if (goal.pace.state === "stalled") {
@@ -1686,8 +1689,11 @@ const detectCategorySpikes = (ctx: AnomalyContext): AssessmentAnomaly[] => {
   }
   // Ranked by money moved, so a small category that doubled cannot outrank a
   // large one that rose by a third.
+  // Not capped here. The four it used to keep were shared across *two* kinds, so four spikes
+  // crowded out every `new-category` finding -- and, being spent before suppression, resolving the
+  // visible ones revealed nothing. `collectAssessmentFacts` bounds the assembled list instead.
   const moved = (x: AssessmentAnomaly) => (x.current ?? 0) - (x.baseline ?? 0);
-  return out.sort((a, b) => moved(b) - moved(a)).slice(0, 4);
+  return out.sort((a, b) => moved(b) - moved(a));
 };
 
 /**
@@ -2145,7 +2151,13 @@ export const sortAssessmentAnomalies = (findings: AssessmentAnomaly[]): Assessme
  * *before* saved Watchlist state was consulted -- `/api/assessment/facts` computes keys only for
  * the findings that were emitted, and a resolved one still occupies a slot -- so resolving the
  * three that were visible produced an empty group rather than revealing the fourth, and a
- * `RESOLVED` row never expires. Detection is uncapped now and the caller caps what it shows.
+ * `RESOLVED` row never expires. Detection no longer caps itself; the caller caps what it shows.
+ *
+ * One upstream limit survives and is deliberate: `computeRecurring` keeps only the eight largest
+ * `newItems`, which bounds `recurring-new` candidates before detection ever sees them. That list
+ * is also a *payload* field, so raising it changes the response shape and every consumer's idea of
+ * what "new charges" means -- its own decision, not this one's. Eight is well above the three the
+ * Watchlist shows, so it is headroom rather than the bug being fixed here.
  */
 export const capFindingsPerKind = (
   findings: AssessmentAnomaly[],
@@ -2177,26 +2189,29 @@ export const WATCHLIST_FINDINGS_PER_KIND = 3;
  * stopped". Generous enough that no realistic account meets it -- a live account measures twelve
  * findings in total -- and low enough that the pathological one cannot flood the AI prompt, which
  * reads this same list.
+ *
+ * Applied by `collectAssessmentFacts` once the list is **assembled**, not by `detectAnomalies`.
+ * Goal and budget findings are merged in afterwards, so a bound inside `detectAnomalies` silently
+ * did not cover them -- which is how `detectGoalAnomalies` kept its own cap of four, spent before
+ * suppression, while this file claimed detection was uncapped.
  */
-const FINDINGS_PAYLOAD_CEILING = 25;
+export const FINDINGS_PAYLOAD_CEILING = 25;
 
 export const detectAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] =>
-  // A payload guard, not a display cap -- see `FINDINGS_PAYLOAD_CEILING`. The display cap is
-  // `WATCHLIST_FINDINGS_PER_KIND`, applied by the route once it knows what has been resolved.
-  capFindingsPerKind(
-    [
-      ...detectHygieneAnomalies(ctx),
-      ...detectCashFlowAnomalies(ctx),
-      ...detectCategorySpikes(ctx),
-      ...detectOutlierTransactions(ctx),
-      ...detectRecurringAnomalies(ctx),
-      ...detectBillAnomalies(ctx),
-      ...detectMissingExpectedIncome(ctx),
-      ...detectConfidenceAnomalies(ctx),
-      ...detectCashShortfall(ctx),
-    ].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]),
-    FINDINGS_PAYLOAD_CEILING,
-  );
+  // Neither bound is applied here. `FINDINGS_PAYLOAD_CEILING` belongs at the assembly point, where
+  // the goal and budget findings have joined; `WATCHLIST_FINDINGS_PER_KIND` belongs in the route,
+  // which is the only place that knows what the user has already resolved.
+  [
+    ...detectHygieneAnomalies(ctx),
+    ...detectCashFlowAnomalies(ctx),
+    ...detectCategorySpikes(ctx),
+    ...detectOutlierTransactions(ctx),
+    ...detectRecurringAnomalies(ctx),
+    ...detectBillAnomalies(ctx),
+    ...detectMissingExpectedIncome(ctx),
+    ...detectConfidenceAnomalies(ctx),
+    ...detectCashShortfall(ctx),
+  ].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
 
 /* ------------------------------------------------------------------ */
 /*  7. Assembly                                                        */

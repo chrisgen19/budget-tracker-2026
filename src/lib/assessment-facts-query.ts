@@ -23,6 +23,8 @@ import {
   type FactBill,
   type FactTransaction,
   sortAssessmentAnomalies,
+  capFindingsPerKind,
+  FINDINGS_PAYLOAD_CEILING,
 } from "@/lib/assessment-facts";
 import { getBudgetPerformance } from "@/lib/budget-plans";
 import { getSavingsGoals } from "@/lib/savings-goals";
@@ -257,5 +259,12 @@ export const collectAssessmentFacts = async (
   if (goalFindings.length > 0 || budgetFindings.length > 0) {
     facts.anomalies = sortAssessmentAnomalies([...facts.anomalies, ...goalFindings, ...budgetFindings]);
   }
+  // The payload bound goes here rather than in `detectAnomalies`, because *here* is where the list
+  // is finally whole: goal and budget findings are merged above, so a bound applied earlier covers
+  // neither. No detector caps its own kind any more, so this is the only thing standing between a
+  // pathological account -- a month with nothing logged makes every recurring charge "stopped" at
+  // once -- and an unbounded payload that the AI prompt also reads. It is not a display cap: the
+  // route caps what the Watchlist shows, after subtracting what the user has resolved.
+  facts.anomalies = capFindingsPerKind(facts.anomalies, FINDINGS_PAYLOAD_CEILING);
   return facts;
 };

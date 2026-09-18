@@ -2,6 +2,21 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-18 - Resolving a Watchlist finding no longer hides the ones behind it
+
+Each kind of finding shows at most three rows, and that limit used to be applied before the app
+checked what you had already resolved or snoozed. So resolving the three on screen left an empty
+group rather than revealing the fourth - and since a resolved finding never comes back, the fourth
+was hidden for good. Four consistently under-budgeted bills with three resolved meant never being
+told about the fourth.
+
+The limit now applies to what is left *after* your resolved and snoozed findings are taken out, so
+dealing with the ones on screen brings the next ones up. Findings about savings goals and budgets
+were outside the limit altogether and are now covered by the same rule.
+
+One visible consequence beyond the Watchlist: the AI Assessment tab reads the same findings, so a
+finding you have resolved no longer appears there either.
+
 ## 2026-09-17 - Unusual-charge rules can be set per account
 
 Three settings under **Profile > Preferences**: how many times a category's typical charge counts
