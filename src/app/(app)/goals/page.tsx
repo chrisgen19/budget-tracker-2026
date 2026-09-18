@@ -7,6 +7,7 @@ import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { ActionFab } from "@/components/ui/action-fab";
+import { useToast } from "@/components/ui/toast";
 import { GoalForm } from "@/components/goals/goal-form";
 import { ContributionForm } from "@/components/goals/contribution-form";
 import { GoalCard, GoalsSummaryBar } from "@/components/goals/goal-card";
@@ -39,6 +40,7 @@ export default function GoalsPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [saveError, setSaveError] = useState("");
 
+  const { showToast } = useToast();
   const { data: goals = [], isLoading, isError, refetch } = useSavingsGoals(showArchived);
   const createGoal = useCreateSavingsGoal();
   const updateGoal = useUpdateSavingsGoal();
@@ -74,14 +76,27 @@ export default function GoalsPage() {
       ? run(() => addContribution.mutateAsync({ id: contributing.id, input }), "Failed to save contribution")
       : Promise.resolve();
 
-  const toggleArchive = (goal: SavingsGoalSummary) => {
-    void run(
-      () => updateGoal.mutateAsync({
+  /**
+   * Archive is the one action fired with no modal open, so it cannot use `saveError` - that is
+   * only rendered inside the three dialogs, and routing this through `run()` sent the failure
+   * somewhere nothing displays it. A failed archive left the button reading "Archive" and the goal
+   * where it was, which is the silent rollback `AGENTS.md` has a rule against.
+   */
+  const toggleArchive = async (goal: SavingsGoalSummary) => {
+    const archiving = goal.status !== "ARCHIVED";
+    try {
+      await updateGoal.mutateAsync({
         id: goal.id,
-        patch: { status: goal.status === "ARCHIVED" ? "ACTIVE" : "ARCHIVED" },
-      }),
-      "Failed to update goal",
-    );
+        patch: { status: archiving ? "ARCHIVED" : "ACTIVE" },
+      });
+    } catch (error) {
+      showToast(
+        error instanceof Error
+          ? error.message
+          : `Could not ${archiving ? "archive" : "restore"} "${goal.name}". Please try again.`,
+        "error",
+      );
+    }
   };
 
   const openCreate = () => {
@@ -198,7 +213,16 @@ export default function GoalsPage() {
         onClose={() => setDeleting(null)}
         onConfirm={() => {
           if (!deleting) return;
-          deleteGoal.mutate(deleting.id, { onSuccess: () => setDeleting(null) });
+          // Without `onError` a failed delete cleared the spinner and left this dialog sitting
+          // there saying nothing, which reads as the Delete button not working.
+          deleteGoal.mutate(deleting.id, {
+            onSuccess: () => setDeleting(null),
+            onError: (error) =>
+              showToast(
+                error instanceof Error ? error.message : `Could not delete "${deleting.name}". Please try again.`,
+                "error",
+              ),
+          });
         }}
         title="Delete goal?"
         message={`"${deleting?.name}" will be removed. It has no contributions, so nothing saved is lost.`}
