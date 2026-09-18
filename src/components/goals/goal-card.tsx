@@ -18,6 +18,7 @@ const PACE_STYLE: Record<SavingsGoalPace["state"], { label: string; className: s
   "on-track": { label: "On track", className: "bg-income-light text-income-dark" },
   behind: { label: "Behind pace", className: "bg-amber-light text-amber-dark" },
   stalled: { label: "Not started", className: "bg-amber-light text-amber-dark" },
+  underway: { label: "Underway", className: "bg-cream-200 text-warm-500" },
   overdue: { label: "Past its date", className: "bg-expense-light text-expense-dark" },
   "no-deadline": { label: "No deadline", className: "bg-cream-200 text-warm-500" },
 };
@@ -33,8 +34,14 @@ const paceLine = (goal: SavingsGoalSummary, money: (amount: number) => string): 
       return `${money(pace.remaining)} short, and the target date has passed.`;
     case "stalled":
       return `${money(pace.remaining)} to go in ${pace.daysRemaining} days. Nothing put aside yet.`;
+    // Money is in, but one deposit is an amount and not a rate. Says what is needed and declines
+    // to report a rate it has not measured, rather than rendering the null as "going in at 0".
+    case "underway":
+      return `${money(pace.remaining)} to go in ${pace.daysRemaining} days. Needs ${money(pace.requiredMonthly ?? 0)} a month; too early to tell what is going in.`;
     default:
-      return `${money(pace.remaining)} to go. Needs ${money(pace.requiredMonthly ?? 0)} a month; going in at ${money(pace.observedMonthly ?? 0)}.`;
+      return pace.observedMonthly === null || pace.observedMonthly <= 0
+        ? `${money(pace.remaining)} to go. Needs ${money(pace.requiredMonthly ?? 0)} a month; nothing has gone in since the first deposit.`
+        : `${money(pace.remaining)} to go. Needs ${money(pace.requiredMonthly ?? 0)} a month; going in at ${money(pace.observedMonthly)}.`;
   }
 };
 

@@ -57,18 +57,27 @@ const fundedFrom = (contributions: SavingsGoalContributionRow[]): number =>
  * up in January and first funded in June has been running for one month, not six, and dividing by
  * six reports a saver who is on track as badly behind.
  *
- * Null until there is a second calendar day to measure against - one contribution is an amount,
- * not a rate, and treating it as a month's worth would either flatter or condemn on one data point.
+ * The opening deposit is **excluded from the numerator**, because it did not accrue over the
+ * window it opens. Counting it divides N deposits by the N-1 intervals between them, overstating
+ * the rate by N/(N-1): 10,000 on day 0 and 10,000 on day 30 is a 10,000 monthly transfer, and the
+ * unadjusted sum called it 20,293 a month. That is not cosmetic - it flows into the on-track test,
+ * so a saver putting away 5,000 against a required 8,227 read as on track and the `goal-off-pace`
+ * finding this feature exists for never fired.
+ *
+ * Null until a **second** contribution exists on a later day. One deposit is an amount and not a
+ * rate - which this always claimed and enforced as `elapsed < 1`, so a lone deposit read a day
+ * later reported 304,400 a month. `paceOf` reads that null as `underway`, never as `stalled`.
  */
 const observedMonthlyRate = (
   contributions: SavingsGoalContributionRow[],
   today: string,
 ): number | null => {
-  if (contributions.length === 0) return null;
-  const days = contributions.map((c) => c.date).sort();
-  const elapsed = daysBetween(days[0], today);
+  if (contributions.length < 2) return null;
+  const sorted = [...contributions].sort((a, b) => a.date.localeCompare(b.date));
+  const elapsed = daysBetween(sorted[0].date, today);
   if (elapsed < 1) return null;
-  return round((fundedFrom(contributions) / elapsed) * DAYS_PER_MONTH);
+  const sinceFirst = fundedFrom(sorted) - sorted[0].amount;
+  return round((sinceFirst / elapsed) * DAYS_PER_MONTH);
 };
 
 /**
@@ -104,10 +113,25 @@ const paceOf = (goal: GoalFacts, funded: number, today: string): SavingsGoalPace
   }
 
   const requiredMonthly = round((remaining / daysRemaining) * DAYS_PER_MONTH);
-  if (observedMonthly === null || observedMonthly <= 0) {
-    // Nothing has gone in, or it has all come back out. There is no rate to run forward, and
-    // guessing one would invent the only number the caller cares about.
+
+  // Nothing has gone in, or it has all come back out. `stalled` is gated on the funded amount and
+  // not on a missing rate: those are different facts, and conflating them put "has nothing put
+  // aside yet" and a "Not started" badge on a goal the user had funded that morning.
+  if (funded <= 0) {
     return { ...base, daysRemaining, requiredMonthly, projectedCompletion: null, state: "stalled" };
+  }
+
+  // Money is going in and there is not yet enough of it, on enough days, to state a rate. Neutral
+  // on purpose, the way `no-deadline` is: inventing a rate here would invent the only figure the
+  // caller reads, and there is nothing for the user to act on either way.
+  if (observedMonthly === null) {
+    return { ...base, daysRemaining, requiredMonthly, projectedCompletion: null, state: "underway" };
+  }
+
+  // A measured rate of zero or less is a real finding, not a missing one: the goal holds money and
+  // has stopped growing, so it arrives on no date at all. `behind` without a projection.
+  if (observedMonthly <= 0) {
+    return { ...base, daysRemaining, requiredMonthly, projectedCompletion: null, state: "behind" };
   }
 
   const daysToFinish = Math.ceil((remaining / observedMonthly) * DAYS_PER_MONTH);

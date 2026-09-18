@@ -900,8 +900,10 @@ export interface SavingsGoalPace {
    * not from the day it was created - a goal set up in January and first funded in June has been
    * running one month, and dividing by six condemns a saver who is on track.
    *
-   * Null until a second calendar day exists to measure against: one contribution is an amount, not
-   * a rate.
+   * The opening deposit is excluded from the numerator, because it did not accrue over the window
+   * it opens: counting it divides N deposits by the N-1 intervals between them and overstates the
+   * rate by N/(N-1). Null until a second contribution exists on a later day - one deposit is an
+   * amount, not a rate.
    */
   observedMonthly: number | null;
   /** Days to the target date; negative once it has passed, null without one. */
@@ -912,10 +914,12 @@ export interface SavingsGoalPace {
    * - `funded` - the target is met.
    * - `on-track` / `behind` - the observed rate against what is required, within a tolerance.
    * - `stalled` - a deadline, but nothing in yet (or it all came back out).
+   * - `underway` - money is going in, but not from enough days to state a rate. Distinct from
+   *   `stalled`, which asserts the opposite and was being reported for it.
    * - `overdue` - the date has passed and it is still short.
    * - `no-deadline` - progress is knowable, pace is not. Not an error and not "fine".
    */
-  state: "funded" | "on-track" | "behind" | "stalled" | "overdue" | "no-deadline";
+  state: "funded" | "on-track" | "behind" | "stalled" | "underway" | "overdue" | "no-deadline";
 }
 
 /** Everything the goals page and the Watchlist read about one goal. */

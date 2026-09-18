@@ -1416,9 +1416,15 @@ export const detectGoalAnomalies = (goals: SavingsGoalSummary[]): AssessmentAnom
             stateKey: `goal:stalled:${goal.id}:${goal.targetDate}`,
           });
       }
+      // A goal holding money that has stopped growing is `behind` with no rate to run forward, so
+      // there is no landing date to name. Saying so beats rendering the null into the sentence.
+      const rate = goal.pace.observedMonthly;
+      const trajectory = goal.pace.projectedCompletion === null || rate === null || rate <= 0
+        ? `Nothing has gone in since the first deposit, so on its own it arrives on no date at all.`
+        : `It has been going in at about ${rate} a month and needs ${required}; at the current rate it lands around ${goal.pace.projectedCompletion} rather than ${goal.targetDate}.`;
       return anomaly("goal-off-pace", "medium",
         `${goal.name} is behind the pace it needs`,
-        `${goal.fundedPct}% funded with ${goal.pace.daysRemaining} days to go. It has been going in at about ${goal.pace.observedMonthly} a month and needs ${required}; at the current rate it lands around ${goal.pace.projectedCompletion} rather than ${goal.targetDate}.`,
+        `${goal.fundedPct}% funded with ${goal.pace.daysRemaining} days to go. ${trajectory}`,
         {
           current: goal.pace.observedMonthly,
           baseline: required,

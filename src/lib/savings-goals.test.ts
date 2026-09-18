@@ -72,13 +72,40 @@ describe("summariseGoal", () => {
       }),
       "2026-07-01",
     );
-    // 20,000 over the 30 days from the first contribution, not over the six months since creation.
-    expect(summary.pace.observedMonthly).toBe(20_293.33);
+    // The 30 days from the first contribution, not the six months since creation - and 10,000 over
+    // them, not 20,000. This is one monthly transfer; the opening deposit did not accrue over the
+    // window it opens, and counting it reported this saver at 20,293.33 a month.
+    expect(summary.pace.observedMonthly).toBe(10_146.67);
   });
 
-  /** One contribution is an amount, not a rate. */
+  /**
+   * Two deposits span one interval, not two. Counting the opening one divides N deposits by the
+   * N-1 gaps between them, and the overstatement is what let a goal that was behind read as on
+   * track - suppressing the `goal-off-pace` finding this whole feature exists to raise.
+   */
+  it("does not call a saver on track who is putting away less than is needed", () => {
+    const summary = summariseGoal(
+      goal({
+        targetAmount: 100_000,
+        targetDate: "2026-12-31",
+        contributions: [put("2026-01-01", 5_000), put("2026-02-01", 5_000)],
+      }),
+      "2026-02-01",
+    );
+    // 5,000 a month going in against 8,227.03 needed.
+    expect(summary.pace).toMatchObject({ observedMonthly: 4_909.68, state: "behind" });
+    expect(detectGoalAnomalies([summary]).map((a) => a.kind)).toContain("goal-off-pace");
+  });
+
+  /** One contribution is an amount, not a rate - however many days ago it landed. */
   it("reports no rate from a single contribution made today", () => {
     const summary = summariseGoal(goal({ contributions: [put("2026-03-01", 10_000)] }), "2026-03-01");
+    expect(summary.pace.observedMonthly).toBeNull();
+  });
+
+  it("reports no rate from a single contribution made a day ago, rather than a month's worth", () => {
+    const summary = summariseGoal(goal({ contributions: [put("2026-02-28", 10_000)] }), "2026-03-01");
+    // Dividing one deposit by the one day since it landed reported 304,400 a month.
     expect(summary.pace.observedMonthly).toBeNull();
   });
 
@@ -122,6 +149,53 @@ describe("summariseGoal", () => {
 
   it("separates a goal with a deadline and nothing in it from one merely behind", () => {
     expect(summariseGoal(goal({ targetDate: "2026-12-31" }), "2026-03-01").pace.state).toBe("stalled");
+  });
+
+  /**
+   * `stalled` asserts nothing has been put aside, so it is gated on the funded amount rather than
+   * on a missing rate. Gating it on the rate put a "Not started" badge, and a Watchlist finding
+   * reading "has nothing put aside yet", on a goal funded that morning - on the one day a saver is
+   * most likely to be looking at it.
+   */
+  it("calls a goal funded today underway, not stalled", () => {
+    const summary = summariseGoal(
+      goal({ targetAmount: 5_000, targetDate: "2026-12-31", contributions: [put("2026-03-01", 1_200)] }),
+      "2026-03-01",
+    );
+    expect(summary).toMatchObject({ funded: 1_200, fundedPct: 24 });
+    expect(summary.pace).toMatchObject({ state: "underway", observedMonthly: null });
+    // Neutral, so it raises nothing: there is no rate to act on and nothing has gone wrong.
+    expect(detectGoalAnomalies([summary])).toEqual([]);
+  });
+
+  /** All of it came back out, so "nothing put aside" is the literal truth and the alert stands. */
+  it("still calls a goal stalled when every contribution has been withdrawn again", () => {
+    const summary = summariseGoal(
+      goal({ targetDate: "2026-12-31", contributions: [put("2026-01-01", 5_000), put("2026-02-01", -5_000)] }),
+      "2026-03-01",
+    );
+    expect(summary.funded).toBe(0);
+    expect(summary.pace.state).toBe("stalled");
+  });
+
+  /**
+   * A measured rate of zero is a finding, not a missing one: the goal holds money and has stopped
+   * growing, so it arrives on no date at all. `behind`, and without a projection to name.
+   */
+  it("calls a goal that has stopped growing behind, with no completion date", () => {
+    const summary = summariseGoal(
+      goal({
+        targetAmount: 100_000,
+        targetDate: "2026-12-31",
+        contributions: [put("2026-01-01", 10_000), put("2026-02-01", 2_000), put("2026-02-15", -2_000)],
+      }),
+      "2026-03-01",
+    );
+    expect(summary.pace).toMatchObject({ state: "behind", projectedCompletion: null });
+    const [finding] = detectGoalAnomalies([summary]);
+    expect(finding.kind).toBe("goal-off-pace");
+    expect(finding.detail).toContain("arrives on no date at all");
+    expect(finding.detail).not.toContain("null");
   });
 
   it("reports a goal past its date and still short as overdue", () => {
