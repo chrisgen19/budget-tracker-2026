@@ -574,6 +574,9 @@ describe("buildAssessmentFacts", () => {
       "bill-snoozed",
       "bill-under-budgeted",
       "missing-expected-income",
+      "goal-off-pace",
+      "goal-stalled",
+      "cash-shortfall",
     ]);
     const anomalies = facts().anomalies;
     expect(anomalies.length).toBeGreaterThan(1);
@@ -1597,5 +1600,197 @@ describe("data-confidence findings", () => {
     ]).anomalies;
     expect(anomalies.find((a) => a.kind === "logging-gap")?.severity).toBe("low");
     expect(anomalies.find((a) => a.kind === "low-coverage")?.severity).toBe("high");
+  });
+});
+
+/**
+ * Where the tracked balance is headed before money next comes in.
+ *
+ * Directional by construction: the opening figure is every income logged minus every expense, so
+ * it knows nothing about money in the account before tracking began. The tests pin the arithmetic
+ * and, just as importantly, the cases where it refuses to answer.
+ */
+describe("cash forecast", () => {
+  const TODAY = "2026-09-06";
+
+  /** Four months of a monthly salary on the 15th, and a month of spending to give it a balance. */
+  const salary = (amount = 40_000): FactTransaction[] =>
+    ["2026-05-15", "2026-06-15", "2026-07-15", "2026-08-15"].map((localDate) =>
+      tx({ localDate, amount, type: "INCOME", description: "Acme Payroll", categoryName: "Salary" }));
+
+  const factsFor = (
+    transactions: FactTransaction[],
+    bills: FactBill[],
+    allTimeTotals?: { income: number; expenses: number },
+  ) =>
+    buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: "2026-09-01", to: "2026-09-30", label: "September 2026", granularity: "monthly" },
+      today: TODAY,
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions,
+      bills,
+      allTimeTotals,
+    });
+
+  const rent = (amount: number) => bill({
+    description: "Rent",
+    amount,
+    nextDueDate: new Date(Date.UTC(2026, 8, 10)),
+    startDate: new Date(Date.UTC(2026, 0, 10)),
+  });
+
+  it("projects only as far as the next expected deposit", () => {
+    const { forecast } = factsFor(salary(), [], { income: 160_000, expenses: 100_000 });
+    // The salary lands on the 15th and the last one seen was 15 August, so the cycle after today is
+    // one measured interval on - which is where the question "before the next income" stops.
+    expect(forecast.nextIncomeDate).toBe("2026-09-15");
+    expect(forecast.through).toBe("2026-09-15");
+  });
+
+  /** Projecting to the end of time turns every account into a shortfall eventually. */
+  it("falls back to a bounded horizon when nothing arrives on a rhythm", () => {
+    const { forecast } = factsFor([], [], { income: 10_000, expenses: 1_000 });
+    expect(forecast.nextIncomeDate).toBeNull();
+    expect(forecast.through).toBe("2026-10-21");
+  });
+
+  it("raises a shortfall when the scheduled charges outrun the balance", () => {
+    const facts = factsFor(salary(), [rent(20_000)], { income: 160_000, expenses: 155_000 });
+    const found = facts.anomalies.find((a) => a.kind === "cash-shortfall");
+    expect(found).toMatchObject({ scope: "outstanding", severity: "high", baseline: 5_000, current: -15_000 });
+    expect(found?.title).toContain("2026-09-10");
+  });
+
+  /** The claim is a direction, and the copy has to say so in its own sentence. */
+  it("says in the finding itself that this is not a bank balance", () => {
+    const facts = factsFor(salary(), [rent(20_000)], { income: 160_000, expenses: 155_000 });
+    const found = facts.anomalies.find((a) => a.kind === "cash-shortfall");
+    expect(found?.detail).toContain("not a bank balance");
+  });
+
+  it("stays quiet when the balance covers everything due", () => {
+    const facts = factsFor(salary(), [rent(20_000)], { income: 160_000, expenses: 60_000 });
+    expect(facts.anomalies.find((a) => a.kind === "cash-shortfall")).toBeUndefined();
+  });
+
+  /**
+   * A balance of nothing and a balance nobody supplied render identically, and one of them would
+   * report every account as about to bounce.
+   */
+  it("refuses to forecast at all without an opening balance", () => {
+    const facts = factsFor(salary(), [rent(20_000)]);
+    expect(facts.forecast.openingBalance).toBeNull();
+    expect(facts.forecast.lowestBalance).toBeNull();
+    expect(facts.anomalies.find((a) => a.kind === "cash-shortfall")).toBeUndefined();
+  });
+
+  /**
+   * A bill payment is an ordinary transaction, so it is already one of `computeRecurring`'s groups.
+   * Counting it on both sides forecasts a shortfall that exists only in the arithmetic.
+   */
+  it("counts a bill once, not once as a schedule and again as a recurring charge", () => {
+    const paidRent = ["2026-05-10", "2026-06-10", "2026-07-10", "2026-08-10"].map((localDate) =>
+      tx({ localDate, amount: 20_000, description: "Rent", categoryName: "Housing" }));
+    const { forecast } = factsFor([...salary(), ...paidRent], [rent(20_000)], { income: 160_000, expenses: 80_000 });
+    expect(forecast.claims.filter((claim) => claim.label === "Rent")).toHaveLength(1);
+    expect(forecast.claims.every((claim) => claim.source === "bill")).toBe(true);
+  });
+
+  it("counts a subscription with no bill behind it", () => {
+    const netflix = ["2026-05-08", "2026-06-08", "2026-07-08", "2026-08-08"].map((localDate) =>
+      tx({ localDate, amount: 499, description: "Netflix", categoryName: "Entertainment" }));
+    const { forecast } = factsFor([...salary(), ...netflix], [], { income: 160_000, expenses: 80_000 });
+    expect(forecast.claims).toContainEqual({
+      date: "2026-09-08",
+      label: "Netflix",
+      amount: 499,
+      source: "recurring",
+    });
+  });
+
+  /**
+   * Three bills in one week and a deposit the week after net out to comfortable and still bounce,
+   * which is why the projection is walked in date order rather than netted.
+   */
+  it("reports the day the balance dips, not merely that it nets out", () => {
+    const { forecast } = factsFor(salary(), [
+      rent(4_000),
+      bill({ id: "b2", description: "Tuition", amount: 4_000, nextDueDate: new Date(Date.UTC(2026, 8, 12)), startDate: new Date(Date.UTC(2026, 0, 12)) }),
+    ], { income: 160_000, expenses: 154_000 });
+    expect(forecast.lowestOn).toBe("2026-09-12");
+    expect(forecast.lowestBalance).toBe(-2_000);
+  });
+
+  /** A salary three weeks late does not mean money is expected three weeks ago. */
+  it("rolls an overdue deposit forward to the cycle it is now in", () => {
+    const stale = ["2026-04-15", "2026-05-15", "2026-06-15", "2026-07-15"].map((localDate) =>
+      tx({ localDate, amount: 40_000, type: "INCOME", description: "Acme Payroll", categoryName: "Salary" }));
+    const { forecast } = factsFor(stale, [], { income: 160_000, expenses: 100_000 });
+    expect(forecast.nextIncomeDate).not.toBeNull();
+    expect(forecast.nextIncomeDate! > TODAY).toBe(true);
+  });
+});
+
+/**
+ * Two ways the projection invented a charge, both found reading it back.
+ *
+ * Kept in their own block because each is a claim about a *specific* wrong row appearing, which is
+ * what makes them fail on revert - a test that only checked the balance would still pass, since the
+ * arithmetic over the wrong claims is perfectly correct.
+ */
+describe("cash forecast - claims it must not invent", () => {
+  const TODAY = "2026-09-06";
+  const salary = ["2026-05-15", "2026-06-15", "2026-07-15", "2026-08-15"].map((localDate) =>
+    tx({ localDate, amount: 40_000, type: "INCOME", description: "Acme Payroll", categoryName: "Salary" }));
+
+  const forecastFor = (transactions: FactTransaction[], bills: FactBill[]) =>
+    buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: "2026-09-01", to: "2026-09-30", label: "September 2026", granularity: "monthly" },
+      today: TODAY,
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions,
+      bills,
+      allTimeTotals: { income: 160_000, expenses: 100_000 },
+    }).forecast;
+
+  /**
+   * `occurrencesBetween` pushes whatever day it is handed as the first occurrence, so an overdue
+   * bill started at today produced a charge dated today that no schedule ever said was due.
+   */
+  it("does not invent a charge today for a bill whose cursor is already behind", () => {
+    const overdue = bill({
+      description: "Rent",
+      amount: 20_000,
+      startDate: new Date(Date.UTC(2026, 0, 10)),
+      nextDueDate: new Date(Date.UTC(2026, 7, 10)),
+    });
+    const { claims } = forecastFor(salary, [overdue]);
+    expect(claims.some((claim) => claim.date === TODAY)).toBe(false);
+    // The occurrence the schedule really does reach next, and nothing before it.
+    expect(claims.map((claim) => claim.date)).toEqual(["2026-09-10"]);
+  });
+
+  const netflix = (days: string[]): FactTransaction[] =>
+    days.map((localDate) => tx({ localDate, amount: 499, description: "Netflix", categoryName: "Entertainment" }));
+
+  /**
+   * A cancelled subscription is money that is never going to leave.
+   *
+   * No salary in these two, so the projection runs to its full horizon rather than stopping at a
+   * deposit a week away - otherwise a monthly charge's next cycle falls outside the window and the
+   * assertion would hold for a reason that has nothing to do with the guard.
+   */
+  it("stops projecting a recurring charge that has lapsed a whole cycle", () => {
+    const { claims } = forecastFor(netflix(["2026-03-08", "2026-04-08", "2026-05-08", "2026-06-08"]), []);
+    expect(claims.some((claim) => claim.label === "Netflix")).toBe(false);
+  });
+
+  it("keeps projecting one that is merely a few days late", () => {
+    const { claims } = forecastFor(netflix(["2026-05-01", "2026-06-01", "2026-07-01", "2026-08-01"]), []);
+    expect(claims.some((claim) => claim.label === "Netflix")).toBe(true);
   });
 });
