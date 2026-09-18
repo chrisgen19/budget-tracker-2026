@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { goalDayToInstant, summariseGoal, type GoalFacts } from "./savings-goals";
+import { goalDayToInstant, summariseGoal, toGoalFacts, type GoalFacts } from "./savings-goals";
 import { detectGoalAnomalies } from "./assessment-facts";
 
 const goal = (over: Partial<GoalFacts> = {}): GoalFacts => ({
@@ -101,6 +101,39 @@ describe("summariseGoal", () => {
   it("reports no rate from a single contribution made today", () => {
     const summary = summariseGoal(goal({ contributions: [put("2026-03-01", 10_000)] }), "2026-03-01");
     expect(summary.pace.observedMonthly).toBeNull();
+  });
+
+  /**
+   * The opening day is excluded as a day, not as a row. Counting rows treats a second deposit made
+   * the same morning as recurring funding, so an opening day nobody has added to since reports a
+   * positive rate for as long as the goal exists - and can mark it on track, suppressing the
+   * off-pace alert.
+   */
+  it("reports no rate from two contributions made on the same opening day", () => {
+    const summary = summariseGoal(
+      goal({
+        targetAmount: 100_000,
+        targetDate: "2026-12-31",
+        contributions: [put("2026-01-01", 5_000), put("2026-01-01", 5_000)],
+      }),
+      "2026-02-01",
+    );
+    expect(summary.funded).toBe(10_000);
+    expect(summary.pace).toMatchObject({ observedMonthly: null, state: "underway" });
+    expect(detectGoalAnomalies([summary])).toEqual([]);
+  });
+
+  it("measures from the opening day once a later one exists, counting neither opening row", () => {
+    const summary = summariseGoal(
+      goal({
+        targetAmount: 100_000,
+        targetDate: "2026-12-31",
+        contributions: [put("2026-01-01", 5_000), put("2026-01-01", 5_000), put("2026-02-01", 5_000)],
+      }),
+      "2026-02-01",
+    );
+    // 5,000 over the 31 days since the opening day - not 15,000, and not 10,000.
+    expect(summary.pace.observedMonthly).toBe(4_909.68);
   });
 
   it("reports no rate from a single contribution made a day ago, rather than a month's worth", () => {
@@ -226,13 +259,40 @@ describe("summariseGoal", () => {
 });
 
 /**
- * A bare date is midnight UTC, which is the previous day for anyone west of Greenwich. A target
- * date stored a day early moves every pace figure that reads it.
+ * A target date and a contribution date are date-only values: "the 1st of March" means the 1st for
+ * everyone. Storing them at midnight in the account's *current* timezone round-trips only while
+ * that timezone never changes, and `users.timezone_offset` is a setting.
  */
 describe("goalDayToInstant", () => {
-  it("stores a calendar day at the start of that day in the user's own timezone", () => {
-    // UTC+8 is -480 by the getTimezoneOffset convention the whole app uses.
-    expect(goalDayToInstant("2026-03-01", -480).toISOString()).toBe("2026-02-28T16:00:00.000Z");
+  it("stores a calendar day at midnight UTC, the convention bills already use", () => {
+    expect(goalDayToInstant("2026-03-01").toISOString()).toBe("2026-03-01T00:00:00.000Z");
+  });
+
+  /**
+   * The failure this replaces: written at UTC+8 the day landed on `2026-02-28T16:00Z`, and read
+   * back at UTC-5 it was 28 February. The deadline, the contribution history and every pace figure
+   * over them moved a day because somebody travelled.
+   */
+  it("reads a stored day back as itself whatever the account's offset has become", () => {
+    const stored = goalDayToInstant("2026-03-01");
+    const row = {
+      id: "g1",
+      name: "House deposit",
+      kind: "GOAL",
+      status: "ACTIVE",
+      targetAmount: 120_000,
+      targetDate: stored,
+      notes: null,
+      createdAt: new Date("2026-01-01T03:00:00.000Z"),
+      contributions: [{ id: "c1", amount: 1_000, date: stored, note: null }],
+    };
+
+    // UTC+8, UTC, UTC-5 and UTC-12 by the getTimezoneOffset convention the whole app uses.
+    for (const timezoneOffset of [-480, 0, 300, 720]) {
+      const facts = toGoalFacts(row, timezoneOffset);
+      expect(facts.targetDate).toBe("2026-03-01");
+      expect(facts.contributions[0].date).toBe("2026-03-01");
+    }
   });
 });
 

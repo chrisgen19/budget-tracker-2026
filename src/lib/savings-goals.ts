@@ -12,6 +12,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { formatLocalDate, type SavingsGoalInput } from "@/lib/validations";
+import { utcDayKey } from "@/lib/bill-dates";
 import {
   daysBetweenCalendarDays as daysBetween,
   parseCalendarDay as parseDay,
@@ -64,20 +65,26 @@ const fundedFrom = (contributions: SavingsGoalContributionRow[]): number =>
  * so a saver putting away 5,000 against a required 8,227 read as on track and the `goal-off-pace`
  * finding this feature exists for never fired.
  *
- * Null until a **second** contribution exists on a later day. One deposit is an amount and not a
- * rate - which this always claimed and enforced as `elapsed < 1`, so a lone deposit read a day
- * later reported 304,400 a month. `paceOf` reads that null as `underway`, never as `stalled`.
+ * Null until a contribution exists on a **later day**. One deposit is an amount and not a rate -
+ * which this always claimed and enforced as `elapsed < 1`, so a lone deposit read a day later
+ * reported 304,400 a month. `paceOf` reads that null as `underway`, never as `stalled`.
+ *
+ * The opening day is excluded as a *day*, not as a row. Counting rows instead treats a second
+ * deposit made on the same morning as recurring funding: two rows on 1 January and nothing since
+ * would report a positive rate all through February, and could mark a goal on track and suppress
+ * the off-pace alert on the strength of an opening day nobody has added to.
  */
 const observedMonthlyRate = (
   contributions: SavingsGoalContributionRow[],
   today: string,
 ): number | null => {
   if (contributions.length < 2) return null;
-  const sorted = [...contributions].sort((a, b) => a.date.localeCompare(b.date));
-  const elapsed = daysBetween(sorted[0].date, today);
+  const firstDay = contributions.reduce((earliest, c) => (c.date < earliest ? c.date : earliest), contributions[0].date);
+  const afterFirstDay = contributions.filter((c) => c.date > firstDay);
+  if (afterFirstDay.length === 0) return null;
+  const elapsed = daysBetween(firstDay, today);
   if (elapsed < 1) return null;
-  const sinceFirst = fundedFrom(sorted) - sorted[0].amount;
-  return round((sinceFirst / elapsed) * DAYS_PER_MONTH);
+  return round((fundedFrom(afterFirstDay) / elapsed) * DAYS_PER_MONTH);
 };
 
 /**
@@ -169,7 +176,12 @@ export const summariseGoal = (goal: GoalFacts, today: string): SavingsGoalSummar
   };
 };
 
-const toGoalFacts = (
+/**
+ * Exported for the round-trip test: the date-only fields must decode identically at any offset,
+ * and that property lives here rather than in `goalDayToInstant`, since this is the half that used
+ * to take the offset and apply it.
+ */
+export const toGoalFacts = (
   goal: {
     id: string;
     name: string;
@@ -188,13 +200,15 @@ const toGoalFacts = (
   kind: goal.kind as GoalFacts["kind"],
   status: goal.status as GoalFacts["status"],
   targetAmount: goal.targetAmount,
-  targetDate: goal.targetDate ? formatLocalDate(goal.targetDate, timezoneOffset) : null,
+  // Date-only, read with UTC accessors and never converted - see `goalDayToInstant`. `createdOn`
+  // is the opposite case, a real instant, so it does resolve through the user's offset.
+  targetDate: goal.targetDate ? utcDayKey(goal.targetDate) : null,
   notes: goal.notes,
   createdOn: formatLocalDate(goal.createdAt, timezoneOffset),
   contributions: goal.contributions.map((c) => ({
     id: c.id,
     amount: c.amount,
-    date: formatLocalDate(c.date, timezoneOffset),
+    date: utcDayKey(c.date),
     note: c.note,
   })),
 });
@@ -249,18 +263,25 @@ export const getSavingsGoal = async (
 };
 
 /**
- * A bare date is midnight UTC, which is the previous day for anyone west of Greenwich.
+ * A target date and a contribution date are **date-only** values, stored at midnight UTC.
  *
- * The same `Date.UTC(y, m, d) + tzOffset * 60000` the rest of the app uses for every day and month
- * boundary. A target date stored a day early moves every pace figure that reads it.
+ * The convention `bill-dates.ts` already sets for the identical problem, and this deliberately
+ * does *not* resolve through the account's timezone. An offset applied on the way in and again on
+ * the way out round-trips only while the offset is the same on both trips: a deadline entered as
+ * 2026-03-01 at UTC+8 is stored as `2026-02-28T16:00Z`, and after the account moves to UTC-5 it
+ * reads back as 28 February. The deadline, the contribution history and every pace figure derived
+ * from them all move by a day because somebody travelled.
+ *
+ * "The 1st of March" means the 1st for everyone, so it is written and read with UTC accessors and
+ * never converted. `today` is the opposite case - a real instant - and stays resolved through the
+ * user's offset, exactly as `userToday` is for bills.
  */
-export const goalDayToInstant = (day: string, timezoneOffset: number): Date =>
-  new Date(parseDay(day).getTime() + timezoneOffset * 60_000);
+export const goalDayToInstant = (day: string): Date => parseDay(day);
 
-export const buildGoalData = (input: SavingsGoalInput, timezoneOffset: number) => ({
+export const buildGoalData = (input: SavingsGoalInput) => ({
   name: input.name,
   kind: input.kind,
   targetAmount: input.targetAmount,
-  targetDate: input.targetDate ? goalDayToInstant(input.targetDate, timezoneOffset) : null,
+  targetDate: input.targetDate ? goalDayToInstant(input.targetDate) : null,
   notes: input.notes ?? null,
 });

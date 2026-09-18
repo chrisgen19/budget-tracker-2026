@@ -46,7 +46,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       data: {
         goalId: goal.id,
         amount: parsed.data.amount,
-        date: goalDayToInstant(parsed.data.date, user?.timezoneOffset ?? 0),
+        date: goalDayToInstant(parsed.data.date),
         note: parsed.data.note ?? null,
       },
       select: { id: true },

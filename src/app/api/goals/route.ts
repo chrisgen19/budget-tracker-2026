@@ -39,7 +39,7 @@ export async function POST(request: Request) {
   try {
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { timezoneOffset: true } });
     const goal = await prisma.savingsGoal.create({
-      data: { userId, ...buildGoalData(parsed.data, user?.timezoneOffset ?? 0) },
+      data: { userId, ...buildGoalData(parsed.data) },
       select: { id: true },
     });
     return NextResponse.json(goal, { status: 201 });
