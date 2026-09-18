@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useUser, type UserInfo } from "@/components/user-provider";
 import { useToast } from "@/components/ui/toast";
+import { analyticsKeys } from "@/hooks/use-analytics";
 
 /**
  * The preference fields `PATCH /api/preferences` accepts and `UserInfo` mirrors.
@@ -27,6 +29,26 @@ export type SavablePreference =
   | "watchlistDuplicateAlerts";
 
 /**
+ * Preferences the assessment facts are computed from.
+ *
+ * `assessmentKeys.facts` is nested under `analyticsKeys.all` so that every *financial* mutation
+ * invalidates it without anyone maintaining a second list of call sites. A threshold is not one:
+ * it changes how the same rows are judged, so nothing on this path would otherwise touch the
+ * cache. Inside the facts query's five-minute `staleTime` that means saving a threshold and going
+ * straight to the Watchlist - which is the whole reason to change one - shows findings computed
+ * with the old value, and a setting that visibly does nothing reads as broken.
+ *
+ * A set here rather than three `invalidateQueries` calls in `WatchlistForm`: this file exists
+ * because nine hand-written copies of the save dance had already drifted, and a fourth Watchlist
+ * setting added later is exactly what forgets the fourth copy.
+ */
+const ANALYTICS_AFFECTING: ReadonlySet<SavablePreference> = new Set([
+  "watchlistOutlierRatio",
+  "watchlistLargeAmount",
+  "watchlistDuplicateAlerts",
+]);
+
+/**
  * Save one preference optimistically, and say so when it does not stick.
  *
  * Every toggle on the profile page applied its new value immediately, PATCHed, and on failure
@@ -45,6 +67,7 @@ export type SavablePreference =
 export function useSavePreference() {
   const { setUser } = useUser();
   const { showToast } = useToast();
+  const queryClient = useQueryClient();
 
   return useCallback(
     async <K extends SavablePreference>(
@@ -76,6 +99,12 @@ export function useSavePreference() {
           return false;
         }
 
+        // Only after the server took it. A rollback leaves the cache agreeing with the database,
+        // so invalidating on a refusal would spend a refetch to arrive back where it started.
+        if (ANALYTICS_AFFECTING.has(key)) {
+          queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
+        }
+
         return true;
       } catch {
         apply(previous);
@@ -83,6 +112,6 @@ export function useSavePreference() {
         return false;
       }
     },
-    [setUser, showToast]
+    [setUser, showToast, queryClient]
   );
 }
