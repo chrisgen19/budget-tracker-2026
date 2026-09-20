@@ -106,6 +106,53 @@ jobs:
           # command really runs. The last step below does the job the tracking comment
           # was added for.
 
+          # A `Bash(verb:*)` rule is a prefix glob over the whole command, and a
+          # redirection is not a sub-command, so `Bash(head:*)` also allows
+          # `head payload > .git/config`. That is the same write primitive that
+          # `sort --output` and `uniq <in> <out>` were dropped for in the commit
+          # before this one, left open on every filter that was kept: the note
+          # below saying they "have no write-to-file flag" is true about flags and
+          # beside the point. The file worth writing is in the workspace - a planted
+          # `[core] fsmonitor = ./x.sh` runs on the next `git ls-files`, which is
+          # allowed, so it is arbitrary execution again by another route (chain
+          # reproduced end to end, PR #361 review). Dropping verbs does not
+          # generalize, since the next filter anyone adds reopens it, so `>` is
+          # denied below for every Bash call whatever the allowlist says.
+          #
+          # Two things the rule deliberately does not do:
+          #
+          #   * It does not look at `>` inside quotes. The hook strips quoted spans
+          #     before matching, because the reviewer posts its findings with
+          #     `gh pr comment --body`, and finding text contains `=>` and
+          #     `Array<string>` and markdown quotes constantly. Matching the raw
+          #     command denied all three (verified), which would have left the job
+          #     unable to post the very review it had just written. A `>` inside a
+          #     balanced quoted span is literal text to the shell too, so this
+          #     agrees with what actually executes.
+          #   * It does not deny `<`. Reading a file is not the primitive in the
+          #     chain (`uniq <in >out` writes through the `>`), Read already does
+          #     it, and banning `<` would break a heredoc, which is how a
+          #     multi-line `gh pr comment -F -` body gets in.
+          #
+          # Pipes are untouched: `gh pr diff | head` still works, and `head x | sh`
+          # stays denied because the right-hand side of a pipe is matched on its own.
+          settings: |
+            {
+              "hooks": {
+                "PreToolUse": [
+                  {
+                    "matcher": "Bash",
+                    "hooks": [
+                      {
+                        "type": "command",
+                        "command": "bare=$(jq -r '(.tool_input.command // \"\") | gsub(\"\\u0027[^\\u0027]*\\u0027\"; \"\") | gsub(\"\\\"[^\\\"]*\\\"\"; \"\")'); case \"$bare\" in *'>'*) printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Shell redirection to a file is not allowed for this reviewer. Read files with Read/Grep/Glob and pipe into the allowed filters; do not redirect into one.\"}}';; esac"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+
           # `claude_args --allowedTools` adds to the tools the action already allows.
           # Agent (formerly Task), Read, Glob and Grep need no permission at all
           # (https://code.claude.com/docs/en/tools-reference), so Bash is what needs
@@ -148,7 +195,9 @@ jobs:
           #   * `sort --output=FILE` and `uniq <in> <out>` also write arbitrary files
           #     (verified), which is the write primitive the exec chain needs. Dropped
           #     for the same reason `Write` and `cat >` never were allowed. The kept
-          #     filters - head, tail, wc, cut, nl, ls - have no write-to-file flag.
+          #     filters - head, tail, wc, cut, nl, ls - have no write-to-file flag,
+          #     which is not on its own enough: a shell redirection gives any of them
+          #     one, so the `settings` hook above denies that separately.
           #
           # Also absent, and not an oversight: `Bash(gh api:*)` and `Bash(gh:*)`, since
           # `gh` runs with the Claude app's token, which can write to the repository; and

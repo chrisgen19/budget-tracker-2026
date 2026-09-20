@@ -78,6 +78,23 @@ writes a file or runs a config command, and the kept text filters (head, tail, w
 have no write-to-file flag. A `:*` allowlist rule is a prefix glob and cannot forbid a flag once its
 verb is allowed, so the only way to bar `--output` and `--ext-diff` is to not allow the verb.
 
+A third review found that removing the writers had not in fact closed the chain at its first step.
+A `:*` rule is a prefix glob over the *whole* command, and a redirection is not a sub-command, so
+`Bash(head:*)` also permits `head payload > .git/config`. "No write-to-file flag" is true about
+flags and beside the point: `>` hands the same write primitive to every filter that was kept, the
+target sits inside the workspace, and a planted `[core] fsmonitor = ./x.sh` executes on the next
+`git ls-files`, which is allowed. The chain was reproduced end to end.
+
+Pruning verbs does not generalize, because the next filter anyone adds reopens it, so the
+redirection itself is now denied, for every Bash call and whatever the allowlist says, by a
+`PreToolUse` hook passed through the action's `settings` input. Two limits are deliberate. The hook
+strips quoted spans before it matches, since the reviewer posts findings with `gh pr comment
+--body` and finding text is full of `=>`, `Array<string>` and markdown quotes; matching the raw
+command denied all three, which would have left the job unable to post the review it had just
+written. And `<` is allowed: reading a file is not the primitive in the chain, Read already does
+it, and banning `<` would break the heredoc that carries a multi-line comment body. Pipes are
+untouched, so `gh pr diff | head` still works while `head x | sh` stays denied on its own merits.
+
 ## 2026-09-17 - Watchlist findings can be resolved or snoozed
 
 Each live Watchlist finding now has **View transactions** (or **Go to Bills**), **Resolve**, and
