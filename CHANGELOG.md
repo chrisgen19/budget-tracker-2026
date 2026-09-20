@@ -85,15 +85,29 @@ flags and beside the point: `>` hands the same write primitive to every filter t
 target sits inside the workspace, and a planted `[core] fsmonitor = ./x.sh` executes on the next
 `git ls-files`, which is allowed. The chain was reproduced end to end.
 
-Pruning verbs does not generalize, because the next filter anyone adds reopens it, so the
-redirection itself is now denied, for every Bash call and whatever the allowlist says, by a
-`PreToolUse` hook passed through the action's `settings` input. Two limits are deliberate. The hook
-strips quoted spans before it matches, since the reviewer posts findings with `gh pr comment
---body` and finding text is full of `=>`, `Array<string>` and markdown quotes; matching the raw
-command denied all three, which would have left the job unable to post the review it had just
-written. And `<` is allowed: reading a file is not the primitive in the chain, Read already does
-it, and banning `<` would break the heredoc that carries a multi-line comment body. Pipes are
-untouched, so `gh pr diff | head` still works while `head x | sh` stays denied on its own merits.
+Pruning verbs does not generalize, because the next filter anyone adds reopens it, so the shell
+syntax itself is now denied, for every Bash call and whatever the allowlist says, by a `PreToolUse`
+hook passed through the action's `settings` input.
+
+A fourth review then broke the hook's first version, which stripped every quoted span and then
+looked for `>`. `head "$(gh issue view 1 --jq .body > .git/config)"` walks through that: the
+substitution sits inside the double-quoted span the check had already discarded, while the shell
+still runs the redirection inside it. Verified, the payload landed. The hook now checks command
+substitution, `$(...)` or backticks, *before* it strips anything but single-quoted spans, and only
+then looks for `>` in what remains. Single quotes are safe to strip first because the shell does
+not expand inside them either.
+
+The quote-stripping stays, because the reviewer posts findings with `gh pr comment --body` and
+finding text is full of `=>`, `Array<string>` and markdown quotes; matching the raw command denied
+all three, which would have left the job unable to post the review it had just written. `<` is
+still allowed: reading is not the primitive in the chain, Read already does it, and banning `<`
+would break the heredoc that carries a multi-line comment body. Pipes are untouched, so
+`gh pr diff | head` still works while `head x | sh` stays denied on its own merits.
+
+The substitution route turned out to be closed one layer up as well: Claude Code's own static
+analyzer refuses a command it cannot parse, and both `head "$(... ; ...)"` and `head "$(... > f)"`
+came back "Contains shell syntax that cannot be statically analyzed" against 2.1.278. That
+behaviour is undocumented, so the hook does not lean on it, and neither guard depends on the other.
 
 ## 2026-09-17 - Watchlist findings can be resolved or snoozed
 

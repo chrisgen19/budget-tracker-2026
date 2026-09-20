@@ -116,26 +116,43 @@ jobs:
           # `[core] fsmonitor = ./x.sh` runs on the next `git ls-files`, which is
           # allowed, so it is arbitrary execution again by another route (chain
           # reproduced end to end, PR #361 review). Dropping verbs does not
-          # generalize, since the next filter anyone adds reopens it, so `>` is
-          # denied below for every Bash call whatever the allowlist says.
+          # generalize, since the next filter anyone adds reopens it, so the shell
+          # syntax is denied below for every Bash call whatever the allowlist says.
           #
-          # Two things the rule deliberately does not do:
+          # The hook denies two things, and the order it checks them in is the
+          # whole point:
           #
-          #   * It does not look at `>` inside quotes. The hook strips quoted spans
-          #     before matching, because the reviewer posts its findings with
-          #     `gh pr comment --body`, and finding text contains `=>` and
-          #     `Array<string>` and markdown quotes constantly. Matching the raw
-          #     command denied all three (verified), which would have left the job
-          #     unable to post the very review it had just written. A `>` inside a
-          #     balanced quoted span is literal text to the shell too, so this
-          #     agrees with what actually executes.
-          #   * It does not deny `<`. Reading a file is not the primitive in the
-          #     chain (`uniq <in >out` writes through the `>`), Read already does
-          #     it, and banning `<` would break a heredoc, which is how a
-          #     multi-line `gh pr comment -F -` body gets in.
+          #   1. Command substitution, `$(...)` or backticks, anywhere outside
+          #      single quotes. Checked *first*, on the text with only single-quoted
+          #      spans removed. Stripping double-quoted spans first and then looking
+          #      for `>` is what the first version of this hook did, and
+          #      `head "$(gh issue view 1 --jq .body > .git/config)"` walks straight
+          #      through it: the whole substitution lives inside the double-quoted
+          #      span the check had already thrown away, while the shell still runs
+          #      the redirection inside it (verified - the payload landed). Single
+          #      quotes are safe to strip because the shell does not expand anything
+          #      inside them either.
+          #   2. Then `>`, on what is left after double-quoted spans are removed.
           #
-          # Pipes are untouched: `gh pr diff | head` still works, and `head x | sh`
+          # The quote-stripping exists because the reviewer posts findings with
+          # `gh pr comment --body`, and finding text is full of `=>`, `Array<string>`
+          # and markdown quotes. Matching the raw command denied all three (verified),
+          # which would have left the job unable to post the review it had just
+          # written. A `>` inside a balanced quoted span is literal text to the shell
+          # too, so this agrees with what would actually execute.
+          #
+          # `<` is deliberately still allowed: reading a file is not the primitive in
+          # the chain (`uniq <in >out` writes through the `>`), Read already does it,
+          # and banning `<` would break the heredoc that carries a multi-line comment
+          # body. Pipes are untouched, so `gh pr diff | head` works, and `head x | sh`
           # stays denied because the right-hand side of a pipe is matched on its own.
+          #
+          # Belt and braces, not the only guard. Claude Code's own static analyzer
+          # refuses a command it cannot parse - both `head "$(... ; ...)"` and
+          # `head "$(... > f)"` came back "Contains shell syntax that cannot be
+          # statically analyzed" (tested against 2.1.278), so the substitution route
+          # is already closed one layer up. That behaviour is undocumented, this hook
+          # does not depend on it, and neither depends on the other.
           settings: |
             {
               "hooks": {
@@ -145,7 +162,7 @@ jobs:
                     "hooks": [
                       {
                         "type": "command",
-                        "command": "bare=$(jq -r '(.tool_input.command // \"\") | gsub(\"\\u0027[^\\u0027]*\\u0027\"; \"\") | gsub(\"\\\"[^\\\"]*\\\"\"; \"\")'); case \"$bare\" in *'>'*) printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Shell redirection to a file is not allowed for this reviewer. Read files with Read/Grep/Glob and pipe into the allowed filters; do not redirect into one.\"}}';; esac"
+                        "command": "v=$(jq -r '(.tool_input.command // \"\") as $c | ($c | gsub(\"\\u0027[^\\u0027]*\\u0027\"; \"\")) as $n | if ($n | test(\"[$]\\\\(|`\")) or (($n | gsub(\"\\\"[^\\\"]*\\\"\"; \"\")) | test(\">\")) then \"deny\" else \"ok\" end'); case \"$v\" in deny) printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"This reviewer may not redirect output to a file (>) or use command substitution ($(...) or backticks). Read files with Read/Grep/Glob and pipe into the allowed filters. Quote literal text in single quotes.\"}}';; esac"
                       }
                     ]
                   }
