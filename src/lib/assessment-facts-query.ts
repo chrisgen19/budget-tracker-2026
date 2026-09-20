@@ -18,11 +18,16 @@ import {
   longestToken,
   resolveFactsWindow,
   DEFAULT_HISTORY_MONTHS,
+  DEFAULT_WATCHLIST_THRESHOLDS,
+  detectGoalAnomalies,
   type FactBill,
   type FactTransaction,
   sortAssessmentAnomalies,
+  capFindingsPerKind,
+  FINDINGS_PAYLOAD_CEILING,
 } from "@/lib/assessment-facts";
 import { getBudgetPerformance } from "@/lib/budget-plans";
+import { getSavingsGoals } from "@/lib/savings-goals";
 import type { AssessmentFacts, TransactionType } from "@/types";
 
 export interface FactsParams {
@@ -60,7 +65,13 @@ export const collectAssessmentFacts = async (
 ): Promise<AssessmentFacts> => {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { timezoneOffset: true, currency: true },
+    select: {
+      timezoneOffset: true,
+      currency: true,
+      watchlistOutlierRatio: true,
+      watchlistLargeAmount: true,
+      watchlistDuplicateAlerts: true,
+    },
   });
   const tzOffset = user?.timezoneOffset ?? 0;
   const tzMs = tzOffset * 60_000;
@@ -227,10 +238,33 @@ export const collectAssessmentFacts = async (
     historyFirstSeen,
     allTimeTotals: { income: totalOf("INCOME"), expenses: totalOf("EXPENSE") },
     unlinkedCandidates,
+    // Falls back to the shipped defaults rather than to zeroes: a user row that could not be read
+    // must produce the behaviour the app had before any of this was configurable, not a silently
+    // disabled detector.
+    thresholds: user
+      ? {
+          outlierRatio: user.watchlistOutlierRatio,
+          largeAmount: user.watchlistLargeAmount,
+          duplicateAlerts: user.watchlistDuplicateAlerts,
+        }
+      : DEFAULT_WATCHLIST_THRESHOLDS,
   });
-  if (params.granularity === "monthly" && isCalendarMonth(params.from, params.to)) {
-    const budget = await getBudgetPerformance(userId, params.from.slice(0, 7), tzOffset);
-    facts.anomalies = sortAssessmentAnomalies([...facts.anomalies, ...detectBudgetWatchlistAnomalies(budget)]);
+  // Goals are outstanding findings and so are read for every period, unlike the budget below: a
+  // deposit due in March is behind whichever report is open, while a budget plan belongs to one
+  // calendar month and cannot be compared against a week or a year.
+  const goalFindings = detectGoalAnomalies(await getSavingsGoals(prisma, userId));
+  const budgetFindings = params.granularity === "monthly" && isCalendarMonth(params.from, params.to)
+    ? detectBudgetWatchlistAnomalies(await getBudgetPerformance(userId, params.from.slice(0, 7), tzOffset))
+    : [];
+  if (goalFindings.length > 0 || budgetFindings.length > 0) {
+    facts.anomalies = sortAssessmentAnomalies([...facts.anomalies, ...goalFindings, ...budgetFindings]);
   }
+  // The payload bound goes here rather than in `detectAnomalies`, because *here* is where the list
+  // is finally whole: goal and budget findings are merged above, so a bound applied earlier covers
+  // neither. No detector caps its own kind any more, so this is the only thing standing between a
+  // pathological account -- a month with nothing logged makes every recurring charge "stopped" at
+  // once -- and an unbounded payload that the AI prompt also reads. It is not a display cap: the
+  // route caps what the Watchlist shows, after subtracting what the user has resolved.
+  facts.anomalies = capFindingsPerKind(facts.anomalies, FINDINGS_PAYLOAD_CEILING);
   return facts;
 };

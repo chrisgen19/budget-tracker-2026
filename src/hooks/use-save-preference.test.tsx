@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+import { analyticsKeys } from "@/hooks/use-analytics";
 import { useSavePreference } from "@/hooks/use-save-preference";
 
 const mocks = vi.hoisted(() => ({ setUser: vi.fn(), showToast: vi.fn() }));
@@ -12,16 +14,27 @@ vi.mock("@/components/ui/toast", () => ({
   useToast: () => ({ showToast: mocks.showToast }),
 }));
 
-const wrapper = ({ children }: { children: ReactNode }) => children;
+// A real client rather than a mocked `useQueryClient`: the assertion worth making is that the
+// Watchlist's own cache namespace is the one invalidated, and a mock cannot tell a correct key
+// from a plausible one.
+let queryClient: QueryClient;
+let invalidate: ReturnType<typeof vi.spyOn>;
+
+const wrapper = ({ children }: { children: ReactNode }) => (
+  <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+);
 
 const save = () => renderHook(() => useSavePreference(), { wrapper }).result.current;
 
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn());
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  invalidate = vi.spyOn(queryClient, "invalidateQueries");
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  queryClient.clear();
 });
 
 describe("a successful save", () => {
@@ -104,6 +117,50 @@ describe("covers both profile tabs", () => {
 
     expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]!.body))).toEqual({ showDayName: false });
     expect(JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]!.body))).toEqual({ dayNameFormat: "FULL" });
+  });
+});
+
+/**
+ * The facts query is keyed by user and period only, with a five-minute `staleTime`, so nothing
+ * about a threshold change reaches it on its own. Saving one and going straight to the Watchlist -
+ * the whole reason to change one - showed findings computed with the old value.
+ */
+describe("a threshold the Watchlist is computed from", () => {
+  beforeEach(() => {
+    vi.mocked(fetch).mockResolvedValue({ ok: true } as Response);
+  });
+
+  it.each([
+    ["watchlistOutlierRatio", 5, 3],
+    ["watchlistLargeAmount", 10_000, null],
+    ["watchlistDuplicateAlerts", false, true],
+  ] as const)("drops the cached findings after saving %s", async (key, next, previous) => {
+    const savePreference = save();
+    await act(async () => {
+      await savePreference(key, next, previous, "a Watchlist setting");
+    });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: analyticsKeys.all });
+  });
+
+  // A rollback leaves the cache agreeing with the database, so a refetch would arrive back where
+  // it started - and would do it while a toast says the save failed.
+  it("leaves the cache alone when the server refused the value", async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 400 } as Response);
+    const savePreference = save();
+    await act(async () => {
+      await savePreference("watchlistOutlierRatio", 5, 3, "the unusual-charge threshold");
+    });
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  // Nothing else on the profile page feeds the assessment, so invalidating for every preference
+  // would refetch the analytics page because somebody changed a date format.
+  it("does not refetch analytics for a preference it is not computed from", async () => {
+    const savePreference = save();
+    await act(async () => {
+      await savePreference("dayNameFormat", "FULL", "SHORT", "the day name format");
+    });
+    expect(invalidate).not.toHaveBeenCalled();
   });
 });
 

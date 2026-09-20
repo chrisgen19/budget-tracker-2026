@@ -789,6 +789,60 @@ const calendarDaySchema = z
 
 const dayOfMonthSchema = z.number().int().min(1).max(31);
 
+/**
+ * Creating or replacing a savings goal.
+ *
+ * `targetDate` is optional and explicitly nullable: a goal with no deadline is a real thing people
+ * have, and the pace arithmetic says so rather than inventing one.
+ */
+/**
+ * How lumpy a household's spending normally is, before "unusual" means anything.
+ *
+ * Bounded at both ends. Below 1.5 nearly every charge is an outlier against its own category's
+ * median and the finding becomes a list of the month's transactions; above 20 nothing short of a
+ * house deposit qualifies and the detector may as well be off - which is a state the switch beside
+ * it should express, not one reached by dragging a number until the alerts stop.
+ */
+export const watchlistOutlierRatioSchema = z.number().min(1.5).max(20);
+
+/** An absolute "this is a lot of money" figure, or null to judge on the ratio alone. */
+export const watchlistLargeAmountSchema = z.number().positive().max(1_000_000_000).nullable();
+
+export const savingsGoalSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(60),
+  kind: z.enum(["GOAL", "SINKING_FUND"]).default("GOAL"),
+  targetAmount: z.number().positive("Target must be greater than 0"),
+  targetDate: calendarDaySchema.nullable().optional(),
+  notes: z.string().trim().max(500).nullable().optional(),
+});
+
+/** Editing a goal. `status` archives it, brings it back, or marks it achieved. */
+export const savingsGoalPatchSchema = savingsGoalSchema
+  .partial()
+  .extend({ status: z.enum(["ACTIVE", "ACHIEVED", "ARCHIVED"]).optional() })
+  .refine((patch) => Object.values(patch).some((value) => value !== undefined), {
+    message: "Nothing to update",
+  });
+
+/**
+ * Assigning money to a goal, or taking it back out.
+ *
+ * One signed amount rather than a kind and a positive number: funded is the sum of the column, and
+ * a sign cannot disagree with a status the way two fields can. Zero is refused because it is not a
+ * decision - it is a row that changes nothing and shows up in the contribution count.
+ */
+export const savingsGoalContributionSchema = z.object({
+  amount: z.number().finite().refine((value) => value !== 0, {
+    message: "Enter an amount to add, or a negative one to take out",
+  }),
+  date: calendarDaySchema,
+  note: z.string().trim().max(255).nullable().optional(),
+});
+
+export type SavingsGoalInput = z.infer<typeof savingsGoalSchema>;
+export type SavingsGoalPatchInput = z.infer<typeof savingsGoalPatchSchema>;
+export type SavingsGoalContributionInput = z.infer<typeof savingsGoalContributionSchema>;
+
 export const creditAccountSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(50),
   color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Invalid color format").default("#8B7E6A"),

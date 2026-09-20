@@ -8,6 +8,7 @@ import {
   BarChart3,
   ArrowLeftRight,
   CalendarClock,
+  PiggyBank,
   CreditCard,
   Tags,
   Tag,
@@ -48,12 +49,13 @@ interface AppShellProps {
   children: React.ReactNode;
 }
 
-const NAV_ITEMS = [
+export const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/quick-log", label: "Quick Log", icon: Zap },
   { href: "/bills", label: "Bills", icon: CalendarClock },
+  { href: "/goals", label: "Goals", icon: PiggyBank },
   { href: "/cards", label: "Cards", icon: CreditCard },
   { href: "/categories", label: "Categories", icon: Tags },
   { href: "/labels", label: "Labels", icon: Tag },

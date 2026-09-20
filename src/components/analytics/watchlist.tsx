@@ -42,6 +42,19 @@ const KIND_LABEL: Record<AssessmentAnomaly["kind"], string> = {
   duplicate: "Possible duplicate",
   "logging-gap": "Data coverage",
   "missed-bill": "Bill follow-up",
+  "recurring-new": "New recurring charge",
+  "recurring-ended": "Recurring charge stopped",
+  "recurring-amount-change": "Recurring charge changed",
+  "recurring-renews-soon": "Renews soon",
+  "bill-due-soon": "Bill due soon",
+  "bill-snoozed": "Bill put off",
+  "bill-under-budgeted": "Bill costs more than budgeted",
+  "missing-expected-income": "Expected income not logged",
+  "low-coverage": "Data coverage",
+  "insufficient-history": "Not enough history",
+  "goal-off-pace": "Savings goal",
+  "goal-stalled": "Savings goal",
+  "cash-shortfall": "Cash shortfall risk",
 };
 
 const SEVERITY_STYLE: Record<
@@ -98,13 +111,34 @@ const SCOPE_SECTIONS: readonly ScopeSectionCopy[] = [
 const groupOf = (finding: AssessmentAnomaly): AssessmentAnomalyScope =>
   finding.scope === "period" ? "period" : "outstanding";
 
+type FindingDestination = NonNullable<AssessmentAnomaly["drillDown"]>["destination"];
+
+/**
+ * Where a finding's follow-up goes.
+ *
+ * Resolved once so the link and its label cannot disagree. They were computed by two separate
+ * conditions, one of which special-cased `missed-bill` and the other of which did not, so a bill
+ * finding that arrived without a drill-down would have offered "View transactions" and opened the
+ * Bills page.
+ */
+const destinationOf = (finding: AssessmentAnomaly): FindingDestination =>
+  finding.drillDown?.destination ?? (finding.kind === "missed-bill" ? "bills" : "transactions");
+
+const ACTION_LABEL: Record<FindingDestination, string> = {
+  transactions: "View transactions",
+  bills: "Go to Bills",
+  goals: "Go to Goals",
+};
+
 const findingHref = (
   finding: AssessmentAnomaly,
   period: AssessmentPeriod,
   returnTo: string,
 ): string => {
   const drillDown = finding.drillDown;
-  if (drillDown?.destination === "bills" || finding.kind === "missed-bill") return "/bills";
+  const destination = destinationOf(finding);
+  if (destination === "goals") return "/goals";
+  if (destination === "bills") return "/bills";
   return buildTransactionsHref({
     type: drillDown?.type,
     categoryId: drillDown?.categoryId,
@@ -183,9 +217,7 @@ function Finding({
           href={findingHref(finding, period, returnTo)}
           className="-mb-2 -ml-2"
         >
-          {finding.drillDown?.destination === "bills" || finding.kind === "missed-bill"
-            ? "Go to Bills"
-            : "View transactions"}
+          {ACTION_LABEL[destinationOf(finding)]}
         </ActionLink>
         <button
           type="button"

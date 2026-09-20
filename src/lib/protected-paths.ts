@@ -27,6 +27,8 @@ export const PROTECTED_PAGE_PATHS = [
   "/quick-log",
   "/transactions",
   "/bills",
+  // Savings goals: targets, what has been put aside and when it is due.
+  "/goals",
   // Credit cards: balances, statement lines and payments.
   "/cards",
   "/categories",

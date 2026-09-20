@@ -11,6 +11,8 @@ import type {
   TransactionLabel,
   BillLabel,
   BudgetAllocationKind,
+  SavingsGoalKind,
+  SavingsGoalStatus,
 } from "@prisma/client";
 
 export type {
@@ -26,6 +28,8 @@ export type {
   TransactionLabel,
   BillLabel,
   BudgetAllocationKind,
+  SavingsGoalKind,
+  SavingsGoalStatus,
 };
 
 /** Transaction with its category (and optional bill) relation */
@@ -691,16 +695,55 @@ export interface AssessmentHeadline {
   monthsOfRunway: number | null;
 }
 
+/** A bill that has not come due yet but will shortly - a claim on cash, not a problem. */
+export interface AssessmentDueSoonBill {
+  id: string;
+  description: string;
+  categoryName: string;
+  /** "YYYY-MM-DD" in the user's own calendar. */
+  dueDate: string;
+  daysUntilDue: number;
+  /** What it is likely to cost - derived for a variable bill, the stored figure otherwise. */
+  amount: number;
+  isEstimate: boolean;
+}
+
+/**
+ * One occurrence deferred again and again rather than paid or skipped.
+ *
+ * Counted per *occurrence*, not per bill: a bill snoozed once a month for a year is twelve
+ * separate decisions about twelve separate charges, while the same charge deferred four times is
+ * one bill nobody intends to pay. Only the second is worth saying anything about.
+ *
+ * Each fresh snooze of an occurrence writes its own log row (`settleBill` only collapses a retry
+ * against a deferral that has not yet lapsed), so the row count is the decision count.
+ */
+export interface AssessmentSnoozedBill {
+  id: string;
+  description: string;
+  categoryName: string;
+  /** The occurrence being deferred, "YYYY-MM-DD". */
+  dueDate: string;
+  snoozes: number;
+  /** When the current deferral runs out, or null when it already has. */
+  snoozedUntil: string | null;
+  amount: number;
+  isEstimate: boolean;
+}
+
 export interface AssessmentBillFacts {
   /** Resolved against the user's own calendar day, not the server's. */
   asOf: string;
   missed: AssessmentMissedBill[];
   accuracy: AssessmentBillAccuracy[];
   unlinkedPayments: AssessmentUnlinkedBillPayment[];
-  /** Bills due within the next 14 days, as a forward-looking claim on cash. */
+  /** Bills due within the next 14 days, as a forward-looking claim on cash. Soonest first. */
+  dueSoon: AssessmentDueSoonBill[];
   dueSoonCount: number;
   dueSoonTotal: number;
   dueSoonIsEstimate: boolean;
+  /** Occurrences deferred repeatedly, most-deferred first. */
+  repeatedlySnoozed: AssessmentSnoozedBill[];
 }
 
 /** One category's movement between the compared month and the baseline months. */
@@ -743,6 +786,37 @@ export interface AssessmentRecurringItem {
   isNew: boolean;
   firstSeen: string;
   lastSeen: string;
+  /**
+   * Median days between consecutive charge days — the cadence, not a nominal billing period.
+   *
+   * Measured rather than assumed: a "monthly" subscription billed on the 1st has a cadence of
+   * 28-31 days depending on the months it has run through, and a median is what survives that
+   * without a calendar model nobody maintains. Null with fewer than two charge days, where there
+   * is no gap to measure.
+   */
+  intervalDays: number | null;
+  /** `lastSeen` plus `intervalDays`, or null without a cadence. When the next charge is due. */
+  expectedNextDate: string | null;
+  /** Days past `expectedNextDate`, 0 when it has not arrived yet or is unknown. */
+  daysOverdue: number;
+  /**
+   * The most recent charge's amount.
+   *
+   * One charge, not the day's total: several rows on one day are a double submit far more often
+   * than a genuine price rise, and summing them would report the duplicate as one.
+   */
+  latestAmount: number;
+  /** Average of every charge before the latest, or null when the latest is the only one. */
+  priorAvgAmount: number | null;
+  /**
+   * The day the charge last *became* its current amount: the first of the unbroken run at
+   * `latestAmount`, which is `lastSeen` itself when the newest charge differs from the one before.
+   *
+   * The identity of a price episode, as distinct from the price. A charge that goes 499, 699, 499,
+   * 699 has two separate rises to 699, and keying a finding on the amount alone made the second one
+   * inherit the first one's resolution and vanish.
+   */
+  latestAmountSince: string;
 }
 
 export interface AssessmentRecurringFacts {
@@ -751,6 +825,14 @@ export interface AssessmentRecurringFacts {
   /** Monthly cost of everything recurring, as a share of average monthly spend. */
   monthlyBase: number;
   monthlyBasePct: number | null;
+  /**
+   * Deposits that arrive on a rhythm, largest first - a salary, an allowance, a standing transfer.
+   *
+   * The same shape and the same cadence arithmetic as the expense side, asked of the other half of
+   * the ledger. `isNew` is always false here: a new income source is good news nobody needs an
+   * alert about.
+   */
+  income: AssessmentRecurringItem[];
 }
 
 /** Two rows the same day, description and amount — almost always a double submit. */
@@ -791,6 +873,114 @@ export interface AssessmentHygieneFacts {
   incomeSources: Array<{ source: string; count: number; total: number; pct: number | null }>;
 }
 
+/** One contribution into a goal, or a withdrawal back out of it (a negative amount). */
+export interface SavingsGoalContributionRow {
+  id: string;
+  amount: number;
+  /** "YYYY-MM-DD" in the user's own calendar. */
+  date: string;
+  note: string | null;
+}
+
+/**
+ * Whether a goal will arrive on time, and what it would take.
+ *
+ * `requiredMonthly` answers "what should I be putting in"; `projectedCompletion` runs the rate
+ * actually observed forward and answers "what will happen". The two disagreeing is the finding.
+ */
+export interface SavingsGoalPace {
+  remaining: number;
+  /**
+   * What is left divided by the months left, or null when there is no deadline or it has passed.
+   * Null is not zero: zero would read as "nothing more needed".
+   */
+  requiredMonthly: number | null;
+  /**
+   * The rate this goal has actually been funded at, measured from its **first contribution** and
+   * not from the day it was created - a goal set up in January and first funded in June has been
+   * running one month, and dividing by six condemns a saver who is on track.
+   *
+   * The opening deposit is excluded from the numerator, because it did not accrue over the window
+   * it opens: counting it divides N deposits by the N-1 intervals between them and overstates the
+   * rate by N/(N-1). Null until a second contribution exists on a later day - one deposit is an
+   * amount, not a rate.
+   */
+  observedMonthly: number | null;
+  /** Days to the target date; negative once it has passed, null without one. */
+  daysRemaining: number | null;
+  /** Where the observed rate lands the goal, or null when there is no rate to run forward. */
+  projectedCompletion: string | null;
+  /**
+   * - `funded` - the target is met.
+   * - `on-track` / `behind` - the observed rate against what is required, within a tolerance.
+   * - `stalled` - a deadline, but nothing in yet (or it all came back out).
+   * - `underway` - money is going in, but not from enough days to state a rate. Distinct from
+   *   `stalled`, which asserts the opposite and was being reported for it.
+   * - `overdue` - the date has passed and it is still short.
+   * - `no-deadline` - progress is knowable, pace is not. Not an error and not "fine".
+   */
+  state: "funded" | "on-track" | "behind" | "stalled" | "underway" | "overdue" | "no-deadline";
+}
+
+/** Everything the goals page and the Watchlist read about one goal. */
+export interface SavingsGoalSummary {
+  id: string;
+  name: string;
+  kind: SavingsGoalKind;
+  status: SavingsGoalStatus;
+  targetAmount: number;
+  targetDate: string | null;
+  notes: string | null;
+  /** The signed sum of every contribution - money assigned on purpose, never a residual. */
+  funded: number;
+  /** Clamped to 100 for the progress bar; `funded` keeps the real figure. */
+  fundedPct: number;
+  lastContributedOn: string | null;
+  contributionCount: number;
+  pace: SavingsGoalPace;
+}
+
+/** One claim on cash between today and the next expected deposit. */
+export interface AssessmentCashClaim {
+  /** "YYYY-MM-DD" in the user's own calendar. */
+  date: string;
+  label: string;
+  amount: number;
+  /**
+   * A scheduled bill, or a charge that simply keeps coming back.
+   *
+   * A recurring charge that matches a bill by name is left out entirely: bill payments are
+   * ordinary transactions, so the same money is already in the schedule and counting both would
+   * forecast a shortfall that only exists in the arithmetic.
+   */
+  source: "bill" | "recurring";
+}
+
+/**
+ * Where the tracked balance is headed before money next comes in.
+ *
+ * **Directional, and the wording everywhere says so.** `openingBalance` is `headline.runningBalance`
+ * - every income the user has logged minus every expense - which is not a bank balance: it knows
+ * nothing about the money that was in the account before tracking began, nothing about anything
+ * spent without being logged, and nothing about a card's opening balance. It is the only balance
+ * the app has until accounts and opening balances are modelled, and a forecast built on it is
+ * worth having as long as it is never dressed up as a statement.
+ */
+export interface AssessmentCashForecast {
+  /** Null when the caller supplied no all-time totals; deliberately not zero. */
+  openingBalance: number | null;
+  /** The last day of the projection: the next expected deposit, or the horizon cap. */
+  through: string;
+  /** When money is next expected in, or null when no source has a rhythm to project from. */
+  nextIncomeDate: string | null;
+  /** The lowest the tracked balance is projected to reach, and the day it happens. */
+  lowestBalance: number | null;
+  lowestOn: string | null;
+  /** Everything claimed against the balance before `through`, soonest first. */
+  claims: AssessmentCashClaim[];
+  committed: number;
+}
+
 /** A pattern in the assessed period that the baseline says should not be there. */
 export type AssessmentAnomalyKind =
   | "budget-threshold"
@@ -804,7 +994,20 @@ export type AssessmentAnomalyKind =
   | "missing-income"
   | "duplicate"
   | "logging-gap"
-  | "missed-bill";
+  | "missed-bill"
+  | "recurring-new"
+  | "recurring-ended"
+  | "recurring-amount-change"
+  | "recurring-renews-soon"
+  | "bill-due-soon"
+  | "bill-snoozed"
+  | "bill-under-budgeted"
+  | "missing-expected-income"
+  | "low-coverage"
+  | "insufficient-history"
+  | "goal-off-pace"
+  | "goal-stalled"
+  | "cash-shortfall";
 
 /**
  * Whether a finding is measured inside the selected period, or describes a standing condition
@@ -828,7 +1031,7 @@ export type AssessmentAnomalyScope = "period" | "outstanding";
 
 /** The most focused destination available for a Watchlist finding. */
 export interface AssessmentAnomalyDrillDown {
-  destination: "transactions" | "bills";
+  destination: "transactions" | "bills" | "goals";
   type?: TransactionType;
   categoryId?: string;
   from?: string;
@@ -867,6 +1070,8 @@ export interface AssessmentFacts {
   confidence: AssessmentDataConfidence;
   headline: AssessmentHeadline;
   bills: AssessmentBillFacts;
+  /** Where the tracked balance is headed before money next comes in. Directional, never a promise. */
+  forecast: AssessmentCashForecast;
   trends: AssessmentTrendFacts;
   recurring: AssessmentRecurringFacts;
   hygiene: AssessmentHygieneFacts;

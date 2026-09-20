@@ -42,6 +42,9 @@ export default async function AppLayout({
       timezoneOffset: true,
       hideAmounts: true,
       role: true,
+      watchlistOutlierRatio: true,
+      watchlistLargeAmount: true,
+      watchlistDuplicateAlerts: true,
     },
   });
 
@@ -92,6 +95,11 @@ export default async function AppLayout({
           showDayName: dbUser?.showDayName ?? true,
           dayNameFormat: (dbUser?.dayNameFormat as "FULL" | "SHORT") ?? "SHORT",
           emailBillReminders: dbUser?.emailBillReminders ?? false,
+          // Defaults mirror the columns'. A user row that failed to load must produce the
+          // behaviour the detectors had before any of this was configurable.
+          watchlistOutlierRatio: dbUser?.watchlistOutlierRatio ?? 3,
+          watchlistLargeAmount: dbUser?.watchlistLargeAmount ?? null,
+          watchlistDuplicateAlerts: dbUser?.watchlistDuplicateAlerts ?? true,
           telegramPromptAvailable,
           telegramDailyPrompt: dbUser?.telegramDailyPrompt ?? false,
           telegramDailyPromptTime: dbUser?.telegramDailyPromptTime ?? "20:00",

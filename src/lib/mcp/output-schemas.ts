@@ -45,6 +45,10 @@ import type {
   AssessmentMonthCoverage,
   AssessmentRecurringFacts,
   AssessmentRecurringItem,
+  AssessmentDueSoonBill,
+  AssessmentSnoozedBill,
+  AssessmentCashClaim,
+  AssessmentCashForecast,
   AssessmentTrendFacts,
   AssessmentUnlinkedBillPayment,
 } from "@/types";
@@ -796,16 +800,60 @@ const headline = z.object({
 });
 assertExact<z.infer<typeof headline>, AssessmentHeadline>(true);
 
+const dueSoonBill = z.object({
+  id: z.string(),
+  description: z.string(),
+  categoryName: z.string(),
+  dueDate: z.string(),
+  daysUntilDue: z.number(),
+  amount: z.number(),
+  isEstimate: z.boolean(),
+});
+assertExact<z.infer<typeof dueSoonBill>, AssessmentDueSoonBill>(true);
+
+const snoozedBill = z.object({
+  id: z.string(),
+  description: z.string(),
+  categoryName: z.string(),
+  dueDate: z.string(),
+  snoozes: z.number(),
+  snoozedUntil: z.string().nullable(),
+  amount: z.number(),
+  isEstimate: z.boolean(),
+});
+assertExact<z.infer<typeof snoozedBill>, AssessmentSnoozedBill>(true);
+
 const billFacts = z.object({
   asOf: z.string(),
   missed: z.array(missedBill),
   accuracy: z.array(billAccuracy),
   unlinkedPayments: z.array(unlinkedBillPayment),
+  dueSoon: z.array(dueSoonBill),
   dueSoonCount: z.number(),
   dueSoonTotal: z.number(),
   dueSoonIsEstimate: z.boolean(),
+  repeatedlySnoozed: z.array(snoozedBill),
 });
 assertExact<z.infer<typeof billFacts>, AssessmentBillFacts>(true);
+
+const cashClaim = z.object({
+  date: z.string(),
+  label: z.string(),
+  amount: z.number(),
+  source: z.enum(["bill", "recurring"]),
+});
+assertExact<z.infer<typeof cashClaim>, AssessmentCashClaim>(true);
+
+const cashForecast = z.object({
+  openingBalance: z.number().nullable(),
+  through: z.string(),
+  nextIncomeDate: z.string().nullable(),
+  lowestBalance: z.number().nullable(),
+  lowestOn: z.string().nullable(),
+  claims: z.array(cashClaim),
+  committed: z.number(),
+});
+assertExact<z.infer<typeof cashForecast>, AssessmentCashForecast>(true);
 
 const categoryMovement = z.object({
   category: z.string(),
@@ -847,6 +895,12 @@ const recurringItem = z.object({
   isNew: z.boolean(),
   firstSeen: z.string(),
   lastSeen: z.string(),
+  intervalDays: z.number().nullable(),
+  expectedNextDate: z.string().nullable(),
+  daysOverdue: z.number(),
+  latestAmount: z.number(),
+  priorAvgAmount: z.number().nullable(),
+  latestAmountSince: z.string(),
 });
 assertExact<z.infer<typeof recurringItem>, AssessmentRecurringItem>(true);
 
@@ -855,6 +909,7 @@ const recurringFacts = z.object({
   newItems: z.array(recurringItem),
   monthlyBase: z.number(),
   monthlyBasePct: z.number().nullable(),
+  income: z.array(recurringItem),
 });
 assertExact<z.infer<typeof recurringFacts>, AssessmentRecurringFacts>(true);
 
@@ -910,6 +965,19 @@ const anomaly = z.object({
     "duplicate",
     "logging-gap",
     "missed-bill",
+    "recurring-new",
+    "recurring-ended",
+    "recurring-amount-change",
+    "recurring-renews-soon",
+    "bill-due-soon",
+    "bill-snoozed",
+    "bill-under-budgeted",
+    "missing-expected-income",
+    "low-coverage",
+    "insufficient-history",
+    "goal-off-pace",
+    "goal-stalled",
+    "cash-shortfall",
   ]),
   // "outstanding" means the selected period does not bound the finding - a missed bill is judged
   // against its own payment history, so it is true now rather than true of the window.
@@ -921,7 +989,7 @@ const anomaly = z.object({
   baseline: z.number().nullable(),
   changePct: z.number().nullable(),
   drillDown: z.object({
-    destination: z.enum(["transactions", "bills"]),
+    destination: z.enum(["transactions", "bills", "goals"]),
     type: transactionType.optional(),
     categoryId: z.string().optional(),
     from: z.string().optional(),
@@ -946,6 +1014,7 @@ export const assessmentFactsOutput = {
   confidence: dataConfidence,
   headline: headline,
   bills: billFacts,
+  forecast: cashForecast,
   trends: trendFacts,
   recurring: recurringFacts,
   hygiene: hygieneFacts,

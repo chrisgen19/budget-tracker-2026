@@ -5,7 +5,7 @@ import { stagger } from "@/components/analytics/motion-variants";
 import { formatCurrency } from "@/lib/utils";
 import { HeadlineCard } from "./headline-card";
 import { ConfidenceCard } from "./confidence-card";
-import { PatternsCard } from "./patterns-card";
+import { PatternsCard, OutstandingCard } from "./patterns-card";
 import { MissedBillsCard, BillAccuracyCard } from "./bills-card";
 import { TrendsCard, RecurringCard } from "./trends-card";
 import { HygieneCard } from "./hygiene-card";
@@ -58,6 +58,7 @@ export function AssessmentFactsPanel({ facts, isLoading, isError, currency, hide
       <ConfidenceCard confidence={facts.confidence} />
       <PatternsCard anomalies={facts.anomalies} fmt={fmt} />
       <MissedBillsCard bills={facts.bills} fmt={fmt} />
+      <OutstandingCard anomalies={facts.anomalies} fmt={fmt} />
       <TrendsCard trends={facts.trends} fmt={fmt} />
       <BillAccuracyCard bills={facts.bills} fmt={fmt} />
       <RecurringCard recurring={facts.recurring} fmt={fmt} />

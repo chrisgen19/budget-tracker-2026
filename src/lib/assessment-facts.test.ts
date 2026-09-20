@@ -13,6 +13,7 @@ import {
   computeHeadline,
   computeHygiene,
   detectBudgetWatchlistAnomalies,
+  DEFAULT_WATCHLIST_THRESHOLDS,
   foldDescription,
   longestToken,
   monthRange,
@@ -21,6 +22,7 @@ import {
   type FactBill,
   type FactTransaction,
 } from "./assessment-facts";
+import { watchlistFindingKey } from "./watchlist-findings";
 import type { BudgetPerformanceData } from "@/types";
 
 let seq = 0;
@@ -552,17 +554,36 @@ describe("buildAssessmentFacts", () => {
   });
 
   /**
-   * Bills are judged against their own full payment history rather than the window, so a missed
-   * bill is true *now* rather than true of the period. Every other finding either filters on
-   * `inPeriod` or compares the period against baseline months. Carrying that distinction is what
-   * stopped the Watchlist dating a live overdue bill to whatever period was on screen (#340).
+   * Bills are judged against their own full payment history rather than the window, and a
+   * recurring charge is judged against its own cadence and today's date, so both are true *now*
+   * rather than true of the period. Every finding not listed here either filters on `inPeriod` or
+   * compares the period against baseline months. Carrying that distinction is what stopped the
+   * Watchlist dating a live overdue bill to whatever period was on screen (#340).
+   *
+   * Asserted against a literal list rather than against `ANOMALY_SCOPE` itself, which would only
+   * restate the implementation: the point is that the set of findings a period does *not* bound
+   * stays a deliberate, reviewed one.
    */
-  it("marks the missed bill as outstanding and everything else as period-scoped", () => {
+  it("marks bill and recurring-charge findings as outstanding and everything else as period-scoped", () => {
+    const outstandingKinds = new Set([
+      "missed-bill",
+      "recurring-new",
+      "recurring-ended",
+      "recurring-amount-change",
+      "recurring-renews-soon",
+      "bill-due-soon",
+      "bill-snoozed",
+      "bill-under-budgeted",
+      "missing-expected-income",
+      "goal-off-pace",
+      "goal-stalled",
+      "cash-shortfall",
+    ]);
     const anomalies = facts().anomalies;
     expect(anomalies.length).toBeGreaterThan(1);
 
     for (const a of anomalies) {
-      expect(a.scope, `${a.kind} scope`).toBe(a.kind === "missed-bill" ? "outstanding" : "period");
+      expect(a.scope, `${a.kind} scope`).toBe(outstandingKinds.has(a.kind) ? "outstanding" : "period");
     }
   });
 
@@ -864,5 +885,1023 @@ describe("assessBillAccuracy monthly series", () => {
 
   it("leaves the series empty for a fixed bill — seven copies of one number is noise", () => {
     expect(assessBillAccuracy(bill({ amount: 1000, payments: payments(1000, 1000, 1000) }), -480).monthlySeries).toEqual([]);
+  });
+});
+
+/**
+ * Changes to the fixed base underneath the discretionary spending.
+ *
+ * Driven through `buildAssessmentFacts` rather than against the detector directly: the cadence
+ * these findings turn on is computed in `computeRecurring`, so a test that handed the detector its
+ * own intervals would prove the prose and nothing about the arithmetic behind it.
+ */
+describe("recurring-charge findings", () => {
+  const charges = (days: string[], amounts: number[] = []): FactTransaction[] =>
+    days.map((localDate, i) =>
+      tx({ localDate, amount: amounts[i] ?? 499, description: "Netflix", categoryName: "Entertainment" }));
+
+  const factsOn = (today: string, transactions: FactTransaction[]) =>
+    buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: `${today.slice(0, 7)}-01`, to: `${today.slice(0, 7)}-28`, label: "period", granularity: "monthly" },
+      today,
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions,
+      bills: [],
+    });
+
+  const kinds = (today: string, transactions: FactTransaction[]): string[] =>
+    factsOn(today, transactions).anomalies.map((a) => a.kind);
+
+  it("measures the cadence from the gaps between charge days rather than assuming a month", () => {
+    const { items } = computeRecurring(charges(["2026-04-03", "2026-05-03", "2026-06-03", "2026-07-03"]), "2026-07-10", 10_000);
+    expect(items[0]).toMatchObject({ intervalDays: 30, expectedNextDate: "2026-08-02", daysOverdue: 0 });
+  });
+
+  /** Two rows on one day are a double submit far more often than a second charge. */
+  it("ignores a repeated day when measuring the cadence", () => {
+    const { items } = computeRecurring(
+      charges(["2026-04-03", "2026-05-03", "2026-05-03", "2026-06-03", "2026-07-03"]),
+      "2026-07-10",
+      10_000,
+    );
+    expect(items[0].intervalDays).toBe(30);
+  });
+
+  /** Amount and day used to be parallel arrays, one of which was sorted in place. */
+  it("reads the latest amount off the latest day, whatever order the rows arrive in", () => {
+    const { items } = computeRecurring(
+      charges(["2026-07-03", "2026-04-03", "2026-06-03", "2026-05-03"], [699, 499, 499, 499]),
+      "2026-07-10",
+      10_000,
+    );
+    expect(items[0]).toMatchObject({ latestAmount: 699, priorAvgAmount: 499, lastSeen: "2026-07-03" });
+  });
+
+  it("warns before an established charge renews", () => {
+    const found = factsOn("2026-08-30", charges(["2026-04-03", "2026-05-03", "2026-06-03", "2026-07-03", "2026-08-03"]))
+      .anomalies.find((a) => a.kind === "recurring-renews-soon");
+    expect(found).toMatchObject({ scope: "outstanding", severity: "low" });
+    expect(found?.title).toContain("2026-09-03");
+  });
+
+  /** A yearly charge four days late is not news; a weekly one is. The lapse is measured in cycles. */
+  it("reports an established charge that is a whole cycle past due", () => {
+    expect(kinds("2026-08-30", charges(["2026-03-03", "2026-04-03", "2026-05-03", "2026-06-03"])))
+      .toContain("recurring-ended");
+  });
+
+  it("does not call a charge stopped before its next one is even due", () => {
+    expect(kinds("2026-08-10", charges(["2026-04-03", "2026-05-03", "2026-06-03", "2026-07-03", "2026-08-03"])))
+      .not.toContain("recurring-ended");
+  });
+
+  /** Two sightings is a habit forming, not a cadence worth calling a lapse against. */
+  it("leaves a charge seen only twice out of the lapse and renewal checks", () => {
+    const found = kinds("2026-08-30", charges(["2026-05-03", "2026-06-03"]));
+    expect(found).not.toContain("recurring-ended");
+    expect(found).not.toContain("recurring-renews-soon");
+  });
+
+  it("reports a price rise against the charge's own average", () => {
+    const found = factsOn("2026-08-10", charges(
+      ["2026-04-03", "2026-05-03", "2026-06-03", "2026-07-03", "2026-08-03"],
+      [499, 499, 499, 499, 699],
+    )).anomalies.find((a) => a.kind === "recurring-amount-change");
+    expect(found).toMatchObject({ severity: "medium", current: 699, baseline: 499, changePct: 40 });
+  });
+
+  /**
+   * The threshold is on the absolute change, so a drop reaches this finding too. Every other part
+   * of it already branched on the direction -- only the closing sentence was written as though a
+   * charge could only ever go up, so a drop read "is 30% below ... A price rise ... costs that much".
+   */
+  it("says a price drop dropped, not rose", () => {
+    const found = factsOn("2026-08-10", charges(
+      ["2026-04-03", "2026-05-03", "2026-06-03", "2026-07-03", "2026-08-03"],
+      [499, 499, 499, 499, 349],
+    )).anomalies.find((a) => a.kind === "recurring-amount-change");
+    expect(found).toMatchObject({ severity: "low", current: 349, baseline: 499 });
+    expect(found?.detail).toContain("below");
+    expect(found?.detail).toContain("A price drop");
+    expect(found?.detail).not.toContain("A price rise");
+  });
+
+  it("leaves a charge that moved less than a fifth alone", () => {
+    expect(kinds("2026-08-10", charges(
+      ["2026-04-03", "2026-05-03", "2026-06-03", "2026-07-03", "2026-08-03"],
+      [499, 499, 499, 499, 549],
+    ))).not.toContain("recurring-amount-change");
+  });
+
+  it("announces a charge that did not exist in the earlier months", () => {
+    const found = factsOn("2026-08-10", charges(["2026-07-03", "2026-08-03"]))
+      .anomalies.find((a) => a.kind === "recurring-new");
+    expect(found).toMatchObject({ scope: "outstanding" });
+    expect(found?.title).toContain("Netflix");
+  });
+
+  /**
+   * The Watchlist tab card renders `title` and `detail` and nothing else, so a sentence that
+   * promises a cost has to state one or stop promising. It said "costs about one payment every 31
+   * days", which is a cadence; the amount only ever travelled in `current`.
+   */
+  it("describes a new charge's cadence without claiming to state its cost", () => {
+    const found = factsOn("2026-08-10", charges(["2026-07-03", "2026-08-03"]))
+      .anomalies.find((a) => a.kind === "recurring-new");
+    expect(found?.detail).toContain("bills about every 31 days");
+    expect(found?.detail).not.toContain("costs about");
+  });
+
+  /**
+   * The identity a resolve or snooze is stored against is the charge, the question, and which
+   * occurrence of that question -- never the running figures, which would return the finding the
+   * moment one more month nudged an average.
+   */
+  it("keys each question about a charge separately from the figures it reports", () => {
+    const found = factsOn("2026-08-30", charges(["2026-03-03", "2026-04-03", "2026-05-03", "2026-06-03"]))
+      .anomalies.find((a) => a.kind === "recurring-ended");
+    expect(found?.stateKey).toBe("recurring:netflix:ended:2026-06-03");
+  });
+
+  /**
+   * A resolve never expires, so a key naming only the charge and the question buried every later
+   * answer to it: resolving September's renewal meant Netflix never raised a renewal finding again.
+   * `expectedNextDate` holds still all cycle and moves when the charge lands, which is exactly the
+   * identity wanted -- a snooze still survives the date drawing nearer.
+   */
+  it("gives each renewal cycle its own key", () => {
+    const sep = factsOn("2026-08-30", charges(["2026-04-03", "2026-05-03", "2026-06-03", "2026-07-03", "2026-08-03"]))
+      .anomalies.find((a) => a.kind === "recurring-renews-soon");
+    const oct = factsOn("2026-09-29", charges(
+      ["2026-04-03", "2026-05-03", "2026-06-03", "2026-07-03", "2026-08-03", "2026-09-03"],
+    )).anomalies.find((a) => a.kind === "recurring-renews-soon");
+    expect(sep?.stateKey).toBe("recurring:netflix:renews-soon:2026-09-03");
+    expect(oct?.stateKey).not.toBe(sep?.stateKey);
+  });
+
+  /**
+   * ...and a charge that returns to its old price and rises again is a second episode, not the
+   * first one recurring. 499, 499, 699, 499, 699 reaches 699 twice; keyed on the amount alone both
+   * rises shared `...:amount-change:699`, so resolving the first hid the second for good.
+   */
+  it("gives a repeat of the same price its own key", () => {
+    const base = ["2026-03-03", "2026-04-03", "2026-05-03", "2026-06-03"];
+    const first = factsOn("2026-07-10", charges(base, [499, 499, 499, 699]))
+      .anomalies.find((a) => a.kind === "recurring-amount-change");
+    const again = factsOn("2026-09-10", charges(
+      [...base, "2026-07-03", "2026-08-03"],
+      [499, 499, 499, 699, 499, 699],
+    )).anomalies.find((a) => a.kind === "recurring-amount-change");
+    expect(first?.stateKey).toBe("recurring:netflix:amount-change:699@2026-06-03");
+    expect(again?.stateKey).toBe("recurring:netflix:amount-change:699@2026-08-03");
+  });
+
+  /** But staying at the new price is the same episode, so a resolved rise stays resolved. */
+  it("keeps one key while the charge stays at the new price", () => {
+    const base = ["2026-03-03", "2026-04-03", "2026-05-03", "2026-06-03"];
+    const risen = factsOn("2026-07-10", charges(base, [499, 499, 499, 699]))
+      .anomalies.find((a) => a.kind === "recurring-amount-change");
+    const stillRisen = factsOn("2026-08-10", charges([...base, "2026-07-03"], [499, 499, 499, 699, 699]))
+      .anomalies.find((a) => a.kind === "recurring-amount-change");
+    expect(risen?.stateKey).toBe("recurring:netflix:amount-change:699@2026-06-03");
+    expect(stillRisen?.stateKey).toBe(risen?.stateKey);
+  });
+
+  /** Resolving a rise to 699 must not silence a later one to 1299. */
+  it("gives a second price episode its own key", () => {
+    const first = factsOn("2026-08-10", charges(
+      ["2026-04-03", "2026-05-03", "2026-06-03", "2026-07-03", "2026-08-03"],
+      [499, 499, 499, 499, 699],
+    )).anomalies.find((a) => a.kind === "recurring-amount-change");
+    const later = factsOn("2026-11-10", charges(
+      ["2026-04-03", "2026-05-03", "2026-06-03", "2026-07-03", "2026-08-03", "2026-09-03", "2026-10-03", "2026-11-03"],
+      [499, 499, 499, 499, 699, 699, 699, 1299],
+    )).anomalies.find((a) => a.kind === "recurring-amount-change");
+    expect(first?.stateKey).toBe("recurring:netflix:amount-change:699@2026-08-03");
+    expect(later?.stateKey).toBe("recurring:netflix:amount-change:1299@2026-11-03");
+  });
+
+  /**
+   * `recurring.items` is cut to 15 for the payload and ordered by total spend, which ranks a daily
+   * coffee above a monthly subscription. Detecting against that list dropped the 16th charge
+   * entirely -- no lapse, renewal or price question was ever asked of it.
+   */
+  it("asks about a charge ranked below the fifteen the payload carries", () => {
+    const rows: FactTransaction[] = [];
+    for (let i = 0; i < 15; i += 1) {
+      for (const day of ["2026-05-10", "2026-06-10", "2026-07-10", "2026-08-10"]) {
+        rows.push(tx({ localDate: day, amount: 5000, description: `Big Charge ${i}`, categoryName: "Entertainment" }));
+      }
+    }
+    for (const day of ["2026-02-05", "2026-03-05", "2026-04-05", "2026-05-05"]) {
+      rows.push(tx({ localDate: day, amount: 149, description: "Tiny Sub", categoryName: "Entertainment" }));
+    }
+    const facts = factsOn("2026-08-20", rows);
+    expect(facts.recurring.items.some((i) => i.description === "Tiny Sub")).toBe(false);
+    expect(facts.anomalies.find((a) => a.kind === "recurring-ended")?.title).toContain("Tiny Sub");
+  });
+
+  /**
+   * The cap belongs on what gets said, not on which charges are asked -- and it sits above what a
+   * person will realistically resolve, because it is applied *before* suppression. A cap of three
+   * with three resolved shows an empty group and hides the fourth charge for good.
+   */
+  it("names every stopped charge up to the cap, not merely three", () => {
+    const rows: FactTransaction[] = [];
+    for (let i = 0; i < 6; i += 1) {
+      for (const day of ["2026-02-05", "2026-03-05", "2026-04-05", "2026-05-05"]) {
+        rows.push(tx({ localDate: day, amount: 500 + i, description: `Gone ${i}`, categoryName: "Entertainment" }));
+      }
+    }
+    const ended = factsOn("2026-08-20", rows).anomalies.filter((a) => a.kind === "recurring-ended");
+    expect(ended).toHaveLength(6);
+  });
+
+  /**
+   * This layer caps nothing per kind. The payload bound lives at the assembly point in
+   * `collectAssessmentFacts`, where the goal and budget findings have joined, and the display cap
+   * lives in the route, after suppression -- see `watchlist-cap.test.ts`. Thirty stopped charges
+   * are thirty findings out of here, which is what gives suppression something to reveal.
+   */
+  it("emits every stopped charge, capping none of them", () => {
+    const rows: FactTransaction[] = [];
+    for (let i = 0; i < 30; i += 1) {
+      for (const day of ["2026-02-05", "2026-03-05", "2026-04-05", "2026-05-05"]) {
+        rows.push(tx({ localDate: day, amount: 500 + i, description: `Gone ${i}`, categoryName: "Entertainment" }));
+      }
+    }
+    const ended = factsOn("2026-08-20", rows).anomalies.filter((a) => a.kind === "recurring-ended");
+    expect(ended).toHaveLength(30);
+  });
+
+  /** And no detector caps to three any more -- six new charges are six findings out of this layer. */
+  it("names every new charge, leaving the display cap to the caller", () => {
+    const rows: FactTransaction[] = [];
+    for (let i = 0; i < 6; i += 1) {
+      for (const day of ["2026-07-05", "2026-08-05"]) {
+        rows.push(tx({ localDate: day, amount: 5000 + i, description: `Fresh ${i}`, categoryName: "Entertainment" }));
+      }
+    }
+    const fresh = factsOn("2026-08-20", rows).anomalies.filter((a) => a.kind === "recurring-new");
+    expect(fresh).toHaveLength(6);
+  });
+
+  it("points the follow-up at the charge's own history rather than at the period", () => {
+    const found = factsOn("2026-08-30", charges(["2026-03-03", "2026-04-03", "2026-05-03", "2026-06-03"]))
+      .anomalies.find((a) => a.kind === "recurring-ended");
+    expect(found?.drillDown).toEqual({
+      destination: "transactions",
+      type: "EXPENSE",
+      search: "Netflix",
+      from: "2026-03-03",
+      to: "2026-08-30",
+    });
+  });
+
+  /**
+   * A group is keyed on the fold, so both spellings of an apostrophe are one charge and the label
+   * is whichever arrived first. The ledger's own search is a plain case-insensitive `contains` that
+   * knows nothing about the fold, so linking the label sent a finding counting four payments to a
+   * list showing two.
+   */
+  it("follows a folded charge up on a needle that matches every spelling of it", () => {
+    const rows = ["2026-03-17", "2026-04-17", "2026-05-17", "2026-06-17"].map((localDate, i) =>
+      tx({
+        localDate,
+        amount: 12_000,
+        description: i % 2 === 0 ? "Angel\u2019s Rent" : "Angel's Rent",
+        categoryName: "Entertainment",
+      }));
+    const facts = factsOn("2026-08-30", rows);
+    const item = facts.recurring.items.find((i) => i.description.includes("Rent"));
+    const found = facts.anomalies.find((a) => a.kind === "recurring-ended");
+
+    expect(item?.occurrences).toBe(4);
+    // "Angel" over "Angel\u2019s": the apostrophe splits the token, which is the whole point --
+    // the needle now matches rows written either way. Longest of the three, and the date range
+    // below it is what keeps the resulting list narrow.
+    expect(found?.drillDown?.search).toBe("Angel");
+    expect(rows.every((r) => r.description.includes(found!.drillDown!.search!))).toBe(true);
+  });
+});
+
+/**
+ * What the bills are doing, beyond the occurrences nobody paid.
+ *
+ * Each of these figures was already being computed into `AssessmentBillFacts` and read by nothing:
+ * `dueSoonCount` had no per-bill detail behind it, snoozes were counted only to decide whether an
+ * occurrence was missed, and `under-budgeted` was a verdict on a card. The tests drive
+ * `buildAssessmentFacts` so the facts and the findings cannot drift apart.
+ */
+describe("bill-behaviour findings", () => {
+  const TODAY = "2026-09-06";
+  const factsFor = (bills: FactBill[]) =>
+    buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: "2026-09-01", to: "2026-09-30", label: "September 2026", granularity: "monthly" },
+      today: TODAY,
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions: [],
+      bills,
+    });
+
+  const findingOf = (kind: string, bills: FactBill[]) =>
+    factsFor(bills).anomalies.find((a) => a.kind === kind);
+
+  const snooze = (dueDate: Date, until: Date) => ({
+    dueDate,
+    status: "SNOOZED" as const,
+    transactionId: null,
+    snoozeUntil: until,
+  });
+
+  it("reports the bills already committed for the fortnight ahead", () => {
+    const found = findingOf("bill-due-soon", [
+      bill({ description: "Meralco", amount: 5500, nextDueDate: new Date(Date.UTC(2026, 8, 11)) }),
+      bill({ id: "b2", description: "Maynilad", amount: 900, nextDueDate: new Date(Date.UTC(2026, 8, 18)) }),
+    ]);
+    expect(found).toMatchObject({ scope: "outstanding", severity: "low", current: 6400 });
+    expect(found?.title).toContain("2 bills");
+    expect(found?.detail).toContain("Meralco on 2026-09-11");
+  });
+
+  it("raises the tone once a bill is days away rather than weeks", () => {
+    const found = findingOf("bill-due-soon", [bill({ nextDueDate: new Date(Date.UTC(2026, 8, 8)) })]);
+    expect(found?.severity).toBe("medium");
+  });
+
+  it("says nothing about a bill that is not due for a month", () => {
+    expect(findingOf("bill-due-soon", [bill({ nextDueDate: new Date(Date.UTC(2026, 9, 20)) })])).toBeUndefined();
+  });
+
+  /**
+   * `sort` is stable, so bills tied on `daysUntilDue` keep the order the loader handed them over
+   * in -- and that query has no `orderBy`, so Postgres may return them differently next request.
+   * The identity has to be the set, not the order it arrived in.
+   */
+  it("keys two bills due the same day the same way whichever order they arrive in", () => {
+    const due = new Date(Date.UTC(2026, 8, 11));
+    const meralco = bill({ id: "b1", description: "Meralco", nextDueDate: due });
+    const maynilad = bill({ id: "b2", description: "Maynilad", nextDueDate: due });
+    const one = findingOf("bill-due-soon", [meralco, maynilad]);
+    const two = findingOf("bill-due-soon", [maynilad, meralco]);
+    expect(one?.stateKey).toBe("bill:due-soon:b1@2026-09-11,b2@2026-09-11");
+    expect(two?.stateKey).toBe(one?.stateKey);
+    expect(two?.detail).toBe(one?.detail);
+  });
+
+  /**
+   * The identity is the set of bills, not a fixed string: a bill falling due next week must not be
+   * silently covered by a snooze taken over a different bill last week.
+   */
+  it("keys the due-soon finding on which bills are in it", () => {
+    const one = findingOf("bill-due-soon", [bill({ nextDueDate: new Date(Date.UTC(2026, 8, 11)) })]);
+    const two = findingOf("bill-due-soon", [
+      bill({ nextDueDate: new Date(Date.UTC(2026, 8, 11)) }),
+      bill({ id: "b2", description: "Maynilad", nextDueDate: new Date(Date.UTC(2026, 8, 12)) }),
+    ]);
+    expect(one?.stateKey).toBe("bill:due-soon:b1@2026-09-11");
+    expect(one?.stateKey).not.toBe(two?.stateKey);
+    expect(one?.findingKeyEvidence).not.toBe(two?.findingKeyEvidence);
+  });
+
+  /**
+   * ...and it is the set and nothing else. Without an explicit `stateKey` the finding key folds in
+   * `current`, which is `dueSoonTotal`, and a variable bill's share of that is re-derived from its
+   * payment history on every run. Correcting a typo'd payment moved the total while the set of
+   * bills stood still, and the resolve or snooze taken over it was silently lost.
+   */
+  it("survives a correction to a variable bill's payment history", () => {
+    const due = new Date(Date.UTC(2026, 8, 11));
+    const variable = (amount: number) => bill({
+      isVariable: true,
+      nextDueDate: due,
+      payments: [{ id: "p1", date: new Date(Date.UTC(2026, 7, 10)), amount }],
+    });
+    const before = findingOf("bill-due-soon", [variable(8000)]);
+    const after = findingOf("bill-due-soon", [variable(8200)]);
+    const period = { from: "2026-09-01", to: "2026-09-30" };
+
+    expect(before?.current).not.toBe(after?.current);
+    expect(watchlistFindingKey(before!, period)).toBe(watchlistFindingKey(after!, period));
+  });
+
+  it("reports an occurrence that has been deferred three times and still not settled", () => {
+    const due = new Date(Date.UTC(2026, 7, 5));
+    const found = findingOf("bill-snoozed", [bill({
+      nextDueDate: due,
+      occurrences: [
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 19))),
+        snooze(due, new Date(Date.UTC(2026, 8, 20))),
+      ],
+    })]);
+    expect(found).toMatchObject({ scope: "outstanding", severity: "medium" });
+    expect(found?.title).toContain("3 times");
+    expect(found?.detail).toContain("deferred again until 2026-09-20");
+  });
+
+  /**
+   * The app's snooze button wrote a bare log row with no replay guard until `settleBill` took over,
+   * so a lost-response retry or a double tap left several SNOOZED rows for one decision. This
+   * finding counts decisions, and three copies of one deferral is still one.
+   */
+  it("counts one deferral once however many rows it left behind", () => {
+    const due = new Date(Date.UTC(2026, 7, 5));
+    expect(findingOf("bill-snoozed", [bill({
+      nextDueDate: due,
+      occurrences: [
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+      ],
+    })])).toBeUndefined();
+  });
+
+  /** ...and the real deferrals still count, since each lands on a later day than the last. */
+  it("still reports three deferrals that arrived among duplicate rows", () => {
+    const due = new Date(Date.UTC(2026, 7, 5));
+    const found = findingOf("bill-snoozed", [bill({
+      nextDueDate: due,
+      occurrences: [
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 19))),
+        snooze(due, new Date(Date.UTC(2026, 7, 26))),
+      ],
+    })]);
+    expect(found?.title).toContain("3 times");
+  });
+
+  /** Twice is an ordinary week where the money was not there yet. */
+  it("leaves an occurrence deferred twice alone", () => {
+    const due = new Date(Date.UTC(2026, 7, 5));
+    expect(findingOf("bill-snoozed", [bill({
+      nextDueDate: due,
+      occurrences: [
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 19))),
+      ],
+    })])).toBeUndefined();
+  });
+
+  /** Telling someone they hesitated over a bill they have since paid is noise with a number on it. */
+  it("drops an occurrence that was deferred repeatedly and then paid", () => {
+    const due = new Date(Date.UTC(2026, 7, 5));
+    expect(findingOf("bill-snoozed", [bill({
+      nextDueDate: new Date(Date.UTC(2026, 8, 5)),
+      occurrences: [
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 19))),
+        snooze(due, new Date(Date.UTC(2026, 7, 26))),
+        { dueDate: due, status: "PAID" as const, transactionId: "t1", snoozeUntil: null },
+      ],
+    })])).toBeUndefined();
+  });
+
+  /** A lapsed deferral is a date in the past; printing it as "until" reads as still in force. */
+  it("does not report a lapsed deferral as one still running", () => {
+    const due = new Date(Date.UTC(2026, 6, 5));
+    const found = findingOf("bill-snoozed", [bill({
+      nextDueDate: due,
+      occurrences: [
+        snooze(due, new Date(Date.UTC(2026, 6, 12))),
+        snooze(due, new Date(Date.UTC(2026, 6, 19))),
+        snooze(due, new Date(Date.UTC(2026, 6, 26))),
+      ],
+    })]);
+    expect(found?.detail).not.toContain("deferred again until");
+  });
+
+  /** A fourth deferral is a fresh decision, so resolving the third must not suppress it. */
+  it("counts the deferrals in the finding's identity", () => {
+    const due = new Date(Date.UTC(2026, 7, 5));
+    const found = findingOf("bill-snoozed", [bill({
+      nextDueDate: due,
+      occurrences: [
+        snooze(due, new Date(Date.UTC(2026, 7, 12))),
+        snooze(due, new Date(Date.UTC(2026, 7, 19))),
+        snooze(due, new Date(Date.UTC(2026, 7, 26))),
+      ],
+    })]);
+    expect(found?.stateKey).toBe("bill:snoozed:b1:2026-08-05:3");
+  });
+
+  it("reports a bill whose payments run consistently above its budgeted figure", () => {
+    const found = findingOf("bill-under-budgeted", [bill({
+      amount: 5000,
+      nextDueDate: new Date(Date.UTC(2026, 9, 5)),
+      payments: [
+        { id: "p1", date: new Date(Date.UTC(2026, 5, 5)), amount: 6400 },
+        { id: "p2", date: new Date(Date.UTC(2026, 6, 5)), amount: 6600 },
+        { id: "p3", date: new Date(Date.UTC(2026, 7, 5)), amount: 6500 },
+      ],
+    })]);
+    expect(found).toMatchObject({ scope: "outstanding", current: 6500, baseline: 5000, changePct: 30 });
+    expect(found?.stateKey).toBe("bill:under-budgeted:b1:5000");
+  });
+
+  /** A metered bill whose budget falls inside the range actually paid is seasonal, not wrong. */
+  it("leaves a seasonal bill out of the under-budgeted finding", () => {
+    expect(findingOf("bill-under-budgeted", [bill({
+      amount: 4000,
+      isVariable: true,
+      nextDueDate: new Date(Date.UTC(2026, 9, 5)),
+      payments: [
+        { id: "p1", date: new Date(Date.UTC(2026, 5, 5)), amount: 2000 },
+        { id: "p2", date: new Date(Date.UTC(2026, 6, 5)), amount: 8000 },
+        { id: "p3", date: new Date(Date.UTC(2026, 7, 5)), amount: 7000 },
+      ],
+    })])).toBeUndefined();
+  });
+
+  it("says nothing about a bill budgeted close to what it actually costs", () => {
+    expect(findingOf("bill-under-budgeted", [bill({
+      amount: 5000,
+      nextDueDate: new Date(Date.UTC(2026, 9, 5)),
+      payments: [
+        { id: "p1", date: new Date(Date.UTC(2026, 5, 5)), amount: 5100 },
+        { id: "p2", date: new Date(Date.UTC(2026, 6, 5)), amount: 5200 },
+      ],
+    })])).toBeUndefined();
+  });
+});
+
+/**
+ * A deposit that arrives on a rhythm and has not arrived.
+ *
+ * Distinct from `missing-income`, which asks whether the *period* saw any income at all. A month
+ * with one of three expected deposits logged passes that check and is still short by two, and it
+ * was the only income finding the layer had.
+ */
+describe("missing-expected-income findings", () => {
+  const salary = (days: string[], amount = 40_000): FactTransaction[] =>
+    days.map((localDate) =>
+      tx({ localDate, amount, type: "INCOME", description: "Acme Payroll", categoryName: "Salary" }));
+
+  const factsOn = (today: string, transactions: FactTransaction[]) =>
+    buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: `${today.slice(0, 7)}-01`, to: `${today.slice(0, 7)}-28`, label: "period", granularity: "monthly" },
+      today,
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions,
+      bills: [],
+    });
+
+  const found = (today: string, transactions: FactTransaction[]) =>
+    factsOn(today, transactions).anomalies.find((a) => a.kind === "missing-expected-income");
+
+  const MONTHLY = ["2026-04-15", "2026-05-15", "2026-06-15", "2026-07-15"];
+
+  it("measures an income source's cadence the same way it measures a charge's", () => {
+    const [source] = factsOn("2026-07-20", salary(MONTHLY)).recurring.income;
+    expect(source).toMatchObject({ description: "Acme Payroll", months: 4, intervalDays: 30, isNew: false });
+  });
+
+  it("chases a deposit that is well past its own rhythm", () => {
+    const late = found("2026-08-30", salary(MONTHLY));
+    expect(late).toMatchObject({ scope: "outstanding", severity: "high", current: 40_000 });
+    expect(late?.title).toContain("has not been logged since 2026-07-15");
+  });
+
+  /** Pay dates slip over weekends; chasing a salary the Monday after is how an alert gets ignored. */
+  it("allows a monthly deposit to land a few days late", () => {
+    expect(found("2026-08-17", salary(MONTHLY))).toBeUndefined();
+  });
+
+  /** Five days is nothing for a monthly salary and most of a cycle for a weekly one. */
+  it("scales the grace period to the cadence rather than fixing it in days", () => {
+    const weekly = ["2026-07-03", "2026-07-10", "2026-07-17", "2026-07-24", "2026-08-07", "2026-08-14"];
+    expect(found("2026-08-26", salary(weekly, 6000))).toMatchObject({ kind: "missing-expected-income" });
+  });
+
+  it("says nothing about a source seen too few times to have a rhythm", () => {
+    expect(found("2026-08-30", salary(["2026-05-15", "2026-06-15"]))).toBeUndefined();
+  });
+
+  it("points the follow-up at the income side of the ledger", () => {
+    expect(found("2026-08-30", salary(MONTHLY))?.drillDown).toEqual({
+      destination: "transactions",
+      type: "INCOME",
+      search: "Acme Payroll",
+      from: "2026-04-15",
+      to: "2026-08-30",
+    });
+  });
+
+  /** A snooze taken on Tuesday has to still hold on Thursday, so the day count is not the identity. */
+  it("keys the finding on the occurrence rather than on how late it is", () => {
+    expect(found("2026-08-30", salary(MONTHLY))?.stateKey)
+      .toBe(found("2026-09-02", salary(MONTHLY))?.stateKey);
+  });
+
+  /** Creep is a question about spending; a new income source is good news nobody needs alerting to. */
+  it("never marks an income source as new", () => {
+    const sources = factsOn("2026-08-10", salary(["2026-07-15", "2026-08-01"])).recurring.income;
+    expect(sources.every((s) => !s.isNew)).toBe(true);
+  });
+});
+
+/**
+ * Whether the figures on the page are worth drawing a conclusion from.
+ *
+ * The coverage gate has always been enforced and has always been silent unless the missing days
+ * happened to fall in one run long enough to be a `logging-gap`. Thirty days each missing half
+ * their rows produce no gap and no trustworthy months either, and the report reads as though it
+ * knows something.
+ */
+describe("data-confidence findings", () => {
+  const factsFor = (
+    transactions: FactTransaction[],
+    period = { from: "2026-08-01", to: "2026-08-31" },
+    today = "2026-09-06",
+  ) =>
+    buildAssessmentFacts({
+      currency: "PHP",
+      period: { ...period, label: "period", granularity: "monthly" },
+      today,
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions,
+      bills: [],
+    });
+
+  const find = (kind: string, ...args: Parameters<typeof factsFor>) =>
+    factsFor(...args).anomalies.find((a) => a.kind === kind);
+
+  /** Six months logged on most days: a baseline that exists and a period that is covered. */
+  const wellLogged = ["2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08"]
+    .flatMap((month) => spread(month, 28));
+
+  it("says plainly when most of the period has nothing logged", () => {
+    const found = find("low-coverage", spread("2026-08", 5));
+    expect(found).toMatchObject({ scope: "period", severity: "high", baseline: MIN_COVERAGE_PCT });
+    expect(found?.detail).toContain("floor rather than a figure");
+  });
+
+  /**
+   * Days missing one at a time never form a run long enough to be a gap, which is exactly the case
+   * that used to pass in silence.
+   */
+  it("catches scattered missing days that never form a reportable gap", () => {
+    const everyOtherDay = Array.from({ length: 10 }, (_, i) =>
+      tx({ localDate: `2026-08-${String(i * 3 + 1).padStart(2, "0")}`, amount: 100 }));
+    const anomalies = factsFor(everyOtherDay).anomalies.map((a) => a.kind);
+    expect(anomalies).toContain("low-coverage");
+    expect(anomalies).not.toContain("logging-gap");
+  });
+
+  /** A month three days old has not failed to log the other twenty-eight. */
+  it("measures coverage against the days elapsed, not the days in the period", () => {
+    expect(find(
+      "low-coverage",
+      spread("2026-09", 3),
+      { from: "2026-09-01", to: "2026-09-30" },
+      "2026-09-03",
+    )).toBeUndefined();
+  });
+
+  it("leaves a well-logged period alone", () => {
+    expect(find("low-coverage", wellLogged)).toBeUndefined();
+  });
+
+  /**
+   * Two months make a line through two points, which has no notion of what is ordinary - yet the
+   * spike and pace detectors quote either as "what the trustworthy months say to expect".
+   */
+  it("warns when there is too little history behind the baseline", () => {
+    const twoMonths = ["2026-07", "2026-08"].flatMap((month) => spread(month, 28));
+    const found = find("insufficient-history", twoMonths);
+    expect(found).toMatchObject({ scope: "period", severity: "low", current: 1, baseline: 3 });
+  });
+
+  it("raises the tone when there is no baseline at all", () => {
+    expect(find("insufficient-history", spread("2026-08", 28))).toMatchObject({ severity: "medium" });
+  });
+
+  it("says nothing about the baseline once there are three trustworthy months behind it", () => {
+    expect(find("insufficient-history", wellLogged)).toBeUndefined();
+  });
+
+  /** Telling someone their baseline is thin as well as their period empty is true and useless. */
+  it("does not pile the thin-baseline finding on top of an unlogged period", () => {
+    const kinds = factsFor(spread("2026-08", 2)).anomalies.map((a) => a.kind);
+    expect(kinds).toContain("low-coverage");
+    expect(kinds).not.toContain("insufficient-history");
+  });
+
+  /** Two findings of different severities about the same days is one finding too many. */
+  it("keeps the gap itself informational and lets the coverage finding carry the weight", () => {
+    const anomalies = factsFor([
+      tx({ localDate: "2026-08-01", amount: 100 }),
+      tx({ localDate: "2026-08-02", amount: 100 }),
+      // `findLoggingGaps` reports the stretch *between* two logged days, so the gap needs a day on
+      // the far side of it to exist at all.
+      tx({ localDate: "2026-08-20", amount: 100 }),
+    ]).anomalies;
+    expect(anomalies.find((a) => a.kind === "logging-gap")?.severity).toBe("low");
+    expect(anomalies.find((a) => a.kind === "low-coverage")?.severity).toBe("high");
+  });
+});
+
+/**
+ * Where the tracked balance is headed before money next comes in.
+ *
+ * Directional by construction: the opening figure is every income logged minus every expense, so
+ * it knows nothing about money in the account before tracking began. The tests pin the arithmetic
+ * and, just as importantly, the cases where it refuses to answer.
+ */
+describe("cash forecast", () => {
+  const TODAY = "2026-09-06";
+
+  /** Four months of a monthly salary on the 15th, and a month of spending to give it a balance. */
+  const salary = (amount = 40_000): FactTransaction[] =>
+    ["2026-05-15", "2026-06-15", "2026-07-15", "2026-08-15"].map((localDate) =>
+      tx({ localDate, amount, type: "INCOME", description: "Acme Payroll", categoryName: "Salary" }));
+
+  const factsFor = (
+    transactions: FactTransaction[],
+    bills: FactBill[],
+    allTimeTotals?: { income: number; expenses: number },
+  ) =>
+    buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: "2026-09-01", to: "2026-09-30", label: "September 2026", granularity: "monthly" },
+      today: TODAY,
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions,
+      bills,
+      allTimeTotals,
+    });
+
+  const rent = (amount: number) => bill({
+    description: "Rent",
+    amount,
+    nextDueDate: new Date(Date.UTC(2026, 8, 10)),
+    startDate: new Date(Date.UTC(2026, 0, 10)),
+  });
+
+  it("projects only as far as the next expected deposit", () => {
+    const { forecast } = factsFor(salary(), [], { income: 160_000, expenses: 100_000 });
+    // The salary lands on the 15th and the last one seen was 15 August, so the cycle after today is
+    // one measured interval on - which is where the question "before the next income" stops.
+    expect(forecast.nextIncomeDate).toBe("2026-09-15");
+    expect(forecast.through).toBe("2026-09-15");
+  });
+
+  /** Projecting to the end of time turns every account into a shortfall eventually. */
+  it("falls back to a bounded horizon when nothing arrives on a rhythm", () => {
+    const { forecast } = factsFor([], [], { income: 10_000, expenses: 1_000 });
+    expect(forecast.nextIncomeDate).toBeNull();
+    expect(forecast.through).toBe("2026-10-21");
+  });
+
+  it("raises a shortfall when the scheduled charges outrun the balance", () => {
+    const facts = factsFor(salary(), [rent(20_000)], { income: 160_000, expenses: 155_000 });
+    const found = facts.anomalies.find((a) => a.kind === "cash-shortfall");
+    expect(found).toMatchObject({ scope: "outstanding", severity: "high", baseline: 5_000, current: -15_000 });
+    expect(found?.title).toContain("2026-09-10");
+  });
+
+  /** The claim is a direction, and the copy has to say so in its own sentence. */
+  it("says in the finding itself that this is not a bank balance", () => {
+    const facts = factsFor(salary(), [rent(20_000)], { income: 160_000, expenses: 155_000 });
+    const found = facts.anomalies.find((a) => a.kind === "cash-shortfall");
+    expect(found?.detail).toContain("not a bank balance");
+  });
+
+  it("stays quiet when the balance covers everything due", () => {
+    const facts = factsFor(salary(), [rent(20_000)], { income: 160_000, expenses: 60_000 });
+    expect(facts.anomalies.find((a) => a.kind === "cash-shortfall")).toBeUndefined();
+  });
+
+  /**
+   * A balance of nothing and a balance nobody supplied render identically, and one of them would
+   * report every account as about to bounce.
+   */
+  it("refuses to forecast at all without an opening balance", () => {
+    const facts = factsFor(salary(), [rent(20_000)]);
+    expect(facts.forecast.openingBalance).toBeNull();
+    expect(facts.forecast.lowestBalance).toBeNull();
+    expect(facts.anomalies.find((a) => a.kind === "cash-shortfall")).toBeUndefined();
+  });
+
+  /**
+   * A bill payment is an ordinary transaction, so it is already one of `computeRecurring`'s groups.
+   * Counting it on both sides forecasts a shortfall that exists only in the arithmetic.
+   */
+  it("counts a bill once, not once as a schedule and again as a recurring charge", () => {
+    const paidRent = ["2026-05-10", "2026-06-10", "2026-07-10", "2026-08-10"].map((localDate) =>
+      tx({ localDate, amount: 20_000, description: "Rent", categoryName: "Housing" }));
+    const { forecast } = factsFor([...salary(), ...paidRent], [rent(20_000)], { income: 160_000, expenses: 80_000 });
+    expect(forecast.claims.filter((claim) => claim.label === "Rent")).toHaveLength(1);
+    expect(forecast.claims.every((claim) => claim.source === "bill")).toBe(true);
+  });
+
+  it("counts a subscription with no bill behind it", () => {
+    const netflix = ["2026-05-08", "2026-06-08", "2026-07-08", "2026-08-08"].map((localDate) =>
+      tx({ localDate, amount: 499, description: "Netflix", categoryName: "Entertainment" }));
+    const { forecast } = factsFor([...salary(), ...netflix], [], { income: 160_000, expenses: 80_000 });
+    expect(forecast.claims).toContainEqual({
+      date: "2026-09-08",
+      label: "Netflix",
+      amount: 499,
+      source: "recurring",
+    });
+  });
+
+  /**
+   * Three bills in one week and a deposit the week after net out to comfortable and still bounce,
+   * which is why the projection is walked in date order rather than netted.
+   */
+  it("reports the day the balance dips, not merely that it nets out", () => {
+    const { forecast } = factsFor(salary(), [
+      rent(4_000),
+      bill({ id: "b2", description: "Tuition", amount: 4_000, nextDueDate: new Date(Date.UTC(2026, 8, 12)), startDate: new Date(Date.UTC(2026, 0, 12)) }),
+    ], { income: 160_000, expenses: 154_000 });
+    expect(forecast.lowestOn).toBe("2026-09-12");
+    expect(forecast.lowestBalance).toBe(-2_000);
+  });
+
+  /** A salary three weeks late does not mean money is expected three weeks ago. */
+  it("rolls an overdue deposit forward to the cycle it is now in", () => {
+    const stale = ["2026-04-15", "2026-05-15", "2026-06-15", "2026-07-15"].map((localDate) =>
+      tx({ localDate, amount: 40_000, type: "INCOME", description: "Acme Payroll", categoryName: "Salary" }));
+    const { forecast } = factsFor(stale, [], { income: 160_000, expenses: 100_000 });
+    expect(forecast.nextIncomeDate).not.toBeNull();
+    expect(forecast.nextIncomeDate! > TODAY).toBe(true);
+  });
+});
+
+/**
+ * The two Watchlist settings that are genuinely preferences rather than arithmetic.
+ *
+ * How lumpy a household's spending normally is, and what a large amount means in their currency,
+ * are facts about them that no baseline can infer. The defaults are the constants the detectors
+ * shipped with, so an account that changes nothing behaves exactly as it did.
+ */
+describe("configurable detection thresholds", () => {
+  const spend = (amounts: number[], month = "2026-08"): FactTransaction[] =>
+    amounts.map((amount, i) =>
+      tx({ localDate: `${month}-${String(i + 1).padStart(2, "0")}`, amount, description: "Groceries" }));
+
+  const factsFor = (transactions: FactTransaction[], thresholds?: Parameters<typeof buildAssessmentFacts>[0]["thresholds"]) =>
+    buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: "2026-08-01", to: "2026-08-31", label: "August 2026", granularity: "monthly" },
+      today: "2026-09-06",
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions,
+      bills: [],
+      thresholds,
+    });
+
+  const kinds = (...args: Parameters<typeof factsFor>) =>
+    factsFor(...args).anomalies.map((a) => a.kind);
+
+  /** Eleven ordinary charges and one ten times the size of them. */
+  const lumpy = spend([...Array.from({ length: 11 }, () => 500), 5_000]);
+
+  it("uses the shipped constants when the caller names no thresholds", () => {
+    expect(kinds(lumpy)).toContain("outlier-transaction");
+  });
+
+  it("goes quiet about a charge below a raised threshold", () => {
+    expect(kinds(lumpy, { ...DEFAULT_WATCHLIST_THRESHOLDS, outlierRatio: 15 }))
+      .not.toContain("outlier-transaction");
+  });
+
+  it("flags more when the threshold is lowered", () => {
+    const mild = spend([...Array.from({ length: 11 }, () => 500), 1_000]);
+    expect(kinds(mild)).not.toContain("outlier-transaction");
+    expect(kinds(mild, { ...DEFAULT_WATCHLIST_THRESHOLDS, outlierRatio: 1.5 }))
+      .toContain("outlier-transaction");
+  });
+
+  /**
+   * The absolute floor exists precisely for the month where one enormous charge makes everything
+   * else look immaterial beside it, so it has to reach a row the relative rule never considers.
+   */
+  it("flags a charge over the absolute figure even where the ratio would not", () => {
+    const evenly = spend([50_000, 50_000, 50_000, 50_000]);
+    expect(kinds(evenly)).not.toContain("outlier-transaction");
+    expect(kinds(evenly, { ...DEFAULT_WATCHLIST_THRESHOLDS, largeAmount: 10_000 }))
+      .toContain("outlier-transaction");
+  });
+
+  /**
+   * The wording, not just the kind. A row the absolute figure admitted has a ratio *below* the
+   * threshold by definition, so the relative sentence renders "about 1x the typical charge" -- and
+   * "about 0x" where the category has no second row, since `median([])` is 0. Both undercut the
+   * finding they are presenting, and this prose is handed to the model as fact.
+   */
+  const outlierDetail = (...args: Parameters<typeof factsFor>) =>
+    factsFor(...args).anomalies.find((a) => a.kind === "outlier-transaction")?.detail ?? "";
+
+  it("does not claim a multiple it did not measure when the absolute figure admitted the row", () => {
+    const evenly = spend([50_000, 50_000, 50_000, 50_000]);
+    const detail = outlierDetail(evenly, { ...DEFAULT_WATCHLIST_THRESHOLDS, largeAmount: 10_000 });
+    expect(detail).not.toMatch(/\bx the typical\b/);
+    expect(detail).toContain('clears your "always flag" figure');
+  });
+
+  it("says there is nothing to compare a lone charge with rather than calling it 0x", () => {
+    const alone = [
+      tx({ localDate: "2026-08-10", amount: 80_000, categoryName: "Medical", description: "Hospital" }),
+      ...spend([500, 500, 500]),
+    ];
+    const facts = factsFor(alone, { ...DEFAULT_WATCHLIST_THRESHOLDS, largeAmount: 10_000 });
+    const found = facts.anomalies.find((a) => a.kind === "outlier-transaction");
+    expect(found?.detail).toContain("the only Medical charge there is to compare it with");
+    expect(found?.detail).not.toContain("0x");
+    // No peers means no baseline was measured; reporting 0 would read as a measured figure.
+    expect(found?.baseline).toBeNull();
+    expect(found?.changePct).toBeNull();
+  });
+
+  it("still states the multiple when the ratio is what admitted the row", () => {
+    expect(outlierDetail(lumpy)).toMatch(/about 10x the typical Food & Dining charge/);
+  });
+
+  /** The switch suppresses the finding; the fact stays, and the assessment's card still lists it. */
+  it("stops alerting on duplicates without stopping detecting them", () => {
+    const doubled = [
+      tx({ localDate: "2026-08-04", amount: 1_200, description: "Watsons" }),
+      tx({ localDate: "2026-08-04", amount: 1_200, description: "Watsons" }),
+    ];
+    expect(kinds(doubled)).toContain("duplicate");
+
+    const off = factsFor(doubled, { ...DEFAULT_WATCHLIST_THRESHOLDS, duplicateAlerts: false });
+    expect(off.anomalies.map((a) => a.kind)).not.toContain("duplicate");
+    expect(off.hygiene.duplicates).toHaveLength(1);
+  });
+});
+
+/**
+ * Two ways the projection invented a charge, both found reading it back.
+ *
+ * Kept in their own block because each is a claim about a *specific* wrong row appearing, which is
+ * what makes them fail on revert - a test that only checked the balance would still pass, since the
+ * arithmetic over the wrong claims is perfectly correct.
+ */
+describe("cash forecast - claims it must not invent", () => {
+  const TODAY = "2026-09-06";
+  const salary = ["2026-05-15", "2026-06-15", "2026-07-15", "2026-08-15"].map((localDate) =>
+    tx({ localDate, amount: 40_000, type: "INCOME", description: "Acme Payroll", categoryName: "Salary" }));
+
+  const forecastFor = (transactions: FactTransaction[], bills: FactBill[]) =>
+    buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: "2026-09-01", to: "2026-09-30", label: "September 2026", granularity: "monthly" },
+      today: TODAY,
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions,
+      bills,
+      allTimeTotals: { income: 160_000, expenses: 100_000 },
+    }).forecast;
+
+  /**
+   * `occurrencesBetween` pushes whatever day it is handed as the first occurrence, so an overdue
+   * bill started at today produced a charge dated today that no schedule ever said was due.
+   */
+  it("does not invent a charge today for a bill whose cursor is already behind", () => {
+    const overdue = bill({
+      description: "Rent",
+      amount: 20_000,
+      startDate: new Date(Date.UTC(2026, 0, 10)),
+      nextDueDate: new Date(Date.UTC(2026, 7, 10)),
+    });
+    const { claims } = forecastFor(salary, [overdue]);
+    expect(claims.some((claim) => claim.date === TODAY)).toBe(false);
+    // The occurrence the schedule really does reach next, and nothing before it.
+    expect(claims.map((claim) => claim.date)).toEqual(["2026-09-10"]);
+  });
+
+  const netflix = (days: string[]): FactTransaction[] =>
+    days.map((localDate) => tx({ localDate, amount: 499, description: "Netflix", categoryName: "Entertainment" }));
+
+  /**
+   * A cancelled subscription is money that is never going to leave.
+   *
+   * No salary in these two, so the projection runs to its full horizon rather than stopping at a
+   * deposit a week away - otherwise a monthly charge's next cycle falls outside the window and the
+   * assertion would hold for a reason that has nothing to do with the guard.
+   */
+  it("stops projecting a recurring charge that has lapsed a whole cycle", () => {
+    const { claims } = forecastFor(netflix(["2026-03-08", "2026-04-08", "2026-05-08", "2026-06-08"]), []);
+    expect(claims.some((claim) => claim.label === "Netflix")).toBe(false);
+  });
+
+  it("keeps projecting one that is merely a few days late", () => {
+    const { claims } = forecastFor(netflix(["2026-05-01", "2026-06-01", "2026-07-01", "2026-08-01"]), []);
+    expect(claims.some((claim) => claim.label === "Netflix")).toBe(true);
   });
 });

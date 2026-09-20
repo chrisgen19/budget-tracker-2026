@@ -31,6 +31,12 @@ export interface UserInfo {
    * switch. Hides the UI only; every card route checks the switch again on its own.
    */
   creditCardsEnabled: boolean;
+  /** Multiples of a category's typical charge before the Watchlist calls one expense unusual. */
+  watchlistOutlierRatio: number;
+  /** An absolute figure that is unusual whatever the category's history, or null for ratio only. */
+  watchlistLargeAmount: number | null;
+  /** Whether possible duplicates are raised as a Watchlist finding. They are detected either way. */
+  watchlistDuplicateAlerts: boolean;
 }
 
 type UserUpdater = Partial<UserInfo> | ((prev: UserInfo) => Partial<UserInfo>);
@@ -41,7 +47,7 @@ interface UserContextValue {
 }
 
 const UserContext = createContext<UserContextValue>({
-  user: { name: "", email: "", currency: "PHP", timezoneOffset: -480, receiptScanEnabled: false, transactionLayout: "infinite", transactionAmountAutofocus: true, defaultLabelType: "EXPENSE", showDayName: true, dayNameFormat: "SHORT", emailBillReminders: false, telegramPromptAvailable: false, telegramDailyPrompt: false, telegramDailyPromptTime: "20:00", emailVerified: false, role: "FREE", roleScanEnabled: false, maxUploadFiles: 10, monthlyScanLimit: 0, scansUsedThisMonth: 0, creditCardsEnabled: false },
+  user: { name: "", email: "", currency: "PHP", timezoneOffset: -480, receiptScanEnabled: false, transactionLayout: "infinite", transactionAmountAutofocus: true, defaultLabelType: "EXPENSE", showDayName: true, dayNameFormat: "SHORT", emailBillReminders: false, telegramPromptAvailable: false, telegramDailyPrompt: false, telegramDailyPromptTime: "20:00", emailVerified: false, role: "FREE", roleScanEnabled: false, maxUploadFiles: 10, monthlyScanLimit: 0, scansUsedThisMonth: 0, creditCardsEnabled: false, watchlistOutlierRatio: 3, watchlistLargeAmount: null, watchlistDuplicateAlerts: true },
   setUser: () => {},
 });
 

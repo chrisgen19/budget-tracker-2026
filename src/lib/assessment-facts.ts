@@ -30,6 +30,7 @@ import {
   describeCoverage,
   describePeriodProgress,
   parseCalendarDay as parseDay,
+  shiftCalendarDay as addDays,
 } from "@/lib/period-progress";
 import type {
   AiWatchSeverity,
@@ -40,9 +41,12 @@ import type {
   AssessmentHeadline,
   AssessmentBillAccuracy,
   AssessmentBillFacts,
+  AssessmentCashClaim,
+  AssessmentCashForecast,
   BudgetPerformanceData,
   AssessmentCategoryMovement,
   AssessmentDataConfidence,
+  AssessmentDueSoonBill,
   AssessmentDuplicateGroup,
   AssessmentFacts,
   AssessmentFragmentation,
@@ -52,6 +56,8 @@ import type {
   AssessmentMonthCoverage,
   AssessmentRecurringFacts,
   AssessmentRecurringItem,
+  AssessmentSnoozedBill,
+  SavingsGoalSummary,
   AssessmentTrendFacts,
   AssessmentUnlinkedBillPayment,
   BillFrequency,
@@ -93,6 +99,24 @@ export interface FactBill {
   occurrences: Array<{ dueDate: Date; status: BillOccurrenceStatus; transactionId: string | null; snoozeUntil: Date | null }>;
 }
 
+/**
+ * The judgements about what is worth telling somebody that only they can make.
+ *
+ * Everything else in this file is arithmetic over their rows. These three are preferences: how
+ * lumpy their spending normally is, what counts as a large charge in their currency, and whether
+ * they want to hear about duplicates at all. Passed in rather than read, like every other input
+ * here, so the analyses stay pure.
+ */
+export interface WatchlistThresholds {
+  /** Multiples of a category's typical charge before a single expense is unusual. */
+  outlierRatio: number;
+  /** An absolute figure that is unusual whatever the category's history, or null for ratio only. */
+  largeAmount: number | null;
+  /** Whether possible duplicates are raised as a finding. The facts are computed either way. */
+  duplicateAlerts: boolean;
+}
+
+
 export interface FactsInput {
   currency: string;
   period: { from: string; to: string; label: string; granularity: string };
@@ -122,6 +146,8 @@ export interface FactsInput {
    * window still left that schedule wrong.
    */
   unlinkedCandidates?: FactTransaction[];
+  /** Omitted falls back to the shipped defaults, so a test or a caller without a user still works. */
+  thresholds?: WatchlistThresholds;
 }
 
 /* ------------------------------------------------------------------ */
@@ -134,7 +160,17 @@ export interface FactsInput {
 export { MIN_COVERAGE_PCT };
 /** A stretch this long with nothing logged is reported as a gap. */
 const MIN_GAP_DAYS = 4;
-/** Charged in at least this many distinct months to count as recurring. */
+/**
+ * Charged in at least this many distinct months to count as recurring.
+ *
+ * Distinct *months*, which is a proxy for "seen often enough to have a cadence" and holds only for
+ * a charge that bills monthly or faster. A quarterly charge reaches four distinct months after a
+ * year, so it never establishes inside the default six-month window, and an annual one never
+ * establishes at all: four of them need four years, and `MAX_WINDOW_MONTHS` caps any scan at two.
+ * So lapse, renewal and price findings do not reach slower subscriptions, which is a real gap and
+ * not a deliberate exclusion -- closing it means giving the recurring pass a wider window than the
+ * facts window, the way `historyFirstSeen` already does for first sightings.
+ */
 const RECURRING_MIN_MONTHS = 4;
 /** First seen inside this many days makes a recurring charge a *new* habit. */
 const NEW_RECURRING_DAYS = 120;
@@ -144,14 +180,86 @@ const NEW_RECURRING_MIN_SHARE = 0.01;
 const SPIKE_RATIO = 1.4;
 /** …and the increase has to be worth this share of the baseline month's spending. */
 const MATERIAL_SHARE = 0.05;
-/** A single expense this many times its category's typical size is an outlier. */
-const OUTLIER_RATIO = 3;
+/**
+ * A single expense this many times its category's typical size is an outlier.
+ *
+ * The *default* only. `WatchlistThresholds` carries the figure actually used, because what counts
+ * as unusual is a fact about a household rather than about the arithmetic: spending that is
+ * naturally lumpy trips this every month, and somebody in that position needs to raise it without
+ * losing every other finding.
+ */
+export const DEFAULT_OUTLIER_RATIO = 3;
+
+/** What every analysis here used before any of it was configurable. */
+export const DEFAULT_WATCHLIST_THRESHOLDS: WatchlistThresholds = {
+  outlierRatio: DEFAULT_OUTLIER_RATIO,
+  largeAmount: null,
+  duplicateAlerts: true,
+};
 /** Payments swinging this much mark a metered bill rather than a misconfigured one. */
 const SEASONAL_SWING = 2;
 /** Average paid this far from budgeted is a figure worth fixing. */
 const BILL_VARIANCE_PCT = 15;
 /** A projected overshoot below this is inside the noise of a partial month. */
 const PACE_OVERSHOOT = 1.15;
+/** A recurring charge due inside this many days is worth a heads-up before it lands. */
+const RECURRING_RENEWAL_DAYS = 7;
+/**
+ * Overdue by this many of its own cycles before a recurring charge is called stopped.
+ *
+ * One whole extra cycle rather than a fixed number of days, so a fortnightly charge four days late
+ * is simply late while a monthly one four days late is barely worth the word. The arithmetic scales
+ * to any cadence, but `RECURRING_MIN_MONTHS` decides which ones it is ever asked about, and today
+ * that is monthly and faster only -- see the note there.
+ */
+const RECURRING_LAPSE_CYCLES = 1;
+/** A recurring charge moving this far from its own average is a price change rather than noise. */
+const RECURRING_AMOUNT_CHANGE_PCT = 20;
+/** Bills falling due inside this many days are a claim on cash worth seeing coming. */
+const DUE_SOON_DAYS = 14;
+/** ...and inside this many, the reminder stops being informational. */
+const DUE_IMMINENT_DAYS = 3;
+/**
+ * Deferrals of one occurrence before it stops being a deferral and starts being avoidance.
+ *
+ * Three, not two: snoozing twice is an ordinary week where the money was not there yet, and a
+ * finding that fires on it would fire on almost every bill almost every month.
+ */
+const REPEATED_SNOOZES = 3;
+/**
+ * How far past its rhythm an expected deposit has to be before it is called missing.
+ *
+ * A share of the gap rather than a fixed number of days, for the reason the bill lapse is counted
+ * in cycles: five days late is nothing for a monthly salary and most of a cycle for a weekly one.
+ * Pay dates slip over weekends and holidays, so the floor keeps a monthly deposit from being
+ * chased the moment a payday lands on a Sunday.
+ */
+const INCOME_GRACE_SHARE = 0.2;
+const MIN_INCOME_GRACE_DAYS = 3;
+/**
+ * Deposits from one source before its rhythm is worth chasing against.
+ *
+ * Counted in occurrences, not in months as the expense side is. `RECURRING_MIN_MONTHS` is a
+ * monthly-shaped gate, and a weekly wage would have had to run for four months - sixteen payments -
+ * before anything could be said about one going missing.
+ */
+const MIN_INCOME_OCCURRENCES = 4;
+/**
+ * Trustworthy months a baseline needs before a trend or a forecast rests on it.
+ *
+ * Three. Two months make a line through two points, which has no notion of what is ordinary, and
+ * one makes nothing at all - yet `detectCategorySpikes` and the pace projection will happily
+ * quote either as "what the trustworthy months say to expect".
+ */
+const MIN_BASELINE_MONTHS = 3;
+/**
+ * How far the cash projection will look when no deposit is expected inside it.
+ *
+ * The question is "will the balance run short before money comes in", so the projection normally
+ * ends at the next expected deposit. With no income source that has a rhythm there is no such day,
+ * and projecting to the end of time turns every account into a shortfall eventually.
+ */
+const FORECAST_HORIZON_DAYS = 45;
 
 /* ------------------------------------------------------------------ */
 /*  Calendar-day helpers                                               */
@@ -190,6 +298,31 @@ const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
 const round = (n: number): number => Math.round(n * 100) / 100;
 const pct = (part: number, whole: number): number | null =>
   whole === 0 ? null : Math.round((part / whole) * 100);
+
+const median = (xs: number[]): number => {
+  if (xs.length === 0) return 0;
+  const sorted = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+};
+
+/**
+ * The cadence of a repeating charge, as the median gap between the days it landed on.
+ *
+ * Median rather than mean because a single missed or double-logged cycle would otherwise move the
+ * answer permanently, and cadence is the basis of both "renews soon" and "seems to have stopped" —
+ * two claims that a drifting figure would make at the wrong times for months.
+ *
+ * Days are deduplicated first: two rows on one day are a double submit far more often than a real
+ * second charge, and a zero-day gap dragged the median toward nothing.
+ */
+const chargeIntervalDays = (days: string[]): number | null => {
+  const distinct = [...new Set(days)].sort();
+  if (distinct.length < 2) return null;
+  const gaps = distinct.slice(1).map((day, index) => daysBetween(distinct[index], day));
+  const value = Math.round(median(gaps));
+  return value > 0 ? value : null;
+};
 
 /**
  * Descriptions are compared folded: "Netflix " and "netflix" are one thing, and
@@ -497,6 +630,120 @@ export const computeHeadline = (
 /* ------------------------------------------------------------------ */
 
 /**
+ * What `computeRecurring` hands back: the payload facts, plus the charges behind them.
+ *
+ * `items` is capped at 15 and is what ships to the client, the AI prompt and MCP. `allItems` is
+ * every established charge and never leaves this module -- `buildAssessmentFacts` destructures it
+ * straight into `AnomalyContext`, so widening it costs nothing on the wire.
+ */
+export type RecurringComputation = AssessmentRecurringFacts & {
+  allItems: AssessmentRecurringItem[];
+};
+
+/**
+ * Group one side of the ledger by folded description and measure each group's cadence.
+ *
+ * Shared by the expense pass and the income one. They ask different questions — a repeating
+ * expense is creep to watch, a repeating income is a deposit to chase when it fails to arrive —
+ * but "what repeats, how often, and how much" is one piece of arithmetic, and two copies of it
+ * would answer that question two ways within a release or so.
+ */
+const buildRecurringItems = (
+  transactions: FactTransaction[],
+  type: TransactionType,
+  today: string,
+  materialMonthly: number,
+  historyFirstSeen: ReadonlyMap<string, string>,
+  /**
+   * Whether "this is new" is a question worth asking of this side of the ledger.
+   *
+   * It is on the expense side, where a charge that did not exist four months ago is creep to
+   * notice. It is not on the income side: a new income source is good news nobody needs an alert
+   * about, and with no materiality floor to apply every deposit first seen inside 120 days would
+   * be marked new - a flag the MCP consumer would then read as meaning something.
+   *
+   * It also decides what gets in at all. An expense has to be new *and* seen twice to qualify
+   * before it is established; an income source only has to be seen twice, because the rhythm is
+   * the whole point and a long-standing salary is the most important row in the list.
+   */
+  trackNew: boolean,
+): AssessmentRecurringItem[] => {
+  // Day and amount travel together. They used to be two parallel arrays, one of
+  // which was then sorted in place: any figure read by position after that
+  // belonged to a different charge than the date beside it.
+  const groups = new Map<string, { months: Set<string>; charges: Array<{ day: string; amount: number }>; label: string }>();
+  for (const t of transactions) {
+    if (t.type !== type) continue;
+    const key = foldDescription(t.description);
+    if (!key) continue;
+    const g = groups.get(key) ?? { months: new Set<string>(), charges: [], label: t.description.trim() };
+    g.months.add(monthOf(t.localDate));
+    g.charges.push({ day: t.localDate, amount: t.amount });
+    groups.set(key, g);
+  }
+
+  const items: AssessmentRecurringItem[] = [];
+  for (const [key, g] of groups) {
+    const charges = [...g.charges].sort((a, b) => a.day.localeCompare(b.day));
+    const amounts = charges.map((c) => c.amount);
+    const days = charges.map((c) => c.day);
+    const firstSeen = historyFirstSeen.get(key) ?? days[0];
+    const lastSeen = days[days.length - 1];
+    const monthlyCost = sum(amounts) / g.months.size;
+    // Two sightings inside four months is a habit forming; four months is an
+    // established one. A new charge should not have to wait a third of a year
+    // to be noticed, which is the whole point of watching for creep.
+    const emerging = g.months.size >= 2;
+    const isNew = trackNew && emerging
+      && daysBetween(firstSeen, today) <= NEW_RECURRING_DAYS
+      && monthlyCost >= materialMonthly;
+    const established = g.months.size >= RECURRING_MIN_MONTHS;
+    if (!established && !(trackNew ? isNew : emerging)) continue;
+    const intervalDays = chargeIntervalDays(days);
+    const expectedNextDate = intervalDays === null ? null : addDays(lastSeen, intervalDays);
+    // Walk back over the unbroken run at the newest amount. Compared rounded, because that is what
+    // `latestAmount` reports and a half-centavo difference is not a price change.
+    const latest = round(amounts[amounts.length - 1]);
+    let runStart = charges.length - 1;
+    while (runStart > 0 && round(charges[runStart - 1].amount) === latest) runStart -= 1;
+    items.push({
+      description: g.label,
+      months: g.months.size,
+      occurrences: amounts.length,
+      avgAmount: round(sum(amounts) / amounts.length),
+      total: round(sum(amounts)),
+      isNew,
+      firstSeen,
+      lastSeen,
+      intervalDays,
+      expectedNextDate,
+      daysOverdue: expectedNextDate === null ? 0 : Math.max(0, daysBetween(expectedNextDate, today)),
+      latestAmount: latest,
+      priorAvgAmount: amounts.length < 2 ? null : round(sum(amounts.slice(0, -1)) / (amounts.length - 1)),
+      latestAmountSince: charges[runStart].day,
+    });
+  }
+  return items.sort((a, b) => b.total - a.total);
+};
+
+/**
+ * Deposits that arrive on a rhythm — a salary, an allowance, a recurring transfer in.
+ *
+ * The same cadence arithmetic as the expense side, asked of the other half of the ledger, and the
+ * only thing that makes "the pay that normally lands on the 15th has not" sayable at all. The
+ * period-level `missing-income` finding answers a much blunter question: whether *anything* came in
+ * at all. A month with one of three expected deposits logged passes that check and is still short.
+ *
+ * No materiality floor and no `historyFirstSeen`: an income source too small to matter is not a
+ * thing people have, and `isNew` is not asked of the income side — a new source is good news
+ * nobody needs an alert about.
+ */
+export const computeRecurringIncome = (
+  transactions: FactTransaction[],
+  today: string,
+): AssessmentRecurringItem[] => buildRecurringItems(transactions, "INCOME", today, 0, new Map(), false);
+
+/**
  * Charges seen in most months of the window — the fixed base under the
  * discretionary spending, and the place a subscription quietly joins.
  *
@@ -516,48 +763,15 @@ export const computeRecurring = (
    * see -- a subscription running for two years looked 120 days old.
    */
   historyFirstSeen: ReadonlyMap<string, string> = new Map(),
-): AssessmentRecurringFacts => {
-  const groups = new Map<string, { months: Set<string>; amounts: number[]; days: string[]; label: string }>();
-  for (const t of transactions) {
-    if (t.type !== "EXPENSE") continue;
-    const key = foldDescription(t.description);
-    if (!key) continue;
-    const g = groups.get(key) ?? { months: new Set<string>(), amounts: [], days: [], label: t.description.trim() };
-    g.months.add(monthOf(t.localDate));
-    g.amounts.push(t.amount);
-    g.days.push(t.localDate);
-    groups.set(key, g);
-  }
-
+): RecurringComputation => {
+  // Day and amount travel together. They used to be two parallel arrays, one of
+  // which was then sorted in place: any figure read by position after that
+  // belonged to a different charge than the date beside it.
   // A charge costing less than this a month is not creep worth reporting. Kept
   // relative rather than a currency figure: the list was otherwise led by bananas
   // and jeepney fares, which repeat faithfully and decide nothing.
   const materialMonthly = avgMonthlyBurn === null ? 0 : avgMonthlyBurn * NEW_RECURRING_MIN_SHARE;
-
-  const items: AssessmentRecurringItem[] = [];
-  for (const [key, g] of groups) {
-    const days = g.days.sort();
-    const firstSeen = historyFirstSeen.get(key) ?? days[0];
-    const monthlyCost = sum(g.amounts) / g.months.size;
-    const isNew = daysBetween(firstSeen, today) <= NEW_RECURRING_DAYS && monthlyCost >= materialMonthly;
-    // Two sightings inside four months is a habit forming; four months is an
-    // established one. A new charge should not have to wait a third of a year
-    // to be noticed, which is the whole point of watching for creep.
-    const established = g.months.size >= RECURRING_MIN_MONTHS;
-    if (!established && !(isNew && g.months.size >= 2)) continue;
-    items.push({
-      description: g.label,
-      months: g.months.size,
-      occurrences: g.amounts.length,
-      avgAmount: round(sum(g.amounts) / g.amounts.length),
-      total: round(sum(g.amounts)),
-      isNew,
-      firstSeen,
-      lastSeen: days[days.length - 1],
-    });
-  }
-
-  items.sort((a, b) => b.total - a.total);
+  const items = buildRecurringItems(transactions, "EXPENSE", today, materialMonthly, historyFirstSeen, true);
   const established = items.filter((i) => i.months >= RECURRING_MIN_MONTHS);
   const monthlyBase = round(sum(established.map((i) => i.total / i.months)));
   return {
@@ -565,6 +779,8 @@ export const computeRecurring = (
     newItems: items.filter((i) => i.isNew).sort((a, b) => b.avgAmount - a.avgAmount).slice(0, 8),
     monthlyBase,
     monthlyBasePct: avgMonthlyBurn ? pct(monthlyBase, avgMonthlyBurn) : null,
+    allItems: items,
+    income: computeRecurringIncome(transactions, today).slice(0, 10),
   };
 };
 
@@ -858,6 +1074,58 @@ export const findUnlinkedBillPayments = (
     .sort((a, b) => b.total - a.total);
 };
 
+/**
+ * Occurrences of one bill that were deferred over and over rather than settled.
+ *
+ * A snooze is a decision the user made and is not a miss, which is why `settledDays` treats a live
+ * one as settled - but the same charge pushed back three times running is a different statement
+ * from the same charge pushed back once, and nothing was reading the difference.
+ *
+ * An occurrence that was eventually paid or skipped is dropped however many times it was deferred
+ * first: the question is what is still unresolved, and telling someone they hesitated over a bill
+ * they have since paid is noise with a number attached.
+ */
+const findRepeatedSnoozes = (
+  bill: FactBill,
+  today: Date,
+  estimate: { amount: number; isEstimate: boolean },
+): AssessmentSnoozedBill[] => {
+  const byDueDate = new Map<string, { deferrals: Set<string>; snoozedUntil: Date | null; resolved: boolean }>();
+  for (const occurrence of bill.occurrences) {
+    const day = utcDayKey(occurrence.dueDate);
+    const entry = byDueDate.get(day) ?? { deferrals: new Set<string>(), snoozedUntil: null, resolved: false };
+    if (occurrence.status === "PAID" || occurrence.status === "SKIPPED") entry.resolved = true;
+    else if (occurrence.status === "SNOOZED") {
+      const until = occurrence.snoozeUntil ? utcDayStart(occurrence.snoozeUntil) : null;
+      // Distinct deferral days, not rows. The app's snooze button wrote a bare log row with no
+      // replay guard from the first bills release until `settleBill` took over, so a lost-response
+      // retry or a double tap left several SNOOZED rows for one decision, and this finding claims
+      // to count decisions. `snoozeUntil` separates the two exactly: the guard only lets an
+      // occurrence be re-snoozed once the previous deferral has lapsed, so a genuine second
+      // decision always lands on a later day while a replay repeats the same one. Compared as a
+      // UTC day because the old route stored the raw local instant.
+      entry.deferrals.add(until ? utcDayKey(until) : "undated");
+      if (until && (!entry.snoozedUntil || until > entry.snoozedUntil)) entry.snoozedUntil = until;
+    }
+    byDueDate.set(day, entry);
+  }
+
+  return [...byDueDate.entries()]
+    .filter(([, entry]) => !entry.resolved && entry.deferrals.size >= REPEATED_SNOOZES)
+    .map(([dueDate, entry]) => ({
+      id: bill.id,
+      description: bill.description,
+      categoryName: bill.categoryName,
+      dueDate,
+      snoozes: entry.deferrals.size,
+      // Only a deferral still running is reported as one. A lapsed `snoozeUntil` is a date in the
+      // past, and printing it beside "snoozed until" would read as a deferral that is still in force.
+      snoozedUntil: entry.snoozedUntil && entry.snoozedUntil > today ? utcDayKey(entry.snoozedUntil) : null,
+      amount: round(estimate.amount),
+      isEstimate: estimate.isEstimate,
+    }));
+};
+
 export const computeBillFacts = (
   bills: FactBill[],
   unlinkedCandidates: FactTransaction[],
@@ -868,7 +1136,8 @@ export const computeBillFacts = (
   const dueSoonCutoff = new Date(todayDate.getTime() + 14 * 86_400_000);
 
   const missed: AssessmentMissedBill[] = [];
-  let dueSoonCount = 0;
+  const dueSoon: AssessmentDueSoonBill[] = [];
+  const repeatedlySnoozed: AssessmentSnoozedBill[] = [];
   let dueSoonTotal = 0;
   let dueSoonIsEstimate = false;
 
@@ -891,10 +1160,20 @@ export const computeBillFacts = (
     if (miss) missed.push(miss);
 
     if (dueDate >= todayDate && dueDate <= dueSoonCutoff) {
-      dueSoonCount += 1;
+      dueSoon.push({
+        id: bill.id,
+        description: bill.description,
+        categoryName: bill.categoryName,
+        dueDate: utcDayKey(dueDate),
+        daysUntilDue: daysBetween(today, utcDayKey(dueDate)),
+        amount: round(estimate.amount),
+        isEstimate: estimate.isEstimate,
+      });
       dueSoonTotal += estimate.amount;
       dueSoonIsEstimate = dueSoonIsEstimate || estimate.isEstimate;
     }
+
+    repeatedlySnoozed.push(...findRepeatedSnoozes(bill, todayDate, estimate));
   }
 
   return {
@@ -904,10 +1183,153 @@ export const computeBillFacts = (
       .map((bill) => assessBillAccuracy(bill, timezoneOffset))
       .sort((a, b) => Math.abs(b.variancePct ?? 0) - Math.abs(a.variancePct ?? 0)),
     unlinkedPayments: findUnlinkedBillPayments(bills, unlinkedCandidates),
-    dueSoonCount,
+    // Tie-broken on id, not left to the sort's stability. `sort` is stable, so bills falling due
+    // on the same day keep the order the loader handed them over in -- and that query has no
+    // `orderBy` (`assessment-facts-query.ts`), so Postgres is free to return them differently on
+    // the next request. Several bills on the 1st or the 15th is ordinary, and `nextDueDate` is
+    // rewritten on every settle, which moves rows. Without this the rendered list reorders itself
+    // between refreshes and the finding's identity moves with it.
+    dueSoon: dueSoon.sort((a, b) => a.daysUntilDue - b.daysUntilDue || a.id.localeCompare(b.id)),
+    dueSoonCount: dueSoon.length,
     dueSoonTotal: round(dueSoonTotal),
     dueSoonIsEstimate,
+    repeatedlySnoozed: repeatedlySnoozed.sort((a, b) => b.snoozes - a.snoozes),
   };
+};
+
+/* ------------------------------------------------------------------ */
+/*  5. Cash forecast — where the tracked balance is headed             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * When a repeating deposit is next expected, rolled forward past any it has already missed.
+ *
+ * A salary three weeks late does not mean money is expected three weeks ago; it means the cycle it
+ * belongs to has passed and the next one is what the projection can lean on. `missing-expected-income`
+ * is the finding about the one that never arrived - this is only about when to stop projecting.
+ */
+const nextExpectedIncomeDay = (
+  income: AssessmentRecurringItem[],
+  today: string,
+): string | null => {
+  const days = income.flatMap((source) => {
+    if (source.occurrences < MIN_INCOME_OCCURRENCES || source.intervalDays === null) return [];
+    let day = source.expectedNextDate;
+    if (day === null) return [];
+    // Bounded by the horizon rather than by a `while (true)`: a source whose interval is somehow
+    // zero would otherwise spin, and a cadence longer than the horizon cannot inform it anyway.
+    for (let i = 0; day <= today && i <= FORECAST_HORIZON_DAYS; i += 1) {
+      day = addDays(day, source.intervalDays);
+    }
+    return day > today ? [day] : [];
+  });
+  return days.length === 0 ? null : days.sort()[0];
+};
+
+/**
+ * Every claim on cash between tomorrow and `through`.
+ *
+ * Bills come from their own schedules. Recurring charges are added on their measured cadence,
+ * except where the charge matches a bill by name: a bill payment is an ordinary transaction, so it
+ * is already in `computeRecurring`'s groups, and counting it on both sides would forecast a
+ * shortfall that exists only in the arithmetic.
+ */
+const collectCashClaims = (
+  bills: FactBill[],
+  recurring: AssessmentRecurringItem[],
+  today: string,
+  through: string,
+  timezoneOffset: number,
+): AssessmentCashClaim[] => {
+  const todayDate = parseDay(today);
+  const throughDate = parseDay(through);
+  const claims: AssessmentCashClaim[] = [];
+  const billNames = new Set(bills.map((bill) => foldDescription(bill.description)));
+
+  for (const bill of bills) {
+    // Walked from the bill's own cursor, never from today. `occurrencesBetween` pushes whatever
+    // day it is handed as the first occurrence, so starting an overdue bill at today invents a
+    // charge due today. Occurrences already behind us are dropped below instead: unpaid ones are
+    // arrears, which `missed-bill` reports, and conflating "you owe back rent" with "you will run
+    // short" would double the alarm and halve the meaning of both.
+    const start = utcDayStart(bill.nextDueDate);
+    const derived = bill.isVariable
+      ? estimateBillAmount(
+          buildEstimateSamples(bill.payments, bill.occurrences.filter((o) => o.status === "PAID"), timezoneOffset),
+          start.getUTCMonth() + 1,
+          start.getUTCFullYear(),
+          bill.amount,
+        )
+      : null;
+    const amount = derived ? derived.amount : bill.amount;
+    // `occurrencesBetween` is exclusive of its end, so the window reaches one day past `through`
+    // to keep a bill falling due on the last day of the projection.
+    for (const due of occurrencesBetween(bill, start, new Date(throughDate.getTime() + 86_400_000))) {
+      if (due < todayDate) continue;
+      claims.push({ date: utcDayKey(due), label: bill.description, amount: round(amount), source: "bill" });
+    }
+  }
+
+  for (const item of recurring) {
+    if (item.months < RECURRING_MIN_MONTHS || item.intervalDays === null || item.expectedNextDate === null) continue;
+    if (billNames.has(foldDescription(item.description))) continue;
+    // A charge a whole cycle past due has stopped - the same rule `recurring-ended` reports it by.
+    // Without this a cancelled subscription keeps being projected as an upcoming claim forever,
+    // and the forecast warns about money that is never going to leave. It also bounds the loop
+    // below, which otherwise starts at a date that could be years in the past.
+    if (item.daysOverdue > item.intervalDays * RECURRING_LAPSE_CYCLES) continue;
+    let day = item.expectedNextDate;
+    while (day <= through) {
+      if (day >= today) {
+        claims.push({ date: day, label: item.description, amount: item.avgAmount, source: "recurring" });
+      }
+      day = addDays(day, item.intervalDays);
+    }
+  }
+
+  return claims.sort((a, b) => a.date.localeCompare(b.date));
+};
+
+/**
+ * Where the tracked balance is headed before money next comes in.
+ *
+ * Directional by construction and labelled that way everywhere it surfaces. The opening figure is
+ * every income logged minus every expense, which knows nothing about money in the account before
+ * tracking began and nothing about anything spent without being logged. It is the only balance the
+ * app has until accounts and opening balances exist, and a projection from it is worth having as
+ * long as nothing dresses it up as a statement.
+ */
+export const computeCashForecast = (
+  bills: FactBill[],
+  recurring: AssessmentRecurringFacts,
+  openingBalance: number | null,
+  today: string,
+  timezoneOffset: number,
+): AssessmentCashForecast => {
+  const nextIncomeDate = nextExpectedIncomeDay(recurring.income, today);
+  const horizon = addDays(today, FORECAST_HORIZON_DAYS);
+  const through = nextIncomeDate !== null && nextIncomeDate < horizon ? nextIncomeDate : horizon;
+  const claims = collectCashClaims(bills, recurring.items, today, through, timezoneOffset);
+  const committed = round(sum(claims.map((c) => c.amount)));
+
+  if (openingBalance === null) {
+    return { openingBalance: null, through, nextIncomeDate, lowestBalance: null, lowestOn: null, claims, committed };
+  }
+
+  // Walked in date order rather than netted, because *when* the balance dips matters: three bills
+  // in one week and a big deposit the week after net out to comfortable and still bounce.
+  let balance = openingBalance;
+  let lowestBalance = openingBalance;
+  let lowestOn = today;
+  for (const claim of claims) {
+    balance = round(balance - claim.amount);
+    if (balance < lowestBalance) {
+      lowestBalance = balance;
+      lowestOn = claim.date;
+    }
+  }
+
+  return { openingBalance: round(openingBalance), through, nextIncomeDate, lowestBalance, lowestOn, claims, committed };
 };
 
 /* ------------------------------------------------------------------ */
@@ -916,12 +1338,30 @@ export const computeBillFacts = (
 
 interface AnomalyContext {
   period: { from: string; to: string };
+  /**
+   * The user's own calendar day.
+   *
+   * Outstanding findings are measured against it rather than against the period, which is the
+   * whole of what makes them outstanding: a subscription renewing on Friday does not renew
+   * differently because a 2019 report is open.
+   */
+  today: string;
   /** The period's calendar month, or null when it spans more than one. */
   periodMonth: string | null;
   periodTx: FactTransaction[];
   windowTx: FactTransaction[];
   confidence: AssessmentDataConfidence;
   bills: AssessmentBillFacts;
+  forecast: AssessmentCashForecast;
+  recurring: AssessmentRecurringFacts;
+  /**
+   * Every established recurring charge, uncapped.
+   *
+   * `recurring.items` is the presentation cut: 15 rows ordered by total spend. Detection has to
+   * read the whole set, or a charge ranked 16th by total is never asked whether it has stopped,
+   * renewed or changed price -- and total spend ranks a daily coffee above a monthly subscription.
+   */
+  recurringAll: AssessmentRecurringItem[];
   hygiene: AssessmentHygieneFacts;
   /** Trustworthy months excluding the period's own — what "normal" is measured against. */
   baselineMonths: string[];
@@ -937,14 +1377,8 @@ interface AnomalyContext {
   throughDay: number;
   periodIncome: number;
   periodExpenses: number;
+  thresholds: WatchlistThresholds;
 }
-
-const median = (xs: number[]): number => {
-  if (xs.length === 0) return 0;
-  const sorted = [...xs].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-};
 
 /**
  * Whether the selected period bounds each kind of finding.
@@ -954,13 +1388,14 @@ const median = (xs: number[]): number => {
  * quietly label the next standing condition as belonging to whatever period is on screen. That is
  * the mistake #340 fixed, and the map is here so it cannot be made a second time.
  *
- * Only `missed-bill` is outstanding. Every other producer either filters on `inPeriod`
- * (`duplicate`, `logging-gap`) or measures the period against baseline months, while bills are
- * judged against their own full payment history (see `buildAssessmentFacts`).
+ * `missed-bill` was once the only outstanding kind; the recurring-charge and bill-behaviour
+ * families join it here. Every other producer either filters on `inPeriod` (`duplicate`,
+ * `logging-gap`) or measures the period against baseline months, while bills and repeating charges
+ * are judged against their own full history (see `buildAssessmentFacts`).
  *
  * An outstanding kind is grouped apart in the Watchlist and left out of the AI tab's "What changed
- * this period" card entirely, since the missed bill has `MissedBillsCard` there. A second
- * outstanding kind needs a home of its own on that tab, or it will not appear on it.
+ * this period" card entirely, so it needs a home of its own on that tab or it will not appear on
+ * it at all. `MissedBillsCard` is that home for `missed-bill`; `OutstandingCard` holds the rest.
  */
 const ANOMALY_SCOPE: Record<AssessmentAnomalyKind, AssessmentAnomalyScope> = {
   "budget-threshold": "period",
@@ -975,6 +1410,34 @@ const ANOMALY_SCOPE: Record<AssessmentAnomalyKind, AssessmentAnomalyScope> = {
   duplicate: "period",
   "logging-gap": "period",
   "missed-bill": "outstanding",
+  // Recurring charges are judged against their own history and against today's date, never
+  // against the selected window: a subscription that renews on Friday renews on Friday whether
+  // the report on screen is this month's or one from 2019.
+  "recurring-new": "outstanding",
+  "recurring-ended": "outstanding",
+  "recurring-amount-change": "outstanding",
+  "recurring-renews-soon": "outstanding",
+  // Bills are judged against their own schedule and payment history, as `missed-bill` already was.
+  // A bill due on Friday is due on Friday whichever report is open, and a budgeted figure that has
+  // been wrong for a year is not wrong *in September*.
+  "bill-due-soon": "outstanding",
+  "bill-snoozed": "outstanding",
+  "bill-under-budgeted": "outstanding",
+  // An expected deposit is late as of today, measured against its own rhythm. `missing-income`,
+  // which asks whether the *period* saw any income at all, stays period-scoped and is a different
+  // question: a month with one of three expected deposits logged passes it and is still short.
+  "missing-expected-income": "outstanding",
+  // Both describe the data behind *this* report. Change the period and the window moves with it,
+  // so a different set of months is being judged and the answer can legitimately differ.
+  "low-coverage": "period",
+  "insufficient-history": "period",
+  // A goal is behind as of today, against its own target date. Opening last March does not make it
+  // less behind, and would not have made it behind any earlier.
+  "goal-off-pace": "outstanding",
+  "goal-stalled": "outstanding",
+  // A projection forward from today. It says nothing about the period on screen, and would be
+  // actively wrong attached to one: the bills it counts are ahead of *now*, not ahead of March.
+  "cash-shortfall": "outstanding",
 };
 
 const anomaly = (
@@ -1076,6 +1539,100 @@ export const detectBudgetWatchlistAnomalies = (
   });
 };
 
+/**
+ * The tracked balance running out before money next comes in.
+ *
+ * **Directional, and the copy says so in its own sentence rather than in a footnote.** The opening
+ * figure is every income logged minus every expense: it knows nothing about money in the account
+ * before tracking began, nothing about anything spent without being logged, and nothing about a
+ * card's opening balance. Until accounts and opening balances are modelled that is the only
+ * balance the app has, and the honest form of this finding is "on the figures logged here", not a
+ * claim about a bank account.
+ *
+ * Silent without an opening balance rather than assuming zero. A balance of nothing and a balance
+ * nobody supplied render identically, and one of them would report every account as about to
+ * bounce - the same rule `computeHeadline` applies to `runningBalance` itself.
+ */
+const detectCashShortfall = (ctx: AnomalyContext): AssessmentAnomaly[] => {
+  const { forecast } = ctx;
+  if (forecast.openingBalance === null || forecast.lowestBalance === null) return [];
+  if (forecast.lowestBalance >= 0) return [];
+
+  const horizon = forecast.nextIncomeDate === null
+    ? `in the next ${FORECAST_HORIZON_DAYS} days, and no regular deposit is expected in that time`
+    : `before the next expected deposit around ${forecast.nextIncomeDate}`;
+  const named = forecast.claims.slice(0, 3).map((claim) => `${claim.label} on ${claim.date}`).join(", ");
+
+  return [anomaly("cash-shortfall", "high",
+    `Tracked balance runs short around ${forecast.lowestOn}`,
+    `${forecast.claims.length} scheduled ${forecast.claims.length === 1 ? "charge" : "charges"} fall due ${horizon}: ${named}${forecast.claims.length > 3 ? " and others" : ""}. On the figures logged here that puts the balance under zero. This is a direction, not a bank balance — it counts only what has been recorded, so anything held outside the app is not in it.`,
+    {
+      current: forecast.lowestBalance,
+      baseline: forecast.openingBalance,
+      drillDown: { destination: "bills" },
+      // The day it happens and what is claimed by then. A charge appearing or being paid changes
+      // the answer and should return the finding for review; the opening balance moving by a
+      // hundred pesos should not.
+      stateKey: `cash:shortfall:${forecast.lowestOn}:${forecast.claims.length}`,
+    })];
+};
+
+/**
+ * Savings goals that will not arrive when they are meant to.
+ *
+ * Two findings rather than one, because they call for different things. `goal-off-pace` is a goal
+ * being funded too slowly: the answer is a bigger transfer, and the finding says how much bigger.
+ * `goal-stalled` is a goal with a deadline and nothing in it, where the answer is to start - or to
+ * admit the date was never real and move it.
+ *
+ * `overdue` and `funded` are deliberately silent. A goal past its date is either already visible
+ * on the goals page as overdue or has been quietly abandoned, and an alert that cannot be acted on
+ * by any amount of saving is one the user learns to ignore; a funded one is good news.
+ *
+ * Goals are passed in rather than read here, the way the budget allocations are: this module holds
+ * no database access, and that is what keeps every analysis in it testable without one.
+ */
+export const detectGoalAnomalies = (goals: SavingsGoalSummary[]): AssessmentAnomaly[] =>
+  goals
+    .filter((goal) => goal.status === "ACTIVE" && (goal.pace.state === "behind" || goal.pace.state === "stalled"))
+    // Not capped here either, and this one mattered more: goal findings are merged into
+    // `facts.anomalies` by `collectAssessmentFacts`, *after* `detectAnomalies` has run, so they
+    // reached neither the display cap nor the payload bound. Four, shared across both goal kinds,
+    // spent before suppression, was the original bug intact.
+    .map((goal) => {
+      const required = goal.pace.requiredMonthly ?? 0;
+      if (goal.pace.state === "stalled") {
+        return anomaly("goal-stalled", "medium",
+          `${goal.name} has nothing put aside yet`,
+          `It is due by ${goal.targetDate}, ${goal.pace.daysRemaining} days away, and no contribution has been recorded. Reaching it from here means putting away about ${required} a month from now until then.`,
+          {
+            current: goal.funded,
+            baseline: goal.targetAmount,
+            drillDown: { destination: "goals" },
+            // The date, not the day count: a snooze taken on Tuesday has to still hold on Thursday.
+            stateKey: `goal:stalled:${goal.id}:${goal.targetDate}`,
+          });
+      }
+      // A goal holding money that has stopped growing is `behind` with no rate to run forward, so
+      // there is no landing date to name. Saying so beats rendering the null into the sentence.
+      const rate = goal.pace.observedMonthly;
+      const trajectory = goal.pace.projectedCompletion === null || rate === null || rate <= 0
+        ? `Nothing has gone in since the first deposit, so on its own it arrives on no date at all.`
+        : `It has been going in at about ${rate} a month and needs ${required}; at the current rate it lands around ${goal.pace.projectedCompletion} rather than ${goal.targetDate}.`;
+      return anomaly("goal-off-pace", "medium",
+        `${goal.name} is behind the pace it needs`,
+        `${goal.fundedPct}% funded with ${goal.pace.daysRemaining} days to go. ${trajectory}`,
+        {
+          current: goal.pace.observedMonthly,
+          baseline: required,
+          changePct: required === 0 ? null : pct((goal.pace.observedMonthly ?? 0) - required, required),
+          drillDown: { destination: "goals" },
+          // Keyed on the goal and its deadline, not on the rate, which moves with every
+          // contribution. Moving the target date is a new decision and re-raises it.
+          stateKey: `goal:off-pace:${goal.id}:${goal.targetDate}`,
+        });
+    });
+
 /** A same-named custom/default category cannot be represented by one ledger filter. */
 const categoryDrillDown = (ctx: AnomalyContext, category: string): AssessmentAnomalyDrillDown => {
   const categoryIds = [...new Set(ctx.periodTx
@@ -1132,8 +1689,11 @@ const detectCategorySpikes = (ctx: AnomalyContext): AssessmentAnomaly[] => {
   }
   // Ranked by money moved, so a small category that doubled cannot outrank a
   // large one that rose by a third.
+  // Not capped here. The four it used to keep were shared across *two* kinds, so four spikes
+  // crowded out every `new-category` finding -- and, being spent before suppression, resolving the
+  // visible ones revealed nothing. `collectAssessmentFacts` bounds the assembled list instead.
   const moved = (x: AssessmentAnomaly) => (x.current ?? 0) - (x.baseline ?? 0);
-  return out.sort((a, b) => moved(b) - moved(a)).slice(0, 4);
+  return out.sort((a, b) => moved(b) - moved(a));
 };
 
 /**
@@ -1162,10 +1722,16 @@ const detectOutlierTransactions = (ctx: AnomalyContext): AssessmentAnomaly[] => 
     if (t.type !== "EXPENSE") continue;
     byCategory.set(t.categoryName, [...(byCategory.get(t.categoryName) ?? []), t]);
   }
+  const { outlierRatio, largeAmount } = ctx.thresholds;
+  // A charge is worth judging if it is a material share of the period, or if it clears the user's
+  // own "this is a lot of money" figure. Either, not both: the absolute floor exists precisely for
+  // the month where one enormous charge makes everything else look immaterial beside it.
   const material = ctx.periodExpenses * MATERIAL_SHARE;
+  const worthJudging = (amount: number) =>
+    amount >= material || (largeAmount !== null && amount >= largeAmount);
 
   return ctx.periodTx
-    .filter((t) => t.type === "EXPENSE" && t.amount >= material)
+    .filter((t) => t.type === "EXPENSE" && worthJudging(t.amount))
     .map((t) => {
       const peers = (byCategory.get(t.categoryName) ?? []).filter((other) => other.id !== t.id);
       const ownHistory = peers.filter((other) => foldDescription(other.description) === foldDescription(t.description));
@@ -1173,22 +1739,33 @@ const detectOutlierTransactions = (ctx: AnomalyContext): AssessmentAnomaly[] => 
       const typical = median(basis.map((other) => other.amount));
       return { t, typical, ratio: typical === 0 ? 0 : t.amount / typical };
     })
-    .filter((x) => x.ratio >= OUTLIER_RATIO)
+    .filter((x) => x.ratio >= outlierRatio || (largeAmount !== null && x.t.amount >= largeAmount))
     .sort((a, b) => b.t.amount - a.t.amount)
-    .slice(0, 3)
-    .map(({ t, typical, ratio }) =>
-      anomaly("outlier-transaction", "medium", `One-off ${t.categoryName} charge on ${t.localDate}`,
-        `"${t.description || t.categoryName}" is about ${Math.round(ratio)}x the typical ${t.categoryName} charge and ${pct(t.amount, ctx.periodExpenses) ?? 0}% of the period's spending. Worth confirming it is not a mistyped amount.`,
+    .map(({ t, typical, ratio }) => {
+      // A row admitted only by the absolute figure has `ratio < outlierRatio` by definition, so the
+      // relative wording would undercut the finding it is presenting: "about 1x the typical charge",
+      // or "about 0x" where the category has no other row at all and `median([])` returned 0. Say
+      // what actually admitted the row instead, and report no baseline where none was measured.
+      const share = `${pct(t.amount, ctx.periodExpenses) ?? 0}% of the period's spending`;
+      const against =
+        ratio >= outlierRatio
+          ? `is about ${Math.round(ratio)}x the typical ${t.categoryName} charge and ${share}`
+          : typical === 0
+            ? `is the only ${t.categoryName} charge there is to compare it with, and ${share}`
+            : `clears your "always flag" figure and is ${share}`;
+      return anomaly("outlier-transaction", "medium", `One-off ${t.categoryName} charge on ${t.localDate}`,
+        `"${t.description || t.categoryName}" ${against}. Worth confirming it is not a mistyped amount.`,
         {
           current: round(t.amount),
-          baseline: round(typical),
-          changePct: pct(t.amount - typical, typical),
+          baseline: typical === 0 ? null : round(typical),
+          changePct: typical === 0 ? null : pct(t.amount - typical, typical),
           drillDown: {
             ...periodDrillDown(ctx, "EXPENSE"),
             categoryId: t.categoryId,
             search: t.description || undefined,
           },
-        }));
+        });
+    });
 };
 
 /** Overspending, a savings rate falling away from the baseline, missing income, and run-rate. */
@@ -1245,6 +1822,270 @@ const detectCashFlowAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
   return out;
 };
 
+/**
+ * Whether the figures on the page are worth drawing a conclusion from at all.
+ *
+ * The coverage gate has always existed and has always been enforced - silently. A month logged on
+ * fewer than 60% of its days is excluded from every rate and average, and nothing on screen said
+ * so unless the missing days happened to fall in one run long enough to be a `logging-gap`. Thirty
+ * days each missing half their rows produce no gap finding and no trustworthy months either, and
+ * the report reads as though it knows something.
+ *
+ * `logging-gap` is the evidence and stays informational; these two are the conclusion and carry
+ * the weight. It used to raise itself to "high" on low coverage, which put two findings of
+ * different severities on screen saying the same thing about the same days.
+ */
+const detectConfidenceAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
+  const out: AssessmentAnomaly[] = [];
+  const { periodCoveragePct, periodDaysElapsed, periodIsPartial } = ctx.confidence;
+
+  // Days *elapsed*, never days in the period: a month three days old has not failed to log the
+  // other twenty-eight, and reporting 10% coverage on the 3rd would fire this every month.
+  if (periodDaysElapsed > 0 && periodCoveragePct < MIN_COVERAGE_PCT) {
+    out.push(anomaly("low-coverage", "high",
+      `Only ${periodCoveragePct}% of these days have anything logged`,
+      `${periodDaysElapsed} day${periodDaysElapsed > 1 ? "s" : ""} of this period ${periodIsPartial ? "have passed" : "were in it"} and most of them hold no transactions. Every total here is a floor rather than a figure, and the budget, pace and forecast readings are not worth acting on until the gaps are filled.`,
+      { current: periodCoveragePct, baseline: MIN_COVERAGE_PCT, drillDown: periodDrillDown(ctx) }));
+  }
+
+  // A period with no logging of its own is already the finding above; saying its baseline is thin
+  // as well is true and useless.
+  if (periodCoveragePct >= MIN_COVERAGE_PCT && ctx.baselineMonths.length < MIN_BASELINE_MONTHS) {
+    const have = ctx.baselineMonths.length;
+    out.push(anomaly("insufficient-history", have === 0 ? "medium" : "low",
+      have === 0
+        ? "Nothing to compare this period against"
+        : `Only ${have} earlier month${have > 1 ? "s" : ""} to compare against`,
+      `A baseline needs ${MIN_BASELINE_MONTHS} months logged well enough to trust before "usual" means anything. ${have === 0 ? "Category spikes, spending pace and forecast-to-exceed are all silent until there are." : "Treat the trends and the pace on this page as provisional until there are more."}`,
+      { current: have, baseline: MIN_BASELINE_MONTHS, drillDown: periodDrillDown(ctx) }));
+  }
+  return out;
+};
+
+/**
+ * Deposits that arrive on a rhythm and have not arrived.
+ *
+ * The blunter `missing-income` asks whether the period saw any income at all; a month with one of
+ * three expected deposits logged passes that and is still short by two. This asks the question per
+ * source, against that source's own cadence, which is the form the answer is actually useful in:
+ * "the 15th-of-the-month salary has not been recorded" names both the deposit and the date.
+ *
+ * High severity by default, and not because it is necessarily bad news - an unlogged deposit makes
+ * every balance, runway and forecast figure on the page wrong, which is worse than a number being
+ * low.
+ */
+const detectMissingExpectedIncome = (ctx: AnomalyContext): AssessmentAnomaly[] =>
+  ctx.recurring.income
+    .filter((source) => {
+      if (source.occurrences < MIN_INCOME_OCCURRENCES || source.intervalDays === null) return false;
+      const grace = Math.max(MIN_INCOME_GRACE_DAYS, Math.round(source.intervalDays * INCOME_GRACE_SHARE));
+      return source.daysOverdue > grace;
+    })
+    .map((source) => anomaly("missing-expected-income", "high",
+      `${source.description} has not been logged since ${source.lastSeen}`,
+      `It has arrived every ${source.intervalDays} days or so across ${source.occurrences} deposits, and the next one was due around ${source.expectedNextDate} — ${source.daysOverdue} days ago. Until it is recorded, the balance, runway and every forecast on this page are short by it.`,
+      {
+        current: source.avgAmount,
+        drillDown: {
+          destination: "transactions",
+          type: "INCOME",
+          search: source.description || undefined,
+          from: source.firstSeen,
+          to: ctx.today,
+        },
+        // The source and the occurrence it is late for. Not the day count, which climbs every
+        // morning: a snooze taken on Tuesday has to still hold on Thursday.
+        stateKey: `income:missing:${foldDescription(source.description)}:${source.expectedNextDate}`,
+      }));
+
+/**
+ * What the bills themselves are doing, beyond the occurrences nobody paid.
+ *
+ * Three questions, all asked of today rather than of the period, which is why all three kinds are
+ * `outstanding`. `missed-bill` already covered the fourth; these are the ones that were computed
+ * into the facts and then read by nothing.
+ *
+ * `bill-due-soon` aggregates the way `missed-bill` does, and deliberately: five bills falling due
+ * in a fortnight is one trip to /bills, and five rows on the Watchlist for it would bury every
+ * other finding under a list the Bills page already shows better. The other two are per bill,
+ * because each names a different bill to go and change.
+ */
+const detectBillAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
+  const out: AssessmentAnomaly[] = [];
+  const dueSoon = ctx.bills.dueSoon;
+
+  if (dueSoon.length > 0) {
+    const imminent = dueSoon[0].daysUntilDue <= DUE_IMMINENT_DAYS;
+    const named = dueSoon.slice(0, 3).map((b) => `${b.description} on ${b.dueDate}`).join(", ");
+    out.push(anomaly("bill-due-soon", imminent ? "medium" : "low",
+      `${dueSoon.length} bill${dueSoon.length > 1 ? "s" : ""} due in the next ${DUE_SOON_DAYS} days`,
+      `${named}${dueSoon.length > 3 ? " and others" : ""}. That is a claim on cash already committed, before anything discretionary this month.${ctx.bills.dueSoonIsEstimate ? " Variable bills are estimated from what they have cost before." : ""}`,
+      {
+        current: ctx.bills.dueSoonTotal,
+        drillDown: { destination: "bills" },
+        // The identity is the *set* of bills, so a newly due bill is a new finding rather than one
+        // silently covered by a snooze taken over a different bill last week. It has to be a
+        // `stateKey` and not the default hash: that hash folds in `current`, which is
+        // `dueSoonTotal`, and a variable bill's share of it is re-derived by `estimateBillAmount`
+        // on every run. Correcting a typo'd payment or logging an out-of-order one would move the
+        // total while the set of bills stood still, re-raising a finding already dealt with --
+        // the same hazard `bill-under-budgeted` keys around two blocks below.
+        // Sorted here as well as in the facts, so the identity is the set itself and not the
+        // order something happens to present it in. Belt and braces on purpose: a future change to
+        // how the list is ordered for display must not silently reissue every stored dismissal.
+        stateKey: `bill:due-soon:${dueSoon.map((b) => `${b.id}@${b.dueDate}`).sort().join(",")}`,
+        findingKeyEvidence: JSON.stringify(dueSoon.map((b) => [b.id, b.dueDate])),
+      }));
+  }
+
+  for (const snoozed of ctx.bills.repeatedlySnoozed) {
+    out.push(anomaly("bill-snoozed", "medium",
+      `${snoozed.description} has been put off ${snoozed.snoozes} times`,
+      `The occurrence due ${snoozed.dueDate} has been snoozed ${snoozed.snoozes} times and is still neither paid nor skipped${snoozed.snoozedUntil ? `, deferred again until ${snoozed.snoozedUntil}` : ""}. If it is not going to be paid, skipping it keeps the schedule honest.`,
+      {
+        current: snoozed.amount,
+        drillDown: { destination: "bills" },
+        // The count is part of the identity: a fourth deferral is a fresh decision, not the same
+        // finding drifting, so resolving the third must not suppress it.
+        stateKey: `bill:snoozed:${snoozed.id}:${snoozed.dueDate}:${snoozed.snoozes}`,
+      }));
+  }
+
+  const underBudgeted = ctx.bills.accuracy.filter(
+    (a) => a.verdict === "under-budgeted" && a.avgPaid !== null && (a.variancePct ?? 0) > 0,
+  );
+  for (const bill of underBudgeted) {
+    out.push(anomaly("bill-under-budgeted", "medium",
+      `${bill.description} costs ${bill.variancePct}% more than it is budgeted for`,
+      `Across ${bill.payments} payments it has averaged ${bill.variancePct}% above the figure on the bill. Every forecast and every budget that reads this bill is short by that much, every month.`,
+      {
+        current: bill.avgPaid,
+        baseline: bill.budgeted,
+        changePct: bill.variancePct,
+        drillDown: { destination: "bills" },
+        // Keyed on the budgeted figure, which is the thing being asked for: one more payment
+        // nudging the average must not re-raise a finding the user has already dealt with, but
+        // changing the budget and still being wrong must.
+        stateKey: `bill:under-budgeted:${bill.id}:${bill.budgeted}`,
+      }));
+  }
+  return out;
+};
+
+/**
+ * Changes to the fixed base underneath the discretionary spending.
+ *
+ * Four questions about a repeating charge, and all four are asked of today rather than of the
+ * selected period — which is why every kind here is `outstanding`. A subscription that renews on
+ * Friday renews on Friday whichever month's report happens to be open.
+ *
+ * Only *established* charges are judged for lapse, renewal and price: a charge seen twice has no
+ * cadence worth trusting, and reporting that it "seems to have stopped" after one skipped fortnight
+ * would be noise. A charge that is new has its own finding, which is the one thing worth saying
+ * about a habit that has not settled yet.
+ */
+const detectRecurringAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
+  const out: AssessmentAnomaly[] = [];
+  // Searched on the fold-safe token, not the display spelling. A group is keyed on
+  // `foldDescription`, so "Angel\u2019s Rent" and "Angel's Rent" are one charge and the label is
+  // whichever of them happened to arrive first -- while the ledger's own search is a plain
+  // case-insensitive `contains` that knows nothing about the fold. Linking the label sent a
+  // finding that counted four payments to a list showing two. `longestToken` is the same needle
+  // `assessment-facts-query` already prefilters bill payments with, and it splits on the
+  // apostrophe for exactly this reason. It costs a little selectivity ("Angel" over
+  // "Angel\u2019s"); the date range below is what keeps the list narrow.
+  const chargeDrillDown = (item: AssessmentRecurringItem): AssessmentAnomalyDrillDown => ({
+    destination: "transactions",
+    type: "EXPENSE",
+    search: item.description ? longestToken(item.description) : undefined,
+    from: item.firstSeen,
+    to: ctx.today,
+  });
+  // Identity is the charge, the question asked about it, and *which* occurrence of that question --
+  // never the running figures. Without the third part a resolve, which never expires, buried every
+  // later answer to the same question: resolving September's renewal meant Netflix never raised a
+  // renewal finding again, and resolving a 499 to 699 rise silenced a later 699 to 1299 one.
+  //
+  // What each kind pins is the thing that stands still for one episode and moves for the next.
+  // `expectedNextDate` is `lastSeen + intervalDays`, so it holds all cycle and changes when the
+  // charge lands -- which is what keeps a snoozed "renews soon" snoozed as the date draws nearer,
+  // the property the figures were being kept out of the key to protect. `lastSeen` is the charge a
+  // lapse was measured from, and `latestAmount` is the new price itself, so one more month at 699
+  // cannot re-raise a rise already dealt with while a further rise to 1299 must -- the same
+  // reasoning that keys `bill-under-budgeted` on the budgeted figure rather than the average.
+  const stateKey = (item: AssessmentRecurringItem, question: string, occurrence: string | number) =>
+    `recurring:${foldDescription(item.description)}:${question}:${occurrence}`;
+
+  for (const item of ctx.recurring.newItems) {
+    out.push(anomaly("recurring-new", "low",
+      `${item.description} is a new recurring charge`,
+      `First seen on ${item.firstSeen} and charged in ${item.months} months since. It bills about ${item.intervalDays ? `every ${item.intervalDays} days` : "once a month"} and did not exist in the earlier months of the window.`,
+      {
+        current: item.avgAmount,
+        drillDown: chargeDrillDown(item),
+        // No `findingKeyEvidence` beside a `stateKey`: `watchlistFindingKey` reads one or the
+        // other, so evidence sitting next to a key is never looked at. `firstSeen` carries the
+        // identity instead, and a charge is only ever new once from that date.
+        stateKey: stateKey(item, "new", item.firstSeen),
+      }));
+  }
+
+  // Collected per kind so the cap lands on what gets said rather than on which charges are asked.
+  // Charges arrive ordered by total spend, so a cap that bites keeps the costliest of each kind.
+  const ended: AssessmentAnomaly[] = [];
+  const renewing: AssessmentAnomaly[] = [];
+  const repriced: AssessmentAnomaly[] = [];
+
+  for (const item of ctx.recurringAll) {
+    if (item.isNew || item.months < RECURRING_MIN_MONTHS || item.intervalDays === null) continue;
+
+    if (item.daysOverdue > item.intervalDays * RECURRING_LAPSE_CYCLES) {
+      ended.push(anomaly("recurring-ended", "low",
+        `${item.description} has stopped charging`,
+        `It was charged about every ${item.intervalDays} days, and the last one was on ${item.lastSeen} — ${item.daysOverdue} days past when the next was due. Either it was cancelled, or the payment was not logged.`,
+        {
+          current: item.avgAmount,
+          drillDown: chargeDrillDown(item),
+          stateKey: stateKey(item, "ended", item.lastSeen),
+        }));
+      continue;
+    }
+
+    if (item.expectedNextDate !== null && item.daysOverdue === 0
+      && daysBetween(ctx.today, item.expectedNextDate) <= RECURRING_RENEWAL_DAYS) {
+      renewing.push(anomaly("recurring-renews-soon", "low",
+        `${item.description} renews around ${item.expectedNextDate}`,
+        `It has been charged every ${item.intervalDays} days or so, and the next one is due within ${RECURRING_RENEWAL_DAYS} days. Cancel it before then if it is not being used.`,
+        {
+          current: item.avgAmount,
+          drillDown: chargeDrillDown(item),
+          stateKey: stateKey(item, "renews-soon", item.expectedNextDate),
+        }));
+    }
+
+    const prior = item.priorAvgAmount;
+    if (prior === null || prior === 0) continue;
+    const change = pct(item.latestAmount - prior, prior);
+    if (change === null || Math.abs(change) < RECURRING_AMOUNT_CHANGE_PCT) continue;
+    repriced.push(anomaly("recurring-amount-change", change > 0 ? "medium" : "low",
+      `${item.description} now costs ${Math.abs(change)}% ${change > 0 ? "more" : "less"}`,
+      `The charge on ${item.lastSeen} is ${Math.abs(change)}% ${change > 0 ? "above" : "below"} the average of the ${item.occurrences - 1} before it. ${change > 0 ? "A price rise" : "A price drop"} on a charge that repeats ${change > 0 ? "costs" : "saves"} that much every cycle from here.`,
+      {
+        current: item.latestAmount,
+        baseline: prior,
+        changePct: change,
+        drillDown: chargeDrillDown(item),
+        // The price *episode*, not the price. A charge that goes 499, 699, 499, 699 rises to 699
+        // twice, and keying on the amount alone let the second rise inherit the first's resolution
+        // and never appear. `latestAmountSince` holds still while the charge stays at this amount,
+        // so one more month at 699 still cannot re-raise a rise already dealt with.
+        stateKey: stateKey(item, "amount-change", `${item.latestAmount}@${item.latestAmountSince}`),
+      }));
+  }
+  out.push(...ended, ...renewing, ...repriced);
+  return out;
+};
+
 /** Findings about the data itself: missed bills, duplicates, days with nothing logged. */
 const detectHygieneAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
   const out: AssessmentAnomaly[] = [];
@@ -1260,7 +2101,10 @@ const detectHygieneAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
       }));
   }
 
-  const dupes = ctx.hygiene.duplicates.filter((d) => d.inPeriod);
+  // The switch suppresses the *finding*, never the fact. `computeHygiene` still detects these and
+  // the assessment's data-quality card still lists them; what somebody turns off here is being
+  // told about them every time they open the page.
+  const dupes = ctx.thresholds.duplicateAlerts ? ctx.hygiene.duplicates.filter((d) => d.inPeriod) : [];
   if (dupes.length > 0) {
     out.push(anomaly("duplicate", "medium", `${dupes.length} possible duplicate entr${dupes.length > 1 ? "ies" : "y"}`,
       `Same day, same description and same amount — usually a double submit. Check ${dupes.slice(0, 2).map((d) => `"${d.description}" on ${d.date}`).join(" and ")}.`,
@@ -1282,10 +2126,13 @@ const detectHygieneAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
       }));
   }
 
+  // Left at "low" whatever the coverage is. It is the evidence; `low-coverage` is the conclusion
+  // and carries the weight, and escalating both put two findings of different severities on screen
+  // saying the same thing about the same days.
   const gaps = ctx.confidence.gaps.filter((g) => g.inPeriod);
   if (gaps.length > 0) {
     const worst = gaps[0];
-    out.push(anomaly("logging-gap", ctx.confidence.periodCoveragePct < MIN_COVERAGE_PCT ? "high" : "low",
+    out.push(anomaly("logging-gap", "low",
       `${worst.days} days with nothing logged`,
       `Nothing was recorded between ${worst.from} and ${worst.to}, so this period's totals are a floor rather than the whole picture. Coverage is ${ctx.confidence.periodCoveragePct}% of the days elapsed.`,
       { current: ctx.confidence.periodCoveragePct, drillDown: periodDrillDown(ctx) }));
@@ -1297,12 +2144,73 @@ const SEVERITY_RANK: Record<AiWatchSeverity, number> = { high: 0, medium: 1, low
 export const sortAssessmentAnomalies = (findings: AssessmentAnomaly[]): AssessmentAnomaly[] =>
   [...findings].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
 
+/**
+ * Keep at most `perKind` findings of each kind, in the order they arrived.
+ *
+ * Every detector used to do this for itself, with a `slice(0, 3)` on the way out. That put the cap
+ * *before* saved Watchlist state was consulted -- `/api/assessment/facts` computes keys only for
+ * the findings that were emitted, and a resolved one still occupies a slot -- so resolving the
+ * three that were visible produced an empty group rather than revealing the fourth, and a
+ * `RESOLVED` row never expires. Detection no longer caps itself; the caller caps what it shows.
+ *
+ * One upstream limit survives and is deliberate: `computeRecurring` keeps only the eight largest
+ * `newItems`, which bounds `recurring-new` candidates before detection ever sees them. That list
+ * is also a *payload* field, so raising it changes the response shape and every consumer's idea of
+ * what "new charges" means -- its own decision, not this one's. Eight is well above the three the
+ * Watchlist shows, so it is headroom rather than the bug being fixed here.
+ */
+export const capFindingsPerKind = (
+  findings: AssessmentAnomaly[],
+  perKind: number,
+): AssessmentAnomaly[] => {
+  const seen = new Map<string, number>();
+  return findings.filter((finding) => {
+    const n = (seen.get(finding.kind) ?? 0) + 1;
+    seen.set(finding.kind, n);
+    return n <= perKind;
+  });
+};
+
+/**
+ * What the Watchlist shows of any one kind, applied after suppression rather than before it.
+ *
+ * Three is a reading limit, not a safety one: past it a group stops being a list of things to do
+ * and becomes a wall to scroll. The point of this constant living in the route rather than in the
+ * detectors is that the fourth finding is still *computed*, so resolving the first three surfaces
+ * it instead of burying it.
+ */
+export const WATCHLIST_FINDINGS_PER_KIND = 3;
+
+/**
+ * The bound that keeps the facts payload finite, and nothing to do with what is displayed.
+ *
+ * Detection is uncapped so suppression has something to reveal, but it cannot be *unbounded*: a
+ * month with nothing logged turns every established recurring charge at once into "seems to have
+ * stopped". Generous enough that no realistic account meets it -- a live account measures twelve
+ * findings in total -- and low enough that the pathological one cannot flood the AI prompt, which
+ * reads this same list.
+ *
+ * Applied by `collectAssessmentFacts` once the list is **assembled**, not by `detectAnomalies`.
+ * Goal and budget findings are merged in afterwards, so a bound inside `detectAnomalies` silently
+ * did not cover them -- which is how `detectGoalAnomalies` kept its own cap of four, spent before
+ * suppression, while this file claimed detection was uncapped.
+ */
+export const FINDINGS_PAYLOAD_CEILING = 25;
+
 export const detectAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] =>
+  // Neither bound is applied here. `FINDINGS_PAYLOAD_CEILING` belongs at the assembly point, where
+  // the goal and budget findings have joined; `WATCHLIST_FINDINGS_PER_KIND` belongs in the route,
+  // which is the only place that knows what the user has already resolved.
   [
     ...detectHygieneAnomalies(ctx),
     ...detectCashFlowAnomalies(ctx),
     ...detectCategorySpikes(ctx),
     ...detectOutlierTransactions(ctx),
+    ...detectRecurringAnomalies(ctx),
+    ...detectBillAnomalies(ctx),
+    ...detectMissingExpectedIncome(ctx),
+    ...detectConfidenceAnomalies(ctx),
+    ...detectCashShortfall(ctx),
   ].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
 
 /* ------------------------------------------------------------------ */
@@ -1355,13 +2263,17 @@ export const buildAssessmentFacts = (input: FactsInput): AssessmentFacts => {
   const window = resolveFactsWindow(period, today, input.historyMonths);
   const confidence = computeConfidence(transactions, window.months, period, today);
   const trends = computeTrends(transactions, confidence.months, confidence.trustworthyMonths, period);
-  const recurring = computeRecurring(transactions, today, trends.avgMonthlyBurn, input.historyFirstSeen);
+  // `allItems` is peeled off here and never reaches the returned facts: detection needs every
+  // charge, the payload wants the top 15.
+  const { allItems: recurringAll, ...recurring } =
+    computeRecurring(transactions, today, trends.avgMonthlyBurn, input.historyFirstSeen);
   const hygiene = computeHygiene(transactions, confidence.trustworthyMonths, period);
   const headline = computeHeadline(trends, input.allTimeTotals ?? null);
   // Falls back to the window when the caller supplies no wider set, so a test or
   // a caller that has only the window still gets an answer -- a narrower one,
   // never a wrong one.
   const billFacts = computeBillFacts(bills, input.unlinkedCandidates ?? transactions, today, input.timezoneOffset);
+  const forecast = computeCashForecast(bills, recurring, headline.runningBalance, today, input.timezoneOffset);
 
   const periodTx = transactions.filter((t) => t.localDate >= period.from && t.localDate <= period.to);
   const periodMonth = monthOf(period.from) === monthOf(period.to) ? monthOf(period.from) : null;
@@ -1373,6 +2285,7 @@ export const buildAssessmentFacts = (input: FactsInput): AssessmentFacts => {
 
   const anomalies = detectAnomalies({
     period,
+    today,
     periodMonth,
     // Only clip when the period is a single month still running; a completed one
     // is compared whole, and a multi-month period has no day to clip to.
@@ -1382,11 +2295,15 @@ export const buildAssessmentFacts = (input: FactsInput): AssessmentFacts => {
     windowTx: transactions,
     confidence,
     bills: billFacts,
+    forecast,
+    recurring,
+    recurringAll,
     hygiene,
     baselineMonths,
     baselineBurn,
     periodIncome: round(sum(periodTx.filter((t) => t.type === "INCOME").map((t) => t.amount))),
     periodExpenses: round(sum(periodTx.filter((t) => t.type === "EXPENSE").map((t) => t.amount))),
+    thresholds: input.thresholds ?? DEFAULT_WATCHLIST_THRESHOLDS,
   });
 
   return {
@@ -1397,6 +2314,7 @@ export const buildAssessmentFacts = (input: FactsInput): AssessmentFacts => {
     confidence,
     headline,
     bills: billFacts,
+    forecast,
     trends,
     recurring,
     hygiene,
