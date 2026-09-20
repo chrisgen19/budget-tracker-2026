@@ -40,10 +40,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          # `0`, not `1`. With a single commit the reviewer has only the PR head, so
+          # every file it wants to read for context has to come over the network:
+          # run 35194924893 spent denied calls on `git fetch origin`,
+          # `gh api .../contents/...` and `curl raw.githubusercontent.com`. With the
+          # whole tree and history on disk, Read/Grep/Glob answer all of it locally.
+          # The diff itself still comes from `gh pr diff` (see the allowlist note),
+          # not from a local `git diff`.
+          fetch-depth: 0
 
       - name: Run Claude Code Review
         id: claude-review
+        # The action exits 1 whenever the session ends on `is_error: true`, and
+        # that says nothing about whether the review happened. On run 35194924893
+        # the four inline findings were posted at 07:42:08-07:42:30 and the
+        # session died at 07:42:31, so a finished review was reported as a failed
+        # job. The step below already knows what reached the PR, and it is the one
+        # that decides: a review that posted passes, a review that posted nothing
+        # fails. Deleting this line hands that decision back to a signal that
+        # cannot tell the two apart.
+        continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
           # Keeps the review subagents in the foreground, so the session cannot end
@@ -52,6 +68,25 @@ jobs:
           # are running in the background, will update shortly" and no findings.
           # Documented at https://code.claude.com/docs/en/code-review#run-in-the-foreground
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
+
+          # Best-effort scrub of Anthropic, cloud and Actions secrets from the
+          # subprocess environment Claude's Bash calls inherit, plus PID-namespace
+          # isolation where bubblewrap is available (anthropics/claude-code-action,
+          # docs/security.md). It auto-enables only alongside `allowed_non_write_users`,
+          # which this job does not set - run 35194924893 logged the variable empty -
+          # so it is asked for by name.
+          #
+          # What it protects is `CLAUDE_CODE_OAUTH_TOKEN`, which is the one secret on
+          # the runner that Claude is not already handed on purpose, and the only
+          # long-lived one: the app token in `GH_TOKEN` and in `.git/config` is
+          # short-lived and is what `gh pr comment` below runs on anyway. The reviewer
+          # reads issues (`gh issue view`, `gh search`), anyone can open an issue on a
+          # public repository, and `gh pr comment` publishes - so untrusted text has a
+          # way in and a way out, and Actions log masking does not cover a PR comment.
+          #
+          # The docs only document `0` to opt out, so `1` opting in where
+          # `allowed_non_write_users` is unset is unconfirmed. It is inert if ignored.
+          CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
@@ -71,19 +106,123 @@ jobs:
           # command really runs. The last step below does the job the tracking comment
           # was added for.
 
+          # A `Bash(verb:*)` rule is a prefix glob over the whole command, and a
+          # redirection is not a sub-command, so `Bash(head:*)` also allows
+          # `head payload > .git/config`. That is the same write primitive that
+          # `sort --output` and `uniq <in> <out>` were dropped for in the commit
+          # before this one, left open on every filter that was kept: the note
+          # below saying they "have no write-to-file flag" is true about flags and
+          # beside the point. The file worth writing is in the workspace - a planted
+          # `[core] fsmonitor = ./x.sh` runs on the next `git ls-files`, which is
+          # allowed, so it is arbitrary execution again by another route (chain
+          # reproduced end to end, PR #361 review). Dropping verbs does not
+          # generalize, since the next filter anyone adds reopens it, so the shell
+          # syntax is denied below for every Bash call whatever the allowlist says.
+          #
+          # The hook denies two things, and the order it checks them in is the
+          # whole point:
+          #
+          #   1. Command substitution, `$(...)` or backticks, anywhere outside
+          #      single quotes. Checked *first*, on the text with only single-quoted
+          #      spans removed. Stripping double-quoted spans first and then looking
+          #      for `>` is what the first version of this hook did, and
+          #      `head "$(gh issue view 1 --jq .body > .git/config)"` walks straight
+          #      through it: the whole substitution lives inside the double-quoted
+          #      span the check had already thrown away, while the shell still runs
+          #      the redirection inside it (verified - the payload landed). Single
+          #      quotes are safe to strip because the shell does not expand anything
+          #      inside them either.
+          #   2. Then `>`, on what is left after double-quoted spans are removed.
+          #
+          # The quote-stripping exists because the reviewer posts findings with
+          # `gh pr comment --body`, and finding text is full of `=>`, `Array<string>`
+          # and markdown quotes. Matching the raw command denied all three (verified),
+          # which would have left the job unable to post the review it had just
+          # written. A `>` inside a balanced quoted span is literal text to the shell
+          # too, so this agrees with what would actually execute.
+          #
+          # `<` is deliberately still allowed: reading a file is not the primitive in
+          # the chain (`uniq <in >out` writes through the `>`), Read already does it,
+          # and banning `<` would break the heredoc that carries a multi-line comment
+          # body. Pipes are untouched, so `gh pr diff | head` works, and `head x | sh`
+          # stays denied because the right-hand side of a pipe is matched on its own.
+          #
+          # Belt and braces, not the only guard. Claude Code's own static analyzer
+          # refuses a command it cannot parse - both `head "$(... ; ...)"` and
+          # `head "$(... > f)"` came back "Contains shell syntax that cannot be
+          # statically analyzed" (tested against 2.1.278), so the substitution route
+          # is already closed one layer up. That behaviour is undocumented, this hook
+          # does not depend on it, and neither depends on the other.
+          settings: |
+            {
+              "hooks": {
+                "PreToolUse": [
+                  {
+                    "matcher": "Bash",
+                    "hooks": [
+                      {
+                        "type": "command",
+                        "command": "v=$(jq -r '(.tool_input.command // \"\") as $c | ($c | gsub(\"\\u0027[^\\u0027]*\\u0027\"; \"\")) as $n | if ($n | test(\"[$]\\\\(|`\")) or (($n | gsub(\"\\\"[^\\\"]*\\\"\"; \"\")) | test(\">\")) then \"deny\" else \"ok\" end'); case \"$v\" in deny) printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"This reviewer may not redirect output to a file (>) or use command substitution ($(...) or backticks). Read files with Read/Grep/Glob and pipe into the allowed filters. Quote literal text in single quotes.\"}}';; esac"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+
           # `claude_args --allowedTools` adds to the tools the action already allows.
-          # Agent (formerly Task), Read, Glob, Grep, TodoWrite, `grep` and read-only `git`
-          # need no permission at all (https://code.claude.com/docs/en/tools-reference),
-          # so Bash is what needs listing. The `Bash(gh ...)` entries match the
-          # `allowed-tools:` frontmatter of the command (anthropics/claude-code,
+          # Agent (formerly Task), Read, Glob and Grep need no permission at all
+          # (https://code.claude.com/docs/en/tools-reference), so Bash is what needs
+          # listing. The `Bash(gh ...)` entries match the `allowed-tools:` frontmatter
+          # of the command (anthropics/claude-code,
           # plugins/code-review/commands/code-review.md), and still have to be repeated:
           # #331 traced #330's one denial to `gh pr view`, which the frontmatter lists.
           # The likely reason is that the command makes that call inside a subagent,
-          # which the frontmatter does not reach. Broadening to `Bash(gh api:*)` or
-          # `Bash(gh:*)` is not a small step: `gh` runs with the Claude app's token,
-          # which can write to the repository.
+          # which the frontmatter does not reach.
+          #
+          # Three things the 30-48 denials per run in the 2026-09-17 07:31 batch
+          # showed. None is a guess about how matching works - each is a call that
+          # appears by name in that batch's denial warnings:
+          #
+          #   * `Skill(code-review:code-review)` was denied in 6 of the 7 runs. The
+          #     prompt above *is* that command, so the first thing a session tries to
+          #     do was the one thing it was not allowed to do; the runs that produced
+          #     findings anyway did so by improvising a review of their own.
+          #   * A compound command is checked per sub-command, so an entry here only
+          #     covers a call that is not piped. `Bash(gh pr diff:*)` was listed and
+          #     `gh pr diff ... | head` was still denied 7 times, because `head` was
+          #     not. The pager and filter entries below are for the right-hand side of
+          #     those pipes, not for their own sake.
+          #   * Read-only `git` is not free after all - `git ls-tree -r` was denied -
+          #     so the read-only *plumbing* verbs are listed. The diff itself comes from
+          #     `gh pr diff`, not `git diff`; see the security note below for why.
+          #
+          # Two verbs and two filters are deliberately kept out, because a `:*` rule is a
+          # prefix glob and cannot forbid a dangerous flag once the verb is allowed:
+          #
+          #   * `git diff`, `git log` and `git show` all accept `--output=<path>`, which
+          #     writes any file the runner can write, and `--ext-diff`, which runs the
+          #     `[diff "x"] command = ...` from `.git/config`. Chained, and using only
+          #     those two verbs, that is arbitrary command execution: `git log
+          #     --output=.git/config --format=...` plants the driver, `git diff
+          #     --ext-diff` fires it, both under the action's write-capable `GH_TOKEN`.
+          #     This was reproduced end to end (PR #361 review). The reviewer does not
+          #     need them: `gh pr diff` is the diff, and Read/Grep/Glob over the
+          #     `fetch-depth: 0` checkout are the file contents.
+          #   * `sort --output=FILE` and `uniq <in> <out>` also write arbitrary files
+          #     (verified), which is the write primitive the exec chain needs. Dropped
+          #     for the same reason `Write` and `cat >` never were allowed. The kept
+          #     filters - head, tail, wc, cut, nl, ls - have no write-to-file flag,
+          #     which is not on its own enough: a shell redirection gives any of them
+          #     one, so the `settings` hook above denies that separately.
+          #
+          # Also absent, and not an oversight: `Bash(gh api:*)` and `Bash(gh:*)`, since
+          # `gh` runs with the Claude app's token, which can write to the repository; and
+          # the package managers - `pnpm type-check` and `npx vitest` were denied several
+          # times in that batch, and allowing them would not have helped, because no step
+          # here installs dependencies.
           claude_args: >-
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Task,Read,Glob,Grep,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Skill(code-review:code-review),Task,Read,Glob,Grep,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*),Bash(git ls-tree:*),Bash(git ls-files:*),Bash(git merge-base:*),Bash(git rev-parse:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(cut:*),Bash(nl:*),Bash(ls:*)"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
 
@@ -110,6 +249,10 @@ jobs:
           EXECUTION_FILE: ${{ steps.claude-review.outputs.execution_file }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          # `failure` here means the session ended on `is_error: true`. It is
+          # reported, never acted on: what matters is whether findings reached the
+          # PR, and the two are independent (run 35194924893 had both).
+          CLAUDE_OUTCOME: ${{ steps.claude-review.outcome }}
         run: |
           set -euo pipefail
 
@@ -117,6 +260,14 @@ jobs:
           # that edits this file (it will not run a reviewer the PR has changed), and a
           # setup failure has already failed the step above.
           if [ -z "${EXECUTION_FILE:-}" ] || [ ! -s "$EXECUTION_FILE" ]; then
+            # No transcript *and* a failed step is a setup failure, which used to
+            # fail the job through the action's own exit code. `continue-on-error`
+            # above suppresses that, so it has to be failed here or a broken action
+            # would now go green.
+            if [ "${CLAUDE_OUTCOME:-}" = failure ]; then
+              echo "::error title=Claude review never started::The action failed before producing a transcript, so this is a setup failure, not a review that stopped early. See the step above."
+              exit 1
+            fi
             echo "::notice title=Claude review did not run::No transcript, so there is nothing to report."
             exit 0
           fi
@@ -184,9 +335,9 @@ jobs:
           {
             echo "### Claude Code Review"
             echo
-            echo "| Turns | Cost (USD) | Denied calls | Summary comments | Inline comments |"
-            echo "|---|---|---|---|---|"
-            echo "| $turns | $cost | $denied | $summary_comments | $inline_comments |"
+            echo "| Session | Turns | Cost (USD) | Denied calls | Summary comments | Inline comments |"
+            echo "|---|---|---|---|---|---|"
+            echo "| $CLAUDE_OUTCOME | $turns | $cost | $denied | $summary_comments | $inline_comments |"
             if [ -n "$denials" ]; then
               echo
               echo "Denied calls, with how many times each was attempted:"
@@ -203,7 +354,18 @@ jobs:
             done <<<"$denials"
           fi
 
+          # A session that ended on `is_error: true` is worth saying out loud even
+          # when the review landed, because it is the signature of a limit being hit
+          # rather than of anything in this repository: on 2026-09-17, four of the
+          # seven reviews started in the same 39 seconds died within 18 seconds of
+          # each other at 07:42:17-07:42:35, at 14, 14, 32 and 43 turns. It is a
+          # warning and not an error because 35194924893 posted all four of its
+          # findings in the 23 seconds before it died.
+          if [ "${CLAUDE_OUTCOME:-}" = failure ]; then
+            echo "::warning title=Claude session ended in error::The action reported is_error:true after $turns turns. If several reviews ended at once, suspect the shared CLAUDE_CODE_OAUTH_TOKEN's rate limit rather than this PR. Set 'show_full_output: true' on a rerun to see the underlying message."
+          fi
+
           if [ $((summary_comments + inline_comments)) -eq 0 ]; then
-            echo "::error title=Claude review posted nothing::The review ended after $turns turns without a comment of its own on this PR (comments from other @claude jobs do not count). With no denied calls it most likely stopped on purpose: the command skips a PR it judges trivial, or one Claude has already commented on. Otherwise the warnings above name what it was refused. Comment '@claude review this PR' for a manual review."
+            echo "::error title=Claude review posted nothing::The review ended after $turns turns without a comment of its own on this PR (comments from other @claude jobs do not count). With no denied calls it most likely stopped on purpose: the command skips a PR it judges trivial, or one Claude has already commented on. Otherwise the warnings above name what it was refused, or the session error above cut it short. Comment '@claude review this PR' for a manual review."
             exit 1
           fi

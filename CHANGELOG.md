@@ -2,6 +2,113 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-18 - A finished code review no longer fails its own job
+
+`anthropics/claude-code-action` exits 1 whenever the Claude session ends on `is_error: true`, and
+that says nothing about whether the review happened. On run 35194924893 (PR #353) the four inline
+findings were posted between 07:42:08 and 07:42:30 and the session died at 07:42:31, so a review
+that did its job was reported as a failed one. The action step is now `continue-on-error`, and
+**Report what the review did** decides the job's colour on its own: it already reads the transcript
+for the comment ids this run created and confirms each one exists on this PR. A review that posted
+passes and records the session error as a warning; a review that posted nothing still fails. A
+setup failure, meaning no transcript *and* a failed step, fails too, since `continue-on-error`
+would otherwise have turned a broken action green.
+
+The session error itself was not this repository's doing. Seven PRs opened within 39 seconds
+started seven concurrent sessions on one `CLAUDE_CODE_OAUTH_TOKEN`, and four of them died between
+07:42:17 and 07:42:35 at 14, 14, 32 and 43 turns. Turn counts that far apart ending in the same
+wall-clock second is a shared account limit, not four per-session faults; the two 14-turn sessions
+spent over ten minutes and $7-$10 to reach 14 turns, which is what throttling looks like from the
+inside. Bounding concurrency was considered and rejected: GitHub keeps only one *pending* run per
+concurrency group, so a burst of seven would cancel five reviews outright, and a silently dropped
+review is worse than a red job whose findings are already on the PR.
+
+Denied tool calls, running at 30-48 per review, made that limit likelier by spending turns on calls
+that could never succeed. Every entry added to `--allowedTools` comes from that batch's own denial
+warnings rather than from a guess about how matching works:
+
+- `Skill(code-review:code-review)` was denied in six of the seven runs. The prompt *is* that
+  command, so the first thing each session tried was the one thing it was not allowed to do. The
+  runs that produced findings anyway improvised a review of their own
+- A compound command is checked per sub-command, so an entry only covers a call that is not piped.
+  `Bash(gh pr diff:*)` was already listed and `gh pr diff ... | head` was still denied seven times,
+  because `head` was not. The pager and filter entries exist for the right-hand side of those pipes
+- Read-only `git` is not free after all. `git ls-tree -r` and `git fetch origin` were both denied,
+  so the read-only verbs are listed explicitly, correcting the note that claimed otherwise
+
+`fetch-depth` moved from `1` to `0` for the same reason: with a single commit the reviewer has no
+base to diff against, so it cannot answer "what did this PR change?" from the checkout and goes
+looking for the diff over the network instead, spending denials on `git fetch origin`,
+`gh api .../contents/...`, `curl raw.githubusercontent.com` and `gh pr diff | head`. With the base
+on disk, `git diff` and `git log` answer all of it.
+
+Still deliberately excluded: `Bash(gh api:*)` and `Bash(gh:*)`, since `gh` runs with the Claude
+app's token and that token can write to the repository; `Write` and `Bash(cat:*)`, since a reviewer
+has nothing to write and `cat >` writes; and the package managers, because `pnpm type-check` and
+`npx vitest` were denied several times in that batch and allowing them would not have helped, as no
+step in this job installs dependencies.
+
+`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is now set, which keeps `CLAUDE_CODE_OAUTH_TOKEN` out of the
+environment Claude's Bash calls inherit. That token is the one secret on the runner Claude is not
+handed on purpose, and the only long-lived one; the app token is short-lived and is what
+`gh pr comment` runs on regardless. It matters because the reviewer reads issues, anyone can open
+an issue on a public repository, and `gh pr comment` publishes, so untrusted text has both a way in
+and a way out, and Actions log masking does not cover a PR comment. The action enables the scrub on
+its own only alongside `allowed_non_write_users`, which this job does not set.
+
+Reading `.git/config` was raised as a separate risk and is not one: the action removes the
+credential `actions/checkout` persisted and installs its own, 46 log lines before the session
+starts.
+
+A second review then found the real problem, and it was one this PR's own earlier commit had
+introduced. `Bash(git diff:*)`, `Bash(git log:*)` and `Bash(git show:*)` each accept
+`--output=<path>`, which writes any file the runner can write, and `--ext-diff`, which runs the
+`command` from a `[diff "name"]` section of `.git/config`. Using only the first two - both of which
+those commits had added - a prompt-injected reviewer can run `git log --output=.git/config
+--format=...` to plant a diff driver and then `git diff --ext-diff` to execute it, as arbitrary
+shell under the action's write-capable `GH_TOKEN`. This was reproduced end to end. `sort --output`
+and `uniq <in> <out>` are the same kind of write primitive and were added in the same commit. All
+five are removed. The exec chain needs a write primitive to seed the config, so removing the file
+writers closes it at the first step, not only at the last.
+
+The reviewer loses nothing it needs: the diff comes from `gh pr diff`, and file contents from
+Read/Grep/Glob over the `fetch-depth: 0` checkout. The read-only git plumbing that was genuinely
+denied in the batch - `ls-tree`, `ls-files`, `merge-base`, `rev-parse` - stays, since none of it
+writes a file or runs a config command, and the kept text filters (head, tail, wc, cut, nl, ls)
+have no write-to-file flag. A `:*` allowlist rule is a prefix glob and cannot forbid a flag once its
+verb is allowed, so the only way to bar `--output` and `--ext-diff` is to not allow the verb.
+
+A third review found that removing the writers had not in fact closed the chain at its first step.
+A `:*` rule is a prefix glob over the *whole* command, and a redirection is not a sub-command, so
+`Bash(head:*)` also permits `head payload > .git/config`. "No write-to-file flag" is true about
+flags and beside the point: `>` hands the same write primitive to every filter that was kept, the
+target sits inside the workspace, and a planted `[core] fsmonitor = ./x.sh` executes on the next
+`git ls-files`, which is allowed. The chain was reproduced end to end.
+
+Pruning verbs does not generalize, because the next filter anyone adds reopens it, so the shell
+syntax itself is now denied, for every Bash call and whatever the allowlist says, by a `PreToolUse`
+hook passed through the action's `settings` input.
+
+A fourth review then broke the hook's first version, which stripped every quoted span and then
+looked for `>`. `head "$(gh issue view 1 --jq .body > .git/config)"` walks through that: the
+substitution sits inside the double-quoted span the check had already discarded, while the shell
+still runs the redirection inside it. Verified, the payload landed. The hook now checks command
+substitution, `$(...)` or backticks, *before* it strips anything but single-quoted spans, and only
+then looks for `>` in what remains. Single quotes are safe to strip first because the shell does
+not expand inside them either.
+
+The quote-stripping stays, because the reviewer posts findings with `gh pr comment --body` and
+finding text is full of `=>`, `Array<string>` and markdown quotes; matching the raw command denied
+all three, which would have left the job unable to post the review it had just written. `<` is
+still allowed: reading is not the primitive in the chain, Read already does it, and banning `<`
+would break the heredoc that carries a multi-line comment body. Pipes are untouched, so
+`gh pr diff | head` still works while `head x | sh` stays denied on its own merits.
+
+The substitution route turned out to be closed one layer up as well: Claude Code's own static
+analyzer refuses a command it cannot parse, and both `head "$(... ; ...)"` and `head "$(... > f)"`
+came back "Contains shell syntax that cannot be statically analyzed" against 2.1.278. That
+behaviour is undocumented, so the hook does not lean on it, and neither guard depends on the other.
+
 ## 2026-09-18 - Resolving a Watchlist finding no longer hides the ones behind it
 
 Each kind of finding shows at most three rows, and that limit used to be applied before the app
