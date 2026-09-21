@@ -276,7 +276,7 @@ const raceOrder = (cards: StrategyCard[], monthlyPool: number, order: StrategyCa
   const cleared: string[] = [];
   let totalInterest = 0;
 
-  for (let month = 1; month <= 600; month += 1) {
+  for (let month = 1; month <= MAX_MONTHS; month += 1) {
     let pool = monthlyPool;
     const live = order.filter((card) => (balances.get(card.id) ?? 0) > SETTLED);
     if (live.length === 0) return { order: cleared, months: month - 1, totalInterest: round(totalInterest), stalled: false };

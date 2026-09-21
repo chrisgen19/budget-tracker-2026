@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireCreditCardsUser } from "@/lib/credit-account-http";
 import {
-  computeAccountBalance,
   getCreditAccountSummaries,
+  monthsInRange,
   observedPaymentWindow,
-  openingBalanceAsOf,
+  owedByMonth,
   readTimezoneOffset,
   summariseObservedPayments,
 } from "@/lib/credit-account-queries";
@@ -25,23 +25,6 @@ import { debtAnalyticsQuerySchema } from "@/lib/validations";
  * rather than an empty report. The tab is hidden for them too; a tab that 403s is worse than none.
  */
 
-/** Month keys from `from` to `to` inclusive, for the owed-over-time series. */
-const monthsBetween = (from: string, to: string): string[] => {
-  const months: string[] = [];
-  const cursor = new Date(`${from.slice(0, 7)}-01T00:00:00.000Z`);
-  const last = to.slice(0, 7);
-  while (`${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}` <= last) {
-    months.push(`${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}`);
-    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
-    if (months.length > 60) break;
-  }
-  return months;
-};
-
-/** The instant a user-local month ends, which is where each trend point is measured. */
-const monthEnd = (month: string, tz: number): Date =>
-  new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 1) + tz * 60_000 - 1);
-
 /**
  * A user-local calendar day as the instants bounding it, by the one formula the app uses:
  * `Date.UTC(y, m, d) + tzOffset * 60000`. Bare `T00:00:00Z` bounds are UTC's day, not the user's,
@@ -51,35 +34,6 @@ const monthEnd = (month: string, tz: number): Date =>
 const dayStart = (day: string, tz: number): Date =>
   new Date(Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10))) + tz * 60_000);
 const dayEnd = (day: string, tz: number): Date => new Date(dayStart(day, tz).getTime() + 86_400_000 - 1);
-
-type LedgerRow = { creditAccountId?: string | null; accountId?: string; amount: number; date: Date; kind?: string };
-
-/**
- * Total owed at the end of each month in the range, from rows already in memory: one pass per
- * month rather than a query per bucket.
- */
-const owedByMonth = (
-  cards: Awaited<ReturnType<typeof getCreditAccountSummaries>>,
-  purchases: LedgerRow[],
-  payments: LedgerRow[],
-  months: string[],
-  tz: number
-) =>
-  months.map((month) => {
-    const asOf = monthEnd(month, tz);
-    const owed = cards.reduce((sum, card) => {
-      const upTo = (row: LedgerRow) => row.date <= asOf;
-      const bought = purchases.filter((row) => row.creditAccountId === card.id && upTo(row));
-      const settled = payments.filter((row) => row.accountId === card.id && upTo(row));
-      const total = (rows: LedgerRow[]) => rows.reduce((acc, row) => acc + row.amount, 0);
-      return sum + computeAccountBalance(openingBalanceAsOf(card, asOf), {
-        purchases: total(bought),
-        payments: total(settled.filter((row) => row.kind === "PAYMENT")),
-        credits: total(settled.filter((row) => row.kind === "CREDIT")),
-      });
-    }, 0);
-    return { month, owed: Math.round(owed * 100) / 100 };
-  });
 
 export async function GET(request: Request) {
   const userId = await requireCreditCardsUser();
@@ -114,12 +68,14 @@ export async function GET(request: Request) {
       prisma.transaction.count({
         where: { userId, type: "EXPENSE", creditAccountId: { in: ids }, category: { name: INTEREST_CATEGORY_NAME } },
       }),
+      // Bounded at the end of the range, since rows after it feed no trend point. Not bounded
+      // below: the first month's balance is built from the whole history up to it.
       prisma.transaction.findMany({
-        where: { userId, type: "EXPENSE", creditAccountId: { in: ids } },
+        where: { userId, type: "EXPENSE", creditAccountId: { in: ids }, date: { lte: dayEnd(to, tz) } },
         select: { creditAccountId: true, amount: true, date: true },
       }),
       prisma.creditPayment.findMany({
-        where: { userId, accountId: { in: ids } },
+        where: { userId, accountId: { in: ids }, date: { lte: dayEnd(to, tz) } },
         select: { accountId: true, amount: true, date: true, kind: true },
       }),
       prisma.creditPayment.findMany({
@@ -128,7 +84,7 @@ export async function GET(request: Request) {
       }),
     ]);
 
-    const owedOverTime = owedByMonth(cards, purchases, payments, monthsBetween(from, to), tz);
+    const owedOverTime = owedByMonth(cards, purchases, payments, monthsInRange(from, to), tz);
 
     const racers: StrategyCard[] = owing
       .filter((card) => card.apr !== null)

@@ -11,7 +11,7 @@ const card = (over: Partial<CardWatchFacts> = {}): CardWatchFacts => ({
   apr: 36,
   dueDay: null,
   interestEverLogged: true,
-  recentPayments: [],
+  recentCycles: [],
   today: TODAY,
   ...over,
 });
@@ -94,39 +94,55 @@ describe("detectCardAnomalies", () => {
   });
 
   describe("paying only the minimum", () => {
-    const min = (amount: number, minimumThen: number | null) => ({ amount, minimumThen });
+    const month = (key: string, paid: number, minimumThen: number | null = 1000) => ({ month: key, paid, minimumThen });
+    const run = (...paid: number[]) =>
+      paid.map((amount, index) => month(["2026-06", "2026-07", "2026-08"][index], amount));
 
-    it("fires after three consecutive minimum-sized payments", () => {
-      const payments = [min(1000, 1000), min(1000, 1000), min(1000, 1000)];
-      expect(kinds([card({ recentPayments: payments })])).toContain("card-minimum-only");
+    it("fires after three consecutive months at about the minimum", () => {
+      expect(kinds([card({ recentCycles: run(1000, 1000, 1000) })])).toContain("card-minimum-only");
     });
 
-    /** Two is a tight couple of months, not a pattern. */
-    it("stays quiet below three", () => {
-      const payments = [min(1000, 1000), min(1000, 1000)];
-      expect(kinds([card({ recentPayments: payments })])).not.toContain("card-minimum-only");
+    /**
+     * The bug the review found. Payment rows used to be counted as cycles, so three part-payments
+     * of 1,000 in a single month -- 3,000 paid, three times the minimum -- read as three minimum
+     * cycles. Grouped by month that is one month at 3,000, nowhere near the minimum.
+     */
+    it("does not treat three part-payments in one month as three cycles", () => {
+      expect(kinds([card({ recentCycles: [month("2026-06", 0), month("2026-07", 0), month("2026-08", 3000)] })]))
+        .not.toContain("card-minimum-only");
     });
 
-    it("stays quiet when one of the three was a real payment", () => {
-      const payments = [min(1000, 1000), min(8000, 1000), min(1000, 1000)];
-      expect(kinds([card({ recentPayments: payments })])).not.toContain("card-minimum-only");
+    /**
+     * The other half: rows from non-consecutive months used to count as a run. A month with nothing
+     * paid is a missed payment, not a minimum one, and breaks it.
+     */
+    it("does not count a month with no payment as a minimum month", () => {
+      expect(kinds([card({ recentCycles: run(1000, 0, 1000) })])).not.toContain("card-minimum-only");
+    });
+
+    it("stays quiet when one of the three months was a real payment", () => {
+      expect(kinds([card({ recentCycles: run(1000, 8000, 1000) })])).not.toContain("card-minimum-only");
     });
 
     /** Rounding up, or adding a little, should not hide the pattern. */
     it("tolerates paying a little over the minimum", () => {
-      const payments = [min(1020, 1000), min(1050, 1000), min(1000, 1000)];
-      expect(kinds([card({ recentPayments: payments })])).toContain("card-minimum-only");
+      expect(kinds([card({ recentCycles: run(1020, 1050, 1000) })])).toContain("card-minimum-only");
     });
 
     /** With no minimum recorded there is nothing to compare against, so it asserts nothing. */
     it("stays quiet when the minimum is unknown", () => {
-      const payments = [min(1000, null), min(1000, null), min(1000, null)];
-      expect(kinds([card({ recentPayments: payments })])).not.toContain("card-minimum-only");
+      const cycles = run(1000, 1000, 1000).map((cycle) => ({ ...cycle, minimumThen: null }));
+      expect(kinds([card({ recentCycles: cycles })])).not.toContain("card-minimum-only");
     });
 
-    it("judges only the most recent three", () => {
-      const payments = [min(9000, 1000), min(1000, 1000), min(1000, 1000), min(1000, 1000)];
-      expect(kinds([card({ recentPayments: payments })])).toContain("card-minimum-only");
+    it("needs a full three months of history", () => {
+      expect(kinds([card({ recentCycles: run(1000, 1000) })])).not.toContain("card-minimum-only");
+    });
+
+    /** Keyed on the latest month, so next month's run is new rather than already dismissed. */
+    it("keys each run on its latest month", () => {
+      const [finding] = detectCardAnomalies([card({ recentCycles: run(1000, 1000, 1000) })]);
+      expect(finding.stateKey).toBe("card:minimum-only:card_1:2026-08");
     });
   });
 

@@ -157,6 +157,40 @@ function CardsTable({ data, money }: { data: DebtAnalytics; money: (n: number) =
 }
 
 /**
+ * The sentence under the two orderings, judged on each one's own outcome.
+ *
+ * The two can stall independently. At 48% APR on 60,000 with 2,500 a month, highest-rate-first
+ * clears in about eleven years while smallest-balance-first never does: it spends the surplus on the
+ * small card while the big one outgrows the pool. Comparing their month counts then read a stalled
+ * run's zeros as a free result and said the two "come out the same" -- the exact opposite of the
+ * truth, in the one situation where the order matters most. So a stalled ordering is never compared
+ * as a number; it is named.
+ */
+export const strategyVerdict = (
+  avalanche: DebtStrategyView,
+  snowball: DebtStrategyView,
+  money: (n: number) => string,
+): string => {
+  if (avalanche.stalled && snowball.stalled) {
+    return "Neither order clears the cards within 50 years at this amount. The order is not the problem; the amount is.";
+  }
+  if (snowball.stalled) {
+    return "Only highest rate first clears these cards at this amount. Smallest balance first spends the extra on the small card while the dearest one outgrows the payment.";
+  }
+  if (avalanche.stalled) {
+    return "Only smallest balance first clears these cards at this amount.";
+  }
+
+  const monthsSaved = snowball.months - avalanche.months;
+  const interestSaved = Math.round((snowball.totalInterest - avalanche.totalInterest) * 100) / 100;
+  if (interestSaved <= 0 && monthsSaved <= 0) {
+    return "Both orders come out about the same here, so pick whichever keeps you paying.";
+  }
+  const months = monthsSaved > 0 ? ` and ${monthsSaved} ${monthsSaved === 1 ? "month" : "months"}` : "";
+  return `Highest rate first saves about ${money(interestSaved)}${months}. Smallest balance first clears a card sooner, which some people find easier to keep going with.`;
+};
+
+/**
  * Avalanche against snowball on the same money. The useful reading is the gap, and with two or
  * three cards it is usually small -- so this says how small rather than implying the choice is big.
  */
@@ -172,34 +206,17 @@ function Strategies({
   const nameOf = (id: string) => names.find((card) => card.id === id)?.name ?? "A card";
   const { avalanche, snowball } = strategies;
 
-  if (avalanche.stalled) {
-    return (
-      <section className="card p-5">
-        <h2 className="font-serif text-lg text-warm-700">Which card first</h2>
-        <p className="mt-2 text-sm text-warm-600">
-          At {money(strategies.monthlyPool)} a month the cards do not clear in any order: that does not
-          cover the interest. The order is not the problem; the amount is.
-        </p>
-      </section>
-    );
-  }
-
-  const monthsSaved = snowball.months - avalanche.months;
-  const interestSaved = Math.round((snowball.totalInterest - avalanche.totalInterest) * 100) / 100;
-
   return (
     <section className="card p-5">
       <h2 className="font-serif text-lg text-warm-700">Which card first</h2>
       <p className="mt-1 text-sm text-warm-400">Paying {money(strategies.monthlyPool)} a month across the cards.</p>
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <StrategyBox title="Highest rate first" subtitle="Avalanche" result={avalanche} nameOf={nameOf} money={money} />
-        <StrategyBox title="Smallest balance first" subtitle="Snowball" result={snowball} nameOf={nameOf} money={money} />
-      </div>
-      <p className="mt-3 text-sm text-warm-600">
-        {interestSaved <= 0 && monthsSaved <= 0
-          ? "Both orders come out the same here, so pick whichever keeps you paying."
-          : `Highest rate first saves about ${money(interestSaved)}${monthsSaved > 0 ? ` and ${monthsSaved} ${monthsSaved === 1 ? "month" : "months"}` : ""}. Smallest balance first clears a card sooner, which some people find easier to keep going with.`}
-      </p>
+      {!(avalanche.stalled && snowball.stalled) && (
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <StrategyBox title="Highest rate first" subtitle="Avalanche" result={avalanche} nameOf={nameOf} money={money} />
+          <StrategyBox title="Smallest balance first" subtitle="Snowball" result={snowball} nameOf={nameOf} money={money} />
+        </div>
+      )}
+      <p className="mt-3 text-sm text-warm-600">{strategyVerdict(avalanche, snowball, money)}</p>
     </section>
   );
 }
@@ -221,10 +238,17 @@ function StrategyBox({
     <div className="rounded-xl border border-cream-200 p-4">
       <p className="font-medium text-warm-700">{title}</p>
       <p className="text-xs text-warm-400">{subtitle}</p>
-      <p className="mt-2 text-sm text-warm-600">
-        Clear in {result.months} {result.months === 1 ? "month" : "months"}, {money(result.totalInterest)} in interest
-      </p>
-      <p className="mt-1 text-xs text-warm-400">Order: {result.order.map(nameOf).join(" → ")}</p>
+      {/* A stalled run carries months: 0 and interest: 0. Printing those would read as free. */}
+      {result.stalled ? (
+        <p className="mt-2 text-sm text-expense">Does not clear within 50 years at this amount</p>
+      ) : (
+        <>
+          <p className="mt-2 text-sm text-warm-600">
+            Clear in {result.months} {result.months === 1 ? "month" : "months"}, {money(result.totalInterest)} in interest
+          </p>
+          <p className="mt-1 text-xs text-warm-400">Order: {result.order.map(nameOf).join(" → ")}</p>
+        </>
+      )}
     </div>
   );
 }

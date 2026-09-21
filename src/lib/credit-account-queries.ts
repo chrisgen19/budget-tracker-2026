@@ -5,6 +5,7 @@ import { sumOwedOnCards } from "@/lib/card-owed";
 import { INTEREST_CATEGORY_NAME, utilizationOf, type CardInterestFacts } from "@/lib/card-interest";
 import { minimumDue, monthsBetweenInclusive, observedMonthlyPayment } from "@/lib/debt-payoff";
 import type { CardWatchFacts } from "@/lib/assessment-facts";
+import { MAX_ANALYTICS_RANGE_DAYS } from "@/lib/analytics-limits";
 
 const round2 = (value: number): number => Math.round(value * 100) / 100;
 
@@ -305,6 +306,88 @@ export const summariseObservedPayments = (
 };
 
 /**
+ * Everything paid to one card in each of the given months, in the user's own calendar.
+ *
+ * Built from the month list rather than from the rows, so a month with no payment appears as zero
+ * instead of silently closing the gap. This grouping *is* the minimum-only fix: the detector used
+ * to receive one entry per payment row, so three part-payments in one month read as three cycles.
+ */
+export const monthlyPaymentTotals = (
+  payments: readonly { amount: number; date: Date }[],
+  months: readonly string[],
+  timezoneOffset: number
+): { month: string; paid: number }[] =>
+  months.map((month) => ({
+    month,
+    paid: payments
+      .filter((payment) => currentMonthKey(timezoneOffset, payment.date) === month)
+      .reduce((sum, payment) => sum + payment.amount, 0),
+  }));
+
+/**
+ * The most month keys a valid Debt tab range can cover. Derived from the span the schema admits
+ * rather than written as its own number: a hand-picked 60 truncated a ten-year range half-way with
+ * nothing on screen saying so. 28-day months are the shortest, so this can only over-estimate.
+ */
+export const MAX_DEBT_TREND_MONTHS = Math.ceil(MAX_ANALYTICS_RANGE_DAYS / 28) + 1;
+
+/** Month keys from `from` to `to` inclusive. */
+export const monthsInRange = (from: string, to: string): string[] => {
+  const months: string[] = [];
+  let month = from.slice(0, 7);
+  const last = to.slice(0, 7);
+  while (month <= last && months.length < MAX_DEBT_TREND_MONTHS) {
+    months.push(month);
+    month = shiftMonthKey(month, 1);
+  }
+  return months;
+};
+
+/** The instant a user-local month ends, which is where each trend point is measured. */
+const monthEndInstant = (month: string, timezoneOffset: number): Date =>
+  new Date(monthWindow(month, timezoneOffset).end);
+
+type DatedRow = { amount: number; date: Date };
+
+/**
+ * Total owed across the cards at the end of each month, in one forward pass.
+ *
+ * Rows are grouped by card and sorted once, then each card is walked month by month with a
+ * pointer that only moves forward -- linear in the rows rather than re-filtering every row for
+ * every card and every month, which is what the first version did.
+ */
+export const owedByMonth = (
+  cards: readonly { id: string; openingBalance: number; openingBalanceDate: Date }[],
+  purchases: readonly (DatedRow & { creditAccountId: string | null })[],
+  payments: readonly (DatedRow & { accountId: string; kind: CreditPaymentKind })[],
+  months: readonly string[],
+  timezoneOffset: number
+): { month: string; owed: number }[] => {
+  const byDate = (a: DatedRow, b: DatedRow) => a.date.getTime() - b.date.getTime();
+  const totals = months.map(() => 0);
+  const ends = months.map((month) => monthEndInstant(month, timezoneOffset));
+
+  for (const card of cards) {
+    const bought = purchases.filter((row) => row.creditAccountId === card.id).sort(byDate);
+    const paid = payments.filter((row) => row.accountId === card.id).sort(byDate);
+    let b = 0;
+    let p = 0;
+    const running = emptyTotals();
+
+    ends.forEach((asOf, index) => {
+      for (; b < bought.length && bought[b].date <= asOf; b += 1) running.purchases += bought[b].amount;
+      for (; p < paid.length && paid[p].date <= asOf; p += 1) {
+        if (paid[p].kind === "CREDIT") running.credits += paid[p].amount;
+        else running.payments += paid[p].amount;
+      }
+      totals[index] += computeAccountBalance(openingBalanceAsOf(card, asOf), running);
+    });
+  }
+
+  return months.map((month, index) => ({ month, owed: round2(totals[index]) }));
+};
+
+/**
  * Everything the Watchlist's card findings need, for every active card that owes something.
  *
  * Read here rather than in `assessment-facts.ts`, which holds no database access: that is what
@@ -335,10 +418,13 @@ export const getCardWatchFacts = async (
     }),
     prisma.creditPayment.findMany({
       where: { userId, accountId: { in: ids }, kind: "PAYMENT", date: { gte: observed.start, lt: observed.end } },
-      select: { accountId: true, amount: true },
-      orderBy: { date: "asc" },
+      select: { accountId: true, amount: true, date: true },
     }),
   ]);
+
+  // The last three whole months of the window, oldest first. Built from the calendar rather than
+  // from the rows, so a month with no payment appears as zero instead of silently closing the gap.
+  const cycleMonths = [2, 1, 0].map((back) => shiftMonthKey(observed.lastMonth, -back));
 
   const everLogged = new Set(
     interestRows.filter((row) => row._count._all > 0).map((row) => row.creditAccountId)
@@ -352,15 +438,17 @@ export const getCardWatchFacts = async (
     apr: card.apr,
     dueDay: card.dueDay,
     interestEverLogged: everLogged.has(card.id),
-    // The minimum is measured against the balance as it stands, not as it stood at each payment:
-    // the card's history of balances is not stored, and a minimum from the current balance is the
-    // closest honest stand-in. It is therefore only used to spot a *run* of minimum-sized payments.
-    recentPayments: payments
-      .filter((payment) => payment.accountId === card.id)
-      .map((payment) => ({
-        amount: payment.amount,
-        minimumThen: minimumDue(card.balance, card.minimumPaymentPct, card.minimumPaymentFloor),
-      })),
+    // The minimum is measured against the balance as it stands, not as it stood that month: the
+    // card's history of balances is not stored, and a minimum from the current balance is the
+    // closest honest stand-in. It is therefore only used to spot a *run* of minimum-sized months.
+    recentCycles: monthlyPaymentTotals(
+      payments.filter((payment) => payment.accountId === card.id),
+      cycleMonths,
+      timezoneOffset
+    ).map((cycle) => ({
+      ...cycle,
+      minimumThen: minimumDue(card.balance, card.minimumPaymentPct, card.minimumPaymentFloor),
+    })),
     today,
   }));
 };

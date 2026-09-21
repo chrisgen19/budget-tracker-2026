@@ -1656,8 +1656,11 @@ export interface CardWatchFacts {
   dueDay: number | null;
   /** Whether any interest or fee has **ever** been logged against this card. */
   interestEverLogged: boolean;
-  /** Payments in the observed window, newest last, with what the minimum was at the time. */
-  recentPayments: { amount: number; minimumThen: number | null }[];
+  /**
+   * The last `MINIMUM_ONLY_CYCLES` whole months, oldest first, each with everything paid in it. A
+   * month with no payment is present with `paid: 0`, so the run is genuinely consecutive.
+   */
+  recentCycles: { month: string; paid: number; minimumThen: number | null }[];
   /** The user's calendar day, so "due soon" is measured against their today and not the server's. */
   today: string;
 }
@@ -1740,20 +1743,25 @@ export const detectCardAnomalies = (cards: CardWatchFacts[]): AssessmentAnomaly[
     }
 
     /**
-     * Paying the minimum is how a balance survives for years. Said only once a run of cycles shows
-     * it is the pattern rather than one tight month, and only where the minimum for each of those
-     * cycles is actually known.
+     * Paying the minimum is how a balance survives for years. Judged per **month**, not per payment
+     * row: three part-payments inside one month are one month's paying, and counting them as three
+     * cycles fired this on someone who paid three times the minimum. Each of the months must hold a
+     * payment -- a month with none is a missed payment, a different and worse problem that this
+     * finding would describe wrongly -- and each must be within tolerance of a minimum that is known.
      */
-    const recent = card.recentPayments.slice(-MINIMUM_ONLY_CYCLES);
+    const cycles = card.recentCycles;
     const minimumOnly =
-      recent.length === MINIMUM_ONLY_CYCLES &&
-      recent.every((payment) => payment.minimumThen !== null && payment.amount <= payment.minimumThen * MINIMUM_TOLERANCE);
+      cycles.length === MINIMUM_ONLY_CYCLES &&
+      cycles.every((cycle) => cycle.paid > 0 && cycle.minimumThen !== null && cycle.paid <= cycle.minimumThen * MINIMUM_TOLERANCE);
     if (minimumOnly) {
+      const latest = cycles[cycles.length - 1];
       findings.push(anomaly("card-minimum-only", "medium",
-        `${card.name} has had about the minimum for ${MINIMUM_ONLY_CYCLES} payments running`,
+        `${card.name} has had about the minimum for ${MINIMUM_ONLY_CYCLES} months running`,
         `Paying the minimum covers the interest and little else, so the balance barely moves. The card's own page shows what clearing it costs on this and on other payments.`,
-        { current: recent.at(-1)?.amount ?? null, baseline: recent.at(-1)?.minimumThen ?? null, drillDown,
-          stateKey: `card:minimum-only:${card.id}:${recent.length}` }));
+        { current: latest.paid, baseline: latest.minimumThen, drillDown,
+          // Keyed on the latest month, so next month's run is a fresh finding rather than one the
+          // user already dismissed.
+          stateKey: `card:minimum-only:${card.id}:${latest.month}` }));
     }
 
     if (card.dueDay !== null) {
