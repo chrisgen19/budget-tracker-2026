@@ -13,6 +13,14 @@ on:
     #   - "src/**/*.js"
     #   - "src/**/*.jsx"
 
+# All automatic reviews share one Anthropic credential. Queue them instead of
+# starting a burst that can exhaust the shared rate limit. `queue: max` retains
+# up to 100 pending reviews; unlike the default single-pending behavior, a new
+# PR does not silently replace an older queued review.
+concurrency:
+  group: claude-code-review-${{ github.repository }}
+  queue: max
+
 jobs:
   claude-review:
     # A PR opened as a draft still fires `opened`, so skip it and wait for
@@ -25,7 +33,9 @@ jobs:
     #   github.event.pull_request.user.login == 'new-developer' ||
     #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
 
-    runs-on: ubuntu-latest
+    # The sandbox setup below depends on Ubuntu 24.04's AppArmor behavior. Pin
+    # the image instead of inheriting a future `ubuntu-latest` migration.
+    runs-on: ubuntu-24.04
     # A full review takes a few minutes. The ceiling caps what a stuck run can bill.
     timeout-minutes: 30
     permissions:
@@ -38,7 +48,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # `0`, not `1`. With a single commit the reviewer has only the PR head, so
           # every file it wants to read for context has to come over the network:
@@ -48,6 +58,9 @@ jobs:
           # The diff itself still comes from `gh pr diff` (see the allowlist note),
           # not from a local `git diff`.
           fetch-depth: 0
+          # Claude's action obtains its own short-lived GitHub App token. Do not
+          # leave the workflow token in this checkout's Git configuration too.
+          persist-credentials: false
 
       # The action restores a fixed list of Claude configuration paths from the
       # PR base, but that documented list does not include either of these files.
@@ -101,7 +114,7 @@ jobs:
         # fails. Deleting this line hands that decision back to a signal that
         # cannot tell the two apart.
         continue-on-error: true
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@cfc3eb22bfed5c26ef66e3223c982af27e4524de # v1
         env:
           # Keeps the review subagents in the foreground, so the session cannot end
           # while they are still working. On #335 the agents were sent to the

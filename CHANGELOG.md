@@ -2,6 +2,18 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-21 - Claude reviews queue on pinned infrastructure
+
+Automatic Claude reviews now share a repository-wide `queue: max` concurrency group. A burst of
+pull requests therefore runs one review at a time instead of exhausting the shared Anthropic
+credential's rate limit, while retaining up to 100 pending reviews rather than silently replacing
+all but the newest one.
+
+The review job is pinned to Ubuntu 24.04 because its sandbox setup depends on that image's AppArmor
+behavior. `actions/checkout` and `anthropics/claude-code-action` are pinned to verified full commit
+SHAs, checkout no longer persists its workflow credential in Git configuration, and Dependabot now
+proposes grouped weekly GitHub Actions updates so immutable pins can still be maintained.
+
 ## 2026-09-21 - Code review policy is trusted and route-aware
 
 Automatic Claude reviews now restore `AGENTS.md` and `REVIEW.md` from the pull request's base
