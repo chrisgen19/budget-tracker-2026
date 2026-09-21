@@ -38,7 +38,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # `0`, not `1`. With a single commit the reviewer has only the PR head, so
           # every file it wants to read for context has to come over the network:
@@ -48,6 +48,36 @@ jobs:
           # The diff itself still comes from `gh pr diff` (see the allowlist note),
           # not from a local `git diff`.
           fetch-depth: 0
+
+      # `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` enables Claude Code's Linux
+      # subprocess sandbox, which requires bubblewrap and socat. The action only
+      # installs these itself when `allowed_non_write_users` is set, so a trusted-
+      # author review like this one has to prepare the runner explicitly. Keep the
+      # AppArmor adjustment in sync with anthropics/claude-code-action's own setup
+      # for Ubuntu 24.04+ runners.
+      - name: Install subprocess isolation dependencies
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for attempt in 1 2 3; do
+            if sudo apt-get update -qq &&
+              sudo apt-get install -y --no-install-recommends bubblewrap socat; then
+              break
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              echo "Failed to install subprocess isolation dependencies after 3 attempts" >&2
+              exit 1
+            fi
+
+            sleep 5
+          done
+
+          if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
 
       - name: Run Claude Code Review
         id: claude-review
@@ -84,8 +114,10 @@ jobs:
           # public repository, and `gh pr comment` publishes - so untrusted text has a
           # way in and a way out, and Actions log masking does not cover a PR comment.
           #
-          # The docs only document `0` to opt out, so `1` opting in where
-          # `allowed_non_write_users` is unset is unconfirmed. It is inert if ignored.
+          # The action passes this standalone opt-in through even though its own
+          # dependency-install step is coupled to `allowed_non_write_users`; the
+          # explicit setup step above fills that gap without broadening who may run
+          # this write-capable review.
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
