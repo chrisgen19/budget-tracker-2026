@@ -108,8 +108,10 @@ export function CardInterestForm({ onSubmit, onCancel }: CardInterestFormProps) 
       </Field>
 
       <Field label="Category" error={errors.categoryId?.message}>
-        <select {...register("categoryId")} className={INPUT_CLASS} disabled={categories.isLoading}>
-          <option value="">{categories.isLoading ? "Loading categories…" : "Choose a category"}</option>
+        <select {...register("categoryId")} className={INPUT_CLASS} disabled={categories.isLoading || categories.isError}>
+          <option value="">
+            {categories.isLoading ? "Loading categories…" : categories.isError ? "Unavailable" : "Choose a category"}
+          </option>
           {expenseCategories.map((category) => (
             <option key={category.id} value={category.id}>
               {category.name}
@@ -118,16 +120,37 @@ export function CardInterestForm({ onSubmit, onCancel }: CardInterestFormProps) 
         </select>
       </Field>
 
-      {/* Without the seeded category the charge still saves, it just will not be counted as
-          interest anywhere, so say that here rather than letting the figure quietly stay at zero. */}
-      {!seeded && !categories.isLoading && (
-        <p className="flex items-start gap-2 rounded-xl border border-amber/30 bg-amber/10 p-3 text-xs text-warm-600">
-          <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-amber-dark" />
-          <span>
-            There is no &ldquo;{INTEREST_CATEGORY_NAME}&rdquo; category yet, so this charge will not be
-            counted as interest. Run the category seed, then move it across.
-          </span>
-        </p>
+      {/* A failed load leaves the select empty and `seeded` undefined, which is indistinguishable
+          from a database that has not been seeded. Sending someone to run a seed over what is
+          actually a dropped request is the wrong instruction, so the error takes precedence. */}
+      {categories.isError ? (
+        <div className="flex items-start gap-2 rounded-xl border border-expense/20 bg-expense-light/40 p-3 text-xs text-warm-600">
+          <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-expense" />
+          <div className="space-y-1">
+            <p>Couldn&apos;t load your categories, so there is nothing to file this charge under.</p>
+            <button
+              type="button"
+              onClick={() => void categories.refetch()}
+              disabled={categories.isFetching}
+              className="min-h-11 text-sm font-medium text-amber-dark disabled:opacity-50"
+            >
+              {categories.isFetching ? "Retrying…" : "Try again"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        // Without the seeded category the charge still saves, it just will not be counted as
+        // interest anywhere, so say that rather than letting the figure quietly stay at zero.
+        !seeded &&
+        !categories.isLoading && (
+          <p className="flex items-start gap-2 rounded-xl border border-amber/30 bg-amber/10 p-3 text-xs text-warm-600">
+            <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-amber-dark" />
+            <span>
+              There is no &ldquo;{INTEREST_CATEGORY_NAME}&rdquo; category yet, so this charge will not be
+              counted as interest. Run the category seed, then move it across.
+            </span>
+          </p>
+        )
       )}
 
       <FormActions onCancel={onCancel} submitting={isSubmitting} submitLabel="Log charge" />

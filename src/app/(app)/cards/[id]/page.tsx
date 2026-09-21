@@ -72,6 +72,10 @@ export default function CardDetailPage() {
 
   const detail = useCreditAccountDetailQuery(id, month);
   const purchaseBatch = useCardPurchaseBatch();
+  // Its own instance, not the purchases one. The batch pins an idempotency key until its save
+  // settles, so sharing it would let a retry of an unconfirmed purchase replay as an interest
+  // charge (and the reverse), and would surface an unconfirmed charge inside the purchases modal.
+  const interestBatch = useCardPurchaseBatch();
   const createPayment = useCreateCreditPayment();
   const updatePayment = useUpdateCreditPayment();
   const deletePayment = useDeleteCreditPayment();
@@ -123,24 +127,8 @@ export default function CardDetailPage() {
     settlePurchases(await purchaseBatch.submit(transactions));
   };
 
-  /**
-   * Interest is an ordinary expense on the card, so it goes through the same batch writer a
-   * purchase does. Nothing card-specific is needed on the write path: only the category tells the
-   * two apart afterwards.
-   */
-  const handleLogInterest = async (input: CardInterestInput) => {
-    const result = await purchaseBatch.submit([
-      {
-        amount: input.amount,
-        description: input.description,
-        type: "EXPENSE" as const,
-        date: resolveTransactionDate(`${input.date}T12:00`, user.timezoneOffset),
-        categoryId: input.categoryId,
-        // A bank charge is not the user's activity, so a label schedule must not guess at it.
-        labelIds: [],
-        creditAccountId: id,
-      },
-    ]);
+  /** The same three outcomes `settlePurchases` handles, worded for a single charge. */
+  const settleInterest = (result: PurchaseBatchResult | null) => {
     if (!result) return;
     if (result.outcome === "saved") {
       showToast("Charge logged", "success");
@@ -150,8 +138,31 @@ export default function CardDetailPage() {
       showToast(result.message, "error");
     } else {
       showToast("Couldn't confirm the charge was saved", "error");
+      // The modal now shows the retry, so the month behind it is the one to check.
       setMonth(accountMonthKey(result.firstDate, user.timezoneOffset));
     }
+  };
+
+  /**
+   * Interest is an ordinary expense on the card, so it goes through the same batch writer a
+   * purchase does. Nothing card-specific is needed on the write path: only the category tells the
+   * two apart afterwards.
+   */
+  const handleLogInterest = async (input: CardInterestInput) => {
+    settleInterest(
+      await interestBatch.submit([
+        {
+          amount: input.amount,
+          description: input.description,
+          type: "EXPENSE" as const,
+          date: resolveTransactionDate(`${input.date}T12:00`, user.timezoneOffset),
+          categoryId: input.categoryId,
+          // A bank charge is not the user's activity, so a label schedule must not guess at it.
+          labelIds: [],
+          creditAccountId: id,
+        },
+      ])
+    );
   };
 
   const handleRecordPayment = async (input: CreditPaymentInput) => {
@@ -308,7 +319,21 @@ export default function CardDetailPage() {
       </Modal>
 
       <Modal open={loggingInterest} onClose={() => setLoggingInterest(false)} title="Log Interest or Fee">
-        <CardInterestForm onSubmit={handleLogInterest} onCancel={() => setLoggingInterest(false)} />
+        {interestBatch.unconfirmed ? (
+          <UnconfirmedPurchases
+            purchases={interestBatch.unconfirmed}
+            retrying={interestBatch.saving}
+            noun={{ singular: "charge", plural: "charges" }}
+            onRetry={() => void interestBatch.retry().then(settleInterest)}
+            onDiscard={() => {
+              interestBatch.discard();
+              setLoggingInterest(false);
+            }}
+            onClose={() => setLoggingInterest(false)}
+          />
+        ) : (
+          <CardInterestForm onSubmit={handleLogInterest} onCancel={() => setLoggingInterest(false)} />
+        )}
       </Modal>
 
       <Modal open={!!editingPayment} onClose={() => setEditingPayment(null)} title="Edit Payment">
