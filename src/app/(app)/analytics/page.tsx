@@ -33,6 +33,7 @@ import { AnalyticsLoadError } from "@/components/analytics/analytics-load-error"
 import { AnalyticsReports } from "@/components/analytics/analytics-reports";
 import { AnalyticsHero } from "@/components/analytics/analytics-hero";
 import { AnalyticsTabBar } from "@/components/analytics/analytics-tab-bar";
+import { DebtAnalyticsPanel } from "@/components/analytics/debt-analytics";
 import {
   AnalyticsHeroSkeleton,
   AnalyticsContentSkeleton,
@@ -130,7 +131,11 @@ export default function AnalyticsPage() {
   const [view, setView] = useState<AnalyticsUrlState>(() =>
     parseAnalyticsParams(new URLSearchParams(queryString), tz),
   );
-  const { period, type: typeFilter, tab: activeTab } = view;
+  const { period, type: typeFilter, tab: requestedTab } = view;
+  // A `?tab=debt` link is a real URL someone with access can share. For a user the credit cards
+  // switch excludes it lands on Reports, the same place a fresh visit does, rather than on a tab
+  // that is not in their bar and a panel that would answer 403.
+  const activeTab = requestedTab === "debt" && !user.creditCardsEnabled ? "reports" : requestedTab;
   const setPeriod = useCallback(
     (next: PeriodSelection) =>
       setView((current) => ({ ...current, period: next })),
@@ -350,6 +355,7 @@ export default function AnalyticsPage() {
             <AnalyticsTabBar
               activeTab={activeTab}
               onSelect={setActiveTab}
+              showCards={user.creditCardsEnabled}
               layoutId="analytics-tab-sticky"
               className="sm:w-fit"
             />
@@ -394,6 +400,7 @@ export default function AnalyticsPage() {
         <AnalyticsTabBar
           activeTab={activeTab}
           onSelect={setActiveTab}
+          showCards={user.creditCardsEnabled}
           layoutId="analytics-tab"
           className="sm:w-fit"
         />
@@ -402,6 +409,12 @@ export default function AnalyticsPage() {
       {activeTab === "forecast" ? (
         <motion.div key="forecast" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
           <CashFlowForecast timezoneOffset={tz} currency={currency} hideAmounts={hideAmounts} />
+        </motion.div>
+      ) : activeTab === "debt" ? (
+        // Only reachable with access: `activeTab` above already turned an excluded user's
+        // `?tab=debt` into Reports, so this never renders a panel that would answer 403.
+        <motion.div key="debt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+          <DebtAnalyticsPanel from={period.from} to={period.to} currency={currency} hideAmounts={hideAmounts} />
         </motion.div>
       ) : isLoading ? (
         <AnalyticsContentSkeleton />

@@ -3,7 +3,8 @@ import type { PrismaClient } from "@/lib/budget-query-types";
 import { buildLabelBreakdown } from "@/lib/budget-queries";
 import { sumOwedOnCards } from "@/lib/card-owed";
 import { INTEREST_CATEGORY_NAME, utilizationOf, type CardInterestFacts } from "@/lib/card-interest";
-import { monthsBetweenInclusive, observedMonthlyPayment } from "@/lib/debt-payoff";
+import { minimumDue, monthsBetweenInclusive, observedMonthlyPayment } from "@/lib/debt-payoff";
+import type { CardWatchFacts } from "@/lib/assessment-facts";
 
 const round2 = (value: number): number => Math.round(value * 100) / 100;
 
@@ -301,6 +302,67 @@ export const summariseObservedPayments = (
   );
 
   return { monthly: observedMonthlyPayment(payments, months), months };
+};
+
+/**
+ * Everything the Watchlist's card findings need, for every active card that owes something.
+ *
+ * Read here rather than in `assessment-facts.ts`, which holds no database access: that is what
+ * keeps its analyses unit-testable. Gated by the caller, not here.
+ */
+export const getCardWatchFacts = async (
+  prisma: PrismaClient,
+  userId: string,
+  today: string,
+  timezoneOffset: number
+): Promise<CardWatchFacts[]> => {
+  const summaries = await getCreditAccountSummaries(prisma, userId);
+  const owing = summaries.filter((card) => card.balance > 0);
+  if (owing.length === 0) return [];
+
+  const ids = owing.map((card) => card.id);
+  const observed = observedPaymentWindow(timezoneOffset);
+  const [interestRows, payments] = await Promise.all([
+    prisma.transaction.groupBy({
+      by: ["creditAccountId"],
+      where: {
+        userId,
+        type: "EXPENSE",
+        creditAccountId: { in: ids },
+        category: { name: INTEREST_CATEGORY_NAME },
+      },
+      _count: { _all: true },
+    }),
+    prisma.creditPayment.findMany({
+      where: { userId, accountId: { in: ids }, kind: "PAYMENT", date: { gte: observed.start, lt: observed.end } },
+      select: { accountId: true, amount: true },
+      orderBy: { date: "asc" },
+    }),
+  ]);
+
+  const everLogged = new Set(
+    interestRows.filter((row) => row._count._all > 0).map((row) => row.creditAccountId)
+  );
+
+  return owing.map((card) => ({
+    id: card.id,
+    name: card.name,
+    balance: card.balance,
+    utilization: card.utilization,
+    apr: card.apr,
+    dueDay: card.dueDay,
+    interestEverLogged: everLogged.has(card.id),
+    // The minimum is measured against the balance as it stands, not as it stood at each payment:
+    // the card's history of balances is not stored, and a minimum from the current balance is the
+    // closest honest stand-in. It is therefore only used to spot a *run* of minimum-sized payments.
+    recentPayments: payments
+      .filter((payment) => payment.accountId === card.id)
+      .map((payment) => ({
+        amount: payment.amount,
+        minimumThen: minimumDue(card.balance, card.minimumPaymentPct, card.minimumPaymentFloor),
+      })),
+    today,
+  }));
 };
 
 export interface CardCategorySpend {

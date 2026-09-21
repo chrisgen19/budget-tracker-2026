@@ -841,6 +841,7 @@ AppSettings (per role: FREE, PAID)
 | 6 | Watchlist: live deterministic findings without an AI run, grouped into "In this period" and "Outstanding", with drill-down to the period's transactions and a Bills link for missed bills | Done |
 | 7 | Watchlist alert families: budget thresholds, recurring-charge changes, bill behaviour, missing expected income, savings-goal pace, data confidence, and a directional cash-shortfall warning | Done |
 | 8 | Savings goals and sinking funds: targets, deliberate contributions, required vs observed rate, projected completion | Done |
+| 9 | Credit card debt: interest and fees logged against a card, APR and minimum payment, payoff on three bases, card payments in the forecast, a Debt tab with avalanche vs snowball, and Watchlist alerts for untracked interest, high utilization, minimum-only paying and payments due ([#365](https://github.com/chrisgen19/budget-tracker-2026/issues/365)) | Done |
 
 ## Changelog
 

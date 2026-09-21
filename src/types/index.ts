@@ -1007,7 +1007,11 @@ export type AssessmentAnomalyKind =
   | "insufficient-history"
   | "goal-off-pace"
   | "goal-stalled"
-  | "cash-shortfall";
+  | "cash-shortfall"
+  | "card-interest-untracked"
+  | "card-utilization-high"
+  | "card-minimum-only"
+  | "card-payment-due-soon";
 
 /**
  * Whether a finding is measured inside the selected period, or describes a standing condition
@@ -1031,7 +1035,9 @@ export type AssessmentAnomalyScope = "period" | "outstanding";
 
 /** The most focused destination available for a Watchlist finding. */
 export interface AssessmentAnomalyDrillDown {
-  destination: "transactions" | "bills" | "goals";
+  destination: "transactions" | "bills" | "goals" | "cards";
+  /** The card a `cards` drill-down opens, so the link lands on it rather than on the list. */
+  cardId?: string;
   type?: TransactionType;
   categoryId?: string;
   from?: string;

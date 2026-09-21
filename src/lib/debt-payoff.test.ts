@@ -6,7 +6,9 @@ import {
   observedMonthlyPayment,
   payoffOnFixedPayment,
   payoffOnMinimum,
+  compareStrategies,
   type DebtTerms,
+  type StrategyCard,
 } from "@/lib/debt-payoff";
 
 const FROM = new Date(Date.UTC(2026, 8, 21));
@@ -238,5 +240,63 @@ describe("comparePayoffs", () => {
     if (result.planned.status !== "clears") throw new Error("expected the plan to clear");
     expect(result.planned.months).toBeLessThan(result.minimum.months);
     expect(result.planned.totalInterest).toBeLessThan(result.minimum.totalInterest);
+  });
+});
+
+describe("compareStrategies", () => {
+  const racer = (over: Partial<StrategyCard> = {}): StrategyCard => ({
+    id: "a", name: "A", balance: 20000, apr: 36, minimumPct: 5, minimumFloor: 500, ...over,
+  });
+
+  /** One card has no ordering to choose, so there is no race to report. */
+  it("is null with fewer than two cards owing", () => {
+    expect(compareStrategies([racer()], 10000)).toBeNull();
+    expect(compareStrategies([racer(), racer({ id: "b", balance: 0 })], 10000)).toBeNull();
+  });
+
+  it("is null without money to pay with", () => {
+    expect(compareStrategies([racer(), racer({ id: "b" })], 0)).toBeNull();
+  });
+
+  /** Avalanche targets the dearest debt, so it can never cost more interest than snowball. */
+  it("never costs more in interest than snowball", () => {
+    const result = compareStrategies(
+      [racer({ id: "big", balance: 40000, apr: 42 }), racer({ id: "small", balance: 8000, apr: 18 })],
+      12000
+    );
+    expect(result).not.toBeNull();
+    expect(result!.avalanche.totalInterest).toBeLessThanOrEqual(result!.snowball.totalInterest);
+  });
+
+  it("clears the highest rate first on avalanche and the smallest balance first on snowball", () => {
+    const result = compareStrategies(
+      [racer({ id: "big", balance: 40000, apr: 42 }), racer({ id: "small", balance: 8000, apr: 18 })],
+      12000
+    )!;
+    expect(result.avalanche.order[0]).toBe("big");
+    expect(result.snowball.order[0]).toBe("small");
+  });
+
+  /**
+   * A pool below the combined interest never finishes, and no ordering fixes that. Reporting a
+   * winner would imply the choice mattered when the shortfall is the only thing that does.
+   */
+  it("reports stalled rather than naming a winner when the pool cannot cover the interest", () => {
+    const result = compareStrategies(
+      [racer({ id: "a", balance: 100000, apr: 36 }), racer({ id: "b", balance: 100000, apr: 36 })],
+      100
+    )!;
+    expect(result.avalanche.stalled).toBe(true);
+    expect(result.snowball.stalled).toBe(true);
+  });
+
+  it("clears both cards eventually on a healthy pool", () => {
+    const result = compareStrategies(
+      [racer({ id: "a", balance: 20000 }), racer({ id: "b", balance: 10000 })],
+      15000
+    )!;
+    expect(result.avalanche.stalled).toBe(false);
+    expect(result.avalanche.order).toHaveLength(2);
+    expect(result.avalanche.months).toBeGreaterThan(0);
   });
 });

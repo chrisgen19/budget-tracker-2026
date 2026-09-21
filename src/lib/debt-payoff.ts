@@ -239,3 +239,101 @@ export const comparePayoffs = ({
     observedMonthly,
   };
 };
+
+/** One card in a multi-card payoff race. */
+export interface StrategyCard {
+  id: string;
+  name: string;
+  balance: number;
+  apr: number;
+  minimumPct: number | null;
+  minimumFloor: number | null;
+}
+
+export interface StrategyResult {
+  /** The order cards are cleared in, soonest first. */
+  order: string[];
+  months: number;
+  totalInterest: number;
+  /** True when the pool never clears the debt inside `MAX_MONTHS`. */
+  stalled: boolean;
+}
+
+/**
+ * Race two payoff orderings against the same monthly pool of money.
+ *
+ * Avalanche pays the highest rate first and is always the cheaper of the two in interest;
+ * snowball pays the smallest balance first and clears individual cards sooner. The useful output
+ * is the **gap**: with two or three cards it is often a month or two and a few hundred, and saying
+ * so plainly is worth more than a widget implying the choice is momentous.
+ *
+ * Every card pays its minimum each month and whatever is left of the pool goes to the target. A
+ * pool too small to cover the minimums is `stalled` rather than a month count, the same refusal
+ * `walk` makes: an ordering cannot fix not paying enough, so naming a winner would be nonsense.
+ */
+const raceOrder = (cards: StrategyCard[], monthlyPool: number, order: StrategyCard[]): StrategyResult => {
+  const balances = new Map(cards.map((card) => [card.id, card.balance]));
+  const cleared: string[] = [];
+  let totalInterest = 0;
+
+  for (let month = 1; month <= 600; month += 1) {
+    let pool = monthlyPool;
+    const live = order.filter((card) => (balances.get(card.id) ?? 0) > SETTLED);
+    if (live.length === 0) return { order: cleared, months: month - 1, totalInterest: round(totalInterest), stalled: false };
+
+    // Interest first, then the minimums, then everything left over onto the front of the order.
+    const owed = new Map<string, number>();
+    for (const card of live) {
+      const balance = balances.get(card.id)!;
+      const interest = balance * (card.apr / 100 / 12);
+      totalInterest += interest;
+      owed.set(card.id, balance + interest);
+    }
+    for (const card of live) {
+      const due = Math.min(owed.get(card.id)!, minimumDue(owed.get(card.id)!, card.minimumPct, card.minimumFloor) ?? 0);
+      const paid = Math.min(due, pool);
+      owed.set(card.id, owed.get(card.id)! - paid);
+      pool -= paid;
+    }
+    for (const card of live) {
+      if (pool <= 0) break;
+      const paid = Math.min(owed.get(card.id)!, pool);
+      owed.set(card.id, owed.get(card.id)! - paid);
+      pool -= paid;
+    }
+
+    let progressed = false;
+    for (const card of live) {
+      const next = owed.get(card.id)!;
+      if (next < balances.get(card.id)!) progressed = true;
+      balances.set(card.id, next);
+      if (next <= SETTLED && !cleared.includes(card.id)) cleared.push(card.id);
+    }
+    // The pool does not even cover the interest, so no ordering of it ever finishes.
+    if (!progressed) return { order: cleared, months: 0, totalInterest: 0, stalled: true };
+  }
+
+  return { order: cleared, months: 0, totalInterest: 0, stalled: true };
+};
+
+const round = (value: number) => Math.round(value * 100) / 100;
+
+/**
+ * Avalanche against snowball on the same money. Returns null when there is nothing to race:
+ * fewer than two cards owing, or no APR on one of them, since a rate is what the orderings differ on.
+ */
+export const compareStrategies = (
+  cards: StrategyCard[],
+  monthlyPool: number
+): { avalanche: StrategyResult; snowball: StrategyResult; monthlyPool: number } | null => {
+  const owing = cards.filter((card) => card.balance > SETTLED);
+  if (owing.length < 2 || monthlyPool <= 0) return null;
+
+  const avalanche = [...owing].sort((a, b) => b.apr - a.apr || a.balance - b.balance);
+  const snowball = [...owing].sort((a, b) => a.balance - b.balance || b.apr - a.apr);
+  return {
+    avalanche: raceOrder(owing, monthlyPool, avalanche),
+    snowball: raceOrder(owing, monthlyPool, snowball),
+    monthlyPool,
+  };
+};

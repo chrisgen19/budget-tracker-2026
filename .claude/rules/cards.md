@@ -10,6 +10,9 @@ paths:
   - src/lib/debt-payoff.ts
   - src/lib/cash-flow-forecast.ts
   - "src/app/api/cash-flow-forecast/**"
+  - "src/app/api/analytics/debt/**"
+  - src/components/analytics/debt-analytics.tsx
+  - src/hooks/use-debt-analytics.ts
   - "src/app/api/credit-accounts/**"
   - "src/app/api/admin/feature-access/**"
   - "src/app/(app)/cards/**"
@@ -144,3 +147,22 @@ Moved out of `AGENTS.md` verbatim when that file reached the size Codex silently
   events, because doing one without the other drops card spending with nothing paying it back.
   The balance query is bounded to **today** for the same reason the events are: a purchase dated
   next month is not owed yet, and counting it would schedule a payment before it happened
+- **The Debt tab reads; `/cards` writes.** `/analytics`'s Debt tab (`/api/analytics/debt`,
+  `DebtAnalyticsPanel`) holds only what a single card's page cannot say -- the total owed and its
+  trend, interest across every card, and avalanche against snowball -- and has no input field at
+  all. Every figure it shows is entered on `/cards`. It is a sibling route rather than a slice of
+  `/api/analytics`, which already carries row-count telemetry, following `/api/cash-flow-forecast`,
+  and it borrows `MAX_ANALYTICS_RANGE_DAYS` through `debtAnalyticsQuerySchema` rather than setting a
+  second span limit that would drift from its siblings'. **Access is gated in three places and all
+  three are needed.** The route opens with `requireCreditCardsUser` (403 `FEATURE_DISABLED`); the
+  tab is not rendered in the bar (`showCards`), since a tab that 403s is worse than none; and the
+  page turns an excluded user's `?tab=debt` into `reports`, because a link from someone with access
+  is a real URL and would otherwise land them on a tab missing from their own bar. Archived cards
+  are included in the total, the same call `sumOwedOnCards` makes: deleting a card with history
+  archives it whatever it still owes. The strategy race (`compareStrategies` in `debt-payoff.ts`)
+  spends the **same monthly pool** the forecast assumes -- planned, else observed, else minimum --
+  so the two cannot disagree about the money available, and a pool that does not cover the
+  interest is reported as `stalled` rather than naming a winner, since no ordering fixes paying too
+  little. Its interest window uses the app-wide `Date.UTC(...) + tzOffset * 60000`: bare
+  `T00:00:00Z` bounds are UTC's day, and in Manila a charge logged at 07:00 on the 1st would land in
+  the previous month
