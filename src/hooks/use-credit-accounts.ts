@@ -28,12 +28,17 @@ export interface CreditAccountView {
   creditLimit: number | null;
   statementDay: number | null;
   dueDay: number | null;
+  apr: number | null;
+  minimumPaymentPct: number | null;
+  minimumPaymentFloor: number | null;
+  plannedPayment: number | null;
   openingBalance: number;
   openingBalanceDate: string;
   isActive: boolean;
   billId: string | null;
   balance: number;
   availableCredit: number | null;
+  utilization: number | null;
   totals: LedgerTotalsView;
 }
 

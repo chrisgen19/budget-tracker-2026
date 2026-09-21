@@ -3,6 +3,7 @@ import { DEFAULT_CATEGORIES } from "@/lib/default-categories";
 import {
   INTEREST_CATEGORY_NAME,
   describeCardInterest,
+  utilizationOf,
 } from "@/lib/card-interest";
 
 describe("INTEREST_CATEGORY_NAME", () => {
@@ -48,5 +49,33 @@ describe("describeCardInterest", () => {
       state: "charged",
       amount: -200,
     });
+  });
+});
+
+describe("utilizationOf", () => {
+  it("reports the share of the limit in use", () => {
+    expect(utilizationOf(18400, 48000)).toBe(38.3);
+  });
+
+  /** No limit recorded is not 0% used, it is a question the data cannot answer. */
+  it("is null without a limit", () => {
+    expect(utilizationOf(18400, null)).toBeNull();
+  });
+
+  /** A zero limit would divide to Infinity, which would render as a figure. */
+  it("is null on a zero limit rather than infinite", () => {
+    expect(utilizationOf(100, 0)).toBeNull();
+  });
+
+  /**
+   * Not clamped. Over the limit is the most useful thing this number says, and clamping would
+   * render it identically to sitting exactly on the limit.
+   */
+  it("goes above 100 when the card is over its limit", () => {
+    expect(utilizationOf(52000, 48000)).toBeGreaterThan(100);
+  });
+
+  it("goes below zero when the card holds a credit", () => {
+    expect(utilizationOf(-500, 48000)).toBeLessThan(0);
   });
 });

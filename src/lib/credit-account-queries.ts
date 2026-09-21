@@ -2,7 +2,7 @@ import type { CreditAccount, CreditPayment, CreditPaymentKind, Prisma } from "@p
 import type { PrismaClient } from "@/lib/budget-query-types";
 import { buildLabelBreakdown } from "@/lib/budget-queries";
 import { sumOwedOnCards } from "@/lib/card-owed";
-import { INTEREST_CATEGORY_NAME, type CardInterestFacts } from "@/lib/card-interest";
+import { INTEREST_CATEGORY_NAME, utilizationOf, type CardInterestFacts } from "@/lib/card-interest";
 
 const round2 = (value: number): number => Math.round(value * 100) / 100;
 
@@ -137,6 +137,10 @@ export interface CreditAccountSummary {
   creditLimit: number | null;
   statementDay: number | null;
   dueDay: number | null;
+  apr: number | null;
+  minimumPaymentPct: number | null;
+  minimumPaymentFloor: number | null;
+  plannedPayment: number | null;
   openingBalance: number;
   openingBalanceDate: Date;
   isActive: boolean;
@@ -145,6 +149,8 @@ export interface CreditAccountSummary {
   balance: number;
   /** Limit minus balance, or null with no limit recorded. Not clamped: being over it is worth seeing. */
   availableCredit: number | null;
+  /** Balance as a percentage of the limit, or null without one. See `utilizationOf`. */
+  utilization: number | null;
   /** All-time totals behind `balance`. */
   totals: LedgerTotals;
 }
@@ -168,12 +174,17 @@ const toSummary = (account: CreditAccount, totals: LedgerTotals, asOf?: Date): C
     creditLimit: account.creditLimit,
     statementDay: account.statementDay,
     dueDay: account.dueDay,
+    apr: account.apr,
+    minimumPaymentPct: account.minimumPaymentPct,
+    minimumPaymentFloor: account.minimumPaymentFloor,
+    plannedPayment: account.plannedPayment,
     openingBalance: account.openingBalance,
     openingBalanceDate: account.openingBalanceDate,
     isActive: account.isActive,
     billId: account.billId,
     balance,
     availableCredit: account.creditLimit === null ? null : round2(account.creditLimit - balance),
+    utilization: utilizationOf(balance, account.creditLimit),
     totals,
   };
 };

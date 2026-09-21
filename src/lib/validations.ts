@@ -849,6 +849,19 @@ export const creditAccountSchema = z.object({
   creditLimit: z.number().positive("Limit must be greater than 0").nullable().optional(),
   statementDay: dayOfMonthSchema.nullable().optional(),
   dueDay: dayOfMonthSchema.nullable().optional(),
+  /**
+   * Interest terms. All nullable, and absent means unknown rather than zero: a payoff projection
+   * computed at 0% is a different card, not a cautious estimate. `apr: 0` is a real 0% plan.
+   */
+  apr: z.number().min(0, "APR can't be negative").max(200, "APR looks too high").nullable().optional(),
+  minimumPaymentPct: z
+    .number()
+    .min(0, "Can't be negative")
+    .max(100, "A minimum over 100% of the balance isn't a minimum")
+    .nullable()
+    .optional(),
+  minimumPaymentFloor: z.number().min(0, "Can't be negative").nullable().optional(),
+  plannedPayment: z.number().min(0, "Can't be negative").nullable().optional(),
   /** Negative is allowed: a card can start out holding a credit. */
   openingBalance: z.number().finite().default(0),
   openingBalanceDate: calendarDaySchema.optional(),

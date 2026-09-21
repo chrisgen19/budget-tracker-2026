@@ -48,3 +48,18 @@ export const describeCardInterest = ({ period, everLogged }: CardInterestFacts):
   // month where something happened. Reporting it as "none" would hide the refund entirely.
   return period !== 0 ? { state: "charged", amount: period } : { state: "none-this-period" };
 };
+
+/**
+ * What share of a card's limit is currently used, as a percentage.
+ *
+ * `null` when there is no limit to measure against, and when the limit is zero: a card whose limit
+ * is nothing has no meaningful ratio, and dividing by it would report `Infinity` as a figure.
+ *
+ * Deliberately **not clamped to 100**. Being over the limit is the single most useful thing this
+ * number can say, and a clamp would render it identically to sitting exactly on it. A negative
+ * balance (the card holds a credit) likewise reports below zero rather than being floored.
+ */
+export const utilizationOf = (balance: number, creditLimit: number | null): number | null => {
+  if (creditLimit === null || creditLimit === 0) return null;
+  return Math.round((balance / creditLimit) * 1000) / 10;
+};

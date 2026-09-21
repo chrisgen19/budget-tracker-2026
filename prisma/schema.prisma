@@ -102,7 +102,9 @@ enum ScanStatus {
   FAILED
 }
 
-/** A user's decision about a live, deterministic Watchlist finding. */
+/**
+ * A user's decision about a live, deterministic Watchlist finding.
+ */
 enum WatchlistFindingStatus {
   RESOLVED
   SNOOZED
@@ -115,36 +117,36 @@ enum FeatureAccess {
 }
 
 model User {
-  id                         String                 @id @default(cuid())
+  id                         String                  @id @default(cuid())
   name                       String
-  email                      String                 @unique
+  email                      String                  @unique
   password                   String
-  role                       UserRole               @default(FREE)
-  hideAmounts                Boolean                @default(false) @map("hide_amounts")
-  currency                   String                 @default("PHP")
-  quickExpenseCategories     String[]               @default([]) @map("quick_expense_categories")
-  quickIncomeCategories      String[]               @default([]) @map("quick_income_categories")
-  quickLabels                String[]               @default([]) @map("quick_labels")
-  emailVerified              Boolean                @default(false) @map("email_verified")
-  receiptScanEnabled         Boolean                @default(false) @map("receipt_scan_enabled")
-  transactionLayout          String                 @default("infinite") @map("transaction_layout")
-  transactionAmountAutofocus Boolean                @default(true) @map("transaction_amount_autofocus")
-  defaultLabelType           String                 @default("EXPENSE") @map("default_label_type")
-  showDayName                Boolean                @default(true) @map("show_day_name")
-  dayNameFormat              DayNameFormat          @default(SHORT) @map("day_name_format")
-  emailBillReminders         Boolean                @default(false) @map("email_bill_reminders")
+  role                       UserRole                @default(FREE)
+  hideAmounts                Boolean                 @default(false) @map("hide_amounts")
+  currency                   String                  @default("PHP")
+  quickExpenseCategories     String[]                @default([]) @map("quick_expense_categories")
+  quickIncomeCategories      String[]                @default([]) @map("quick_income_categories")
+  quickLabels                String[]                @default([]) @map("quick_labels")
+  emailVerified              Boolean                 @default(false) @map("email_verified")
+  receiptScanEnabled         Boolean                 @default(false) @map("receipt_scan_enabled")
+  transactionLayout          String                  @default("infinite") @map("transaction_layout")
+  transactionAmountAutofocus Boolean                 @default(true) @map("transaction_amount_autofocus")
+  defaultLabelType           String                  @default("EXPENSE") @map("default_label_type")
+  showDayName                Boolean                 @default(true) @map("show_day_name")
+  dayNameFormat              DayNameFormat           @default(SHORT) @map("day_name_format")
+  emailBillReminders         Boolean                 @default(false) @map("email_bill_reminders")
   /// Whether the Telegram bot sends one evening prompt on weekdays asking what was spent on the
   /// commute and lunch. Separate from `emailBillReminders` in every way: different channel,
   /// different cron route, different log table. A bill is a known amount on a known date; this is
   /// a nudge about spending that has already happened and was not written down.
-  telegramDailyPrompt        Boolean                @default(false) @map("telegram_daily_prompt")
+  telegramDailyPrompt        Boolean                 @default(false) @map("telegram_daily_prompt")
   /// When to send it, "HH:mm" in the user's own timezone, compared lexicographically the same way
   /// `LabelSchedule.startTime` is.
   ///
   /// Data rather than a cron expression on purpose. Coolify tasks run in the container, which is
   /// UTC, so 20:00 Asia/Manila is 12:00 UTC and a weekday there is not reliably a weekday here.
   /// Encoding that in a dashboard field puts the schedule somewhere no test can reach.
-  telegramDailyPromptTime    String                 @default("20:00") @map("telegram_daily_prompt_time")
+  telegramDailyPromptTime    String                  @default("20:00") @map("telegram_daily_prompt_time")
   /// The Telegram account permitted to act as this user through the Mini App.
   ///
   /// The bot needs no such link: it writes through an MCP token already bound to a user. A Mini
@@ -158,29 +160,29 @@ model User {
   ///
   /// Note this is *not* sufficient on its own. `getTelegramUserId` also requires the id to be in
   /// `TELEGRAM_ALLOWED_IDS`, so revoking access there revokes it for the Mini App too.
-  telegramUserId             String?                @unique @map("telegram_user_id")
-  timezoneOffset             Int                    @default(-480) @map("timezone_offset")
+  telegramUserId             String?                 @unique @map("telegram_user_id")
+  timezoneOffset             Int                     @default(-480) @map("timezone_offset")
   /// A user-entered balance at the *start* of `forecastOpeningBalanceDate`. This is deliberately
   /// not called a bank balance: until accounts/reconciliation exist it is only the tracked
   /// baseline from which the cash-flow forecast applies ledger activity.
-  forecastOpeningBalance     Float?                 @map("forecast_opening_balance")
-  forecastOpeningBalanceDate DateTime?              @map("forecast_opening_balance_date")
+  forecastOpeningBalance     Float?                  @map("forecast_opening_balance")
+  forecastOpeningBalanceDate DateTime?               @map("forecast_opening_balance_date")
   /// How many times its category's typical charge a single expense has to be before the Watchlist
   /// calls it unusual. The default is the constant the detector shipped with; raising it is how
   /// somebody whose spending is naturally lumpy quiets the finding without losing the rest.
-  watchlistOutlierRatio      Float                  @default(3) @map("watchlist_outlier_ratio")
+  watchlistOutlierRatio      Float                   @default(3) @map("watchlist_outlier_ratio")
   /// An absolute figure above which a single expense is unusual whatever its category's history,
   /// or null to judge on the ratio alone. Nullable rather than 0: zero would make every charge
   /// unusual, which is the opposite of what an unset field should mean.
-  watchlistLargeAmount       Float?                 @map("watchlist_large_amount")
+  watchlistLargeAmount       Float?                  @map("watchlist_large_amount")
   /// Whether possible duplicates are raised as a Watchlist finding. The duplicates themselves are
   /// still computed and still shown in the assessment's data-quality card - this is about the
   /// alert, not about the detection.
-  watchlistDuplicateAlerts   Boolean                @default(true) @map("watchlist_duplicate_alerts")
+  watchlistDuplicateAlerts   Boolean                 @default(true) @map("watchlist_duplicate_alerts")
   /// Lease, not a flag: MCP writes are permitted only while this is in the future. A boolean
   /// would depend on remembering to switch it back off, and the failure that matters is leaving
   /// writes on for days, which fails silently. Null means writes are off.
-  mcpWritesEnabledUntil      DateTime?              @map("mcp_writes_enabled_until")
+  mcpWritesEnabledUntil      DateTime?               @map("mcp_writes_enabled_until")
   transactions               Transaction[]
   categories                 Category[]
   scanLogs                   ScanLog[]
@@ -197,8 +199,8 @@ model User {
   budgetPlans                BudgetPlan[]
   watchlistFindingStates     WatchlistFindingState[]
   savingsGoals               SavingsGoal[]
-  createdAt                  DateTime               @default(now()) @map("created_at")
-  updatedAt                  DateTime               @updatedAt @map("updated_at")
+  createdAt                  DateTime                @default(now()) @map("created_at")
+  updatedAt                  DateTime                @updatedAt @map("updated_at")
 
   @@map("users")
 }
@@ -300,7 +302,7 @@ model BudgetAllocation {
   /// and actual spending (`deriveRolloverCarryIn`). Stored at save time, it froze a previous
   /// month that had not ended yet.
   rolloverEnabled Boolean              @default(false) @map("rollover_enabled")
-  createdAt      DateTime             @default(now()) @map("created_at")
+  createdAt       DateTime             @default(now()) @map("created_at")
 
   @@unique([planId, categoryId])
   @@index([categoryId])
@@ -309,7 +311,6 @@ model BudgetAllocation {
 
 /**
  * A resolve/snooze decision for one current Watchlist finding.
- *
  * `findingHash` is the SHA-256 of the client-visible finding key, never the
  * key itself: a state row must not become another store of descriptions or
  * monetary facts. A changed deterministic finding produces a different key and
@@ -333,31 +334,29 @@ model WatchlistFindingState {
 
 /**
  * A sum the user is deliberately putting aside, and by when.
- *
  * The point of the model is the word deliberately. A positive net cash flow is money that happened
  * not to be spent, which is a different thing from money assigned to a deposit on a house, and
  * every report here could previously only see the first. Funded amounts therefore come from
  * explicit `SavingsGoalContribution` rows and never from a residual: a month where nothing was
  * spent must not read as a month where the goal advanced.
- *
  * `targetDate` is stored at UTC midnight and read as a calendar day, the way every bill date in
  * this schema is - it is a day in the user's own calendar, not an instant.
  */
 model SavingsGoal {
-  id            String                     @id @default(cuid())
-  userId        String                     @map("user_id")
-  user          User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id            String                    @id @default(cuid())
+  userId        String                    @map("user_id")
+  user          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
   name          String
-  kind          SavingsGoalKind            @default(GOAL)
-  targetAmount  Float                      @map("target_amount")
+  kind          SavingsGoalKind           @default(GOAL)
+  targetAmount  Float                     @map("target_amount")
   /// The day it should be funded by, or null for a goal with no deadline. Pace is only
   /// computable against a date, so a goal without one reports progress and never "off track".
-  targetDate    DateTime?                  @map("target_date")
-  status        SavingsGoalStatus          @default(ACTIVE)
+  targetDate    DateTime?                 @map("target_date")
+  status        SavingsGoalStatus         @default(ACTIVE)
   notes         String?
   contributions SavingsGoalContribution[]
-  createdAt     DateTime                   @default(now()) @map("created_at")
-  updatedAt     DateTime                   @updatedAt @map("updated_at")
+  createdAt     DateTime                  @default(now()) @map("created_at")
+  updatedAt     DateTime                  @updatedAt @map("updated_at")
 
   @@unique([userId, name])
   @@index([userId, status])
@@ -366,11 +365,9 @@ model SavingsGoal {
 
 /**
  * Money put into a goal, or taken back out of it.
- *
  * One signed column rather than a kind enum and a positive amount: funded is the sum of the
  * column, which is the figure every other number here derives from, and a sign cannot disagree
  * with a status the way two fields can. A withdrawal is a negative row.
- *
  * Deliberately *not* a `Transaction`. Moving money into savings is not spending it, and a
  * contribution written as an EXPENSE would land in every category report, the assessment and the
  * budget as though the money were gone - the same reasoning that keeps `CreditPayment` out of the
@@ -545,31 +542,45 @@ model ScheduledTransaction {
 /// There is no balance column. What is owed is derived on every read (`computeAccountBalance`):
 /// opening balance, plus purchases, less payments and credits.
 model CreditAccount {
-  id                 String                @id @default(cuid())
-  name               String
-  color              String                @default("#8B7E6A")
-  creditLimit        Float?                @map("credit_limit")
+  id                  String                @id @default(cuid())
+  name                String
+  color               String                @default("#8B7E6A")
+  creditLimit         Float?                @map("credit_limit")
   /// Day of the month the statement closes, 1-31. Informational: nothing schedules off it yet.
-  statementDay       Int?                  @map("statement_day")
+  statementDay        Int?                  @map("statement_day")
   /// Day of the month payment is due, 1-31. The linked bill is what actually reminds.
-  dueDay             Int?                  @map("due_day")
+  dueDay              Int?                  @map("due_day")
+  /// Annual purchase rate as a percentage: 36 for 36% APR. Nullable, and every projection that
+  /// needs it is withheld rather than computed at zero when it is absent -- a payoff date assuming
+  /// no interest is not a conservative estimate, it is a different card. `0` is a real value and
+  /// means a genuine 0% installment plan, which is why this is not defaulted.
+  apr                 Float?                @map("apr")
+  /// Cards bill the greater of a percentage of the outstanding balance and a fixed floor, so both
+  /// halves are stored. Either may be null; with both null no minimum is known and the
+  /// minimum-payment projection is withheld. A single flat figure was the other option and drifts
+  /// wrong as the balance falls, which is the whole period a payoff projection covers.
+  minimumPaymentPct   Float?                @map("minimum_payment_pct")
+  minimumPaymentFloor Float?                @map("minimum_payment_floor")
+  /// What the user intends to pay each cycle: the one figure here they choose rather than the app
+  /// observes. Null means no plan has been set, not a plan to pay nothing.
+  plannedPayment      Float?                @map("planned_payment")
   /// What was already owed when tracking began. Purchases and payments are counted on top of it
   /// whatever their date, so log only what this figure does not already include.
-  openingBalance     Float                 @default(0) @map("opening_balance")
-  openingBalanceDate DateTime              @map("opening_balance_date")
+  openingBalance      Float                 @default(0) @map("opening_balance")
+  openingBalanceDate  DateTime              @map("opening_balance_date")
   /// Archived rather than deleted once any purchase or payment exists, so history never loses
   /// the card it belongs to.
-  isActive           Boolean               @default(true) @map("is_active")
+  isActive            Boolean               @default(true) @map("is_active")
   /// Reserved for a payment reminder bill, at most one per card. Nothing links it yet: paying a
   /// reminder would have to write a `credit_payments` row, which bills do not know how to do.
-  billId             String?               @unique @map("bill_id")
-  bill               ScheduledTransaction? @relation(fields: [billId], references: [id], onDelete: SetNull)
-  userId             String                @map("user_id")
-  user               User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  purchases          Transaction[]
-  payments           CreditPayment[]
-  createdAt          DateTime              @default(now()) @map("created_at")
-  updatedAt          DateTime              @updatedAt @map("updated_at")
+  billId              String?               @unique @map("bill_id")
+  bill                ScheduledTransaction? @relation(fields: [billId], references: [id], onDelete: SetNull)
+  userId              String                @map("user_id")
+  user                User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purchases           Transaction[]
+  payments            CreditPayment[]
+  createdAt           DateTime              @default(now()) @map("created_at")
+  updatedAt           DateTime              @updatedAt @map("updated_at")
 
   @@index([userId, isActive])
   @@map("credit_accounts")

@@ -54,3 +54,22 @@ Moved out of `AGENTS.md` verbatim when that file reached the size Codex silently
   `computeAccountBalance` knows nothing about interest, so while none is logged the derived balance
   drifts below the statement every cycle, and a zero would present that drift as a card that costs
   nothing to carry. `describeCardInterest` owns that distinction and is the only place it is made
+- **A card's interest terms are nullable, and absent is not zero.** `apr`, `minimum_payment_pct`,
+  `minimum_payment_floor` and `planned_payment` (migration `20260921060000`) all read null as
+  *unknown*, and every projection that needs one is withheld rather than computed with a stand-in.
+  A payoff date worked out at 0% on a card actually charging 36% is not a cautious estimate, it is
+  a different card -- the same rule `computeCashForecast` applies to `runningBalance` and
+  `savings-goals.ts` applies to a goal with no `target_date`. `apr: 0` is therefore a **real
+  value**, meaning a genuine 0% installment plan, and is why none of the four carry a default.
+  The minimum is two columns because banks bill the greater of a percentage and a fixed floor
+  ("5% of outstanding or 500, whichever is higher"); one flat figure drifts wrong as the balance
+  falls, which is the entire span a payoff projection covers. `planned_payment` is the one figure
+  here the user chooses rather than the app observes
+- **Utilization is derived, never stored, and never clamped.** `utilizationOf` in
+  `src/lib/card-interest.ts` is `balance / credit_limit` as a percentage, `null` when there is no
+  limit *and* when the limit is zero -- a card with no limit has no ratio, and dividing by zero
+  would print `Infinity` as though it were a figure. It is deliberately not clamped to 0-100: being
+  **over** the limit is the most useful thing the number can say and a clamp renders it identically
+  to sitting exactly on it, while a card holding a credit reads below zero. It is a percentage
+  rather than an amount, so Hide Amounts does not mask it: on its own it discloses nothing without
+  the limit beside it, which is masked

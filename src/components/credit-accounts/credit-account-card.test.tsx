@@ -34,6 +34,11 @@ const account = (over: Partial<CreditAccountView> = {}): CreditAccountView => ({
   billId: null,
   balance: 2295.28,
   availableCredit: null,
+  utilization: null,
+  apr: null,
+  minimumPaymentPct: null,
+  minimumPaymentFloor: null,
+  plannedPayment: null,
   totals: { purchases: 7295.28, payments: 5000, credits: 0 },
   ...over,
 });

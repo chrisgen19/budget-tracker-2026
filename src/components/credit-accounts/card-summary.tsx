@@ -40,6 +40,11 @@ export function CardSummary({ account, monthTotals, interest }: CardSummaryProps
     ...(account.availableCredit !== null
       ? [{ label: "Available credit", value: money(account.availableCredit) }]
       : []),
+    // A percentage is not an amount, so it is not masked by Hide Amounts: it reveals nothing about
+    // what the card holds without the limit beside it, which is masked.
+    ...(account.utilization !== null
+      ? [{ label: "Utilization", value: `${account.utilization}%`, muted: account.utilization < 0 }]
+      : []),
   ];
 
   return (

@@ -43,6 +43,10 @@ export function CreditAccountForm({ account, onSubmit, onCancel }: CreditAccount
       creditLimit: account?.creditLimit ?? null,
       statementDay: account?.statementDay ?? null,
       dueDay: account?.dueDay ?? null,
+      apr: account?.apr ?? null,
+      minimumPaymentPct: account?.minimumPaymentPct ?? null,
+      minimumPaymentFloor: account?.minimumPaymentFloor ?? null,
+      plannedPayment: account?.plannedPayment ?? null,
       openingBalance: account?.openingBalance ?? 0,
       // The account's own calendar day, not the browser's: the server stores this as the start of
       // that day in the account timezone.
@@ -134,6 +138,67 @@ export function CreditAccountForm({ account, onSubmit, onCancel }: CreditAccount
         What you owed when you started tracking this card. Don&apos;t also add the charges it
         already includes, or they count twice.
       </p>
+
+      {/* Its own section, closed by default: a card paid in full every month needs none of it, and
+          these figures are read off a statement rather than remembered. */}
+      <details className="rounded-xl border border-cream-300 bg-cream-50/40">
+        <summary className="flex min-h-11 cursor-pointer items-center px-4 text-sm font-medium text-warm-600">
+          Interest and payments
+        </summary>
+        <div className="space-y-4 px-4 pb-4">
+          <p className="text-xs text-warm-400">
+            Optional, and only needed to work out what carrying a balance costs. Leave blank if you
+            pay this card in full.
+          </p>
+
+          <Field label="APR (%)" hint="Optional" error={errors.apr?.message}>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              placeholder="e.g. 36"
+              {...register("apr", { setValueAs: optionalNumber })}
+              className={INPUT_CLASS}
+            />
+          </Field>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Minimum (%)" hint="Of balance" error={errors.minimumPaymentPct?.message}>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                placeholder="e.g. 5"
+                {...register("minimumPaymentPct", { setValueAs: optionalNumber })}
+                className={INPUT_CLASS}
+              />
+            </Field>
+            <Field label={`Minimum floor (${symbol})`} hint="Optional" error={errors.minimumPaymentFloor?.message}>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                placeholder="e.g. 500"
+                {...register("minimumPaymentFloor", { setValueAs: optionalNumber })}
+                className={INPUT_CLASS}
+              />
+            </Field>
+          </div>
+          <p className="-mt-2 text-xs text-warm-400">
+            Banks bill whichever of the two is higher. Enter them as your statement words it.
+          </p>
+
+          <Field label={`Planned monthly payment (${symbol})`} hint="Optional" error={errors.plannedPayment?.message}>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              {...register("plannedPayment", { setValueAs: optionalNumber })}
+              className={INPUT_CLASS}
+            />
+          </Field>
+        </div>
+      </details>
 
       <FormActions
         onCancel={onCancel}
