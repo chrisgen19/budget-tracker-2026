@@ -31,6 +31,22 @@ const monthsBetween = (from: string, to: string) => {
   return months;
 };
 
+interface CardForecastInputs {
+  /** Whether the cards half of the forecast applies at all. False leaves the old model untouched. */
+  enabled: boolean;
+  /** Card payments already made since the opening balance: real money out, in no transaction row. */
+  paymentsMade: number;
+  forecastable: ForecastCard[];
+  assumptions: string[];
+}
+
+const DISABLED_CARDS: CardForecastInputs = {
+  enabled: false,
+  paymentsMade: 0,
+  forecastable: [],
+  assumptions: [],
+};
+
 /**
  * The cards whose payments the forecast can place, and what it had to leave out.
  *
@@ -41,11 +57,13 @@ const monthsBetween = (from: string, to: string) => {
  */
 const forecastCards = async (
   userId: string,
-  tz: number
-): Promise<{ forecastable: ForecastCard[]; assumptions: string[] }> => {
+  tz: number,
+  window: { openingAt: Date; todayEnd: Date }
+): Promise<CardForecastInputs> => {
   // The credit cards switch hides the feature entirely for a user it excludes, so the forecast
-  // must not show them a payment line they cannot open, edit or explain.
-  if (!(await userCanUseCreditCards(prisma, userId))) return { forecastable: [], assumptions: [] };
+  // must not show them a payment line they cannot open, edit or explain -- and must not rebase
+  // their tracked balance either, or it would drop card spending with nothing paying it back.
+  if (!(await userCanUseCreditCards(prisma, userId))) return DISABLED_CARDS;
 
   const accounts = await prisma.creditAccount.findMany({
     where: { userId, isActive: true },
@@ -54,14 +72,16 @@ const forecastCards = async (
       minimumPaymentPct: true, minimumPaymentFloor: true, plannedPayment: true,
     },
   });
-  if (accounts.length === 0) return { forecastable: [], assumptions: [] };
+  if (accounts.length === 0) return DISABLED_CARDS;
 
   const ids = accounts.map((account) => account.id);
   const observed = observedPaymentWindow(tz);
-  const [purchaseGroups, paymentGroups, recentPayments] = await Promise.all([
+  const [purchaseGroups, paymentGroups, recentPayments, settled] = await Promise.all([
     prisma.transaction.groupBy({
       by: ["creditAccountId"],
-      where: { userId, type: "EXPENSE", creditAccountId: { in: ids } },
+      // Bounded to today. A purchase dated next month is not owed yet, and counting it here would
+      // schedule a payment for it before it has happened.
+      where: { userId, type: "EXPENSE", creditAccountId: { in: ids }, date: { lte: window.todayEnd } },
       _sum: { amount: true },
     }),
     prisma.creditPayment.groupBy({
@@ -72,6 +92,12 @@ const forecastCards = async (
     prisma.creditPayment.findMany({
       where: { userId, accountId: { in: ids }, kind: "PAYMENT", date: { gte: observed.start, lt: observed.end } },
       select: { accountId: true, amount: true, date: true },
+    }),
+    // Payments already made since the opening balance. These are real money out of the bank and
+    // are in no `transactions` row, so nothing else in this route subtracts them.
+    prisma.creditPayment.aggregate({
+      where: { userId, kind: "PAYMENT", date: { gte: window.openingAt, lte: window.todayEnd } },
+      _sum: { amount: true },
     }),
   ]);
 
@@ -105,6 +131,8 @@ const forecastCards = async (
   }
 
   return {
+    enabled: true,
+    paymentsMade: settled._sum.amount ?? 0,
     forecastable,
     assumptions:
       undated.length === 0
@@ -131,14 +159,24 @@ const getForecast = async (request: Request, userId: string) => {
   }
   const openingDate = user.forecastOpeningBalanceDate.toISOString().slice(0, 10);
   if (openingDate > today) return NextResponse.json({ configured: false, today, horizonDays: days, assumptions: ["The opening tracked balance date cannot be in the future."] });
-  const cards = await forecastCards(userId, tz);
+  const cards = await forecastCards(userId, tz, {
+    openingAt: dateAtStart(openingDate, tz),
+    todayEnd: dateAtEnd(today, tz),
+  });
+  // With cards in play the balance has to be cash-like, or the same money leaves twice: a card
+  // purchase is an EXPENSE and already lowers the tracked balance the day it is made, and the
+  // payment event would then take it out again. Card purchases are therefore excluded from both
+  // transaction paths and the card's whole balance is paid off over the horizon instead. The
+  // payments already made are subtracted directly, since they are in no `transactions` row. This
+  // is the identity cards.md states, rearranged: cash = tracked + owed - card opening balances.
+  const cashOnly = cards.enabled ? { creditAccountId: null } : {};
   const [past, future, schedules, budgets] = await Promise.all([
-    prisma.transaction.findMany({ where: { userId, date: { gte: dateAtStart(openingDate, tz), lte: dateAtEnd(today, tz) } }, select: { amount: true, type: true } }),
-    prisma.transaction.findMany({ where: { userId, date: { gte: dateAtStart(addDays(today, 1), tz), lte: dateAtEnd(to, tz) } }, select: { date: true, amount: true, type: true, description: true } }),
+    prisma.transaction.findMany({ where: { userId, ...cashOnly, date: { gte: dateAtStart(openingDate, tz), lte: dateAtEnd(today, tz) } }, select: { amount: true, type: true } }),
+    prisma.transaction.findMany({ where: { userId, ...cashOnly, date: { gte: dateAtStart(addDays(today, 1), tz), lte: dateAtEnd(to, tz) } }, select: { date: true, amount: true, type: true, description: true } }),
     prisma.scheduledTransaction.findMany({ where: { userId, isActive: true, nextDueDate: { lte: new Date(`${to}T00:00:00.000Z`) } }, select: { id: true, amount: true, description: true, type: true, frequency: true, customIntervalDays: true, startDate: true, endDate: true, nextDueDate: true, isVariable: true, transactions: { select: { id: true, date: true, amount: true } }, occurrences: { where: { status: { in: ["PAID", "SKIPPED"] } }, select: { dueDate: true, transactionId: true } } } }),
     Promise.all(forecastMonths.map((month) => getBudgetPerformance(userId, month, tz))),
   ]);
-  const current = past.reduce((balance, row) => balance + (row.type === "INCOME" ? row.amount : -row.amount), user.forecastOpeningBalance);
+  const current = past.reduce((balance, row) => balance + (row.type === "INCOME" ? row.amount : -row.amount), user.forecastOpeningBalance) - cards.paymentsMade;
   const events: ForecastEvent[] = future.map((row) => ({ date: localCalendarDay(row.date, tz), amount: row.type === "INCOME" ? row.amount : -row.amount, kind: "future-transaction", description: row.description || "Future-dated transaction", estimated: false, assumption: "A transaction already entered for this date." }));
   // PAID occurrence logs identify the scheduled date a linked transaction settled. A payment's
   // transaction date can differ from its due date, so comparing transaction dates is incorrect.
@@ -146,7 +184,7 @@ const getForecast = async (request: Request, userId: string) => {
   budgets.forEach((budget) => events.push(...remainingBudgetPaceEvents(budget.month, budget.allocations, today, to)));
   events.push(...cardPaymentEvents(cards.forecastable, today, to));
   const result = buildCashFlowForecast({ openingBalance: current, from: today, to, events });
-  return NextResponse.json({ configured: true, today, horizonDays: days, openingBalance: user.forecastOpeningBalance, openingBalanceDate: openingDate, trackedBalanceToday: current, daily: result.days, lowestBalance: result.lowestBalance, cashCrunches: result.cashCrunches, assumptions: ["Projected tracked balance is not a reconciled bank balance.", "Future-dated transactions are treated as committed.", "Fixed bills and income use their schedules; variable bills are estimates based on their own payment history.", "Flexible and Savings budget remaining after logged spending is spread evenly through each month. Unplanned spending, transfers, and account balances are not modeled.", "Credit card payments are projected on each card's due day, from its planned payment, else what you have been paying it, else its minimum. Interest yet to be charged and new purchases on a card are not projected, and a card whose payment is already a bill is counted once.", ...cards.assumptions] });
+  return NextResponse.json({ configured: true, today, horizonDays: days, openingBalance: user.forecastOpeningBalance, openingBalanceDate: openingDate, trackedBalanceToday: current, daily: result.days, lowestBalance: result.lowestBalance, cashCrunches: result.cashCrunches, assumptions: ["Projected tracked balance is not a reconciled bank balance.", "Future-dated transactions are treated as committed.", "Fixed bills and income use their schedules; variable bills are estimates based on their own payment history.", "Flexible and Savings budget remaining after logged spending is spread evenly through each month. Unplanned spending, transfers, and account balances are not modeled.", ...(cards.enabled ? ["Because card payments are projected, purchases paid with a card are left out of the balance above and are paid off through their card instead, so the same money is not counted twice. Card payments you have already made are subtracted.", "Credit card payments are projected on each card's due day, from its planned payment, else what you have been paying it, else its minimum. Interest yet to be charged and purchases dated after today are not projected, and a card whose payment is already a bill is counted once."] : []), ...cards.assumptions] });
 };
 
 export async function GET(request: Request) {

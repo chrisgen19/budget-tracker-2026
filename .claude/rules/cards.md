@@ -131,3 +131,16 @@ Moved out of `AGENTS.md` verbatim when that file reached the size Codex silently
   would take three 8,000 payments against a 5,000 debt; interest and new purchases are deliberately
   not accrued, both being unknowable here. The whole block is gated on `userCanUseCreditCards`: a
   user the switch excludes must not get a payment line they cannot open or explain
+- **Projecting card payments forces the forecast's balance to be cash, not the tracked balance.**
+  A purchase is an EXPENSE, so it *already* lowers the tracked balance the day it is made; emitting
+  a payment for it as well takes the same money out of the bank twice, and the first cut of the
+  forecast did exactly that. So when cards apply, `/api/cash-flow-forecast` excludes rows carrying
+  `credit_account_id` from **both** transaction reads and subtracts the `credit_payments` already
+  made (real money out, in no `transactions` row and therefore subtracted nowhere else), leaving
+  the card's whole balance to be paid off across the horizon. That is this file's own identity
+  rearranged -- `cash = tracked + owed - card opening balances` -- which is also why a card's
+  opening balance needs no special case: it was never logged as spending, and paying it is cash
+  leaving for the first time. The rebase is behind the same `userCanUseCreditCards` gate as the
+  events, because doing one without the other drops card spending with nothing paying it back.
+  The balance query is bounded to **today** for the same reason the events are: a purchase dated
+  next month is not owed yet, and counting it would schedule a payment before it happened
