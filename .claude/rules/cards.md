@@ -8,6 +8,8 @@ paths:
   - src/lib/card-owed.ts
   - src/lib/card-interest.ts
   - src/lib/debt-payoff.ts
+  - src/lib/cash-flow-forecast.ts
+  - "src/app/api/cash-flow-forecast/**"
   - "src/app/api/credit-accounts/**"
   - "src/app/api/admin/feature-access/**"
   - "src/app/(app)/cards/**"
@@ -114,3 +116,18 @@ Moved out of `AGENTS.md` verbatim when that file reached the size Codex silently
   `CREDIT` is a refund the card issued, not a payment anyone chose to make, and averaging it in
   overstates what is going against the card. The window is anchored to **today**, not to the month
   on screen, so scrolling back to March does not change what the projection says is being paid now
+- **The cash-flow forecast pays the cards, and refuses rather than guesses.** `cardPaymentEvents`
+  (`src/lib/cash-flow-forecast.ts`) emits a `card-payment` on each card's `due_day`, which was the
+  largest known outflow the forecast counted nowhere: a purchase lowers the tracked balance the day
+  it is made, while the money leaves the bank only when the card is paid. Three refusals, each
+  deliberate. A card with a linked reminder **bill** is skipped, because that bill already emits its
+  own event from the same schedule and counting both empties the account twice -- the guard the
+  forecast already applies to a recurring charge matching a bill by name. A card with **no due day**
+  is skipped and *named in the assumptions*, since the output is the lowest projected balance **and
+  the day it falls on**, so a guessed date answers wrongly rather than roughly. A card owing nothing
+  is skipped. The amount is the most specific figure the card has -- planned, else observed, else
+  the minimum -- and `assumption` says which, because the three mean different things. The balance
+  is walked **down** across the horizon and each payment capped at what is left, or ninety days
+  would take three 8,000 payments against a 5,000 debt; interest and new purchases are deliberately
+  not accrued, both being unknowable here. The whole block is gated on `userCanUseCreditCards`: a
+  user the switch excludes must not get a payment line they cannot open or explain

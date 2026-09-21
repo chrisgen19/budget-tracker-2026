@@ -1,7 +1,9 @@
 import { computeNextDueDate, utcDayStart } from "@/lib/bill-utils";
+import { clampToMonth } from "@/lib/bill-dates";
+import { minimumDue } from "@/lib/debt-payoff";
 import { buildEstimateSamples, describeEstimateBasis, estimateBillAmount } from "@/lib/bill-estimate";
 
-export type ForecastEventKind = "future-transaction" | "scheduled-income" | "bill" | "flexible-pace" | "savings-contribution";
+export type ForecastEventKind = "future-transaction" | "scheduled-income" | "bill" | "flexible-pace" | "savings-contribution" | "card-payment";
 export type ForecastEvent = { date: string; amount: number; kind: ForecastEventKind; description: string; estimated: boolean; assumption: string; sourceId?: string };
 export type ForecastDay = { date: string; projectedBalance: number; inflows: number; outflows: number; events: ForecastEvent[] };
 
@@ -10,6 +12,21 @@ export type ForecastSchedule = {
   customIntervalDays: number | null; startDate: Date; endDate: Date | null; nextDueDate: Date; isVariable: boolean;
   payments: Array<{ id: string; date: Date; amount: number }>;
   occurrences: Array<{ dueDate: Date; transactionId: string | null }>;
+};
+
+export type ForecastCard = {
+  id: string;
+  name: string;
+  /** What the card owes today. Nothing at or below zero is projected. */
+  balance: number;
+  /** Day of the month payment is due. Null means the date is unknown, and the card is skipped. */
+  dueDay: number | null;
+  /** A linked reminder bill already emits its own event, so a card with one is skipped. */
+  billId: string | null;
+  plannedPayment: number | null;
+  observedMonthly: number | null;
+  minimumPct: number | null;
+  minimumFloor: number | null;
 };
 
 export type ForecastBudgetAllocation = {
@@ -89,6 +106,90 @@ export const scheduledForecastEvents = (schedules: ForecastSchedule[], from: str
     }
   }
   return events;
+};
+
+/**
+ * What the credit cards will take out of the bank inside the horizon.
+ *
+ * Card payments are the largest known outflow most accounts have, and the forecast counted none of
+ * them: a purchase lowers the tracked balance on the day it is made, while the money only leaves
+ * the bank when the card is paid.
+ *
+ * Three rules decide whether a card appears at all, and each one is a refusal rather than a guess:
+ *
+ * - **A card with a linked reminder bill is skipped.** That bill already emits its own `bill` event
+ *   from the same schedule, and counting both would take the payment out of the bank twice. The
+ *   same guard the forecast applies to a recurring charge that matches a bill by name.
+ * - **A card with no `dueDay` is skipped**, and the caller says so in its assumptions. The output
+ *   of this forecast is the lowest projected balance *and the date it happens*, so placing a real
+ *   outflow on a guessed day answers the question wrongly rather than approximately.
+ * - **A card with nothing owed is skipped.** There is no payment to make.
+ *
+ * The amount is the most specific figure the card has: what the user plans to pay, else what they
+ * have actually been paying, else the bank's minimum. `assumption` names which of the three it
+ * used, because they mean quite different things.
+ *
+ * The projected balance is walked **down** across the horizon and each payment is capped at what is
+ * left, so a 90-day forecast cannot take three 8,000 payments out of a 5,000 debt. It deliberately
+ * does not accrue interest or new purchases over the horizon: both are unknowable here, and a card
+ * paid off early in the window is the honest reading of what is known today.
+ */
+export const cardPaymentEvents = (
+  cards: readonly ForecastCard[],
+  from: string,
+  to: string
+): ForecastEvent[] => {
+  const events: ForecastEvent[] = [];
+
+  for (const card of cards) {
+    if (card.billId !== null || card.dueDay === null || card.balance <= 0) continue;
+
+    const planned = card.plannedPayment;
+    const monthly =
+      planned ?? card.observedMonthly ?? minimumDue(card.balance, card.minimumPct, card.minimumFloor);
+    if (monthly === null || monthly <= 0) continue;
+
+    const basis =
+      planned !== null
+        ? "the payment you planned for this card"
+        : card.observedMonthly !== null
+          ? "what you have been paying this card each month"
+          : "this card's minimum payment";
+
+    let remaining = card.balance;
+    for (const date of monthlyDueDates(card.dueDay, from, to)) {
+      if (remaining <= 0) break;
+      const amount = money(Math.min(monthly, remaining));
+      remaining = money(remaining - amount);
+      events.push({
+        date,
+        amount,
+        kind: "card-payment",
+        description: `${card.name} payment`,
+        estimated: true,
+        assumption: `Based on ${basis}. Interest and new purchases on the card are not projected.`,
+        sourceId: card.id,
+      });
+    }
+  }
+
+  return events;
+};
+
+/** Every occurrence of `dueDay` between the two days, clamped into a month that is shorter. */
+const monthlyDueDates = (dueDay: number, from: string, to: string): string[] => {
+  const dates: string[] = [];
+  const fromDay = day(from);
+  const toDay = day(to);
+  const cursor = new Date(Date.UTC(fromDay.getUTCFullYear(), fromDay.getUTCMonth(), 1));
+
+  while (cursor <= toDay) {
+    const due = clampToMonth(cursor.getUTCFullYear(), cursor.getUTCMonth(), dueDay);
+    if (due >= fromDay && due <= toDay) dates.push(key(due));
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+
+  return dates;
 };
 
 /** Spread only budget money still unspent after actuals and rollover across the usable month. */

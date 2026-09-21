@@ -3,7 +3,14 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { localCalendarDay } from "@/lib/period-progress";
 import { getBudgetPerformance } from "@/lib/budget-plans";
-import { buildCashFlowForecast, remainingBudgetPaceEvents, scheduledForecastEvents, type ForecastEvent } from "@/lib/cash-flow-forecast";
+import { buildCashFlowForecast, cardPaymentEvents, remainingBudgetPaceEvents, scheduledForecastEvents, type ForecastCard, type ForecastEvent } from "@/lib/cash-flow-forecast";
+import { userCanUseCreditCards } from "@/lib/credit-card-access";
+import {
+  computeAccountBalance,
+  foldLedgerGroups,
+  observedPaymentWindow,
+  summariseObservedPayments,
+} from "@/lib/credit-account-queries";
 import { cashFlowForecastQuerySchema, forecastOpeningBalanceSchema } from "@/lib/validations";
 
 const dateAtStart = (value: string, tz: number) => new Date(Date.parse(`${value}T00:00:00.000Z`) + tz * 60_000);
@@ -24,6 +31,92 @@ const monthsBetween = (from: string, to: string) => {
   return months;
 };
 
+/**
+ * The cards whose payments the forecast can place, and what it had to leave out.
+ *
+ * A card payment is the largest known outflow most accounts have and was counted nowhere: a
+ * purchase lowers the tracked balance the day it is made, while the money leaves the bank only when
+ * the card is paid. What cannot be placed is *said*, not guessed, because the forecast's output is
+ * the lowest projected balance and the day it falls on.
+ */
+const forecastCards = async (
+  userId: string,
+  tz: number
+): Promise<{ forecastable: ForecastCard[]; assumptions: string[] }> => {
+  // The credit cards switch hides the feature entirely for a user it excludes, so the forecast
+  // must not show them a payment line they cannot open, edit or explain.
+  if (!(await userCanUseCreditCards(prisma, userId))) return { forecastable: [], assumptions: [] };
+
+  const accounts = await prisma.creditAccount.findMany({
+    where: { userId, isActive: true },
+    select: {
+      id: true, name: true, dueDay: true, billId: true, openingBalance: true,
+      minimumPaymentPct: true, minimumPaymentFloor: true, plannedPayment: true,
+    },
+  });
+  if (accounts.length === 0) return { forecastable: [], assumptions: [] };
+
+  const ids = accounts.map((account) => account.id);
+  const observed = observedPaymentWindow(tz);
+  const [purchaseGroups, paymentGroups, recentPayments] = await Promise.all([
+    prisma.transaction.groupBy({
+      by: ["creditAccountId"],
+      where: { userId, type: "EXPENSE", creditAccountId: { in: ids } },
+      _sum: { amount: true },
+    }),
+    prisma.creditPayment.groupBy({
+      by: ["accountId", "kind"],
+      where: { userId, accountId: { in: ids } },
+      _sum: { amount: true },
+    }),
+    prisma.creditPayment.findMany({
+      where: { userId, accountId: { in: ids }, kind: "PAYMENT", date: { gte: observed.start, lt: observed.end } },
+      select: { accountId: true, amount: true, date: true },
+    }),
+  ]);
+
+  const totals = foldLedgerGroups(ids, purchaseGroups, paymentGroups);
+  const forecastable: ForecastCard[] = [];
+  const undated: string[] = [];
+
+  for (const account of accounts) {
+    const balance = computeAccountBalance(
+      account.openingBalance,
+      totals.get(account.id) ?? { purchases: 0, payments: 0, credits: 0 }
+    );
+    if (balance <= 0) continue;
+    if (account.dueDay === null && account.billId === null) undated.push(account.name);
+
+    forecastable.push({
+      id: account.id,
+      name: account.name,
+      balance,
+      dueDay: account.dueDay,
+      billId: account.billId,
+      plannedPayment: account.plannedPayment,
+      observedMonthly: summariseObservedPayments(
+        recentPayments.filter((payment) => payment.accountId === account.id),
+        observed,
+        tz
+      ).monthly,
+      minimumPct: account.minimumPaymentPct,
+      minimumFloor: account.minimumPaymentFloor,
+    });
+  }
+
+  return {
+    forecastable,
+    assumptions:
+      undated.length === 0
+        ? []
+        : [
+            `Card payments are projected from each card's due day. ${undated.join(", ")} ${
+              undated.length === 1 ? "has no due day set, so its payment is" : "have no due day set, so their payments are"
+            } not included.`,
+          ],
+  };
+};
+
 const getForecast = async (request: Request, userId: string) => {
   const url = new URL(request.url);
   const parsed = cashFlowForecastQuerySchema.safeParse({ days: url.searchParams.get("days"), tz: url.searchParams.get("tz") });
@@ -38,6 +131,7 @@ const getForecast = async (request: Request, userId: string) => {
   }
   const openingDate = user.forecastOpeningBalanceDate.toISOString().slice(0, 10);
   if (openingDate > today) return NextResponse.json({ configured: false, today, horizonDays: days, assumptions: ["The opening tracked balance date cannot be in the future."] });
+  const cards = await forecastCards(userId, tz);
   const [past, future, schedules, budgets] = await Promise.all([
     prisma.transaction.findMany({ where: { userId, date: { gte: dateAtStart(openingDate, tz), lte: dateAtEnd(today, tz) } }, select: { amount: true, type: true } }),
     prisma.transaction.findMany({ where: { userId, date: { gte: dateAtStart(addDays(today, 1), tz), lte: dateAtEnd(to, tz) } }, select: { date: true, amount: true, type: true, description: true } }),
@@ -50,8 +144,9 @@ const getForecast = async (request: Request, userId: string) => {
   // transaction date can differ from its due date, so comparing transaction dates is incorrect.
   events.push(...scheduledForecastEvents(schedules.map((schedule) => ({ ...schedule, payments: schedule.transactions })), today, to, tz));
   budgets.forEach((budget) => events.push(...remainingBudgetPaceEvents(budget.month, budget.allocations, today, to)));
+  events.push(...cardPaymentEvents(cards.forecastable, today, to));
   const result = buildCashFlowForecast({ openingBalance: current, from: today, to, events });
-  return NextResponse.json({ configured: true, today, horizonDays: days, openingBalance: user.forecastOpeningBalance, openingBalanceDate: openingDate, trackedBalanceToday: current, daily: result.days, lowestBalance: result.lowestBalance, cashCrunches: result.cashCrunches, assumptions: ["Projected tracked balance is not a reconciled bank balance.", "Future-dated transactions are treated as committed.", "Fixed bills and income use their schedules; variable bills are estimates based on their own payment history.", "Flexible and Savings budget remaining after logged spending is spread evenly through each month. Unplanned spending, transfers, and account balances are not modeled."] });
+  return NextResponse.json({ configured: true, today, horizonDays: days, openingBalance: user.forecastOpeningBalance, openingBalanceDate: openingDate, trackedBalanceToday: current, daily: result.days, lowestBalance: result.lowestBalance, cashCrunches: result.cashCrunches, assumptions: ["Projected tracked balance is not a reconciled bank balance.", "Future-dated transactions are treated as committed.", "Fixed bills and income use their schedules; variable bills are estimates based on their own payment history.", "Flexible and Savings budget remaining after logged spending is spread evenly through each month. Unplanned spending, transfers, and account balances are not modeled.", "Credit card payments are projected on each card's due day, from its planned payment, else what you have been paying it, else its minimum. Interest yet to be charged and new purchases on a card are not projected, and a card whose payment is already a bill is counted once.", ...cards.assumptions] });
 };
 
 export async function GET(request: Request) {
