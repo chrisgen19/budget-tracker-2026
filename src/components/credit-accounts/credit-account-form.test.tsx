@@ -7,6 +7,27 @@ vi.mock("@/components/user-provider", () => ({
   useUser: () => ({ user: { currency: "PHP", timezoneOffset: -480 } }),
 }));
 
+const cardFixture = {
+  id: "card-1",
+  name: "BPI",
+  color: "#5B6B8C",
+  creditLimit: 50000,
+  statementDay: 10,
+  dueDay: 5,
+  apr: null,
+  minimumPaymentPct: null,
+  minimumPaymentFloor: null,
+  plannedPayment: null,
+  utilization: null,
+  openingBalance: 1200,
+  openingBalanceDate: "2026-08-31T16:00:00.000Z",
+  isActive: true,
+  billId: null,
+  balance: 1200,
+  availableCredit: 48800,
+  totals: { purchases: 0, payments: 0, credits: 0 },
+};
+
 describe("CreditAccountForm", () => {
   it("sends blank optional numbers as null, not 0 or NaN", async () => {
     const onSubmit = vi.fn<(data: CreditAccountInput) => Promise<void>>(async () => {});
@@ -61,6 +82,33 @@ describe("CreditAccountForm", () => {
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     expect(onSubmit.mock.calls[0][0].apr).toBe(0);
+  });
+
+  /**
+   * Collapsed, the section reads "Leave blank if you pay this card in full", so a card that already
+   * has an APR looks like it never saved one.
+   */
+  it("opens the interest section when the card already has terms", () => {
+    const { container } = render(
+      <CreditAccountForm
+        account={{ ...cardFixture, apr: 36 } as never}
+        onSubmit={async () => {}}
+        onCancel={() => {}}
+      />
+    );
+    expect(container.querySelector("details")?.hasAttribute("open")).toBe(true);
+  });
+
+  it("leaves it closed for a card with none of them", () => {
+    const { container } = render(
+      <CreditAccountForm account={cardFixture as never} onSubmit={async () => {}} onCancel={() => {}} />
+    );
+    expect(container.querySelector("details")?.hasAttribute("open")).toBe(false);
+  });
+
+  it("leaves it closed for a new card", () => {
+    const { container } = render(<CreditAccountForm onSubmit={async () => {}} onCancel={() => {}} />);
+    expect(container.querySelector("details")?.hasAttribute("open")).toBe(false);
   });
 
   it("refuses a negative APR without submitting", async () => {

@@ -7,11 +7,16 @@ import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import type { CreditAccountView } from "@/hooks/use-credit-accounts";
 
-/** Share of the limit in use, 0-100, or null with no limit. Clamped for the bar; over the limit reads 100. */
-export const limitUsedPercent = (balance: number, creditLimit: number | null): number | null => {
-  if (!creditLimit) return null;
-  return Math.min(100, Math.max(0, Math.round((balance / creditLimit) * 100)));
-};
+/**
+ * How wide to draw the usage bar, 0-100.
+ *
+ * Only the **bar** is clamped. The figure printed beside it is `account.utilization` as the server
+ * derived it, because over the limit and holding a credit are the two readings worth seeing and a
+ * bar can draw neither -- it has no width past full and none below empty. Clamping the number too
+ * is what made this page disagree with `/cards/[id]`, which shows the real one.
+ */
+export const limitBarPercent = (utilization: number | null | undefined): number | null =>
+  utilization == null ? null : Math.min(100, Math.max(0, Math.round(utilization)));
 
 /** 1st, 2nd, 3rd, 4th, 11th, 21st, 22nd. */
 export const ordinalDay = (day: number): string => {
@@ -23,7 +28,9 @@ export const ordinalDay = (day: number): string => {
 export function CreditAccountCard({ account }: { account: CreditAccountView }) {
   const { user } = useUser();
   const { hideAmounts } = usePrivacy();
-  const used = limitUsedPercent(account.balance, account.creditLimit);
+  // One source of truth for the ratio: the server's. This page only decides how to draw it.
+  const used = account.utilization ?? null;
+  const barWidth = limitBarPercent(used);
   // An overpayment leaves the card holding money, which is good news and should not read as debt.
   const holdsCredit = account.balance < 0;
 
@@ -54,19 +61,19 @@ export function CreditAccountCard({ account }: { account: CreditAccountView }) {
         {maskCurrency(Math.abs(account.balance), user.currency, hideAmounts)}
       </p>
 
-      {used !== null && account.creditLimit !== null && (
+      {used !== null && barWidth !== null && account.creditLimit !== null && (
         <div className="mt-3">
           <div
             role="progressbar"
             aria-label="Credit limit used"
-            aria-valuenow={used}
+            aria-valuenow={barWidth}
             aria-valuemin={0}
             aria-valuemax={100}
             className="h-1.5 overflow-hidden rounded-full bg-cream-100"
           >
             <div
               className={cn("h-full rounded-full", used >= 90 ? "bg-expense" : "bg-amber")}
-              style={{ width: `${used}%` }}
+              style={{ width: `${barWidth}%` }}
             />
           </div>
           <p className="mt-1 text-xs text-warm-400">

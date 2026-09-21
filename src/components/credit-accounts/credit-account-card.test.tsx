@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
   CreditAccountCard,
-  limitUsedPercent,
+  limitBarPercent,
   ordinalDay,
 } from "@/components/credit-accounts/credit-account-card";
 import type { CreditAccountView } from "@/hooks/use-credit-accounts";
@@ -60,14 +60,53 @@ describe("ordinalDay", () => {
   });
 });
 
-describe("limitUsedPercent", () => {
-  it("is null with no limit", () => {
-    expect(limitUsedPercent(2295.28, null)).toBeNull();
+describe("limitBarPercent", () => {
+  it("is null with no utilization to draw", () => {
+    expect(limitBarPercent(null)).toBeNull();
+    expect(limitBarPercent(undefined)).toBeNull();
   });
 
-  it("clamps for the bar at both ends", () => {
-    expect(limitUsedPercent(60000, 50000)).toBe(100);
-    expect(limitUsedPercent(-100, 50000)).toBe(0);
+  /** The bar clamps because it cannot draw past full or below empty. The figure does not. */
+  it("clamps the bar at both ends", () => {
+    expect(limitBarPercent(120)).toBe(100);
+    expect(limitBarPercent(-5)).toBe(0);
+  });
+
+  it("rounds to a whole percent for the width", () => {
+    expect(limitBarPercent(38.3)).toBe(38);
+  });
+});
+
+describe("CreditAccountCard utilization", () => {
+  /**
+   * The list and the detail page must print the same number. They did not: this page had its own
+   * clamped, integer-rounded implementation, so a card over its limit read "100%" here and "108.3%"
+   * there, and a card holding a credit read "0%" here and a negative there. Both are exactly the
+   * readings `.claude/rules/cards.md` says must survive.
+   */
+  it("prints the server's figure unclamped when the card is over its limit", () => {
+    privacy.hideAmounts = false;
+    render(<CreditAccountCard account={account({ creditLimit: 48000, balance: 52000, utilization: 108.3 })} />);
+    expect(screen.getByText(/108\.3% of/)).toBeDefined();
+  });
+
+  it("prints a negative when the card holds a credit", () => {
+    privacy.hideAmounts = false;
+    render(<CreditAccountCard account={account({ creditLimit: 48000, balance: -500, utilization: -1 })} />);
+    expect(screen.getByText(/-1% of/)).toBeDefined();
+  });
+
+  /** The bar is the one thing that clamps, because it cannot be drawn past full. */
+  it("still clamps the bar itself to full", () => {
+    privacy.hideAmounts = false;
+    render(<CreditAccountCard account={account({ creditLimit: 48000, balance: 52000, utilization: 108.3 })} />);
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("100");
+  });
+
+  it("shows no bar at all without a utilization", () => {
+    privacy.hideAmounts = false;
+    render(<CreditAccountCard account={account({ creditLimit: 48000, utilization: null })} />);
+    expect(screen.queryByRole("progressbar")).toBeNull();
   });
 });
 

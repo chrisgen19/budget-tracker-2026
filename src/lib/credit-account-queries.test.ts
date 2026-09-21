@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  OBSERVED_PAYMENT_MONTHS,
   buildCardCategoryBreakdown,
   computeAccountBalance,
   currentMonthKey,
   foldLedgerGroups,
   monthWindow,
+  observedPaymentWindow,
   openingBalanceAsOf,
+  shiftMonthKey,
+  summariseObservedPayments,
 } from "./credit-account-queries";
 
 describe("openingBalanceAsOf", () => {
@@ -119,5 +123,90 @@ describe("buildCardCategoryBreakdown", () => {
 
   it("drops a category it has no name for rather than rendering a blank row", () => {
     expect(buildCardCategoryBreakdown([{ categoryId: "gone", _sum: { amount: 10 } }], categories)).toEqual([]);
+  });
+});
+
+describe("shiftMonthKey", () => {
+  it("walks backwards across a year boundary", () => {
+    expect(shiftMonthKey("2026-01", -1)).toBe("2025-12");
+    expect(shiftMonthKey("2026-03", -6)).toBe("2025-09");
+  });
+});
+
+describe("observedPaymentWindow", () => {
+  /**
+   * The window is the six *complete* months before this one. Letting it run to now would sweep in
+   * the current month-to-date as well, so up to seven months of payments would be divided by six:
+   * an average overstated by about a sixth, that jumps when this month's payment posts and drops
+   * again at rollover.
+   */
+  it("stops at the start of the current month", () => {
+    const now = new Date(Date.UTC(2026, 8, 21, 4)); // 21 September 2026, midday in Manila
+    const window = observedPaymentWindow(MANILA, now);
+
+    expect(window.firstMonth).toBe("2026-03");
+    expect(window.lastMonth).toBe("2026-08");
+    expect(window.start).toEqual(monthWindow("2026-03", MANILA).start);
+    expect(window.end).toEqual(monthWindow("2026-09", MANILA).start);
+  });
+
+  it("spans exactly the configured number of whole months", () => {
+    const now = new Date(Date.UTC(2026, 8, 21, 4));
+    const { firstMonth, lastMonth } = observedPaymentWindow(MANILA, now);
+    const [fy, fm] = firstMonth.split("-").map(Number);
+    const [ly, lm] = lastMonth.split("-").map(Number);
+    expect((ly - fy) * 12 + (lm - fm) + 1).toBe(OBSERVED_PAYMENT_MONTHS);
+  });
+});
+
+describe("summariseObservedPayments", () => {
+  const window = { firstMonth: "2026-03", lastMonth: "2026-08" };
+  const paid = (month: string, amount: number) => ({
+    amount,
+    date: new Date(`${month}-15T04:00:00.000Z`),
+  });
+
+  /**
+   * The bug this guards. A card first paid in July has two months of history, not six. Dividing
+   * 8,000 by six gives 1,333, which on a 50,000 balance at 36% APR is below the 1,500 monthly
+   * interest and reports "never clears" for someone paying it down at 4,000 a month.
+   */
+  it("divides by the months observed, not by the width of the window", () => {
+    const result = summariseObservedPayments(
+      [paid("2026-07", 4000), paid("2026-07", 4000), paid("2026-08", 4000)],
+      window,
+      MANILA
+    );
+    expect(result.months).toBe(2);
+    expect(result.monthly).toBe(6000);
+  });
+
+  it("uses the full window for a card paid across all of it", () => {
+    const payments = ["2026-03", "2026-05", "2026-08"].map((month) => paid(month, 6000));
+    const result = summariseObservedPayments(payments, window, MANILA);
+    expect(result.months).toBe(OBSERVED_PAYMENT_MONTHS);
+    expect(result.monthly).toBe(3000);
+  });
+
+  /**
+   * A quiet stretch *after* the first payment still counts, and should: someone who paid three
+   * times in March and nothing since is not paying 6,000 a month.
+   */
+  it("keeps counting the months after payments stop", () => {
+    const payments = Array.from({ length: 3 }, () => paid("2026-03", 6000));
+    const result = summariseObservedPayments(payments, window, MANILA);
+    expect(result.months).toBe(OBSERVED_PAYMENT_MONTHS);
+    expect(result.monthly).toBe(3000);
+  });
+
+  it("reports nothing observed when there are no payments", () => {
+    expect(summariseObservedPayments([], window, MANILA)).toEqual({ monthly: null, months: 0 });
+  });
+
+  /** Under three payments there is a span but no average: one transfer is not a habit. */
+  it("still withholds the average below the payment floor", () => {
+    const result = summariseObservedPayments([paid("2026-08", 5000)], window, MANILA);
+    expect(result.monthly).toBeNull();
+    expect(result.months).toBe(1);
   });
 });
