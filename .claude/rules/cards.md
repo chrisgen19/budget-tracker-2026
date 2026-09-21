@@ -169,7 +169,10 @@ Moved out of `AGENTS.md` verbatim when that file reached the size Codex silently
   the truth, in exactly the case where the order matters most -- so a stalled ordering is named,
   never compared as a number, and only when both stall is the amount blamed rather than the order.
   The trend is `owedByMonth`, one forward pass with per-card pointers, over reads bounded at the
-  range's end (rows after it feed no point) but not its start (the first month needs all history).
+  range's end but not its start (the first month needs all history). The bound is only safe
+  because the **last point is measured at `to` too**, not at the end of `to`'s month: a range
+  ending on the 15th asks what was owed by the 15th, and measuring at the 30th while the reads
+  stopped at the 15th left the second half of the month out of a point labelled with all of it.
   Its month cap `MAX_DEBT_TREND_MONTHS` is derived from `MAX_ANALYTICS_RANGE_DAYS`, never written
   by hand: a hand-picked 60 truncated a valid ten-year range half-way with nothing saying so. Its interest window uses the app-wide `Date.UTC(...) + tzOffset * 60000`: bare
   `T00:00:00Z` bounds are UTC's day, and in Manila a charge logged at 07:00 on the 1st would land in

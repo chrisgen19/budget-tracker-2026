@@ -328,6 +328,43 @@ describe("owedByMonth", () => {
     expect(series[0].owed).toBe(3500);
   });
 
+  /**
+   * The reviewer's case. A range ending on 15 June asks what was owed by the 15th. The last point
+   * used to be measured at 30 June while the reads stopped at the 15th, so the two disagreed about
+   * where the range ended. Now both stop at `to`, and a purchase on the 20th is outside the range
+   * however it reaches this function.
+   */
+  it("measures a range that ends mid-month at its end, not at the month's", () => {
+    const series = owedByMonth(
+      [card],
+      [
+        { creditAccountId: "c1", amount: 4000, date: at("2026-06-10") },
+        { creditAccountId: "c1", amount: 9000, date: at("2026-06-20") },
+      ],
+      [],
+      ["2026-05", "2026-06"],
+      MANILA,
+      new Date(Date.UTC(2026, 5, 16) + MANILA * 60_000 - 1) // end of 15 June in Manila
+    );
+    expect(series).toEqual([
+      { month: "2026-05", owed: 0 },
+      { month: "2026-06", owed: 4000 },
+    ]);
+  });
+
+  /** Earlier months are complete inside the range, so the range end must not clip them. */
+  it("leaves every earlier month measured at its own end", () => {
+    const series = owedByMonth(
+      [card],
+      [{ creditAccountId: "c1", amount: 3000, date: at("2026-05-28") }],
+      [],
+      ["2026-05", "2026-06"],
+      MANILA,
+      new Date(Date.UTC(2026, 5, 16) + MANILA * 60_000 - 1)
+    );
+    expect(series[0]).toEqual({ month: "2026-05", owed: 3000 });
+  });
+
   /** Rows arrive in no particular order from the database; the walk must not depend on it. */
   it("gives the same answer whatever order the rows arrive in", () => {
     const rows = [

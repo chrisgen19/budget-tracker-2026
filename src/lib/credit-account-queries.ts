@@ -361,11 +361,21 @@ export const owedByMonth = (
   purchases: readonly (DatedRow & { creditAccountId: string | null })[],
   payments: readonly (DatedRow & { accountId: string; kind: CreditPaymentKind })[],
   months: readonly string[],
-  timezoneOffset: number
+  timezoneOffset: number,
+  /**
+   * Where the range stops. The last month is measured here rather than at that month's end when
+   * the range stops part-way through it: a range ending on the 15th asks what was owed by the
+   * 15th. Measuring at the month's end instead disagreed with the reads, which stop at `to`, so the
+   * point labelled with the whole month silently left out its second half.
+   */
+  rangeEnd?: Date
 ): { month: string; owed: number }[] => {
   const byDate = (a: DatedRow, b: DatedRow) => a.date.getTime() - b.date.getTime();
   const totals = months.map(() => 0);
-  const ends = months.map((month) => monthEndInstant(month, timezoneOffset));
+  const ends = months.map((month) => {
+    const end = monthEndInstant(month, timezoneOffset);
+    return rangeEnd && rangeEnd < end ? rangeEnd : end;
+  });
 
   for (const card of cards) {
     const bought = purchases.filter((row) => row.creditAccountId === card.id).sort(byDate);

@@ -68,7 +68,8 @@ export async function GET(request: Request) {
       prisma.transaction.count({
         where: { userId, type: "EXPENSE", creditAccountId: { in: ids }, category: { name: INTEREST_CATEGORY_NAME } },
       }),
-      // Bounded at the end of the range, since rows after it feed no trend point. Not bounded
+      // Bounded at the end of the range, since rows after it feed no trend point -- true because
+      // `owedByMonth` measures the last point at `to` as well, not at its month's end. Not bounded
       // below: the first month's balance is built from the whole history up to it.
       prisma.transaction.findMany({
         where: { userId, type: "EXPENSE", creditAccountId: { in: ids }, date: { lte: dayEnd(to, tz) } },
@@ -84,7 +85,9 @@ export async function GET(request: Request) {
       }),
     ]);
 
-    const owedOverTime = owedByMonth(cards, purchases, payments, monthsInRange(from, to), tz);
+    // Measured at `to`, the same instant the reads above stop at, so the last point and the rows
+    // behind it cannot disagree about where the range ends.
+    const owedOverTime = owedByMonth(cards, purchases, payments, monthsInRange(from, to), tz, dayEnd(to, tz));
 
     const racers: StrategyCard[] = owing
       .filter((card) => card.apr !== null)
