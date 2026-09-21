@@ -1,17 +1,28 @@
 # REVIEW.md
 
+## Severity and evidence
+
+- **Important** means an introduced correctness, security, privacy, data-integrity, deployment, or user-visible regression with a concrete failure or risk path
+- **Nit** means a maintainability or convention issue that does not change behavior; report at most three nits per review
+- Every finding must identify the triggering input or execution path and explain the resulting observable failure or risk
+- Do not report formatting, lint, or type errors already enforced deterministically by CI unless they reveal a deeper behavioral defect
+- Do not lower confidence merely because a bug needs a particular realistic input or state; do reject findings that remain speculative after checking the relevant context
+
 ## Always flag
 
 ### Security (blocking)
-- Every API route MUST call `getAuthUserId()`, `getAuthUser()`, or `requireAdmin()` as the first operation — no exceptions
+- Every non-public API route must authenticate and authorize before it reads or mutates protected data
+- Use the mechanism required by the route family: NextAuth session helpers, `requireAdmin()`, Telegram signed `initData`, `CRON_SECRET`, or MCP bearer-token authentication
+- Public authentication routes must validate their input and must not disclose whether sensitive account data exists
 - Admin routes MUST use `requireAdmin()`, not UI-only role checks
-- All mutations MUST verify ownership (`userId` match) on transactions, categories, and bills
-- All user input MUST be validated with Zod schemas from `src/lib/validations.ts` — no inline validation
+- All user-owned reads and mutations MUST enforce ownership, including indirect foreign-key references
+- Validate untrusted input before using it. Reuse shared Zod schemas where they exist; reusable request schemas belong in `src/lib/validations.ts`
 - Never use `$queryRaw` with string interpolation — Prisma parameterized queries only
 - Passwords must never appear in logs, API responses, or error messages
 - No secrets, API keys, or `.env` values in the diff
 - File uploads must enforce MIME type (`image/*`) and 4MB size limit
 - Receipt scan endpoints must check `ScanLog` monthly limits and respect role caps (FREE < PAID < ADMIN)
+- Treat changes to `.github/workflows/**`, `AGENTS.md`, `REVIEW.md`, and `.claude/**` as security-sensitive configuration, not as trivial documentation changes
 
 ### Data integrity (blocking)
 - Date-range queries MUST accept and apply `timezoneOffset` — without it, transactions appear on the wrong day for non-UTC users
@@ -27,7 +38,7 @@
 ## Always check
 
 ### API routes
-- Auth check → Zod validation → database call — in that order, always
+- Authenticate before protected-data access, enforce request-size ceilings before materializing large bodies, validate before database writes, and use the route family's documented auth mechanism
 - Error responses use `{ error: string }` shape with correct HTTP status (400/401/403/404/500)
 - Handler body wrapped in try/catch with a generic 500 fallback
 
@@ -42,8 +53,11 @@
 ### Database
 - New columns need sensible defaults to avoid breaking existing rows
 - Add indexes for columns used in WHERE/ORDER BY clauses
-- Migrations created via `pnpm db:migrate`, not manual SQL
+- Always review migration SQL for data loss, destructive operations, unsafe locking, deploy order, and disagreement with `schema.prisma`
+- Generate migrations with `pnpm db:migrate` by default. Manual SQL is allowed when Prisma cannot express the required behavior, such as a partial index; require an explanation and focused verification
+- `pnpm build` must never migrate a database. Production migration remains exclusive to `pnpm build:deploy`
 - Shared read-only queries belong in `src/lib/budget-queries.ts` (dependency-injected for MCP reuse)
+- When shared query signatures, schemas, scopes, or response types change, review affected MCP consumers and run the MCP server type-check required by `AGENTS.md`
 
 ### TypeScript
 - `const` by default, `let` when needed, never `var`
@@ -53,10 +67,8 @@
 
 ## Skip
 
-- Changes only to `CHANGELOG.md`, `README.md`, or `AGENTS.md`
+- Changes only to `CHANGELOG.md` or `README.md`, unless the prose contradicts behavior or security/deployment instructions
 - Lock file updates (`pnpm-lock.yaml`) when accompanied by a valid dependency change
-- Generated files: `prisma/migrations/*/migration.sql` (review the schema change in `schema.prisma` instead)
-- Files in `mcp-server/` unless the PR specifically targets MCP functionality
 - Formatting-only diffs with no logic changes
 
 ## Project-specific pitfalls

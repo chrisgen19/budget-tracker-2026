@@ -2,6 +2,21 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-21 - Code review policy is trusted and route-aware
+
+Automatic Claude reviews now restore `AGENTS.md` and `REVIEW.md` from the pull request's base
+commit before the reviewer starts. The action already protects `.claude/`, but
+`.claude/CLAUDE.md` imports the previously unprotected `AGENTS.md`, and the review agents consume
+the previously unprotected `REVIEW.md`; a pull request could therefore change the policy applied
+to its own review. Restoring the working copies does not hide those changes from `gh pr diff`.
+
+The review policy now recognizes each supported authentication boundary rather than requiring a
+NextAuth helper in every route, reviews migration SQL and affected MCP consumers instead of
+skipping them, and requires concrete evidence while capping low-value nits. Workflow configuration
+and reviewer instructions are explicitly security-sensitive changes. The reporting documentation
+also distinguishes an intentional plugin eligibility skip from this repository's stricter rule
+that every automatic review must leave evidence.
+
 ## 2026-09-18 - A finished code review no longer fails its own job
 
 `anthropics/claude-code-action` exits 1 whenever the Claude session ends on `is_error: true`, and
