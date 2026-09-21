@@ -2,6 +2,15 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-22 - Claude reviews fail closed without their sandbox
+
+The automatic Claude reviewer now explicitly enables its sandbox, refuses to start when the
+sandbox is unavailable, and prevents a blocked command from retrying unsandboxed on the host. The
+existing Ubuntu 24.04 pin, bubblewrap/socat installation, AppArmor adjustment and subprocess
+environment scrub remain the mechanisms that make the sandbox available; the new settings turn
+their absence or failure into a hard boundary instead of Claude Code's default warning and
+unsandboxed fallback.
+
 ## 2026-09-21 - Claude reviews queue on pinned infrastructure
 
 Automatic Claude reviews now share a repository-wide `queue: max` concurrency group. A burst of
