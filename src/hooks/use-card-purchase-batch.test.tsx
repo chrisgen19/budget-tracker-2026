@@ -126,4 +126,36 @@ describe("useCardPurchaseBatch", () => {
     expect(first.clientBatchId).toBeTruthy();
     expect(second.clientBatchId).not.toBe(first.clientBatchId);
   });
+
+  /**
+   * The card page runs two of these: one for purchases, one for interest and fees, which are
+   * ordinary expenses on the card and so go through this same writer.
+   *
+   * They must be separate instances. A key is pinned until its save settles, so one shared between
+   * the two flows would let a charge entered after an unconfirmed purchase batch replay that batch
+   * and report the charge as saved, which is the exact failure the key exists to prevent, reached
+   * from the other direction.
+   */
+  it("keeps one instance's key and pinned rows away from another's", async () => {
+    const purchases = setup();
+    const interest = setup();
+
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await act(async () => {
+      await purchases.result.current.submit([purchase(1111)]);
+    });
+    expect(purchases.result.current.unconfirmed).not.toBeNull();
+    // The interest modal must still offer its form, not the other flow's retry screen.
+    expect(interest.result.current.unconfirmed).toBeNull();
+
+    fetchMock.mockResolvedValueOnce(respond(201, { transactions: [{ id: "tx-3" }] }));
+    await act(async () => {
+      await interest.result.current.submit([purchase(250)]);
+    });
+
+    const [stuck, charge] = sentBodies();
+    expect(charge.clientBatchId).not.toBe(stuck.clientBatchId);
+    // The pinned purchases are still pinned: the charge settled its own save and nothing else.
+    expect(purchases.result.current.unconfirmed).toEqual([purchase(1111)]);
+  });
 });

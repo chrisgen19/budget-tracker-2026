@@ -25,6 +25,9 @@ export const DEFAULT_CATEGORIES = [
   { name: "Healthcare", type: TransactionType.EXPENSE, icon: "Heart", color: "#FF6B6B" },
   { name: "Fun", type: TransactionType.EXPENSE, icon: "Gift", color: "#45B7D1" },
   { name: "Personal Care", type: TransactionType.EXPENSE, icon: "Sparkles", color: "#C8702A" },
+  // Interest and card fees are ordinary spending: money that genuinely left. Its own category
+  // rather than a flag on the row, so "what the cards cost me" is a query that already exists.
+  { name: "Interest & Fees", type: TransactionType.EXPENSE, icon: "Landmark", color: "#B4472A" },
   { name: "Other Expense", type: TransactionType.EXPENSE, icon: "MoreHorizontal", color: "#8B7E6A" },
 
   // Income categories

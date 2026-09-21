@@ -102,6 +102,7 @@ other agent tools do not load them, so open the file directly when you need the 
 - **[.claude/rules/api-routes.md](.claude/rules/api-routes.md)**: the full API Routes Reference, every route the app exposes. Loads on `src/app/api/**`.
 - **[.claude/rules/receipts.md](.claude/rules/receipts.md)**: scanning and itemization, the scan-credit quota, receipt year repair, EXIF capture dates, and captions as hints. Loads on `src/lib/receipt-scan.ts`, `src/lib/receipt-date.ts`, `src/lib/receipt-guard.ts`, `src/lib/scan-quota.ts`, `src/lib/exif-date.ts`, `src/app/api/receipts/**`, `src/components/scan-receipt-sheet.tsx`, `src/components/multi-scan-review.tsx`, `src/components/scan-provider.tsx`, `src/components/profile/features-form.tsx`, `src/app/api/preferences/**`, `src/lib/telegram/bot.ts`.
 - **[.claude/rules/gemini.md](.claude/rules/gemini.md)**: the model, fallback, thinking and timeout variables that govern every AI call. Loads on `src/lib/gemini.ts`, `src/lib/receipt-scan.ts`, `src/lib/ai-assessment.ts`, `src/lib/gemini-limits.ts`, `src/app/api/receipts/**`, `src/lib/telegram/classify.ts`.
+- **[.claude/rules/cards.md](.claude/rules/cards.md)**: a card purchase is an expense and a card payment is not a transaction, the derived balance, interest and fees as ordinary spending with no row type of their own, and who the credit cards switch lets in. Loads on `src/lib/credit-account-queries.ts`, `src/lib/credit-account-writes.ts`, `src/lib/credit-account-http.ts`, `src/lib/credit-card-access.ts`, `src/lib/card-purchase-rule.ts`, `src/lib/card-owed.ts`, `src/lib/card-interest.ts`, `src/app/api/credit-accounts/**`, `src/app/api/admin/feature-access/**`, `src/app/(app)/cards/**`, `src/components/credit-accounts/**`, `src/hooks/use-credit-accounts.ts`, `src/hooks/use-card-purchase-batch.ts`, `src/lib/default-categories.ts`.
 
 ## Commands
 - `pnpm dev` — Start dev server (Turbopack)
@@ -135,7 +136,7 @@ Active tasks:
 
 ## Database
 - `DATABASE_URL` in `.env` points to local PostgreSQL
-- Default categories are seeded (18 total: 13 expense, 5 income) from `src/lib/default-categories.ts`.
+- Default categories are seeded (19 total: 14 expense, 5 income) from `src/lib/default-categories.ts`.
   The seed checks each one individually, so a category added to that list reaches an already-seeded
   database; it used to skip the whole block whenever any default existed. `@@unique([name, type,
   userId])` does not constrain defaults, since their `userId` is NULL and Postgres treats NULLs as
@@ -174,27 +175,7 @@ Active tasks:
   A goal with no `target_date` reports progress and no pace at all: pace against no deadline is a
   category error, not a conservative estimate. Deleting a goal cascades to its contributions, so the
   UI only offers delete for one with none and archiving is the answer for the rest
-- **A card purchase is spending; paying the card is not.** A purchase is an ordinary EXPENSE
-  transaction carrying `credit_account_id` ("Paid with" on the form), so it reaches every category
-  and label report, search, the assessment and MCP on the day it was bought, with no card-specific
-  code in any of them. Paying the card, or a refund it issues, is a `CreditPayment` row, kept out of
-  `transactions` entirely so no expense query needs a filter to avoid counting the money twice. What
-  a card owes is `opening_balance + purchases - payments - credits`, derived on every read
-  (`src/lib/credit-account-queries.ts`). The dashboard's Running Balance falls when a purchase is
-  made; its "Owed on cards" line (up to the end of the month shown) is what is left to pay the banks,
-  so cash in the bank is that balance plus it, less the cards' opening balances, which were never
-  logged as spending. The one rule for linking a row to a
-  card is `checkCardPurchases` (`src/lib/card-purchase-rule.ts`): an expense, on the caller's own
-  card, and an archived card takes no new purchases while its existing ones stay editable.
-  This replaced a first version (#318) that kept statement lines in `credit_charges` and counted
-  only the payment, which hid card spending from every category and label report; migration
-  `20260915120000_card_purchases_are_transactions` converts that data. Who sees cards is a
-  switch on /admin/settings (`site_settings.credit_cards_access`, "Admin only" until changed,
-  and a missing row reads as that): `canUseCreditCards` in `src/lib/credit-card-access.ts`. The
-  card routes open with `requireCreditCardsUser`, linking a transaction to a card is refused
-  without access, and `/cards` has a server layout that redirects; turning it off hides everything
-  but deletes nothing. Not yet: card due reminders, and "Paid with" on Telegram, receipt scans,
-  quick-log tiles and MCP
+- **Credit cards and interest** — moved to [.claude/rules/cards.md](.claude/rules/cards.md) verbatim, with the rest of the card rules. What a card owes is derived and never stored, a purchase is an ordinary expense and a payment is not a transaction at all, and interest has no row type of its own
 - Users can create custom categories on top of defaults
 - Key models: `User`, `Category`, `Transaction`, `ScheduledTransaction` (recurring bills; `@@map("scheduled_transactions")` — there is no `Bill` model), `ScheduledTransactionLog` (per-occurrence PAID/SKIPPED/SNOOZED), `BillEmailLog`, `Label`, `LabelSchedule`, `TransactionLabel`, `BillLabel`, `VerificationToken`, `ScanLog`, `AiAssessment`, `AiUsageLog`, `McpToken`, `AppSettings`, `TelegramPromptLog`, `TelegramQuickTile`, `TelegramQuickTileLabel`, `CreditAccount` (a credit card; balance derived, never stored), `CreditPayment` (payments and refunds on a card; never in `transactions`, so in no expense total), `BudgetPlan`/`BudgetAllocation`, `WatchlistFindingState` (a resolve or snooze, stored as a SHA-256 hash of the finding key and never its text), `SavingsGoal`/`SavingsGoalContribution`
 - Notable columns: `users.hide_amounts`, `users.timezone_offset`, `users.telegram_user_id` (the Mini App's identity half; set by hand with `scripts/link-telegram-user.ts`, so a restored database loses it), `users.email_verified`, `users.default_label_type`, `transactions.receipt_group_id`, `transactions.receipt_breakdown`, `transactions.bill_id`, `transactions.client_batch_id`, `transactions.created_via`, `transactions.mcp_token_id`, `transactions.updated_via`, `transactions.updated_by_mcp_token_id`, `users.mcp_writes_enabled_until`, `mcp_tokens.source`, `transactions.credit_account_id` (the credit card an expense was paid with; only an EXPENSE may carry it, see `src/lib/card-purchase-rule.ts`), `users.watchlist_outlier_ratio` / `users.watchlist_large_amount` / `users.watchlist_duplicate_alerts` (the only three Watchlist rules that are preferences rather than arithmetic; defaults match the constants the detectors shipped with)

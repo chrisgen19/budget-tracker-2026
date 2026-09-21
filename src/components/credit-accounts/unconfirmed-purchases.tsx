@@ -11,6 +11,8 @@ interface UnconfirmedPurchasesProps {
   onRetry: () => void;
   onDiscard: () => void;
   onClose: () => void;
+  /** What these rows are called. Interest and fees go through the same batch writer as purchases. */
+  noun?: { singular: string; plural: string };
 }
 
 /**
@@ -18,9 +20,16 @@ interface UnconfirmedPurchasesProps {
  * rows, which is always safe. Discard is the way out when retrying keeps failing, and the card's list
  * behind this modal has been refreshed so it can be checked first.
  */
-export function UnconfirmedPurchases({ purchases, retrying, onRetry, onDiscard, onClose }: UnconfirmedPurchasesProps) {
+export function UnconfirmedPurchases({
+  purchases,
+  retrying,
+  onRetry,
+  onDiscard,
+  onClose,
+  noun = { singular: "purchase", plural: "purchases" },
+}: UnconfirmedPurchasesProps) {
   const { user } = useUser();
-  const count = `${purchases.length} ${purchases.length === 1 ? "purchase" : "purchases"}`;
+  const count = `${purchases.length} ${purchases.length === 1 ? noun.singular : noun.plural}`;
 
   return (
     <div className="space-y-4">
@@ -31,7 +40,7 @@ export function UnconfirmedPurchases({ purchases, retrying, onRetry, onDiscard, 
             Couldn&apos;t confirm {count} ({formatCurrency(purchasesTotal(purchases), user.currency)}) were saved
           </p>
           <p>
-            Retry sends exactly the same purchases, so they can&apos;t be added twice. To change one, retry
+            Retry sends exactly the same {noun.plural}, so they can&apos;t be added twice. To change one, retry
             first, then edit it once it&apos;s saved.
           </p>
           <p>
@@ -68,7 +77,7 @@ export function UnconfirmedPurchases({ purchases, retrying, onRetry, onDiscard, 
         className="inline-flex min-h-11 w-full items-center justify-center gap-2 text-sm text-warm-400 transition-colors hover:text-expense disabled:cursor-not-allowed disabled:opacity-50"
       >
         <Trash2 className="h-4 w-4" />
-        Discard these purchases
+        Discard these {noun.plural}
       </button>
     </div>
   );
