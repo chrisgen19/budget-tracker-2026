@@ -11,6 +11,7 @@ import { useToast } from "@/components/ui/toast";
 import { useUser } from "@/components/user-provider";
 import { MonthSwitcher } from "@/components/credit-accounts/month-switcher";
 import { CardSummary } from "@/components/credit-accounts/card-summary";
+import { CardCostOfCarry } from "@/components/credit-accounts/card-cost-of-carry";
 import { CardBreakdownTabs } from "@/components/credit-accounts/card-breakdown-tabs";
 import { CardLedgerList } from "@/components/credit-accounts/card-ledger-list";
 import { CreditAccountForm } from "@/components/credit-accounts/credit-account-form";
@@ -239,6 +240,12 @@ export default function CardDetailPage() {
       />
 
       <CardSummary account={account} monthTotals={period.totals} interest={detail.data.interest} />
+
+      <CardCostOfCarry
+        account={account}
+        observedMonthlyPayment={detail.data.observedMonthlyPayment}
+        onEdit={() => setEditingCard(true)}
+      />
 
       <div className="mb-6 flex flex-wrap gap-2">
         {account.isActive ? (

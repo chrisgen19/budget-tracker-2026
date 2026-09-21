@@ -87,6 +87,7 @@ export interface CreditAccountDetailView {
   categoryBreakdown: CardCategorySpendView[];
   labelBreakdown: CardLabelSpendView[];
   interest: CardInterestFacts;
+  observedMonthlyPayment: number | null;
 }
 
 /** What the card page sends for each purchase line: an ordinary transaction paid with the card. */

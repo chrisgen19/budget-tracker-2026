@@ -73,3 +73,25 @@ Moved out of `AGENTS.md` verbatim when that file reached the size Codex silently
   to sitting exactly on it, while a card holding a credit reads below zero. It is a percentage
   rather than an amount, so Hide Amounts does not mask it: on its own it discloses nothing without
   the limit beside it, which is masked
+- **A payoff is three answers, and each is withheld on its own account.** `src/lib/debt-payoff.ts`
+  is pure, with no Prisma, and `comparePayoffs` returns the minimum, the observed average and the
+  plan side by side -- the useful reading is the *gap* between what the bank asks, what is actually
+  being paid and what was intended, which a single figure cannot show. **Every basis needs an APR**
+  and the whole block is withheld without one; beyond that a missing plan hides only the plan.
+  Four states, deliberately distinct: `never-clears` when a month ends no lower than it began (a
+  percentage-only minimum under the monthly interest is the common case, and "600 months" there
+  would be an invented number), `beyond-horizon` when it does fall but not inside `MAX_MONTHS`
+  (a balance that *is* clearing must not be told it never will), `settled`, and `unknown` carrying
+  the reason so the UI can name what to fix. Interest is charged on the balance **before** the
+  payment lands, the pessimistic reading of a cycle: a card that posts payments first costs less
+  than this says, never more. `minimumDue` is the greater of the percentage and the floor and never
+  more than the balance, recomputed each month from the *current* balance -- which is why `walk`
+  takes a function rather than an amount, and why one flat minimum cannot stand in for one
+- **The observed average is over months, not over payments, and excludes refunds.**
+  `observedMonthlyPayment` divides by `OBSERVED_PAYMENT_MONTHS` (6), so two payments in one month
+  and one in the next average to what is really being paid per month rather than to one payment's
+  size, and it is null below `MIN_PAYMENTS_FOR_AVERAGE` (3) -- one transfer is not a habit, and a
+  payoff date off it presents an accident as a plan. The caller passes `kind: PAYMENT` rows only: a
+  `CREDIT` is a refund the card issued, not a payment anyone chose to make, and averaging it in
+  overstates what is going against the card. The window is anchored to **today**, not to the month
+  on screen, so scrolling back to March does not change what the projection says is being paid now

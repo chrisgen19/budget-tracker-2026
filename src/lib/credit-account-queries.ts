@@ -3,6 +3,7 @@ import type { PrismaClient } from "@/lib/budget-query-types";
 import { buildLabelBreakdown } from "@/lib/budget-queries";
 import { sumOwedOnCards } from "@/lib/card-owed";
 import { INTEREST_CATEGORY_NAME, utilizationOf, type CardInterestFacts } from "@/lib/card-interest";
+import { observedMonthlyPayment } from "@/lib/debt-payoff";
 
 const round2 = (value: number): number => Math.round(value * 100) / 100;
 
@@ -51,6 +52,28 @@ export const monthWindow = (month: string, timezoneOffset: number): DateWindow =
 export const currentMonthKey = (timezoneOffset: number, now: Date = new Date()): string => {
   const local = new Date(now.getTime() - timezoneOffset * 60_000);
   return `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, "0")}`;
+};
+
+/**
+ * How many whole months of payments the observed-average payoff basis looks back over.
+ *
+ * Six: long enough that one unusually large or small payment does not set the average, short
+ * enough that it describes what is being paid *now* rather than a habit since abandoned.
+ */
+export const OBSERVED_PAYMENT_MONTHS = 6;
+
+/**
+ * The instant the observed-payment window opens: the start of the month `OBSERVED_PAYMENT_MONTHS`
+ * before the user's current one.
+ *
+ * Anchored to today rather than to the month being viewed. What is being paid each month is a fact
+ * about the card now, and scrolling back to March should not change the payoff projection.
+ */
+export const observedPaymentWindowStart = (timezoneOffset: number, now: Date = new Date()): Date => {
+  const [year, month] = currentMonthKey(timezoneOffset, now).split("-").map(Number);
+  const anchor = new Date(Date.UTC(year, month - 1 - OBSERVED_PAYMENT_MONTHS, 1));
+  const key = `${anchor.getUTCFullYear()}-${String(anchor.getUTCMonth() + 1).padStart(2, "0")}`;
+  return monthWindow(key, timezoneOffset).start;
 };
 
 /** The offset every card read and write resolves calendar days with. */
@@ -278,6 +301,11 @@ export interface CreditAccountDetail {
   labelBreakdown: ReturnType<typeof buildLabelBreakdown>;
   /** Interest and fees on this card. See `card-interest.ts` for why the two fields are separate. */
   interest: CardInterestFacts;
+  /**
+   * What is actually being paid to this card each month, or null with too little history to say.
+   * `PAYMENT` rows only: a `CREDIT` is a refund the card issued, not a payment the user chose.
+   */
+  observedMonthlyPayment: number | null;
 }
 
 /**
@@ -304,7 +332,17 @@ export const getCreditAccountDetail = async (
   // seeded default, and nothing has to resolve an id before it can ask.
   const interestWhere = { category: { name: INTEREST_CATEGORY_NAME } };
 
-  const [allTime, inPeriod, purchases, payments, categoryGroups, labelRows, interestPeriod, interestEver] =
+  const [
+    allTime,
+    inPeriod,
+    purchases,
+    payments,
+    categoryGroups,
+    labelRows,
+    interestPeriod,
+    interestEver,
+    recentPayments,
+  ] =
     await Promise.all([
       sumLedgers(prisma, userId, [account.id]),
       sumLedgers(prisma, userId, [account.id], window),
@@ -317,6 +355,15 @@ export const getCreditAccountDetail = async (
       // property of the card, not of the month on screen.
       prisma.transaction.count({
         where: { userId, type: "EXPENSE" as const, creditAccountId: account.id, ...interestWhere },
+      }),
+      prisma.creditPayment.findMany({
+        where: {
+          userId,
+          accountId: account.id,
+          kind: "PAYMENT" as const,
+          date: { gte: observedPaymentWindowStart(timezoneOffset) },
+        },
+        select: { amount: true },
       }),
     ]);
 
@@ -338,5 +385,6 @@ export const getCreditAccountDetail = async (
     ),
     labelBreakdown: buildLabelBreakdown(labelRows, monthTotal),
     interest: { period: round2(interestPeriod._sum.amount ?? 0), everLogged: interestEver > 0 },
+    observedMonthlyPayment: observedMonthlyPayment(recentPayments, OBSERVED_PAYMENT_MONTHS),
   };
 };
