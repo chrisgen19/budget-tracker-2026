@@ -243,7 +243,7 @@ export default function CardDetailPage() {
 
       <CardCostOfCarry
         account={account}
-        observedMonthlyPayment={detail.data.observedMonthlyPayment}
+        observedPayment={detail.data.observedPayment}
         onEdit={() => setEditingCard(true)}
       />
 

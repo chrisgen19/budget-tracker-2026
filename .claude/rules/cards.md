@@ -7,6 +7,7 @@ paths:
   - src/lib/card-purchase-rule.ts
   - src/lib/card-owed.ts
   - src/lib/card-interest.ts
+  - src/lib/debt-payoff.ts
   - "src/app/api/credit-accounts/**"
   - "src/app/api/admin/feature-access/**"
   - "src/app/(app)/cards/**"
@@ -85,13 +86,26 @@ Moved out of `AGENTS.md` verbatim when that file reached the size Codex silently
   the reason so the UI can name what to fix. Interest is charged on the balance **before** the
   payment lands, the pessimistic reading of a cycle: a card that posts payments first costs less
   than this says, never more. `minimumDue` is the greater of the percentage and the floor and never
-  more than the balance, recomputed each month from the *current* balance -- which is why `walk`
-  takes a function rather than an amount, and why one flat minimum cannot stand in for one
+  more than the balance, recomputed each month from what is **owed** that cycle -- interest
+  included, since that is the statement balance a bank bills a percentage of. Handing it the
+  pre-interest balance instead caps the tail months short, leaves the interest behind every month
+  and makes the minimum basis slower than a flat payment of the same size, corrupting the one
+  comparison the feature exists for. It is also why `walk` takes a function rather than an amount.
+  Note the break-even is not "percentage equals the monthly rate": paying `p` of `balance * (1 + r)`
+  gains ground only above `100r / (1 + r)`, which at 36% APR is 2.91%, so a 3% minimum is
+  `beyond-horizon` and a 2% one is `never-clears`
 - **The observed average is over months, not over payments, and excludes refunds.**
   `observedMonthlyPayment` divides by `OBSERVED_PAYMENT_MONTHS` (6), so two payments in one month
   and one in the next average to what is really being paid per month rather than to one payment's
   size, and it is null below `MIN_PAYMENTS_FOR_AVERAGE` (3) -- one transfer is not a habit, and a
-  payoff date off it presents an accident as a plan. The caller passes `kind: PAYMENT` rows only: a
+  payoff date off it presents an accident as a plan. The divisor is the months **actually
+  observed**, from the first payment's month to the end of the window, never the window's full
+  width: a card two months old would otherwise have its rate divided by six, diluting it to a third
+  and dropping it under the interest, so a card being paid down briskly reports as one that never
+  clears. That is the rule `savings-goals.ts` already applies by measuring pace from a goal's first
+  contribution. The window itself is the six **complete** months before this one and stops at the
+  start of the current month -- including the month to date would divide up to seven months of
+  payments by six, overstating the average and making it jump when this month's payment posts. The caller passes `kind: PAYMENT` rows only: a
   `CREDIT` is a refund the card issued, not a payment anyone chose to make, and averaging it in
   overstates what is going against the card. The window is anchored to **today**, not to the month
   on screen, so scrolling back to March does not change what the projection says is being paid now

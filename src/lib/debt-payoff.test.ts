@@ -51,13 +51,41 @@ describe("payoffOnMinimum", () => {
   });
 
   /**
-   * The case that matters most and the reason `never-clears` is its own state. At 36% APR the
-   * monthly interest is 3% of the balance; a 3% minimum with no floor never gets ahead of it, and
-   * reporting that as "600 months" would be a fabricated number.
+   * The case that matters most and the reason `never-clears` is its own state. Reporting it as
+   * "600 months" would be a fabricated number.
+   *
+   * The minimum is billed on the statement balance, interest included, so the break-even is not
+   * simply "percentage equals the monthly rate": a percentage `p` of `balance * (1 + r)` clears
+   * ground only when `(1 + r)(1 - p) < 1`, i.e. above `100r / (1 + r)`. At 36% APR (r = 3%) that
+   * threshold is 2.91%, so a 2% minimum genuinely never gets anywhere.
    */
   it("reports never-clears when the minimum never beats the interest", () => {
-    const result = payoffOnMinimum(terms({ minimumPct: 3, minimumFloor: null }), FROM);
+    const result = payoffOnMinimum(terms({ minimumPct: 2, minimumFloor: null }), FROM);
     expect(result).toEqual({ status: "never-clears" });
+  });
+
+  /**
+   * Just the other side of that threshold. A 3% minimum against 3% monthly interest does gain
+   * ground, by about 0.09% of the balance a month, so it is `beyond-horizon` rather than
+   * `never-clears` -- the distinction exists precisely so this case is not called hopeless.
+   */
+  it("reports the barely-ahead minimum as beyond the horizon, not as never", () => {
+    const result = payoffOnMinimum(terms({ minimumPct: 3, minimumFloor: null }), FROM);
+    expect(result).toEqual({ status: "beyond-horizon" });
+  });
+
+  /**
+   * The units bug this guards: the minimum is capped at what is *owed* this cycle, not at the
+   * pre-interest balance. Capping early leaves the interest behind every month, dragging the tail
+   * out and making the minimum basis slower than a flat payment of the same size.
+   */
+  it("clears a tail month in one step, like a flat payment of the same size", () => {
+    const viaMinimum = payoffOnMinimum(terms({ balance: 600, minimumPct: 5, minimumFloor: 500 }), FROM);
+    const viaFlat = payoffOnFixedPayment(terms({ balance: 600 }), 500, FROM, "not-planned");
+    expect(viaMinimum.status).toBe("clears");
+    expect(viaFlat.status).toBe("clears");
+    if (viaMinimum.status !== "clears" || viaFlat.status !== "clears") return;
+    expect(viaMinimum.months).toBe(viaFlat.months);
   });
 
   it("is unknown, naming the missing minimum, when neither column is set", () => {

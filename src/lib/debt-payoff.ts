@@ -50,6 +50,11 @@ export type PayoffOutcome =
  * Both columns are optional and either alone is usable. Returns null only when neither is set,
  * which is "no minimum is known" rather than "the minimum is nothing".
  *
+ * Handed what is owed for the cycle, **interest included** -- that is the statement balance a bank
+ * actually bills a percentage of. Passing the pre-interest balance instead caps the tail months
+ * below what is owed, leaving a remainder the next month has to chase and making the minimum basis
+ * systematically slower than a fixed payment of the same size.
+ *
  * The floor is not applied once the balance is below it: a card owing 200 against a 500 floor is
  * billed the 200, not more than it owes.
  */
@@ -77,9 +82,9 @@ const addMonths = (from: Date, months: number): Date => {
 /**
  * Walk the balance forward a month at a time until it clears.
  *
- * `paymentFor` is handed the balance at the start of each month, so a minimum that is a percentage
- * of the outstanding balance falls as the balance does -- which is exactly why a single flat
- * minimum cannot stand in for one, and why this takes a function rather than an amount.
+ * `paymentFor` is handed what is owed for the cycle *after* interest, so a minimum that is a
+ * percentage of the statement balance falls as the balance does -- which is exactly why a single
+ * flat minimum cannot stand in for one, and why this takes a function rather than an amount.
  *
  * Interest is charged on the balance *before* the payment lands. That is the pessimistic reading of
  * a billing cycle and the right one to show someone deciding what to pay: a card that posts the
@@ -97,11 +102,14 @@ const walk = (
   let totalInterest = 0;
 
   for (let month = 1; month <= MAX_MONTHS; month += 1) {
-    const payment = paymentFor(balance);
-    if (payment === null) return { status: "unknown", reason: "no-minimum" };
-
     const interest = balance * monthlyRate;
     const owed = balance + interest;
+
+    // `owed`, not `balance`: a percentage minimum is billed on the statement balance, and capping
+    // the payment at the pre-interest figure leaves the interest behind every single month.
+    const payment = paymentFor(owed);
+    if (payment === null) return { status: "unknown", reason: "no-minimum" };
+
     const paid = Math.min(payment, owed);
     const next = owed - paid;
 
@@ -149,6 +157,17 @@ export const payoffOnFixedPayment = (
 export const MIN_PAYMENTS_FOR_AVERAGE = 3;
 
 /**
+ * Whole months from one `YYYY-MM` to another, counting both ends. `2026-03` to `2026-08` is 6.
+ *
+ * Returns 0 or less when `to` precedes `from`, which callers clamp rather than trusting.
+ */
+export const monthsBetweenInclusive = (fromKey: string, toKey: string): number => {
+  const [fromYear, fromMonth] = fromKey.split("-").map(Number);
+  const [toYear, toMonth] = toKey.split("-").map(Number);
+  return (toYear - fromYear) * 12 + (toMonth - fromMonth) + 1;
+};
+
+/**
  * What is actually being paid each month, averaged over the payments supplied.
  *
  * The caller passes **`PAYMENT` rows only**. A `CREDIT` is a refund the card issued, not a payment
@@ -158,6 +177,12 @@ export const MIN_PAYMENTS_FOR_AVERAGE = 3;
  * payoff date off a single transfer would present an accident as a plan. The divisor is the number
  * of **months in the window**, not the number of payments, so two payments in one month and one in
  * the next average to what was really being paid per month rather than to a single payment's size.
+ *
+ * `monthsInWindow` is the span actually observed, which for a young card is shorter than the full
+ * window. Dividing a two-month-old card's payments by six understates its rate to a third of the
+ * truth, which can push it under the interest and report a card being paid down briskly as one
+ * that never clears -- the same error `savings-goals.ts` avoids by measuring a goal's pace from its
+ * first contribution rather than from the day it was created.
  */
 export const observedMonthlyPayment = (
   payments: readonly { amount: number }[],

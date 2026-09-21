@@ -7,10 +7,11 @@ import { useUser } from "@/components/user-provider";
 import { userToday } from "@/lib/bill-dates";
 import { comparePayoffs, type PayoffOutcome } from "@/lib/debt-payoff";
 import type { CreditAccountView } from "@/hooks/use-credit-accounts";
+import type { ObservedPayment } from "@/lib/credit-account-queries";
 
 interface CardCostOfCarryProps {
   account: CreditAccountView;
-  observedMonthlyPayment: number | null;
+  observedPayment: ObservedPayment;
   onEdit: () => void;
 }
 
@@ -89,7 +90,7 @@ function OutcomeRow({
  * what is actually being paid, and what was planned. Each is withheld on its own account, so a card
  * with no plan still shows its minimum.
  */
-export function CardCostOfCarry({ account, observedMonthlyPayment, onEdit }: CardCostOfCarryProps) {
+export function CardCostOfCarry({ account, observedPayment, onEdit }: CardCostOfCarryProps) {
   const { user } = useUser();
   const { hideAmounts } = usePrivacy();
   const money = (amount: number) => maskCurrency(amount, user.currency, hideAmounts);
@@ -103,7 +104,7 @@ export function CardCostOfCarry({ account, observedMonthlyPayment, onEdit }: Car
     minimumPct: account.minimumPaymentPct,
     minimumFloor: account.minimumPaymentFloor,
     plannedPayment: account.plannedPayment,
-    observedMonthly: observedMonthlyPayment,
+    observedMonthly: observedPayment.monthly,
     from: userToday(user.timezoneOffset),
   });
 
@@ -140,9 +141,13 @@ export function CardCostOfCarry({ account, observedMonthlyPayment, onEdit }: Car
                 <OutcomeRow
                   label="Your average"
                   detail={
+                    // The real span, not the window's width: claiming six months of history for a
+                    // card two months old asserts a record that does not exist.
                     payoffs.observedMonthly === null
                       ? undefined
-                      : `${money(payoffs.observedMonthly)}/mo over 6 months`
+                      : `${money(payoffs.observedMonthly)}/mo over ${observedPayment.months} ${
+                          observedPayment.months === 1 ? "month" : "months"
+                        }`
                   }
                   outcome={payoffs.observed}
                   money={money}

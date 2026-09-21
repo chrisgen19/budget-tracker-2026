@@ -36,7 +36,7 @@ describe("CardCostOfCarry", () => {
   /** A settled card has no payoff to project, so the whole block stays out of the way. */
   it("renders nothing for a card that owes nothing", () => {
     const { container } = render(
-      <CardCostOfCarry account={account({ balance: 0 })} observedMonthlyPayment={null} onEdit={() => {}} />
+      <CardCostOfCarry account={account({ balance: 0 })} observedPayment={{ monthly: null, months: 0 }} onEdit={() => {}} />
     );
     expect(container.firstChild).toBeNull();
   });
@@ -47,7 +47,7 @@ describe("CardCostOfCarry", () => {
    */
   it("asks for the APR instead of projecting without one", () => {
     render(
-      <CardCostOfCarry account={account({ apr: null })} observedMonthlyPayment={5000} onEdit={() => {}} />
+      <CardCostOfCarry account={account({ apr: null })} observedPayment={{ monthly: 5000, months: 6 }} onEdit={() => {}} />
     );
     expect(screen.getByText(/Add this card's APR/)).toBeDefined();
     expect(screen.queryByRole("table")).toBeNull();
@@ -55,7 +55,7 @@ describe("CardCostOfCarry", () => {
 
   it("shows all three bases when the terms are there", () => {
     render(
-      <CardCostOfCarry account={account()} observedMonthlyPayment={5333} onEdit={() => {}} />
+      <CardCostOfCarry account={account()} observedPayment={{ monthly: 5333, months: 6 }} onEdit={() => {}} />
     );
     expect(screen.getByRole("table")).toBeDefined();
     expect(screen.getByText("The minimum")).toBeDefined();
@@ -68,7 +68,7 @@ describe("CardCostOfCarry", () => {
     render(
       <CardCostOfCarry
         account={account({ plannedPayment: null })}
-        observedMonthlyPayment={null}
+        observedPayment={{ monthly: null, months: 0 }}
         onEdit={() => {}}
       />
     );
@@ -77,22 +77,31 @@ describe("CardCostOfCarry", () => {
   });
 
   /**
-   * The headline case. A percentage-only minimum below the monthly interest never clears, and
-   * saying so is the entire point of the card.
+   * The headline case. A percentage-only minimum that never gets ahead of the interest never
+   * clears, and saying so plainly is the entire point of the card. At 36% APR the break-even is
+   * 2.91% of the statement balance, so 2% never moves.
    */
   it("says a minimum that never beats the interest never clears", () => {
     render(
       <CardCostOfCarry
-        account={account({ minimumPaymentPct: 3, minimumPaymentFloor: null, plannedPayment: null })}
-        observedMonthlyPayment={null}
+        account={account({ minimumPaymentPct: 2, minimumPaymentFloor: null, plannedPayment: null })}
+        observedPayment={{ monthly: null, months: 0 }}
         onEdit={() => {}}
       />
     );
     expect(screen.getByText("Never clears")).toBeDefined();
   });
 
+  /** The span shown is the one measured, not the window's width. */
+  it("names how many months the average actually covers", () => {
+    render(
+      <CardCostOfCarry account={account()} observedPayment={{ monthly: 4000, months: 2 }} onEdit={() => {}} />
+    );
+    expect(screen.getByText(/over 2 months/)).toBeDefined();
+  });
+
   it("labels itself a projection", () => {
-    render(<CardCostOfCarry account={account()} observedMonthlyPayment={5333} onEdit={() => {}} />);
+    render(<CardCostOfCarry account={account()} observedPayment={{ monthly: 5333, months: 6 }} onEdit={() => {}} />);
     expect(screen.getByText(/A projection, not a promise/)).toBeDefined();
   });
 });

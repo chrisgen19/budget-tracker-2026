@@ -7,6 +7,7 @@ import type {
 } from "@/lib/validations";
 import { cashFlowForecastKeys } from "@/hooks/use-cash-flow-forecast";
 import type { CardInterestFacts } from "@/lib/card-interest";
+import type { ObservedPayment } from "@/lib/credit-account-queries";
 
 /* ------------------------------------------------------------------ */
 /*  Wire types                                                         */
@@ -87,7 +88,7 @@ export interface CreditAccountDetailView {
   categoryBreakdown: CardCategorySpendView[];
   labelBreakdown: CardLabelSpendView[];
   interest: CardInterestFacts;
-  observedMonthlyPayment: number | null;
+  observedPayment: ObservedPayment;
 }
 
 /** What the card page sends for each purchase line: an ordinary transaction paid with the card. */
