@@ -22,7 +22,58 @@ describe("CreditAccountForm", () => {
       statementDay: null,
       dueDay: null,
       openingBalance: 0,
+      // Unknown, not zero. A payoff projection reads null as "withhold" and 0 as a real 0% plan.
+      apr: null,
+      minimumPaymentPct: null,
+      minimumPaymentFloor: null,
+      plannedPayment: null,
     });
+  });
+
+  it("carries the interest terms through", async () => {
+    const onSubmit = vi.fn<(data: CreditAccountInput) => Promise<void>>(async () => {});
+    render(<CreditAccountForm onSubmit={onSubmit} onCancel={() => {}} />);
+
+    fireEvent.change(screen.getByLabelText("Card name"), { target: { value: "BPI" } });
+    fireEvent.change(screen.getByLabelText(/APR/i), { target: { value: "36" } });
+    fireEvent.change(screen.getByLabelText(/minimum \(%\)/i), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/minimum floor/i), { target: { value: "500" } });
+    fireEvent.change(screen.getByLabelText(/planned monthly payment/i), { target: { value: "8000" } });
+    fireEvent.click(screen.getByRole("button", { name: /add card/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      apr: 36,
+      minimumPaymentPct: 5,
+      minimumPaymentFloor: 500,
+      plannedPayment: 8000,
+    });
+  });
+
+  /** 0% installment plans are real, so zero has to survive as a value rather than read as unset. */
+  it("keeps a 0% APR as zero rather than null", async () => {
+    const onSubmit = vi.fn<(data: CreditAccountInput) => Promise<void>>(async () => {});
+    render(<CreditAccountForm onSubmit={onSubmit} onCancel={() => {}} />);
+
+    fireEvent.change(screen.getByLabelText("Card name"), { target: { value: "0% plan" } });
+    fireEvent.change(screen.getByLabelText(/APR/i), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: /add card/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0].apr).toBe(0);
+  });
+
+  it("refuses a negative APR without submitting", async () => {
+    const onSubmit = vi.fn(async () => {});
+    render(<CreditAccountForm onSubmit={onSubmit} onCancel={() => {}} />);
+
+    fireEvent.change(screen.getByLabelText("Card name"), { target: { value: "BPI" } });
+    fireEvent.change(screen.getByLabelText(/APR/i), { target: { value: "-5" } });
+    fireEvent.click(screen.getByRole("button", { name: /add card/i }));
+
+    await waitFor(() => expect(screen.getByLabelText(/APR/i)).toBeTruthy());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("refuses a due day past 31 without submitting", async () => {
@@ -49,6 +100,11 @@ describe("CreditAccountForm", () => {
           statementDay: 10,
           dueDay: 5,
           openingBalance: 1200,
+          apr: null,
+          minimumPaymentPct: null,
+          minimumPaymentFloor: null,
+          plannedPayment: null,
+          utilization: null,
           // Midnight on 1 September in Manila, which is still 31 August in UTC.
           openingBalanceDate: "2026-08-31T16:00:00.000Z",
           isActive: true,

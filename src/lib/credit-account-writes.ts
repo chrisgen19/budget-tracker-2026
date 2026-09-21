@@ -92,6 +92,12 @@ export const createCreditAccount = async ({
       creditLimit: input.creditLimit ?? null,
       statementDay: input.statementDay ?? null,
       dueDay: input.dueDay ?? null,
+      // `?? null` rather than omitted: absent and cleared are the same state for these, and a
+      // projection reads null as "unknown" and withholds itself.
+      apr: input.apr ?? null,
+      minimumPaymentPct: input.minimumPaymentPct ?? null,
+      minimumPaymentFloor: input.minimumPaymentFloor ?? null,
+      plannedPayment: input.plannedPayment ?? null,
       openingBalance: input.openingBalance,
       openingBalanceDate: localDayStart(
         input.openingBalanceDate ?? localTodayKey(timezoneOffset),
