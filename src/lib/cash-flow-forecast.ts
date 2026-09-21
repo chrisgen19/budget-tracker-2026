@@ -118,8 +118,13 @@ export const scheduledForecastEvents = (schedules: ForecastSchedule[], from: str
  * Three rules decide whether a card appears at all, and each one is a refusal rather than a guess:
  *
  * - **A card with a linked reminder bill is skipped.** That bill already emits its own `bill` event
- *   from the same schedule, and counting both would take the payment out of the bank twice. The
- *   same guard the forecast applies to a recurring charge that matches a bill by name.
+ *   from the same schedule, and counting both would take the payment out of the bank twice. Note
+ *   `credit_accounts.bill_id` has **no write path yet** -- the schema calls it reserved -- so this
+ *   guard is correct and currently unreachable. It is kept rather than dropped because it is the
+ *   mechanism that will link the two, and the alternative, matching a bill to a card by name, is a
+ *   heuristic that can suppress a real bill. What this does *not* catch is a bill the user wrote
+ *   themselves as a card reminder: nothing connects it to the card, so it is counted separately,
+ *   and the route's assumptions say so rather than claiming a guarantee that does not hold.
  * - **A card with no `dueDay` is skipped**, and the caller says so in its assumptions. The output
  *   of this forecast is the lowest projected balance *and the date it happens*, so placing a real
  *   outflow on a guessed day answers the question wrongly rather than approximately.
@@ -127,7 +132,9 @@ export const scheduledForecastEvents = (schedules: ForecastSchedule[], from: str
  *
  * The amount is the most specific figure the card has: what the user plans to pay, else what they
  * have actually been paying, else the bank's minimum. `assumption` names which of the three it
- * used, because they mean quite different things.
+ * used, because they mean quite different things. The minimum is **recomputed against what is still
+ * owed at each due date**, since a percentage of the balance falls as the balance does; the other
+ * two are figures the user or their history fixed, so they stay put.
  *
  * The projected balance is walked **down** across the horizon and each payment is capped at what is
  * left, so a 90-day forecast cannot take three 8,000 payments out of a 5,000 debt. It deliberately
@@ -145,21 +152,28 @@ export const cardPaymentEvents = (
     if (card.billId !== null || card.dueDay === null || card.balance <= 0) continue;
 
     const planned = card.plannedPayment;
-    const monthly =
-      planned ?? card.observedMonthly ?? minimumDue(card.balance, card.minimumPct, card.minimumFloor);
-    if (monthly === null || monthly <= 0) continue;
+    // A function of what is still owed, not one amount: a percentage minimum falls as the balance
+    // does. `debt-payoff.ts`'s `walk` takes a function for exactly this reason, and paying a flat
+    // figure here would overstate every later cycle and pay the card off faster than the bank asks.
+    const paymentFor = (owed: number): number | null =>
+      planned ?? card.observedMonthly ?? minimumDue(owed, card.minimumPct, card.minimumFloor);
+
+    const first = paymentFor(card.balance);
+    if (first === null || first <= 0) continue;
 
     const basis =
       planned !== null
         ? "the payment you planned for this card"
         : card.observedMonthly !== null
           ? "what you have been paying this card each month"
-          : "this card's minimum payment";
+          : "this card's minimum payment, which falls with the balance";
 
     let remaining = card.balance;
     for (const date of monthlyDueDates(card.dueDay, from, to)) {
       if (remaining <= 0) break;
-      const amount = money(Math.min(monthly, remaining));
+      const due = paymentFor(remaining);
+      if (due === null || due <= 0) break;
+      const amount = money(Math.min(due, remaining));
       remaining = money(remaining - amount);
       events.push({
         date,

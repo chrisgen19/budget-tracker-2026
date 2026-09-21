@@ -68,6 +68,34 @@ describe("cardPaymentEvents", () => {
       expect(first.amount).toBe(2400); // 5% of 48,000, above the 500 floor
       expect(first.assumption).toContain("minimum");
     });
+
+    /**
+     * A percentage minimum is a percentage of what is still owed, so it falls as the balance does.
+     * Computing it once and paying that flat figure every cycle overstates every later payment and
+     * clears the card faster than the bank ever asked -- the distortion cards.md already forbids in
+     * `debt-payoff.ts`, which is why `walk` there takes a function rather than an amount.
+     */
+    it("recomputes the minimum against what is still owed each cycle", () => {
+      const events = cardPaymentEvents([card({ balance: 48000 })], FROM, TO);
+      const amounts = events.map((event) => event.amount);
+
+      expect(amounts).toEqual([2400, 2280, 2166]);
+      // Strictly falling, rather than a flat 2,400 three times.
+      expect(amounts[1]).toBeLessThan(amounts[0]);
+      expect(amounts[2]).toBeLessThan(amounts[1]);
+    });
+
+    /** A planned figure is one the user fixed, so it does not move with the balance. */
+    it("keeps a planned payment flat", () => {
+      const events = cardPaymentEvents([card({ balance: 48000, plannedPayment: 8000 })], FROM, TO);
+      expect(events.map((event) => event.amount)).toEqual([8000, 8000, 8000]);
+    });
+
+    /** Nor does an observed average, which describes a habit rather than a rule. */
+    it("keeps an observed average flat", () => {
+      const events = cardPaymentEvents([card({ balance: 48000, observedMonthly: 5000 })], FROM, TO);
+      expect(events.map((event) => event.amount)).toEqual([5000, 5000, 5000]);
+    });
   });
 
   /**
