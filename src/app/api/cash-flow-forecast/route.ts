@@ -48,6 +48,70 @@ const DISABLED_CARDS: CardForecastInputs = {
 };
 
 /**
+ * What the forecast had to leave out, named.
+ *
+ * A card with no due day is skipped rather than placed on a guessed date, and the whole output of
+ * this report is the lowest projected balance *and the day it falls on*. Saying which cards are
+ * missing is what keeps that a disclosed limit rather than a silently optimistic answer.
+ */
+const undatedCardsAssumption = (names: string[]): string[] => {
+  if (names.length === 0) return [];
+  const tail =
+    names.length === 1
+      ? "has no due day set, so its payment is"
+      : "have no due day set, so their payments are";
+  return [`Card payments are projected from each card's due day. ${names.join(", ")} ${tail} not included.`];
+};
+
+/**
+ * Everything the cards half needs out of the database, in one round trip.
+ *
+ * Split from `forecastCards` so the fetching and the per-card reasoning can be read separately;
+ * the three date bounds here are the part worth reading closely, and they were buried in the
+ * middle of the mapping loop.
+ */
+const readCardLedger = async (
+  userId: string,
+  ids: string[],
+  tz: number,
+  window: { openingAt: Date; todayEnd: Date }
+) => {
+  const observed = observedPaymentWindow(tz);
+  const [purchaseGroups, paymentGroups, recentPayments, settled] = await Promise.all([
+    prisma.transaction.groupBy({
+      by: ["creditAccountId"],
+      // Bounded to today. A purchase dated next month is not owed yet, and counting it here would
+      // schedule a payment for it before it has happened.
+      where: { userId, type: "EXPENSE", creditAccountId: { in: ids }, date: { lte: window.todayEnd } },
+      _sum: { amount: true },
+    }),
+    prisma.creditPayment.groupBy({
+      by: ["accountId", "kind"],
+      where: { userId, accountId: { in: ids } },
+      _sum: { amount: true },
+    }),
+    prisma.creditPayment.findMany({
+      where: { userId, accountId: { in: ids }, kind: "PAYMENT", date: { gte: observed.start, lt: observed.end } },
+      select: { accountId: true, amount: true, date: true },
+    }),
+    // Payments already made since the opening balance. Real money out of the bank, in no
+    // `transactions` row, so nothing else in this route subtracts them. Deliberately **not**
+    // scoped to the active cards above: paying off an archived card still emptied the account.
+    prisma.creditPayment.aggregate({
+      where: { userId, kind: "PAYMENT", date: { gte: window.openingAt, lte: window.todayEnd } },
+      _sum: { amount: true },
+    }),
+  ]);
+
+  return {
+    observed,
+    recentPayments,
+    totals: foldLedgerGroups(ids, purchaseGroups, paymentGroups),
+    paymentsMade: settled._sum.amount ?? 0,
+  };
+};
+
+/**
  * The cards whose payments the forecast can place, and what it had to leave out.
  *
  * A card payment is the largest known outflow most accounts have and was counted nowhere: a
@@ -74,41 +138,14 @@ const forecastCards = async (
   });
   if (accounts.length === 0) return DISABLED_CARDS;
 
-  const ids = accounts.map((account) => account.id);
-  const observed = observedPaymentWindow(tz);
-  const [purchaseGroups, paymentGroups, recentPayments, settled] = await Promise.all([
-    prisma.transaction.groupBy({
-      by: ["creditAccountId"],
-      // Bounded to today. A purchase dated next month is not owed yet, and counting it here would
-      // schedule a payment for it before it has happened.
-      where: { userId, type: "EXPENSE", creditAccountId: { in: ids }, date: { lte: window.todayEnd } },
-      _sum: { amount: true },
-    }),
-    prisma.creditPayment.groupBy({
-      by: ["accountId", "kind"],
-      where: { userId, accountId: { in: ids } },
-      _sum: { amount: true },
-    }),
-    prisma.creditPayment.findMany({
-      where: { userId, accountId: { in: ids }, kind: "PAYMENT", date: { gte: observed.start, lt: observed.end } },
-      select: { accountId: true, amount: true, date: true },
-    }),
-    // Payments already made since the opening balance. These are real money out of the bank and
-    // are in no `transactions` row, so nothing else in this route subtracts them.
-    prisma.creditPayment.aggregate({
-      where: { userId, kind: "PAYMENT", date: { gte: window.openingAt, lte: window.todayEnd } },
-      _sum: { amount: true },
-    }),
-  ]);
-
-  const totals = foldLedgerGroups(ids, purchaseGroups, paymentGroups);
+  const ledger = await readCardLedger(userId, accounts.map((account) => account.id), tz, window);
   const forecastable: ForecastCard[] = [];
   const undated: string[] = [];
 
   for (const account of accounts) {
     const balance = computeAccountBalance(
       account.openingBalance,
-      totals.get(account.id) ?? { purchases: 0, payments: 0, credits: 0 }
+      ledger.totals.get(account.id) ?? { purchases: 0, payments: 0, credits: 0 }
     );
     if (balance <= 0) continue;
     if (account.dueDay === null && account.billId === null) undated.push(account.name);
@@ -121,8 +158,8 @@ const forecastCards = async (
       billId: account.billId,
       plannedPayment: account.plannedPayment,
       observedMonthly: summariseObservedPayments(
-        recentPayments.filter((payment) => payment.accountId === account.id),
-        observed,
+        ledger.recentPayments.filter((payment) => payment.accountId === account.id),
+        ledger.observed,
         tz
       ).monthly,
       minimumPct: account.minimumPaymentPct,
@@ -132,16 +169,9 @@ const forecastCards = async (
 
   return {
     enabled: true,
-    paymentsMade: settled._sum.amount ?? 0,
+    paymentsMade: ledger.paymentsMade,
     forecastable,
-    assumptions:
-      undated.length === 0
-        ? []
-        : [
-            `Card payments are projected from each card's due day. ${undated.join(", ")} ${
-              undated.length === 1 ? "has no due day set, so its payment is" : "have no due day set, so their payments are"
-            } not included.`,
-          ],
+    assumptions: undatedCardsAssumption(undated),
   };
 };
 
