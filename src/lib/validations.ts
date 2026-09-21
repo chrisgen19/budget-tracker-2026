@@ -903,3 +903,20 @@ export const cardPurchasesFormSchema = z.object({
 });
 
 export type CardPurchaseLine = z.infer<typeof cardPurchaseLineSchema>;
+
+/**
+ * One interest or fee charge on a card. It becomes an ordinary EXPENSE transaction carrying the
+ * card, exactly like a purchase, because the money genuinely left: see `card-interest.ts`.
+ *
+ * The category is chosen rather than hardcoded. "Interest & Fees" is seeded, but a database seeded
+ * before it was added does not have it until `pnpm db:seed` runs again, and a form that assumed it
+ * would simply fail to submit with nothing on screen explaining why.
+ */
+export const cardInterestSchema = z.object({
+  date: calendarDaySchema,
+  description: z.string().trim().min(1, "Describe the charge").max(255),
+  categoryId: z.string().min(1, "Category is required"),
+  amount: z.number({ invalid_type_error: "Enter an amount above 0" }).positive("Enter an amount above 0"),
+});
+
+export type CardInterestInput = z.infer<typeof cardInterestSchema>;

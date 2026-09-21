@@ -2,6 +2,7 @@ import type { CreditAccount, CreditPayment, CreditPaymentKind, Prisma } from "@p
 import type { PrismaClient } from "@/lib/budget-query-types";
 import { buildLabelBreakdown } from "@/lib/budget-queries";
 import { sumOwedOnCards } from "@/lib/card-owed";
+import { INTEREST_CATEGORY_NAME, type CardInterestFacts } from "@/lib/card-interest";
 
 const round2 = (value: number): number => Math.round(value * 100) / 100;
 
@@ -264,6 +265,8 @@ export interface CreditAccountDetail {
   categoryBreakdown: CardCategorySpend[];
   /** Same arithmetic as analytics: a purchase counts in full under every label it carries. */
   labelBreakdown: ReturnType<typeof buildLabelBreakdown>;
+  /** Interest and fees on this card. See `card-interest.ts` for why the two fields are separate. */
+  interest: CardInterestFacts;
 }
 
 /**
@@ -286,14 +289,25 @@ export const getCreditAccountDetail = async (
   const purchaseWhere = { userId, type: "EXPENSE" as const, creditAccountId: account.id, date };
   const order = [{ date: "desc" as const }, { createdAt: "desc" as const }];
 
-  const [allTime, inPeriod, purchases, payments, categoryGroups, labelRows] = await Promise.all([
-    sumLedgers(prisma, userId, [account.id]),
-    sumLedgers(prisma, userId, [account.id], window),
-    prisma.transaction.findMany({ where: purchaseWhere, select: PURCHASE_ROW_SELECT, orderBy: order, take: MAX_CARD_PERIOD_ROWS }),
-    prisma.creditPayment.findMany({ where: { userId, accountId: account.id, date }, orderBy: order, take: MAX_CARD_PERIOD_ROWS }),
-    prisma.transaction.groupBy({ by: ["categoryId"], where: purchaseWhere, _sum: { amount: true } }),
-    prisma.transaction.findMany({ where: purchaseWhere, select: { amount: true, labels: LABEL_LINKS_SELECT } }),
-  ]);
+  // Matched on the category *name*, so a user's own same-named category counts alongside the
+  // seeded default, and nothing has to resolve an id before it can ask.
+  const interestWhere = { category: { name: INTEREST_CATEGORY_NAME } };
+
+  const [allTime, inPeriod, purchases, payments, categoryGroups, labelRows, interestPeriod, interestEver] =
+    await Promise.all([
+      sumLedgers(prisma, userId, [account.id]),
+      sumLedgers(prisma, userId, [account.id], window),
+      prisma.transaction.findMany({ where: purchaseWhere, select: PURCHASE_ROW_SELECT, orderBy: order, take: MAX_CARD_PERIOD_ROWS }),
+      prisma.creditPayment.findMany({ where: { userId, accountId: account.id, date }, orderBy: order, take: MAX_CARD_PERIOD_ROWS }),
+      prisma.transaction.groupBy({ by: ["categoryId"], where: purchaseWhere, _sum: { amount: true } }),
+      prisma.transaction.findMany({ where: purchaseWhere, select: { amount: true, labels: LABEL_LINKS_SELECT } }),
+      prisma.transaction.aggregate({ where: { ...purchaseWhere, ...interestWhere }, _sum: { amount: true } }),
+      // All time, and deliberately not clipped to the window: "have we ever tracked this" is a
+      // property of the card, not of the month on screen.
+      prisma.transaction.count({
+        where: { userId, type: "EXPENSE" as const, creditAccountId: account.id, ...interestWhere },
+      }),
+    ]);
 
   const categories = await prisma.category.findMany({
     where: { id: { in: categoryGroups.map((group) => group.categoryId) } },
@@ -312,5 +326,6 @@ export const getCreditAccountDetail = async (
       new Map(categories.map(({ id, ...meta }) => [id, meta]))
     ),
     labelBreakdown: buildLabelBreakdown(labelRows, monthTotal),
+    interest: { period: round2(interestPeriod._sum.amount ?? 0), everLogged: interestEver > 0 },
   };
 };

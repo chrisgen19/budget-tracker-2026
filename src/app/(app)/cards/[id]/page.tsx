@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { AlertTriangle, ArchiveRestore, ArrowLeft, Banknote, ListFilter, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, ArchiveRestore, ArrowLeft, Banknote, Landmark, ListFilter, Pencil, Plus, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
@@ -16,6 +16,7 @@ import { CardLedgerList } from "@/components/credit-accounts/card-ledger-list";
 import { CreditAccountForm } from "@/components/credit-accounts/credit-account-form";
 import { CardPurchasesForm } from "@/components/credit-accounts/card-purchases-form";
 import { CardPaymentForm } from "@/components/credit-accounts/card-payment-form";
+import { CardInterestForm } from "@/components/credit-accounts/card-interest-form";
 import { UnconfirmedPurchases } from "@/components/credit-accounts/unconfirmed-purchases";
 import { useCardPurchaseBatch, type PurchaseBatchResult } from "@/hooks/use-card-purchase-batch";
 import {
@@ -30,6 +31,7 @@ import {
 import { accountDateKey, accountMonthKey } from "@/lib/account-time";
 import {
   resolveTransactionDate,
+  type CardInterestInput,
   type CardPurchaseLine,
   type CreditAccountInput,
   type CreditPaymentInput,
@@ -62,6 +64,7 @@ export default function CardDetailPage() {
   const [month, setMonth] = useState(() => accountMonthKey(new Date(), user.timezoneOffset));
   const [addingPurchases, setAddingPurchases] = useState(false);
   const [paying, setPaying] = useState(false);
+  const [loggingInterest, setLoggingInterest] = useState(false);
   const [editingPayment, setEditingPayment] = useState<CreditPaymentView | null>(null);
   const [deletingPayment, setDeletingPayment] = useState<CreditPaymentView | null>(null);
   const [editingCard, setEditingCard] = useState(false);
@@ -118,6 +121,37 @@ export default function CardDetailPage() {
       creditAccountId: id,
     }));
     settlePurchases(await purchaseBatch.submit(transactions));
+  };
+
+  /**
+   * Interest is an ordinary expense on the card, so it goes through the same batch writer a
+   * purchase does. Nothing card-specific is needed on the write path: only the category tells the
+   * two apart afterwards.
+   */
+  const handleLogInterest = async (input: CardInterestInput) => {
+    const result = await purchaseBatch.submit([
+      {
+        amount: input.amount,
+        description: input.description,
+        type: "EXPENSE" as const,
+        date: resolveTransactionDate(`${input.date}T12:00`, user.timezoneOffset),
+        categoryId: input.categoryId,
+        // A bank charge is not the user's activity, so a label schedule must not guess at it.
+        labelIds: [],
+        creditAccountId: id,
+      },
+    ]);
+    if (!result) return;
+    if (result.outcome === "saved") {
+      showToast("Charge logged", "success");
+      setLoggingInterest(false);
+      setMonth(accountMonthKey(result.firstDate, user.timezoneOffset));
+    } else if (result.outcome === "refused") {
+      showToast(result.message, "error");
+    } else {
+      showToast("Couldn't confirm the charge was saved", "error");
+      setMonth(accountMonthKey(result.firstDate, user.timezoneOffset));
+    }
   };
 
   const handleRecordPayment = async (input: CreditPaymentInput) => {
@@ -193,7 +227,7 @@ export default function CardDetailPage() {
         action={<MonthSwitcher month={month} onChange={setMonth} />}
       />
 
-      <CardSummary account={account} monthTotals={period.totals} />
+      <CardSummary account={account} monthTotals={period.totals} interest={detail.data.interest} />
 
       <div className="mb-6 flex flex-wrap gap-2">
         {account.isActive ? (
@@ -205,6 +239,10 @@ export default function CardDetailPage() {
             <button type="button" onClick={() => setPaying(true)} className={SECONDARY_BUTTON}>
               <Banknote className="h-4 w-4" />
               Pay
+            </button>
+            <button type="button" onClick={() => setLoggingInterest(true)} className={SECONDARY_BUTTON}>
+              <Landmark className="h-4 w-4" />
+              Log Interest
             </button>
           </>
         ) : (
@@ -267,6 +305,10 @@ export default function CardDetailPage() {
 
       <Modal open={paying} onClose={() => setPaying(false)} title="Pay Card">
         <CardPaymentForm defaultAmount={account.balance} onSubmit={handleRecordPayment} onCancel={() => setPaying(false)} />
+      </Modal>
+
+      <Modal open={loggingInterest} onClose={() => setLoggingInterest(false)} title="Log Interest or Fee">
+        <CardInterestForm onSubmit={handleLogInterest} onCancel={() => setLoggingInterest(false)} />
       </Modal>
 
       <Modal open={!!editingPayment} onClose={() => setEditingPayment(null)} title="Edit Payment">
