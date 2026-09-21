@@ -49,6 +49,17 @@ jobs:
           # not from a local `git diff`.
           fetch-depth: 0
 
+      # The action restores a fixed list of Claude configuration paths from the
+      # PR base, but that documented list does not include either of these files.
+      # `.claude/CLAUDE.md` imports `AGENTS.md`, and the review agents consume
+      # `REVIEW.md`, so leaving their PR-head copies active would let a PR change
+      # the policy used to review itself. The PR changes remain visible through
+      # `gh pr diff`; only the working copies used as instructions are restored.
+      - name: Restore trusted review policy
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git restore --source="$BASE_SHA" -- AGENTS.md REVIEW.md
+
       # `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` enables Claude Code's Linux
       # subprocess sandbox, which requires bubblewrap and socat. The action only
       # installs these itself when `allowed_non_write_users` is set, so a trusted-
@@ -265,9 +276,10 @@ jobs:
       # of the command. Nothing else from the transcript is printed, since it also holds
       # every tool output, which is why the action hides it (`show_full_output` would
       # publish all of it in this public repo's logs). The step then fails the job if
-      # this run left nothing on the PR. With `--comment`, the command always posts
-      # either inline findings or a "No issues found" comment, so an empty PR means it
-      # did not finish.
+      # this run left nothing on the PR. The command can intentionally stop without a
+      # comment when its eligibility check calls the PR trivial or already reviewed;
+      # that is a successful plugin skip but still fails this repository's stricter
+      # policy that every automatic review must leave evidence of its own.
       #
       # "This run" is taken from the transcript, not from the PR's comment list. Every
       # `@claude` job posts as the same `claude[bot]`, and the list API's `since`
