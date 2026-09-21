@@ -25,6 +25,11 @@ const account = (balance: number): CreditAccountView =>
     billId: null,
     balance,
     availableCredit: null,
+    utilization: null,
+    apr: null,
+    minimumPaymentPct: null,
+    minimumPaymentFloor: null,
+    plannedPayment: null,
     totals: { purchases: 0, payments: 0, credits: 0 },
   }) as unknown as CreditAccountView;
 
@@ -57,6 +62,18 @@ describe("CardSummary interest", () => {
       <CardSummary account={account(5000)} monthTotals={totals} interest={{ period: 1446.5, everLogged: true }} />
     );
     expect(screen.getByText(/1,446\.5/)).toBeDefined();
+  });
+
+  /**
+   * The `as unknown as` fixture hides a missing field from the type checker, so an absent
+   * `utilization` rendered the string "undefined%" and three tests passed without noticing.
+   */
+  it("shows no utilization row when the server sent none", () => {
+    render(
+      <CardSummary account={account(0)} monthTotals={totals} interest={{ period: 0, everLogged: true }} />
+    );
+    expect(screen.queryByText("Utilization")).toBeNull();
+    expect(screen.queryByText(/undefined/)).toBeNull();
   });
 
   /** A card carrying a balance with no interest logged is the case the drift warning is for. */

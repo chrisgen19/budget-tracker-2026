@@ -73,7 +73,12 @@ Moved out of `AGENTS.md` verbatim when that file reached the size Codex silently
   **over** the limit is the most useful thing the number can say and a clamp renders it identically
   to sitting exactly on it, while a card holding a credit reads below zero. It is a percentage
   rather than an amount, so Hide Amounts does not mask it: on its own it discloses nothing without
-  the limit beside it, which is masked
+  the limit beside it, which is masked. **Only the bar clamps.** `/cards` draws a progress bar and
+  `limitBarPercent` rounds and clamps it to 0-100 for that alone, because a bar has no width past
+  full and none below empty; the figure printed beside it is the server's `account.utilization`
+  untouched. That page briefly had its own clamped implementation and so disagreed with
+  `/cards/[id]` in exactly the two cases this rule exists to preserve -- 108.3% read as "100%" on
+  one page and correctly on the other. One ratio, derived once on the server
 - **A payoff is three answers, and each is withheld on its own account.** `src/lib/debt-payoff.ts`
   is pure, with no Prisma, and `comparePayoffs` returns the minimum, the observed average and the
   plan side by side -- the useful reading is the *gap* between what the bank asks, what is actually

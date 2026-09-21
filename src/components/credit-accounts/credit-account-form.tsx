@@ -57,6 +57,13 @@ export function CreditAccountForm({ account, onSubmit, onCancel }: CreditAccount
     },
   });
   const selectedColor = watch("color");
+  // Open on edit when the card already carries any of these. Collapsed, the section's own copy
+  // reads "Leave blank if you pay this card in full", so a saved 36% APR looks like it never saved.
+  const hasTerms =
+    account != null &&
+    [account.apr, account.minimumPaymentPct, account.minimumPaymentFloor, account.plannedPayment].some(
+      (value) => value != null
+    );
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-5">
@@ -141,7 +148,7 @@ export function CreditAccountForm({ account, onSubmit, onCancel }: CreditAccount
 
       {/* Its own section, closed by default: a card paid in full every month needs none of it, and
           these figures are read off a statement rather than remembered. */}
-      <details className="rounded-xl border border-cream-300 bg-cream-50/40">
+      <details open={hasTerms} className="rounded-xl border border-cream-300 bg-cream-50/40">
         <summary className="flex min-h-11 cursor-pointer items-center px-4 text-sm font-medium text-warm-600">
           Interest and payments
         </summary>
