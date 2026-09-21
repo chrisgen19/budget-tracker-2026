@@ -94,7 +94,11 @@ export async function GET(request: Request) {
       }));
     // What the account actually puts against the cards each month: the same preference order the
     // forecast uses, so the two cannot disagree about the money available.
-    const monthlyPool = owing.reduce((sum, card) => {
+    // Only the cards in the race fund it. A card with no APR is left out of `racers`, and counting
+    // its payment into the pool anyway handed the racing cards money that is really going elsewhere,
+    // shortening both orderings and able to turn a stall into a clear.
+    const racing = new Set(racers.map((card) => card.id));
+    const monthlyPool = owing.filter((card) => racing.has(card.id)).reduce((sum, card) => {
       const observedMonthly = summariseObservedPayments(
         recentPayments.filter((payment) => payment.accountId === card.id), observed, tz
       ).monthly;

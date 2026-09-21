@@ -313,6 +313,9 @@ const raceOrder = (cards: StrategyCard[], monthlyPool: number, order: StrategyCa
     if (!progressed) return { order: cleared, months: 0, totalInterest: 0, stalled: true };
   }
 
+  // Progress every month, but not finished inside fifty years. Also `stalled`: for the question the
+  // race answers -- does this amount clear the cards -- the answer is no either way. The copy that
+  // reads this must therefore claim only that, and never the cause, which differs between the two.
   return { order: cleared, months: 0, totalInterest: 0, stalled: true };
 };
 

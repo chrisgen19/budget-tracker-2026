@@ -47,4 +47,31 @@ describe("strategyVerdict", () => {
   it("calls a tie a tie when both clear equally", () => {
     expect(strategyVerdict(cleared(30, 5000), cleared(30, 5000), money)).toMatch(/about the same/);
   });
+
+  /**
+   * The other way to be `stalled`: every month pays something down, but the race runs past fifty
+   * years. Two large 0% balances paid 100 a month each make steady progress and still take about
+   * eighty years. The verdict must say that neither clears in time, and must not claim a cause such
+   * as a card outgrowing the payment, which is only true of the no-progress stall.
+   */
+  it("describes a race past the horizon without inventing a cause", () => {
+    const race = compareStrategies(
+      [
+        { id: "a", name: "A", balance: 100000, apr: 0, minimumPct: null, minimumFloor: 100 },
+        { id: "b", name: "B", balance: 90000, apr: 0, minimumPct: null, minimumFloor: 100 },
+      ],
+      200
+    );
+    expect(race!.avalanche.stalled).toBe(true);
+    expect(race!.snowball.stalled).toBe(true);
+
+    const verdict = strategyVerdict(race!.avalanche, race!.snowball, money);
+    expect(verdict).toMatch(/within 50 years/);
+    expect(verdict).not.toMatch(/outgrow|cover the interest/);
+  });
+
+  it("never names a cause when only one order clears", () => {
+    expect(strategyVerdict(cleared(40, 9000), stalled, money)).not.toMatch(/outgrow|small card/);
+  });
 });
+

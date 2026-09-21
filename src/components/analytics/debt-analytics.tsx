@@ -175,10 +175,12 @@ export const strategyVerdict = (
     return "Neither order clears the cards within 50 years at this amount. The order is not the problem; the amount is.";
   }
   if (snowball.stalled) {
-    return "Only highest rate first clears these cards at this amount. Smallest balance first spends the extra on the small card while the dearest one outgrows the payment.";
+    // No cause given. `stalled` covers two cases -- the dear card outgrowing the payment, and a race
+    // that is making progress but runs past fifty years -- and a cause is only true of the first.
+    return "Only highest rate first clears these cards within 50 years at this amount.";
   }
   if (avalanche.stalled) {
-    return "Only smallest balance first clears these cards at this amount.";
+    return "Only smallest balance first clears these cards within 50 years at this amount.";
   }
 
   const monthsSaved = snowball.months - avalanche.months;
