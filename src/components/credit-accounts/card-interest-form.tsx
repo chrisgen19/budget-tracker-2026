@@ -64,6 +64,11 @@ export function CardInterestForm({ onSubmit, onCancel }: CardInterestFormProps) 
   }, [seeded, setValue]);
 
   const description = watch("description");
+  // Classification is by category name, so what matters is the category actually chosen, not
+  // whether the seeded one happens to exist. Picking any other one saves a charge that moves the
+  // balance and is counted as interest nowhere.
+  const selected = expenseCategories.find((category) => category.id === watch("categoryId"));
+  const countsAsInterest = selected?.name === INTEREST_CATEGORY_NAME;
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-5">
@@ -139,15 +144,25 @@ export function CardInterestForm({ onSubmit, onCancel }: CardInterestFormProps) 
           </div>
         </div>
       ) : (
-        // Without the seeded category the charge still saves, it just will not be counted as
-        // interest anywhere, so say that rather than letting the figure quietly stay at zero.
-        !seeded &&
-        !categories.isLoading && (
+        // The charge saves either way and moves the balance. What it will not do is show up as
+        // interest, and a form named after interest must not stay quiet about that.
+        !categories.isLoading &&
+        !countsAsInterest && (
           <p className="flex items-start gap-2 rounded-xl border border-amber/30 bg-amber/10 p-3 text-xs text-warm-600">
             <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-amber-dark" />
             <span>
-              There is no &ldquo;{INTEREST_CATEGORY_NAME}&rdquo; category yet, so this charge will not be
-              counted as interest. Run the category seed, then move it across.
+              {seeded ? (
+                <>
+                  This will be filed under {selected ? `“${selected.name}”` : "another category"} and
+                  counted as ordinary spending, not as interest. Choose &ldquo;{INTEREST_CATEGORY_NAME}
+                  &rdquo; to have it counted.
+                </>
+              ) : (
+                <>
+                  There is no &ldquo;{INTEREST_CATEGORY_NAME}&rdquo; category yet, so this charge will not
+                  be counted as interest. Run the category seed, then move it across.
+                </>
+              )}
             </span>
           </p>
         )

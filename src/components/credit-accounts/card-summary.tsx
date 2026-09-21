@@ -24,11 +24,17 @@ export function CardSummary({ account, monthTotals, interest }: CardSummaryProps
     { label: "Bought this month", value: money(monthTotals.purchases) },
     { label: "Paid this month", value: money(monthTotals.payments) },
     ...(monthTotals.credits > 0 ? [{ label: "Refunded", value: money(monthTotals.credits) }] : []),
-    // "Not tracked" rather than a zero. A card that has never had interest logged is not a card
-    // that costs nothing to carry, and the two must not render alike.
+    // Three values, not two. A card that has never had interest logged is not a card that was
+    // charged none this month, and collapsing both to "None" loses the distinction
+    // `describeCardInterest` exists to make -- the notice below only covers a card in debt.
     {
       label: "Interest & fees",
-      value: interestState.state === "charged" ? money(interestState.amount) : "None",
+      value:
+        interestState.state === "charged"
+          ? money(interestState.amount)
+          : interestState.state === "untracked"
+            ? "Not tracked"
+            : "None",
       muted: interestState.state !== "charged",
     },
     ...(account.availableCredit !== null
