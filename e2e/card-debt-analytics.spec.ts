@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Browser, type Page } from "@playwright/test";
 import { PrismaClient, type UserRole } from "@prisma/client";
 import { encode } from "next-auth/jwt";
 
@@ -53,10 +53,34 @@ const admin = () =>
 const nonAdmin = () =>
   prisma.user.findFirst({ where: { role: { not: "ADMIN" } }, select: { id: true, role: true, name: true, email: true } });
 
+/**
+ * Open each route once before the assertions start.
+ *
+ * Against a dev server every route is compiled on first request, and `/analytics` is heavy enough
+ * that the compile alone outruns the 5s expect timeout. Without this, a cold `.next` failed five of
+ * these tests on the first run and none on the second, which is the worst way for a suite to
+ * behave: it reports the build, not the code. Warming costs one page load and makes the result the
+ * same whether or not someone happened to have the app open already.
+ */
+const warmRoutes = async (browser: Browser, cardId: string) => {
+  const user = await admin();
+  if (!user) return;
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage();
+    await signIn(page, user);
+    for (const path of [`/cards/${cardId}`, "/analytics"]) {
+      await page.goto(`${BASE}${path}`, { waitUntil: "networkidle", timeout: 180_000 });
+    }
+  } finally {
+    await context.close();
+  }
+};
+
 test.describe("card debt analytics", () => {
   test.skip(!process.env.NEXTAUTH_SECRET, "Set NEXTAUTH_SECRET (the dev server's own)");
 
-  test.beforeAll(async () => {
+  test.beforeAll(async ({ browser }) => {
     const found = await prisma.creditAccount.findFirst({
       where: { isActive: true },
       select: {
@@ -76,6 +100,8 @@ test.describe("card debt analytics", () => {
       minimumPaymentFloor: found.minimumPaymentFloor,
       plannedPayment: found.plannedPayment,
     };
+    await warmRoutes(browser, found.id);
+
     // Start from the withheld state, whatever the card happened to hold.
     await prisma.creditAccount.update({
       where: { id: found.id },

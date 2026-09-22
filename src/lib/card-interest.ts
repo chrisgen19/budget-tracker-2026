@@ -64,10 +64,11 @@ export const utilizationOf = (balance: number, creditLimit: number | null): numb
   return Math.round((balance / creditLimit) * 1000) / 10;
 };
 
-/** One card's contribution to the portfolio ratio. Archived cards count: they still owe. */
+/** One card's contribution to the portfolio ratio. */
 export interface UtilizationCard {
   balance: number;
   creditLimit: number | null;
+  isActive: boolean;
 }
 
 export interface OverallUtilization {
@@ -97,9 +98,21 @@ export interface OverallUtilization {
  * the data cannot answer, and 0% is an answer.
  */
 export const overallUtilizationOf = (cards: readonly UtilizationCard[]): OverallUtilization | null => {
+  // A settled archived card is dropped outright. Archiving is what deleting a card with history
+  // does, so a card paid off and then deleted keeps its old limit on a row nothing else counts:
+  // it has no balance to place, and its credit line is gone, so all it can do is pad the
+  // denominator. Left in, archiving one paid-off card read a portfolio at 81.5% as 39.5% while
+  // `totalOwed` beside it did not move -- two figures in one headline disagreeing about the same
+  // cards, in the direction that invites complacency about a card that is nearly maxed.
+  //
+  // An archived card that still *owes* stays, with its limit. Its debt is real and has to be
+  // placed against something, and keeping the balance while dropping the limit is precisely the
+  // inflation this function exists to prevent.
+  const counting = cards.filter((card) => card.isActive || card.balance > 0);
+
   // The same test `utilizationOf` applies per card, so the two cannot disagree about which cards
   // are measurable: a zero limit divides to Infinity there and must not be summed into a total here.
-  const measurable = cards.filter((card) => card.creditLimit !== null && card.creditLimit !== 0);
+  const measurable = counting.filter((card) => card.creditLimit !== null && card.creditLimit !== 0);
   if (measurable.length === 0) return null;
 
   const limit = measurable.reduce((sum, card) => sum + (card.creditLimit ?? 0), 0);
@@ -111,6 +124,6 @@ export const overallUtilizationOf = (cards: readonly UtilizationCard[]): Overall
   return {
     percent: Math.round((balance / limit) * 1000) / 10,
     counted: measurable.length,
-    omitted: cards.length - measurable.length,
+    omitted: counting.length - measurable.length,
   };
 };
