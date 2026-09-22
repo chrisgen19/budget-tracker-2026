@@ -2,6 +2,18 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-22 - Claude's eligibility check works inside the strict tool boundary
+
+The first ordinary review after enabling the explicit tool boundary stopped after six turns when
+its eligibility agent made one compound `gh pr view` call. The reviewer now tells every subagent to
+prefer separate commands and `gh --jq`, and pre-approves the read-only `jq` filter without weakening
+the existing ban on redirects or command substitution. Even `/dev/null` is not exempt: quoted path
+concatenation and a PR-supplied symlink can make a path that looks like the device to a textual check
+resolve inside the workspace instead.
+
+Denied compound calls now report the executable in each segment without exposing their arguments,
+so a future compatibility gap identifies the missing tool instead of only the first command.
+
 ## 2026-09-22 - Claude's review plugin is reproducibly pinned
 
 The automatic reviewer now installs Anthropic's `code-review` plugin through a trusted local

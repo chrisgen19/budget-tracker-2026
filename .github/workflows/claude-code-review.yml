@@ -194,6 +194,10 @@ jobs:
           #      quotes are safe to strip because the shell does not expand anything
           #      inside them either.
           #   2. Then `>`, on what is left after double-quoted spans are removed.
+          #      There is deliberately no `/dev/null` exception. A PR can commit a
+          #      `dev/null` symlink and spell `./dev/null` as `'.'/dev/null`; deleting
+          #      the quoted fragment before checking would mistake that workspace path
+          #      for the real device and restore the arbitrary-write primitive.
           #
           # The quote-stripping exists because the reviewer posts findings with
           # `gh pr comment --body`, and finding text is full of `=>`, `Array<string>`
@@ -279,6 +283,9 @@ jobs:
           #     `gh pr diff ... | head` was still denied 7 times, because `head` was
           #     not. The pager and filter entries below are for the right-hand side of
           #     those pipes, not for their own sake.
+          #     `jq` is included for the same reason after #382's eligibility agent
+          #     stopped on one compound `gh pr view` call. It is a JSON filter with
+          #     no file-output option; the hook still prevents redirecting its output.
           #   * Read-only `git` is not free after all - `git ls-tree -r` was denied -
           #     so the read-only *plumbing* verbs are listed. The diff itself comes from
           #     `gh pr diff`, not `git diff`; see the security note below for why.
@@ -316,20 +323,24 @@ jobs:
           claude_args: >-
             --permission-mode dontAsk
             --permission-prompts none
+            --append-subagent-system-prompt "Prefer one approved shell command per tool call during this read-only review. Do not use command substitution or redirect output. Prefer gh --json and --jq for GitHub data; if a pipeline is still required, use only the approved read-only filters."
             --disallowedTools "Write,Edit,NotebookEdit,WebFetch,WebSearch,Bash(gh issue list:*),Bash(gh search:*)"
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Skill(code-review:code-review),Task,Read,Glob,Grep,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(git ls-tree:*),Bash(git ls-files:*),Bash(git merge-base:*),Bash(git rev-parse:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(cut:*),Bash(nl:*),Bash(ls:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Skill(code-review:code-review),Task,Read,Glob,Grep,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(git ls-tree:*),Bash(git ls-files:*),Bash(git merge-base:*),Bash(git rev-parse:*),Bash(jq:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(cut:*),Bash(nl:*),Bash(ls:*)"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
 
       # A denied tool is not an error, so a review that gave up still ended green, and
       # the log only printed how many calls were denied, never which. This step reads
       # the result message from the transcript the action leaves on the runner and
-      # prints the denied calls: the tool name, and for Bash only the first three words
-      # of the command. Nothing else from the transcript is printed, since it also holds
-      # every tool output, which is why the action hides it (`show_full_output` would
-      # publish all of it in this public repo's logs). The step then fails the job if
-      # this run left nothing on the PR. The command can intentionally stop without a
-      # comment when its eligibility check calls the PR trivial or already reviewed;
+      # prints the denied calls: the tool name, for Bash the first three words, and the
+      # executable at the start of each command segment. #382 only reported `gh pr
+      # view ... compound`, hiding whether the denied segment was a filter or redirect.
+      # Redirect targets and arguments from later segments stay hidden. Nothing else is
+      # printed, since the transcript holds every tool output, which is why the action
+      # hides it (`show_full_output` would publish all of it in this public repo's logs).
+      # The step then fails the job if this run left nothing on the PR. The command can
+      # intentionally stop without a comment when its eligibility check calls the PR
+      # trivial or already reviewed;
       # that is a successful plugin skip but still fails this repository's stricter
       # policy that every automatic review must leave evidence of its own.
       #
@@ -378,8 +389,13 @@ jobs:
             (.permission_denials // [])[]
             | if .tool_name == "Bash" then
                 (.tool_input.command // "") as $cmd
+                | ([$cmd | splits("[|;&\\n]+")
+                    | (([splits("[[:space:]<>]+")] | map(select(. != "")) | .[0]) // empty)]
+                   | join(" -> ")) as $segments
                 | "Bash(" + ([$cmd | splits("[[:space:]]+")] | map(select(. != "")) | .[0:3] | join(" ")) + " ...)"
-                  + (if ($cmd | test("[|;&<>\n]")) then " compound" else "" end)
+                  + (if ($cmd | test("[|;&<>\n]")) then
+                       " compound[" + $segments + (if ($cmd | test("[<>]")) then "; redirect" else "" end) + "]"
+                     else "" end)
               elif .tool_name == "Skill" then "Skill(" + (.tool_input.skill // "?" | tostring) + ")"
               else .tool_name
               end
