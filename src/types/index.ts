@@ -780,6 +780,14 @@ export interface AssessmentRecurringItem {
   description: string;
   months: number;
   occurrences: number;
+  /**
+   * Whether this is a settled habit rather than one still forming -- the one test every consumer
+   * reads (the Watchlist's lapse, renewal and price findings, the cash forecast's claims, and the
+   * monthly base). A charge billing monthly or faster establishes by being seen in enough distinct
+   * months of the window; a slower one by a steady cadence across the user's whole history, since a
+   * six-month window holds only two sightings of a quarterly charge and never two of a yearly one.
+   */
+  established: boolean;
   avgAmount: number;
   total: number;
   /** First seen inside the last 120 days: a habit forming rather than an old one. */
