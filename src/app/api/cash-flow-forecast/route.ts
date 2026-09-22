@@ -3,12 +3,13 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { localCalendarDay } from "@/lib/period-progress";
 import { getBudgetPerformance } from "@/lib/budget-plans";
-import { buildCashFlowForecast, cardPaymentEvents, previousDueDate, remainingBudgetPaceEvents, scheduledForecastEvents, type ForecastCard, type ForecastEvent } from "@/lib/cash-flow-forecast";
+import { buildCashFlowForecast, cardPaymentEvents, previousDueDate, scheduleStatus, remainingBudgetPaceEvents, scheduledForecastEvents, type ForecastCard, type ForecastEvent } from "@/lib/cash-flow-forecast";
 import { userCanUseCreditCards } from "@/lib/credit-card-access";
 import {
   computeAccountBalance,
   foldLedgerGroups,
   observedPaymentWindow,
+  openingBalanceAsOf,
   summariseObservedPayments,
 } from "@/lib/credit-account-queries";
 import { cashFlowForecastQuerySchema, forecastOpeningBalanceSchema } from "@/lib/validations";
@@ -37,6 +38,12 @@ interface CardForecastInputs {
   /** Card payments already made since the opening balance: real money out, in no transaction row. */
   paymentsMade: number;
   forecastable: ForecastCard[];
+  /**
+   * Cards that owe but cannot be scheduled. They stay on the old footing -- purchases count when
+   * made, payments do not -- because dropping their purchases from cash with no event paying them
+   * back is how their debt used to vanish from the forecast.
+   */
+  unscheduledIds: string[];
   assumptions: string[];
 }
 
@@ -44,23 +51,31 @@ const DISABLED_CARDS: CardForecastInputs = {
   enabled: false,
   paymentsMade: 0,
   forecastable: [],
+  unscheduledIds: [],
   assumptions: [],
 };
 
 /**
- * What the forecast had to leave out, named.
+ * What the forecast could not schedule, named, and what it did instead.
  *
- * A card with no due day is skipped rather than placed on a guessed date, and the whole output of
- * this report is the lowest projected balance *and the day it falls on*. Saying which cards are
- * missing is what keeps that a disclosed limit rather than a silently optimistic answer.
+ * Naming alone is not enough, which is the lesson here: an undated card used to be named while its
+ * debt still vanished, because its purchases were dropped from cash with nothing paying them back.
+ * These cards stay on the old footing, so the sentence says where their spending went.
  */
-const undatedCardsAssumption = (names: string[]): string[] => {
-  if (names.length === 0) return [];
-  const tail =
-    names.length === 1
-      ? "has no due day set, so its payment is"
-      : "have no due day set, so their payments are";
-  return [`Card payments are projected from each card's due day. ${names.join(", ")} ${tail} not included.`];
+const unscheduledCardsAssumption = (noDueDay: string[], noAmount: string[]): string[] => {
+  const list = (names: string[]) => names.join(", ");
+  const lines: string[] = [];
+  if (noDueDay.length > 0) {
+    lines.push(`${list(noDueDay)} ${noDueDay.length === 1 ? "has" : "have"} no due day set, so the date of payment is unknown.`);
+  }
+  if (noAmount.length > 0) {
+    lines.push(`${list(noAmount)} ${noAmount.length === 1 ? "has" : "have"} no planned payment, minimum, or three months of payments yet, so the amount is unknown.`);
+  }
+  if (lines.length === 0) return [];
+  return [
+    ...lines,
+    "Purchases on those cards are counted against your balance on the day they were made instead, and their payments are not projected. Add the missing details on the card to have them scheduled.",
+  ];
 };
 
 /**
@@ -117,7 +132,8 @@ const readCardLedger = async (
     // Payments already made since the opening balance. Real money out of the bank, in no
     // `transactions` row, so nothing else in this route subtracts them. Not scoped to the cards
     // being forecast: paying off a card that now owes nothing still emptied the account.
-    prisma.creditPayment.aggregate({
+    prisma.creditPayment.groupBy({
+      by: ["accountId"],
       where: { userId, kind: "PAYMENT", date: { gte: window.openingAt, lte: window.todayEnd } },
       _sum: { amount: true },
     }),
@@ -136,7 +152,7 @@ const readCardLedger = async (
     observed,
     recentPayments,
     totals: foldLedgerGroups(ids, purchaseGroups, paymentGroups),
-    paymentsMade: settled._sum.amount ?? 0,
+    paymentsMadeBy: new Map(settled.map((group) => [group.accountId, group._sum.amount ?? 0])),
     cyclePayments,
   };
 };
@@ -166,47 +182,55 @@ const forecastCards = async (
   const accounts = await prisma.creditAccount.findMany({
     where: { userId },
     select: {
-      id: true, name: true, dueDay: true, billId: true, openingBalance: true,
+      id: true, name: true, dueDay: true, billId: true, openingBalance: true, openingBalanceDate: true,
       minimumPaymentPct: true, minimumPaymentFloor: true, plannedPayment: true,
     },
   });
   if (accounts.length === 0) return DISABLED_CARDS;
 
   const ledger = await readCardLedger(userId, accounts.map((account) => account.id), tz, window);
-  const forecastable: ForecastCard[] = [];
-  const undated: string[] = [];
-
-  for (const account of accounts) {
-    const balance = computeAccountBalance(
-      account.openingBalance,
+  const cards: ForecastCard[] = accounts.map((account) => ({
+    id: account.id,
+    name: account.name,
+    // `openingBalanceAsOf`, as every other balance read does: an opening debt dated after today
+    // does not exist yet, so the forecast must not schedule its payment before that date.
+    balance: computeAccountBalance(
+      openingBalanceAsOf(account, window.todayEnd),
       ledger.totals.get(account.id) ?? { purchases: 0, payments: 0, credits: 0 }
-    );
-    if (balance <= 0) continue;
-    if (account.dueDay === null && account.billId === null) undated.push(account.name);
+    ),
+    dueDay: account.dueDay,
+    billId: account.billId,
+    plannedPayment: account.plannedPayment,
+    observedMonthly: summariseObservedPayments(
+      ledger.recentPayments.filter((payment) => payment.accountId === account.id),
+      ledger.observed,
+      tz
+    ).monthly,
+    minimumPct: account.minimumPaymentPct,
+    minimumFloor: account.minimumPaymentFloor,
+    paidThisCycle: paidSincePreviousDue(ledger.cyclePayments, account, window.today, tz),
+  }));
 
-    forecastable.push({
-      id: account.id,
-      name: account.name,
-      balance,
-      dueDay: account.dueDay,
-      billId: account.billId,
-      plannedPayment: account.plannedPayment,
-      observedMonthly: summariseObservedPayments(
-        ledger.recentPayments.filter((payment) => payment.accountId === account.id),
-        ledger.observed,
-        tz
-      ).monthly,
-      minimumPct: account.minimumPaymentPct,
-      minimumFloor: account.minimumPaymentFloor,
-      paidThisCycle: paidSincePreviousDue(ledger.cyclePayments, account, window.today, tz),
-    });
-  }
+  const status = new Map(cards.map((card) => [card.id, scheduleStatus(card)]));
+  const unscheduled = cards.filter((card) => {
+    const state = status.get(card.id);
+    return state === "no-due-day" || state === "no-amount";
+  });
+  const unscheduledIds = new Set(unscheduled.map((card) => card.id));
 
   return {
     enabled: true,
-    paymentsMade: ledger.paymentsMade,
-    forecastable,
-    assumptions: undatedCardsAssumption(undated),
+    // Only the cards being rebased: an unscheduled card's purchases already came out of cash when
+    // they were made, so subtracting its payments as well would take the same money out twice.
+    paymentsMade: [...ledger.paymentsMadeBy]
+      .filter(([accountId]) => !unscheduledIds.has(accountId))
+      .reduce((sum, [, amount]) => sum + amount, 0),
+    forecastable: cards.filter((card) => status.get(card.id) === "scheduled"),
+    unscheduledIds: [...unscheduledIds],
+    assumptions: unscheduledCardsAssumption(
+      unscheduled.filter((card) => status.get(card.id) === "no-due-day").map((card) => card.name),
+      unscheduled.filter((card) => status.get(card.id) === "no-amount").map((card) => card.name)
+    ),
   };
 };
 
@@ -235,7 +259,12 @@ const getForecast = async (request: Request, userId: string) => {
   // transaction paths and the card's whole balance is paid off over the horizon instead. The
   // payments already made are subtracted directly, since they are in no `transactions` row. This
   // is the identity cards.md states, rearranged: cash = tracked + owed - card opening balances.
-  const cashOnly = cards.enabled ? { creditAccountId: null } : {};
+  // Cards the forecast pays off are taken out of the cash reads; a card it cannot schedule is left in,
+  // so its spending counts when it happened rather than nowhere. `OR` with `null` rather than
+  // `NOT ... in`: a SQL `NOT IN` is null for a row with no card, and would drop every cash expense.
+  const cashOnly = cards.enabled
+    ? { OR: [{ creditAccountId: null }, { creditAccountId: { in: cards.unscheduledIds } }] }
+    : {};
   const [past, future, schedules, budgets] = await Promise.all([
     prisma.transaction.findMany({ where: { userId, ...cashOnly, date: { gte: dateAtStart(openingDate, tz), lte: dateAtEnd(today, tz) } }, select: { amount: true, type: true } }),
     prisma.transaction.findMany({ where: { userId, ...cashOnly, date: { gte: dateAtStart(addDays(today, 1), tz), lte: dateAtEnd(to, tz) } }, select: { date: true, amount: true, type: true, description: true } }),
