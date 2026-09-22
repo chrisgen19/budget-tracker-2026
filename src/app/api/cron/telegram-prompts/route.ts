@@ -7,6 +7,7 @@ import { sendMessage } from "@/lib/telegram/send";
 import { env } from "@/lib/telegram/env";
 import { telegramPromptOwnerId } from "@/lib/telegram/prompt-owner";
 import { miniAppButtonRow, miniAppUrl } from "@/lib/telegram/mini-app";
+import { sendWatchlistDigest } from "@/lib/telegram/watchlist-digest-send";
 
 /** The categories the prompt asks about, by their seeded names. */
 const FARE_CATEGORY = "Transportation";
@@ -27,11 +28,115 @@ const allowedChatIds = (): number[] =>
     .map(Number)
     .filter(Number.isSafeInteger);
 
+interface PromptUser {
+  id: string;
+  timezoneOffset: number | null;
+  telegramDailyPromptTime: string;
+}
+
 /**
- * Sends the evening prompt to anyone who has it switched on and has not had it today.
+ * The evening prompt for one user: true when a message went out.
+ *
+ * Throws when the send fails, after releasing the claimed day so the next tick retries.
+ */
+async function sendEveningPrompt(user: PromptUser, chatId: number, now: Date): Promise<boolean> {
+  const tzOffset = user.timezoneOffset ?? 0;
+  if (!isPromptDue({ now, timezoneOffset: tzOffset, promptTime: user.telegramDailyPromptTime })) {
+    return false;
+  }
+
+  // The user's calendar day, encoded at UTC midnight. Date-only, like a bill due date.
+  const promptedOn = userToday(tzOffset, now);
+
+  // The same day as a real span of instants, for reading what was logged in it. This is the
+  // one formula used app-wide: `Date.UTC(y, m, d) + tzOffset * 60000`.
+  const dayStart = new Date(promptedOn.getTime() + tzOffset * 60_000);
+  const dayEnd = new Date(dayStart.getTime() + 86_400_000);
+
+  const logged = await prisma.transaction.findMany({
+    where: {
+      userId: user.id,
+      type: "EXPENSE",
+      date: { gte: dayStart, lt: dayEnd },
+      category: { name: { in: [FARE_CATEGORY, LUNCH_CATEGORY] } },
+    },
+    select: { category: { select: { name: true } } },
+  });
+
+  const names = new Set(logged.map((t) => t.category.name));
+  const text = composePrompt({
+    hasFare: names.has(FARE_CATEGORY),
+    hasLunch: names.has(LUNCH_CATEGORY),
+  });
+
+  // Nothing missing, so nothing to ask. The log row is still written, so a later tick the
+  // same day does not reconsider it once something has been deleted.
+  if (!text) {
+    await prisma.telegramPromptLog.createMany({
+      data: [{ userId: user.id, promptedOn }],
+      skipDuplicates: true,
+    });
+    return false;
+  }
+
+  // Written *before* sending, and removed again if the send throws, so a failure retries on
+  // the next tick while a success can never be repeated. `BillEmailLog` does the same.
+  const claimed = await prisma.telegramPromptLog.createMany({
+    data: [{ userId: user.id, promptedOn }],
+    skipDuplicates: true,
+  });
+
+  // Already sent today, by an earlier tick or a concurrent one. The unique index decided it,
+  // not a read, so two overlapping runs cannot both pass here.
+  if (claimed.count === 0) return false;
+
+  try {
+    // The Mini App row is built by a helper that yields *nothing* when there is no usable
+    // HTTPS URL, and that is load-bearing here rather than tidy. Telegram rejects the whole
+    // `sendMessage` when a button carries a URL it will not accept; this route then releases
+    // its claimed `telegram_prompt_logs` row, the next tick fails identically, and the evening
+    // prompt disappears permanently. `sendOne`'s plain-text retry would technically get the
+    // text through, but it drops `reply_markup` entirely, so a bad Mini App button would also
+    // cost "Nothing today" and the formatting. Refusing to build one is the actual guard.
+    //
+    // A `web_app` button is only valid in a private chat. `chatId` is a numeric id from the
+    // allowlist, which in a private chat is the user's own, so that holds unconditionally.
+    const keyboard = {
+      inline_keyboard: [
+        ...miniAppButtonRow(miniAppUrl(process.env), "\u26a1 Quick log"),
+        [
+          {
+            text: "Nothing today",
+            callback_data: encodePromptCallback({ day: utcDayKey(promptedOn) }),
+          },
+        ],
+      ],
+    };
+
+    // `sendMessage` reports failure by returning null rather than throwing - it swallows a
+    // Markdown parse error and retries in plain text, and only gives up silently. Ignoring
+    // the return value meant a failed send still counted, still kept the claimed day, and so
+    // was never retried: the prompt would vanish for that day with nothing in the logs.
+    const sent = await sendMessage(chatId, text, "Markdown", keyboard);
+    if (sent === null) {
+      throw new Error("Telegram would not accept the prompt message");
+    }
+    return true;
+  } catch (sendError) {
+    await prisma.telegramPromptLog.deleteMany({
+      where: { userId: user.id, promptedOn },
+    });
+    throw sendError;
+  }
+}
+
+/**
+ * Sends the evening prompt and the Watchlist digest to anyone who has them switched on and has
+ * not had them today.
  *
  * Driven by a Coolify Scheduled Task every 15 minutes. The schedule itself lives in
- * `users.telegram_daily_prompt_time`, resolved against `users.timezone_offset`, so this endpoint
+ * `users.telegram_daily_prompt_time` and `users.telegram_watchlist_digest_time`, resolved against
+ * `users.timezone_offset`, so this endpoint
  * is called far more often than it does anything and the cron entry never has to change.
  */
 export async function GET(request: Request) {
@@ -50,17 +155,24 @@ export async function GET(request: Request) {
   // enabling it would have their day read and this chat messaged about it.
   const ownerId = await telegramPromptOwnerId(prisma);
   if (!ownerId) {
-    return NextResponse.json({ usersProcessed: 0, promptsSent: 0, errors: 0, owner: null });
+    return NextResponse.json({ usersProcessed: 0, promptsSent: 0, digestsSent: 0, errors: 0, owner: null });
   }
 
   const users = await prisma.user.findMany({
-    where: { id: ownerId, telegramDailyPrompt: true },
-    select: { id: true, timezoneOffset: true, telegramDailyPromptTime: true },
+    where: { id: ownerId, OR: [{ telegramDailyPrompt: true }, { telegramWatchlistDigest: true }] },
+    select: {
+      id: true,
+      timezoneOffset: true,
+      telegramDailyPrompt: true,
+      telegramDailyPromptTime: true,
+      telegramWatchlistDigest: true,
+      telegramWatchlistDigestTime: true,
+    },
   });
 
   const chatIds = allowedChatIds();
   if (users.length === 0 || chatIds.length === 0) {
-    return NextResponse.json({ usersProcessed: users.length, promptsSent: 0, errors: 0 });
+    return NextResponse.json({ usersProcessed: users.length, promptsSent: 0, digestsSent: 0, errors: 0 });
   }
 
   // One recipient, deliberately. The allowlist answers "who may talk to the bot", never "whose
@@ -85,103 +197,26 @@ export async function GET(request: Request) {
 
   const now = new Date();
   let promptsSent = 0;
+  let digestsSent = 0;
   let errors = 0;
 
   for (const user of users) {
     try {
-      const tzOffset = user.timezoneOffset ?? 0;
-      if (!isPromptDue({ now, timezoneOffset: tzOffset, promptTime: user.telegramDailyPromptTime })) {
-        continue;
-      }
-
-      // The user's calendar day, encoded at UTC midnight. Date-only, like a bill due date.
-      const promptedOn = userToday(tzOffset, now);
-
-      // The same day as a real span of instants, for reading what was logged in it. This is the
-      // one formula used app-wide: `Date.UTC(y, m, d) + tzOffset * 60000`.
-      const dayStart = new Date(promptedOn.getTime() + tzOffset * 60_000);
-      const dayEnd = new Date(dayStart.getTime() + 86_400_000);
-
-      const logged = await prisma.transaction.findMany({
-        where: {
-          userId: user.id,
-          type: "EXPENSE",
-          date: { gte: dayStart, lt: dayEnd },
-          category: { name: { in: [FARE_CATEGORY, LUNCH_CATEGORY] } },
-        },
-        select: { category: { select: { name: true } } },
-      });
-
-      const names = new Set(logged.map((t) => t.category.name));
-      const text = composePrompt({
-        hasFare: names.has(FARE_CATEGORY),
-        hasLunch: names.has(LUNCH_CATEGORY),
-      });
-
-      // Nothing missing, so nothing to ask. The log row is still written, so a later tick the
-      // same day does not reconsider it once something has been deleted.
-      if (!text) {
-        await prisma.telegramPromptLog.createMany({
-          data: [{ userId: user.id, promptedOn }],
-          skipDuplicates: true,
-        });
-        continue;
-      }
-
-      // Written *before* sending, and removed again if the send throws, so a failure retries on
-      // the next tick while a success can never be repeated. `BillEmailLog` does the same.
-      const claimed = await prisma.telegramPromptLog.createMany({
-        data: [{ userId: user.id, promptedOn }],
-        skipDuplicates: true,
-      });
-
-      // Already sent today, by an earlier tick or a concurrent one. The unique index decided it,
-      // not a read, so two overlapping runs cannot both pass here.
-      if (claimed.count === 0) continue;
-
-      try {
-        // The Mini App row is built by a helper that yields *nothing* when there is no usable
-        // HTTPS URL, and that is load-bearing here rather than tidy. Telegram rejects the whole
-        // `sendMessage` when a button carries a URL it will not accept; this route then releases
-        // its claimed `telegram_prompt_logs` row, the next tick fails identically, and the evening
-        // prompt disappears permanently. `sendOne`'s plain-text retry would technically get the
-        // text through, but it drops `reply_markup` entirely, so a bad Mini App button would also
-        // cost "Nothing today" and the formatting. Refusing to build one is the actual guard.
-        //
-        // A `web_app` button is only valid in a private chat. `chatId` is a numeric id from the
-        // allowlist, which in a private chat is the user's own, so that holds unconditionally.
-        const keyboard = {
-          inline_keyboard: [
-            ...miniAppButtonRow(miniAppUrl(process.env), "\u26a1 Quick log"),
-            [
-              {
-                text: "Nothing today",
-                callback_data: encodePromptCallback({ day: utcDayKey(promptedOn) }),
-              },
-            ],
-          ],
-        };
-
-        // `sendMessage` reports failure by returning null rather than throwing - it swallows a
-        // Markdown parse error and retries in plain text, and only gives up silently. Ignoring
-        // the return value meant a failed send still counted, still kept the claimed day, and so
-        // was never retried: the prompt would vanish for that day with nothing in the logs.
-        const sent = await sendMessage(chatId, text, "Markdown", keyboard);
-        if (sent === null) {
-          throw new Error("Telegram would not accept the prompt message");
-        }
-        promptsSent += 1;
-      } catch (sendError) {
-        await prisma.telegramPromptLog.deleteMany({
-          where: { userId: user.id, promptedOn },
-        });
-        throw sendError;
-      }
+      if (user.telegramDailyPrompt && (await sendEveningPrompt(user, chatId, now))) promptsSent += 1;
     } catch (error) {
       errors += 1;
       console.error(`[telegram-prompts] Failed for user ${user.id}:`, error);
     }
+    // Independent of the prompt above, so a failure in one never costs the other its day.
+    try {
+      if (user.telegramWatchlistDigest && (await sendWatchlistDigest(prisma, user, chatId, now)) === "sent") {
+        digestsSent += 1;
+      }
+    } catch (error) {
+      errors += 1;
+      console.error(`[telegram-prompts] Watchlist digest failed for user ${user.id}:`, error);
+    }
   }
 
-  return NextResponse.json({ usersProcessed: users.length, promptsSent, errors });
+  return NextResponse.json({ usersProcessed: users.length, promptsSent, digestsSent, errors });
 }

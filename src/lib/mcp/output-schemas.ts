@@ -893,6 +893,9 @@ const recurringItem = z.object({
   avgAmount: z.number(),
   total: z.number(),
   isNew: z.boolean(),
+  // A settled habit, as opposed to one still forming. Slower-than-monthly charges establish on
+  // their cadence across the whole history rather than on months inside the window.
+  established: z.boolean(),
   firstSeen: z.string(),
   lastSeen: z.string(),
   intervalDays: z.number().nullable(),
@@ -978,6 +981,10 @@ const anomaly = z.object({
     "goal-off-pace",
     "goal-stalled",
     "cash-shortfall",
+    "card-interest-untracked",
+    "card-utilization-high",
+    "card-minimum-only",
+    "card-payment-due-soon",
   ]),
   // "outstanding" means the selected period does not bound the finding - a missed bill is judged
   // against its own payment history, so it is true now rather than true of the window.
@@ -989,7 +996,8 @@ const anomaly = z.object({
   baseline: z.number().nullable(),
   changePct: z.number().nullable(),
   drillDown: z.object({
-    destination: z.enum(["transactions", "bills", "goals"]),
+    destination: z.enum(["transactions", "bills", "goals", "cards"]),
+    cardId: z.string().optional(),
     type: transactionType.optional(),
     categoryId: z.string().optional(),
     from: z.string().optional(),

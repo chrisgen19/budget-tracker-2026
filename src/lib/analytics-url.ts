@@ -7,6 +7,7 @@ export const ANALYTICS_TAB_IDS = [
   "reports",
   "budget",
   "forecast",
+  "debt",
   "watchlist",
   "statistics",
   "health",

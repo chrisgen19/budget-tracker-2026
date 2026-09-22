@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_DEBT_TREND_MONTHS,
   OBSERVED_PAYMENT_MONTHS,
   buildCardCategoryBreakdown,
+  monthlyPaymentTotals,
+  monthsInRange,
+  owedByMonth,
   computeAccountBalance,
   currentMonthKey,
   foldLedgerGroups,
@@ -208,5 +212,167 @@ describe("summariseObservedPayments", () => {
     const result = summariseObservedPayments([paid("2026-08", 5000)], window, MANILA);
     expect(result.monthly).toBeNull();
     expect(result.months).toBe(1);
+  });
+});
+
+describe("monthlyPaymentTotals", () => {
+  const on = (day: string, amount: number) => ({ amount, date: new Date(`${day}T04:00:00.000Z`) });
+
+  /**
+   * The minimum-only fix. The detector used to receive one entry per payment row, so three
+   * part-payments in one month read as three minimum cycles. Grouped, they are one month.
+   */
+  it("adds part-payments in the same month into one total", () => {
+    const totals = monthlyPaymentTotals(
+      [on("2026-08-02", 1000), on("2026-08-12", 1000), on("2026-08-25", 1000)],
+      ["2026-06", "2026-07", "2026-08"],
+      MANILA
+    );
+    expect(totals).toEqual([
+      { month: "2026-06", paid: 0 },
+      { month: "2026-07", paid: 0 },
+      { month: "2026-08", paid: 3000 },
+    ]);
+  });
+
+  /** Built from the calendar, so a month with nothing paid is a zero rather than a closed gap. */
+  it("keeps a month with no payment as zero", () => {
+    const totals = monthlyPaymentTotals([on("2026-06-10", 500), on("2026-08-10", 500)], ["2026-06", "2026-07", "2026-08"], MANILA);
+    expect(totals.map((cycle) => cycle.paid)).toEqual([500, 0, 500]);
+  });
+
+  /** A payment at 07:00 Manila on the 1st is still UTC's previous day, and belongs to the 1st. */
+  it("files a payment by the user's own calendar, not UTC's", () => {
+    const early = { amount: 700, date: new Date("2026-07-31T23:00:00.000Z") }; // 07:00 on 1 Aug in Manila
+    expect(monthlyPaymentTotals([early], ["2026-07", "2026-08"], MANILA)).toEqual([
+      { month: "2026-07", paid: 0 },
+      { month: "2026-08", paid: 700 },
+    ]);
+  });
+});
+
+describe("monthsInRange", () => {
+  it("lists every month from one to the other, inclusive", () => {
+    expect(monthsInRange("2025-11-15", "2026-02-03")).toEqual(["2025-11", "2025-12", "2026-01", "2026-02"]);
+  });
+
+  /**
+   * A hand-picked cap of 60 cut a ten-year range half-way with nothing saying so. The cap is now
+   * derived from the span the schema admits, so a valid range is never truncated.
+   */
+  it("never truncates the widest range the schema accepts", () => {
+    const months = monthsInRange("2016-01-01", "2026-01-06"); // 3,658 days
+    expect(months).toHaveLength(121);
+    expect(months.at(-1)).toBe("2026-01");
+    expect(months.length).toBeLessThanOrEqual(MAX_DEBT_TREND_MONTHS);
+  });
+});
+
+describe("owedByMonth", () => {
+  const card = { id: "c1", openingBalance: 0, openingBalanceDate: new Date("2026-01-01T00:00:00.000Z") };
+  const at = (day: string) => new Date(`${day}T04:00:00.000Z`);
+
+  it("builds each month's balance from everything up to that month's end", () => {
+    const series = owedByMonth(
+      [card],
+      [
+        { creditAccountId: "c1", amount: 10000, date: at("2026-06-10") },
+        { creditAccountId: "c1", amount: 2000, date: at("2026-07-10") },
+      ],
+      [{ accountId: "c1", kind: "PAYMENT", amount: 3000, date: at("2026-07-20") }],
+      ["2026-06", "2026-07", "2026-08"],
+      MANILA
+    );
+    expect(series).toEqual([
+      { month: "2026-06", owed: 10000 },
+      { month: "2026-07", owed: 9000 },
+      { month: "2026-08", owed: 9000 },
+    ]);
+  });
+
+  /** A refund lowers the balance like a payment does; it just is not one. */
+  it("subtracts credits as well as payments", () => {
+    const series = owedByMonth(
+      [card],
+      [{ creditAccountId: "c1", amount: 5000, date: at("2026-06-10") }],
+      [{ accountId: "c1", kind: "CREDIT", amount: 800, date: at("2026-06-15") }],
+      ["2026-06"],
+      MANILA
+    );
+    expect(series[0].owed).toBe(4200);
+  });
+
+  /** The first month still needs everything before the range, or it starts from zero. */
+  it("counts history from before the range into the first month", () => {
+    const series = owedByMonth(
+      [card],
+      [{ creditAccountId: "c1", amount: 7000, date: at("2026-02-10") }],
+      [],
+      ["2026-06"],
+      MANILA
+    );
+    expect(series[0].owed).toBe(7000);
+  });
+
+  it("sums every card into one figure per month", () => {
+    const series = owedByMonth(
+      [card, { ...card, id: "c2" }],
+      [
+        { creditAccountId: "c1", amount: 1000, date: at("2026-06-10") },
+        { creditAccountId: "c2", amount: 2500, date: at("2026-06-11") },
+      ],
+      [],
+      ["2026-06"],
+      MANILA
+    );
+    expect(series[0].owed).toBe(3500);
+  });
+
+  /**
+   * The reviewer's case. A range ending on 15 June asks what was owed by the 15th. The last point
+   * used to be measured at 30 June while the reads stopped at the 15th, so the two disagreed about
+   * where the range ended. Now both stop at `to`, and a purchase on the 20th is outside the range
+   * however it reaches this function.
+   */
+  it("measures a range that ends mid-month at its end, not at the month's", () => {
+    const series = owedByMonth(
+      [card],
+      [
+        { creditAccountId: "c1", amount: 4000, date: at("2026-06-10") },
+        { creditAccountId: "c1", amount: 9000, date: at("2026-06-20") },
+      ],
+      [],
+      ["2026-05", "2026-06"],
+      MANILA,
+      new Date(Date.UTC(2026, 5, 16) + MANILA * 60_000 - 1) // end of 15 June in Manila
+    );
+    expect(series).toEqual([
+      { month: "2026-05", owed: 0 },
+      { month: "2026-06", owed: 4000 },
+    ]);
+  });
+
+  /** Earlier months are complete inside the range, so the range end must not clip them. */
+  it("leaves every earlier month measured at its own end", () => {
+    const series = owedByMonth(
+      [card],
+      [{ creditAccountId: "c1", amount: 3000, date: at("2026-05-28") }],
+      [],
+      ["2026-05", "2026-06"],
+      MANILA,
+      new Date(Date.UTC(2026, 5, 16) + MANILA * 60_000 - 1)
+    );
+    expect(series[0]).toEqual({ month: "2026-05", owed: 3000 });
+  });
+
+  /** Rows arrive in no particular order from the database; the walk must not depend on it. */
+  it("gives the same answer whatever order the rows arrive in", () => {
+    const rows = [
+      { creditAccountId: "c1", amount: 2000, date: at("2026-07-10") },
+      { creditAccountId: "c1", amount: 10000, date: at("2026-06-10") },
+    ];
+    const forward = owedByMonth([card], rows, [], ["2026-06", "2026-07"], MANILA);
+    const reversed = owedByMonth([card], [...rows].reverse(), [], ["2026-06", "2026-07"], MANILA);
+    expect(reversed).toEqual(forward);
   });
 });

@@ -7,6 +7,7 @@ import { useUser } from "@/components/user-provider";
 import { useSavePreference } from "@/hooks/use-save-preference";
 import { HH_MM } from "@/lib/validations";
 import { InstallAppCard } from "@/components/pwa/install-app-card";
+import { TelegramDigestSetting } from "@/components/profile/telegram-digest-setting";
 
 export function FeaturesForm() {
   const { user } = useUser();
@@ -260,6 +261,8 @@ export function FeaturesForm() {
           )}
         </div>
         )}
+
+        {user.telegramPromptAvailable && <TelegramDigestSetting />}
 
         <div className="flex items-center justify-between gap-4 p-4 rounded-xl border border-cream-300 bg-cream-50/50">
           <div className="flex items-center gap-3">

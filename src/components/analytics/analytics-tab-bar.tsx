@@ -9,6 +9,7 @@ import {
   Trophy,
   WalletCards,
   CalendarDays,
+  CreditCard,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AnalyticsTab } from "@/lib/analytics-url";
@@ -31,6 +32,14 @@ const ANALYTICS_TABS = [
     label: "Forecast",
     shortLabel: "Forecast",
     icon: CalendarDays,
+  },
+  {
+    id: "debt" as const,
+    label: "Debt",
+    shortLabel: "Debt",
+    icon: CreditCard,
+    /** Hidden entirely for a user the credit cards switch excludes. */
+    requiresCards: true,
   },
   {
     id: "watchlist" as const,
@@ -73,12 +82,16 @@ export function AnalyticsTabBar({
   onSelect,
   layoutId,
   className,
+  showCards = false,
 }: {
   activeTab: AnalyticsTab;
   onSelect: (tab: AnalyticsTab) => void;
   layoutId: string;
   className?: string;
+  /** Whether this user may see the cards half. A tab that 403s is worse than no tab. */
+  showCards?: boolean;
 }) {
+  const tabs = ANALYTICS_TABS.filter((tab) => showCards || !tab.requiresCards);
   return (
     <div
       role="tablist"
@@ -87,7 +100,7 @@ export function AnalyticsTabBar({
         className,
       )}
     >
-      {ANALYTICS_TABS.map((tab) => (
+      {tabs.map((tab) => (
         <button
           key={tab.id}
           role="tab"

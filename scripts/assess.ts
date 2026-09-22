@@ -16,6 +16,7 @@
  */
 import { PrismaClient } from "@prisma/client";
 import { collectAssessmentFacts } from "../src/lib/assessment-facts-query";
+import { cadenceLabel } from "../src/lib/recurring-cadence";
 import { formatLocalDate } from "../src/lib/validations";
 import type { AssessmentFacts } from "../src/types";
 
@@ -124,7 +125,7 @@ const printRecurring = (f: AssessmentFacts, currency: string) => {
   h1("5. RECURRING SPEND");
   const established = f.recurring.items.filter((i) => !i.isNew);
   for (const i of established) {
-    console.log(`  ${i.description.padEnd(28)} ${String(i.months).padStart(2)} months  ${String(i.occurrences).padStart(3)}x  avg ${money(i.avgAmount, currency)}  total ${money(i.total, currency)}`);
+    console.log(`  ${i.description.padEnd(28)} ${(cadenceLabel(i.intervalDays) ?? `${i.months} months`).padEnd(14)} ${String(i.occurrences).padStart(3)}x  avg ${money(i.avgAmount, currency)}  total ${money(i.total, currency)}`);
   }
   if (established.length === 0) none();
   console.log(`\n  About ${money(f.recurring.monthlyBase, currency)} a month repeats${f.recurring.monthlyBasePct !== null ? ` (${f.recurring.monthlyBasePct}% of a typical month)` : ""}.`);

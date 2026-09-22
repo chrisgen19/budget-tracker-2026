@@ -8,6 +8,11 @@ paths:
   - src/lib/card-owed.ts
   - src/lib/card-interest.ts
   - src/lib/debt-payoff.ts
+  - src/lib/cash-flow-forecast.ts
+  - "src/app/api/cash-flow-forecast/**"
+  - "src/app/api/analytics/debt/**"
+  - src/components/analytics/debt-analytics.tsx
+  - src/hooks/use-debt-analytics.ts
   - "src/app/api/credit-accounts/**"
   - "src/app/api/admin/feature-access/**"
   - "src/app/(app)/cards/**"
@@ -114,3 +119,90 @@ Moved out of `AGENTS.md` verbatim when that file reached the size Codex silently
   `CREDIT` is a refund the card issued, not a payment anyone chose to make, and averaging it in
   overstates what is going against the card. The window is anchored to **today**, not to the month
   on screen, so scrolling back to March does not change what the projection says is being paid now
+- **The cash-flow forecast pays the cards, and refuses rather than guesses.** `cardPaymentEvents`
+  (`src/lib/cash-flow-forecast.ts`) emits a `card-payment` on each card's `due_day`, which was the
+  largest known outflow the forecast counted nowhere: a purchase lowers the tracked balance the day
+  it is made, while the money leaves the bank only when the card is paid. Three refusals, each
+  deliberate. A card with a linked reminder **bill** is skipped, because that bill already emits its
+  own event from the same schedule and counting both empties the account twice -- the guard the
+  forecast already applies to a recurring charge matching a bill by name. A card with **no due day**
+  is skipped and *named in the assumptions*, since the output is the lowest projected balance **and
+  the day it falls on**, so a guessed date answers wrongly rather than roughly. A card owing nothing
+  is skipped. The amount is the most specific figure the card has -- planned, else observed, else
+  the minimum -- and `assumption` says which, because the three mean different things. The balance
+  is walked **down** across the horizon and each payment capped at what is left, or ninety days
+  would take three 8,000 payments against a 5,000 debt; interest and new purchases are deliberately
+  not accrued, both being unknowable here. The whole block is gated on `userCanUseCreditCards`: a
+  user the switch excludes must not get a payment line they cannot open or explain
+- **Projecting card payments forces the forecast's balance to be cash, not the tracked balance.**
+  A purchase is an EXPENSE, so it *already* lowers the tracked balance the day it is made; emitting
+  a payment for it as well takes the same money out of the bank twice, and the first cut of the
+  forecast did exactly that. So when cards apply, `/api/cash-flow-forecast` excludes rows carrying
+  `credit_account_id` from **both** transaction reads and subtracts the `credit_payments` already
+  made (real money out, in no `transactions` row and therefore subtracted nowhere else), leaving
+  the card's whole balance to be paid off across the horizon. That is this file's own identity
+  rearranged -- `cash = tracked + owed - card opening balances` -- which is also why a card's
+  opening balance needs no special case: it was never logged as spending, and paying it is cash
+  leaving for the first time. The rebase is behind the same `userCanUseCreditCards` gate as the
+  events, because doing one without the other drops card spending with nothing paying it back.
+  The balance query is bounded to **today** for the same reason the events are: a purchase dated
+  next month is not owed yet, and counting it would schedule a payment before it happened. The
+  **payments** are bounded to today too: a payment dated next week is outside `paymentsMade` and
+  emits no event, so counting it in today's balance made that money vanish from the forecast.
+  **Archived cards that still owe are forecast** like any other -- the rebase drops every card's
+  purchases from cash, so leaving one out removed its spending with nothing paying it back.
+  And a payment made **before** a due date is credited against that due date
+  (`paidThisCycle`, counted from the day after `previousDueDate`): it has already left cash, so
+  taking the planned amount again on the due date paid one cycle twice. **Only cards the forecast can
+  schedule are rebased.** `scheduleStatus` is the one rule, shared by the events and the route: a
+  card owing money with no due day, or with no plan, no three months of payments and no minimum
+  -- the state every new card starts in -- gets no events, and dropping its purchases from cash
+  with nothing paying them back made its whole debt vanish, ending the forecast too high by that
+  balance. Naming it in the assumptions, which the undated case already did, did not stop that. Such
+  a card stays on the old footing: its purchases stay in the cash reads and its payments stay out
+  of `paymentsMade`. The cash reads use `OR [creditAccountId null, in unscheduled]` rather than
+  `NOT in scheduled`, because SQL `NOT IN` is null for a row with no card and would drop every cash
+  expense. A card's opening debt goes through `openingBalanceAsOf` like every other balance read,
+  so one dated after today is not paid before it exists
+- **With cards on, the forecast's opening balance is what the bank held -- decided, not assumed.**
+  The rebase above is correct only if `users.forecast_opening_balance` is the figure a banking app
+  shows on that date, because a card purchase made *before* the opening date has not left the
+  bank until the card is paid, and it is paid off once through the card's events. A review (#373)
+  proposed adding the card debt that existed on the opening date back into cash, which is right
+  only if the entered figure already had that debt taken off; applied to a bank balance it ends
+  the forecast too high by exactly that debt. The owner confirmed the bank-balance reading, so the
+  fix was to the **wording**: with cards on, the form asks "Set your bank balance" and says not to
+  take card debt off, and the metric reads "Cash in the bank today". The schema comment calling
+  it a *tracked* baseline predates the rebase and still describes the cards-off case.
+  `verify-forecast-card-payments.ts` pins it with a pre-opening purchase, confirmed to fail
+  against the proposed change
+- **The Debt tab reads; `/cards` writes.** `/analytics`'s Debt tab (`/api/analytics/debt`,
+  `DebtAnalyticsPanel`) holds only what a single card's page cannot say -- the total owed and its
+  trend, interest across every card, and avalanche against snowball -- and has no input field at
+  all. Every figure it shows is entered on `/cards`. It is a sibling route rather than a slice of
+  `/api/analytics`, which already carries row-count telemetry, following `/api/cash-flow-forecast`,
+  and it borrows `MAX_ANALYTICS_RANGE_DAYS` through `debtAnalyticsQuerySchema` rather than setting a
+  second span limit that would drift from its siblings'. **Access is gated in three places and all
+  three are needed.** The route opens with `requireCreditCardsUser` (403 `FEATURE_DISABLED`); the
+  tab is not rendered in the bar (`showCards`), since a tab that 403s is worse than none; and the
+  page turns an excluded user's `?tab=debt` into `reports`, because a link from someone with access
+  is a real URL and would otherwise land them on a tab missing from their own bar. Archived cards
+  are included in the total, the same call `sumOwedOnCards` makes: deleting a card with history
+  archives it whatever it still owes. The strategy race (`compareStrategies` in `debt-payoff.ts`)
+  spends the **same monthly pool** the forecast assumes -- planned, else observed, else minimum --
+  so the two cannot disagree about the money available. **The two orderings can stall
+  independently**, and `strategyVerdict` judges each on its own outcome: at 48% APR on 60,000
+  with 2,500 a month, highest-rate-first clears in about eleven years while smallest-balance-first
+  never does, spending the surplus on the small card while the dear one outgrows the pool. Reading
+  a stalled run's zeros as a result once said both orders "come out the same" -- the opposite of
+  the truth, in exactly the case where the order matters most -- so a stalled ordering is named,
+  never compared as a number, and only when both stall is the amount blamed rather than the order.
+  The trend is `owedByMonth`, one forward pass with per-card pointers, over reads bounded at the
+  range's end but not its start (the first month needs all history). The bound is only safe
+  because the **last point is measured at `to` too**, not at the end of `to`'s month: a range
+  ending on the 15th asks what was owed by the 15th, and measuring at the 30th while the reads
+  stopped at the 15th left the second half of the month out of a point labelled with all of it.
+  Its month cap `MAX_DEBT_TREND_MONTHS` is derived from `MAX_ANALYTICS_RANGE_DAYS`, never written
+  by hand: a hand-picked 60 truncated a valid ten-year range half-way with nothing saying so. Its interest window uses the app-wide `Date.UTC(...) + tzOffset * 60000`: bare
+  `T00:00:00Z` bounds are UTC's day, and in Manila a charge logged at 07:00 on the 1st would land in
+  the previous month

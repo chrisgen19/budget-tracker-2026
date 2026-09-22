@@ -55,6 +55,10 @@ const KIND_LABEL: Record<AssessmentAnomaly["kind"], string> = {
   "goal-off-pace": "Savings goal",
   "goal-stalled": "Savings goal",
   "cash-shortfall": "Cash shortfall risk",
+  "card-interest-untracked": "Card interest not tracked",
+  "card-utilization-high": "Card utilization",
+  "card-minimum-only": "Paying only the minimum",
+  "card-payment-due-soon": "Card payment due soon",
 };
 
 const SEVERITY_STYLE: Record<
@@ -128,6 +132,7 @@ const ACTION_LABEL: Record<FindingDestination, string> = {
   transactions: "View transactions",
   bills: "Go to Bills",
   goals: "Go to Goals",
+  cards: "Open card",
 };
 
 const findingHref = (
@@ -138,6 +143,9 @@ const findingHref = (
   const drillDown = finding.drillDown;
   const destination = destinationOf(finding);
   if (destination === "goals") return "/goals";
+  // Straight to the card when the finding names one: every card finding is about a single card,
+  // and the list page makes the reader find it again.
+  if (destination === "cards") return drillDown?.cardId ? `/cards/${drillDown.cardId}` : "/cards";
   if (destination === "bills") return "/bills";
   return buildTransactionsHref({
     type: drillDown?.type,
