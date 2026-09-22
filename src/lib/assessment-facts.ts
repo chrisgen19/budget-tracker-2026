@@ -132,6 +132,12 @@ export interface FactsInput {
   /** Earliest sighting of each folded expense description across the user's whole history. */
   historyFirstSeen?: ReadonlyMap<string, string>;
   /**
+   * Every expense charge of each folded description seen at least twice, across the last
+   * `RECURRING_HISTORY_MONTHS` rather than the window. What lets a quarterly or yearly charge
+   * establish at all: the window holds two sightings of the first and never two of the second.
+   */
+  historyCharges?: ReadonlyMap<string, HistoryCharge[]>;
+  /**
    * Every income and expense the user has ever recorded, for the running balance.
    *
    * A balance is not a window: six months of it is a period's net, which is a
@@ -161,17 +167,55 @@ export { MIN_COVERAGE_PCT };
 /** A stretch this long with nothing logged is reported as a gap. */
 const MIN_GAP_DAYS = 4;
 /**
- * Charged in at least this many distinct months to count as recurring.
+ * Charged in at least this many distinct months of the window to count as recurring -- for a charge
+ * billing monthly or faster.
  *
- * Distinct *months*, which is a proxy for "seen often enough to have a cadence" and holds only for
- * a charge that bills monthly or faster. A quarterly charge reaches four distinct months after a
- * year, so it never establishes inside the default six-month window, and an annual one never
- * establishes at all: four of them need four years, and `MAX_WINDOW_MONTHS` caps any scan at two.
- * So lapse, renewal and price findings do not reach slower subscriptions, which is a real gap and
- * not a deliberate exclusion -- closing it means giving the recurring pass a wider window than the
- * facts window, the way `historyFirstSeen` already does for first sightings.
+ * Distinct *months* is a proxy for "seen often enough to have a cadence" that holds only at that
+ * speed. A quarterly charge reaches four distinct months after a year and an annual one after four,
+ * so slower charges establish by `isSlowRecurring` instead, over `historyCharges` (#360).
  */
 const RECURRING_MIN_MONTHS = 4;
+/** One expense charge from the whole-history read, already on the user's calendar. */
+export interface HistoryCharge {
+  day: string;
+  amount: number;
+  description: string;
+}
+/**
+ * How far back the slow-cadence read looks. Three years: enough for three sightings of a yearly
+ * charge, and short enough that a subscription cancelled long ago is not dredged back up.
+ */
+export const RECURRING_HISTORY_MONTHS = 36;
+/** A median gap this long or longer is a slow cadence, judged on history rather than the window. */
+const SLOW_CADENCE_MIN_DAYS = 60;
+/**
+ * A charge seen only twice establishes only if the two are about a **year** apart. One gap proves no
+ * rhythm, so it has to be a gap that coincidence rarely produces.
+ *
+ * Measured, not guessed: the first version also accepted pairs about two, three and six months apart,
+ * and on real data it established two meals -- a 7-Eleven snack bought 97 days apart and a Mang
+ * Inasal order 87 days apart -- as quarterly subscriptions, one "renewing" and one "repriced by 34%".
+ * Buying a usual meal twice in a quarter is ordinary. Buying it twice a year apart to within a couple
+ * of weeks is not, while a yearly subscription renews on almost the same date. So quarterly and
+ * half-yearly charges wait for a third sighting, which for a quarterly one is six months of history.
+ */
+const PAIR_CYCLE_DAYS = 365;
+/** How far a pair's single gap may sit from a year: about eighteen days either way. */
+const PAIR_CYCLE_TOLERANCE = 0.05;
+/** With three or more charges, how far any gap may stray from their median and still be regular. */
+const SLOW_REGULARITY = 0.2;
+/**
+ * The largest charge may be at most this multiple of the smallest. Subscriptions reprice, but not
+ * by this much; two purchases from one merchant at 300 and 2,500 are two purchases.
+ */
+const SLOW_AMOUNT_RATIO = 2;
+/**
+ * A slow charge last seen longer ago than this many of its own cycles is not tracked at all.
+ * Three, so `recurring-ended` can still fire in the cycle after it lapses (it needs one whole cycle
+ * overdue, i.e. two since the last charge) and then drops, rather than re-reporting a yearly
+ * subscription cancelled three years ago for as long as the history reaches.
+ */
+const SLOW_STALE_CYCLES = 3;
 /** First seen inside this many days makes a recurring charge a *new* habit. */
 const NEW_RECURRING_DAYS = 120;
 /** …and it has to cost at least this share of a month's spending to be worth reporting. */
@@ -208,9 +252,8 @@ const RECURRING_RENEWAL_DAYS = 7;
  * Overdue by this many of its own cycles before a recurring charge is called stopped.
  *
  * One whole extra cycle rather than a fixed number of days, so a fortnightly charge four days late
- * is simply late while a monthly one four days late is barely worth the word. The arithmetic scales
- * to any cadence, but `RECURRING_MIN_MONTHS` decides which ones it is ever asked about, and today
- * that is monthly and faster only -- see the note there.
+ * is simply late while a monthly one four days late is barely worth the word. It scales to any
+ * cadence, and since #360 slower charges reach it too: a yearly one is late after a whole year.
  */
 const RECURRING_LAPSE_CYCLES = 1;
 /** A recurring charge moving this far from its own average is a price change rather than noise. */
@@ -645,6 +688,91 @@ export type RecurringComputation = AssessmentRecurringFacts & {
   allItems: AssessmentRecurringItem[];
 };
 
+type Charge = { day: string; amount: number };
+
+/**
+ * Whether charges with a slow cadence form a real recurring charge.
+ *
+ * Judged on the user's whole history, because that is the only place the evidence exists: a
+ * six-month window holds two sightings of a quarterly charge and never two of a yearly one. The
+ * bar is higher than "seen twice", because a slow repeat is also what a habit looks like. A steady
+ * gap, a gap of a year when there is only one to go on, amounts in the same range, and a last
+ * sighting recent enough to still be news.
+ */
+export const isSlowRecurring = (charges: readonly Charge[], today: string): boolean => {
+  const days = [...new Set(charges.map((charge) => charge.day))].sort();
+  if (days.length < 2) return false;
+  const gaps = days.slice(1).map((day, index) => daysBetween(days[index], day));
+  const cycle = median(gaps);
+  if (cycle < SLOW_CADENCE_MIN_DAYS) return false;
+  if (gaps.some((gap) => Math.abs(gap - cycle) > cycle * SLOW_REGULARITY)) return false;
+  if (days.length === 2 && Math.abs(cycle - PAIR_CYCLE_DAYS) > PAIR_CYCLE_DAYS * PAIR_CYCLE_TOLERANCE) {
+    return false;
+  }
+  const amounts = charges.map((charge) => charge.amount).filter((amount) => amount > 0);
+  if (amounts.length === 0 || Math.max(...amounts) > Math.min(...amounts) * SLOW_AMOUNT_RATIO) return false;
+  return daysBetween(days[days.length - 1], today) <= cycle * SLOW_STALE_CYCLES;
+};
+
+/**
+ * One recurring item from one charge's rows, or null when it is neither established nor forming.
+ *
+ * Shared by the window's pass and the whole-history one, so a slow charge and a fast one are
+ * described in exactly the same terms. `established` is the caller's, because the two passes decide
+ * it differently: months in the window for a fast cadence, `isSlowRecurring` for a slow one.
+ */
+const summariseCharges = (
+  label: string,
+  key: string,
+  unsorted: readonly Charge[],
+  today: string,
+  materialMonthly: number,
+  historyFirstSeen: ReadonlyMap<string, string>,
+  trackNew: boolean,
+  isEstablished: (item: { months: number; occurrences: number; intervalDays: number | null }) => boolean,
+): AssessmentRecurringItem | null => {
+  const charges = [...unsorted].sort((a, b) => a.day.localeCompare(b.day));
+  const amounts = charges.map((c) => c.amount);
+  const days = charges.map((c) => c.day);
+  const months = new Set(days.map(monthOf)).size;
+  const firstSeen = historyFirstSeen.get(key) ?? days[0];
+  const lastSeen = days[days.length - 1];
+  const monthlyCost = sum(amounts) / months;
+  const intervalDays = chargeIntervalDays(days);
+  // Two sightings inside four months is a habit forming; four months is an
+  // established one. A new charge should not have to wait a third of a year
+  // to be noticed, which is the whole point of watching for creep.
+  const emerging = months >= 2;
+  const isNew = trackNew && emerging
+    && daysBetween(firstSeen, today) <= NEW_RECURRING_DAYS
+    && monthlyCost >= materialMonthly;
+  const established = isEstablished({ months, occurrences: amounts.length, intervalDays });
+  if (!established && !(trackNew ? isNew : emerging)) return null;
+  const expectedNextDate = intervalDays === null ? null : addDays(lastSeen, intervalDays);
+  // Walk back over the unbroken run at the newest amount. Compared rounded, because that is what
+  // `latestAmount` reports and a half-centavo difference is not a price change.
+  const latest = round(amounts[amounts.length - 1]);
+  let runStart = charges.length - 1;
+  while (runStart > 0 && round(charges[runStart - 1].amount) === latest) runStart -= 1;
+  return {
+    description: label,
+    months,
+    occurrences: amounts.length,
+    established,
+    avgAmount: round(sum(amounts) / amounts.length),
+    total: round(sum(amounts)),
+    isNew,
+    firstSeen,
+    lastSeen,
+    intervalDays,
+    expectedNextDate,
+    daysOverdue: expectedNextDate === null ? 0 : Math.max(0, daysBetween(expectedNextDate, today)),
+    latestAmount: latest,
+    priorAvgAmount: amounts.length < 2 ? null : round(sum(amounts.slice(0, -1)) / (amounts.length - 1)),
+    latestAmountSince: charges[runStart].day,
+  };
+};
+
 /**
  * Group one side of the ledger by folded description and measure each group's cadence.
  *
@@ -652,6 +780,11 @@ export type RecurringComputation = AssessmentRecurringFacts & {
  * expense is creep to watch, a repeating income is a deposit to chase when it fails to arrive —
  * but "what repeats, how often, and how much" is one piece of arithmetic, and two copies of it
  * would answer that question two ways within a release or so.
+ *
+ * Two passes on the expense side. The window's rows decide every charge billing monthly or faster,
+ * exactly as before. Then any charge whose whole-history cadence is slow and steady replaces its
+ * window item, or appears without one -- a yearly subscription is usually last seen *before* the
+ * window opened, which is precisely when its renewal is coming up.
  */
 const buildRecurringItems = (
   transactions: FactTransaction[],
@@ -672,64 +805,54 @@ const buildRecurringItems = (
    * the whole point and a long-standing salary is the most important row in the list.
    */
   trackNew: boolean,
+  isEstablished: (item: { months: number; occurrences: number; intervalDays: number | null }) => boolean,
+  historyCharges: ReadonlyMap<string, HistoryCharge[]> = new Map(),
 ): AssessmentRecurringItem[] => {
   // Day and amount travel together. They used to be two parallel arrays, one of
   // which was then sorted in place: any figure read by position after that
   // belonged to a different charge than the date beside it.
-  const groups = new Map<string, { months: Set<string>; charges: Array<{ day: string; amount: number }>; label: string }>();
+  const groups = new Map<string, { charges: Charge[]; label: string }>();
   for (const t of transactions) {
     if (t.type !== type) continue;
     const key = foldDescription(t.description);
     if (!key) continue;
-    const g = groups.get(key) ?? { months: new Set<string>(), charges: [], label: t.description.trim() };
-    g.months.add(monthOf(t.localDate));
+    const g = groups.get(key) ?? { charges: [], label: t.description.trim() };
     g.charges.push({ day: t.localDate, amount: t.amount });
     groups.set(key, g);
   }
 
-  const items: AssessmentRecurringItem[] = [];
+  const byKey = new Map<string, AssessmentRecurringItem>();
   for (const [key, g] of groups) {
-    const charges = [...g.charges].sort((a, b) => a.day.localeCompare(b.day));
-    const amounts = charges.map((c) => c.amount);
-    const days = charges.map((c) => c.day);
-    const firstSeen = historyFirstSeen.get(key) ?? days[0];
-    const lastSeen = days[days.length - 1];
-    const monthlyCost = sum(amounts) / g.months.size;
-    // Two sightings inside four months is a habit forming; four months is an
-    // established one. A new charge should not have to wait a third of a year
-    // to be noticed, which is the whole point of watching for creep.
-    const emerging = g.months.size >= 2;
-    const isNew = trackNew && emerging
-      && daysBetween(firstSeen, today) <= NEW_RECURRING_DAYS
-      && monthlyCost >= materialMonthly;
-    const established = g.months.size >= RECURRING_MIN_MONTHS;
-    if (!established && !(trackNew ? isNew : emerging)) continue;
-    const intervalDays = chargeIntervalDays(days);
-    const expectedNextDate = intervalDays === null ? null : addDays(lastSeen, intervalDays);
-    // Walk back over the unbroken run at the newest amount. Compared rounded, because that is what
-    // `latestAmount` reports and a half-centavo difference is not a price change.
-    const latest = round(amounts[amounts.length - 1]);
-    let runStart = charges.length - 1;
-    while (runStart > 0 && round(charges[runStart - 1].amount) === latest) runStart -= 1;
-    items.push({
-      description: g.label,
-      months: g.months.size,
-      occurrences: amounts.length,
-      avgAmount: round(sum(amounts) / amounts.length),
-      total: round(sum(amounts)),
-      isNew,
-      firstSeen,
-      lastSeen,
-      intervalDays,
-      expectedNextDate,
-      daysOverdue: expectedNextDate === null ? 0 : Math.max(0, daysBetween(expectedNextDate, today)),
-      latestAmount: latest,
-      priorAvgAmount: amounts.length < 2 ? null : round(sum(amounts.slice(0, -1)) / (amounts.length - 1)),
-      latestAmountSince: charges[runStart].day,
-    });
+    const item = summariseCharges(g.label, key, g.charges, today, materialMonthly, historyFirstSeen, trackNew, isEstablished);
+    if (item) byKey.set(key, item);
   }
-  return items.sort((a, b) => b.total - a.total);
+
+  for (const [key, history] of historyCharges) {
+    const charges = history.map(({ day, amount }) => ({ day, amount }));
+    if (!isSlowRecurring(charges, today)) continue;
+    const label = groups.get(key)?.label ?? history[history.length - 1].description.trim();
+    const item = summariseCharges(label, key, charges, today, materialMonthly, historyFirstSeen, trackNew, () => true);
+    if (item) byKey.set(key, item);
+  }
+
+  // By monthly cost, not by `total`. Totals no longer share a span -- a slow item's covers up to
+  // `RECURRING_HISTORY_MONTHS`, a fast one's the window -- so ranking by them let a long-running
+  // quarterly charge outrank a costlier monthly one. The order matters beyond display: the top 15
+  // are what the cash forecast projects as claims, and what the per-kind caps keep when they bite.
+  return [...byKey.values()].sort((a, b) => monthlyEquivalent(b) - monthlyEquivalent(a));
 };
+
+/**
+ * What a recurring charge costs per month.
+ *
+ * `total / months` for a charge billing monthly or faster, as the base always was. Not for a slow
+ * one: a yearly 4,990 is seen in one month of the window and would count as 4,990 a month. Its own
+ * cycle prices it instead, about 416 a month.
+ */
+const monthlyEquivalent = (item: AssessmentRecurringItem): number =>
+  item.intervalDays !== null && item.intervalDays >= SLOW_CADENCE_MIN_DAYS
+    ? (item.avgAmount * (365.25 / 12)) / item.intervalDays
+    : item.total / item.months;
 
 /**
  * Deposits that arrive on a rhythm — a salary, an allowance, a recurring transfer in.
@@ -746,7 +869,10 @@ const buildRecurringItems = (
 export const computeRecurringIncome = (
   transactions: FactTransaction[],
   today: string,
-): AssessmentRecurringItem[] => buildRecurringItems(transactions, "INCOME", today, 0, new Map(), false);
+): AssessmentRecurringItem[] =>
+  buildRecurringItems(transactions, "INCOME", today, 0, new Map(), false,
+    // The rule the income findings always used, now carried on the item so they read one field.
+    ({ occurrences, intervalDays }) => occurrences >= MIN_INCOME_OCCURRENCES && intervalDays !== null);
 
 /**
  * Charges seen in most months of the window — the fixed base under the
@@ -768,6 +894,8 @@ export const computeRecurring = (
    * see -- a subscription running for two years looked 120 days old.
    */
   historyFirstSeen: ReadonlyMap<string, string> = new Map(),
+  /** Whole-history charges for slow cadences. See `FactsInput.historyCharges`. */
+  historyCharges: ReadonlyMap<string, HistoryCharge[]> = new Map(),
 ): RecurringComputation => {
   // Day and amount travel together. They used to be two parallel arrays, one of
   // which was then sorted in place: any figure read by position after that
@@ -776,9 +904,10 @@ export const computeRecurring = (
   // relative rather than a currency figure: the list was otherwise led by bananas
   // and jeepney fares, which repeat faithfully and decide nothing.
   const materialMonthly = avgMonthlyBurn === null ? 0 : avgMonthlyBurn * NEW_RECURRING_MIN_SHARE;
-  const items = buildRecurringItems(transactions, "EXPENSE", today, materialMonthly, historyFirstSeen, true);
-  const established = items.filter((i) => i.months >= RECURRING_MIN_MONTHS);
-  const monthlyBase = round(sum(established.map((i) => i.total / i.months)));
+  const items = buildRecurringItems(transactions, "EXPENSE", today, materialMonthly, historyFirstSeen, true,
+    ({ months }) => months >= RECURRING_MIN_MONTHS, historyCharges);
+  const established = items.filter((i) => i.established);
+  const monthlyBase = round(sum(established.map(monthlyEquivalent)));
   return {
     items: items.slice(0, 15),
     newItems: items.filter((i) => i.isNew).sort((a, b) => b.avgAmount - a.avgAmount).slice(0, 8),
@@ -1218,7 +1347,7 @@ const nextExpectedIncomeDay = (
   today: string,
 ): string | null => {
   const days = income.flatMap((source) => {
-    if (source.occurrences < MIN_INCOME_OCCURRENCES || source.intervalDays === null) return [];
+    if (!source.established || source.intervalDays === null) return [];
     let day = source.expectedNextDate;
     if (day === null) return [];
     // Bounded by the horizon rather than by a `while (true)`: a source whose interval is somehow
@@ -1276,7 +1405,7 @@ const collectCashClaims = (
   }
 
   for (const item of recurring) {
-    if (item.months < RECURRING_MIN_MONTHS || item.intervalDays === null || item.expectedNextDate === null) continue;
+    if (!item.established || item.intervalDays === null || item.expectedNextDate === null) continue;
     if (billNames.has(foldDescription(item.description))) continue;
     // A charge a whole cycle past due has stopped - the same rule `recurring-ended` reports it by.
     // Without this a cancelled subscription keeps being projected as an upcoming claim forever,
@@ -1362,7 +1491,7 @@ interface AnomalyContext {
   /**
    * Every established recurring charge, uncapped.
    *
-   * `recurring.items` is the presentation cut: 15 rows ordered by total spend. Detection has to
+   * `recurring.items` is the presentation cut: 15 rows ordered by monthly cost. Detection has to
    * read the whole set, or a charge ranked 16th by total is never asked whether it has stopped,
    * renewed or changed price -- and total spend ranks a daily coffee above a monthly subscription.
    */
@@ -2027,7 +2156,7 @@ const detectConfidenceAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => 
 const detectMissingExpectedIncome = (ctx: AnomalyContext): AssessmentAnomaly[] =>
   ctx.recurring.income
     .filter((source) => {
-      if (source.occurrences < MIN_INCOME_OCCURRENCES || source.intervalDays === null) return false;
+      if (!source.established || source.intervalDays === null) return false;
       const grace = Math.max(MIN_INCOME_GRACE_DAYS, Math.round(source.intervalDays * INCOME_GRACE_SHARE));
       return source.daysOverdue > grace;
     })
@@ -2181,13 +2310,13 @@ const detectRecurringAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
   }
 
   // Collected per kind so the cap lands on what gets said rather than on which charges are asked.
-  // Charges arrive ordered by total spend, so a cap that bites keeps the costliest of each kind.
+  // Charges arrive ordered by monthly cost, so a cap that bites keeps the costliest of each kind.
   const ended: AssessmentAnomaly[] = [];
   const renewing: AssessmentAnomaly[] = [];
   const repriced: AssessmentAnomaly[] = [];
 
   for (const item of ctx.recurringAll) {
-    if (item.isNew || item.months < RECURRING_MIN_MONTHS || item.intervalDays === null) continue;
+    if (item.isNew || !item.established || item.intervalDays === null) continue;
 
     if (item.daysOverdue > item.intervalDays * RECURRING_LAPSE_CYCLES) {
       ended.push(anomaly("recurring-ended", "low",
@@ -2416,7 +2545,7 @@ export const buildAssessmentFacts = (input: FactsInput): AssessmentFacts => {
   // `allItems` is peeled off here and never reaches the returned facts: detection needs every
   // charge, the payload wants the top 15.
   const { allItems: recurringAll, ...recurring } =
-    computeRecurring(transactions, today, trends.avgMonthlyBurn, input.historyFirstSeen);
+    computeRecurring(transactions, today, trends.avgMonthlyBurn, input.historyFirstSeen, input.historyCharges);
   const hygiene = computeHygiene(transactions, confidence.trustworthyMonths, period);
   const headline = computeHeadline(trends, input.allTimeTotals ?? null);
   // Falls back to the window when the caller supplies no wider set, so a test or

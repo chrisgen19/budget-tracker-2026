@@ -893,6 +893,9 @@ const recurringItem = z.object({
   avgAmount: z.number(),
   total: z.number(),
   isNew: z.boolean(),
+  // A settled habit, as opposed to one still forming. Slower-than-monthly charges establish on
+  // their cadence across the whole history rather than on months inside the window.
+  established: z.boolean(),
   firstSeen: z.string(),
   lastSeen: z.string(),
   intervalDays: z.number().nullable(),

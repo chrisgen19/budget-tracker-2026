@@ -19,6 +19,8 @@ import {
   resolveFactsWindow,
   DEFAULT_HISTORY_MONTHS,
   DEFAULT_WATCHLIST_THRESHOLDS,
+  RECURRING_HISTORY_MONTHS,
+  type HistoryCharge,
   detectCardAnomalies,
   detectGoalAnomalies,
   type FactBill,
@@ -54,6 +56,57 @@ const isCalendarMonth = (from: string, to: string): boolean => {
 const localDayStart = (day: string, tzMs: number): Date => new Date(new Date(`${day}T00:00:00.000Z`).getTime() + tzMs);
 /** …and the last instant of one, so an inclusive `to` does not drop its own day. */
 const localDayEnd = (day: string, tzMs: number): Date => new Date(new Date(`${day}T23:59:59.999Z`).getTime() + tzMs);
+
+/**
+ * Every charge of each expense seen at least twice over the last `RECURRING_HISTORY_MONTHS`, keyed
+ * by folded description -- what lets a quarterly or yearly subscription establish (#360).
+ *
+ * Two narrow reads rather than every row in the history. A grouped count first, **folded before it
+ * is counted**: "Netflix" once and "Netflix " once are two sightings of one charge, and filtering the
+ * raw descriptions on `count >= 2` would drop both. Then only the rows of descriptions that survive,
+ * three columns each. One-off purchases, which are most rows, never leave the database.
+ */
+const readHistoryCharges = async (
+  prisma: PrismaClient,
+  userId: string,
+  today: string,
+  tzOffset: number
+): Promise<Map<string, HistoryCharge[]>> => {
+  const [year, month] = today.split("-").map(Number);
+  const since = new Date(Date.UTC(year, month - 1 - RECURRING_HISTORY_MONTHS, 1) + tzOffset * 60_000);
+  // Up to the end of the user's today, inclusive. A charge dated in the future has not happened, so
+  // it is not a sighting: counting it could establish a subscription before its second charge and
+  // put its "last seen" ahead of today. The rule every card read settled on too.
+  const where = { userId, type: "EXPENSE" as const, date: { gte: since, lte: localDayEnd(today, tzOffset * 60_000) } };
+
+  const counts = await prisma.transaction.groupBy({ by: ["description"], where, _count: { _all: true } });
+  const perKey = new Map<string, { total: number; raw: string[] }>();
+  for (const row of counts) {
+    const key = foldDescription(row.description ?? "");
+    if (!key) continue;
+    const entry = perKey.get(key) ?? { total: 0, raw: [] };
+    entry.total += row._count._all;
+    entry.raw.push(row.description ?? "");
+    perKey.set(key, entry);
+  }
+  const repeated = [...perKey.values()].filter((entry) => entry.total >= 2).flatMap((entry) => entry.raw);
+  if (repeated.length === 0) return new Map();
+
+  const rows = await prisma.transaction.findMany({
+    where: { ...where, description: { in: repeated } },
+    select: { description: true, amount: true, date: true },
+  });
+  const byKey = new Map<string, HistoryCharge[]>();
+  for (const row of rows) {
+    const description = row.description ?? "";
+    const key = foldDescription(description);
+    if (!key) continue;
+    const list = byKey.get(key) ?? [];
+    list.push({ day: formatLocalDate(row.date, tzOffset), amount: row.amount, description });
+    byKey.set(key, list);
+  }
+  return byKey;
+};
 
 /**
  * Compute the assessment's facts for a period.
@@ -142,6 +195,8 @@ export const collectAssessmentFacts = async (
 
   // Folded here rather than in SQL: `groupBy` is exact, and "Netflix " and
   // "netflix" have to collapse the same way `computeRecurring` collapses them.
+  const historyCharges = await readHistoryCharges(prisma, userId, today, tzOffset);
+
   const historyFirstSeen = new Map<string, string>();
   for (const row of firstSightings) {
     if (!row._min.date) continue;
@@ -239,6 +294,7 @@ export const collectAssessmentFacts = async (
     transactions,
     bills: factBills,
     historyFirstSeen,
+    historyCharges,
     allTimeTotals: { income: totalOf("INCOME"), expenses: totalOf("EXPENSE") },
     unlinkedCandidates,
     // Falls back to the shipped defaults rather than to zeroes: a user row that could not be read

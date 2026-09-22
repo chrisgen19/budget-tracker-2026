@@ -4,6 +4,7 @@ import { TrendingUp, Repeat, ArrowUpRight, ArrowDownRight, Sparkle } from "lucid
 import { cn } from "@/lib/utils";
 import { Section, Bar, Chip, AllClear, type Money } from "./section";
 import type { AssessmentRecurringFacts, AssessmentTrendFacts } from "@/types";
+import { cadenceLabel } from "@/lib/recurring-cadence";
 
 const DIRECTION = {
   up: { icon: ArrowUpRight, tone: "text-expense" },
@@ -88,7 +89,7 @@ export function RecurringCard({ recurring, fmt }: { recurring: AssessmentRecurri
     <Section
       icon={Repeat}
       title="Recurring spend"
-      subtitle="Charges that come back month after month, and anything new that has joined them."
+      subtitle="Charges that come back on a steady rhythm, and anything new that has joined them."
       aside={
         recurring.monthlyBasePct !== null ? (
           <Chip tone={recurring.monthlyBasePct > 60 ? "warn" : "neutral"}>{recurring.monthlyBasePct}% of a month</Chip>
@@ -116,14 +117,15 @@ export function RecurringCard({ recurring, fmt }: { recurring: AssessmentRecurri
           <li key={i.description} className="flex items-baseline justify-between gap-2 text-sm">
             <span className="text-warm-600 truncate">{i.description}</span>
             <span className="text-warm-400 shrink-0 text-xs">
-              {fmt(i.avgAmount)} · {i.months} months
+              {/* The cadence, not "N months": a yearly charge seen twice is not a two-month habit. */}
+              {fmt(i.avgAmount)} · {cadenceLabel(i.intervalDays) ?? `${i.months} months`}
             </span>
           </li>
         ))}
       </ul>
       <p className="text-xs text-warm-400 mt-3">
-        About {fmt(recurring.monthlyBase)} a month goes to charges that come back every month. Not all of it is
-        committed — some is simply habit.
+        About {fmt(recurring.monthlyBase)} a month goes to recurring charges, with a quarterly or yearly one counted
+        at its monthly share. Not all of it is committed — some is simply habit.
       </p>
     </Section>
   );
