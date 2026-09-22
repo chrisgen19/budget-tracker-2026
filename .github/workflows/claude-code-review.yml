@@ -145,8 +145,13 @@ jobs:
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
-          plugins: 'code-review@claude-code-plugins'
+          # The local marketplace is protected with the rest of `.claude/` by the
+          # action's PR base-branch restore. Its `git-subdir` source pins the upstream
+          # plugin to an exact commit, so a change on Anthropic's default branch cannot
+          # silently alter the prompts and agents that run with this job's credentials.
+          # See `.claude/claude-review-marketplace/README.md` for the update procedure.
+          plugin_marketplaces: './.claude/claude-review-marketplace'
+          plugins: 'code-review@budget-tracker-review-plugins'
           prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
 
           # No `track_progress`. It forces the action into tag mode (src/modes/detector.ts),

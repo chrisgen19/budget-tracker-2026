@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "budget-tracker-review-plugins",
+  "version": "1.0.0",
+  "description": "Pinned plugins used by the Budget Tracker review workflow",
+  "owner": {
+    "name": "Budget Tracker maintainers"
+  },
+  "plugins": [
+    {
+      "name": "code-review",
+      "description": "Anthropic's multi-agent pull request review plugin",
+      "version": "1.0.0",
+      "author": {
+        "name": "Anthropic"
+      },
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/anthropics/claude-code.git",
+        "path": "plugins/code-review",
+        "sha": "b486776a2eef0d3f39abaebaa3c03e378c7480b8"
+      },
+      "category": "productivity"
+    }
+  ]
+}
