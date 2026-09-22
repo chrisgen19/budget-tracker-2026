@@ -20,6 +20,8 @@ export interface Preferences {
   emailBillReminders: boolean;
   telegramDailyPrompt: boolean;
   telegramDailyPromptTime: string;
+  telegramWatchlistDigest: boolean;
+  telegramWatchlistDigestTime: string;
 }
 
 export const preferencesKeys = {

@@ -69,3 +69,41 @@ describe("the Telegram prompt card", () => {
     expect(screen.queryByText(/Telegram Evening Prompt/i)).not.toBeNull();
   });
 });
+
+describe("the Telegram Watchlist digest card", () => {
+  const digestSwitch = () => screen.getByRole("switch", { name: /Watchlist Digest/i });
+
+  // Same gate as the evening prompt, for the same reason: the cron sends to the bot's one chat.
+  it("is hidden from an account that does not own the bot", () => {
+    mocks.user = { ...mocks.user, telegramPromptAvailable: false };
+    render(<FeaturesForm />);
+    expect(screen.queryByText(/Telegram Watchlist Digest/i)).toBeNull();
+  });
+
+  it("switches on through the shared save path", () => {
+    mocks.user = { ...mocks.user, telegramWatchlistDigest: false, telegramWatchlistDigestTime: "08:00" };
+    render(<FeaturesForm />);
+    fireEvent.click(digestSwitch());
+    expect(mocks.savePreference).toHaveBeenCalledWith("telegramWatchlistDigest", true, false, expect.any(String));
+  });
+
+  it("offers its own send time only while it is on", () => {
+    mocks.user = { ...mocks.user, telegramDailyPrompt: false, telegramWatchlistDigest: false };
+    render(<FeaturesForm />);
+    expect(screen.queryByLabelText(/send at/i)).toBeNull();
+  });
+
+  it("saves a complete time and ignores one still being typed", () => {
+    mocks.user = {
+      ...mocks.user,
+      telegramDailyPrompt: false,
+      telegramWatchlistDigest: true,
+      telegramWatchlistDigestTime: "08:00",
+    };
+    render(<FeaturesForm />);
+    fireEvent.change(timeInput(), { target: { value: "07:" } });
+    expect(mocks.savePreference).not.toHaveBeenCalled();
+    fireEvent.change(timeInput(), { target: { value: "07:30" } });
+    expect(mocks.savePreference).toHaveBeenCalledWith("telegramWatchlistDigestTime", "07:30", "08:00", expect.any(String));
+  });
+});

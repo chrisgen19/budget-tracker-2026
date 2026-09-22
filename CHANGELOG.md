@@ -14,6 +14,16 @@ resolve inside the workspace instead.
 Denied compound calls now report the executable in each segment without exposing their arguments,
 so a future compatibility gap identifies the missing tool instead of only the first command.
 
+## 2026-09-22 - Watchlist alerts on Telegram
+
+A daily Telegram digest of the Watchlist findings that need action: bills and card payments due or
+missed, untracked card interest, subscriptions about to renew, expected income that has not
+arrived, a projected cash shortfall, and budget limits reached or forecast. Off by default and
+switched on, with its own send time, in Profile > Features, for the account that owns the bot.
+One message a day at most, only findings not sent before, and nothing at all on a day with
+nothing new. Resolving or snoozing a finding on the Watchlist silences it on Telegram too, and the
+message links straight to the Watchlist tab. Spending-pattern observations stay in the app.
+
 ## 2026-09-22 - Claude reviews use an explicit tool boundary
 
 The automatic reviewer now separates sandbox containment from tool authorization. Sandboxed Bash

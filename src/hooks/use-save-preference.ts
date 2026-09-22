@@ -24,6 +24,8 @@ export type SavablePreference =
   | "emailBillReminders"
   | "telegramDailyPrompt"
   | "telegramDailyPromptTime"
+  | "telegramWatchlistDigest"
+  | "telegramWatchlistDigestTime"
   | "watchlistOutlierRatio"
   | "watchlistLargeAmount"
   | "watchlistDuplicateAlerts";
