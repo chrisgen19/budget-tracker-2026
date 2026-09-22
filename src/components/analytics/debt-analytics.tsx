@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { AlertTriangle, CreditCard, Percent, TrendingDown } from "lucide-react";
 import { maskCurrency } from "@/lib/utils";
-import { describeCardInterest } from "@/lib/card-interest";
+import { describeCardInterest, type OverallUtilization } from "@/lib/card-interest";
 import { useDebtAnalytics, type DebtAnalytics, type DebtStrategyView } from "@/hooks/use-debt-analytics";
 
 interface DebtAnalyticsProps {
@@ -73,11 +73,12 @@ export function DebtAnalyticsPanel({ from, to, currency, hideAmounts }: DebtAnal
 function Headline({ data, money }: { data: DebtAnalytics; money: (n: number) => string }) {
   const interest = describeCardInterest(data.interest);
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       <div className="card p-5">
         <p className="text-sm text-warm-400">Owed across all cards</p>
         <p className="font-serif text-3xl text-warm-700">{money(data.totalOwed)}</p>
       </div>
+      <Utilization overall={data.overallUtilization} />
       <div className="card p-5">
         <p className="text-sm text-warm-400">Interest and fees this period</p>
         {/* "Not tracked" rather than zero: see describeCardInterest. */}
@@ -88,6 +89,43 @@ function Headline({ data, money }: { data: DebtAnalytics; money: (n: number) => 
           <p className="mt-1 text-xs text-warm-400">Log interest on each card so the balances stay honest.</p>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Utilization across every card at once: total owed over total limit.
+ *
+ * The figure a scoring model reads, and the one thing the per-card column beside it cannot say.
+ * Not masked by Hide Amounts: it is a percentage, and on its own it discloses nothing without the
+ * limit beside it, which is masked. `/cards` applies the same rule to each card's own figure.
+ *
+ * Deliberately unclamped, matching `utilizationOf`, so being over the limit does not render
+ * identically to sitting exactly on it.
+ */
+export function Utilization({ overall }: { overall: OverallUtilization | null }) {
+  return (
+    <div className="card p-5">
+      <p className="text-sm text-warm-400">Used across all cards</p>
+      {overall === null ? (
+        <>
+          {/* Never 0%: no limit recorded is a question the data cannot answer, not an answer. */}
+          <p className="font-serif text-3xl text-warm-700">Not set</p>
+          <p className="mt-1 text-xs text-warm-400">Add a credit limit to a card to see how much of it is in use.</p>
+        </>
+      ) : (
+        <>
+          <p className="font-serif text-3xl text-warm-700">{overall.percent}%</p>
+          {overall.omitted > 0 && (
+            // Both sides of the ratio use the counted cards only, so the figure must not imply it
+            // covers the ones left out.
+            <p className="mt-1 text-xs text-warm-400">
+              Across {overall.counted} {overall.counted === 1 ? "card" : "cards"} with a limit set.{" "}
+              {overall.omitted} {overall.omitted === 1 ? "card has" : "cards have"} none.
+            </p>
+          )}
+        </>
+      )}
     </div>
   );
 }

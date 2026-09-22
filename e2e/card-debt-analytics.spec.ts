@@ -235,9 +235,14 @@ test.describe("card debt analytics", () => {
 
       const owed = page.locator("div", { has: page.getByText("Owed across all cards") }).last();
       await expect(owed).toContainText(/[\d,]+\.\d{2}/);
-      // Per card, in the table. There is no all-cards figure to assert: see the report.
+      // Per card, in the table.
       const row = page.getByRole("row").filter({ hasText: /%/ }).first();
       await expect(row).toBeVisible();
+
+      // And across all cards (#379). A percentage, so Hide Amounts deliberately leaves it alone:
+      // on its own it discloses nothing without the limit beside it, which is masked.
+      const used = page.locator("div", { has: page.getByText("Used across all cards") }).last();
+      await expect(used).toContainText(/\d+(\.\d+)?%|Not set/);
 
       // Hide Amounts is a database preference, so a fresh load must honour it.
       await prisma.user.update({ where: { id: user!.id }, data: { hideAmounts: true } });
@@ -245,6 +250,9 @@ test.describe("card debt analytics", () => {
       await expect(page.getByText("Owed across all cards")).toBeVisible();
       await expect(owed).toContainText("••••••");
       await expect(owed).not.toContainText(/[\d,]+\.\d{2}/);
+      // The percentage is not money and must survive the mask, or the tile reads as broken.
+      await expect(page.locator("div", { has: page.getByText("Used across all cards") }).last())
+        .toContainText(/\d+(\.\d+)?%|Not set/);
     } finally {
       await prisma.user.update({ where: { id: user!.id }, data: before! });
     }

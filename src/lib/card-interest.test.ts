@@ -3,6 +3,7 @@ import { DEFAULT_CATEGORIES } from "@/lib/default-categories";
 import {
   INTEREST_CATEGORY_NAME,
   describeCardInterest,
+  overallUtilizationOf,
   utilizationOf,
 } from "@/lib/card-interest";
 
@@ -77,5 +78,68 @@ describe("utilizationOf", () => {
 
   it("goes below zero when the card holds a credit", () => {
     expect(utilizationOf(-500, 48000)).toBeLessThan(0);
+  });
+});
+
+describe("overallUtilizationOf", () => {
+  it("is one sum over another, not the mean of each card's percentage", () => {
+    // 10% of 100,000 and 90% of 1,000: averaging the percentages says 50% used, which is nonsense.
+    const overall = overallUtilizationOf([
+      { balance: 10_000, creditLimit: 100_000 },
+      { balance: 900, creditLimit: 1_000 },
+    ]);
+    expect(overall?.percent).toBeCloseTo(10.8, 1);
+    expect(overall?.counted).toBe(2);
+  });
+
+  /**
+   * The failure this function exists to prevent. Summing every balance while summing only the
+   * known limits inflates the ratio, and inflates it in the direction that provokes a payment
+   * nobody needed to make.
+   */
+  it("drops a card with no limit from both sides, never from one", () => {
+    const overall = overallUtilizationOf([
+      { balance: 25_000, creditLimit: 100_000 },
+      { balance: 50_000, creditLimit: null },
+    ]);
+    expect(overall?.percent).toBe(25);
+    expect(overall?.counted).toBe(1);
+    expect(overall?.omitted).toBe(1);
+  });
+
+  /** A paid-off card still offers its limit, so leaving it out would overstate the ratio. */
+  it("counts a card that owes nothing, which is what keeps the figure honest", () => {
+    const overall = overallUtilizationOf([
+      { balance: 25_000, creditLimit: 50_000 },
+      { balance: 0, creditLimit: 50_000 },
+    ]);
+    expect(overall?.percent).toBe(25);
+    expect(overall?.counted).toBe(2);
+  });
+
+  /** No limit anywhere is a question the data cannot answer, and 0% is an answer. */
+  it("is null when no card carries a limit", () => {
+    expect(overallUtilizationOf([{ balance: 25_000, creditLimit: null }])).toBeNull();
+    expect(overallUtilizationOf([])).toBeNull();
+  });
+
+  /** Same rule as utilizationOf: a zero limit would divide to Infinity. */
+  it("ignores a zero limit rather than dividing by it", () => {
+    const overall = overallUtilizationOf([
+      { balance: 100, creditLimit: 0 },
+      { balance: 25_000, creditLimit: 100_000 },
+    ]);
+    expect(overall?.percent).toBe(25);
+    expect(overall?.omitted).toBe(1);
+  });
+
+  /** Not clamped, for the reason utilizationOf is not: over the limit is the useful reading. */
+  it("goes above 100 when the portfolio is over its limits", () => {
+    expect(overallUtilizationOf([{ balance: 52_000, creditLimit: 48_000 }])?.percent).toBeGreaterThan(100);
+  });
+
+  it("agrees with utilizationOf on a single card", () => {
+    const one = { balance: 18_400, creditLimit: 48_000 };
+    expect(overallUtilizationOf([one])?.percent).toBe(utilizationOf(one.balance, one.creditLimit));
   });
 });

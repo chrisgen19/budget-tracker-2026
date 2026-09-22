@@ -63,3 +63,54 @@ export const utilizationOf = (balance: number, creditLimit: number | null): numb
   if (creditLimit === null || creditLimit === 0) return null;
   return Math.round((balance / creditLimit) * 1000) / 10;
 };
+
+/** One card's contribution to the portfolio ratio. Archived cards count: they still owe. */
+export interface UtilizationCard {
+  balance: number;
+  creditLimit: number | null;
+}
+
+export interface OverallUtilization {
+  /** Total balance over total limit, as a percentage, across the counted cards only. */
+  percent: number;
+  /** How many cards the ratio covers. */
+  counted: number;
+  /** How many cards were left out of both sides for having no usable limit. */
+  omitted: number;
+}
+
+/**
+ * Utilization across every card at once, which is the figure a scoring model actually reads.
+ *
+ * Not the mean of each card's percentage, and not the worst card. A portfolio ratio is one sum over
+ * another: two cards at 10% of 100,000 and 90% of 1,000 are nowhere near 50% used, and averaging
+ * the percentages says they are.
+ *
+ * **Cards with no usable limit are dropped from both sides, never from one.** This is the whole of
+ * the arithmetic worth getting right. Summing every balance while summing only the known limits
+ * inflates the ratio, and it inflates it in the dangerous direction: utilization is a number people
+ * act on, so reporting a portfolio as worse used than it is provokes a payment that was not needed.
+ * The count of what was left out rides along so the UI can say which cards the figure covers rather
+ * than implying it covers them all.
+ *
+ * `null` when no card carries a limit, for the same reason `utilizationOf` is: that is a question
+ * the data cannot answer, and 0% is an answer.
+ */
+export const overallUtilizationOf = (cards: readonly UtilizationCard[]): OverallUtilization | null => {
+  // The same test `utilizationOf` applies per card, so the two cannot disagree about which cards
+  // are measurable: a zero limit divides to Infinity there and must not be summed into a total here.
+  const measurable = cards.filter((card) => card.creditLimit !== null && card.creditLimit !== 0);
+  if (measurable.length === 0) return null;
+
+  const limit = measurable.reduce((sum, card) => sum + (card.creditLimit ?? 0), 0);
+  // Every limit negative would divide by a negative total and flip the sign of a real ratio. No
+  // card should have one, and a figure that inverts under bad data is worse than no figure.
+  if (limit <= 0) return null;
+
+  const balance = measurable.reduce((sum, card) => sum + card.balance, 0);
+  return {
+    percent: Math.round((balance / limit) * 1000) / 10,
+    counted: measurable.length,
+    omitted: cards.length - measurable.length,
+  };
+};
