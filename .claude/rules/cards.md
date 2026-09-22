@@ -154,6 +154,18 @@ Moved out of `AGENTS.md` verbatim when that file reached the size Codex silently
   And a payment made **before** a due date is credited against that due date
   (`paidThisCycle`, counted from the day after `previousDueDate`): it has already left cash, so
   taking the planned amount again on the due date paid one cycle twice
+- **With cards on, the forecast's opening balance is what the bank held -- decided, not assumed.**
+  The rebase above is correct only if `users.forecast_opening_balance` is the figure a banking app
+  shows on that date, because a card purchase made *before* the opening date has not left the
+  bank until the card is paid, and it is paid off once through the card's events. A review (#373)
+  proposed adding the card debt that existed on the opening date back into cash, which is right
+  only if the entered figure already had that debt taken off; applied to a bank balance it ends
+  the forecast too high by exactly that debt. The owner confirmed the bank-balance reading, so the
+  fix was to the **wording**: with cards on, the form asks "Set your bank balance" and says not to
+  take card debt off, and the metric reads "Cash in the bank today". The schema comment calling
+  it a *tracked* baseline predates the rebase and still describes the cards-off case.
+  `verify-forecast-card-payments.ts` pins it with a pre-opening purchase, confirmed to fail
+  against the proposed change
 - **The Debt tab reads; `/cards` writes.** `/analytics`'s Debt tab (`/api/analytics/debt`,
   `DebtAnalyticsPanel`) holds only what a single card's page cannot say -- the total owed and its
   trend, interest across every card, and avalanche against snowball -- and has no input field at

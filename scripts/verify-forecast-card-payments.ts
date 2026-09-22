@@ -41,6 +41,25 @@ import { encode } from "next-auth/jwt";
 const prisma = new PrismaClient();
 const BASE = process.env.BASE_URL ?? "http://127.0.0.1:3111";
 
+/**
+ * Refuse to send a session over cleartext to anything but this machine.
+ *
+ * The same guard `verify-telegram-miniapp.ts`, `verify-transaction-update.ts`,
+ * `verify-mcp-bill-writes.ts` and `verify-label-removal-stamps.ts` carry. `BASE_URL` is an
+ * environment variable, so pointing it at a staging host over plain `http:` is one paste away, and
+ * what travels here is worse than theirs: a signed session for an **ADMIN**, valid until the JWT
+ * expires. Deleting the throwaway user afterwards does not revoke it. Checked before any fixture is
+ * written or token minted, so a refused run leaves nothing behind.
+ */
+const requireSafeBaseUrl = (raw: string): void => {
+  const url = new URL(raw);
+  const loopback = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
+  if (url.protocol === "https:" || (url.protocol === "http:" && loopback)) return;
+  throw new Error(
+    `BASE_URL must use https outside this machine; got ${url.protocol}//${url.hostname}`
+  );
+};
+
 let failures = 0;
 const check = (name: string, ok: boolean, detail = "") => {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` -- ${detail}` : ""}`);
@@ -68,10 +87,12 @@ interface ForecastResponse {
 }
 
 async function main() {
+  requireSafeBaseUrl(BASE);
   const secret = process.env.NEXTAUTH_SECRET;
   if (!secret) throw new Error("NEXTAUTH_SECRET is required to mint a session cookie");
   await firstScenario(secret);
   await cycleAndArchivedScenario(secret);
+  await preOpeningDebtScenario(secret);
 }
 
 async function firstScenario(secret: string) {
@@ -282,6 +303,64 @@ async function cycleAndArchivedScenario(secret: string) {
       `expected 39,000.00, got ${money(end)}`);
   } finally {
     await prisma.creditPayment.deleteMany({ where: { userId: user.id } });
+    await prisma.transaction.deleteMany({ where: { userId: user.id } });
+    await prisma.creditAccount.deleteMany({ where: { userId: user.id } });
+    await prisma.category.deleteMany({ where: { userId: user.id } });
+    await prisma.user.delete({ where: { id: user.id } });
+  }
+}
+
+/**
+ * The opening balance is **what the bank held**, and a card debt older than it is paid exactly once.
+ *
+ * A reviewer proposed adding the card debt that existed on the opening date back into cash, which
+ * is right only if the opening figure had that debt already taken off. It is decided otherwise: the
+ * form asks for the bank balance, the number a banking app shows, and a purchase made before the
+ * opening date has not left the bank until the card is paid. This pins that decision, so the
+ * proposed change fails here instead of shipping: it would end this account at 50,000, not 40,000.
+ */
+async function preOpeningDebtScenario(secret: string) {
+  const user = await prisma.user.create({
+    data: {
+      email: `fcp3-${Date.now()}@test.local`, name: "Forecast Cards 3", password: "x", role: "ADMIN",
+      timezoneOffset: 0, forecastOpeningBalance: 50_000, forecastOpeningBalanceDate: at(dayFromToday(-30)),
+    },
+  });
+
+  try {
+    const category = await prisma.category.create({
+      data: { name: `FCP3 Spend ${Date.now()}`, type: "EXPENSE", icon: "ShoppingBag", color: "#E07C4F", userId: user.id },
+    });
+    const card = await prisma.creditAccount.create({
+      data: {
+        name: "FCP3 Card", userId: user.id, openingBalance: 0, openingBalanceDate: at(dayFromToday(-90)),
+        dueDay: Number(dayFromToday(3).slice(8, 10)), plannedPayment: 10_000,
+      },
+    });
+    // Bought forty days ago: ten days *before* the opening balance was taken, never paid since.
+    await prisma.transaction.create({
+      data: {
+        amount: 10_000, type: "EXPENSE", description: "FCP3 old purchase", date: at(dayFromToday(-40)),
+        categoryId: category.id, userId: user.id, creditAccountId: card.id,
+      },
+    });
+
+    const token = await encode({
+      token: { id: user.id, role: user.role, name: user.name, email: user.email, sub: user.id },
+      secret,
+    });
+    const response = await fetch(`${BASE}/api/cash-flow-forecast?days=30&tz=0`, {
+      headers: { cookie: `next-auth.session-token=${token}` },
+    });
+    if (!response.ok) throw new Error(`Forecast request failed: ${response.status}`);
+    const forecast = (await response.json()) as ForecastResponse;
+
+    check("[opening] cash today is the bank balance entered", near(forecast.trackedBalanceToday ?? 0, 50_000),
+      `got ${money(forecast.trackedBalanceToday ?? 0)}`);
+    const end = forecast.daily?.at(-1)?.projectedBalance ?? 0;
+    check("[opening] a card debt older than the opening balance is paid once", near(end, 40_000),
+      `expected 40,000.00, got ${money(end)}`);
+  } finally {
     await prisma.transaction.deleteMany({ where: { userId: user.id } });
     await prisma.creditAccount.deleteMany({ where: { userId: user.id } });
     await prisma.category.deleteMany({ where: { userId: user.id } });
