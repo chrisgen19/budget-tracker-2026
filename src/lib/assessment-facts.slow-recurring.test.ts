@@ -208,3 +208,30 @@ describe("monthly charges are unchanged", () => {
     expect(item?.established ?? false).toBe(false);
   });
 });
+
+describe("ranking mixes window and history fairly", () => {
+  /**
+   * Totals stopped sharing a span once slow items came from up to three years of history, so ranking
+   * by them let a cheap, long-running quarterly charge (300 twelve times: 3,600) outrank fifteen
+   * subscriptions at 500 a month (3,000 each over the window) and push one out of the top 15. That
+   * cut is not only display: it is the list the cash forecast projects claims from. Ranked by
+   * monthly cost, the quarterly charge (about 100 a month) is the one left out.
+   */
+  it("keeps the costliest charges per month in the top fifteen", () => {
+    const window = Array.from({ length: 15 }, (_, i) =>
+      ["2026-03-03", "2026-04-03", "2026-05-03", "2026-06-03", "2026-07-03", "2026-08-03"].map((day) =>
+        tx(day, 500, `Subscription ${i + 1}`))).flat();
+    const quarterlyDays = Array.from({ length: 12 }, (_, i) => {
+      const date = new Date(Date.UTC(2023, 8, 10) + i * 91 * 86_400_000);
+      return date.toISOString().slice(0, 10);
+    });
+    const quarterly = history("Cloud Backup", quarterlyDays.map((day) => [day, 300]));
+
+    const facts = factsOn("2026-08-10", quarterly, window);
+    const names = facts.recurring.items.map((item) => item.description);
+    expect(names).toHaveLength(15);
+    expect(names.filter((name) => name.startsWith("Subscription"))).toHaveLength(15);
+    expect(names).not.toContain("Cloud Backup");
+  });
+});
+

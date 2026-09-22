@@ -835,7 +835,11 @@ const buildRecurringItems = (
     if (item) byKey.set(key, item);
   }
 
-  return [...byKey.values()].sort((a, b) => b.total - a.total);
+  // By monthly cost, not by `total`. Totals no longer share a span -- a slow item's covers up to
+  // `RECURRING_HISTORY_MONTHS`, a fast one's the window -- so ranking by them let a long-running
+  // quarterly charge outrank a costlier monthly one. The order matters beyond display: the top 15
+  // are what the cash forecast projects as claims, and what the per-kind caps keep when they bite.
+  return [...byKey.values()].sort((a, b) => monthlyEquivalent(b) - monthlyEquivalent(a));
 };
 
 /**
@@ -1487,7 +1491,7 @@ interface AnomalyContext {
   /**
    * Every established recurring charge, uncapped.
    *
-   * `recurring.items` is the presentation cut: 15 rows ordered by total spend. Detection has to
+   * `recurring.items` is the presentation cut: 15 rows ordered by monthly cost. Detection has to
    * read the whole set, or a charge ranked 16th by total is never asked whether it has stopped,
    * renewed or changed price -- and total spend ranks a daily coffee above a monthly subscription.
    */
@@ -2306,7 +2310,7 @@ const detectRecurringAnomalies = (ctx: AnomalyContext): AssessmentAnomaly[] => {
   }
 
   // Collected per kind so the cap lands on what gets said rather than on which charges are asked.
-  // Charges arrive ordered by total spend, so a cap that bites keeps the costliest of each kind.
+  // Charges arrive ordered by monthly cost, so a cap that bites keeps the costliest of each kind.
   const ended: AssessmentAnomaly[] = [];
   const renewing: AssessmentAnomaly[] = [];
   const repriced: AssessmentAnomaly[] = [];

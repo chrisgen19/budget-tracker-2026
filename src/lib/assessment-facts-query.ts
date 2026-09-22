@@ -74,7 +74,10 @@ const readHistoryCharges = async (
 ): Promise<Map<string, HistoryCharge[]>> => {
   const [year, month] = today.split("-").map(Number);
   const since = new Date(Date.UTC(year, month - 1 - RECURRING_HISTORY_MONTHS, 1) + tzOffset * 60_000);
-  const where = { userId, type: "EXPENSE" as const, date: { gte: since } };
+  // Up to the end of the user's today, inclusive. A charge dated in the future has not happened, so
+  // it is not a sighting: counting it could establish a subscription before its second charge and
+  // put its "last seen" ahead of today. The rule every card read settled on too.
+  const where = { userId, type: "EXPENSE" as const, date: { gte: since, lte: localDayEnd(today, tzOffset * 60_000) } };
 
   const counts = await prisma.transaction.groupBy({ by: ["description"], where, _count: { _all: true } });
   const perKey = new Map<string, { total: number; raw: string[] }>();
