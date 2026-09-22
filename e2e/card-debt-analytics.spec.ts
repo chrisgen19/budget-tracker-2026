@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Browser, type Page } from "@playwright/test";
 import { PrismaClient, type UserRole } from "@prisma/client";
 import { encode } from "next-auth/jwt";
 
@@ -53,12 +53,45 @@ const admin = () =>
 const nonAdmin = () =>
   prisma.user.findFirst({ where: { role: { not: "ADMIN" } }, select: { id: true, role: true, name: true, email: true } });
 
+/**
+ * Open each route once before the assertions start.
+ *
+ * Against a dev server every route is compiled on first request, and `/analytics` is heavy enough
+ * that the compile alone outruns the 5s expect timeout. Without this, a cold `.next` failed five of
+ * these tests on the first run and none on the second, which is the worst way for a suite to
+ * behave: it reports the build, not the code. Warming costs one page load and makes the result the
+ * same whether or not someone happened to have the app open already.
+ */
+const warmRoutes = async (browser: Browser, cardId: string) => {
+  const user = await admin();
+  if (!user) return;
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage();
+    await signIn(page, user);
+    // `?tab=debt` rather than bare `/analytics`: the Debt panel is the only thing that fetches
+    // `/api/analytics/debt`, so warming the default Reports tab left that route to be compiled by
+    // whichever test reached it first. That was invisible in a full run, where an earlier test
+    // happened to pay it, and failed the moment this file was run with `-g` or sharded.
+    for (const path of [`/cards/${cardId}`, "/analytics?tab=debt"]) {
+      await page.goto(`${BASE}${path}`, { waitUntil: "networkidle", timeout: 180_000 });
+    }
+  } finally {
+    await context.close();
+  }
+};
+
 test.describe("card debt analytics", () => {
   test.skip(!process.env.NEXTAUTH_SECRET, "Set NEXTAUTH_SECRET (the dev server's own)");
 
-  test.beforeAll(async () => {
+  test.beforeAll(async ({ browser }) => {
+    const owner = await admin();
+    if (!owner) return;
+    // Scoped to the account the tests sign in as. Any active card would do for the arithmetic, but
+    // a card belonging to someone else renders on no page these tests can open, and would leave
+    // every assertion here passing against a panel that never showed it.
     const found = await prisma.creditAccount.findFirst({
-      where: { isActive: true },
+      where: { isActive: true, userId: owner.id },
       select: {
         id: true,
         userId: true,
@@ -76,6 +109,8 @@ test.describe("card debt analytics", () => {
       minimumPaymentFloor: found.minimumPaymentFloor,
       plannedPayment: found.plannedPayment,
     };
+    await warmRoutes(browser, found.id);
+
     // Start from the withheld state, whatever the card happened to hold.
     await prisma.creditAccount.update({
       where: { id: found.id },
@@ -235,9 +270,17 @@ test.describe("card debt analytics", () => {
 
       const owed = page.locator("div", { has: page.getByText("Owed across all cards") }).last();
       await expect(owed).toContainText(/[\d,]+\.\d{2}/);
-      // Per card, in the table. There is no all-cards figure to assert: see the report.
+      // Per card, in the table.
       const row = page.getByRole("row").filter({ hasText: /%/ }).first();
       await expect(row).toBeVisible();
+
+      // And across all cards (#379). A percentage, so Hide Amounts deliberately leaves it alone:
+      // on its own it discloses nothing without the limit beside it, which is masked.
+      const used = page.locator("div", { has: page.getByText("Used across all cards") }).last();
+      // A real percentage, not "Not set": that is what a null aggregate renders, so accepting it
+      // would let this pass on exactly the regression it exists to catch. The card is given a
+      // limit above, so the figure must be there.
+      await expect(used).toContainText(/\d+(\.\d+)?%/);
 
       // Hide Amounts is a database preference, so a fresh load must honour it.
       await prisma.user.update({ where: { id: user!.id }, data: { hideAmounts: true } });
@@ -245,6 +288,9 @@ test.describe("card debt analytics", () => {
       await expect(page.getByText("Owed across all cards")).toBeVisible();
       await expect(owed).toContainText("••••••");
       await expect(owed).not.toContainText(/[\d,]+\.\d{2}/);
+      // The percentage is not money and must survive the mask, or the tile reads as broken.
+      await expect(page.locator("div", { has: page.getByText("Used across all cards") }).last())
+        .toContainText(/\d+(\.\d+)?%/);
     } finally {
       await prisma.user.update({ where: { id: user!.id }, data: before! });
     }
@@ -277,7 +323,7 @@ test.describe("card debt analytics", () => {
     await signIn(page, user!);
 
     const forecastable = await prisma.creditAccount.findFirst({
-      where: { isActive: true, dueDay: { not: null }, billId: null },
+      where: { isActive: true, dueDay: { not: null }, billId: null, userId: user!.id },
       select: { id: true, name: true },
     });
     test.skip(!forecastable, "No card with a due day and no linked bill");
@@ -310,7 +356,7 @@ test.describe("card debt analytics", () => {
 
       // A card linked to a bill already emits a `bill` event; counting it here too would double it.
       const linked = await prisma.creditAccount.findMany({
-        where: { isActive: true, billId: { not: null } },
+        where: { isActive: true, billId: { not: null }, userId: user!.id },
         select: { name: true },
       });
       for (const card of linked) {
@@ -318,7 +364,7 @@ test.describe("card debt analytics", () => {
       }
 
       // A card with no due day has no honest date to sit on, so it is skipped and said so.
-      const undated = await prisma.creditAccount.count({ where: { isActive: true, dueDay: null } });
+      const undated = await prisma.creditAccount.count({ where: { isActive: true, dueDay: null, userId: user!.id } });
       if (undated > 0) {
         expect(JSON.stringify(body.assumptions)).toMatch(/due day/i);
       }
