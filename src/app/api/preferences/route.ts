@@ -31,6 +31,8 @@ export async function GET() {
       emailBillReminders: true,
       telegramDailyPrompt: true,
       telegramDailyPromptTime: true,
+      telegramWatchlistDigest: true,
+      telegramWatchlistDigestTime: true,
       mcpWritesEnabledUntil: true,
       watchlistOutlierRatio: true,
       watchlistLargeAmount: true,
@@ -52,6 +54,8 @@ export async function GET() {
     emailBillReminders: user?.emailBillReminders ?? false,
     telegramDailyPrompt: user?.telegramDailyPrompt ?? false,
     telegramDailyPromptTime: user?.telegramDailyPromptTime ?? "20:00",
+    telegramWatchlistDigest: user?.telegramWatchlistDigest ?? false,
+    telegramWatchlistDigestTime: user?.telegramWatchlistDigestTime ?? "08:00",
     mcpWritesEnabledUntil: user?.mcpWritesEnabledUntil?.toISOString() ?? null,
     watchlistOutlierRatio: user?.watchlistOutlierRatio ?? 3,
     watchlistLargeAmount: user?.watchlistLargeAmount ?? null,
@@ -184,6 +188,22 @@ export async function PATCH(request: Request) {
     data.telegramDailyPromptTime = val;
   }
 
+  if ("telegramWatchlistDigest" in body) {
+    data.telegramWatchlistDigest = Boolean(body.telegramWatchlistDigest);
+  }
+
+  if ("telegramWatchlistDigestTime" in body) {
+    const val = body.telegramWatchlistDigestTime;
+    // Same rule and same reason as the evening prompt's time above: compared as a string.
+    if (typeof val !== "string" || !HH_MM.test(val)) {
+      return NextResponse.json(
+        { error: "telegramWatchlistDigestTime must be a zero-padded 24-hour time, e.g. '08:00'" },
+        { status: 400 }
+      );
+    }
+    data.telegramWatchlistDigestTime = val;
+  }
+
   if ("dayNameFormat" in body) {
     const val = body.dayNameFormat;
     if (val !== "FULL" && val !== "SHORT") {
@@ -212,6 +232,8 @@ export async function PATCH(request: Request) {
       emailBillReminders: true,
       telegramDailyPrompt: true,
       telegramDailyPromptTime: true,
+      telegramWatchlistDigest: true,
+      telegramWatchlistDigestTime: true,
       mcpWritesEnabledUntil: true,
     },
   });
@@ -230,6 +252,8 @@ export async function PATCH(request: Request) {
     emailBillReminders: user.emailBillReminders,
     telegramDailyPrompt: user.telegramDailyPrompt,
     telegramDailyPromptTime: user.telegramDailyPromptTime,
+    telegramWatchlistDigest: user.telegramWatchlistDigest,
+    telegramWatchlistDigestTime: user.telegramWatchlistDigestTime,
     mcpWritesEnabledUntil: user.mcpWritesEnabledUntil?.toISOString() ?? null,
   });
 }
