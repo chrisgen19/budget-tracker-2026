@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   promptLogCreateMany: vi.fn(),
   promptLogDeleteMany: vi.fn(),
   sendMessage: vi.fn(),
+  sendWatchlistDigest: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -21,6 +22,8 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/telegram/send", () => ({ sendMessage: mocks.sendMessage }));
+// Covered on its own in `watchlist-digest-send.test.ts`; here only whether the route calls it.
+vi.mock("@/lib/telegram/watchlist-digest-send", () => ({ sendWatchlistDigest: mocks.sendWatchlistDigest }));
 
 import { GET } from "@/app/api/cron/telegram-prompts/route";
 
@@ -30,7 +33,14 @@ const MANILA = -480;
 /** Tuesday 2026-09-01, 12:00Z = Tuesday 20:00 in Manila. */
 const DUE = new Date("2026-09-01T12:00:00.000Z");
 
-const USER = { id: "u1", timezoneOffset: MANILA, telegramDailyPromptTime: "20:00" };
+const USER = {
+  id: "u1",
+  timezoneOffset: MANILA,
+  telegramDailyPrompt: true,
+  telegramDailyPromptTime: "20:00",
+  telegramWatchlistDigest: false,
+  telegramWatchlistDigestTime: "08:00",
+};
 
 const call = (auth = "Bearer test-secret") =>
   GET(new Request("http://localhost/api/cron/telegram-prompts", { headers: { authorization: auth } }));
@@ -50,6 +60,7 @@ beforeEach(() => {
   mocks.promptLogCreateMany.mockResolvedValue({ count: 1 });
   mocks.promptLogDeleteMany.mockResolvedValue({ count: 1 });
   mocks.sendMessage.mockResolvedValue(1);
+  mocks.sendWatchlistDigest.mockResolvedValue("sent");
 });
 
 afterEach(() => {
@@ -203,7 +214,7 @@ describe("scoping to the bot's owner", () => {
     await call();
     expect(mocks.userFindMany.mock.calls[0][0].where).toMatchObject({
       id: "u1",
-      telegramDailyPrompt: true,
+      OR: [{ telegramDailyPrompt: true }, { telegramWatchlistDigest: true }],
     });
   });
 
@@ -211,7 +222,7 @@ describe("scoping to the bot's owner", () => {
     mocks.mcpTokenFindFirst.mockResolvedValue(null);
     const res = await call();
     expect(mocks.sendMessage).not.toHaveBeenCalled();
-    expect(await res.json()).toMatchObject({ promptsSent: 0, owner: null });
+    expect(await res.json()).toMatchObject({ promptsSent: 0, digestsSent: 0, owner: null });
   });
 
   it("sends nothing on a deployment with no bot token at all", async () => {
@@ -281,5 +292,48 @@ describe("the quick-log button", () => {
     delete process.env.TELEGRAM_APP_URL;
     await call();
     expect(mocks.promptLogCreateMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The digest shares this route, its owner scoping and its one-recipient rule, and nothing else:
+ * each has its own switch, its own day, and a failure in one must not cost the other.
+ */
+describe("the Watchlist digest", () => {
+  const DIGEST_ONLY = { ...USER, telegramDailyPrompt: false, telegramWatchlistDigest: true };
+
+  it("runs only for a user who switched it on", async () => {
+    await call();
+    expect(mocks.sendWatchlistDigest).not.toHaveBeenCalled();
+  });
+
+  it("runs without the evening prompt, and sends the prompt nothing", async () => {
+    mocks.userFindMany.mockResolvedValue([DIGEST_ONLY]);
+    const res = await call();
+    expect(mocks.sendWatchlistDigest).toHaveBeenCalledWith(expect.anything(), DIGEST_ONLY, 123456, DUE);
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
+    expect(await res.json()).toMatchObject({ promptsSent: 0, digestsSent: 1 });
+  });
+
+  it("does not count a quiet day as sent", async () => {
+    mocks.userFindMany.mockResolvedValue([DIGEST_ONLY]);
+    mocks.sendWatchlistDigest.mockResolvedValue("nothing-new");
+    expect(await (await call()).json()).toMatchObject({ digestsSent: 0, errors: 0 });
+  });
+
+  it("still sends the evening prompt when the digest fails", async () => {
+    mocks.userFindMany.mockResolvedValue([{ ...USER, telegramWatchlistDigest: true }]);
+    mocks.sendWatchlistDigest.mockRejectedValue(new Error("boom"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await (await call()).json()).toMatchObject({ promptsSent: 1, digestsSent: 0, errors: 1 });
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  /** The same refusal as the prompt: a second id is somebody else, and findings are the owner's. */
+  it("is never sent when the recipient is ambiguous", async () => {
+    mocks.userFindMany.mockResolvedValue([DIGEST_ONLY]);
+    process.env.TELEGRAM_ALLOWED_IDS = "123456,987654";
+    expect((await call()).status).toBe(409);
+    expect(mocks.sendWatchlistDigest).not.toHaveBeenCalled();
   });
 });

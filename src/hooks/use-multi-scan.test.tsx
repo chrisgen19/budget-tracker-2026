@@ -71,6 +71,8 @@ const createWrapper = () => {
             telegramPromptAvailable: false,
             telegramDailyPrompt: false,
             telegramDailyPromptTime: "20:00",
+            telegramWatchlistDigest: false,
+            telegramWatchlistDigestTime: "08:00",
             showDayName: true,
             dayNameFormat: "SHORT",
             emailBillReminders: false,

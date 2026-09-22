@@ -20,6 +20,10 @@ export interface UserInfo {
   telegramDailyPrompt: boolean;
   /** "HH:mm", zero-padded, in this user's own timezone. */
   telegramDailyPromptTime: string;
+  /** The morning Watchlist digest on Telegram, behind the same owner gate as the evening prompt. */
+  telegramWatchlistDigest: boolean;
+  /** "HH:mm", zero-padded, in this user's own timezone. */
+  telegramWatchlistDigestTime: string;
   emailVerified: boolean;
   role: UserRole;
   roleScanEnabled: boolean;
@@ -47,7 +51,7 @@ interface UserContextValue {
 }
 
 const UserContext = createContext<UserContextValue>({
-  user: { name: "", email: "", currency: "PHP", timezoneOffset: -480, receiptScanEnabled: false, transactionLayout: "infinite", transactionAmountAutofocus: true, defaultLabelType: "EXPENSE", showDayName: true, dayNameFormat: "SHORT", emailBillReminders: false, telegramPromptAvailable: false, telegramDailyPrompt: false, telegramDailyPromptTime: "20:00", emailVerified: false, role: "FREE", roleScanEnabled: false, maxUploadFiles: 10, monthlyScanLimit: 0, scansUsedThisMonth: 0, creditCardsEnabled: false, watchlistOutlierRatio: 3, watchlistLargeAmount: null, watchlistDuplicateAlerts: true },
+  user: { name: "", email: "", currency: "PHP", timezoneOffset: -480, receiptScanEnabled: false, transactionLayout: "infinite", transactionAmountAutofocus: true, defaultLabelType: "EXPENSE", showDayName: true, dayNameFormat: "SHORT", emailBillReminders: false, telegramPromptAvailable: false, telegramDailyPrompt: false, telegramDailyPromptTime: "20:00", telegramWatchlistDigest: false, telegramWatchlistDigestTime: "08:00", emailVerified: false, role: "FREE", roleScanEnabled: false, maxUploadFiles: 10, monthlyScanLimit: 0, scansUsedThisMonth: 0, creditCardsEnabled: false, watchlistOutlierRatio: 3, watchlistLargeAmount: null, watchlistDuplicateAlerts: true },
   setUser: () => {},
 });
 
