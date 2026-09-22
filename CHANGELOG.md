@@ -2,6 +2,15 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-22 - Claude's eligibility check works inside the strict tool boundary
+
+The first ordinary review after enabling the explicit tool boundary stopped after six turns when
+its eligibility agent made one compound `gh pr view` call. The reviewer now tells every subagent to
+prefer separate commands and `gh --jq`, pre-approves the read-only `jq` filter, and permits output
+suppression only to `/dev/null`; arbitrary file redirects and command substitution remain denied.
+Denied compound calls now report the executable in each segment without exposing their arguments,
+so a future compatibility gap identifies the missing tool instead of only the first command.
+
 ## 2026-09-22 - Claude reviews use an explicit tool boundary
 
 The automatic reviewer now separates sandbox containment from tool authorization. Sandboxed Bash
