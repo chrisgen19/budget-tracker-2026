@@ -9,7 +9,7 @@ import {
   readTimezoneOffset,
   summariseObservedPayments,
 } from "@/lib/credit-account-queries";
-import { INTEREST_CATEGORY_NAME } from "@/lib/card-interest";
+import { INTEREST_CATEGORY_NAME, overallUtilizationOf } from "@/lib/card-interest";
 import { compareStrategies, minimumDue, type StrategyCard } from "@/lib/debt-payoff";
 import { debtAnalyticsQuerySchema } from "@/lib/validations";
 
@@ -110,6 +110,12 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       totalOwed: Math.round(owing.reduce((sum, card) => sum + card.balance, 0) * 100) / 100,
+      // Over `cards`, not `owing`. A card that owes nothing still offers its limit, and dropping it
+      // would take a real denominator out of the ratio and report the portfolio as worse used than
+      // it is. Archived cards are in for the same reason they are in `totalOwed` and in the per-card
+      // table below: a figure that counted them in one and not the other would contradict itself on
+      // one screen.
+      overallUtilization: overallUtilizationOf(cards),
       owedOverTime,
       // Never logged and none this period are different answers; see `describeCardInterest`.
       interest: { period: Math.round((interest._sum.amount ?? 0) * 100) / 100, everLogged: interestEver > 0 },

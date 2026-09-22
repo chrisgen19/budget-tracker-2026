@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import type { CardInterestFacts } from "@/lib/card-interest";
+import type { CardInterestFacts, OverallUtilization } from "@/lib/card-interest";
 
 export interface DebtStrategyView {
   order: string[];
@@ -24,6 +24,8 @@ export interface DebtCardView {
 
 export interface DebtAnalytics {
   totalOwed: number;
+  /** Across every card at once, or null when no card carries a limit. */
+  overallUtilization: OverallUtilization | null;
   owedOverTime: Array<{ month: string; owed: number }>;
   interest: CardInterestFacts;
   cards: DebtCardView[];

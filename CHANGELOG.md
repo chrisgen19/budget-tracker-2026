@@ -14,6 +14,14 @@ resolve inside the workspace instead.
 Denied compound calls now report the executable in each segment without exposing their arguments,
 so a future compatibility gap identifies the missing tool instead of only the first command.
 
+## 2026-09-22 - Claude's review plugin is reproducibly pinned
+
+The automatic reviewer now installs Anthropic's `code-review` plugin through a trusted local
+marketplace whose upstream `git-subdir` source is pinned to an exact commit. Review behavior can no
+longer change merely because Anthropic's marketplace branch moved. The plugin remains upstream
+rather than being copied into this repository, and advancing the pin now requires a documented,
+reviewable pull request with marketplace validation and a subsequent live application-PR check.
+
 ## 2026-09-22 - Watchlist alerts on Telegram
 
 A daily Telegram digest of the Watchlist findings that need action: bills and card payments due or

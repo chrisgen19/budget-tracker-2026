@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { strategyVerdict } from "@/components/analytics/debt-analytics";
+import { render, screen } from "@testing-library/react";
+import { Utilization, strategyVerdict } from "@/components/analytics/debt-analytics";
 import { compareStrategies } from "@/lib/debt-payoff";
 
 const money = (n: number) => `P${n}`;
@@ -75,3 +76,34 @@ describe("strategyVerdict", () => {
   });
 });
 
+
+describe("Utilization", () => {
+  /**
+   * The whole reason the aggregate is nullable. A portfolio with no limit anywhere is not 0% used,
+   * and a zero here would read as a person using none of their credit.
+   */
+  it("says the limit is not set rather than showing 0%", () => {
+    render(<Utilization overall={null} />);
+    expect(screen.getByText("Not set")).toBeDefined();
+    expect(screen.queryByText("0%")).toBeNull();
+  });
+
+  it("shows the percentage with no caveat when every card has a limit", () => {
+    render(<Utilization overall={{ percent: 38.3, counted: 3, omitted: 0 }} />);
+    expect(screen.getByText("38.3%")).toBeDefined();
+    expect(screen.queryByText(/with a limit set/)).toBeNull();
+  });
+
+  /** Both sides of the ratio use the counted cards only, so it must not imply it covers the rest. */
+  it("names how many cards the figure covers when some were left out", () => {
+    render(<Utilization overall={{ percent: 25, counted: 2, omitted: 1 }} />);
+    expect(screen.getByText(/Across 2 cards with a limit set/)).toBeDefined();
+    expect(screen.getByText(/1 card has none/)).toBeDefined();
+  });
+
+  /** Unclamped, matching utilizationOf: over the limit is the most useful thing it can say. */
+  it("shows over 100% rather than clamping", () => {
+    render(<Utilization overall={{ percent: 112.5, counted: 1, omitted: 0 }} />);
+    expect(screen.getByText("112.5%")).toBeDefined();
+  });
+});
