@@ -209,8 +209,21 @@ jobs:
           # statically analyzed" (tested against 2.1.278), so the substitution route
           # is already closed one layer up. That behaviour is undocumented, this hook
           # does not depend on it, and neither depends on the other.
+          #
+          # The sandbox is a required security boundary for this unattended,
+          # credential-bearing reviewer. `failIfUnavailable` turns a missing or
+          # unusable sandbox into a startup failure instead of Claude Code's default
+          # warning-and-continue behavior. `allowUnsandboxedCommands: false` also
+          # disables the per-command escape hatch, so a command rejected inside the
+          # sandbox cannot be retried on the host. The dependency step above makes
+          # these fail-closed settings operational on the pinned Linux runner.
           settings: |
             {
+              "sandbox": {
+                "enabled": true,
+                "failIfUnavailable": true,
+                "allowUnsandboxedCommands": false
+              },
               "hooks": {
                 "PreToolUse": [
                   {
