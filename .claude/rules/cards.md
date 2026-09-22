@@ -10,6 +10,9 @@ paths:
   - src/lib/debt-payoff.ts
   - src/lib/cash-flow-forecast.ts
   - "src/app/api/cash-flow-forecast/**"
+  - "src/app/api/analytics/debt/**"
+  - src/components/analytics/debt-analytics.tsx
+  - src/hooks/use-debt-analytics.ts
   - "src/app/api/credit-accounts/**"
   - "src/app/api/admin/feature-access/**"
   - "src/app/(app)/cards/**"
@@ -173,3 +176,33 @@ Moved out of `AGENTS.md` verbatim when that file reached the size Codex silently
   it a *tracked* baseline predates the rebase and still describes the cards-off case.
   `verify-forecast-card-payments.ts` pins it with a pre-opening purchase, confirmed to fail
   against the proposed change
+- **The Debt tab reads; `/cards` writes.** `/analytics`'s Debt tab (`/api/analytics/debt`,
+  `DebtAnalyticsPanel`) holds only what a single card's page cannot say -- the total owed and its
+  trend, interest across every card, and avalanche against snowball -- and has no input field at
+  all. Every figure it shows is entered on `/cards`. It is a sibling route rather than a slice of
+  `/api/analytics`, which already carries row-count telemetry, following `/api/cash-flow-forecast`,
+  and it borrows `MAX_ANALYTICS_RANGE_DAYS` through `debtAnalyticsQuerySchema` rather than setting a
+  second span limit that would drift from its siblings'. **Access is gated in three places and all
+  three are needed.** The route opens with `requireCreditCardsUser` (403 `FEATURE_DISABLED`); the
+  tab is not rendered in the bar (`showCards`), since a tab that 403s is worse than none; and the
+  page turns an excluded user's `?tab=debt` into `reports`, because a link from someone with access
+  is a real URL and would otherwise land them on a tab missing from their own bar. Archived cards
+  are included in the total, the same call `sumOwedOnCards` makes: deleting a card with history
+  archives it whatever it still owes. The strategy race (`compareStrategies` in `debt-payoff.ts`)
+  spends the **same monthly pool** the forecast assumes -- planned, else observed, else minimum --
+  so the two cannot disagree about the money available. **The two orderings can stall
+  independently**, and `strategyVerdict` judges each on its own outcome: at 48% APR on 60,000
+  with 2,500 a month, highest-rate-first clears in about eleven years while smallest-balance-first
+  never does, spending the surplus on the small card while the dear one outgrows the pool. Reading
+  a stalled run's zeros as a result once said both orders "come out the same" -- the opposite of
+  the truth, in exactly the case where the order matters most -- so a stalled ordering is named,
+  never compared as a number, and only when both stall is the amount blamed rather than the order.
+  The trend is `owedByMonth`, one forward pass with per-card pointers, over reads bounded at the
+  range's end but not its start (the first month needs all history). The bound is only safe
+  because the **last point is measured at `to` too**, not at the end of `to`'s month: a range
+  ending on the 15th asks what was owed by the 15th, and measuring at the 30th while the reads
+  stopped at the 15th left the second half of the month out of a point labelled with all of it.
+  Its month cap `MAX_DEBT_TREND_MONTHS` is derived from `MAX_ANALYTICS_RANGE_DAYS`, never written
+  by hand: a hand-picked 60 truncated a valid ten-year range half-way with nothing saying so. Its interest window uses the app-wide `Date.UTC(...) + tzOffset * 60000`: bare
+  `T00:00:00Z` bounds are UTC's day, and in Manila a charge logged at 07:00 on the 1st would land in
+  the previous month

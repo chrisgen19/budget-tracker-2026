@@ -35,4 +35,28 @@ describe("AnalyticsTabBar", () => {
       expect(tab.className).toContain("min-h-11");
     }
   });
+
+  /**
+   * `/analytics` is open to everyone; cards are admin-only until an admin flips the switch. A Debt
+   * tab that renders and then answers 403 is worse than no tab, so it is not rendered at all.
+   */
+  it("hides the Debt tab from a user without credit card access", () => {
+    render(<AnalyticsTabBar activeTab="reports" onSelect={vi.fn()} layoutId="t1" />);
+    expect(screen.queryByRole("tab", { name: /debt/i })).toBeNull();
+  });
+
+  it("shows it to a user who has access", () => {
+    render(<AnalyticsTabBar activeTab="reports" onSelect={vi.fn()} layoutId="t2" showCards />);
+    expect(screen.getByRole("tab", { name: /debt/i })).toBeDefined();
+  });
+
+  /** Gating one tab must not cost anyone the rest of the bar. */
+  it("keeps every other tab either way", () => {
+    const { unmount } = render(<AnalyticsTabBar activeTab="reports" onSelect={vi.fn()} layoutId="t3" />);
+    const without = screen.getAllByRole("tab").length;
+    unmount();
+    render(<AnalyticsTabBar activeTab="reports" onSelect={vi.fn()} layoutId="t4" showCards />);
+    expect(screen.getAllByRole("tab").length).toBe(without + 1);
+  });
 });
+

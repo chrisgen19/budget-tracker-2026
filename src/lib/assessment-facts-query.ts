@@ -19,6 +19,7 @@ import {
   resolveFactsWindow,
   DEFAULT_HISTORY_MONTHS,
   DEFAULT_WATCHLIST_THRESHOLDS,
+  detectCardAnomalies,
   detectGoalAnomalies,
   type FactBill,
   type FactTransaction,
@@ -28,6 +29,8 @@ import {
 } from "@/lib/assessment-facts";
 import { getBudgetPerformance } from "@/lib/budget-plans";
 import { getSavingsGoals } from "@/lib/savings-goals";
+import { getCardWatchFacts } from "@/lib/credit-account-queries";
+import { userCanUseCreditCards } from "@/lib/credit-card-access";
 import type { AssessmentFacts, TransactionType } from "@/types";
 
 export interface FactsParams {
@@ -253,11 +256,21 @@ export const collectAssessmentFacts = async (
   // deposit due in March is behind whichever report is open, while a budget plan belongs to one
   // calendar month and cannot be compared against a week or a year.
   const goalFindings = detectGoalAnomalies(await getSavingsGoals(prisma, userId));
+  // Same reasoning as goals, and the same gate the rest of the cards feature uses: a user the
+  // credit cards switch excludes must not be told about cards they cannot open.
+  const cardFindings = (await userCanUseCreditCards(prisma, userId))
+    ? detectCardAnomalies(await getCardWatchFacts(prisma, userId, today, tzOffset))
+    : [];
   const budgetFindings = params.granularity === "monthly" && isCalendarMonth(params.from, params.to)
     ? detectBudgetWatchlistAnomalies(await getBudgetPerformance(userId, params.from.slice(0, 7), tzOffset))
     : [];
-  if (goalFindings.length > 0 || budgetFindings.length > 0) {
-    facts.anomalies = sortAssessmentAnomalies([...facts.anomalies, ...goalFindings, ...budgetFindings]);
+  if (goalFindings.length > 0 || budgetFindings.length > 0 || cardFindings.length > 0) {
+    facts.anomalies = sortAssessmentAnomalies([
+      ...facts.anomalies,
+      ...goalFindings,
+      ...budgetFindings,
+      ...cardFindings,
+    ]);
   }
   // The payload bound goes here rather than in `detectAnomalies`, because *here* is where the list
   // is finally whole: goal and budget findings are merged above, so a bound applied earlier covers

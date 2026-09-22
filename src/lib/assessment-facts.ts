@@ -215,7 +215,12 @@ const RECURRING_RENEWAL_DAYS = 7;
 const RECURRING_LAPSE_CYCLES = 1;
 /** A recurring charge moving this far from its own average is a price change rather than noise. */
 const RECURRING_AMOUNT_CHANGE_PCT = 20;
-/** Bills falling due inside this many days are a claim on cash worth seeing coming. */
+/**
+ * Bills falling due inside this many days are a claim on cash worth seeing coming.
+ *
+ * Shared with the card due-soon finding rather than given a second constant: a card payment is the
+ * same kind of claim on the same cash, and two numbers meaning "soon" drift apart.
+ */
 const DUE_SOON_DAYS = 14;
 /** ...and inside this many, the reminder stops being informational. */
 const DUE_IMMINENT_DAYS = 3;
@@ -1438,6 +1443,13 @@ const ANOMALY_SCOPE: Record<AssessmentAnomalyKind, AssessmentAnomalyScope> = {
   // A projection forward from today. It says nothing about the period on screen, and would be
   // actively wrong attached to one: the bills it counts are ahead of *now*, not ahead of March.
   "cash-shortfall": "outstanding",
+  // What a card owes is true today and is derived from its whole history, never from the window:
+  // a card at 90% of its limit is at 90% whichever month's report happens to be open, and a
+  // balance nobody has logged interest against has been drifting since long before this period.
+  "card-interest-untracked": "outstanding",
+  "card-utilization-high": "outstanding",
+  "card-minimum-only": "outstanding",
+  "card-payment-due-soon": "outstanding",
 };
 
 const anomaly = (
@@ -1632,6 +1644,144 @@ export const detectGoalAnomalies = (goals: SavingsGoalSummary[]): AssessmentAnom
           stateKey: `goal:off-pace:${goal.id}:${goal.targetDate}`,
         });
     });
+
+/** What `detectCardAnomalies` needs to know about one card. Assembled by the loader, never here. */
+export interface CardWatchFacts {
+  id: string;
+  name: string;
+  /** What the card owes today, derived. Nothing at or below zero raises anything. */
+  balance: number;
+  utilization: number | null;
+  apr: number | null;
+  dueDay: number | null;
+  /** Whether any interest or fee has **ever** been logged against this card. */
+  interestEverLogged: boolean;
+  /**
+   * The last `MINIMUM_ONLY_CYCLES` whole months, oldest first, each with everything paid in it. A
+   * month with no payment is present with `paid: 0`, so the run is genuinely consecutive.
+   */
+  recentCycles: { month: string; paid: number; minimumThen: number | null }[];
+  /** The user's calendar day, so "due soon" is measured against their today and not the server's. */
+  today: string;
+}
+
+/**
+ * The utilization a card has to reach before it is worth saying anything.
+ *
+ * Hardcoded rather than a fourth preference. `.claude/rules/assessment.md` settles this: three
+ * thresholds are user settings because no baseline can infer them, and "a second configurable
+ * threshold is a second way for two accounts to disagree about the same rows". 30% is the figure
+ * the scoring agencies publish and is not account-specific in the way lumpy spending is.
+ */
+const HIGH_UTILIZATION_PCT = 30;
+
+/** How many consecutive cycles of paying about the minimum before it reads as a pattern. */
+const MINIMUM_ONLY_CYCLES = 3;
+
+/** Within this much of the minimum counts as paying it. Rounding and a tip should not hide it. */
+const MINIMUM_TOLERANCE = 1.05;
+
+/** Whole days between two calendar days, both `YYYY-MM-DD`. */
+const daysUntil = (from: string, to: string): number =>
+  Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+
+/** The next occurrence of `dueDay` on or after `today`, clamped into a shorter month. */
+const nextDueDate = (today: string, dueDay: number): string => {
+  const [year, month] = today.split("-").map(Number);
+  for (const offset of [0, 1]) {
+    const target = new Date(Date.UTC(year, month - 1 + offset, 1));
+    const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+    const day = Math.min(dueDay, lastDay);
+    const candidate = `${target.getUTCFullYear()}-${String(target.getUTCMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    if (candidate >= today) return candidate;
+  }
+  return today;
+};
+
+/**
+ * What the credit cards are doing that the user would want told rather than found.
+ *
+ * Passed in rather than read here, like `detectGoalAnomalies` and the budget allocations: this
+ * module holds no database access, and that is what keeps every analysis in it unit-testable.
+ *
+ * Only cards that owe something raise anything. A settled card has no utilization worth reporting,
+ * no minimum to be stuck on and no payment to chase.
+ */
+export const detectCardAnomalies = (cards: CardWatchFacts[]): AssessmentAnomaly[] =>
+  cards.filter((card) => card.balance > 0).flatMap((card) => {
+    const findings: AssessmentAnomaly[] = [];
+    const drillDown: AssessmentAnomalyDrillDown = { destination: "cards", cardId: card.id };
+
+    /**
+     * The card is accruing interest that reaches no figure in the app.
+     *
+     * `computeAccountBalance` is `opening + purchases - payments - credits` and knows nothing about
+     * interest, so while none is logged the derived balance drifts below the statement every cycle
+     * and every figure built on it drifts with it. Requires an APR, because without one there is no
+     * evidence the card charges interest at all -- a card paid in full every month should stay
+     * silent rather than be nagged about a cost it does not have.
+     */
+    if (card.apr !== null && card.apr > 0 && !card.interestEverLogged) {
+      findings.push(anomaly("card-interest-untracked", "medium",
+        `No interest has ever been logged on ${card.name}`,
+        `It carries a balance at ${card.apr}% APR, so the bank is charging interest that nothing here records. Until it is logged, what this card is shown as owing drifts further below the real statement every month, and so does every figure derived from it.`,
+        { current: card.balance, drillDown, stateKey: `card:interest-untracked:${card.id}` }));
+    }
+
+    if (card.utilization !== null && card.utilization >= HIGH_UTILIZATION_PCT) {
+      findings.push(anomaly("card-utilization-high", card.utilization >= 90 ? "high" : "medium",
+        `${card.name} is using ${Math.round(card.utilization)}% of its limit`,
+        `Anything above ${HIGH_UTILIZATION_PCT}% of a card's limit counts against you where utilization is scored, and it leaves less room for anything unexpected.`,
+        {
+          current: card.utilization,
+          baseline: HIGH_UTILIZATION_PCT,
+          drillDown,
+          // Bucketed to ten points, so a balance drifting 61% -> 62% does not re-raise a finding
+          // the user has already resolved, while crossing into a new band genuinely does.
+          stateKey: `card:utilization:${card.id}:${Math.floor(card.utilization / 10)}`,
+        }));
+    }
+
+    /**
+     * Paying the minimum is how a balance survives for years. Judged per **month**, not per payment
+     * row: three part-payments inside one month are one month's paying, and counting them as three
+     * cycles fired this on someone who paid three times the minimum. Each of the months must hold a
+     * payment -- a month with none is a missed payment, a different and worse problem that this
+     * finding would describe wrongly -- and each must be within tolerance of a minimum that is known.
+     */
+    const cycles = card.recentCycles;
+    const minimumOnly =
+      cycles.length === MINIMUM_ONLY_CYCLES &&
+      cycles.every((cycle) => cycle.paid > 0 && cycle.minimumThen !== null && cycle.paid <= cycle.minimumThen * MINIMUM_TOLERANCE);
+    if (minimumOnly) {
+      const latest = cycles[cycles.length - 1];
+      findings.push(anomaly("card-minimum-only", "medium",
+        `${card.name} has had about the minimum for ${MINIMUM_ONLY_CYCLES} months running`,
+        `Paying the minimum covers the interest and little else, so the balance barely moves. The card's own page shows what clearing it costs on this and on other payments.`,
+        { current: latest.paid, baseline: latest.minimumThen, drillDown,
+          // Keyed on the latest month, so next month's run is a fresh finding rather than one the
+          // user already dismissed.
+          stateKey: `card:minimum-only:${card.id}:${latest.month}` }));
+    }
+
+    if (card.dueDay !== null) {
+      const due = nextDueDate(card.today, card.dueDay);
+      const days = daysUntil(card.today, due);
+      if (days >= 0 && days <= DUE_SOON_DAYS) {
+        findings.push(anomaly("card-payment-due-soon", "medium",
+          `${card.name} is due ${days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`}`,
+          `It owes a balance and payment is due on ${due}. Nothing here tracks whether a card has been paid, so this is a reminder rather than a record.`,
+          {
+            current: card.balance,
+            drillDown,
+            // Keyed on the occurrence, so paying it and dismissing this does not silence next month.
+            stateKey: `card:due-soon:${card.id}:${due}`,
+          }));
+      }
+    }
+
+    return findings;
+  });
 
 /** A same-named custom/default category cannot be represented by one ledger filter. */
 const categoryDrillDown = (ctx: AnomalyContext, category: string): AssessmentAnomalyDrillDown => {

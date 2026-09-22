@@ -325,6 +325,26 @@ export const budgetPlanInputSchema = z.object({
 
 export type BudgetPlanInput = z.infer<typeof budgetPlanInputSchema>;
 
+/**
+ * The Debt tab's range. Borrows `/api/analytics`'s own span bound rather than setting a second one:
+ * two limits on the same page drift apart, and the tab should refuse exactly what its siblings do.
+ */
+export const debtAnalyticsQuerySchema = z
+  .object({ from: validDateString, to: validDateString })
+  .superRefine((data, context) => {
+    if (data.from > data.to) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "from must not be after to", path: ["from"] });
+      return;
+    }
+    if (analyticsRangeDays(data.from, data.to) > MAX_ANALYTICS_RANGE_DAYS) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Date range cannot exceed ${MAX_ANALYTICS_RANGE_DAYS.toLocaleString()} days`,
+        path: ["to"],
+      });
+    }
+  });
+
 export const analyticsQuerySchema = z.object({
   granularity: z.enum(["weekly", "monthly", "yearly"]),
   from: validDateString,
