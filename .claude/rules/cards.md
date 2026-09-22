@@ -153,7 +153,17 @@ Moved out of `AGENTS.md` verbatim when that file reached the size Codex silently
   purchases from cash, so leaving one out removed its spending with nothing paying it back.
   And a payment made **before** a due date is credited against that due date
   (`paidThisCycle`, counted from the day after `previousDueDate`): it has already left cash, so
-  taking the planned amount again on the due date paid one cycle twice
+  taking the planned amount again on the due date paid one cycle twice. **Only cards the forecast can
+  schedule are rebased.** `scheduleStatus` is the one rule, shared by the events and the route: a
+  card owing money with no due day, or with no plan, no three months of payments and no minimum
+  -- the state every new card starts in -- gets no events, and dropping its purchases from cash
+  with nothing paying them back made its whole debt vanish, ending the forecast too high by that
+  balance. Naming it in the assumptions, which the undated case already did, did not stop that. Such
+  a card stays on the old footing: its purchases stay in the cash reads and its payments stay out
+  of `paymentsMade`. The cash reads use `OR [creditAccountId null, in unscheduled]` rather than
+  `NOT in scheduled`, because SQL `NOT IN` is null for a row with no card and would drop every cash
+  expense. A card's opening debt goes through `openingBalanceAsOf` like every other balance read,
+  so one dated after today is not paid before it exists
 - **With cards on, the forecast's opening balance is what the bank held -- decided, not assumed.**
   The rebase above is correct only if `users.forecast_opening_balance` is the figure a banking app
   shows on that date, because a card purchase made *before* the opening date has not left the

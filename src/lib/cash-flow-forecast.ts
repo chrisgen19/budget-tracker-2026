@@ -114,6 +114,35 @@ export const scheduledForecastEvents = (schedules: ForecastSchedule[], from: str
   return events;
 };
 
+/** Why a card owing money does, or does not, get payment events. */
+export type CardScheduleStatus =
+  | "scheduled"
+  /** Its linked reminder bill emits the payment. */
+  | "billed"
+  /** Nothing owed, so nothing to pay. */
+  | "settled"
+  /** No due day, so there is no date to put a payment on. */
+  | "no-due-day"
+  /** No plan, too little payment history and no minimum terms, so there is no amount. */
+  | "no-amount";
+
+/**
+ * Whether the forecast can place a card's payments, and if not, why.
+ *
+ * One rule, shared by the events and by the route's cash rebase. They have to agree: the route drops
+ * a card's purchases from cash only on the understanding that its events will pay them back, and a
+ * card left without events -- undated, or with no figure to pay -- used to lose its debt from the
+ * forecast entirely. The default state of a new card, with its terms not yet filled in, is one of
+ * those.
+ */
+export const scheduleStatus = (card: ForecastCard): CardScheduleStatus => {
+  if (card.balance <= 0) return "settled";
+  if (card.billId !== null) return "billed";
+  if (card.dueDay === null) return "no-due-day";
+  const figure = card.plannedPayment ?? card.observedMonthly ?? minimumDue(card.balance, card.minimumPct, card.minimumFloor);
+  return figure === null || figure <= 0 ? "no-amount" : "scheduled";
+};
+
 /**
  * What the credit cards will take out of the bank inside the horizon.
  *
@@ -155,7 +184,7 @@ export const cardPaymentEvents = (
   const events: ForecastEvent[] = [];
 
   for (const card of cards) {
-    if (card.billId !== null || card.dueDay === null || card.balance <= 0) continue;
+    if (scheduleStatus(card) !== "scheduled" || card.dueDay === null) continue;
 
     const planned = card.plannedPayment;
     // A function of what is still owed, not one amount: a percentage minimum falls as the balance
@@ -164,8 +193,6 @@ export const cardPaymentEvents = (
     const paymentFor = (owed: number): number | null =>
       planned ?? card.observedMonthly ?? minimumDue(owed, card.minimumPct, card.minimumFloor);
 
-    const first = paymentFor(card.balance);
-    if (first === null || first <= 0) continue;
 
     const basis =
       planned !== null

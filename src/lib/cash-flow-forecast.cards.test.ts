@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCashFlowForecast, cardPaymentEvents, previousDueDate, type ForecastCard } from "@/lib/cash-flow-forecast";
+import { buildCashFlowForecast, cardPaymentEvents, previousDueDate, scheduleStatus, type ForecastCard } from "@/lib/cash-flow-forecast";
 
 const card = (over: Partial<ForecastCard> = {}): ForecastCard => ({
   id: "card_1",
@@ -247,6 +247,41 @@ describe("previousDueDate", () => {
   /** A 31st due day falls on the 30th in a 30-day month. */
   it("clamps into a shorter month", () => {
     expect(previousDueDate(31, "2026-10-10")).toBe("2026-09-30");
+  });
+});
+
+describe("scheduleStatus", () => {
+  it("schedules a card with a date and something to pay", () => {
+    expect(scheduleStatus(card())).toBe("scheduled");
+  });
+
+  /**
+   * The default state of a new card: a due day, a balance, and none of the optional terms yet.
+   * It has no amount, so it cannot be scheduled -- and the route must then keep its purchases in
+   * cash, or its debt vanishes from the forecast.
+   */
+  it("reports a card with no plan, history or minimum as having no amount", () => {
+    expect(scheduleStatus(card({ minimumPct: null, minimumFloor: null }))).toBe("no-amount");
+  });
+
+  it("reports a card with no due day", () => {
+    expect(scheduleStatus(card({ dueDay: null }))).toBe("no-due-day");
+  });
+
+  it("leaves a card paid through its bill to the bill", () => {
+    expect(scheduleStatus(card({ billId: "bill_1" }))).toBe("billed");
+  });
+
+  it("has nothing to schedule for a card that owes nothing", () => {
+    expect(scheduleStatus(card({ balance: 0 }))).toBe("settled");
+  });
+
+  /** The events and the route must agree, so the events skip exactly what the status rules out. */
+  it("emits events for a scheduled card and none for any other", () => {
+    for (const over of [{ dueDay: null }, { minimumPct: null, minimumFloor: null }, { billId: "b" }, { balance: 0 }]) {
+      expect(cardPaymentEvents([card(over)], FROM, TO)).toEqual([]);
+    }
+    expect(cardPaymentEvents([card()], FROM, TO).length).toBeGreaterThan(0);
   });
 });
 

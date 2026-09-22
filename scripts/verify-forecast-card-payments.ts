@@ -93,6 +93,7 @@ async function main() {
   await firstScenario(secret);
   await cycleAndArchivedScenario(secret);
   await preOpeningDebtScenario(secret);
+  await unscheduledScenario(secret);
 }
 
 async function firstScenario(secret: string) {
@@ -360,6 +361,75 @@ async function preOpeningDebtScenario(secret: string) {
     const end = forecast.daily?.at(-1)?.projectedBalance ?? 0;
     check("[opening] a card debt older than the opening balance is paid once", near(end, 40_000),
       `expected 40,000.00, got ${money(end)}`);
+  } finally {
+    await prisma.transaction.deleteMany({ where: { userId: user.id } });
+    await prisma.creditAccount.deleteMany({ where: { userId: user.id } });
+    await prisma.category.deleteMany({ where: { userId: user.id } });
+    await prisma.user.delete({ where: { id: user.id } });
+  }
+}
+
+/**
+ * A card the forecast cannot schedule keeps its debt in the forecast (Codex, on #373).
+ *
+ * The cash rebase drops a card's purchases from cash on the understanding that its payment events
+ * pay them back. A card with no due day, or with a due day but no plan, history or minimum -- the
+ * state every new card starts in -- gets no events, so its debt used to vanish and the forecast
+ * ended too high by exactly its balance. Such a card now stays on the old footing: its purchases
+ * count against cash on the day they were made.
+ *
+ * 50,000 opening cash. Card U (no due day) bought 7,000; card N (due day, no terms) bought 5,000.
+ * Neither is scheduled, so both purchases come off cash now: 38,000, and it stays there.
+ */
+async function unscheduledScenario(secret: string) {
+  const user = await prisma.user.create({
+    data: {
+      email: `fcp4-${Date.now()}@test.local`, name: "Forecast Cards 4", password: "x", role: "ADMIN",
+      timezoneOffset: 0, forecastOpeningBalance: 50_000, forecastOpeningBalanceDate: at(dayFromToday(-30)),
+    },
+  });
+
+  try {
+    const category = await prisma.category.create({
+      data: { name: `FCP4 Spend ${Date.now()}`, type: "EXPENSE", icon: "ShoppingBag", color: "#E07C4F", userId: user.id },
+    });
+    const undated = await prisma.creditAccount.create({
+      data: { name: "FCP4 Undated", userId: user.id, openingBalance: 0, openingBalanceDate: at(dayFromToday(-60)) },
+    });
+    const noTerms = await prisma.creditAccount.create({
+      data: {
+        name: "FCP4 No Terms", userId: user.id, openingBalance: 0, openingBalanceDate: at(dayFromToday(-60)),
+        dueDay: Number(dayFromToday(3).slice(8, 10)),
+      },
+    });
+    for (const [accountId, amount] of [[undated.id, 7_000], [noTerms.id, 5_000]] as const) {
+      await prisma.transaction.create({
+        data: {
+          amount, type: "EXPENSE", description: "FCP4 purchase", date: at(dayFromToday(-10)),
+          categoryId: category.id, userId: user.id, creditAccountId: accountId,
+        },
+      });
+    }
+
+    const token = await encode({
+      token: { id: user.id, role: user.role, name: user.name, email: user.email, sub: user.id },
+      secret,
+    });
+    const response = await fetch(`${BASE}/api/cash-flow-forecast?days=30&tz=0`, {
+      headers: { cookie: `next-auth.session-token=${token}` },
+    });
+    if (!response.ok) throw new Error(`Forecast request failed: ${response.status}`);
+    const forecast = (await response.json()) as ForecastResponse;
+
+    const end = forecast.daily?.at(-1)?.projectedBalance ?? 0;
+    check("[unscheduled] unscheduled cards' spending still leaves the forecast", near(end, 38_000),
+      `expected 38,000.00, got ${money(end)} (50,000 means both debts vanished)`);
+    const cardEvents = (forecast.daily ?? []).flatMap((day) => day.events.filter((event) => event.kind === "card-payment"));
+    check("[unscheduled] and no payment is invented for them", cardEvents.length === 0,
+      `events: ${JSON.stringify(cardEvents.map((event) => event.amount))}`);
+    const said = (forecast.assumptions ?? []).join(" ");
+    check("[unscheduled] both cards are named, with what happened to their spending",
+      said.includes("FCP4 Undated") && said.includes("FCP4 No Terms") && said.includes("on the day they were made"));
   } finally {
     await prisma.transaction.deleteMany({ where: { userId: user.id } });
     await prisma.creditAccount.deleteMany({ where: { userId: user.id } });
