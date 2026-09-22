@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCashFlowForecast, cardPaymentEvents, type ForecastCard } from "@/lib/cash-flow-forecast";
+import { buildCashFlowForecast, cardPaymentEvents, previousDueDate, type ForecastCard } from "@/lib/cash-flow-forecast";
 
 const card = (over: Partial<ForecastCard> = {}): ForecastCard => ({
   id: "card_1",
@@ -11,6 +11,7 @@ const card = (over: Partial<ForecastCard> = {}): ForecastCard => ({
   observedMonthly: null,
   minimumPct: 5,
   minimumFloor: 500,
+  paidThisCycle: 0,
   ...over,
 });
 
@@ -179,3 +180,73 @@ describe("card spending leaves the bank exactly once", () => {
     expect(forecast.days.find((day) => day.date === "2026-10-04")?.projectedBalance).toBe(10000);
   });
 });
+
+describe("a payment already made this cycle", () => {
+  /**
+   * The Codex finding. Paying a planned 5,000 three days early takes it out of cash today, and the
+   * due date then took another 5,000 on top -- the same cycle's payment twice, inventing a crunch in
+   * the report whose output is the lowest balance and the day it falls on.
+   */
+  it("does not take the payment again on the due date", () => {
+    const events = cardPaymentEvents(
+      [card({ balance: 43000, plannedPayment: 5000, dueDay: 25, paidThisCycle: 5000 })],
+      "2026-09-22",
+      "2026-10-31"
+    );
+    expect(events.map((event) => [event.date, event.amount])).toEqual([["2026-10-25", 5000]]);
+  });
+
+  it("takes only what is left of it when part was paid early", () => {
+    const [first] = cardPaymentEvents(
+      [card({ balance: 43000, plannedPayment: 5000, dueDay: 25, paidThisCycle: 2000 })],
+      "2026-09-22",
+      "2026-10-31"
+    );
+    expect([first.date, first.amount]).toEqual(["2026-09-25", 3000]);
+  });
+
+  /** A minimum already met early leaves nothing due on that date. */
+  it("skips a minimum that has already been met", () => {
+    const events = cardPaymentEvents(
+      [card({ balance: 45600, dueDay: 25, paidThisCycle: 2400 })],
+      "2026-09-22",
+      "2026-09-30"
+    );
+    expect(events).toEqual([]);
+  });
+
+  /** Only the next due date can have been paid toward: every later one opens after it. */
+  it("credits the early payment against the next due date only", () => {
+    const events = cardPaymentEvents(
+      [card({ balance: 43000, plannedPayment: 5000, dueDay: 25, paidThisCycle: 5000 })],
+      "2026-09-22",
+      "2026-11-30"
+    );
+    expect(events.map((event) => event.amount)).toEqual([5000, 5000]);
+  });
+});
+
+describe("previousDueDate", () => {
+  it("is last month's due date while this month's is still ahead", () => {
+    expect(previousDueDate(25, "2026-09-22")).toBe("2026-08-25");
+  });
+
+  /** On the due day itself the cycle ending today is still open. */
+  it("is last month's on the due day itself", () => {
+    expect(previousDueDate(25, "2026-09-25")).toBe("2026-08-25");
+  });
+
+  it("is this month's once it has passed", () => {
+    expect(previousDueDate(5, "2026-09-22")).toBe("2026-09-05");
+  });
+
+  it("rolls back across a year", () => {
+    expect(previousDueDate(25, "2026-01-10")).toBe("2025-12-25");
+  });
+
+  /** A 31st due day falls on the 30th in a 30-day month. */
+  it("clamps into a shorter month", () => {
+    expect(previousDueDate(31, "2026-10-10")).toBe("2026-09-30");
+  });
+});
+

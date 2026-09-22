@@ -146,7 +146,14 @@ Moved out of `AGENTS.md` verbatim when that file reached the size Codex silently
   leaving for the first time. The rebase is behind the same `userCanUseCreditCards` gate as the
   events, because doing one without the other drops card spending with nothing paying it back.
   The balance query is bounded to **today** for the same reason the events are: a purchase dated
-  next month is not owed yet, and counting it would schedule a payment before it happened
+  next month is not owed yet, and counting it would schedule a payment before it happened. The
+  **payments** are bounded to today too: a payment dated next week is outside `paymentsMade` and
+  emits no event, so counting it in today's balance made that money vanish from the forecast.
+  **Archived cards that still owe are forecast** like any other -- the rebase drops every card's
+  purchases from cash, so leaving one out removed its spending with nothing paying it back.
+  And a payment made **before** a due date is credited against that due date
+  (`paidThisCycle`, counted from the day after `previousDueDate`): it has already left cash, so
+  taking the planned amount again on the due date paid one cycle twice
 - **The Debt tab reads; `/cards` writes.** `/analytics`'s Debt tab (`/api/analytics/debt`,
   `DebtAnalyticsPanel`) holds only what a single card's page cannot say -- the total owed and its
   trend, interest across every card, and avalanche against snowball -- and has no input field at

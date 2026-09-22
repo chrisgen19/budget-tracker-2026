@@ -27,6 +27,12 @@ export type ForecastCard = {
   observedMonthly: number | null;
   minimumPct: number | null;
   minimumFloor: number | null;
+  /**
+   * Already paid toward the next due date: payments since the previous due date, up to today.
+   * That money has left the bank and is subtracted from cash, so the next due date owes only what
+   * is left of it. Without this, paying three days early took the payment out twice.
+   */
+  paidThisCycle: number;
 };
 
 export type ForecastBudgetAllocation = {
@@ -169,10 +175,15 @@ export const cardPaymentEvents = (
           : "this card's minimum payment, which falls with the balance";
 
     let remaining = card.balance;
+    let credit = card.paidThisCycle;
     for (const date of monthlyDueDates(card.dueDay, from, to)) {
       if (remaining <= 0) break;
-      const due = paymentFor(remaining);
-      if (due === null || due <= 0) break;
+      const figure = paymentFor(remaining);
+      if (figure === null || figure <= 0) break;
+      // Only the first due date can have been paid toward already: every later one opens after it.
+      const due = figure - credit;
+      credit = 0;
+      if (due <= 0) continue;
       const amount = money(Math.min(due, remaining));
       remaining = money(remaining - amount);
       events.push({
@@ -188,6 +199,18 @@ export const cardPaymentEvents = (
   }
 
   return events;
+};
+
+/**
+ * The due date the current cycle opened after: the occurrence of `dueDay` before the next one on or
+ * after `today`. A payment dated after it and on or before today counts toward the next due date.
+ */
+export const previousDueDate = (dueDay: number, today: string): string => {
+  const now = day(today);
+  const thisMonth = clampToMonth(now.getUTCFullYear(), now.getUTCMonth(), dueDay);
+  // The next due date is this month's when it has not passed yet, so the cycle opened last month.
+  const monthsBack = thisMonth >= now ? 1 : 0;
+  return key(clampToMonth(now.getUTCFullYear(), now.getUTCMonth() - monthsBack, dueDay));
 };
 
 /** Every occurrence of `dueDay` between the two days, clamped into a month that is shorter. */

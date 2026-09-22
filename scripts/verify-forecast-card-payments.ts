@@ -23,6 +23,10 @@
  *      which `.claude/rules/cards.md` states, actually holds against the route's own numbers.
  *   4. The projected floor never dips below the cash the account really ends with.
  *
+ * A second account (`cycleAndArchivedScenario`) pins three more read bugs Codex found on #373: an
+ * early payment taken again on its due date, an archived card's debt dropped entirely, and a
+ * future-dated payment treated as already made.
+ *
  * Creates and deletes its own user, so it never touches a real account. It needs the credit cards
  * feature switched on for that user, which it does by making them an ADMIN -- `canUseCreditCards`
  * lets an admin through whatever the site setting says, so the run cannot be broken by an unrelated
@@ -66,7 +70,11 @@ interface ForecastResponse {
 async function main() {
   const secret = process.env.NEXTAUTH_SECRET;
   if (!secret) throw new Error("NEXTAUTH_SECRET is required to mint a session cookie");
+  await firstScenario(secret);
+  await cycleAndArchivedScenario(secret);
+}
 
+async function firstScenario(secret: string) {
   const user = await prisma.user.create({
     data: {
       email: `fcp-${Date.now()}@test.local`,
@@ -175,6 +183,104 @@ async function main() {
     );
   } finally {
     // Ordered by dependency: payments and transactions reference the card, which references the user.
+    await prisma.creditPayment.deleteMany({ where: { userId: user.id } });
+    await prisma.transaction.deleteMany({ where: { userId: user.id } });
+    await prisma.creditAccount.deleteMany({ where: { userId: user.id } });
+    await prisma.category.deleteMany({ where: { userId: user.id } });
+    await prisma.user.delete({ where: { id: user.id } });
+  }
+}
+
+/**
+ * Three ways the forecast's reads lost or duplicated a payment, each a `where` clause no unit test
+ * sees (Codex, on #373):
+ *
+ *   - A payment made before the due date was subtracted from cash today and then taken again on
+ *     the due date, because nothing credited it against that cycle.
+ *   - An **archived** card that still owes was left out of the forecast while its purchases were
+ *     still dropped from cash, so its balance was never paid back at all.
+ *   - A **future-dated** payment lowered what the card owes today, though the money had not left
+ *     the bank and no event carried it.
+ *
+ * Numbers, on a 60-day horizon: 50,000 opening cash. Card A bought 10,000, paid 4,000 two days ago
+ * toward a due date three days out, and has 3,000 dated ten days ahead; planned 4,000. Archived
+ * card B bought 3,000, due in five days, planned 3,000. Cash today is 46,000. A's next due date is
+ * already paid, so A pays 4,000 once, a month later, against a balance of 6,000 (not 3,000: the
+ * future payment has not happened). B pays 3,000. The account ends at 39,000.
+ */
+async function cycleAndArchivedScenario(secret: string) {
+  const user = await prisma.user.create({
+    data: {
+      email: `fcp2-${Date.now()}@test.local`, name: "Forecast Cards 2", password: "x", role: "ADMIN",
+      timezoneOffset: 0, forecastOpeningBalance: 50_000, forecastOpeningBalanceDate: at(dayFromToday(-30)),
+    },
+  });
+
+  try {
+    const category = await prisma.category.create({
+      data: { name: `FCP2 Spend ${Date.now()}`, type: "EXPENSE", icon: "ShoppingBag", color: "#E07C4F", userId: user.id },
+    });
+    const cardA = await prisma.creditAccount.create({
+      data: {
+        name: "FCP2 Card A", userId: user.id, openingBalance: 0, openingBalanceDate: at(dayFromToday(-30)),
+        dueDay: Number(dayFromToday(3).slice(8, 10)), plannedPayment: 4_000,
+      },
+    });
+    const cardB = await prisma.creditAccount.create({
+      data: {
+        name: "FCP2 Card B", userId: user.id, openingBalance: 0, openingBalanceDate: at(dayFromToday(-30)),
+        dueDay: Number(dayFromToday(5).slice(8, 10)), plannedPayment: 3_000, isActive: false,
+      },
+    });
+    const purchase = (accountId: string, amount: number, day: number) =>
+      prisma.transaction.create({
+        data: {
+          amount, type: "EXPENSE", description: "FCP2 purchase", date: at(dayFromToday(day)),
+          categoryId: category.id, userId: user.id, creditAccountId: accountId,
+        },
+      });
+    await purchase(cardA.id, 10_000, -10);
+    await purchase(cardB.id, 3_000, -12);
+    await prisma.creditPayment.createMany({
+      data: [
+        { amount: 4_000, kind: "PAYMENT", description: "FCP2 early", date: at(dayFromToday(-2)), accountId: cardA.id, userId: user.id },
+        { amount: 3_000, kind: "PAYMENT", description: "FCP2 future", date: at(dayFromToday(10)), accountId: cardA.id, userId: user.id },
+      ],
+    });
+
+    const token = await encode({
+      token: { id: user.id, role: user.role, name: user.name, email: user.email, sub: user.id },
+      secret,
+    });
+    const response = await fetch(`${BASE}/api/cash-flow-forecast?days=60&tz=0`, {
+      headers: { cookie: `next-auth.session-token=${token}` },
+    });
+    if (!response.ok) throw new Error(`Forecast request failed: ${response.status}`);
+    const forecast = (await response.json()) as ForecastResponse;
+
+    const eventsFor = (id: string) =>
+      (forecast.daily ?? []).flatMap((day) =>
+        day.events.filter((event) => event.kind === "card-payment" && (event as { sourceId?: string }).sourceId === id)
+      );
+
+    check("[cycle] cash today counts the early payment once", near(forecast.trackedBalanceToday ?? 0, 46_000),
+      `got ${money(forecast.trackedBalanceToday ?? 0)}`);
+    const aAmounts = eventsFor(cardA.id).map((event) => event.amount);
+    // Checked by date, not by count. A count of one also comes out of the *broken* route whenever
+    // another bug has already shrunk the balance -- measured: with the future-payment bug present
+    // too, the broken route made one payment, on the wrong date, and a count check passed it.
+    const firstDue = dayFromToday(3);
+    const aDates = eventsFor(cardA.id).map((event) => (event as { date?: string }).date);
+    check("[cycle] an already-paid due date is not paid again", !aDates.includes(firstDue) && aDates.length === 1,
+      `card A paid on ${JSON.stringify(aDates)}; ${firstDue} was already paid`);
+    check("[cycle] a future-dated payment does not shrink today's balance", near(aAmounts[0] ?? 0, 4_000),
+      `card A paid ${aAmounts[0]} (3,000 means the future payment was counted as made)`);
+    check("[cycle] an archived card that still owes is paid off", near(eventsFor(cardB.id)[0]?.amount ?? 0, 3_000),
+      `card B events: ${JSON.stringify(eventsFor(cardB.id).map((event) => event.amount))}`);
+    const end = forecast.daily?.at(-1)?.projectedBalance ?? 0;
+    check("[cycle] the account ends where the real payments leave it", near(end, 39_000),
+      `expected 39,000.00, got ${money(end)}`);
+  } finally {
     await prisma.creditPayment.deleteMany({ where: { userId: user.id } });
     await prisma.transaction.deleteMany({ where: { userId: user.id } });
     await prisma.creditAccount.deleteMany({ where: { userId: user.id } });
