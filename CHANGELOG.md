@@ -2,6 +2,36 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-22 - Claude reviews use an explicit tool boundary
+
+The automatic reviewer now separates sandbox containment from tool authorization. Sandboxed Bash
+commands are no longer auto-approved: only the reviewer's named read-only commands and PR comment
+paths run, while every other permission request is denied without waiting for an unavailable human.
+Write, edit, notebook-edit and web tools are removed from the session entirely, and broad GitHub
+issue listing and search are denied and no longer pre-approved. Targeted issue reads remain available
+for pull requests that explicitly reference an issue.
+
+## 2026-09-22 - Claude reviews fail closed without their sandbox
+
+The automatic Claude reviewer now explicitly enables its sandbox, refuses to start when the
+sandbox is unavailable, and prevents a blocked command from retrying unsandboxed on the host. The
+existing Ubuntu 24.04 pin, bubblewrap/socat installation, AppArmor adjustment and subprocess
+environment scrub remain the mechanisms that make the sandbox available; the new settings turn
+their absence or failure into a hard boundary instead of Claude Code's default warning and
+unsandboxed fallback.
+
+## 2026-09-21 - Claude reviews queue on pinned infrastructure
+
+Automatic Claude reviews now share a repository-wide `queue: max` concurrency group. A burst of
+pull requests therefore runs one review at a time instead of exhausting the shared Anthropic
+credential's rate limit, while retaining up to 100 pending reviews rather than silently replacing
+all but the newest one.
+
+The review job is pinned to Ubuntu 24.04 because its sandbox setup depends on that image's AppArmor
+behavior. `actions/checkout` and `anthropics/claude-code-action` are pinned to verified full commit
+SHAs, checkout no longer persists its workflow credential in Git configuration, and Dependabot now
+proposes grouped weekly GitHub Actions updates so immutable pins can still be maintained.
+
 ## 2026-09-21 - Code review policy is trusted and route-aware
 
 Automatic Claude reviews now restore `AGENTS.md` and `REVIEW.md` from the pull request's base
