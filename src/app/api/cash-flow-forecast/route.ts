@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { localCalendarDay } from "@/lib/period-progress";
 import { getBudgetPerformance } from "@/lib/budget-plans";
-import { buildCashFlowForecast, cardPaymentEvents, remainingBudgetPaceEvents, scheduledForecastEvents, type ForecastCard, type ForecastEvent } from "@/lib/cash-flow-forecast";
+import { buildCashFlowForecast, cardPaymentEvents, previousDueDate, remainingBudgetPaceEvents, scheduledForecastEvents, type ForecastCard, type ForecastEvent } from "@/lib/cash-flow-forecast";
 import { userCanUseCreditCards } from "@/lib/credit-card-access";
 import {
   computeAccountBalance,
@@ -64,6 +64,23 @@ const undatedCardsAssumption = (names: string[]): string[] => {
 };
 
 /**
+ * What has been paid toward a card's next due date: payments after the previous due date's end,
+ * up to today. Zero for a card with no due day, which is not forecast anyway.
+ */
+const paidSincePreviousDue = (
+  payments: { accountId: string; amount: number; date: Date }[],
+  account: { id: string; dueDay: number | null },
+  today: string,
+  tz: number
+): number => {
+  if (account.dueDay === null) return 0;
+  const opened = dateAtEnd(previousDueDate(account.dueDay, today), tz);
+  return payments
+    .filter((payment) => payment.accountId === account.id && payment.date > opened)
+    .reduce((sum, payment) => sum + payment.amount, 0);
+};
+
+/**
  * Everything the cards half needs out of the database, in one round trip.
  *
  * Split from `forecastCards` so the fetching and the per-card reasoning can be read separately;
@@ -74,10 +91,10 @@ const readCardLedger = async (
   userId: string,
   ids: string[],
   tz: number,
-  window: { openingAt: Date; todayEnd: Date }
+  window: { openingAt: Date; todayEnd: Date; today: string }
 ) => {
   const observed = observedPaymentWindow(tz);
-  const [purchaseGroups, paymentGroups, recentPayments, settled] = await Promise.all([
+  const [purchaseGroups, paymentGroups, recentPayments, settled, cyclePayments] = await Promise.all([
     prisma.transaction.groupBy({
       by: ["creditAccountId"],
       // Bounded to today. A purchase dated next month is not owed yet, and counting it here would
@@ -87,7 +104,10 @@ const readCardLedger = async (
     }),
     prisma.creditPayment.groupBy({
       by: ["accountId", "kind"],
-      where: { userId, accountId: { in: ids } },
+      // Bounded to today, like purchases. A payment dated next week is not in `paymentsMade`, which
+      // stops at today, and emits no event of its own, so counting it here lowered what the card
+      // owes today while the money never left the bank anywhere in the forecast.
+      where: { userId, accountId: { in: ids }, date: { lte: window.todayEnd } },
       _sum: { amount: true },
     }),
     prisma.creditPayment.findMany({
@@ -95,11 +115,20 @@ const readCardLedger = async (
       select: { accountId: true, amount: true, date: true },
     }),
     // Payments already made since the opening balance. Real money out of the bank, in no
-    // `transactions` row, so nothing else in this route subtracts them. Deliberately **not**
-    // scoped to the active cards above: paying off an archived card still emptied the account.
+    // `transactions` row, so nothing else in this route subtracts them. Not scoped to the cards
+    // being forecast: paying off a card that now owes nothing still emptied the account.
     prisma.creditPayment.aggregate({
       where: { userId, kind: "PAYMENT", date: { gte: window.openingAt, lte: window.todayEnd } },
       _sum: { amount: true },
+    }),
+    // Recent enough to cover any card's current cycle, which opens at most a month back; each
+    // card then keeps only those after its own previous due date.
+    prisma.creditPayment.findMany({
+      where: {
+        userId, accountId: { in: ids }, kind: "PAYMENT",
+        date: { gte: dateAtStart(addDays(window.today, -62), tz), lte: window.todayEnd },
+      },
+      select: { accountId: true, amount: true, date: true },
     }),
   ]);
 
@@ -108,6 +137,7 @@ const readCardLedger = async (
     recentPayments,
     totals: foldLedgerGroups(ids, purchaseGroups, paymentGroups),
     paymentsMade: settled._sum.amount ?? 0,
+    cyclePayments,
   };
 };
 
@@ -122,15 +152,19 @@ const readCardLedger = async (
 const forecastCards = async (
   userId: string,
   tz: number,
-  window: { openingAt: Date; todayEnd: Date }
+  window: { openingAt: Date; todayEnd: Date; today: string }
 ): Promise<CardForecastInputs> => {
   // The credit cards switch hides the feature entirely for a user it excludes, so the forecast
   // must not show them a payment line they cannot open, edit or explain -- and must not rebase
   // their tracked balance either, or it would drop card spending with nothing paying it back.
   if (!(await userCanUseCreditCards(prisma, userId))) return DISABLED_CARDS;
 
+  // Archived cards included. `cashOnly` drops *every* card's purchases from the cash balance, so a
+  // card left out here had its spending removed with nothing paying it back -- the one-sided rebase
+  // cards.md warns against. Deleting a card with history archives it whatever it still owes, the
+  // same reason `sumOwedOnCards` and the Debt tab count archived cards. Settled ones drop out below.
   const accounts = await prisma.creditAccount.findMany({
-    where: { userId, isActive: true },
+    where: { userId },
     select: {
       id: true, name: true, dueDay: true, billId: true, openingBalance: true,
       minimumPaymentPct: true, minimumPaymentFloor: true, plannedPayment: true,
@@ -164,6 +198,7 @@ const forecastCards = async (
       ).monthly,
       minimumPct: account.minimumPaymentPct,
       minimumFloor: account.minimumPaymentFloor,
+      paidThisCycle: paidSincePreviousDue(ledger.cyclePayments, account, window.today, tz),
     });
   }
 
@@ -192,6 +227,7 @@ const getForecast = async (request: Request, userId: string) => {
   const cards = await forecastCards(userId, tz, {
     openingAt: dateAtStart(openingDate, tz),
     todayEnd: dateAtEnd(today, tz),
+    today,
   });
   // With cards in play the balance has to be cash-like, or the same money leaves twice: a card
   // purchase is an EXPENSE and already lowers the tracked balance the day it is made, and the
