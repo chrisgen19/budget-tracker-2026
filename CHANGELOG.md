@@ -2,6 +2,17 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-22 - Automatic reviews skip bot pull requests
+
+The first Dependabot pull request failed the review job in 19 seconds, and every weekly one after
+it would have. The action refuses a non-human actor that is not in `allowed_bots`, and behind that
+a Dependabot-triggered run reads GitHub's separate Dependabot secret store, where the Anthropic
+credential does not exist. Allowing both would put a shared credential in the one context GitHub
+deliberately isolates from repository secrets, in order to review a diff that is a version string.
+Bot-authored pull requests are now skipped before the job starts, so the rule that every automatic
+review must leave evidence of its own keeps failing only for reviews that were actually expected.
+Commenting `@claude review this PR` still runs one on demand, under the commenter's own identity.
+
 ## 2026-09-22 - Claude's eligibility check works inside the strict tool boundary
 
 The first ordinary review after enabling the explicit tool boundary stopped after six turns when

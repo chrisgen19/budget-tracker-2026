@@ -25,7 +25,26 @@ jobs:
   claude-review:
     # A PR opened as a draft still fires `opened`, so skip it and wait for
     # `ready_for_review` instead.
-    if: github.event.pull_request.draft == false
+    #
+    # A bot-authored PR is skipped outright. #375, the first Dependabot PR this
+    # repository's own `.github/dependabot.yml` produced, failed this job in 19
+    # seconds on two independent blockers. The action rejects a non-human actor
+    # unless it is named in `allowed_bots`; behind that, a Dependabot-triggered
+    # run reads GitHub's separate Dependabot secret store, where
+    # `CLAUDE_CODE_OAUTH_TOKEN` does not exist - run 35668902874 logs
+    # `Secret source: Dependabot` and an empty token. Clearing both would mean
+    # copying the shared Anthropic credential into the one context GitHub
+    # deliberately isolates from repository secrets, to review a diff that is a
+    # version string. Skipping is not a silent pass either: without this guard
+    # the policy below that every automatic review must leave evidence of its
+    # own (`exit 1` when nothing was posted) fails every weekly Dependabot PR
+    # forever, and a check that is always red stops being read when it goes red
+    # for a real reason. Comment `@claude review this PR` for one on demand -
+    # `claude.yml` runs under the commenter, so secrets resolve there and the
+    # actor is human.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.user.type != 'Bot'
 
     # Optional: Filter by PR author
     # if: |
