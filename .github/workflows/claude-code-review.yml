@@ -188,12 +188,11 @@ jobs:
           #      the redirection inside it (verified - the payload landed). Single
           #      quotes are safe to strip because the shell does not expand anything
           #      inside them either.
-          #   2. Then `>`, on what is left after double-quoted spans are removed and
-          #      harmless output suppression to `/dev/null` is stripped. The
-          #      eligibility agent generated one compound `gh pr view` call on #382
-          #      and stopped before launching its review agents. `/dev/null` is the
-          #      only output target exempted, and a later redirect in the same command
-          #      is still caught.
+          #   2. Then `>`, on what is left after double-quoted spans are removed.
+          #      There is deliberately no `/dev/null` exception. A PR can commit a
+          #      `dev/null` symlink and spell `./dev/null` as `'.'/dev/null`; deleting
+          #      the quoted fragment before checking would mistake that workspace path
+          #      for the real device and restore the arbitrary-write primitive.
           #
           # The quote-stripping exists because the reviewer posts findings with
           # `gh pr comment --body`, and finding text is full of `=>`, `Array<string>`
@@ -242,7 +241,7 @@ jobs:
                     "hooks": [
                       {
                         "type": "command",
-                        "command": "v=$(jq -r '(.tool_input.command // \"\") as $c | ($c | gsub(\"\\u0027[^\\u0027]*\\u0027\"; \"\")) as $n | ($n | gsub(\"\\\"[^\\\"]*\\\"\"; \"\") | gsub(\"(^|[[:space:]])[012]?>[[:space:]]*/dev/null([[:space:]]|$)\"; \" \")) as $w | if ($n | test(\"[$]\\\\(|`\")) or ($w | test(\">\")) then \"deny\" else \"ok\" end'); case \"$v\" in deny) printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"This reviewer may not redirect output to a file (except /dev/null) or use command substitution ($(...) or backticks). Read files with Read/Grep/Glob and pipe into the allowed filters. Quote literal text in single quotes.\"}}';; esac"
+                        "command": "v=$(jq -r '(.tool_input.command // \"\") as $c | ($c | gsub(\"\\u0027[^\\u0027]*\\u0027\"; \"\")) as $n | if ($n | test(\"[$]\\\\(|`\")) or (($n | gsub(\"\\\"[^\\\"]*\\\"\"; \"\")) | test(\">\")) then \"deny\" else \"ok\" end'); case \"$v\" in deny) printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"This reviewer may not redirect output to a file (>) or use command substitution ($(...) or backticks). Read files with Read/Grep/Glob and pipe into the allowed filters. Quote literal text in single quotes.\"}}';; esac"
                       }
                     ]
                   }
@@ -319,7 +318,7 @@ jobs:
           claude_args: >-
             --permission-mode dontAsk
             --permission-prompts none
-            --append-subagent-system-prompt "Prefer one approved shell command per tool call during this read-only review. Do not use command substitution. Do not redirect output except to /dev/null. Prefer gh --json and --jq for GitHub data; if a pipeline is still required, use only the approved read-only filters."
+            --append-subagent-system-prompt "Prefer one approved shell command per tool call during this read-only review. Do not use command substitution or redirect output. Prefer gh --json and --jq for GitHub data; if a pipeline is still required, use only the approved read-only filters."
             --disallowedTools "Write,Edit,NotebookEdit,WebFetch,WebSearch,Bash(gh issue list:*),Bash(gh search:*)"
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Skill(code-review:code-review),Task,Read,Glob,Grep,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(git ls-tree:*),Bash(git ls-files:*),Bash(git merge-base:*),Bash(git rev-parse:*),Bash(jq:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(cut:*),Bash(nl:*),Bash(ls:*)"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md

@@ -6,8 +6,11 @@ All notable development history for the Budget Tracker app.
 
 The first ordinary review after enabling the explicit tool boundary stopped after six turns when
 its eligibility agent made one compound `gh pr view` call. The reviewer now tells every subagent to
-prefer separate commands and `gh --jq`, pre-approves the read-only `jq` filter, and permits output
-suppression only to `/dev/null`; arbitrary file redirects and command substitution remain denied.
+prefer separate commands and `gh --jq`, and pre-approves the read-only `jq` filter without weakening
+the existing ban on redirects or command substitution. Even `/dev/null` is not exempt: quoted path
+concatenation and a PR-supplied symlink can make a path that looks like the device to a textual check
+resolve inside the workspace instead.
+
 Denied compound calls now report the executable in each segment without exposing their arguments,
 so a future compatibility gap identifies the missing tool instead of only the first command.
 
