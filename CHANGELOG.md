@@ -2,6 +2,15 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-22 - Claude reviews use an explicit tool boundary
+
+The automatic reviewer now separates sandbox containment from tool authorization. Sandboxed Bash
+commands are no longer auto-approved: only the reviewer's named read-only commands and PR comment
+paths run, while every other permission request is denied without waiting for an unavailable human.
+Write, edit, notebook-edit and web tools are removed from the session entirely, and broad GitHub
+issue listing and search are denied and no longer pre-approved. Targeted issue reads remain available
+for pull requests that explicitly reference an issue.
+
 ## 2026-09-22 - Claude reviews fail closed without their sandbox
 
 The automatic Claude reviewer now explicitly enables its sandbox, refuses to start when the

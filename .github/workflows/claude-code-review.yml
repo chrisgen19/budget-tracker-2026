@@ -217,12 +217,18 @@ jobs:
           # disables the per-command escape hatch, so a command rejected inside the
           # sandbox cannot be retried on the host. The dependency step above makes
           # these fail-closed settings operational on the pinned Linux runner.
+          # `autoAllowBashIfSandboxed` is false because containment and authorization
+          # are separate decisions. Claude Code otherwise approves every command it
+          # can sandbox, even in a permission mode that would normally ask. With it
+          # disabled, only the Bash patterns below are pre-approved; `dontAsk` denies
+          # anything else instead of waiting for a person who is not present.
           settings: |
             {
               "sandbox": {
                 "enabled": true,
                 "failIfUnavailable": true,
-                "allowUnsandboxedCommands": false
+                "allowUnsandboxedCommands": false,
+                "autoAllowBashIfSandboxed": false
               },
               "hooks": {
                 "PreToolUse": [
@@ -239,7 +245,13 @@ jobs:
               }
             }
 
-          # `claude_args --allowedTools` adds to the tools the action already allows.
+          # `claude_args --allowedTools` adds to the tools the action already allows;
+          # it is an approval list, not an availability list. The matching deny list
+          # removes write/edit and web tools from the model entirely. `dontAsk` then
+          # denies any remaining call that would require approval, and
+          # `--permission-prompts none` makes the unattended behavior explicit even
+          # if the action's non-interactive host behavior changes.
+          #
           # Agent (formerly Task), Read, Glob and Grep need no permission at all
           # (https://code.claude.com/docs/en/tools-reference), so Bash is what needs
           # listing. The `Bash(gh ...)` entries match the `allowed-tools:` frontmatter
@@ -285,13 +297,22 @@ jobs:
           #     which is not on its own enough: a shell redirection gives any of them
           #     one, so the `settings` hook above denies that separately.
           #
+          # Broad issue discovery is absent too. `gh issue list` and `gh search` let
+          # arbitrary issue text enter a credential-bearing session even though the
+          # review command does not need it. A targeted `gh issue view` remains for a
+          # PR that explicitly references an issue; it is read-only, and the sandbox,
+          # shell hook and no-prompt default still constrain what can follow from it.
+          #
           # Also absent, and not an oversight: `Bash(gh api:*)` and `Bash(gh:*)`, since
           # `gh` runs with the Claude app's token, which can write to the repository; and
           # the package managers - `pnpm type-check` and `npx vitest` were denied several
           # times in that batch, and allowing them would not have helped, because no step
           # here installs dependencies.
           claude_args: >-
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Skill(code-review:code-review),Task,Read,Glob,Grep,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*),Bash(git ls-tree:*),Bash(git ls-files:*),Bash(git merge-base:*),Bash(git rev-parse:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(cut:*),Bash(nl:*),Bash(ls:*)"
+            --permission-mode dontAsk
+            --permission-prompts none
+            --disallowedTools "Write,Edit,NotebookEdit,WebFetch,WebSearch,Bash(gh issue list:*),Bash(gh search:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Skill(code-review:code-review),Task,Read,Glob,Grep,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(git ls-tree:*),Bash(git ls-files:*),Bash(git merge-base:*),Bash(git rev-parse:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(cut:*),Bash(nl:*),Bash(ls:*)"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
 
