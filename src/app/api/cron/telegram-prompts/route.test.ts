@@ -222,7 +222,7 @@ describe("scoping to the bot's owner", () => {
     mocks.mcpTokenFindFirst.mockResolvedValue(null);
     const res = await call();
     expect(mocks.sendMessage).not.toHaveBeenCalled();
-    expect(await res.json()).toMatchObject({ promptsSent: 0, owner: null });
+    expect(await res.json()).toMatchObject({ promptsSent: 0, digestsSent: 0, owner: null });
   });
 
   it("sends nothing on a deployment with no bot token at all", async () => {

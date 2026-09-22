@@ -155,7 +155,7 @@ export async function GET(request: Request) {
   // enabling it would have their day read and this chat messaged about it.
   const ownerId = await telegramPromptOwnerId(prisma);
   if (!ownerId) {
-    return NextResponse.json({ usersProcessed: 0, promptsSent: 0, errors: 0, owner: null });
+    return NextResponse.json({ usersProcessed: 0, promptsSent: 0, digestsSent: 0, errors: 0, owner: null });
   }
 
   const users = await prisma.user.findMany({
