@@ -2,6 +2,18 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-23 - A production backup you can take before you migrate
+
+Coolify's nightly dump is the safety net for the accident nobody saw coming. `backup-prod-db.ts` is
+the other thing: the deliberate snapshot taken immediately before a migration reaches production,
+when last night is not good enough. It refuses to run against this machine, refuses a connection
+string that permits cleartext, keeps the password out of `ps`, writes owner-only outside the
+repository, and reads the dump back with `pg_restore -l` rather than trusting its size, because a
+truncated dump has a plausible size and restores into a half-populated database.
+
+It also refuses a server newer than the local `pg_dump`, which cannot read one and would otherwise
+fail at the worst possible moment with a message naming neither version.
+
 ## 2026-09-23 - A review that did not happen stops reporting as one that did
 
 Two blind spots in the step that reports what an automatic review did, both found by watching it
