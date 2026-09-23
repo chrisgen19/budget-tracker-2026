@@ -2,6 +2,27 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-23 - Automatic reviews start at the review, not at the question of whether to review
+
+From 2026-09-22 on, no automatic review of an ordinary pull request posted anything: eight runs
+across six pull requests stopped within nine turns, which is as far as the review command's first
+step gets: the Haiku agent that decides whether a pull request is worth reviewing at all. The first fault was a `2>&1` that agent kept
+adding to `gh pr view`, which the redirect hook correctly refuses; both prompts now say not to, and
+the next run on #388 had no denied call. It stopped anyway, after five turns, for a reason the log
+could not show.
+
+Three of the four questions that step asks are facts, not judgment, so they moved out of the agent
+into a plain step that asks the API before anything is installed: is the pull request still open,
+still out of draft, and free of any comment or review by Claude. They cannot simply be dropped,
+because the same "opened" or "ready for review" event arrives again on a rerun, on every
+draft-then-ready toggle, and late from the review queue, and each of those would otherwise be
+another full review. The fourth question, whether a change is too trivial to review, is the one
+that is gone. The session is told all of this and to begin at the review itself. A copy of the
+command with that step removed would have been firmer, and is ruled out by its licence, which is
+all rights reserved, in a public repository. Because an instruction can still be ignored, a review
+that posts nothing now quotes the session's own closing message on the run, so the next skip
+names its reason instead of leaving it to be guessed.
+
 ## 2026-09-23 - A review that did not happen stops reporting as one that did
 
 Two blind spots in the step that reports what an automatic review did, both found by watching it
