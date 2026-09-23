@@ -339,10 +339,25 @@ jobs:
           # the package managers - `pnpm type-check` and `npx vitest` were denied several
           # times in that batch, and allowing them would not have helped, because no step
           # here installs dependencies.
+          #
+          # Both prompts name `2>&1` because "redirect output" alone did not stop it.
+          # On #388 both attempts of run 35809973325 were denied one `gh pr view ...
+          # 2>&1`, the eligibility check the command runs first as a haiku subagent
+          # (`gh pr view <PR> --comments`), and each session then stopped at 8-9 turns
+          # with nothing posted. The hook above is right to deny it: `2>&1` contains a
+          # `>`, and making an exception for it would mean parsing redirections instead
+          # of refusing them. So the fix is to stop the call being written, and to say
+          # what a denial means - retry without the syntax - rather than letting the
+          # check read an empty result as a reason to stop. The same check also looks
+          # for "Claude has already commented", and CodeRabbit's summary was already on
+          # the PR when it ran, so the prompt says whose comments count.
+          # The main-session prompt is there because the subagent one does not reach
+          # the session that decides whether to stop.
           claude_args: >-
             --permission-mode dontAsk
             --permission-prompts none
-            --append-subagent-system-prompt "Prefer one approved shell command per tool call during this read-only review. Do not use command substitution or redirect output. Prefer gh --json and --jq for GitHub data; if a pipeline is still required, use only the approved read-only filters."
+            --append-system-prompt "This review runs unattended with a fixed tool allowlist. Never add a shell redirection (including 2>&1 or 2>/dev/null) or command substitution to any command, and repeat this rule to every subagent you launch. A denied call means the syntax was refused, not that the check failed: retry it in an allowed form. Only comments authored by claude or claude[bot] count as Claude having already commented; comments from other bots such as coderabbitai do not."
+            --append-subagent-system-prompt "Prefer one approved shell command per tool call during this read-only review. Do not use command substitution or redirect output, and never append 2>&1 or 2>/dev/null: stderr already reaches you. If a call is denied, retry it without that syntax instead of reporting the check as failed. Prefer gh --json and --jq for GitHub data; if a pipeline is still required, use only the approved read-only filters. Only comments authored by claude or claude[bot] count as Claude having already commented; comments from other bots such as coderabbitai do not."
             --disallowedTools "Write,Edit,NotebookEdit,WebFetch,WebSearch,Bash(gh issue list:*),Bash(gh search:*)"
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Skill(code-review:code-review),Task,Read,Glob,Grep,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(git ls-tree:*),Bash(git ls-files:*),Bash(git merge-base:*),Bash(git rev-parse:*),Bash(jq:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(cut:*),Bash(nl:*),Bash(ls:*)"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
