@@ -112,9 +112,9 @@ describe("useServiceWorkerUpdate", () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
-  // The mirror case, and why the guard is `hadController` rather than "did this tab accept": when
-  // another tab accepts the update, every sibling tab's controller changes too, and those tabs are
-  // the ones still running the old bundle.
+  // The mirror case, and why the guard is "was this page already controlled" rather than "did this
+  // tab accept": when another tab accepts the update, every sibling tab's controller changes too,
+  // and those tabs are the ones still running the old bundle.
   it("reloads a sibling tab when another tab accepts the update", async () => {
     renderHook(() => useServiceWorkerUpdate());
     await waitFor(() => expect(registration.update).toHaveBeenCalled());
