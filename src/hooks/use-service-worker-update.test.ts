@@ -98,6 +98,32 @@ describe("useServiceWorkerUpdate", () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
+  // `clientsClaim` fires `controllerchange` when a worker claims a page that had no controller,
+  // which is every first visit: first load, cleared site data, incognito, the installed PWA's cold
+  // launch. Reloading there is a reload nobody asked for, on a page that is already current.
+  it("does not reload when a first install claims the page", async () => {
+    install(null);
+    const { result } = renderHook(() => useServiceWorkerUpdate());
+    await waitFor(() => expect(registration.update).toHaveBeenCalled());
+    act(() => {
+      container.dispatchEvent(new Event("controllerchange"));
+    });
+    expect(result.current.updateAvailable).toBe(false);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  // The mirror case, and why the guard is `hadController` rather than "did this tab accept": when
+  // another tab accepts the update, every sibling tab's controller changes too, and those tabs are
+  // the ones still running the old bundle.
+  it("reloads a sibling tab when another tab accepts the update", async () => {
+    renderHook(() => useServiceWorkerUpdate());
+    await waitFor(() => expect(registration.update).toHaveBeenCalled());
+    act(() => {
+      container.dispatchEvent(new Event("controllerchange"));
+    });
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
   it("does nothing where there is no service worker at all", () => {
     Reflect.deleteProperty(navigator, "serviceWorker");
     const { result } = renderHook(() => useServiceWorkerUpdate());

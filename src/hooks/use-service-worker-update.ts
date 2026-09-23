@@ -44,9 +44,19 @@ export function useServiceWorkerUpdate() {
       });
     };
 
-    // A reload is the whole point, so the page must not keep running once the new worker takes
-    // over. `once`, since `controllerchange` also fires for reasons this hook did not ask for.
-    const onControllerChange = () => window.location.reload();
+    // `clientsClaim` makes `controllerchange` fire when a worker claims a page that had no
+    // controller, which is every first visit: first load, cleared site data, incognito, the
+    // installed PWA's cold launch. Reloading there is a reload nobody asked for, on a page that is
+    // already current. So the reload is gated on the tab having been controlled at mount, the same
+    // distinction `note` draws above.
+    //
+    // Gated on that rather than on this tab having called `applyUpdate`, deliberately: when another
+    // tab accepts, every sibling tab's controller changes too, and those tabs are the ones left
+    // running the old bundle. `once`, since one reload is all a page gets.
+    const hadController = navigator.serviceWorker.controller !== null;
+    const onControllerChange = () => {
+      if (hadController) window.location.reload();
+    };
 
     void navigator.serviceWorker
       .getRegistration()
