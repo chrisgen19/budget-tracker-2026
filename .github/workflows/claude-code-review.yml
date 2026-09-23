@@ -394,14 +394,41 @@ jobs:
               echo "::error title=Claude review never started::The action failed before producing a transcript, so this is a setup failure, not a review that stopped early. See the step above."
               exit 1
             fi
-            echo "::notice title=Claude review did not run::No transcript, so there is nothing to report."
+            # A success with no transcript is the action skipping itself. It will
+            # not run a reviewer that the pull request has edited, so every PR
+            # touching this file gets one: #381, #383 and #385 each reported a green
+            # `claude-review` that had reviewed nothing, and #385's took 22 seconds.
+            # This cannot be an error - such a PR can never be reviewed automatically
+            # and failing it would block every change to this workflow - but it must
+            # not read as a pass either. A warning annotates the PR; the notice it
+            # replaces only ever reached the run log, where nobody looked.
+            changed=$(gh pr diff "$PR_NUMBER" --repo "$REPO" --name-only || true)
+            case "$changed" in
+              *.github/workflows/claude-code-review.yml*)
+                why="this PR edits .github/workflows/claude-code-review.yml, and the action will not run a reviewer the PR has changed. Expected: it resolves once this PR merges." ;;
+              *)
+                why="the action produced no transcript and did not report a failure. This is not an expected state; see the step above." ;;
+            esac
+            echo "::warning title=Claude review did not run::No review took place, so this check passing means nothing on this PR - $why"
+            {
+              echo "### Claude Code Review"
+              echo
+              echo "**No review took place.** $why"
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
           result=$(jq -c '[.[] | select(.type == "result")] | last // {}' "$EXECUTION_FILE")
           turns=$(jq -r '.num_turns // "?"' <<<"$result")
           cost=$(jq -r '(.total_cost_usd // 0) * 100 | round / 100' <<<"$result")
-          denied=$(jq -r '.permission_denials // [] | length' <<<"$result")
+          # `permission_denials_count` first, and the array only as a fallback. The
+          # action stopped emitting the array: on #386 the result carried
+          # `"permission_denials_count": 1` and no array at all, so this read `[]`,
+          # reported 0, printed no warning, and the error at the end of this step
+          # then told the reader there were no denied calls. The detail list below is
+          # best effort for the same reason - a count with no detail still has to say
+          # so rather than going quiet, which is the whole point of #383.
+          denied=$(jq -r '.permission_denials_count // (.permission_denials // [] | length)' <<<"$result")
           # One line per distinct call, most frequent first. Control characters are
           # dropped so a command's text cannot start a workflow command of its own.
           denials=$(jq -r '
@@ -483,6 +510,8 @@ jobs:
             while read -r times call; do
               echo "::warning title=Claude review was denied a tool::${times}x ${call}"
             done <<<"$denials"
+          elif [ "${denied:-0}" -gt 0 ]; then
+            echo "::warning title=Claude review was denied a tool::${denied} call(s) denied, but this version of the action reports only a count and no per-call detail, so which tool is unknown. Set 'show_full_output: true' on a rerun to see them."
           fi
 
           # A session that ended on `is_error: true` is worth saying out loud even
@@ -497,6 +526,11 @@ jobs:
           fi
 
           if [ $((summary_comments + inline_comments)) -eq 0 ]; then
-            echo "::error title=Claude review posted nothing::The review ended after $turns turns without a comment of its own on this PR (comments from other @claude jobs do not count). With no denied calls it most likely stopped on purpose: the command skips a PR it judges trivial, or one Claude has already commented on. Otherwise the warnings above name what it was refused, or the session error above cut it short. Comment '@claude review this PR' for a manual review."
+            if [ "${denied:-0}" -gt 0 ]; then
+              cause="${denied} call(s) were denied, so a missing tool may have cut it short; the warnings above are what they were."
+            else
+              cause="Nothing was denied, so it most likely stopped on purpose: the command skips a PR it judges trivial, or one Claude has already commented on."
+            fi
+            echo "::error title=Claude review posted nothing::The review ended after $turns turns without a comment of its own on this PR (comments from other @claude jobs do not count). $cause A session error above, if any, is the other possibility. Comment '@claude review this PR' for a manual review."
             exit 1
           fi
