@@ -319,13 +319,38 @@ jobs:
           # can sandbox, even in a permission mode that would normally ask. With it
           # disabled, only the Bash patterns below are pre-approved; `dontAsk` denies
           # anything else instead of waiting for a person who is not present.
+          #
+          # `network.allowedDomains` is what every automatic review since this sandbox
+          # was enforced (e6a3fdf, 2026-09-21 23:51 UTC) was missing. The sandbox
+          # pre-allows no domains and prompts for each new one
+          # (https://code.claude.com/docs/en/sandboxing#network-isolation); with no
+          # one to answer, `dontAsk` refuses, so every `gh` call from Bash failed to
+          # reach GitHub. The last review that posted was 22:52 the same night, an hour
+          # before; none has since. It never showed as a denied call, because a
+          # sandbox network refusal is not a permission denial, and it went unseen
+          # until the report step started quoting the session's closing message: on
+          # #392 (run 35823331904) that was "The user explicitly denied network
+          # access to `api.github.com`". The `2>&1` calls #389 chased were most
+          # likely the model trying to see why `gh` was failing. `api.github.com` is
+          # the one host `gh` needs with `GH_TOKEN`, and the Bash allowlist below
+          # still decides which `gh` commands may run at all. Every other host stays
+          # blocked. The docs warn that an allowed GitHub domain can be an exfiltration
+          # path, since the proxy trusts the client-supplied hostname and code in the
+          # sandbox could use domain fronting to reach other hosts; that needs a command
+          # able to open an arbitrary connection, and none on the allowlist can (no
+          # `curl`, no `gh api`). `api.github.com` is itself a way out, but `gh pr
+          # comment` already publishes by design. The inline
+          # comment tool is not Bash, so the sandbox never applied to it.
           settings: |
             {
               "sandbox": {
                 "enabled": true,
                 "failIfUnavailable": true,
                 "allowUnsandboxedCommands": false,
-                "autoAllowBashIfSandboxed": false
+                "autoAllowBashIfSandboxed": false,
+                "network": {
+                  "allowedDomains": ["api.github.com"]
+                }
               },
               "hooks": {
                 "PreToolUse": [
