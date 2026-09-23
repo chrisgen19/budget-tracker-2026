@@ -2,6 +2,16 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-23 - Every workflow action is pinned to a commit
+
+`claude.yml` passed the shared Anthropic credential to `anthropics/claude-code-action@v1`, a major
+tag, while `claude-code-review.yml` pinned the same action to an exact commit and the review
+plugin's marketplace behind it was pinned too. A major tag is a movable pointer its maintainer
+re-points on every release, so that job's code could change with no diff and no review here. Both
+remaining workflows now pin every action to a full commit SHA. `ci.yml` is pinned for the same
+reason at lower stakes: it holds no secrets, but a compromised action there could still report
+lint, type-check and test as green on a change that is not.
+
 ## 2026-09-22 - Automatic reviews skip bot pull requests
 
 The first Dependabot pull request failed the review job in 19 seconds, and every weekly one after
