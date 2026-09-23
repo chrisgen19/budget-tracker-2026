@@ -19,14 +19,14 @@ class FakeRegistration extends EventTarget {
 }
 
 let registration: FakeRegistration;
-let container: EventTarget & { controller: unknown; getRegistration: () => Promise<unknown> };
+let container: EventTarget & { controller: unknown; ready: Promise<unknown> };
 let reload: ReturnType<typeof vi.fn>;
 
-const install = (controller: unknown) => {
+const install = (controller: unknown, ready?: Promise<unknown>) => {
   registration = new FakeRegistration();
   const target = new EventTarget() as typeof container;
   target.controller = controller;
-  target.getRegistration = () => Promise.resolve(registration);
+  target.ready = ready ?? Promise.resolve(registration);
   container = target;
   Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: container });
 };
@@ -191,6 +191,33 @@ describe("useServiceWorkerUpdate", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // `@serwist/window` registers only after the window's `load` event, which the hook's effect
+  // usually beats. A first-visit tab then mounted with no registration and never looked again, so
+  // a deploy while it stayed open was never offered.
+  it("picks up a registration that only appears after mount", async () => {
+    let register: (reg: unknown) => void = () => {};
+    install(null, new Promise((resolve) => (register = resolve)));
+    const { result } = renderHook(() => useServiceWorkerUpdate());
+    await act(async () => {});
+    expect(registration.update).not.toHaveBeenCalled();
+
+    await act(async () => register(registration));
+    expect(registration.update).toHaveBeenCalledTimes(1);
+
+    // The first claim, then a deploy while the tab stays open.
+    act(() => {
+      container.controller = {};
+      container.dispatchEvent(new Event("controllerchange"));
+    });
+    const installing = new FakeWorker();
+    registration.installing = installing;
+    act(() => {
+      registration.dispatchEvent(new Event("updatefound"));
+      installing.become("installed");
+    });
+    await waitFor(() => expect(result.current.updateAvailable).toBe(true));
   });
 
   it("does nothing where there is no service worker at all", () => {

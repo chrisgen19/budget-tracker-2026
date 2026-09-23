@@ -90,19 +90,21 @@ export function useServiceWorkerUpdate() {
       window.location.reload();
     };
 
-    void navigator.serviceWorker
-      .getRegistration()
+    // `ready`, not `getRegistration()`. `@serwist/window` defers `register()` until the window's
+    // `load` event, which this effect usually beats, so on a first visit `getRegistration()` came
+    // back empty and was never asked again: `check` then bailed on a null registration for the
+    // life of the tab, and a deploy while it stayed open was never offered. `ready` waits for the
+    // registration instead, and resolves at once when one is already active. In development, where
+    // Serwist is disabled, it never resolves, which is the same as having nothing to update.
+    void navigator.serviceWorker.ready
       .then((reg) => {
-        if (cancelled || !reg) return;
+        if (cancelled) return;
         registration = reg;
         note(reg.waiting);
         reg.addEventListener("updatefound", onUpdateFound);
         check();
       })
-      .catch(() => {
-        // No registration is the ordinary case in development, where Serwist is disabled. There is
-        // nothing to update and nothing to report.
-      });
+      .catch(() => {});
 
     const poll = window.setInterval(check, UPDATE_POLL_MS);
     document.addEventListener("visibilitychange", onVisible);
