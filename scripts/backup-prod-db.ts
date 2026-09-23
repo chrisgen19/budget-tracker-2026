@@ -24,6 +24,7 @@ import { mkdirSync, chmodSync, statSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { isLocalDatabase, databaseHost } from "./db-host";
+import { splitCredentials } from "./pg-uri";
 import { sslProblem } from "./pg-sslmode";
 import { versionSkew } from "./pg-version";
 
@@ -44,24 +45,6 @@ const SOURCE = flag("from") ?? process.env.PROD_DATABASE_URL;
  * who points `--out` back inside the repo, but the default keeps it out of reach entirely.
  */
 const BACKUP_DIR = flag("out") ?? join(homedir(), "db-backups");
-
-/**
- * Split the password out of a connection string.
- *
- * Lifted from `refresh-local-mirror.ts` for the same reason it exists there: pg_dump takes the URL
- * as argv, so a password in it is visible to every process on the machine through `ps` for the
- * whole of the dump. PGPASSWORD is read from the environment, which `ps` does not show.
- */
-const splitCredentials = (url: string): { safeUrl: string; env: Record<string, string> } => {
-  try {
-    const u = new URL(url);
-    const password = u.password ? decodeURIComponent(u.password) : "";
-    u.password = "";
-    return { safeUrl: u.toString(), env: password ? { PGPASSWORD: password } : {} };
-  } catch {
-    return { safeUrl: url, env: {} };
-  }
-};
 
 const runOn = (url: string, cmd: string, args: string[]): string => {
   const { safeUrl, env } = splitCredentials(url);

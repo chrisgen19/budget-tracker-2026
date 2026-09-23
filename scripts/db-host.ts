@@ -1,3 +1,5 @@
+import { hasRawFragment } from "./pg-uri";
+
 /**
  * Decide whether a Postgres connection string points at this machine.
  *
@@ -76,6 +78,10 @@ export const databaseHost = (url: string): string | null => {
   } catch {
     return null;
   }
+
+  // A raw `#` hides every parameter after it from `searchParams` while libpq still reads them,
+  // including a `host=` that moves the destination. See `hasRawFragment`.
+  if (hasRawFragment(url)) return null;
 
   const params = parsed.searchParams;
   const overrides = params.getAll("host").map((h) => h.toLowerCase());

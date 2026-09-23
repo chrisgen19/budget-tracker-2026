@@ -2,6 +2,26 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-23 - The guards stop reading connection strings differently from libpq
+
+Two more places where WHATWG `URL` and libpq disagreed about the same string, found by review on
+the backup script and measured on PostgreSQL 17.9.
+
+`URL` puts everything after a raw `#` into the fragment, where `searchParams` cannot see it. libpq
+has no fragment and keeps reading parameters to the end, keeping the last value for each keyword.
+So `?sslmode=require#&sslmode=disable` connected in cleartext while the guard saw only `require`,
+and `?...#&host=127.0.0.1` moved the destination itself while the guard still named the authority.
+A string carrying a raw `#` is now refused rather than read: Prisma rejects one outright, and a `#`
+in a password has to be written `%23`, which produces no fragment and is unaffected.
+
+`password` is also an ordinary libpq connection keyword, so it can be given as a query parameter -
+and it beats both the userinfo password and `PGPASSWORD`. Such a string did not merely leave the
+secret in `argv` for `ps` to show; it overrode the environment variable that exists to keep it out
+of `argv`. Both passwords now move into `PGPASSWORD`.
+
+Both guards and both scripts read connection strings through one module now, since each of these
+bugs was found in two copies of the same code at once.
+
 ## 2026-09-23 - The local-database guard stops answering when it cannot know
 
 `databaseHost` decided where a connection string lands by reading the first `host=` parameter and

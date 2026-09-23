@@ -111,6 +111,22 @@ describe("isLocalDatabase", () => {
     expect(isLocalDatabase("postgres://u:p@db/x?host=prod.example&host=other.example")).toBe(false);
   });
 
+  // WHATWG URL hides everything after a raw `#` in the fragment; libpq reads on and keeps the last
+  // value per keyword. Measured on PostgreSQL 17.9, the first string below connects to 127.0.0.1
+  // while this function used to answer nonexistent.invalid.
+  it("refuses a string with a raw # hiding parameters from the guard", () => {
+    expect(
+      isLocalDatabase("postgres://u@nonexistent.invalid:5432/db?sslmode=disable&application_name=x#&host=127.0.0.1")
+    ).toBe(false);
+    expect(databaseHost("postgres://u@localhost:5432/db?a=1#&host=prod.example")).toBeNull();
+    expect(databaseHost("postgres://u@localhost:5432/db?sslmode=require#")).toBeNull();
+  });
+
+  // An encoded # is part of the password and makes no fragment, so it must not trip the refusal.
+  it("still answers for a percent-encoded # in the password", () => {
+    expect(isLocalDatabase("postgres://u:pa%23ss@localhost:5432/db")).toBe(true);
+  });
+
   it("refuses a socket URL redirected at a real host", () => {
     expect(isLocalDatabase("postgresql:///db?host=prod.example")).toBe(false);
   });

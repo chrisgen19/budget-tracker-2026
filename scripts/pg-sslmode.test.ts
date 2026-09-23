@@ -44,6 +44,13 @@ describe("sslProblem", () => {
     expect(sslProblem(at("sslmode=require&sslmode=disable"))).toContain("sslmode=disable");
   });
 
+  // Measured: ?sslmode=require#&sslmode=disable connects with ssl = f while getAll answers
+  // ["require"], so the guard has to refuse the string rather than read it.
+  it("refuses a string whose later sslmode is hidden behind a raw #", () => {
+    expect(sslProblem(at("sslmode=require#&sslmode=disable"))).toContain("raw `#`");
+    expect(sslProblem(at("sslmode=require#"))).toContain("raw `#`");
+  });
+
   it("allows require and above", () => {
     for (const mode of ["require", "verify-ca", "verify-full"]) {
       expect(sslProblem(at(`sslmode=${mode}`))).toBeNull();

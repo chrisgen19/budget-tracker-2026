@@ -30,6 +30,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, existsSync, rmSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { isLocalDatabase, databaseHost } from "./db-host";
+import { splitCredentials } from "./pg-uri";
 import { sslProblem } from "./pg-sslmode";
 
 const argv = process.argv.slice(2);
@@ -46,25 +47,6 @@ const SOURCE = flag("from");
 const DEST = process.env.DATABASE_URL;
 const BACKUP_DIR = flag("backup-dir") ?? join(process.cwd(), ".mirror-backups");
 const UNREACHABLE = "unreachable";
-
-/**
- * Split the password out of a connection string.
- *
- * psql and pg_dump take the URL as argv, so a password in it is visible to
- * every process on the machine via `ps` for the whole of a multi-minute dump,
- * and lands in any shell history or transcript of the command. PGPASSWORD is
- * read from the environment instead, which `ps` does not show.
- */
-const splitCredentials = (url: string): { safeUrl: string; env: Record<string, string> } => {
-  try {
-    const u = new URL(url);
-    const password = u.password ? decodeURIComponent(u.password) : "";
-    u.password = "";
-    return { safeUrl: u.toString(), env: password ? { PGPASSWORD: password } : {} };
-  } catch {
-    return { safeUrl: url, env: {} };
-  }
-};
 
 const runOn = (url: string, cmd: string, args: string[]): string => {
   const { safeUrl, env } = splitCredentials(url);

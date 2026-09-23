@@ -1,3 +1,5 @@
+import { hasRawFragment } from "./pg-uri";
+
 /**
  * Read the `sslmode` libpq will actually use, and refuse one that permits cleartext.
  *
@@ -45,6 +47,12 @@ export const effectiveSslMode = (url: string): string | null => {
  * deployment actually uses and needs a CA bundle to satisfy.
  */
 export const sslProblem = (url: string): string | null => {
+  // Checked here rather than in `effectiveSslMode`, so the refusal says what is actually wrong
+  // instead of reporting the mode as unset. Measured, `?sslmode=require#&sslmode=disable` connects
+  // in cleartext while this guard sees only `require`.
+  if (hasRawFragment(url)) {
+    return "the string contains a raw `#`, so libpq reads parameters after it that this cannot see";
+  }
   const mode = effectiveSslMode(url);
   if (mode === null) return "no sslmode= is set, so libpq may connect in cleartext";
   if (["disable", "allow", "prefer"].includes(mode)) {
