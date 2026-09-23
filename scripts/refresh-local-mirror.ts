@@ -30,6 +30,8 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, existsSync, rmSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { isLocalDatabase, databaseHost } from "./db-host";
+import { splitCredentials } from "./pg-uri";
+import { sslProblem } from "./pg-sslmode";
 
 const argv = process.argv.slice(2);
 const APPLY = argv.includes("--apply");
@@ -45,25 +47,6 @@ const SOURCE = flag("from");
 const DEST = process.env.DATABASE_URL;
 const BACKUP_DIR = flag("backup-dir") ?? join(process.cwd(), ".mirror-backups");
 const UNREACHABLE = "unreachable";
-
-/**
- * Split the password out of a connection string.
- *
- * psql and pg_dump take the URL as argv, so a password in it is visible to
- * every process on the machine via `ps` for the whole of a multi-minute dump,
- * and lands in any shell history or transcript of the command. PGPASSWORD is
- * read from the environment instead, which `ps` does not show.
- */
-const splitCredentials = (url: string): { safeUrl: string; env: Record<string, string> } => {
-  try {
-    const u = new URL(url);
-    const password = u.password ? decodeURIComponent(u.password) : "";
-    u.password = "";
-    return { safeUrl: u.toString(), env: password ? { PGPASSWORD: password } : {} };
-  } catch {
-    return { safeUrl: url, env: {} };
-  }
-};
 
 const runOn = (url: string, cmd: string, args: string[]): string => {
   const { safeUrl, env } = splitCredentials(url);
@@ -107,30 +90,6 @@ const describe = (url: string): Snapshot => {
 };
 
 const line = (s: Snapshot): string => `${s.rows}  ·  settings ${s.config.slice(0, 8)}`;
-
-/**
- * Refuse a source that permits an unencrypted connection.
- *
- * libpq's `disable`, `allow` and `prefer` will all send credentials and the
- * whole database in cleartext if the server does not insist otherwise, and this
- * copies an entire production database over that connection. `require` and
- * above are accepted: `require` does not authenticate the server, which is a
- * real weakness, but demanding `verify-full` here would refuse the connection
- * string this deployment actually uses and needs a CA bundle to satisfy.
- */
-const sslProblem = (url: string): string | null => {
-  let mode: string | null;
-  try {
-    mode = new URL(url).searchParams.get("sslmode");
-  } catch {
-    return null;
-  }
-  if (mode === null) return "no sslmode= is set, so libpq may connect in cleartext";
-  if (["disable", "allow", "prefer"].includes(mode)) {
-    return `sslmode=${mode} permits an unencrypted connection`;
-  }
-  return null;
-};
 
 function main(): number {
   if (!SOURCE) {

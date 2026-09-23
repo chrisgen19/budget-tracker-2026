@@ -2,6 +2,79 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-23 - The host guard reads a failover list the way libpq does
+
+Two more measurements, both from review. The guard applied libpq's last-wins rule to a repeated
+`host=` but still read only the first `hostaddr`, which had been reasoned by analogy rather than
+measured. It does follow the same rule: `?hostaddr=203.0.113.5&hostaddr=127.0.0.1` connected to
+`127.0.0.1`, so a string whose authority and first address both looked remote agreed that it was
+remote while libpq landed on this machine.
+
+libpq has also accepted a comma-separated failover list in `host` and `hostaddr` since PostgreSQL
+10, and the guard was classifying the whole list as one name. `?host=nonexistent.invalid,127.0.0.1`
+matched none of its patterns, read as an ordinary remote host, and connected here. Every entry is
+now classified, and a list whose entries disagree is refused like any other ambiguous string.
+
+Removing a `password` query parameter no longer rewrites the rest of the query. Mutating
+`URLSearchParams` re-serialises the whole thing with form-encoding, which is not URI encoding:
+`?password=x&options=-c%20statement_timeout%3D0` came back as `options=-c+statement_timeout%3D0`,
+which a URI reader decodes to a literal `+` rather than a space, handing `pg_dump` a different
+`options` than the guards checked.
+
+## 2026-09-23 - The guards stop reading connection strings differently from libpq
+
+Two more places where WHATWG `URL` and libpq disagreed about the same string, found by review on
+the backup script and measured on PostgreSQL 17.9.
+
+`URL` puts everything after a raw `#` into the fragment, where `searchParams` cannot see it. libpq
+has no fragment and keeps reading parameters to the end, keeping the last value for each keyword.
+So `?sslmode=require#&sslmode=disable` connected in cleartext while the guard saw only `require`,
+and `?...#&host=127.0.0.1` moved the destination itself while the guard still named the authority.
+A string carrying a raw `#` is now refused rather than read: Prisma rejects one outright, and a `#`
+in a password has to be written `%23`, which produces no fragment and is unaffected.
+
+`password` is also an ordinary libpq connection keyword, so it can be given as a query parameter -
+and it beats both the userinfo password and `PGPASSWORD`. Such a string did not merely leave the
+secret in `argv` for `ps` to show; it overrode the environment variable that exists to keep it out
+of `argv`. Both passwords now move into `PGPASSWORD`.
+
+Both guards and both scripts read connection strings through one module now, since each of these
+bugs was found in two copies of the same code at once.
+
+## 2026-09-23 - The local-database guard stops answering when it cannot know
+
+`databaseHost` decided where a connection string lands by reading the first `host=` parameter and
+ignoring `hostaddr`, on a measurement taken against Prisma. The `psql` and `pg_dump` callers use
+libpq, which honours `hostaddr` and takes the **last** `host=`. Measured on PostgreSQL 17.9,
+`postgres://u@nonexistent.invalid:5432/db?hostaddr=127.0.0.1` connects to `127.0.0.1` while the
+guard answered `nonexistent.invalid`. The worse direction is the local-looking one: a destination
+reading as this machine while libpq aims at production, which `refresh-local-mirror.ts` would then
+DROP and recreate.
+
+Prisma and libpq disagree about such a string, so no single answer is right for every caller.
+Instead of picking one, a string whose possible destinations disagree about being on this machine
+is now refused, which every caller already fails closed on. Disagreement, not mere presence:
+`?host=localhost&hostaddr=127.0.0.1` is an ordinary local setup and is still answered normally,
+because a guard that misfires teaches people to reach for `ALLOW_REMOTE_DB=1` by reflex.
+
+A production backup is also no longer published until it has been read back. It is written under a
+`.partial` name and renamed only after validation, so a dump interrupted by a lost connection or a
+full disk cannot leave a file that looks like the backup you are about to migrate against.
+
+## 2026-09-23 - A production backup you can take before you migrate
+
+Coolify's nightly dump is the safety net for the accident nobody saw coming. `backup-prod-db.ts` is
+the other thing: the deliberate snapshot taken immediately before a migration reaches production,
+when last night is not good enough. It refuses to run against this machine, refuses a connection
+string that permits cleartext, keeps the password out of `ps`, writes owner-only outside the
+repository, and reads every block of the dump back with `pg_restore -f` rather than trusting its
+size, because a truncated dump has a plausible size and restores into a half-populated database.
+`pg_restore -l` is not that check and was the first attempt at it: the table of contents sits ahead
+of the data, so it answers happily from a dump whose data never arrived.
+
+It also refuses a server newer than the local `pg_dump`, which cannot read one and would otherwise
+fail at the worst possible moment with a message naming neither version.
+
 ## 2026-09-23 - The review sandbox can reach GitHub again
 
 The actual reason no automatic review has posted since 2026-09-21. Enforcing the Bash sandbox for

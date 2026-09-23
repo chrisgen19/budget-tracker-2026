@@ -71,10 +71,84 @@ describe("isLocalDatabase", () => {
     expect(isLocalDatabase("postgresql://prod.example/db?host=/var/run/postgresql")).toBe(true);
   });
 
-  // Both were measured to be ignored by Prisma, so neither may move the verdict.
-  it("ignores hostaddr and a capitalised HOST, as Prisma does", () => {
-    expect(isLocalDatabase("postgres://u:p@localhost:5432/db?hostaddr=prod.example")).toBe(true);
+  // `HOST` really is ignored by everything, so it may not move the verdict.
+  it("ignores a capitalised HOST", () => {
     expect(isLocalDatabase("postgres://u:p@localhost:5432/db?HOST=prod.example")).toBe(true);
+  });
+
+  // `hostaddr` used to be in the case above, on a measurement taken against Prisma and then relied
+  // on by the psql/pg_dump callers, where it is false. Measured on PostgreSQL 17.9,
+  // `postgres://u@nonexistent.invalid:5432/db?hostaddr=127.0.0.1` connects to 127.0.0.1.
+  //
+  // Both directions are dangerous, and the local-looking one is the worse of the two:
+  // `refresh-local-mirror.ts` checks isLocalDatabase(DEST) and then DROPs and recreates that
+  // database over libpq, so a "local" verdict here aimed libpq at prod.example.
+  it("refuses a string whose hostaddr and host disagree about this machine", () => {
+    expect(isLocalDatabase("postgres://u:p@localhost:5432/db?hostaddr=prod.example")).toBe(false);
+    expect(isLocalDatabase("postgres://u:p@prod.example:5432/db?hostaddr=127.0.0.1")).toBe(false);
+    expect(databaseHost("postgres://u:p@prod.example:5432/db?hostaddr=127.0.0.1")).toBeNull();
+  });
+
+  // Disagreement, not mere presence. Refusing every hostaddr would misfire on ordinary local
+  // setups, and the note atop db-host.ts is why that matters: a guard that cries wolf teaches
+  // ALLOW_REMOTE_DB=1 by reflex.
+  it("answers normally when hostaddr agrees with the host", () => {
+    expect(isLocalDatabase("postgres://u:p@localhost:5432/db?hostaddr=127.0.0.1")).toBe(true);
+    expect(isLocalDatabase("postgres://u:p@prod.example:5432/db?hostaddr=10.0.0.4")).toBe(false);
+    expect(databaseHost("postgres://u:p@localhost:5432/db?hostaddr=127.0.0.1")).toBe("localhost");
+  });
+
+  // libpq takes the LAST host=, URLSearchParams.get answers the first. Measured connecting to
+  // 127.0.0.1 for the first line below.
+  it("refuses a repeated host that disagrees with itself", () => {
+    expect(isLocalDatabase("postgres://u:p@db/x?host=nonexistent.invalid&host=127.0.0.1")).toBe(false);
+    expect(isLocalDatabase("postgres://u:p@db/x?host=127.0.0.1&host=prod.example")).toBe(false);
+  });
+
+  it("accepts a repeated host that agrees", () => {
+    expect(isLocalDatabase("postgres://u:p@db/x?host=localhost&host=127.0.0.1")).toBe(true);
+    expect(databaseHost("postgres://u:p@db/x?host=localhost&host=127.0.0.1")).toBe("127.0.0.1");
+    expect(isLocalDatabase("postgres://u:p@db/x?host=prod.example&host=other.example")).toBe(false);
+  });
+
+  // WHATWG URL hides everything after a raw `#` in the fragment; libpq reads on and keeps the last
+  // value per keyword. Measured on PostgreSQL 17.9, the first string below connects to 127.0.0.1
+  // while this function used to answer nonexistent.invalid.
+  it("refuses a string with a raw # hiding parameters from the guard", () => {
+    expect(
+      isLocalDatabase("postgres://u@nonexistent.invalid:5432/db?sslmode=disable&application_name=x#&host=127.0.0.1")
+    ).toBe(false);
+    expect(databaseHost("postgres://u@localhost:5432/db?a=1#&host=prod.example")).toBeNull();
+    expect(databaseHost("postgres://u@localhost:5432/db?sslmode=require#")).toBeNull();
+  });
+
+  // An encoded # is part of the password and makes no fragment, so it must not trip the refusal.
+  it("still answers for a percent-encoded # in the password", () => {
+    expect(isLocalDatabase("postgres://u:pa%23ss@localhost:5432/db")).toBe(true);
+  });
+
+  // Measured on PostgreSQL 17.9: ?hostaddr=203.0.113.5&hostaddr=127.0.0.1 connected to 127.0.0.1.
+  // Reading only the first left both candidates looking remote, so no disagreement was detected and
+  // the guard waved through a string that lands on this machine.
+  it("applies last-wins to a repeated hostaddr, not just the first", () => {
+    expect(
+      isLocalDatabase("postgres://u@prod.example:5432/db?hostaddr=203.0.113.5&hostaddr=127.0.0.1")
+    ).toBe(false);
+    expect(
+      databaseHost("postgres://u@prod.example:5432/db?hostaddr=203.0.113.5&hostaddr=127.0.0.1")
+    ).toBeNull();
+  });
+
+  // libpq takes a comma-separated failover list in host and hostaddr (multi-host, PG10+). Measured:
+  // ?host=nonexistent.invalid,127.0.0.1 connected to 127.0.0.1, while the whole string matched none
+  // of isLocalName's patterns and so read as an ordinary remote host.
+  it("classifies each entry of a comma-separated host list", () => {
+    expect(isLocalDatabase("postgres://u@x:5432/db?host=nonexistent.invalid,127.0.0.1")).toBe(false);
+    expect(databaseHost("postgres://u@x:5432/db?host=prod.example,localhost")).toBeNull();
+    // A list that agrees is still answered, for the reason every other check here tests agreement
+    // rather than presence.
+    expect(isLocalDatabase("postgres://u@x:5432/db?host=localhost,127.0.0.1")).toBe(true);
+    expect(isLocalDatabase("postgres://u@x:5432/db?host=a.example,b.example")).toBe(false);
   });
 
   it("refuses a socket URL redirected at a real host", () => {
