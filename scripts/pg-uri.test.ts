@@ -61,6 +61,18 @@ describe("splitCredentials", () => {
     expect(splitCredentials(userinfo(ALPHA, "?password=")).env).toEqual({ PGPASSWORD: ALPHA });
   });
 
+  // URLSearchParams mutation re-serialises the whole query with form-encoding, turning %20 into +,
+  // which a URI reader then decodes as a literal +. Removing the password must not rewrite what
+  // every other parameter says.
+  it("preserves the encoding of every other parameter", () => {
+    const opts = "-c%20statement_timeout%3D0";
+    const { safeUrl } = splitCredentials(queryParam(ALPHA, `&options=${opts}&application_name=a%2Bb`));
+    expect(safeUrl).toContain(`options=${opts}`);
+    expect(safeUrl).toContain("application_name=a%2Bb");
+    expect(safeUrl).not.toContain("+");
+    expect(safeUrl).not.toContain(ALPHA);
+  });
+
   it("leaves a string with no password alone", () => {
     const url = "postgres://u@h:5432/db?sslmode=require";
     expect(splitCredentials(url)).toEqual({ safeUrl: url, env: {} });

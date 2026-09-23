@@ -92,11 +92,23 @@ export const databaseHost = (url: string): string | null => {
   // Every destination any consumer of this string might choose. The authority is absent when a
   // `host=` is present, because that parameter wins for Prisma and libpq alike.
   const candidates = overrides.length > 0 ? [...overrides] : [declared];
-  const addr = params.get("hostaddr");
-  if (addr !== null) candidates.push(addr.toLowerCase());
+  // `getAll`, not `get`: a repeated `hostaddr` follows the same last-wins rule as `host`, which was
+  // inferred by analogy here and is now measured. On PostgreSQL 17.9,
+  // `?hostaddr=203.0.113.5&hostaddr=127.0.0.1` connected to 127.0.0.1 -- and reading only the first
+  // left a string whose candidates were an unreachable TEST-NET address and a remote authority,
+  // agreeing that it was remote, while libpq went to this machine.
+  candidates.push(...params.getAll("hostaddr").map((a) => a.toLowerCase()));
 
-  if (new Set(candidates.map(isLocalHostValue)).size > 1) return null;
-  return declared;
+  // Every candidate may itself be a comma-separated failover list, so the destinations to compare
+  // are the entries, not the values. Measured: `?host=nonexistent.invalid,127.0.0.1` connected to
+  // 127.0.0.1, while the whole string matched none of `isLocalName`'s patterns and read as remote.
+  const destinations = candidates.flatMap((value) => value.split(","));
+
+  if (new Set(destinations.map(isLocalHostValue)).size > 1) return null;
+  // Past that check every destination agrees about this machine, so any entry gives the same
+  // verdict. The first is the one libpq tries first, and unlike the comma-joined string it is a
+  // host a caller can classify and print.
+  return declared.split(",")[0];
 };
 
 /**

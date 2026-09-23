@@ -60,8 +60,16 @@ export const splitCredentials = (url: string): { safeUrl: string; env: Record<st
     const password = fromQuery.length > 0 ? fromQuery[fromQuery.length - 1] : fromUserinfo;
 
     u.password = "";
-    // Only when there is one, so a string without it is serialised exactly as before.
-    if (fromQuery.length > 0) u.searchParams.delete("password");
+    // Filtering the raw query text rather than calling `searchParams.delete`. Any mutation through
+    // `URLSearchParams` re-serialises the whole query with form-encoding rules, which are not URI
+    // percent-encoding: measured, `?password=x&options=-c%20statement_timeout%3D0` came back as
+    // `options=-c+statement_timeout%3D0`, which a URI reader decodes to a literal `+` instead of a
+    // space. That hands `pg_dump` a different `options` than the one the guards checked. Only when
+    // there is a password to remove, so a string without one is serialised exactly as before.
+    if (fromQuery.length > 0) {
+      const kept = u.search.slice(1).split("&").filter((pair) => pair.split("=")[0] !== "password");
+      u.search = kept.join("&");
+    }
 
     return { safeUrl: u.toString(), env: password ? { PGPASSWORD: password } : {} };
   } catch {

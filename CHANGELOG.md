@@ -2,6 +2,25 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-23 - The host guard reads a failover list the way libpq does
+
+Two more measurements, both from review. The guard applied libpq's last-wins rule to a repeated
+`host=` but still read only the first `hostaddr`, which had been reasoned by analogy rather than
+measured. It does follow the same rule: `?hostaddr=203.0.113.5&hostaddr=127.0.0.1` connected to
+`127.0.0.1`, so a string whose authority and first address both looked remote agreed that it was
+remote while libpq landed on this machine.
+
+libpq has also accepted a comma-separated failover list in `host` and `hostaddr` since PostgreSQL
+10, and the guard was classifying the whole list as one name. `?host=nonexistent.invalid,127.0.0.1`
+matched none of its patterns, read as an ordinary remote host, and connected here. Every entry is
+now classified, and a list whose entries disagree is refused like any other ambiguous string.
+
+Removing a `password` query parameter no longer rewrites the rest of the query. Mutating
+`URLSearchParams` re-serialises the whole thing with form-encoding, which is not URI encoding:
+`?password=x&options=-c%20statement_timeout%3D0` came back as `options=-c+statement_timeout%3D0`,
+which a URI reader decodes to a literal `+` rather than a space, handing `pg_dump` a different
+`options` than the guards checked.
+
 ## 2026-09-23 - The guards stop reading connection strings differently from libpq
 
 Two more places where WHATWG `URL` and libpq disagreed about the same string, found by review on
