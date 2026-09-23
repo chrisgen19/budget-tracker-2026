@@ -353,10 +353,28 @@ jobs:
           # the PR when it ran, so the prompt says whose comments count.
           # The main-session prompt is there because the subagent one does not reach
           # the session that decides whether to stop.
+          #
+          # The main prompt also tells the session to skip the command's step 1, the
+          # haiku eligibility check. Every automatic review of a real PR from
+          # 2026-09-22 on stopped within 5-9 turns, which is as far as that step gets
+          # (the transcript is not logged, so the turn count is the evidence):
+          # bugfix/recurring-slow-cadence,
+          # test/card-debt-analytics-e2e, bugfix/overall-card-utilization,
+          # feature/watchlist-telegram-digest, fix/sha-pin-workflow-actions and three
+          # runs on #388, the last (35817906938) after 5 turns with nothing denied and
+          # only CodeRabbit on the PR. Its four conditions are already settled before
+          # the session starts: the job's `if:` excludes drafts and bot authors, a
+          # closed PR fires neither trigger, and `opened`/`ready_for_review` is not a
+          # re-review. That leaves "trivial", which costs one review when it is wrong.
+          # The alternative, a copy of the command with step 1 deleted, is ruled out by
+          # the upstream licence: the plugin is all rights reserved and this repository
+          # is public (see .claude/claude-review-marketplace/README.md). This is an
+          # instruction rather than a code change, so if a session runs step 1 anyway
+          # the report step below prints the reason it gave for stopping.
           claude_args: >-
             --permission-mode dontAsk
             --permission-prompts none
-            --append-system-prompt "This review runs unattended with a fixed tool allowlist. Never add a shell redirection (including 2>&1 or 2>/dev/null) or command substitution to any command, and repeat this rule to every subagent you launch. A denied call means the syntax was refused, not that the check failed: retry it in an allowed form. Only comments authored by claude or claude[bot] count as Claude having already commented; comments from other bots such as coderabbitai do not."
+            --append-system-prompt "This workflow has already made the review command's step 1 decision before you started: it runs only for an open, non-draft, human-authored pull request that has just been opened or marked ready, so this PR must be reviewed. Skip step 1 entirely, do not launch its eligibility agent, and begin at step 2. Do not stop early on any condition step 1 would have checked, including a change that looks trivial. This review runs unattended with a fixed tool allowlist. Never add a shell redirection (including 2>&1 or 2>/dev/null) or command substitution to any command, and repeat this rule to every subagent you launch. A denied call means the syntax was refused, not that the check failed: retry it in an allowed form. Only comments authored by claude or claude[bot] count as Claude having already commented; comments from other bots such as coderabbitai do not."
             --append-subagent-system-prompt "Prefer one approved shell command per tool call during this read-only review. Do not use command substitution or redirect output, and never append 2>&1 or 2>/dev/null: stderr already reaches you. If a call is denied, retry it without that syntax instead of reporting the check as failed. Prefer gh --json and --jq for GitHub data; if a pipeline is still required, use only the approved read-only filters. Only comments authored by claude or claude[bot] count as Claude having already commented; comments from other bots such as coderabbitai do not."
             --disallowedTools "Write,Edit,NotebookEdit,WebFetch,WebSearch,Bash(gh issue list:*),Bash(gh search:*)"
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Skill(code-review:code-review),Task,Read,Glob,Grep,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(git ls-tree:*),Bash(git ls-files:*),Bash(git merge-base:*),Bash(git rev-parse:*),Bash(jq:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(cut:*),Bash(nl:*),Bash(ls:*)"
@@ -372,11 +390,12 @@ jobs:
       # Redirect targets and arguments from later segments stay hidden. Nothing else is
       # printed, since the transcript holds every tool output, which is why the action
       # hides it (`show_full_output` would publish all of it in this public repo's logs).
-      # The step then fails the job if this run left nothing on the PR. The command can
-      # intentionally stop without a comment when its eligibility check calls the PR
-      # trivial or already reviewed;
-      # that is a successful plugin skip but still fails this repository's stricter
-      # policy that every automatic review must leave evidence of its own.
+      # The step then fails the job if this run left nothing on the PR, and prints the
+      # session's closing message so the reason it stopped is on the record. The
+      # command's eligibility check is skipped by the prompt above, but a session that
+      # runs it anyway can still stop without a comment on a PR it calls trivial; that
+      # is a successful plugin skip but still fails this repository's stricter policy
+      # that every automatic review must leave evidence of its own.
       #
       # "This run" is taken from the transcript, not from the PR's comment list. Every
       # `@claude` job posts as the same `claude[bot]`, and the list API's `since`
@@ -544,8 +563,29 @@ jobs:
             if [ "${denied:-0}" -gt 0 ]; then
               cause="${denied} call(s) were denied, so a missing tool may have cut it short; the warnings above are what they were."
             else
-              cause="Nothing was denied, so it most likely stopped on purpose: the command skips a PR it judges trivial, or one Claude has already commented on."
+              cause="Nothing was denied, so it most likely stopped on purpose, for the reason below."
             fi
-            echo "::error title=Claude review posted nothing::The review ended after $turns turns without a comment of its own on this PR (comments from other @claude jobs do not count). $cause A session error above, if any, is the other possibility. Comment '@claude review this PR' for a manual review."
+            # The session's own closing words, which name the condition it stopped on.
+            # Without them every skip since 2026-09-22 read the same and each fix was a
+            # guess; a local run of the same command said "already has a comment from
+            # user claude ... I'm stopping here" in one line. This is the model's
+            # one-paragraph conclusion, not tool output, so it does not reopen what
+            # `show_full_output` stays off for. `.result` first, then the last assistant
+            # text in case the action drops that field, as it did the denials array.
+            # Newlines and control characters are removed so the text stays inside the
+            # one annotation below and cannot start a workflow command of its own.
+            reason=$(jq -r '
+              ((([.[] | select(.type == "result")] | last | .result?) // null)
+                // ([.[] | select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text] | last)
+                // "(the session left no closing message)")
+              | tostring | gsub("[[:cntrl:]]+"; " ") | .[0:500]
+            ' "$EXECUTION_FILE")
+            {
+              echo
+              echo "**Why it stopped, in the session's own words:**"
+              echo
+              echo "> $reason"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=Claude review posted nothing::The review ended after $turns turns without a comment of its own on this PR (comments from other @claude jobs do not count). $cause Session's closing message: $reason. A session error above, if any, is the other possibility. Comment '@claude review this PR' for a manual review."
             exit 1
           fi
