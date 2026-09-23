@@ -39,11 +39,11 @@ The worked example is #304 then #307. #304 reverted the label/category code and 
 removed a table the still-serving release selected on every label query.
 
 Keep the model in `schema.prisma` until the contract PR, and stop *reading* it in code instead.
-Remove the model in the same PR as the drop. #304 removed the model early, so every migration name
-still matched while the schema and the database disagreed, and the next `prisma migrate dev` on an
-unrelated change would have silently generated the `DROP`. `check-migration-drift.ts` now diffs the
-two (`prisma migrate diff --from-schema-datasource`) and fails the deploy on any difference, so
-that shape no longer ships.
+Remove the model in the same PR as the drop. Remove it early and every migration name still
+matches while the schema and the database disagree, so the next `prisma migrate dev` on an
+unrelated change silently generates the `DROP`. That is why #304 kept the model and #307 removed it
+alongside the drop migration. `check-migration-drift.ts` diffs the two (`prisma migrate diff
+--from-schema-datasource`) and fails the deploy on any difference, so that shape no longer ships.
 
 Write the contract migration as a **forward** migration. Never edit or delete an applied one: the
 drift check fails any deploy whose checkout lacks a migration the database has applied.
@@ -51,9 +51,11 @@ drift check fails any deploy whose checkout lacks a migration the database has a
 ## An API response shape change needs one release of backward compatibility
 
 `src/app/sw.ts` precaches the JS bundles. `skipWaiting` and `clientsClaim` swap the *worker*, not
-the script an open tab is already running, and `/api/*` is `NetworkOnly`. So after a deploy, React
-Query's refetch-on-focus feeds new JSON to old code, and nothing reloads the page. `next.config.ts`
-sets no `deploymentId`, and even with one, Next's skew protection covers RSC and server-action
+the script an open tab is already running, and `/api/*` is `NetworkOnly`. So after a deploy, new
+JSON reaches old code through React Query's refetch-on-reconnect, refetch-on-mount once `staleTime`
+lapses, and the invalidations after every mutation, and nothing reloads the page. (Not focus:
+`query-client.ts` sets `refetchOnWindowFocus: false` app-wide.) `next.config.ts` sets no
+`deploymentId`, and even with one, Next's skew protection covers RSC and server-action
 requests, not the plain `fetch` calls this app's hooks make.
 
 Until there is an update-available prompt, the rule is by hand:
