@@ -16,7 +16,13 @@ declare const self: ServiceWorkerGlobalScope;
 
 const serwist = new Serwist({
   precacheEntries: self.__SW_MANIFEST,
-  skipWaiting: true,
+  // `false`, so a new worker waits instead of taking over the moment it installs. That wait is
+  // what makes an update *promptable*: with `skipWaiting: true` there is no waiting worker for a
+  // page to find, the swap happens silently, and the open tab keeps running the old bundle against
+  // the new API anyway -- the skew #306 is about. The page now offers a reload and applies the
+  // update by posting `SKIP_WAITING` below. `clientsClaim` stays: once the user accepts and the new
+  // worker activates, it should take the open pages with it.
+  skipWaiting: false,
   clientsClaim: true,
   navigationPreload: true,
   runtimeCaching: [
@@ -49,6 +55,12 @@ const serwist = new Serwist({
       },
     ],
   },
+});
+
+// The other half of `skipWaiting: false`: the waiting worker activates only when a page asks it
+// to, which `useServiceWorkerUpdate` does after the user accepts the prompt.
+self.addEventListener("message", (event: ExtendableMessageEvent) => {
+  if (event.data?.type === "SKIP_WAITING") void self.skipWaiting();
 });
 
 serwist.addEventListeners();
