@@ -56,6 +56,18 @@ of the data, so it answers happily from a dump whose data never arrived.
 It also refuses a server newer than the local `pg_dump`, which cannot read one and would otherwise
 fail at the worst possible moment with a message naming neither version.
 
+## 2026-09-23 - The review sandbox can reach GitHub again
+
+The actual reason no automatic review has posted since 2026-09-21. Enforcing the Bash sandbox for
+the reviewer was right, but the sandbox allows no network host until someone approves it, and an
+unattended review has no one to approve anything. Every `gh` call it made, to read the pull
+request, its diff, or to post the review, was refused on the way to GitHub. None of it appeared as
+a denied call, because a blocked connection is not a permission denial, so two earlier fixes went
+after the symptoms: the `2>&1` the model kept adding was most likely it trying to see why `gh`
+failed. It came to light on the first run after the report step began quoting the session's own
+closing words, which said in as many words that access to `api.github.com` had been denied. The
+sandbox now allows that one host and still blocks every other.
+
 ## 2026-09-23 - Automatic reviews start at the review, not at the question of whether to review
 
 From 2026-09-22 on, no automatic review of an ordinary pull request posted anything: eight runs
