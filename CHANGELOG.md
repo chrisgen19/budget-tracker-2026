@@ -8,8 +8,10 @@ Coolify's nightly dump is the safety net for the accident nobody saw coming. `ba
 the other thing: the deliberate snapshot taken immediately before a migration reaches production,
 when last night is not good enough. It refuses to run against this machine, refuses a connection
 string that permits cleartext, keeps the password out of `ps`, writes owner-only outside the
-repository, and reads the dump back with `pg_restore -l` rather than trusting its size, because a
-truncated dump has a plausible size and restores into a half-populated database.
+repository, and reads every block of the dump back with `pg_restore -f` rather than trusting its
+size, because a truncated dump has a plausible size and restores into a half-populated database.
+`pg_restore -l` is not that check and was the first attempt at it: the table of contents sits ahead
+of the data, so it answers happily from a dump whose data never arrived.
 
 It also refuses a server newer than the local `pg_dump`, which cannot read one and would otherwise
 fail at the worst possible moment with a message naming neither version.

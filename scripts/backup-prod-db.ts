@@ -24,6 +24,7 @@ import { mkdirSync, chmodSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { isLocalDatabase, databaseHost } from "./db-host";
+import { sslProblem } from "./pg-sslmode";
 import { versionSkew } from "./pg-version";
 
 const argv = process.argv.slice(2);
@@ -69,25 +70,6 @@ const runOn = (url: string, cmd: string, args: string[]): string => {
     maxBuffer: 256 * 1024 * 1024,
     env: { ...process.env, ...env },
   });
-};
-
-/**
- * Refuse a source that permits an unencrypted connection.
- *
- * Same rule as `refresh-local-mirror.ts`: `disable`, `allow` and `prefer` all send the credentials
- * and the whole database in cleartext if the server does not insist otherwise, and this copies an
- * entire production database across that connection.
- */
-const sslProblem = (url: string): string | null => {
-  let mode: string | null;
-  try {
-    mode = new URL(url).searchParams.get("sslmode");
-  } catch {
-    return null;
-  }
-  if (mode === null) return "no sslmode= is set, so libpq may connect in cleartext";
-  if (["disable", "allow", "prefer"].includes(mode)) return `sslmode=${mode} permits an unencrypted connection`;
-  return null;
 };
 
 /**
@@ -177,13 +159,24 @@ function main(): number {
   runOn(SOURCE, "pg_dump", ["--format=custom", "--no-owner", "--no-privileges", "-f", file]);
   chmodSync(file, 0o600);
 
-  // Reading the dump back is the only thing that distinguishes a backup from a file. A truncated
-  // or half-written dump has a plausible size and restores into a half-populated database.
-  // Not through `runOn`: this reads the local file and takes no connection string at all.
+  // Reading the dump back is the only thing that distinguishes a backup from a file. A truncated or
+  // half-written dump has a plausible size and restores into a half-populated database.
+  //
+  // `-l` is not that check, which is what this originally used. The table of contents sits ahead of
+  // the data in the custom format, so `-l` answers from a file whose data never arrived: measured on
+  // a 186,475-byte dump truncated to exactly half, `pg_restore -l` exited 0 and listed 215 objects.
+  // `-f` decompresses every block and is the one that fails ("could not read from input file: end of
+  // file"). Its output goes to /dev/null rather than a file, because the alternative is writing the
+  // whole database back out as plaintext SQL beside the dump. It costs a full read of the file,
+  // which `-l` does not, and that is the price of the check meaning anything.
+  //
+  // `-l` still runs, for the object count alone: a figure to compare against the next backup.
+  // Neither goes through `runOn`: both read the local file and take no connection string at all.
+  execFileSync("pg_restore", ["-f", "/dev/null", file], { maxBuffer: 256 * 1024 * 1024 });
   const toc = execFileSync("pg_restore", ["-l", file], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
   const objects = toc.split("\n").filter((l) => l && !l.startsWith(";")).length;
   const size = statSync(file).size;
-  console.log(`\nWrote ${size.toLocaleString()} bytes, ${objects} objects, verified readable by pg_restore.`);
+  console.log(`\nWrote ${size.toLocaleString()} bytes, ${objects} objects, every block read back by pg_restore.`);
   console.log(`\nRestore into a local database with:\n  pg_restore --clean --if-exists --no-owner -d "$DATABASE_URL" ${file}`);
   return 0;
 }
