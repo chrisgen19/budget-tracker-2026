@@ -19,14 +19,18 @@ jobs:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      # Pinned to commit SHAs for the reason given in `claude.yml`. The stakes are
+      # lower here - this job holds no secrets and only `contents: read` - but a
+      # compromised action could still make lint, type-check and test report green
+      # on a change that is not.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # pnpm version is read from the "packageManager" field in package.json.
       # It must stay >=10.16 so the .npmrc hardening (minimum-release-age,
       # block-exotic-subdeps) is actually enforced here.
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 20
           cache: pnpm

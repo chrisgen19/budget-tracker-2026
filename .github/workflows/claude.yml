@@ -25,14 +25,26 @@ jobs:
       id-token: write
       actions: read # Required for Claude to read CI results on PRs
     steps:
+      # Actions are pinned to full commit SHAs, not major tags. A major tag is a
+      # movable pointer that its maintainer re-points on every release, so `@v1`
+      # changes the code running here with no diff, no PR and no review in this
+      # repository - the tj-actions/changed-files compromise re-pointed every
+      # version tag at a commit that dumped CI secrets into build logs. This job
+      # is the one that matters: it passes `CLAUDE_CODE_OAUTH_TOKEN` straight to
+      # the action below and holds `id-token: write`. `claude-code-review.yml`
+      # already pins the same action by SHA and #381 pinned the review plugin's
+      # marketplace behind it; leaving the other consumer of that credential on a
+      # floating tag was the remaining gap in the same chain. Dependabot advances
+      # these (see `.github/dependabot.yml`), which is only worth anything if the
+      # SHA it moves to gets looked at.
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 1
 
       - name: Run Claude Code
         id: claude
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@cfc3eb22bfed5c26ef66e3223c982af27e4524de # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
