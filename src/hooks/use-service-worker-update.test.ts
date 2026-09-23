@@ -76,7 +76,7 @@ describe("useServiceWorkerUpdate", () => {
     await waitFor(() => expect(result.current.updateAvailable).toBe(true));
   });
 
-  it("polls for a build that shipped while the tab sat untouched", async () => {
+  it("checks once at mount, before any polling", async () => {
     renderHook(() => useServiceWorkerUpdate());
     await waitFor(() => expect(registration.update).toHaveBeenCalledTimes(1));
   });
@@ -122,6 +122,75 @@ describe("useServiceWorkerUpdate", () => {
       container.dispatchEvent(new Event("controllerchange"));
     });
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  // The trap the first-install guard opened: the claim consumed the only listener, so the tab that
+  // most needs the reload -- one that started uncontrolled and stayed open across a deploy -- got a
+  // banner whose button did nothing. An installed PWA left open after its first launch is exactly
+  // this tab.
+  it("still reloads a tab that was claimed first and updated later", async () => {
+    install(null);
+    const { result } = renderHook(() => useServiceWorkerUpdate());
+    await waitFor(() => expect(registration.update).toHaveBeenCalled());
+
+    // The first claim: not an update, must not reload.
+    act(() => {
+      container.controller = {};
+      container.dispatchEvent(new Event("controllerchange"));
+    });
+    expect(reload).not.toHaveBeenCalled();
+
+    // A deploy lands while the tab is still open.
+    const installing = new FakeWorker();
+    registration.installing = installing;
+    act(() => {
+      registration.dispatchEvent(new Event("updatefound"));
+      installing.become("installed");
+    });
+    await waitFor(() => expect(result.current.updateAvailable).toBe(true));
+
+    act(() => result.current.applyUpdate());
+    act(() => {
+      container.dispatchEvent(new Event("controllerchange"));
+    });
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps polling, and checks again when the tab is brought back", async () => {
+    vi.useFakeTimers();
+    try {
+      renderHook(() => useServiceWorkerUpdate());
+      await act(async () => {});
+      expect(registration.update).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        vi.advanceTimersByTime(60 * 60 * 1000);
+      });
+      expect(registration.update).toHaveBeenCalledTimes(2);
+
+      act(() => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      expect(registration.update).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops polling once the hook unmounts", async () => {
+    vi.useFakeTimers();
+    try {
+      const { unmount } = renderHook(() => useServiceWorkerUpdate());
+      await act(async () => {});
+      unmount();
+      act(() => {
+        vi.advanceTimersByTime(3 * 60 * 60 * 1000);
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      expect(registration.update).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does nothing where there is no service worker at all", () => {
