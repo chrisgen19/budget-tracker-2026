@@ -2,6 +2,20 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-23 - A review that did not happen stops reporting as one that did
+
+Two blind spots in the step that reports what an automatic review did, both found by watching it
+run rather than by reading it. A denied call was counted from a field the action no longer emits,
+so a review cut short by a missing tool reported zero denials, printed no warning, and then told
+the reader in as many words that nothing had been denied. The count it does emit is now read, and
+a count with no per-call detail says so instead of going quiet.
+
+Separately, the action refuses to run a reviewer that the pull request has edited, which means
+every change to the review workflow itself produced a green `claude-review` that had reviewed
+nothing. That cannot be an error, since such a pull request can never be reviewed automatically,
+but it no longer passes silently: it now annotates the pull request and says on the run summary
+that no review took place, and why.
+
 ## 2026-09-23 - Every workflow action is pinned to a commit
 
 `claude.yml` passed the shared Anthropic credential to `anthropics/claude-code-action@v1`, a major
