@@ -66,7 +66,71 @@ jobs:
       id-token: write
 
     steps:
+      # The review command's own step 1 asks whether to review at all, in a haiku
+      # agent, and from 2026-09-22 that agent stopped every automatic review of an
+      # ordinary PR. The prompt below now tells the session to skip it. Two of its
+      # four questions are facts, though, and cannot be dropped with it: the job-level
+      # `if:` only sees the event, and the same `opened` or `ready_for_review` arrives
+      # again on a rerun (`gh run rerun`), on every draft-then-ready toggle, and late
+      # from the `queue: max` concurrency queue after the PR has closed or gone back
+      # to draft. #388 had all of the first two within one afternoon. Without this
+      # step each of those is another full review - eight agents, two of them Opus -
+      # and a second set of comments. So the facts are checked here, by the API, and
+      # only the judgment call ("trivial") is gone. A skip is a warning, not a pass
+      # dressed as one, and it names the reason.
+      #
+      # "Already reviewed" means any comment, review or inline comment by the Claude
+      # app, as the command's own step 1 counts it. That includes a manual `@claude`
+      # review from claude.yml, which posts as the same app: after one of those an
+      # automatic review would be the duplicate. `@claude review this PR` remains the
+      # way to ask for another. Findings from CodeRabbit or Codex do not count.
+      - name: Check the PR still needs a review
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          CLAUDE_BOT_LOGIN: "claude[bot]"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # The live PR, not the event payload, which is as old as the event.
+          pr=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '{state, draft}')
+          state=$(jq -r .state <<<"$pr")
+          draft=$(jq -r .draft <<<"$pr")
+
+          # One id per line from all three places a review can land, every page.
+          prior=0
+          for path in issues/$PR_NUMBER/comments pulls/$PR_NUMBER/reviews pulls/$PR_NUMBER/comments; do
+            n=$(gh api --paginate "repos/$REPO/$path" \
+              --jq ".[] | select(.user.login == \"$CLAUDE_BOT_LOGIN\") | .id" | wc -l)
+            prior=$((prior + n))
+          done
+
+          reason=""
+          if [ "$state" != open ]; then
+            reason="the PR is $state."
+          elif [ "$draft" = true ]; then
+            reason="the PR went back to draft; marking it ready will run this again."
+          elif [ "$prior" -gt 0 ]; then
+            reason="Claude has already posted on this PR ($prior comment(s) or review(s) by $CLAUDE_BOT_LOGIN). Comment '@claude review this PR' for another review."
+          fi
+
+          if [ -n "$reason" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Claude review skipped::No automatic review, because $reason"
+            {
+              echo "### Claude Code Review"
+              echo
+              echo "**Skipped:** $reason"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout repository
+        if: steps.gate.outputs.skip != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # `0`, not `1`. With a single commit the reviewer has only the PR head, so
@@ -88,6 +152,7 @@ jobs:
       # the policy used to review itself. The PR changes remain visible through
       # `gh pr diff`; only the working copies used as instructions are restored.
       - name: Restore trusted review policy
+        if: steps.gate.outputs.skip != 'true'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: git restore --source="$BASE_SHA" -- AGENTS.md REVIEW.md
@@ -99,6 +164,7 @@ jobs:
       # AppArmor adjustment in sync with anthropics/claude-code-action's own setup
       # for Ubuntu 24.04+ runners.
       - name: Install subprocess isolation dependencies
+        if: steps.gate.outputs.skip != 'true'
         timeout-minutes: 5
         shell: bash
         run: |
@@ -124,6 +190,9 @@ jobs:
 
       - name: Run Claude Code Review
         id: claude-review
+        # Skipped by the gate step above, and so is the report step at the end: its
+        # `outcome != 'skipped'` condition already excludes a run that never started.
+        if: steps.gate.outputs.skip != 'true'
         # The action exits 1 whenever the session ends on `is_error: true`, and
         # that says nothing about whether the review happened. On run 35194924893
         # the four inline findings were posted at 07:42:08-07:42:30 and the
@@ -362,10 +431,13 @@ jobs:
           # test/card-debt-analytics-e2e, bugfix/overall-card-utilization,
           # feature/watchlist-telegram-digest, fix/sha-pin-workflow-actions and three
           # runs on #388, the last (35817906938) after 5 turns with nothing denied and
-          # only CodeRabbit on the PR. Its four conditions are already settled before
-          # the session starts: the job's `if:` excludes drafts and bot authors, a
-          # closed PR fires neither trigger, and `opened`/`ready_for_review` is not a
-          # re-review. That leaves "trivial", which costs one review when it is wrong.
+          # only CodeRabbit on the PR. Three of its four conditions are facts, and the
+          # `gate` step at the top of this job checks them through the API before the
+          # session starts: closed, draft, and already reviewed by Claude (an earlier
+          # version of this comment claimed `opened`/`ready_for_review` could not be a
+          # re-review; a rerun or a draft toggle makes it one, #391 review). Bot
+          # authors are the job's `if:`. That leaves "trivial", which costs one review
+          # when it is wrong.
           # The alternative, a copy of the command with step 1 deleted, is ruled out by
           # the upstream licence: the plugin is all rights reserved and this repository
           # is public (see .claude/claude-review-marketplace/README.md). This is an
@@ -374,7 +446,7 @@ jobs:
           claude_args: >-
             --permission-mode dontAsk
             --permission-prompts none
-            --append-system-prompt "This workflow has already made the review command's step 1 decision before you started: it runs only for an open, non-draft, human-authored pull request that has just been opened or marked ready, so this PR must be reviewed. Skip step 1 entirely, do not launch its eligibility agent, and begin at step 2. Do not stop early on any condition step 1 would have checked, including a change that looks trivial. This review runs unattended with a fixed tool allowlist. Never add a shell redirection (including 2>&1 or 2>/dev/null) or command substitution to any command, and repeat this rule to every subagent you launch. A denied call means the syntax was refused, not that the check failed: retry it in an allowed form. Only comments authored by claude or claude[bot] count as Claude having already commented; comments from other bots such as coderabbitai do not."
+            --append-system-prompt "Before you started, this workflow checked through the GitHub API that this pull request is open, not a draft, not bot-authored, and has no comment or review from Claude yet, so it must be reviewed. Skip step 1 entirely, do not launch its eligibility agent, and begin at step 2. Do not stop early on any condition step 1 would have checked, including a change that looks trivial. This review runs unattended with a fixed tool allowlist. Never add a shell redirection (including 2>&1 or 2>/dev/null) or command substitution to any command, and repeat this rule to every subagent you launch. A denied call means the syntax was refused, not that the check failed: retry it in an allowed form. Only comments authored by claude or claude[bot] count as Claude having already commented; comments from other bots such as coderabbitai do not."
             --append-subagent-system-prompt "Prefer one approved shell command per tool call during this read-only review. Do not use command substitution or redirect output, and never append 2>&1 or 2>/dev/null: stderr already reaches you. If a call is denied, retry it without that syntax instead of reporting the check as failed. Prefer gh --json and --jq for GitHub data; if a pipeline is still required, use only the approved read-only filters. Only comments authored by claude or claude[bot] count as Claude having already commented; comments from other bots such as coderabbitai do not."
             --disallowedTools "Write,Edit,NotebookEdit,WebFetch,WebSearch,Bash(gh issue list:*),Bash(gh search:*)"
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Skill(code-review:code-review),Task,Read,Glob,Grep,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(git ls-tree:*),Bash(git ls-files:*),Bash(git merge-base:*),Bash(git rev-parse:*),Bash(jq:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(cut:*),Bash(nl:*),Bash(ls:*)"

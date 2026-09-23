@@ -11,9 +11,13 @@ adding to `gh pr view`, which the redirect hook correctly refuses; both prompts 
 the next run on #388 had no denied call. It stopped anyway, after five turns, for a reason the log
 could not show.
 
-Every question that step asks is already settled before the session starts: the job skips drafts
-and bot authors, a closed pull request triggers nothing, and a newly opened pull request has not
-been reviewed. So the session is now told to skip it and begin at the review itself. A copy of the
+Three of the four questions that step asks are facts, not judgment, so they moved out of the agent
+into a plain step that asks the API before anything is installed: is the pull request still open,
+still out of draft, and free of any comment or review by Claude. They cannot simply be dropped,
+because the same "opened" or "ready for review" event arrives again on a rerun, on every
+draft-then-ready toggle, and late from the review queue, and each of those would otherwise be
+another full review. The fourth question, whether a change is too trivial to review, is the one
+that is gone. The session is told all of this and to begin at the review itself. A copy of the
 command with that step removed would have been firmer, and is ruled out by its licence, which is
 all rights reserved, in a public repository. Because an instruction can still be ignored, a review
 that posts nothing now quotes the session's own closing message on the run, so the next skip
