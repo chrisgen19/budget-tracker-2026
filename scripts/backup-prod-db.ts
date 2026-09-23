@@ -20,7 +20,7 @@
  * (`~/db-backups` by default, or `--out <dir>`).
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, chmodSync, statSync } from "node:fs";
+import { mkdirSync, chmodSync, statSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { isLocalDatabase, databaseHost } from "./db-host";
@@ -150,33 +150,47 @@ function main(): number {
   chmodSync(BACKUP_DIR, 0o700);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const file = join(BACKUP_DIR, `prod-${stamp}.dmp`);
-
+  // Written under `.partial` and renamed only once it has been read back.
+  //
+  // Everything below can fail: pg_dump can lose the connection halfway, the disk can fill, and the
+  // validation can reject what arrived. Under its final name from the start, each of those leaves a
+  // `prod-<stamp>.dmp` that the validation exists to reject -- and this script runs seconds before a
+  // migration, so the next person to look is under pressure, sees today's timestamp, and believes
+  // it. The rename is atomic within a directory, so the final name never exists unvalidated, and the
+  // partial is removed on every failure path rather than left to be puzzled over.
+  const partial = `${file}.partial`;
   console.log(`\nDumping to ${file}`);
-  // Custom format, matching what Coolify's own nightly job writes, so one restore procedure covers
-  // either file. --no-owner/--no-privileges because the roles on this machine are not the roles
-  // there, and a restore that fails on GRANT statements is a restore nobody completes under
-  // pressure.
-  runOn(SOURCE, "pg_dump", ["--format=custom", "--no-owner", "--no-privileges", "-f", file]);
-  chmodSync(file, 0o600);
+  try {
+    runOn(SOURCE, "pg_dump", ["--format=custom", "--no-owner", "--no-privileges", "-f", partial]);
+    chmodSync(partial, 0o600);
 
-  // Reading the dump back is the only thing that distinguishes a backup from a file. A truncated or
-  // half-written dump has a plausible size and restores into a half-populated database.
-  //
-  // `-l` is not that check, which is what this originally used. The table of contents sits ahead of
-  // the data in the custom format, so `-l` answers from a file whose data never arrived: measured on
-  // a 186,475-byte dump truncated to exactly half, `pg_restore -l` exited 0 and listed 215 objects.
-  // `-f` decompresses every block and is the one that fails ("could not read from input file: end of
-  // file"). Its output goes to /dev/null rather than a file, because the alternative is writing the
-  // whole database back out as plaintext SQL beside the dump. It costs a full read of the file,
-  // which `-l` does not, and that is the price of the check meaning anything.
-  //
-  // `-l` still runs, for the object count alone: a figure to compare against the next backup.
-  // Neither goes through `runOn`: both read the local file and take no connection string at all.
-  execFileSync("pg_restore", ["-f", "/dev/null", file], { maxBuffer: 256 * 1024 * 1024 });
-  const toc = execFileSync("pg_restore", ["-l", file], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
-  const objects = toc.split("\n").filter((l) => l && !l.startsWith(";")).length;
-  const size = statSync(file).size;
-  console.log(`\nWrote ${size.toLocaleString()} bytes, ${objects} objects, every block read back by pg_restore.`);
+    // Reading the dump back is the only thing that distinguishes a backup from a file. A truncated
+    // or half-written dump has a plausible size and restores into a half-populated database.
+    //
+    // `-l` is not that check, which is what this originally used. The table of contents sits ahead
+    // of the data in the custom format, so `-l` answers from a file whose data never arrived:
+    // measured on a 186,475-byte dump truncated to exactly half, `pg_restore -l` exited 0 and listed
+    // 215 objects. `-f` decompresses every block and is the one that fails ("could not read from
+    // input file: end of file"). Its output goes to /dev/null rather than a file, because the
+    // alternative is writing the whole database back out as plaintext SQL beside the dump. It costs
+    // a full read of the file, which `-l` does not, and that is the price of the check meaning
+    // anything.
+    //
+    // `-l` still runs, for the object count alone: a figure to compare against the next backup.
+    // Neither goes through `runOn`: both read the local file and take no connection string at all.
+    execFileSync("pg_restore", ["-f", "/dev/null", partial], { maxBuffer: 256 * 1024 * 1024 });
+    const toc = execFileSync("pg_restore", ["-l", partial], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+    const objects = toc.split("\n").filter((l) => l && !l.startsWith(";")).length;
+    const size = statSync(partial).size;
+
+    renameSync(partial, file);
+    console.log(`\nWrote ${size.toLocaleString()} bytes, ${objects} objects, every block read back by pg_restore.`);
+  } catch (error) {
+    rmSync(partial, { force: true });
+    console.error(`\nBackup failed and the partial file was removed. There is no backup at ${file}.`);
+    throw error;
+  }
+
   console.log(`\nRestore into a local database with:\n  pg_restore --clean --if-exists --no-owner -d "$DATABASE_URL" ${file}`);
   return 0;
 }

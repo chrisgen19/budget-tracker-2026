@@ -2,6 +2,26 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-23 - The local-database guard stops answering when it cannot know
+
+`databaseHost` decided where a connection string lands by reading the first `host=` parameter and
+ignoring `hostaddr`, on a measurement taken against Prisma. The `psql` and `pg_dump` callers use
+libpq, which honours `hostaddr` and takes the **last** `host=`. Measured on PostgreSQL 17.9,
+`postgres://u@nonexistent.invalid:5432/db?hostaddr=127.0.0.1` connects to `127.0.0.1` while the
+guard answered `nonexistent.invalid`. The worse direction is the local-looking one: a destination
+reading as this machine while libpq aims at production, which `refresh-local-mirror.ts` would then
+DROP and recreate.
+
+Prisma and libpq disagree about such a string, so no single answer is right for every caller.
+Instead of picking one, a string whose possible destinations disagree about being on this machine
+is now refused, which every caller already fails closed on. Disagreement, not mere presence:
+`?host=localhost&hostaddr=127.0.0.1` is an ordinary local setup and is still answered normally,
+because a guard that misfires teaches people to reach for `ALLOW_REMOTE_DB=1` by reflex.
+
+A production backup is also no longer published until it has been read back. It is written under a
+`.partial` name and renamed only after validation, so a dump interrupted by a lost connection or a
+full disk cannot leave a file that looks like the backup you are about to migrate against.
+
 ## 2026-09-23 - A production backup you can take before you migrate
 
 Coolify's nightly dump is the safety net for the accident nobody saw coming. `backup-prod-db.ts` is

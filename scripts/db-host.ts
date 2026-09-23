@@ -36,6 +36,9 @@ const isLocalName = (value: string): boolean => {
   return LOCAL_NAMES.has(host) || host.endsWith(".localhost") || LOOPBACK_V4.test(host);
 };
 
+/** As `isLocalName`, but an empty host is the unix socket `isLocalDatabase` treats as local. */
+const isLocalHostValue = (value: string): boolean => value === "" || isLocalName(value);
+
 /**
  * The host a Postgres URL actually connects to, lower-cased, or `null` if it cannot be determined.
  *
@@ -45,7 +48,26 @@ const isLocalName = (value: string): boolean => {
  * `Can't reach database server at nonexistent.invalid:5432`. Prisma's own output names the host it
  * is not using, so trusting the authority here would let `postgresql://localhost/db?host=prod`
  * through the guard and straight into production. Only the lower-case `host` has this effect --
- * `hostaddr` and `HOST` were both measured to be ignored.
+ * `HOST` was measured to be ignored, and so is `hostaddr` **by Prisma**.
+ *
+ * `hostaddr` is not ignored by libpq, which is the trap. That measurement was taken against Prisma
+ * and then relied on by the `psql`/`pg_dump` callers, where it is false. Measured on PostgreSQL
+ * 17.9, `postgres://u@nonexistent.invalid:5432/db?hostaddr=127.0.0.1` connects to `127.0.0.1` and
+ * reports `inet_server_addr() = 127.0.0.1`, while this function answered `nonexistent.invalid` --
+ * so a backup script guarding on it would dump this machine believing it had dumped production.
+ * A repeated `host=` does the same thing: libpq takes the **last** value, `URLSearchParams.get`
+ * answers the first, and `?host=nonexistent.invalid&host=127.0.0.1` was measured connecting to
+ * `127.0.0.1`.
+ *
+ * Prisma and libpq therefore disagree about where such a string lands, and no single answer is
+ * right for every caller. Rather than pick one, a string whose candidate destinations disagree
+ * about *being on this machine* returns null, which every caller already treats as a refusal.
+ *
+ * The test is deliberately disagreement and not mere presence. `?host=localhost&hostaddr=127.0.0.1`
+ * is an ordinary local setup and both candidates are this machine, so it is answered normally. The
+ * note at the top of this file is the reason: a guard that misfires on ordinary local setups
+ * teaches the developer to type `ALLOW_REMOTE_DB=1` by reflex, which removes it more thoroughly
+ * than deleting it would.
  */
 export const databaseHost = (url: string): string | null => {
   let parsed: URL;
@@ -55,10 +77,20 @@ export const databaseHost = (url: string): string | null => {
     return null;
   }
 
-  const override = parsed.searchParams.get("host");
-  if (override !== null) return override.toLowerCase();
+  const params = parsed.searchParams;
+  const overrides = params.getAll("host").map((h) => h.toLowerCase());
+  // The last one, because that is the one libpq uses. When they disagree about locality the answer
+  // is discarded below anyway; this only decides which name is reported when they agree.
+  const declared = overrides.length > 0 ? overrides[overrides.length - 1] : parsed.hostname.toLowerCase();
 
-  return parsed.hostname.toLowerCase();
+  // Every destination any consumer of this string might choose. The authority is absent when a
+  // `host=` is present, because that parameter wins for Prisma and libpq alike.
+  const candidates = overrides.length > 0 ? [...overrides] : [declared];
+  const addr = params.get("hostaddr");
+  if (addr !== null) candidates.push(addr.toLowerCase());
+
+  if (new Set(candidates.map(isLocalHostValue)).size > 1) return null;
+  return declared;
 };
 
 /**
