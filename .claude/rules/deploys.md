@@ -58,7 +58,14 @@ lapses, and the invalidations after every mutation, and nothing reloads the page
 `deploymentId`, and even with one, Next's skew protection covers RSC and server-action
 requests, not the plain `fetch` calls this app's hooks make.
 
-Until there is an update-available prompt, the rule is by hand:
+`UpdatePromptBanner` now offers the reload. `sw.ts` sets `skipWaiting: false` so a new worker
+waits instead of swapping silently, `useServiceWorkerUpdate` finds it (already waiting, arriving via
+`updatefound`, or found by the `update()` poll a long-open tab needs), and the page reloads on
+`controllerchange` once the user accepts.
+
+That shortens the window; it does not remove it. The prompt is a prompt, so a tab can sit on the old
+bundle for as long as someone ignores it, and it is suppressed while offline. Every rule below still
+applies:
 
 - **Removing or renaming a response field:** keep returning it (empty or defaulted) for one
   release, then remove it in a later PR. #304 did this with the labels' `categories` array.

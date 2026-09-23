@@ -35,6 +35,7 @@ import { BillReminderBanner, type PayAndEditData } from "@/components/bills/bill
 import { InstallBannerProvider, useInstallBanner } from "@/components/pwa/install-banner-context";
 import { InstallPromptBanner } from "@/components/pwa/install-prompt-banner";
 import { OfflineBanner } from "@/components/pwa/offline-banner";
+import { UpdatePromptBanner } from "@/components/pwa/update-prompt-banner";
 import { useBillReminders } from "@/components/bills/bill-reminder-provider";
 import {
   getFabContentClearance,
@@ -199,6 +200,7 @@ export function AppShell({ children }: AppShellProps) {
     <div className="min-h-screen bg-cream-100">
       {/* Offline Banner */}
       <OfflineBanner />
+      <UpdatePromptBanner />
 
       {/* Desktop Sidebar */}
       <aside className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:flex lg:w-64 lg:flex-col bg-white border-r border-cream-300/60 shadow-warm z-30">

@@ -2,6 +2,22 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-23 - An open tab is told when the app behind it has changed
+
+A deploy swaps the server while an open tab keeps running the bundle it loaded, and `/api/*` is
+never cached, so the old code starts reading new JSON. On #304 that was a TypeError on the labels
+page. Nothing reloaded, because `skipWaiting` swaps the service *worker*, not the script a tab is
+already running.
+
+A new build now waits instead of taking over silently, and the page offers a reload: "A new version
+is available." Accepting it lets the waiting worker activate and reloads once it is actually in
+charge, rather than the moment it is asked. A first-ever visit is not mistaken for an update, a tab
+left open overnight polls rather than waiting for an event it already missed, and the prompt stays
+hidden while offline, where the offline banner sits.
+
+This shortens the skew window rather than closing it, since a prompt can be ignored. The
+backward-compatibility rule for API response shapes still stands.
+
 ## 2026-09-23 - The host guard reads a failover list the way libpq does
 
 Two more measurements, both from review. The guard applied libpq's last-wins rule to a repeated
