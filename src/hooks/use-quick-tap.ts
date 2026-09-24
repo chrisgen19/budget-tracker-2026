@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/ui/toast";
 import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
@@ -29,6 +29,12 @@ export function useQuickTap() {
   const { showToast } = useToast();
   const { hideAmounts } = usePrivacy();
   const { user } = useUser();
+  // Read when the request settles, not when the tap started: hiding amounts while a tap is in
+  // flight must still keep the figure out of the toast that tap produces.
+  const hideAmountsRef = useRef(hideAmounts);
+  useEffect(() => {
+    hideAmountsRef.current = hideAmounts;
+  }, [hideAmounts]);
   const logTile = useLogQuickTile();
 
   /** The tile waiting on a figure, or null. Only an `amount === null` tile ever lands here. */
@@ -75,10 +81,11 @@ export function useQuickTap() {
       setAsking(null);
 
       // A short title and one truncated detail line. The whole sentence used to be the title, and
-      // a long description plus category plus labels wrapped to four lines on a phone.
-      const amountText = hideAmounts ? null : formatCurrency(result.amount, user.currency);
+      // a long description plus category plus labels wrapped to four lines on a phone. The amount
+      // leads, so a long description is what truncates rather than the figure.
+      const amountText = hideAmountsRef.current ? null : formatCurrency(result.amount, user.currency);
       showToast(result.replayed ? "Already logged" : "Transaction logged", "success", {
-        description: [result.description, amountText, result.categoryName].filter(Boolean).join(" · "),
+        description: [amountText, result.description, result.categoryName].filter(Boolean).join(" · "),
       });
     } catch (error) {
       // A 4xx wrote nothing, so the pin is dropped and a corrected retry is a new intent. Anything
