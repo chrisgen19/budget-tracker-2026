@@ -1,7 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/ui/toast";
+import { usePrivacy } from "@/components/privacy-provider";
+import { useUser } from "@/components/user-provider";
+import { formatCurrency } from "@/lib/utils";
 import { QuickLogError, useLogQuickTile } from "@/hooks/use-quick-tiles";
 import {
   claimPendingTap,
@@ -24,6 +27,19 @@ import type { QuickTileView } from "@/lib/telegram/tile-queries";
  */
 export function useQuickTap() {
   const { showToast } = useToast();
+  const { hideAmounts } = usePrivacy();
+  const { user } = useUser();
+  // Read when the request settles, not when the tap started: hiding amounts while a tap is in
+  // flight must still keep the figure out of the toast that tap produces. Once this surface
+  // unmounts the ref can no longer follow the setting, and a tap can outlive its page, so the
+  // cleanup leaves the figure out rather than trust a value that may be stale.
+  const hideAmountsRef = useRef(hideAmounts);
+  useEffect(() => {
+    hideAmountsRef.current = hideAmounts;
+    return () => {
+      hideAmountsRef.current = true;
+    };
+  }, [hideAmounts]);
   const logTile = useLogQuickTile();
 
   /** The tile waiting on a figure, or null. Only an `amount === null` tile ever lands here. */
@@ -69,17 +85,18 @@ export function useQuickTap() {
       releasePendingTap(slot);
       setAsking(null);
 
-      const labels = result.labels.length > 0 ? `, ${result.labels.join(", ")}` : "";
-      showToast(
-        result.replayed
-          ? `Already logged: ${result.description}`
-          : `Logged ${result.description} to ${result.categoryName}${labels}`
-      );
+      // A short title and one truncated detail line. The whole sentence used to be the title, and
+      // a long description plus category plus labels wrapped to four lines on a phone. The amount
+      // leads, so a long description is what truncates rather than the figure.
+      const amountText = hideAmountsRef.current ? null : formatCurrency(result.amount, user.currency);
+      showToast(result.replayed ? "Already logged" : "Transaction logged", "success", {
+        description: [amountText, result.description, result.categoryName].filter(Boolean).join(" · "),
+      });
     } catch (error) {
       // A 4xx wrote nothing, so the pin is dropped and a corrected retry is a new intent. Anything
       // else may have committed, so the pin is kept and the next attempt replays it.
       if (error instanceof QuickLogError && error.wrote === "no") releasePendingTap(slot);
-      showToast(error instanceof Error ? error.message : "Could not log that");
+      showToast(error instanceof Error ? error.message : "Could not log that", "error");
     }
   };
 
