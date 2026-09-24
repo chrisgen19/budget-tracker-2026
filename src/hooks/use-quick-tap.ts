@@ -30,10 +30,15 @@ export function useQuickTap() {
   const { hideAmounts } = usePrivacy();
   const { user } = useUser();
   // Read when the request settles, not when the tap started: hiding amounts while a tap is in
-  // flight must still keep the figure out of the toast that tap produces.
+  // flight must still keep the figure out of the toast that tap produces. Once this surface
+  // unmounts the ref can no longer follow the setting, and a tap can outlive its page, so the
+  // cleanup leaves the figure out rather than trust a value that may be stale.
   const hideAmountsRef = useRef(hideAmounts);
   useEffect(() => {
     hideAmountsRef.current = hideAmounts;
+    return () => {
+      hideAmountsRef.current = true;
+    };
   }, [hideAmounts]);
   const logTile = useLogQuickTile();
 
