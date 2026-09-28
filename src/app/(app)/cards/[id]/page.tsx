@@ -177,7 +177,12 @@ export default function CardDetailPage() {
   const handleSavePayment = async (patch: CreditPaymentInput) => {
     if (!editingPayment) return;
     const write = () => updatePayment.mutateAsync({ accountId: id, paymentId: editingPayment.id, patch });
-    if (await attempt(write, "Payment updated", "Failed to update the payment")) setEditingPayment(null);
+    if (await attempt(write, "Payment updated", "Failed to update the payment")) {
+      setEditingPayment(null);
+      // Follow the payment, as recording one does. A date moved into another month otherwise makes
+      // the row vanish from the list, with only "Payment updated" to say where it went.
+      setMonth(patch.date.slice(0, 7));
+    }
   };
 
   const handleDeletePayment = async () => {
