@@ -2,6 +2,29 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-28 - A card payment retried after a lost response is recorded once
+
+Purchases on a card were already protected against a lost response; payments were not. If a payment
+committed and its response never arrived, the Pay form showed "Failed to fetch" with the fields
+still filled in, and pressing Record again saved it a second time, leaving the card owing less than
+it did.
+
+The form now sends an idempotency key, `clientRequestId`, and keeps it until the server answers with
+a saved payment, including across closing and reopening the form. A key that already saved one is
+answered 200 with that payment instead of 201, looked up before the body is validated so a retry is
+never refused over inputs it will not use. Two attempts racing past that lookup are settled by a
+unique index on `(user_id, client_request_id)`: the loser gets the winner's row, not a 500.
+
+A failed save now says what happened. A refusal shows the server's reason. No response, or a 5xx,
+says the payment could not be confirmed and that Record is safe to press again. The fields stay
+editable, and if an edited retry turns out to be answered by an earlier attempt that did land, the
+page says the changes were not saved rather than "Payment recorded".
+
+Migration `20260928120000` adds the nullable column and the index. Expand only: every existing row
+is NULL, which Postgres treats as distinct, and the release still serving during the deploy writes no
+key. A tab open from before the deploy keeps working, since the key is optional.
+`scripts/verify-card-payment-idempotency.ts` proves the race against a real database.
+
 ## 2026-09-28 - The Debt tab and the forecast follow a card payment
 
 Recording a payment on a card left the Debt tab showing what was owed before it. Its cached read

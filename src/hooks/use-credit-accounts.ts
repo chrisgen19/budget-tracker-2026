@@ -267,15 +267,49 @@ export function useAddCardPurchases() {
   return useCardMutation(postPurchases, SPENDING_KEYS);
 }
 
+/**
+ * A failed payment save, and whether it can have written anything: the same split as
+ * `PurchaseSaveError`. A 4xx wrote nothing. No response, or a 5xx, may sit in front of a payment
+ * that committed, so the retry has to go out under the same key.
+ */
+export class PaymentSaveError extends Error {
+  constructor(message: string, readonly committed: "no" | "unknown") {
+    super(message);
+    this.name = "PaymentSaveError";
+  }
+}
+
+interface RecordPaymentVariables {
+  accountId: string;
+  input: CreditPaymentInput;
+  /** The idempotency key. `useRecordCardPayment` owns it and decides when it is renewed. */
+  clientRequestId?: string;
+}
+
+/** A 200 is the route answering a key that had already saved a payment, with that payment. */
+const postPayment = async ({ accountId, input, clientRequestId }: RecordPaymentVariables) => {
+  let res: Response;
+  try {
+    res = await fetch(`${cardUrl(accountId)}/payments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...input, ...(clientRequestId && { clientRequestId }) }),
+    });
+  } catch {
+    throw new PaymentSaveError("Couldn't reach the server to record the payment", "unknown");
+  }
+  const json: unknown = await res.json().catch(() => null);
+  if (res.ok) return { payment: json as CreditPaymentView, replayed: res.status === 200 };
+
+  if (res.status >= 400 && res.status < 500) {
+    const message = (json as { error?: unknown } | null)?.error;
+    throw new PaymentSaveError(typeof message === "string" ? message : "Failed to record the payment", "no");
+  }
+  throw new PaymentSaveError("The server didn't confirm the payment was recorded", "unknown");
+};
+
 export function useCreateCreditPayment() {
-  return useCardMutation(
-    ({ accountId, input }: { accountId: string; input: CreditPaymentInput }) =>
-      requestJson<CreditPaymentView>(`${cardUrl(accountId)}/payments`, "Failed to record the payment", {
-        method: "POST",
-        body: JSON.stringify(input),
-      }),
-    CARD_STATE_KEYS
-  );
+  return useCardMutation(postPayment, CARD_STATE_KEYS);
 }
 
 export function useUpdateCreditPayment() {

@@ -101,6 +101,62 @@ describe("createCreditPayment", () => {
     expect(await pay(prisma)).toEqual({ ok: false, reason: "ACCOUNT_ARCHIVED" });
     expect(client.creditPayment.create).not.toHaveBeenCalled();
   });
+
+  describe("with an idempotency key", () => {
+    const KEY = "0b7c5d7e-6a0f-4d8e-9a55-3c1f2e4d5b6a";
+    const payKeyed = (prisma: PrismaClient, clientRequestId?: string) =>
+      createCreditPayment({
+        prisma,
+        userId: "user-1",
+        accountId: "card-1",
+        input: { kind: "PAYMENT", amount: 5000, description: "BPI app", date: "2026-09-05" },
+        timezoneOffset: MANILA,
+        clientRequestId,
+      });
+    const uniqueViolation = () =>
+      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" });
+
+    it("stores the key on the payment, and reports a fresh save", async () => {
+      const { prisma, client } = stub();
+
+      const result = await payKeyed(prisma, KEY);
+
+      expect(result).toMatchObject({ ok: true, replayed: false });
+      expect(client.creditPayment.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ clientRequestId: KEY }),
+      });
+    });
+
+    // Two attempts under one key that both got past the route's lookup: the unique index lets one
+    // insert through, and the other must answer with that row rather than a 500 the client would
+    // read as "unknown" and retry forever.
+    it("answers a lost race on the key with the payment that won it", async () => {
+      const { prisma, client } = stub();
+      client.creditPayment.create.mockRejectedValueOnce(uniqueViolation());
+      const winner = { id: "pay-winner", amount: 5000 };
+      Object.assign(client.creditPayment, { findFirst: vi.fn(async () => winner) });
+
+      expect(await payKeyed(prisma, KEY)).toEqual({ ok: true, payment: winner, replayed: true });
+      expect(
+        (client.creditPayment as unknown as { findFirst: ReturnType<typeof vi.fn> }).findFirst
+      ).toHaveBeenCalledWith({ where: { userId: "user-1", clientRequestId: KEY } });
+    });
+
+    it("does not swallow a unique violation that no key explains", async () => {
+      const { prisma, client } = stub();
+      client.creditPayment.create.mockRejectedValueOnce(uniqueViolation());
+
+      await expect(payKeyed(prisma)).rejects.toThrow("Unique constraint failed");
+    });
+
+    it("rethrows any other failure rather than calling it a replay", async () => {
+      const { prisma, client } = stub();
+      client.creditPayment.create.mockRejectedValueOnce(new Error("connection reset"));
+      Object.assign(client.creditPayment, { findFirst: vi.fn(async () => ({ id: "pay-old" })) });
+
+      await expect(payKeyed(prisma, KEY)).rejects.toThrow("connection reset");
+    });
+  });
 });
 
 describe("updateCreditPayment", () => {

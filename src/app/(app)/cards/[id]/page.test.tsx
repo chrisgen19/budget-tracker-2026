@@ -6,6 +6,8 @@ import type { CreditAccountDetailView } from "@/hooks/use-credit-accounts";
 const hooks = vi.hoisted(() => ({
   detailQuery: vi.fn(),
   updatePayment: vi.fn(),
+  recordPayment: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -23,16 +25,18 @@ vi.mock("@/components/user-provider", () => ({
   useUser: () => ({ user: { currency: "PHP", timezoneOffset: -480 } }),
 }));
 vi.mock("@/components/privacy-provider", () => ({ usePrivacy: () => ({ hideAmounts: false }) }));
-vi.mock("@/components/ui/toast", () => ({ useToast: () => ({ showToast: vi.fn() }) }));
+vi.mock("@/components/ui/toast", () => ({ useToast: () => ({ showToast: hooks.showToast }) }));
 vi.mock("@/hooks/use-card-purchase-batch", () => ({
   useCardPurchaseBatch: () => ({ unconfirmed: null, saving: false, submit: vi.fn(), retry: vi.fn(), discard: vi.fn() }),
+}));
+vi.mock("@/hooks/use-record-card-payment", () => ({
+  useRecordCardPayment: () => ({ submit: hooks.recordPayment }),
 }));
 vi.mock("@/hooks/use-credit-accounts", () => {
   const idle = () => ({ mutateAsync: vi.fn(), isPending: false });
   return {
     useCreditAccountDetailQuery: hooks.detailQuery,
     useUpdateCreditPayment: () => ({ mutateAsync: hooks.updatePayment, isPending: false }),
-    useCreateCreditPayment: idle,
     useDeleteCreditPayment: idle,
     useUpdateCreditAccount: idle,
     useDeleteCreditAccount: idle,
@@ -122,5 +126,40 @@ describe("CardDetailPage", () => {
     expect(lastMonthRequested()).toBe("2026-09");
     // The form stays open to try again.
     expect(screen.getByRole("button", { name: /save/i })).toBeTruthy();
+  });
+
+  describe("recording a payment", () => {
+    const recordOnePeso = async () => {
+      render(<CardDetailPage />);
+      fireEvent.click(screen.getByRole("button", { name: "Pay" }));
+      fireEvent.change(await screen.findByLabelText(/Amount/), { target: { value: "1" } });
+      fireEvent.click(screen.getByRole("button", { name: /record/i }));
+      await waitFor(() => expect(hooks.recordPayment).toHaveBeenCalled());
+    };
+
+    it("keeps the form open after an unconfirmed save, saying Record is safe to press again", async () => {
+      hooks.recordPayment.mockResolvedValue({ outcome: "unconfirmed" });
+
+      await recordOnePeso();
+
+      await waitFor(() =>
+        expect(hooks.showToast).toHaveBeenCalledWith(expect.stringMatching(/won't be counted twice/), "error")
+      );
+      expect(screen.getByRole("button", { name: /record/i })).toBeTruthy();
+    });
+
+    it("closes on the month an earlier attempt landed in, and says the edits were not saved", async () => {
+      hooks.recordPayment.mockResolvedValue({
+        outcome: "earlier-attempt-saved",
+        payment: { id: "pay-2", kind: "PAYMENT", amount: 5000, description: "", date: "2026-08-29T16:00:00.000Z" },
+      });
+
+      await recordOnePeso();
+
+      await waitFor(() => expect(lastMonthRequested()).toBe("2026-08"));
+      expect(hooks.showToast).toHaveBeenCalledWith(expect.stringMatching(/weren't saved/), "error");
+      // Gone once the modal's exit animation has run.
+      await waitFor(() => expect(screen.queryByRole("button", { name: /record/i })).toBeNull());
+    });
   });
 });

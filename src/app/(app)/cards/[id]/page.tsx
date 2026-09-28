@@ -20,8 +20,8 @@ import { CardPaymentForm } from "@/components/credit-accounts/card-payment-form"
 import { CardInterestForm } from "@/components/credit-accounts/card-interest-form";
 import { UnconfirmedPurchases } from "@/components/credit-accounts/unconfirmed-purchases";
 import { useCardPurchaseBatch, type PurchaseBatchResult } from "@/hooks/use-card-purchase-batch";
+import { useRecordCardPayment } from "@/hooks/use-record-card-payment";
 import {
-  useCreateCreditPayment,
   useCreditAccountDetailQuery,
   useDeleteCreditAccount,
   useDeleteCreditPayment,
@@ -77,7 +77,7 @@ export default function CardDetailPage() {
   // settles, so sharing it would let a retry of an unconfirmed purchase replay as an interest
   // charge (and the reverse), and would surface an unconfirmed charge inside the purchases modal.
   const interestBatch = useCardPurchaseBatch();
-  const createPayment = useCreateCreditPayment();
+  const recordPayment = useRecordCardPayment(user.timezoneOffset);
   const updatePayment = useUpdateCreditPayment();
   const deletePayment = useDeleteCreditPayment();
   const updateCard = useUpdateCreditAccount();
@@ -166,12 +166,23 @@ export default function CardDetailPage() {
     );
   };
 
+  /**
+   * A save closes the form on the month the payment landed in. A refusal or an unconfirmed save
+   * leaves it open: Record again goes out under the same key, so it cannot count the money twice.
+   */
   const handleRecordPayment = async (input: CreditPaymentInput) => {
-    const label = input.kind === "CREDIT" ? "Refund recorded" : "Payment recorded";
-    if (await attempt(() => createPayment.mutateAsync({ accountId: id, input }), label, "Failed to record the payment")) {
-      setPaying(false);
-      setMonth(input.date.slice(0, 7));
+    const result = await recordPayment.submit(id, input);
+    if (result.outcome === "refused") return showToast(result.message, "error");
+    if (result.outcome === "unconfirmed") {
+      return showToast("Couldn't confirm the payment was recorded. Press Record to try again: it won't be counted twice.", "error");
     }
+    if (result.outcome === "saved") {
+      showToast(input.kind === "CREDIT" ? "Refund recorded" : "Payment recorded", "success");
+    } else {
+      showToast("An earlier attempt had already been recorded, so these changes weren't saved. Edit it from the list.", "error");
+    }
+    setPaying(false);
+    setMonth(accountMonthKey(result.payment.date, user.timezoneOffset));
   };
 
   const handleSavePayment = async (patch: CreditPaymentInput) => {
