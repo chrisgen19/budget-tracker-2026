@@ -15,10 +15,13 @@ answered 200 with that payment instead of 201, looked up before the body is vali
 never refused over inputs it will not use. Two attempts racing past that lookup are settled by a
 unique index on `(user_id, client_request_id)`: the loser gets the winner's row, not a 500.
 
-A failed save now says what happened. A refusal shows the server's reason. No response, or a 5xx,
-says the payment could not be confirmed and that Record is safe to press again. The fields stay
-editable, and if an edited retry turns out to be answered by an earlier attempt that did land, the
-page says the changes were not saved rather than "Payment recorded".
+A failed save now says what happened. A refusal shows the server's reason and leaves the fields to
+correct. No response, or a 5xx, **pins** the payment the way an unconfirmed purchase already was:
+the form is replaced with Retry, which sends exactly the same payment under the same key, and
+Discard, which drops the key. Pinned survives closing Pay, so reopening it shows the same retry. A
+first cut kept the fields editable instead, and review caught what that allowed: the key stayed
+armed behind a blank form, so the next payment entered, even a genuinely different one, was
+answered with the old one, and the notice told the user to edit that one from the list.
 
 Migration `20260928120000` adds the nullable column and the index. Expand only: every existing row
 is NULL, which Postgres treats as distinct, and the release still serving during the deploy writes no

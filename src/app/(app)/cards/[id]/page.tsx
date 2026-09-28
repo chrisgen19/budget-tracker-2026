@@ -20,7 +20,7 @@ import { CardPaymentForm } from "@/components/credit-accounts/card-payment-form"
 import { CardInterestForm } from "@/components/credit-accounts/card-interest-form";
 import { UnconfirmedPurchases } from "@/components/credit-accounts/unconfirmed-purchases";
 import { useCardPurchaseBatch, type PurchaseBatchResult } from "@/hooks/use-card-purchase-batch";
-import { useRecordCardPayment } from "@/hooks/use-record-card-payment";
+import { useRecordCardPayment, type RecordPaymentResult } from "@/hooks/use-record-card-payment";
 import {
   useCreditAccountDetailQuery,
   useDeleteCreditAccount,
@@ -77,7 +77,7 @@ export default function CardDetailPage() {
   // settles, so sharing it would let a retry of an unconfirmed purchase replay as an interest
   // charge (and the reverse), and would surface an unconfirmed charge inside the purchases modal.
   const interestBatch = useCardPurchaseBatch();
-  const recordPayment = useRecordCardPayment(user.timezoneOffset);
+  const recordPayment = useRecordCardPayment();
   const updatePayment = useUpdateCreditPayment();
   const deletePayment = useDeleteCreditPayment();
   const updateCard = useUpdateCreditAccount();
@@ -167,23 +167,24 @@ export default function CardDetailPage() {
   };
 
   /**
-   * A save closes the form on the month the payment landed in. A refusal or an unconfirmed save
-   * leaves it open: Record again goes out under the same key, so it cannot count the money twice.
+   * The same three outcomes `settlePurchases` handles, for one payment. A save closes the form on the
+   * month the payment landed in; a refusal leaves the fields to correct; an unconfirmed save pins
+   * the payment, and the modal shows its retry in place of the form.
    */
-  const handleRecordPayment = async (input: CreditPaymentInput) => {
-    const result = await recordPayment.submit(id, input);
-    if (result.outcome === "refused") return showToast(result.message, "error");
-    if (result.outcome === "unconfirmed") {
-      return showToast("Couldn't confirm the payment was recorded. Press Record to try again: it won't be counted twice.", "error");
-    }
+  const settlePayment = (result: RecordPaymentResult | null) => {
+    if (!result) return;
     if (result.outcome === "saved") {
-      showToast(input.kind === "CREDIT" ? "Refund recorded" : "Payment recorded", "success");
+      showToast(result.payment.kind === "CREDIT" ? "Refund recorded" : "Payment recorded", "success");
+      setPaying(false);
+      setMonth(accountMonthKey(result.payment.date, user.timezoneOffset));
+    } else if (result.outcome === "refused") {
+      showToast(result.message, "error");
     } else {
-      showToast("An earlier attempt had already been recorded, so these changes weren't saved. Edit it from the list.", "error");
+      showToast("Couldn't confirm the payment was recorded", "error");
     }
-    setPaying(false);
-    setMonth(accountMonthKey(result.payment.date, user.timezoneOffset));
   };
+
+  const handleRecordPayment = async (input: CreditPaymentInput) => settlePayment(await recordPayment.submit(id, input));
 
   const handleSavePayment = async (patch: CreditPaymentInput) => {
     if (!editingPayment) return;
@@ -338,7 +339,21 @@ export default function CardDetailPage() {
       </Modal>
 
       <Modal open={paying} onClose={() => setPaying(false)} title="Pay Card">
-        <CardPaymentForm defaultAmount={account.balance} onSubmit={handleRecordPayment} onCancel={() => setPaying(false)} />
+        {recordPayment.unconfirmed ? (
+          <UnconfirmedPurchases
+            purchases={[recordPayment.unconfirmed]}
+            retrying={recordPayment.saving}
+            noun={{ singular: "payment", plural: "payments" }}
+            onRetry={() => void recordPayment.retry().then(settlePayment)}
+            onDiscard={() => {
+              recordPayment.discard();
+              setPaying(false);
+            }}
+            onClose={() => setPaying(false)}
+          />
+        ) : (
+          <CardPaymentForm defaultAmount={account.balance} onSubmit={handleRecordPayment} onCancel={() => setPaying(false)} />
+        )}
       </Modal>
 
       <Modal open={loggingInterest} onClose={() => setLoggingInterest(false)} title="Log Interest or Fee">

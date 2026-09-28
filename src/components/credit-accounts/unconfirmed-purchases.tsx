@@ -37,7 +37,8 @@ export function UnconfirmedPurchases({
         <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-expense" />
         <div className="space-y-1">
           <p className="font-medium text-warm-700">
-            Couldn&apos;t confirm {count} ({formatCurrency(purchasesTotal(purchases), user.currency)}) were saved
+            Couldn&apos;t confirm {count} ({formatCurrency(purchasesTotal(purchases), user.currency)}){" "}
+            {purchases.length === 1 ? "was" : "were"} saved
           </p>
           <p>
             Retry sends exactly the same {noun.plural}, so they can&apos;t be added twice. To change one, retry
