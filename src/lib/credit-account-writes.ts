@@ -188,8 +188,24 @@ export const deleteCreditAccount = async ({
 };
 
 /**
+ * The payment already saved under an idempotency key, or null. Scoped to the user, so another
+ * user's key is simply not found.
+ */
+export const findSavedCreditPayment = (
+  prisma: PrismaClient,
+  userId: string,
+  clientRequestId: string
+): Promise<CreditPayment | null> =>
+  prisma.creditPayment.findFirst({ where: { userId, clientRequestId } });
+
+/**
  * Record a payment to a card, or a refund it issued. Never an expense: the purchases were counted
  * when they were made, so this only lowers what the card owes. Refused on an archived card.
+ *
+ * With a `clientRequestId`, a second attempt under the same key returns the first one's row with
+ * `replayed: true` instead of recording the money twice. The route looks the key up before
+ * validating anything; this covers two attempts that race past that lookup, where the unique index
+ * on `(user_id, client_request_id)` lets exactly one insert through.
  */
 export const createCreditPayment = async ({
   prisma,
@@ -198,11 +214,13 @@ export const createCreditPayment = async ({
   input,
   timezoneOffset,
   createdVia = "APP",
+  clientRequestId,
 }: AccountWriteParams & {
   accountId: string;
   input: CreditPaymentInput;
   createdVia?: TransactionSource;
-}): Promise<{ ok: true; payment: CreditPayment } | Failure> => {
+  clientRequestId?: string;
+}): Promise<{ ok: true; payment: CreditPayment; replayed: boolean } | Failure> => {
   const account = await prisma.creditAccount.findFirst({
     where: { id: accountId, userId },
     select: { isActive: true },
@@ -210,18 +228,29 @@ export const createCreditPayment = async ({
   if (!account) return fail("NOT_FOUND");
   if (!account.isActive) return fail("ACCOUNT_ARCHIVED");
 
-  const payment = await prisma.creditPayment.create({
-    data: {
-      kind: input.kind,
-      amount: input.amount,
-      description: input.description,
-      date: localDayStart(input.date, timezoneOffset),
-      accountId,
-      userId,
-      createdVia,
-    },
-  });
-  return { ok: true, payment };
+  try {
+    const payment = await prisma.creditPayment.create({
+      data: {
+        kind: input.kind,
+        amount: input.amount,
+        description: input.description,
+        date: localDayStart(input.date, timezoneOffset),
+        accountId,
+        userId,
+        createdVia,
+        ...(clientRequestId && { clientRequestId }),
+      },
+    });
+    return { ok: true, payment, replayed: false };
+  } catch (error) {
+    const lostTheRace =
+      clientRequestId !== undefined &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002";
+    const saved = lostTheRace ? await findSavedCreditPayment(prisma, userId, clientRequestId) : null;
+    if (!saved) throw error;
+    return { ok: true, payment: saved, replayed: true };
+  }
 };
 
 /** Correct one payment. Allowed on an archived card, since fixing its history is not adding to it. */

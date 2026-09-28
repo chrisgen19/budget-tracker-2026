@@ -611,9 +611,14 @@ model CreditPayment {
   userId      String            @map("user_id")
   user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdVia  TransactionSource @default(APP) @map("created_via")
+  /// Idempotency key for POST /api/credit-accounts/[id]/payments. A payment that commits but whose
+  /// response is lost looks identical to one that failed, and the form stays open inviting another
+  /// Record, which would lower the balance twice. Null for rows written without one.
+  clientRequestId String?       @map("client_request_id")
   createdAt   DateTime          @default(now()) @map("created_at")
   updatedAt   DateTime          @updatedAt @map("updated_at")
 
+  @@unique([userId, clientRequestId])
   @@index([accountId, date])
   @@index([userId, date])
   @@map("credit_payments")

@@ -906,6 +906,16 @@ export const creditPaymentSchema = z.object({
   date: calendarDaySchema,
 });
 
+/**
+ * Recording a payment. `clientRequestId` is the idempotency key: a retry after a lost response
+ * replays the payment already saved under it rather than recording the money a second time. Kept
+ * off `creditPaymentSchema`, which the form and the correction schema derive from, so a correction
+ * can never write a key onto an existing row.
+ */
+export const creditPaymentCreateSchema = creditPaymentSchema.extend({
+  clientRequestId: clientBatchIdSchema.optional(),
+});
+
 /** Correcting one payment. `.partial()` does not re-apply the defaults, so an omitted kind is left alone. */
 export const creditPaymentPatchSchema = creditPaymentSchema
   .partial()

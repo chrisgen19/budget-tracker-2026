@@ -6,6 +6,12 @@ import type { CreditAccountDetailView } from "@/hooks/use-credit-accounts";
 const hooks = vi.hoisted(() => ({
   detailQuery: vi.fn(),
   updatePayment: vi.fn(),
+  recordPayment: vi.fn(),
+  retryPayment: vi.fn(),
+  discardPayment: vi.fn(),
+  showToast: vi.fn(),
+  /** What `useRecordCardPayment` reports as pinned. A plain value, so reset in `beforeEach`. */
+  pinned: { payment: null as null | { kind: "PAYMENT" | "CREDIT"; amount: number; description: string; date: string } },
 }));
 
 vi.mock("next/navigation", () => ({
@@ -23,16 +29,24 @@ vi.mock("@/components/user-provider", () => ({
   useUser: () => ({ user: { currency: "PHP", timezoneOffset: -480 } }),
 }));
 vi.mock("@/components/privacy-provider", () => ({ usePrivacy: () => ({ hideAmounts: false }) }));
-vi.mock("@/components/ui/toast", () => ({ useToast: () => ({ showToast: vi.fn() }) }));
+vi.mock("@/components/ui/toast", () => ({ useToast: () => ({ showToast: hooks.showToast }) }));
 vi.mock("@/hooks/use-card-purchase-batch", () => ({
   useCardPurchaseBatch: () => ({ unconfirmed: null, saving: false, submit: vi.fn(), retry: vi.fn(), discard: vi.fn() }),
+}));
+vi.mock("@/hooks/use-record-card-payment", () => ({
+  useRecordCardPayment: () => ({
+    submit: hooks.recordPayment,
+    retry: hooks.retryPayment,
+    discard: hooks.discardPayment,
+    saving: false,
+    unconfirmed: hooks.pinned.payment,
+  }),
 }));
 vi.mock("@/hooks/use-credit-accounts", () => {
   const idle = () => ({ mutateAsync: vi.fn(), isPending: false });
   return {
     useCreditAccountDetailQuery: hooks.detailQuery,
     useUpdateCreditPayment: () => ({ mutateAsync: hooks.updatePayment, isPending: false }),
-    useCreateCreditPayment: idle,
     useDeleteCreditPayment: idle,
     useUpdateCreditAccount: idle,
     useDeleteCreditAccount: idle,
@@ -82,6 +96,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-09-28T04:00:00.000Z"));
   hooks.detailQuery.mockReturnValue({ isLoading: false, isError: false, isFetching: false, data: DETAIL, refetch: vi.fn() });
   hooks.updatePayment.mockResolvedValue({});
+  hooks.pinned.payment = null;
 });
 
 afterEach(() => {
@@ -118,9 +133,76 @@ describe("CardDetailPage", () => {
     fireEvent.change(await screen.findByLabelText("Date"), { target: { value: "2026-08-30" } });
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
 
-    await waitFor(() => expect(hooks.updatePayment).toHaveBeenCalled());
+    // The toast, not the call: the page handles the rejection a tick after the call is made, and a
+    // month switched regardless of the outcome would land after an assertion made at the call.
+    await waitFor(() => expect(hooks.showToast).toHaveBeenCalledWith("Failed to update the payment", "error"));
     expect(lastMonthRequested()).toBe("2026-09");
     // The form stays open to try again.
     expect(screen.getByRole("button", { name: /save/i })).toBeTruthy();
+  });
+
+  describe("recording a payment", () => {
+    const recordOnePeso = async () => {
+      render(<CardDetailPage />);
+      fireEvent.click(screen.getByRole("button", { name: "Pay" }));
+      fireEvent.change(await screen.findByLabelText(/Amount/), { target: { value: "1" } });
+      fireEvent.click(screen.getByRole("button", { name: /record/i }));
+      await waitFor(() => expect(hooks.recordPayment).toHaveBeenCalled());
+    };
+
+    it("closes on the month a saved payment landed in", async () => {
+      hooks.recordPayment.mockResolvedValue({
+        outcome: "saved",
+        payment: { id: "pay-2", kind: "PAYMENT", amount: 1, description: "", date: "2026-08-29T16:00:00.000Z" },
+      });
+
+      await recordOnePeso();
+
+      await waitFor(() => expect(lastMonthRequested()).toBe("2026-08"));
+      expect(hooks.showToast).toHaveBeenCalledWith("Payment recorded", "success");
+      // Gone once the modal's exit animation has run.
+      await waitFor(() => expect(screen.queryByRole("button", { name: /record/i })).toBeNull());
+    });
+
+    it("leaves the fields to correct after a refusal", async () => {
+      hooks.recordPayment.mockResolvedValue({ outcome: "refused", message: "That card is archived" });
+
+      await recordOnePeso();
+
+      await waitFor(() => expect(hooks.showToast).toHaveBeenCalledWith("That card is archived", "error"));
+      expect(screen.getByLabelText(/Amount/)).toBeTruthy();
+    });
+
+    it("says so when a save could not be confirmed", async () => {
+      hooks.recordPayment.mockResolvedValue({ outcome: "unconfirmed" });
+
+      await recordOnePeso();
+
+      await waitFor(() =>
+        expect(hooks.showToast).toHaveBeenCalledWith("Couldn't confirm the payment was recorded", "error")
+      );
+    });
+
+    // The review finding on #397: reopening Pay showed a blank form over a key still armed for the
+    // old payment, so a new payment was answered with it. A pinned payment shows its retry instead.
+    it("offers only the pinned payment's retry or a discard when Pay is opened over one", async () => {
+      hooks.pinned.payment = { kind: "PAYMENT", amount: 5000, description: "", date: "2026-09-28" };
+      hooks.retryPayment.mockResolvedValue({
+        outcome: "saved",
+        payment: { id: "pay-2", kind: "PAYMENT", amount: 5000, description: "", date: "2026-09-27T16:00:00.000Z" },
+      });
+      render(<CardDetailPage />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Pay" }));
+      expect(await screen.findByText(/Couldn't confirm 1 payment \(₱5,000.00\) was saved/)).toBeTruthy();
+      expect(screen.queryByLabelText(/Amount/)).toBeNull();
+
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      await waitFor(() => expect(hooks.showToast).toHaveBeenCalledWith("Payment recorded", "success"));
+      expect(hooks.retryPayment).toHaveBeenCalledTimes(1);
+
+      fireEvent.click(screen.getByRole("button", { name: /discard these payments/i }));
+      expect(hooks.discardPayment).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -2,6 +2,32 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-28 - A card payment retried after a lost response is recorded once
+
+Purchases on a card were already protected against a lost response; payments were not. If a payment
+committed and its response never arrived, the Pay form showed "Failed to fetch" with the fields
+still filled in, and pressing Record again saved it a second time, leaving the card owing less than
+it did.
+
+The form now sends an idempotency key, `clientRequestId`, and keeps it until the server answers with
+a saved payment, including across closing and reopening the form. A key that already saved one is
+answered 200 with that payment instead of 201, looked up before the body is validated so a retry is
+never refused over inputs it will not use. Two attempts racing past that lookup are settled by a
+unique index on `(user_id, client_request_id)`: the loser gets the winner's row, not a 500.
+
+A failed save now says what happened. A refusal shows the server's reason and leaves the fields to
+correct. No response, or a 5xx, **pins** the payment the way an unconfirmed purchase already was:
+the form is replaced with Retry, which sends exactly the same payment under the same key, and
+Discard, which drops the key. Pinned survives closing Pay, so reopening it shows the same retry. A
+first cut kept the fields editable instead, and review caught what that allowed: the key stayed
+armed behind a blank form, so the next payment entered, even a genuinely different one, was
+answered with the old one, and the notice told the user to edit that one from the list.
+
+Migration `20260928120000` adds the nullable column and the index. Expand only: every existing row
+is NULL, which Postgres treats as distinct, and the release still serving during the deploy writes no
+key. A tab open from before the deploy keeps working, since the key is optional.
+`scripts/verify-card-payment-idempotency.ts` proves the race against a real database.
+
 ## 2026-09-28 - The Debt tab and the forecast follow a card payment
 
 Recording a payment on a card left the Debt tab showing what was owed before it. Its cached read
