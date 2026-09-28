@@ -122,7 +122,9 @@ describe("CardDetailPage", () => {
     fireEvent.change(await screen.findByLabelText("Date"), { target: { value: "2026-08-30" } });
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
 
-    await waitFor(() => expect(hooks.updatePayment).toHaveBeenCalled());
+    // The toast, not the call: the page handles the rejection a tick after the call is made, and a
+    // month switched regardless of the outcome would land after an assertion made at the call.
+    await waitFor(() => expect(hooks.showToast).toHaveBeenCalledWith("Failed to update the payment", "error"));
     expect(lastMonthRequested()).toBe("2026-09");
     // The form stays open to try again.
     expect(screen.getByRole("button", { name: /save/i })).toBeTruthy();
