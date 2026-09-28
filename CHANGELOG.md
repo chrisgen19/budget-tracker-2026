@@ -2,6 +2,23 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-28 - The Debt tab and the forecast follow a card payment
+
+Recording a payment on a card left the Debt tab showing what was owed before it. Its cached read
+was keyed `["debt-analytics", ...]`, a root nothing ever invalidated -- not a payment, not a
+purchase, not an edit on /transactions -- so it kept the old total for as long as the five-minute
+stale time ran. Measured on a real card: ₱76,566.08 on the tab after a payment that took the card
+to ₱76,565.08, with no request made. The key now sits under the card root, `["credit-accounts",
+"debt", ...]`, so every write that already refreshes the cards refreshes the tab with them, the
+seven on /transactions included, and a future writer cannot forget it.
+
+Payments and a card's own edits also refresh the cash-flow forecast now. They invalidated only the
+dashboard, while the forecast subtracts payments already made and schedules the next one from the
+card's due day, plan and balance.
+
+Correcting a payment's date into another month now follows it there, as recording one already did.
+It used to vanish from the list with only "Payment updated" to say where it went.
+
 ## 2026-09-23 - An open tab is told when the app behind it has changed
 
 A deploy swaps the server while an open tab keeps running the bundle it loaded, and `/api/*` is

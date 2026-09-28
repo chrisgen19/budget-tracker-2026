@@ -205,4 +205,6 @@ Moved out of `AGENTS.md` verbatim when that file reached the size Codex silently
   Its month cap `MAX_DEBT_TREND_MONTHS` is derived from `MAX_ANALYTICS_RANGE_DAYS`, never written
   by hand: a hand-picked 60 truncated a valid ten-year range half-way with nothing saying so. Its interest window uses the app-wide `Date.UTC(...) + tzOffset * 60000`: bare
   `T00:00:00Z` bounds are UTC's day, and in Manila a charge logged at 07:00 on the 1st would land in
-  the previous month
+  the previous month. Its query key sits **under the card root** (`["credit-accounts", "debt", ...]`),
+  so every write that invalidates `creditAccountKeys.all` refreshes it too. As a root of its own
+  nothing ever invalidated it, and the tab showed the pre-payment total for the full stale time

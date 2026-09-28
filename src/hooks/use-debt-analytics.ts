@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { creditAccountKeys } from "@/hooks/use-credit-accounts";
 import type { CardInterestFacts, OverallUtilization } from "@/lib/card-interest";
 
 export interface DebtStrategyView {
@@ -32,9 +33,16 @@ export interface DebtAnalytics {
   strategies: { avalanche: DebtStrategyView; snowball: DebtStrategyView; monthlyPool: number } | null;
 }
 
+/**
+ * Nested under the card root on purpose. Everything the tab shows is derived from card reads, and
+ * every write that moves a card -- a payment, a purchase, an edit or delete on /transactions --
+ * already invalidates `creditAccountKeys.all`. As a root of its own (`["debt-analytics"]`) nothing
+ * ever invalidated it, so the tab kept showing what was owed before a payment for as long as the
+ * five-minute stale time ran.
+ */
 export const debtAnalyticsKeys = {
-  all: ["debt-analytics"] as const,
-  range: (from: string, to: string) => ["debt-analytics", from, to] as const,
+  all: [...creditAccountKeys.all, "debt"] as const,
+  range: (from: string, to: string) => [...creditAccountKeys.all, "debt", from, to] as const,
 };
 
 /** The Debt tab's portfolio view. Only mounted when the credit cards switch admits the user. */

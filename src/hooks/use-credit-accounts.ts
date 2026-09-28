@@ -118,8 +118,13 @@ export const creditAccountKeys = {
  * roots those factories use.
  */
 const SPENDING_KEYS = [["transactions"], ["dashboard"], ["analytics"], ["labels"], cashFlowForecastKeys.all] as const;
-/** The dashboard shows what cards owe, so a payment changes it too. */
-const DASHBOARD_KEY = [["dashboard"]] as const;
+/**
+ * What a payment, or a card's own terms, move beyond the card reads: the dashboard shows what cards
+ * owe, and the forecast subtracts payments already made and schedules the next ones from the
+ * card's due day, plan and balance. Not spending, so no report of it. (The Debt tab is covered by
+ * `creditAccountKeys.all`, which it is nested under.)
+ */
+const CARD_STATE_KEYS = [["dashboard"], cashFlowForecastKeys.all] as const;
 
 /* ------------------------------------------------------------------ */
 /*  Fetch helper                                                       */
@@ -200,7 +205,7 @@ export function useCreateCreditAccount() {
       method: "POST",
       body: JSON.stringify(input),
     })
-  , DASHBOARD_KEY);
+  , CARD_STATE_KEYS);
 }
 
 export function useUpdateCreditAccount() {
@@ -209,7 +214,7 @@ export function useUpdateCreditAccount() {
       method: "PUT",
       body: JSON.stringify(patch),
     })
-  , DASHBOARD_KEY);
+  , CARD_STATE_KEYS);
 }
 
 export function useDeleteCreditAccount() {
@@ -217,7 +222,7 @@ export function useDeleteCreditAccount() {
     requestJson<{ outcome: "deleted" | "archived" }>(cardUrl(accountId), "Failed to delete card", {
       method: "DELETE",
     })
-  , DASHBOARD_KEY);
+  , CARD_STATE_KEYS);
 }
 
 /**
@@ -269,7 +274,7 @@ export function useCreateCreditPayment() {
         method: "POST",
         body: JSON.stringify(input),
       }),
-    DASHBOARD_KEY
+    CARD_STATE_KEYS
   );
 }
 
@@ -280,7 +285,7 @@ export function useUpdateCreditPayment() {
         method: "PUT",
         body: JSON.stringify(patch),
       }),
-    DASHBOARD_KEY
+    CARD_STATE_KEYS
   );
 }
 
@@ -290,6 +295,6 @@ export function useDeleteCreditPayment() {
       requestJson<{ message: string }>(paymentUrl(accountId, paymentId), "Failed to delete the payment", {
         method: "DELETE",
       }),
-    DASHBOARD_KEY
+    CARD_STATE_KEYS
   );
 }
