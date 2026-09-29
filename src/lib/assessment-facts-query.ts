@@ -11,6 +11,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { formatLocalDate } from "@/lib/validations";
+import { toLocalComponents } from "@/lib/schedule-matching";
 import {
   buildAssessmentFacts,
   detectBudgetWatchlistAnomalies,
@@ -24,6 +25,7 @@ import {
   detectCardAnomalies,
   detectGoalAnomalies,
   type FactBill,
+  type FactLabelSchedule,
   type FactTransaction,
   sortAssessmentAnomalies,
   capFindingsPerKind,
@@ -140,7 +142,7 @@ export const collectAssessmentFacts = async (
   // week is what tells us last month's bill was settled after all.
   const rangeEnd = window.dataTo > today ? window.dataTo : today;
 
-  const [rows, bills, firstSightings, allTime] = await Promise.all([
+  const [rows, bills, firstSightings, allTime, schedules] = await Promise.all([
     prisma.transaction.findMany({
       where: { userId, date: { gte: localDayStart(window.dataFrom, tzMs), lte: localDayEnd(rangeEnd, tzMs) } },
       select: {
@@ -151,11 +153,12 @@ export const collectAssessmentFacts = async (
         description: true,
         categoryId: true,
         billId: true,
+        createdAt: true,
         category: { select: { name: true } },
-        // Only the count is needed, and `_count` avoids pulling a row per label:
-        // the amount split across several labels is a question for
-        // `getLabelBreakdown`, never for a naive join here.
-        _count: { select: { labels: true } },
+        // Label ids, for the schedule audit's "which rows carry it". Never summed per
+        // label here: the amount split across several labels is a question for
+        // `getLabelBreakdown`, and a naive join over these would double-count.
+        labels: { select: { labelId: true } },
       },
     }),
     prisma.scheduledTransaction.findMany({
@@ -191,6 +194,11 @@ export const collectAssessmentFacts = async (
     // Every row the user has, for the running balance. A balance is not a window:
     // six months of it is a period's net, which answers a different question.
     prisma.transaction.groupBy({ by: ["type"], where: { userId }, _sum: { amount: true } }),
+    // Every auto-apply rule, for the audit of what the clock has been labelling.
+    prisma.labelSchedule.findMany({
+      where: { label: { userId } },
+      select: { labelId: true, days: true, startTime: true, endTime: true, label: { select: { name: true, applicableTo: true } } },
+    }),
   ]);
 
   // Folded here rather than in SQL: `groupBy` is exact, and "Netflix " and
@@ -216,7 +224,19 @@ export const collectAssessmentFacts = async (
     categoryId: t.categoryId,
     categoryName: t.category.name,
     billId: t.billId,
-    labelCount: t._count.labels,
+    labelCount: t.labels.length,
+    localTime: toLocalComponents(t.date, tzOffset).time,
+    loggedMinutesAfter: Math.round((t.createdAt.getTime() - t.date.getTime()) / 60_000),
+    labelIds: t.labels.map((l) => l.labelId),
+  }));
+
+  const labelSchedules: FactLabelSchedule[] = schedules.map((s) => ({
+    labelId: s.labelId,
+    labelName: s.label.name,
+    applicableTo: s.label.applicableTo,
+    days: s.days,
+    startTime: s.startTime,
+    endTime: s.endTime,
   }));
 
   // Payments named after a bill but carrying no `billId`, across all history. The
@@ -297,6 +317,7 @@ export const collectAssessmentFacts = async (
     historyCharges,
     allTimeTotals: { income: totalOf("INCOME"), expenses: totalOf("EXPENSE") },
     unlinkedCandidates,
+    labelSchedules,
     // Falls back to the shipped defaults rather than to zeroes: a user row that could not be read
     // must produce the behaviour the app had before any of this was configurable, not a silently
     // disabled detector.

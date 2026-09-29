@@ -172,6 +172,9 @@ async function main() {
     facts.hygiene.fragmentation.length +
     facts.confidence.excludedMonths.length +
     facts.bills.unlinkedPayments.length +
+    facts.hygiene.underLogged.length +
+    facts.hygiene.scheduledLabels.filter((l) => l.clockOnly.length > 0).length +
+    facts.hygiene.clockSlips.length +
     // The prompt lists unlabeled spend as a dataQuality candidate and the script
     // prints it, but the gate did not count it -- so an account whose only
     // accuracy problem was a fifth of its spending carrying no label scored zero

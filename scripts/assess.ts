@@ -153,6 +153,27 @@ const printQuality = (f: AssessmentFacts, currency: string) => {
   h2("same thing stored several ways");
   if (f.hygiene.fragmentation.length === 0) none();
   for (const g of f.hygiene.fragmentation) console.log(`  ${g.transactions} txns: ${g.variants.map((v) => `[${v}]`).join(" ")}`);
+
+  h2("under-logged: a category far below its usual month, in a month that passed the gate");
+  console.log("    Coverage counts days, not rows. These months count toward every rate above.");
+  if (f.hygiene.underLogged.length === 0) none();
+  for (const x of f.hygiene.underLogged) {
+    console.log(`  ${x.month}  ${x.category.padEnd(22)} ${String(x.count).padStart(3)} txns vs ${x.typicalCount} usual  ${money(x.total, currency)} vs ${money(x.typicalTotal, currency)}`);
+  }
+
+  h2("scheduled labels: categories a label reaches only inside its clock window");
+  console.log("    Never chosen outside the window, so probably put there by the schedule. Amounts are gross, not the label's split share.");
+  if (f.hygiene.scheduledLabels.length === 0) none();
+  for (const s of f.hygiene.scheduledLabels) {
+    console.log(`  ${s.label} (${s.window}): ${s.inWindow} of ${s.rows} rows fall inside the window`);
+    for (const c of s.clockOnly) console.log(`      ${c.category.padEnd(22)} ${String(c.count).padStart(3)} txns  ${money(c.total, currency)}`);
+  }
+
+  h2("likely AM/PM slips: timed before 05:00, written ~12 hours later the same day");
+  if (f.hygiene.clockSlips.length === 0) none();
+  for (const c of f.hygiene.clockSlips) {
+    console.log(`  ${c.date} ${c.time} (written ${c.loggedAt})  ${c.description}  ${money(c.amount, currency)}`);
+  }
 };
 
 const printIncome = (f: AssessmentFacts, currency: string) => {

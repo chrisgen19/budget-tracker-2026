@@ -91,9 +91,10 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
    a user who sees a low month in their app deserves to know it is a gap, not a win.
 
    The gate applies to every **rate, average and trend**: sections 2, 4, 7 and 8 read only
-   trustworthy months, and so does section 6's unlabeled-spend split. It deliberately does
-   **not** apply to the checks that detect whether something *exists* — recurring spend (5),
-   and section 6's duplicates and fragmentation — which read the whole window. An excluded
+   trustworthy months, and so do section 6's unlabeled-spend split and under-logged check. It
+   deliberately does **not** apply to the checks that detect whether something *exists* —
+   recurring spend (5), and section 6's duplicates, fragmentation, scheduled-label audit and
+   AM/PM slips — which read the whole window. An excluded
    month is missing rows, not wrong ones: a duplicate submitted in it is still a duplicate,
    a misspelling is still a misspelling, and hiding them would suppress real findings while
    filtering recurrence would only understate it. Section 3 reads a bill's whole payment
@@ -102,6 +103,12 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
    Note section 6 **straddles** the gate: it groups the data-quality findings by what they
    are about, not by whether the gate applies to them. Do not describe the whole section as
    gated or ungated.
+
+   The gate has one blind spot, and section 6's **under-logged** list covers it. Coverage counts
+   days with any row, so a month backfilled from one source (ride history, a card statement)
+   passes with whole categories missing. An under-logged month stays in every rate, so when the
+   list names one, say its total is probably understated and adjust any rate you quote by hand.
+   Do not quietly drop the month.
 
 3. **Pull live figures from MCP** for the current month and upcoming bills. Cross-check the
    bill amounts against section 3's paid range and its `ok` / `under-budgeted` / `seasonal`
@@ -135,7 +142,10 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
      than one, name them in prose instead of splitting a total you were not given.
    - **The prose** — headline, ledger figures, the row stacks, the spellings, the action
      block, the scope row in the masthead. This is the judgement half and gets rewritten
-     each run.
+     each run. When the user asks for recommendations as well as findings (a cleaner label
+     or category structure, say), put them in a `<table class="spec">` inside a
+     `<div class="chart-wrap">`, under `<h3>` subheads. `.readout` is for figures and
+     right-aligns everything.
 
    Then publish it to the **same URL**, so there is one link that always holds the current
    assessment rather than a new artifact each month.
@@ -174,7 +184,7 @@ not be timezone-shifted. That logic already lives in `src/lib/budget-queries.ts`
 | 3. Bills | **Missed occurrences first** — a due date that passed with no payment, skip or snooze is the most actionable thing in the report. Then **read `swing` before `variance`.** Swing under ~1.5 means a fixed bill, and a high variance there really is a misconfigured figure. A bill marked `seasonal` — and listed again in the second table — is a metered one, where the budget sits inside the range actually paid and no single figure can be right; the month-by-month shape is shown for those. High swing alone is not enough: a bill nobody budgeted anywhere near is `under-budgeted` and still needs its warning. Also bills paid *outside* the bill system, which silently skip the schedule |
 | 4. Category trend | Rising categories only; a fall is usually the gap, not thrift |
 | 5. Recurring spend | The fixed monthly base, and **new** recurring charges — habits forming before they are noticed. Immaterial ones are dropped on purpose: a faithfully repeating jeepney fare decides nothing |
-| 6. Data quality | Three findings, grouped: **duplicates** (same day, description and amount — usually a double-submit); **unlabeled spend** split by cause, where `bill payment` is a **system gap** — bill payments bypass label auto-apply — not user sloppiness, so say which it is; and **fragmentation**, one thing stored several ways, which matters because the Telegram bot searches by description text |
+| 6. Data quality | Six findings, grouped: **duplicates** (same day, description and amount — usually a double-submit, but a same-fare commute there and back is not one, so check the times); **unlabeled spend** split by cause, where `bill payment` is a **system gap** — bill payments bypass label auto-apply — not user sloppiness, so say which it is; **fragmentation**, one thing stored several ways, which matters because the Telegram bot and the recurring-charge detector both key on description text; **under-logged**, a steady category far below its usual month inside a month the gate trusts; **scheduled labels**, the categories a label with an auto-apply schedule reaches only inside its clock window. Put that one as a question, since nothing records whether the clock or the user applied a label, and many rows are timed when they were logged rather than when the money was spent. Last, **AM/PM slips**, rows timed before 05:00 but written about twelve hours later |
 | 7. Income concentration | Share from the single largest source |
 | 8. What changed this period | Anomalies against the trustworthy months — a pace that has moved, a category above its baseline, a logging gap. A month still running is compared against the *same days* of those months, never scaled up |
 

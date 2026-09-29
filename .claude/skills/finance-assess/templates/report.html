@@ -47,6 +47,7 @@
       --accent:  #D9A441;
       --flag:    #E0705A;
       --shadow:  0 1px 2px rgba(0,0,0,.4), 0 6px 20px -12px rgba(0,0,0,.6);
+      color-scheme: dark;
     }
   }
 
@@ -64,6 +65,7 @@
     --accent:  #D9A441;
     --flag:    #E0705A;
     --shadow:  0 1px 2px rgba(0,0,0,.4), 0 6px 20px -12px rgba(0,0,0,.6);
+    color-scheme: dark;
   }
 
   * { box-sizing: border-box; }
@@ -385,6 +387,45 @@
     color: var(--muted);
     line-height: 1.75;
   }
+
+  /* ---------- text tables: recommendations and structure, left-aligned ---------- */
+
+  h3 {
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: 20px;
+    line-height: 1.25;
+    margin: 36px 0 0;
+    text-wrap: balance;
+  }
+
+  .spec {
+    width: 100%;
+    min-width: 520px;
+    border-collapse: collapse;
+    margin-top: 16px;
+    font-size: 14.5px;
+    line-height: 1.45;
+  }
+  .spec th, .spec td {
+    text-align: left;
+    vertical-align: top;
+    padding: 10px 14px 10px 0;
+    border-bottom: 1px solid var(--rule);
+    color: var(--ink-2);
+  }
+  .spec th {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--rule-2);
+  }
+  .spec td:first-child { color: var(--ink); font-weight: 500; white-space: nowrap; }
+  .spec tr:last-child td { border-bottom: none; }
+  .row .what { min-width: 0; }
 
   /* tooltip */
   #tip {

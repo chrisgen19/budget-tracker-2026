@@ -23,6 +23,7 @@ import { MONTH_NAMES } from "@/lib/analytics-buckets";
 import { computeNextDueDate } from "@/lib/bill-utils";
 import { utcDayStart, utcDayKey } from "@/lib/bill-dates";
 import { buildEstimateSamples, estimateBillAmount } from "@/lib/bill-estimate";
+import { scheduleRuleMatches } from "@/lib/schedule-matching";
 import {
   MIN_COVERAGE_PCT,
   daysBetweenCalendarDays as daysBetween,
@@ -45,6 +46,7 @@ import type {
   AssessmentCashForecast,
   BudgetPerformanceData,
   AssessmentCategoryMovement,
+  AssessmentClockSlip,
   AssessmentDataConfidence,
   AssessmentDueSoonBill,
   AssessmentDuplicateGroup,
@@ -56,9 +58,11 @@ import type {
   AssessmentMonthCoverage,
   AssessmentRecurringFacts,
   AssessmentRecurringItem,
+  AssessmentScheduledLabel,
   AssessmentSnoozedBill,
   SavingsGoalSummary,
   AssessmentTrendFacts,
+  AssessmentUnderLoggedCategory,
   AssessmentUnlinkedBillPayment,
   BillFrequency,
   BillOccurrenceStatus,
@@ -81,6 +85,29 @@ export interface FactTransaction {
   categoryName: string;
   billId: string | null;
   labelCount: number;
+  /**
+   * The three fields below feed only the label-schedule audit and the AM/PM check. They are
+   * optional because callers that never reach those checks don't load them (the unlinked-payment
+   * candidates, most tests). A row missing one is skipped by the check that needs it; it is never
+   * judged as though the value were zero.
+   */
+  /** "HH:mm" in the user's own clock. */
+  localTime?: string;
+  /** Minutes from the row's date to when it was written: the backfill lag, negative if pre-dated. */
+  loggedMinutesAfter?: number;
+  labelIds?: string[];
+}
+
+/** One auto-apply rule of a label: the clock window it tags every new row inside. */
+export interface FactLabelSchedule {
+  labelId: string;
+  labelName: string;
+  /** "EXPENSE" | "INCOME" | "BOTH", as `schedule-matching.ts` reads it. */
+  applicableTo: string;
+  /** 0 = Sunday, the `getUTCDay` convention the schedules are stored in. */
+  days: number[];
+  startTime: string;
+  endTime: string;
 }
 
 /** A bill plus everything needed to judge it: its schedule, its payments, its settled occurrences. */
@@ -152,6 +179,8 @@ export interface FactsInput {
    * window still left that schedule wrong.
    */
   unlinkedCandidates?: FactTransaction[];
+  /** Every label auto-apply rule the user has. Omitted means none, so the schedule audit is empty. */
+  labelSchedules?: FactLabelSchedule[];
   /** Omitted falls back to the shipped defaults, so a test or a caller without a user still works. */
   thresholds?: WatchlistThresholds;
 }
@@ -308,6 +337,42 @@ const MIN_BASELINE_MONTHS = 3;
  * and projecting to the end of time turns every account into a shortfall eventually.
  */
 const FORECAST_HORIZON_DAYS = 45;
+/**
+ * A category counts as under-logged in a month when both its row count and its total fall to this
+ * share of its typical month or below.
+ *
+ * Both, because either alone misfires: a month of fewer, larger grocery runs has fewer rows and the
+ * usual total, and a month of cheaper meals has the usual rows and a lower total. Neither is missing
+ * anything. On the owner's account the rule separates a July backfilled from ride history (18 meal
+ * rows against a typical 52, 26% of the usual total) from a June of cooking at home (48 rows, half
+ * the total), which is real.
+ */
+const UNDER_LOGGED_SHARE = 0.4;
+/** A category must usually see this many rows a month before a thin month means anything. */
+const UNDER_LOGGED_MIN_TYPICAL_ROWS = 4;
+/**
+ * And it must be steady: its second-lowest other month at least this share of its typical one.
+ *
+ * A lumpy category's quiet month is behaviour, not a gap. On the owner's account Fun ran 7, 4, 10,
+ * 1, 2, 0 and 13 rows, and without this its May read as missing rows. The second-lowest rather
+ * than the lowest, so two thin months in a row cannot each excuse the other.
+ */
+const UNDER_LOGGED_STEADY_SHARE = 0.5;
+/**
+ * A scheduled label reaching a category only inside its window, this many times or more, is
+ * reported. One sighting could be a real choice made during office hours; two that never once
+ * happen outside them are the pattern.
+ */
+const CLOCK_ONLY_MIN_ROWS = 2;
+/**
+ * The AM/PM check reads rows timed before this hour. Few purchases happen between midnight and
+ * five, and the same slip on a daytime row (a 09:00 typed for 21:00) is indistinguishable from a
+ * morning purchase logged at night, so the check stays where it can tell the two apart.
+ */
+const CLOCK_SLIP_BEFORE = "05:00";
+/** Written this many minutes after its stated time, give or take the tolerance: twelve hours. */
+const CLOCK_SLIP_LAG_MINUTES = 720;
+const CLOCK_SLIP_TOLERANCE_MINUTES = 10;
 
 /* ------------------------------------------------------------------ */
 /*  Calendar-day helpers                                               */
@@ -973,11 +1038,172 @@ export const findFragmentation = (transactions: FactTransaction[]): AssessmentFr
     .slice(0, 6);
 };
 
+/**
+ * Categories logged far below their usual month, inside months the coverage gate trusts.
+ *
+ * The gate counts days with any row, so a month backfilled from one source (ride history, a card
+ * statement) passes it while whole categories are missing. Each trustworthy month is compared with
+ * the median of the *other* trustworthy months, zero-filled, so a category absent for a whole month
+ * still registers. Needs a baseline of `MIN_BASELINE_MONTHS` besides the month judged, and only
+ * steady categories are judged at all.
+ */
+export const findUnderLoggedCategories = (
+  transactions: FactTransaction[],
+  trustworthy: string[],
+): AssessmentUnderLoggedCategory[] => {
+  if (trustworthy.length <= MIN_BASELINE_MONTHS) return [];
+  const trusted = new Set(trustworthy);
+  const byCategory = new Map<string, Map<string, { count: number; total: number }>>();
+  for (const t of transactions) {
+    const month = monthOf(t.localDate);
+    if (t.type !== "EXPENSE" || !trusted.has(month)) continue;
+    const byMonth = byCategory.get(t.categoryName) ?? new Map<string, { count: number; total: number }>();
+    const cell = byMonth.get(month) ?? { count: 0, total: 0 };
+    cell.count += 1;
+    cell.total += t.amount;
+    byMonth.set(month, cell);
+    byCategory.set(t.categoryName, byMonth);
+  }
+
+  const found: AssessmentUnderLoggedCategory[] = [];
+  for (const [category, byMonth] of byCategory) {
+    const series = trustworthy.map((month) => ({ month, ...(byMonth.get(month) ?? { count: 0, total: 0 }) }));
+    for (const cell of series) {
+      const others = series.filter((o) => o.month !== cell.month);
+      const typicalCount = median(others.map((o) => o.count));
+      const typicalTotal = median(others.map((o) => o.total));
+      if (typicalCount < UNDER_LOGGED_MIN_TYPICAL_ROWS) continue;
+      // At least three others, guaranteed by the baseline check above.
+      const secondLowest = others.map((o) => o.count).sort((a, b) => a - b)[1];
+      if (secondLowest < typicalCount * UNDER_LOGGED_STEADY_SHARE) continue;
+      if (cell.count > typicalCount * UNDER_LOGGED_SHARE || cell.total > typicalTotal * UNDER_LOGGED_SHARE) continue;
+      found.push({
+        month: cell.month,
+        category,
+        count: cell.count,
+        typicalCount: round(typicalCount),
+        total: round(cell.total),
+        typicalTotal: round(typicalTotal),
+      });
+    }
+  }
+  // Ranked by money missing, never by percentage: a category at 10% of a tiny baseline is noise.
+  return found.sort((a, b) => (b.typicalTotal - b.total) - (a.typicalTotal - a.total)).slice(0, 6);
+};
+
+const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** "Mon–Fri", "Sat, Sun", "Every day": runs of three or more days collapse to a range. */
+const describeScheduleDays = (days: number[]): string => {
+  const sorted = [...new Set(days)].sort((a, b) => a - b);
+  if (sorted.length === 7) return "Every day";
+  const runs: number[][] = [];
+  for (const d of sorted) {
+    const run = runs[runs.length - 1];
+    if (run && d === run[run.length - 1] + 1) run.push(d);
+    else runs.push([d]);
+  }
+  return runs
+    .map((run) => run.length > 2
+      ? `${WEEKDAY_NAMES[run[0]]}–${WEEKDAY_NAMES[run[run.length - 1]]}`
+      : run.map((d) => WEEKDAY_NAMES[d]).join(", "))
+    .join(", ");
+};
+
+/**
+ * For each label with an auto-apply schedule: how many of its rows the clock could have tagged,
+ * and which categories it reaches *only* that way.
+ *
+ * Nothing records whether a label was applied by a schedule or picked by hand, so the audit reads
+ * it from the pattern. A category that carries the label outside the window too is one the user
+ * chooses it for; one that carries it only inside the window, never once outside, is one the
+ * clock chose. That is a question to put to the user, not a verdict, since a purchase that really
+ * is work and always happens in office hours looks the same. Reads the whole window: it asks
+ * whether a mislabel exists, and a thin month withholds rows rather than falsifying them.
+ */
+export const auditScheduledLabels = (
+  transactions: FactTransaction[],
+  schedules: FactLabelSchedule[],
+): AssessmentScheduledLabel[] => {
+  const rulesByLabel = new Map<string, FactLabelSchedule[]>();
+  for (const rule of schedules) rulesByLabel.set(rule.labelId, [...(rulesByLabel.get(rule.labelId) ?? []), rule]);
+
+  const audits: AssessmentScheduledLabel[] = [];
+  for (const [labelId, rules] of rulesByLabel) {
+    const carrying = transactions.flatMap((t) =>
+      t.labelIds?.includes(labelId) && t.localTime !== undefined ? [{ t, time: t.localTime }] : []);
+    if (carrying.length === 0) continue;
+
+    let inWindow = 0;
+    const byCategory = new Map<string, { inside: number; outside: number; total: number }>();
+    for (const { t, time } of carrying) {
+      const day = parseDay(t.localDate).getUTCDay();
+      const inside = rules.some((rule) => scheduleRuleMatches(rule, day, time, t.type));
+      if (inside) inWindow += 1;
+      const g = byCategory.get(t.categoryName) ?? { inside: 0, outside: 0, total: 0 };
+      if (inside) {
+        g.inside += 1;
+        g.total += t.amount;
+      } else {
+        g.outside += 1;
+      }
+      byCategory.set(t.categoryName, g);
+    }
+
+    audits.push({
+      label: rules[0].labelName,
+      window: rules.map((rule) => `${describeScheduleDays(rule.days)} ${rule.startTime}–${rule.endTime}`).join("; "),
+      rows: carrying.length,
+      inWindow,
+      clockOnly: [...byCategory.entries()]
+        .filter(([, g]) => g.outside === 0 && g.inside >= CLOCK_ONLY_MIN_ROWS)
+        .map(([category, g]) => ({ category, count: g.inside, total: round(g.total) }))
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 8),
+    });
+  }
+  return audits.sort((a, b) => b.rows - a.rows);
+};
+
+/** "HH:mm" moved forward by some minutes, wrapping at midnight. */
+const addMinutesToTime = (time: string, minutes: number): string => {
+  const [h, m] = time.split(":").map(Number);
+  const total = (((h * 60 + m + minutes) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+};
+
+/**
+ * Rows timed in the small hours but written about twelve hours later: a PM purchase entered as AM.
+ *
+ * A 04:36 commute written at 16:36 the same day is not a night-time trip logged by day; the time
+ * field was set to the right digits in the wrong half of the day. Beyond reading the wrong day in
+ * a timeline, it puts the row outside any daytime label schedule. Reads the whole window.
+ */
+export const findClockSlips = (transactions: FactTransaction[]): AssessmentClockSlip[] =>
+  transactions
+    .flatMap((t) => {
+      const { localTime, loggedMinutesAfter } = t;
+      if (localTime === undefined || loggedMinutesAfter === undefined) return [];
+      if (localTime >= CLOCK_SLIP_BEFORE) return [];
+      if (Math.abs(loggedMinutesAfter - CLOCK_SLIP_LAG_MINUTES) > CLOCK_SLIP_TOLERANCE_MINUTES) return [];
+      return [{
+        transactionId: t.id,
+        date: t.localDate,
+        time: localTime,
+        loggedAt: addMinutesToTime(localTime, loggedMinutesAfter),
+        description: t.description.trim(),
+        amount: round(t.amount),
+      }];
+    })
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 8);
+
 /** Unlabeled spend split by cause, plus how concentrated income is. */
 export const computeHygiene = (
   transactions: FactTransaction[],
   trustworthy: string[],
   period: { from: string; to: string },
+  labelSchedules: FactLabelSchedule[] = [],
 ): AssessmentHygieneFacts => {
   const trusted = new Set(trustworthy);
   const scoped = transactions.filter((t) => trusted.has(monthOf(t.localDate)));
@@ -1016,6 +1242,11 @@ export const computeHygiene = (
       total: round(g.total),
       pct: pct(g.total, totalIncome),
     })),
+    // Gated like every rate, since "usual" needs months worth averaging. The other two ask whether
+    // a mistake exists, so they read the whole window, as duplicates and fragmentation do.
+    underLogged: findUnderLoggedCategories(transactions, trustworthy),
+    scheduledLabels: auditScheduledLabels(transactions, labelSchedules),
+    clockSlips: findClockSlips(transactions),
   };
 };
 
@@ -2546,7 +2777,7 @@ export const buildAssessmentFacts = (input: FactsInput): AssessmentFacts => {
   // charge, the payload wants the top 15.
   const { allItems: recurringAll, ...recurring } =
     computeRecurring(transactions, today, trends.avgMonthlyBurn, input.historyFirstSeen, input.historyCharges);
-  const hygiene = computeHygiene(transactions, confidence.trustworthyMonths, period);
+  const hygiene = computeHygiene(transactions, confidence.trustworthyMonths, period, input.labelSchedules);
   const headline = computeHeadline(trends, input.allTimeTotals ?? null);
   // Falls back to the window when the caller supplies no wider set, so a test or
   // a caller that has only the window still gets an answer -- a narrower one,

@@ -34,6 +34,7 @@ import type {
   AssessmentBillAccuracy,
   AssessmentBillFacts,
   AssessmentCategoryMovement,
+  AssessmentClockSlip,
   AssessmentDataConfidence,
   AssessmentDuplicateGroup,
   AssessmentFacts,
@@ -45,11 +46,13 @@ import type {
   AssessmentMonthCoverage,
   AssessmentRecurringFacts,
   AssessmentRecurringItem,
+  AssessmentScheduledLabel,
   AssessmentDueSoonBill,
   AssessmentSnoozedBill,
   AssessmentCashClaim,
   AssessmentCashForecast,
   AssessmentTrendFacts,
+  AssessmentUnderLoggedCategory,
   AssessmentUnlinkedBillPayment,
 } from "@/types";
 
@@ -933,6 +936,35 @@ const fragmentation = z.object({
 });
 assertExact<z.infer<typeof fragmentation>, AssessmentFragmentation>(true);
 
+const underLoggedCategory = z.object({
+  month: z.string(),
+  category: z.string(),
+  count: z.number(),
+  typicalCount: z.number(),
+  total: z.number(),
+  typicalTotal: z.number(),
+});
+assertExact<z.infer<typeof underLoggedCategory>, AssessmentUnderLoggedCategory>(true);
+
+const scheduledLabel = z.object({
+  label: z.string(),
+  window: z.string(),
+  rows: z.number(),
+  inWindow: z.number(),
+  clockOnly: z.array(z.object({ category: z.string(), count: z.number(), total: z.number() })),
+});
+assertExact<z.infer<typeof scheduledLabel>, AssessmentScheduledLabel>(true);
+
+const clockSlip = z.object({
+  transactionId: z.string(),
+  date: z.string(),
+  time: z.string(),
+  loggedAt: z.string(),
+  description: z.string(),
+  amount: z.number(),
+});
+assertExact<z.infer<typeof clockSlip>, AssessmentClockSlip>(true);
+
 const hygieneFacts = z.object({
   duplicates: z.array(duplicateGroup),
   unlabeled: z.object({
@@ -951,6 +983,9 @@ const hygieneFacts = z.object({
       pct: z.number().nullable(),
     })
   ),
+  underLogged: z.array(underLoggedCategory),
+  scheduledLabels: z.array(scheduledLabel),
+  clockSlips: z.array(clockSlip),
 });
 assertExact<z.infer<typeof hygieneFacts>, AssessmentHygieneFacts>(true);
 
