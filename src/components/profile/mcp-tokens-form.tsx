@@ -25,6 +25,7 @@ export function McpTokensForm() {
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<McpTokenRecord | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [changingExpiryId, setChangingExpiryId] = useState<string | null>(null);
   const [minted, setMinted] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   // `undefined` means "not known yet or failed to load", distinct from `null`, which means the
@@ -114,6 +115,34 @@ export function McpTokensForm() {
     } finally {
       setRevokingId(null);
       setRevoking(null);
+    }
+  };
+
+  /** Give a live token a new lifetime from today. Resolves to whether it saved, so the picker
+   *  stays open on a refusal and the reason is shown instead of a silently unchanged row. */
+  const handleChangeExpiry = async (
+    token: McpTokenRecord,
+    expiresInDays: number | null
+  ): Promise<boolean> => {
+    setChangingExpiryId(token.id);
+    setError("");
+    try {
+      const res = await fetch(`/api/mcp/tokens/${token.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expiresInDays }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Failed to change expiry");
+      setTokens((current) =>
+        (current ?? []).map((item) => (item.id === data.record.id ? data.record : item))
+      );
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to change expiry");
+      return false;
+    } finally {
+      setChangingExpiryId(null);
     }
   };
 
@@ -239,6 +268,8 @@ export function McpTokensForm() {
             deletingId={deletingId}
             onRevoke={setRevoking}
             onDelete={setDeleting}
+            changingExpiryId={changingExpiryId}
+            onChangeExpiry={handleChangeExpiry}
           />
         )}
 

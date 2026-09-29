@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { grantsWrite, mcpScopeSchema } from "@/lib/mcp/scopes";
+import { grantsWrite, mcpScopeSchema, type McpScope } from "@/lib/mcp/scopes";
 import { MAX_BREAKDOWN_GROUPS, MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
 import {
   analyticsRangeDays,
@@ -159,7 +159,7 @@ export const MAX_TOKEN_EXPIRY_DAYS = 365;
 
 /** Longest lifetime for a token that can write. Shorter than the read cap on purpose: it bounds
  *  how long a leaked writing credential stays useful, which revocation alone cannot do when the
- *  leak goes unnoticed. */
+ *  leak goes unnoticed. A Telegram bot token is exempt; see `tokenExpiryRefusal`. */
 export const MAX_WRITE_TOKEN_EXPIRY_DAYS = 90;
 
 /** Ceiling on a single timed MCP write lease: 365 days. It was 30, and the Telegram bot writes
@@ -515,32 +515,59 @@ export const mcpTokenSourceSchema = z.enum(["MCP", "TELEGRAM"]);
 
 export type McpTokenSource = z.infer<typeof mcpTokenSourceSchema>;
 
+/** Days a token lasts from now, `null` for never. The one shape minting and re-dating share. */
+const tokenExpiryDaysSchema = z.number().int().min(1).max(MAX_TOKEN_EXPIRY_DAYS).nullable();
+
+/**
+ * Why a lifetime is refused for a token with these scopes and source, or `null` when it is allowed.
+ *
+ * A token that can write must expire within `MAX_WRITE_TOKEN_EXPIRY_DAYS`, **unless it is the
+ * Telegram bot's**. The bot writes through `/api/mcp` with `TELEGRAM_MCP_TOKEN`, so the cap meant
+ * it stopped logging every 90 days until someone minted a new token, pasted it into Coolify and
+ * redeployed. That credential lives in the server's environment, not in a laptop's config file,
+ * which is where a leak goes unnoticed; laptop tokens keep the cap. The source is a label the
+ * owner picks at mint, so this narrows the default rather than proving where the token lives.
+ *
+ * One function rather than a schema refine plus a form mirror, because minting, changing an
+ * existing token's expiry, and the form's disabled buttons all have to give the same answer.
+ */
+export const tokenExpiryRefusal = (token: {
+  scopes: readonly McpScope[];
+  source: McpTokenSource;
+  expiresInDays: number | null;
+}): string | null => {
+  if (!grantsWrite(token.scopes) || token.source === "TELEGRAM") return null;
+  if (token.expiresInDays === null) return "A token with a write scope must expire";
+  if (token.expiresInDays > MAX_WRITE_TOKEN_EXPIRY_DAYS) {
+    return `A token with a write scope may last at most ${MAX_WRITE_TOKEN_EXPIRY_DAYS} days`;
+  }
+  return null;
+};
+
+/** Body of `PATCH /api/mcp/tokens/[id]`: a new lifetime counted from now, replacing the old one. */
+export const updateMcpTokenExpirySchema = z.object({ expiresInDays: tokenExpiryDaysSchema });
+
 /**
  * Minting an MCP token.
  *
  * A read-only credential that never expires is a contained risk: it can only ever disclose. One
- * that can also create rows is not, so a write grant must carry an end date, and a shorter one.
- * Enforced in the schema rather than only in the form, since the form is not the only thing that
- * can post this.
+ * that can also create rows is not, so a write grant must carry an end date, and a shorter one,
+ * unless it is the Telegram bot's (`tokenExpiryRefusal`). Enforced in the schema rather than only
+ * in the form, since the form is not the only thing that can post this.
  */
 export const createMcpTokenSchema = z
   .object({
     name: z.string().trim().min(1).max(60),
     scopes: z.array(mcpScopeSchema).min(1),
-    expiresInDays: z.number().int().min(1).max(MAX_TOKEN_EXPIRY_DAYS).nullable(),
+    expiresInDays: tokenExpiryDaysSchema,
     source: mcpTokenSourceSchema.default("MCP"),
   })
-  .refine((v) => !(grantsWrite(v.scopes) && v.expiresInDays === null), {
-    message: "A token with a write scope must expire",
-    path: ["expiresInDays"],
-  })
-  .refine(
-    (v) => !(grantsWrite(v.scopes) && (v.expiresInDays ?? 0) > MAX_WRITE_TOKEN_EXPIRY_DAYS),
-    {
-      message: `A token with a write scope may last at most ${MAX_WRITE_TOKEN_EXPIRY_DAYS} days`,
-      path: ["expiresInDays"],
+  .superRefine((value, ctx) => {
+    const refusal = tokenExpiryRefusal(value);
+    if (refusal) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: refusal, path: ["expiresInDays"] });
     }
-  );
+  });
 
 /**
  * One transaction accepted by the MCP write tool.

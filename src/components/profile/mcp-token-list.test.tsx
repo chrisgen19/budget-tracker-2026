@@ -20,6 +20,7 @@ const revoked = (over: Partial<McpTokenRecord> = {}) =>
 const renderList = (tokens: McpTokenRecord[]) => {
   const onRevoke = vi.fn();
   const onDelete = vi.fn();
+  const onChangeExpiry = vi.fn().mockResolvedValue(true);
   render(
     <McpTokenList
       tokens={tokens}
@@ -27,10 +28,14 @@ const renderList = (tokens: McpTokenRecord[]) => {
       deletingId={null}
       onRevoke={onRevoke}
       onDelete={onDelete}
+      changingExpiryId={null}
+      onChangeExpiry={onChangeExpiry}
     />
   );
-  return { onRevoke, onDelete };
+  return { onRevoke, onDelete, onChangeExpiry };
 };
+
+const writeScopes = ["budget:read", "transactions:write"];
 
 describe("McpTokenList", () => {
   it("lists a live token with a revoke action", () => {
@@ -91,5 +96,55 @@ describe("McpTokenList", () => {
   it("shows the empty state when there are no tokens at all", () => {
     renderList([]);
     expect(screen.getByText(/No tokens yet/i)).toBeDefined();
+  });
+
+  describe("Change expiry", () => {
+    const optionNames = () =>
+      screen
+        .getAllByRole("button")
+        .map((button) => button.textContent ?? "")
+        .filter((text) => /days|year|Never/.test(text));
+
+    it("offers the bot's write token Never and a year", () => {
+      renderList([token({ scopes: writeScopes, source: "TELEGRAM" })]);
+      fireEvent.click(screen.getByRole("button", { name: /change expiry/i }));
+
+      expect(optionNames()).toEqual(["30 days", "90 days", "1 year", "Never expires"]);
+    });
+
+    // The same rule the API applies, so the list never offers a button the server refuses.
+    it("offers an assistant's write token nothing past 90 days", () => {
+      renderList([token({ scopes: writeScopes, source: "MCP" })]);
+      fireEvent.click(screen.getByRole("button", { name: /change expiry/i }));
+
+      expect(optionNames()).toEqual(["30 days", "90 days"]);
+    });
+
+    it("sends Never as null and closes once saved", async () => {
+      const bot = token({ scopes: writeScopes, source: "TELEGRAM" });
+      const { onChangeExpiry } = renderList([bot]);
+      fireEvent.click(screen.getByRole("button", { name: /change expiry/i }));
+      fireEvent.click(screen.getByRole("button", { name: "Never expires" }));
+
+      expect(onChangeExpiry).toHaveBeenCalledWith(bot, null);
+      await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Never expires" })).toBeNull());
+    });
+
+    it("stays open when the save is refused, so the choice can be retried", async () => {
+      const { onChangeExpiry } = renderList([token({ scopes: writeScopes, source: "TELEGRAM" })]);
+      onChangeExpiry.mockResolvedValue(false);
+      fireEvent.click(screen.getByRole("button", { name: /change expiry/i }));
+      fireEvent.click(screen.getByRole("button", { name: "Never expires" }));
+
+      await vi.waitFor(() => expect(onChangeExpiry).toHaveBeenCalled());
+      expect(screen.getByRole("button", { name: "Never expires" })).toBeDefined();
+    });
+
+    it("is not offered on a dead token", () => {
+      renderList([revoked()]);
+      fireEvent.click(screen.getByRole("button", { name: /revoked or expired/i }));
+
+      expect(screen.queryByRole("button", { name: /change expiry/i })).toBeNull();
+    });
   });
 });

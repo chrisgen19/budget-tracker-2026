@@ -39,9 +39,10 @@ export interface PromptOwnerDb {
  * prompting its owner asks them for a message the bot then fails to record - the prompt keeps
  * arriving, every reply fails, and nothing in the chat explains why.
  *
- * Expiry is not a remote possibility here. The bot's token needs `transactions:write`, and such a
- * token may not choose "Never" and is capped at `MAX_WRITE_TOKEN_EXPIRY_DAYS`, so it is certain to
- * lapse. Silence is the right behaviour then: it is also the signal that the token needs re-minting.
+ * Expiry used to be certain here: the bot's token needs `transactions:write`, which capped it at
+ * `MAX_WRITE_TOKEN_EXPIRY_DAYS`. A Telegram bot token is now exempt (`tokenExpiryRefusal`) and can
+ * be set to never expire, but one minted or left with an end date still lapses. Silence is the
+ * right behaviour then: it is also the signal that the token needs a new expiry or re-minting.
  */
 export const telegramPromptOwnerId = async (
   db: PromptOwnerDb,

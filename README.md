@@ -316,6 +316,8 @@ In the deployed app, go to **Profile → MCP Access**:
    `receipts:read` and `bills:read` both include the parent transaction's description and
    amount, so neither is as narrow as its name suggests.
 3. Pick an expiry. 90 days is the default; "Never" exists but should be a deliberate choice.
+   A live token's expiry can be changed later with **Change expiry** on its row, counted from
+   today, without minting a new one.
 
 Copy the token immediately. Only its SHA-256 is stored, so it cannot be shown again: a lost
 token is re-minted, not recovered. Revoke from the same screen at any time; it takes effect on
@@ -388,7 +390,9 @@ Two tools write, and the server refuses either unless **both** of these are true
 
 1. The token carries the `transactions:write` scope, which covers both creating and changing.
    A token without it cannot see either tool at all — they are removed from the server rather
-   than refused on call. The scope caps the token at 90 days and forbids "Never" expires.
+   than refused on call. The scope caps the token at 90 days and forbids "Never" expires,
+   except for a token whose **Used by** is **Telegram bot**, which may last a year or never
+   expire so the bot does not stop logging every 90 days.
 2. Writes are switched on under **Profile > MCP Access > Write access**. This is a lease, not a
    toggle: pick 1 hour, 8 hours, 30 days, 90 days or 1 year, and it closes itself. **Forever** is
    the exception: it stays open until you press **Turn off now**, so it gives up the self-closing
@@ -458,7 +462,7 @@ three independent controls. None of them substitutes for another:
 
 | Control | What it is | Why |
 |---|---|---|
-| Write scope | `transactions:write`, covering both creating and changing. Chosen when the token is minted and fixed for its life, and it caps the token at 90 days and forbids "Never" expires | Least privilege. A read token can never be talked into writing |
+| Write scope | `transactions:write`, covering both creating and changing. Chosen when the token is minted and fixed for its life, and it caps the token at 90 days and forbids "Never" expires, unless the token is the Telegram bot's | Least privilege. A read token can never be talked into writing |
 | Write lease | `users.mcp_writes_enabled_until`, a timestamp rather than a boolean, set from Profile > MCP Access. Forever is stored as 9999-12-31 | Every timed option (up to 1 year) closes itself, so forgetting to switch writes off cannot leave them open past the expiry you chose. Forever opts out of that on purpose: a leaked write token stays useful until you notice and switch writes off |
 | Provenance | `created_via` + `mcp_token_id` for creation, `updated_via` + `updated_by_mcp_token_id` for the last edit, all set server-side | An audit trail. A compromised token cannot forge or omit it, and an edit cannot erase who created the row |
 
@@ -578,8 +582,10 @@ refunded.
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
 2. Mint an MCP token in **Profile > MCP Access** with **all seven** scopes the handlers need:
    `budget:read`, `transactions:read`, `labels:read`, `bills:read`, `receipts:read`, `receipts:scan`, `transactions:write`. Set **Used by** to
-   **Telegram bot** so its rows are stamped `TELEGRAM` rather than appearing as Claude's. A
-   write-only token fails on every message, since each one reads the category list first.
+   **Telegram bot** so its rows are stamped `TELEGRAM` rather than appearing as Claude's. That
+   is also what lets it pick **Never** as its expiry; any other write token is capped at 90 days,
+   and a lapsed token silently stops the bot. A write-only token fails on every message, since
+   each one reads the category list first.
 3. Set the environment variables (see below), then start the app. The bot starts with it.
 4. Message the bot. If your id is not on the allowlist it stays silent, and the log prints the id
    so you can copy it in.

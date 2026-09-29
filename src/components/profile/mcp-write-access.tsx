@@ -10,7 +10,7 @@ import { isForeverLease, MCP_WRITE_LEASE_FOREVER } from "@/lib/validations";
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
 /** Extends a pill's 30px height to a 44px touch target without making the row taller. */
-const HIT_AREA =
+export const HIT_AREA =
   "relative before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']";
 
 /** Minutes from now, `"forever"` until switched off by hand, `null` to switch writes off. */
