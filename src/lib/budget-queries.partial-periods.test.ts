@@ -101,6 +101,51 @@ describe("getSpendingTrends clips a running month against the same days (#236)",
     expect(result.totalChangePercent).toBe(20);
   });
 
+  /**
+   * Float noise must not read as a change. Two rows summing to 300.30 come to 300.29999999999995
+   * as `Float`, so an unrounded change was -5.7e-14: the Telegram bot's `change === 0` check then
+   * missed it and replied "Groceries: ₱0.00 less" under "Biggest changes".
+   */
+  it("reports an equal month as exactly zero change, whatever order the rows were summed in", async () => {
+    pinManilaDay("2026-09-07");
+
+    const { prisma } = fakePrisma([
+      tx("2026-08-10", 100.1, "Groceries"),
+      tx("2026-08-20", 200.2, "Groceries"),
+      tx("2026-07-15", 300.3, "Groceries"),
+    ]);
+
+    const result = await getSpendingTrends(prisma, "u1", {
+      currentMonth: "2026-08",
+      previousMonth: "2026-07",
+      timezoneOffset: MANILA,
+    });
+
+    expect(result.currentTotal).toBe(300.3);
+    expect(result.totalChange).toBe(0);
+    expect(result.byCategory.find((c) => c.name === "Groceries")?.change).toBe(0);
+  });
+
+  it("rounds the trend total once, after summing categories, not each category first", async () => {
+    pinManilaDay("2026-09-07");
+
+    // Sub-cent amounts are schema-legal (`z.number().positive()`, a Float column). Rounded per
+    // category first, each 0.004 became 0 and the total read 0 instead of 0.01.
+    const { prisma } = fakePrisma([
+      tx("2026-08-10", 0.004, "Groceries"),
+      tx("2026-08-11", 0.004, "Transport"),
+    ]);
+
+    const result = await getSpendingTrends(prisma, "u1", {
+      currentMonth: "2026-08",
+      previousMonth: "2026-07",
+      timezoneOffset: MANILA,
+    });
+
+    expect(result.currentTotal).toBe(0.01);
+    expect(result.totalChange).toBe(0.01);
+  });
+
   it("clips both months to the current day of the month", async () => {
     pinManilaDay("2026-09-07");
     const { prisma, seen } = fakePrisma([]);
