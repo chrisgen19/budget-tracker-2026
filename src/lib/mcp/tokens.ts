@@ -79,6 +79,11 @@ export const resolveWritePermission = (
 export const hashMcpToken = (token: string): string =>
   createHash("sha256").update(token).digest("hex");
 
+/** `expires_at` for a lifetime of `days` from `now`, or `null` for a token that never expires.
+ *  Shared by minting and by changing an existing token's expiry, so both count the same way. */
+export const expiryFromDays = (days: number | null, now = Date.now()): Date | null =>
+  days === null ? null : new Date(now + days * 24 * 60 * 60 * 1000);
+
 /**
  * Generate a new token and persist only its digest.
  *
@@ -96,10 +101,7 @@ export const mintMcpToken = async (params: {
   source?: TransactionSource;
 }) => {
   const token = TOKEN_PREFIX + randomBytes(TOKEN_BYTES).toString("base64url");
-  const expiresAt =
-    params.expiresInDays === null
-      ? null
-      : new Date(Date.now() + params.expiresInDays * 24 * 60 * 60 * 1000);
+  const expiresAt = expiryFromDays(params.expiresInDays);
 
   const record = await prisma.mcpToken.create({
     data: {

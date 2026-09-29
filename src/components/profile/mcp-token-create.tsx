@@ -11,24 +11,23 @@ import {
   isWriteScope,
   type McpScope,
 } from "@/lib/mcp/scopes";
-import type { McpTokenSource } from "@/lib/validations";
+import {
+  MAX_WRITE_TOKEN_EXPIRY_DAYS,
+  tokenExpiryRefusal,
+  type McpTokenSource,
+} from "@/lib/validations";
 
 const INPUT_CLASS =
   "w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50/50 text-warm-700 placeholder:text-warm-300 focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber transition-all";
 
 /** Bounded by default: an unbounded credential should be a deliberate choice, not the path
- *  of least resistance. `null` is the "never expires" option. */
-const EXPIRY_OPTIONS: { label: string; days: number | null }[] = [
+ *  of least resistance. `null` is the "never expires" option. Shared with "Change expiry". */
+export const TOKEN_EXPIRY_OPTIONS: { label: string; days: number | null }[] = [
   { label: "30 days", days: 30 },
   { label: "90 days", days: 90 },
   { label: "1 year", days: 365 },
   { label: "Never", days: null },
 ];
-
-/** A read-only credential that never expires can only ever disclose; one that can create rows
- *  cannot be left unbounded, because revocation only helps once the leak is noticed. Mirrored by
- *  the API, which rejects the same combinations regardless of what the form allows. */
-const MAX_WRITE_EXPIRY_DAYS = 90;
 
 /**
  * What the token represents, stamped onto every transaction it writes.
@@ -42,8 +41,9 @@ const SOURCE_OPTIONS: { value: McpTokenSource; label: string; hint: string }[] =
   { value: "TELEGRAM", label: "Telegram bot", hint: "The personal bot that relays messages to this app" },
 ];
 
-const allowedExpiry = (days: number | null, write: boolean) =>
-  !write || (days !== null && days <= MAX_WRITE_EXPIRY_DAYS);
+/** The API's own rule (`tokenExpiryRefusal`), so a button the form enables is one the API takes. */
+const allowedExpiry = (days: number | null, scopes: McpScope[], source: McpTokenSource) =>
+  tokenExpiryRefusal({ scopes, source, expiresInDays: days }) === null;
 
 interface McpTokenCreateProps {
   /** Resolves to whether the token was minted; a rejected save must leave the form intact. */
@@ -73,16 +73,21 @@ export function McpTokenCreate({ onCreate, creating }: McpTokenCreateProps) {
     // the API rejects, so pull the selection back to the write ceiling instead of failing on
     // submit. Computed here rather than inside a setState updater: React may run an updater more
     // than once, so queueing a second update from inside one can repeat or observe stale state.
-    if (grantsWrite(next) && !allowedExpiry(expiresInDays, true)) {
-      setExpiresInDays(MAX_WRITE_EXPIRY_DAYS);
-    }
+    if (!allowedExpiry(expiresInDays, next, source)) setExpiresInDays(MAX_WRITE_TOKEN_EXPIRY_DAYS);
     setScopes(next);
+  };
+
+  // Same pull-back for switching a write token from Telegram bot to AI assistant with "Never" or
+  // "1 year" selected, which only the bot's token may keep.
+  const chooseSource = (next: McpTokenSource) => {
+    if (!allowedExpiry(expiresInDays, scopes, next)) setExpiresInDays(MAX_WRITE_TOKEN_EXPIRY_DAYS);
+    setSource(next);
   };
 
   const canSubmit =
     name.trim().length > 0 &&
     scopes.length > 0 &&
-    allowedExpiry(expiresInDays, write) &&
+    allowedExpiry(expiresInDays, scopes, source) &&
     !creating;
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -148,7 +153,7 @@ export function McpTokenCreate({ onCreate, creating }: McpTokenCreateProps) {
               key={option.value}
               type="button"
               title={option.hint}
-              onClick={() => setSource(option.value)}
+              onClick={() => chooseSource(option.value)}
               className={cn(
                 "px-3 py-1.5 rounded-full text-xs font-medium border transition-colors",
                 source === option.value
@@ -169,14 +174,14 @@ export function McpTokenCreate({ onCreate, creating }: McpTokenCreateProps) {
       <fieldset>
         <legend className="text-sm font-medium text-warm-600">Expires</legend>
         <div className="mt-1.5 flex flex-wrap gap-2">
-          {EXPIRY_OPTIONS.map((option) => {
-            const disabled = !allowedExpiry(option.days, write);
+          {TOKEN_EXPIRY_OPTIONS.map((option) => {
+            const disabled = !allowedExpiry(option.days, scopes, source);
             return (
               <button
                 key={option.label}
                 type="button"
                 disabled={disabled}
-                title={disabled ? "Not available for a token that can write" : undefined}
+                title={disabled ? "Only a Telegram bot token that can write may last this long" : undefined}
                 onClick={() => setExpiresInDays(option.days)}
                 className={cn(
                   "px-3 py-1.5 rounded-full text-xs font-medium border transition-colors",
@@ -193,7 +198,9 @@ export function McpTokenCreate({ onCreate, creating }: McpTokenCreateProps) {
         </div>
         {write && (
           <p className="text-xs text-warm-400 mt-2">
-            A token that can write must expire, within {MAX_WRITE_EXPIRY_DAYS} days.
+            {source === "TELEGRAM"
+              ? "A Telegram bot token may last longer, since it lives in the server's settings rather than on a laptop."
+              : `A token that can write must expire, within ${MAX_WRITE_TOKEN_EXPIRY_DAYS} days.`}
           </p>
         )}
       </fieldset>

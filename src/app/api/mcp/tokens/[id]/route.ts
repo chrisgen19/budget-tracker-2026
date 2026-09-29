@@ -1,8 +1,69 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
-import { mcpTokenSelect } from "@/lib/mcp/tokens";
+import { expiryFromDays, mcpTokenSelect } from "@/lib/mcp/tokens";
 import { isTokenDead } from "@/lib/mcp/token-status";
+import { parseScopes } from "@/lib/mcp/scopes";
+import { tokenExpiryRefusal, updateMcpTokenExpirySchema } from "@/lib/validations";
+
+const TOKEN_DEAD = "This token no longer works. Create a new one instead.";
+
+/**
+ * Change a live token's expiry, counted from now and replacing the old one.
+ *
+ * Exists so the Telegram bot's token can be given a longer life **in place**: re-minting means a
+ * new secret, pasting it into Coolify and a redeploy, and every step is a chance to break the bot.
+ * The same `tokenExpiryRefusal` as minting judges it, against the token's stored scopes and
+ * source, so nothing can be made to outlive what it could have been minted with.
+ *
+ * A dead token is refused rather than revived. Expiry and revocation are how a credential that
+ * may have leaked stops working, and bringing one back is exactly what they exist to prevent.
+ */
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const userId = await getAuthUserId();
+  if (userId instanceof NextResponse) return userId;
+
+  const { id } = await params;
+  const parsed = updateMcpTokenExpirySchema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid expiry" }, { status: 400 });
+  }
+
+  const existing = await prisma.mcpToken.findFirst({
+    where: { id, userId },
+    select: { scopes: true, source: true, revokedAt: true, expiresAt: true },
+  });
+  if (!existing) {
+    return NextResponse.json({ error: "Token not found" }, { status: 404 });
+  }
+  if (isTokenDead(existing)) return NextResponse.json({ error: TOKEN_DEAD }, { status: 409 });
+
+  const { expiresInDays } = parsed.data;
+  // `APP` is never minted, so a stored source outside the schema is treated as the strict case.
+  const source = existing.source === "TELEGRAM" ? "TELEGRAM" : "MCP";
+  const scopes = parseScopes(existing.scopes);
+  const refusal = tokenExpiryRefusal({ scopes, source, expiresInDays });
+  if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
+
+  // Guarded on the same conditions as the check above, so a revoke or lapse that lands between
+  // the read and this write is not undone by it.
+  const { count } = await prisma.mcpToken.updateMany({
+    where: {
+      id,
+      userId,
+      revokedAt: null,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+    },
+    data: { expiresAt: expiryFromDays(expiresInDays) },
+  });
+  if (count === 0) return NextResponse.json({ error: TOKEN_DEAD }, { status: 409 });
+
+  const record = await prisma.mcpToken.findUnique({ where: { id }, select: mcpTokenSelect });
+  return NextResponse.json({ record });
+}
 
 /**
  * Revoke a token, or delete an already-revoked one for good.

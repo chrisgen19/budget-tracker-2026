@@ -2,6 +2,24 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-29 - The Telegram bot's token can be set to never expire, without replacing it
+
+A token with a write scope could last at most 90 days, and the bot writes with one, so the bot was
+due to stop logging again on the day its token lapsed. Fixing that meant minting a new token,
+pasting it into `TELEGRAM_MCP_TOKEN` in Coolify and redeploying, every 90 days.
+
+A token whose **Used by** is **Telegram bot** may now last a year or never expire. Every other
+write token keeps the 90-day cap, since those live in a laptop's config where a leak is likeliest
+to go unnoticed. One rule, `tokenExpiryRefusal`, now decides this for minting, for the new
+endpoint below, and for which buttons the form enables, replacing a schema check and a separate
+copy of the limit in the form.
+
+Each live token now has **Change expiry**, backed by `PATCH /api/mcp/tokens/[id]`. It sets a new
+lifetime counted from today and keeps the same secret, so the bot's existing token can be moved
+to Never in place with nothing to change in Coolify. A revoked or expired token is refused with
+409 rather than revived, since bringing a dead credential back is what expiry and revocation
+exist to prevent.
+
 ## 2026-09-29 - MCP write access can stay on for 90 days, a year, or until turned off
 
 Profile > MCP Access > Write access offered 1 hour, 8 hours and 30 days, and the server refused

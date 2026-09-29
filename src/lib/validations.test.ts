@@ -15,6 +15,7 @@ import {
   quickPickIdsSchema,
   receiptBreakdownMetaSchema,
   resolveTransactionDate,
+  tokenExpiryRefusal,
 } from "./validations";
 import { MAX_BREAKDOWN_LINE_ITEMS } from "./receipt-limits";
 
@@ -175,6 +176,52 @@ describe("createMcpTokenSchema", () => {
   it("rejects an unknown scope", () => {
     const result = createMcpTokenSchema.safeParse({ ...base, scopes: ["transactions:destroy"] });
     expect(result.success).toBe(false);
+  });
+
+  // The bot writes through this token, so a 90-day cap meant it stopped logging every 90 days.
+  it("lets a Telegram bot write token never expire, or last a year", () => {
+    for (const expiresInDays of [null, 365]) {
+      const result = createMcpTokenSchema.safeParse({
+        ...base,
+        scopes: ["budget:read", "transactions:write"],
+        source: "TELEGRAM",
+        expiresInDays,
+      });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it("keeps the cap for a write token that names no source", () => {
+    // `source` defaults to MCP, so omitting it must not slip past the cap.
+    const result = createMcpTokenSchema.safeParse({
+      ...base,
+      scopes: ["transactions:write"],
+      expiresInDays: null,
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("tokenExpiryRefusal", () => {
+  const write = ["budget:read", "transactions:write"] as const;
+
+  it("allows anything for a read-only token", () => {
+    expect(tokenExpiryRefusal({ scopes: ["budget:read"], source: "MCP", expiresInDays: null })).toBeNull();
+  });
+
+  it("allows anything for the Telegram bot's write token", () => {
+    expect(tokenExpiryRefusal({ scopes: write, source: "TELEGRAM", expiresInDays: null })).toBeNull();
+    expect(tokenExpiryRefusal({ scopes: write, source: "TELEGRAM", expiresInDays: 365 })).toBeNull();
+  });
+
+  it("names the rule an assistant's write token breaks", () => {
+    expect(tokenExpiryRefusal({ scopes: write, source: "MCP", expiresInDays: null })).toBe(
+      "A token with a write scope must expire"
+    );
+    expect(tokenExpiryRefusal({ scopes: write, source: "MCP", expiresInDays: 91 })).toBe(
+      "A token with a write scope may last at most 90 days"
+    );
+    expect(tokenExpiryRefusal({ scopes: write, source: "MCP", expiresInDays: 90 })).toBeNull();
   });
 });
 

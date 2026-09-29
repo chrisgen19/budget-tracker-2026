@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { Ban, ChevronDown, ChevronRight, KeyRound, Trash2 } from "lucide-react";
+import { Ban, CalendarClock, ChevronDown, ChevronRight, KeyRound, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MCP_SCOPE_LABELS, type McpScope } from "@/lib/mcp/scopes";
 import { isTokenDead } from "@/lib/mcp/token-status";
+import { McpTokenExpiryEditor } from "@/components/profile/mcp-token-expiry-editor";
+import { HIT_AREA } from "@/components/profile/mcp-write-access";
 
 export interface McpTokenRecord {
   id: string;
@@ -42,6 +44,10 @@ interface McpTokenListProps {
   onRevoke: (token: McpTokenRecord) => void;
   /** Only offered for tokens that are already dead; the API refuses a live one. */
   onDelete: (token: McpTokenRecord) => void;
+  /** Id of the token whose expiry is being saved, so its picker disables while in flight. */
+  changingExpiryId: string | null;
+  /** Only offered for live tokens. Resolves to whether it saved, so the picker closes only then. */
+  onChangeExpiry: (token: McpTokenRecord, expiresInDays: number | null) => Promise<boolean>;
 }
 
 export function McpTokenList({
@@ -50,6 +56,8 @@ export function McpTokenList({
   deletingId,
   onRevoke,
   onDelete,
+  changingExpiryId,
+  onChangeExpiry,
 }: McpTokenListProps) {
   /**
    * Dead tokens are collapsed rather than listed alongside the live ones.
@@ -59,6 +67,11 @@ export function McpTokenList({
    * after a few rotations the working ones are buried under the retired ones.
    */
   const [showDead, setShowDead] = useState(false);
+  const [editingExpiryId, setEditingExpiryId] = useState<string | null>(null);
+
+  const saveExpiry = async (token: McpTokenRecord, expiresInDays: number | null) => {
+    if (await onChangeExpiry(token, expiresInDays)) setEditingExpiryId(null);
+  };
 
   if (tokens.length === 0) {
     return (
@@ -73,53 +86,81 @@ export function McpTokenList({
 
   const row = (token: McpTokenRecord) => {
     const status = statusOf(token);
+    const editing = !status.dead && editingExpiryId === token.id;
     return (
       <li
         key={token.id}
         className={cn(
-          "flex items-start justify-between gap-4 p-4 rounded-xl border border-cream-300 bg-cream-50/50",
+          "p-4 rounded-xl border border-cream-300 bg-cream-50/50",
           status.dead && "opacity-60"
         )}
       >
-        <div className="flex items-start gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center shrink-0">
-            <KeyRound className="w-5 h-5 text-amber-dark" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-warm-600 truncate">{token.name}</p>
-            <p className="text-xs text-warm-400 font-mono">{token.prefix}…</p>
-            {token.source === "TELEGRAM" && (
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-amber-light flex items-center justify-center shrink-0">
+              <KeyRound className="w-5 h-5 text-amber-dark" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-warm-600 truncate">{token.name}</p>
+              <p className="text-xs text-warm-400 font-mono">{token.prefix}…</p>
+              {token.source === "TELEGRAM" && (
+                <p className="text-xs text-warm-400 mt-1">
+                  Writes are tagged &ldquo;Added via Telegram&rdquo;
+                </p>
+              )}
+              <p className="text-xs text-warm-400 mt-1">{status.label}</p>
+              {/* Beside the expiry it changes, and apart from Revoke, so the two 44px hit areas
+                  never overlap: stacked, a tap meant for one could land on the other. */}
+              {!status.dead && (
+                <button
+                  type="button"
+                  onClick={() => setEditingExpiryId(editing ? null : token.id)}
+                  aria-expanded={editing}
+                  className={cn(
+                    HIT_AREA,
+                    "mt-1 inline-flex items-center gap-1 text-xs font-medium text-amber-dark hover:text-amber"
+                  )}
+                >
+                  <CalendarClock className="w-3.5 h-3.5" />
+                  Change expiry
+                </button>
+              )}
               <p className="text-xs text-warm-400 mt-1">
-                Writes are tagged &ldquo;Added via Telegram&rdquo;
+                {token.scopes.map((scope) => MCP_SCOPE_LABELS[scope as McpScope] ?? scope).join(" · ")}
               </p>
-            )}
-            <p className="text-xs text-warm-400 mt-1">{status.label}</p>
-            <p className="text-xs text-warm-400 mt-1">
-              {token.scopes.map((scope) => MCP_SCOPE_LABELS[scope as McpScope] ?? scope).join(" · ")}
-            </p>
+            </div>
           </div>
+
+          {status.dead ? (
+            <button
+              type="button"
+              onClick={() => onDelete(token)}
+              disabled={deletingId === token.id}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-warm-400 hover:text-red-600 disabled:opacity-50 shrink-0"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onRevoke(token)}
+              disabled={revokingId === token.id}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-red-600 hover:text-red-700 disabled:opacity-50 shrink-0"
+            >
+              <Ban className="w-3.5 h-3.5" />
+              Revoke
+            </button>
+          )}
         </div>
 
-        {status.dead ? (
-          <button
-            type="button"
-            onClick={() => onDelete(token)}
-            disabled={deletingId === token.id}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-warm-400 hover:text-red-600 disabled:opacity-50 shrink-0"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            Delete
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => onRevoke(token)}
-            disabled={revokingId === token.id}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-red-600 hover:text-red-700 disabled:opacity-50 shrink-0"
-          >
-            <Ban className="w-3.5 h-3.5" />
-            Revoke
-          </button>
+        {editing && (
+          <McpTokenExpiryEditor
+            token={token}
+            saving={changingExpiryId === token.id}
+            onSave={(days) => saveExpiry(token, days)}
+            onCancel={() => setEditingExpiryId(null)}
+          />
         )}
       </li>
     );
