@@ -3,23 +3,30 @@
 import { useEffect, useState } from "react";
 import { Lock, Unlock } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isForeverLease, MCP_WRITE_LEASE_FOREVER } from "@/lib/validations";
 
-/** Lease durations offered in the UI. `null` is "until I turn it off", which the API still caps
- *  at 30 days so a forgotten lease closes itself eventually. */
 /** Longest delay `setTimeout` represents faithfully; anything larger is truncated and fires
  *  immediately. */
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
-const LEASE_OPTIONS: { label: string; minutes: number }[] = [
-  { label: "1 hour", minutes: 60 },
-  { label: "8 hours", minutes: 8 * 60 },
-  { label: "30 days", minutes: 30 * 24 * 60 },
+/** Minutes from now, `"forever"` until switched off by hand, `null` to switch writes off. */
+export type McpWriteLease = number | typeof MCP_WRITE_LEASE_FOREVER | null;
+
+/** Lease durations offered in the UI. "Forever" stays open until "Turn off now"; every other
+ *  option lapses on its own. */
+const LEASE_OPTIONS: { label: string; lease: Exclude<McpWriteLease, null> }[] = [
+  { label: "1 hour", lease: 60 },
+  { label: "8 hours", lease: 8 * 60 },
+  { label: "30 days", lease: 30 * 24 * 60 },
+  { label: "90 days", lease: 90 * 24 * 60 },
+  { label: "1 year", lease: 365 * 24 * 60 },
+  { label: "forever", lease: MCP_WRITE_LEASE_FOREVER },
 ];
 
 interface McpWriteAccessProps {
   /** ISO instant the lease lapses, `null` when writes are off, `undefined` when unknown. */
   enabledUntil: string | null | undefined;
-  onChange: (minutes: number | null) => Promise<void>;
+  onChange: (lease: McpWriteLease) => Promise<void>;
   onReload: () => void;
 }
 
@@ -48,10 +55,10 @@ export function McpWriteAccess({ enabledUntil, onChange, onReload }: McpWriteAcc
     return () => clearTimeout(timer);
   }, [expiresAt, now]);
 
-  const apply = async (minutes: number | null) => {
+  const apply = async (lease: McpWriteLease) => {
     setSaving(true);
     try {
-      await onChange(minutes);
+      await onChange(lease);
       setNow(Date.now());
     } finally {
       setSaving(false);
@@ -99,9 +106,11 @@ export function McpWriteAccess({ enabledUntil, onChange, onReload }: McpWriteAcc
         <div className="min-w-0">
           <p className="text-sm font-medium text-warm-600">Write access</p>
           <p className="text-xs text-warm-400 mt-0.5">
-            {live
-              ? `Claude can add and change transactions until ${formatUntil(enabledUntil!)}.`
-              : "Claude can read your budget but cannot add or change transactions."}
+            {!live
+              ? "Claude can read your budget but cannot add or change transactions."
+              : isForeverLease(enabledUntil!)
+                ? "Claude can add and change transactions until you turn it off."
+                : `Claude can add and change transactions until ${formatUntil(enabledUntil!)}.`}
           </p>
           <p className="text-xs text-warm-400 mt-1">
             Each option replaces the current expiry rather than adding to it. A token still needs
@@ -118,7 +127,7 @@ export function McpWriteAccess({ enabledUntil, onChange, onReload }: McpWriteAcc
             key={option.label}
             type="button"
             disabled={saving}
-            onClick={() => apply(option.minutes)}
+            onClick={() => apply(option.lease)}
             className="px-3 py-1.5 rounded-full text-xs font-medium border border-cream-300 text-warm-500 hover:bg-cream-100 transition-colors disabled:opacity-50"
           >
             {live ? `Set to ${option.label}` : `Enable ${option.label}`}

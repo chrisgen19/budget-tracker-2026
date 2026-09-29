@@ -3,10 +3,14 @@ import {
   batchTransactionSchema,
   assessmentReportSchema,
   createMcpTokenSchema,
+  FOREVER_LEASE_UNTIL,
   formatLocalDate,
   hasTrustworthyTime,
+  isForeverLease,
   isRealDate,
+  MAX_WRITE_LEASE_MINUTES,
   mcpTransactionSchema,
+  mcpWriteLeaseSchema,
   receiptBreakdownItemSchema,
   quickPickIdsSchema,
   receiptBreakdownMetaSchema,
@@ -475,5 +479,40 @@ describe("quickPickIdsSchema", () => {
     const six = ["a", "b", "c", "d", "e", "f"];
     expect(quickPickIdsSchema(6).safeParse(six).success).toBe(true);
     expect(quickPickIdsSchema(4).safeParse(six).success).toBe(false);
+  });
+});
+
+describe("mcpWriteLeaseSchema", () => {
+  it("accepts every duration the panel offers, up to a year", () => {
+    for (const minutes of [60, 8 * 60, 30 * 24 * 60, 90 * 24 * 60, 365 * 24 * 60]) {
+      expect(mcpWriteLeaseSchema.safeParse(minutes).success).toBe(true);
+    }
+  });
+
+  it("accepts forever by name and null to switch writes off", () => {
+    expect(mcpWriteLeaseSchema.safeParse("forever").success).toBe(true);
+    expect(mcpWriteLeaseSchema.safeParse(null).success).toBe(true);
+  });
+
+  it("still caps a numeric lease, so a mis-sent number cannot mean forever", () => {
+    expect(mcpWriteLeaseSchema.safeParse(MAX_WRITE_LEASE_MINUTES + 1).success).toBe(false);
+  });
+
+  it("refuses coercible strays that are not the forever literal", () => {
+    for (const value of ["60", "Forever", true, 0, -60, 1.5]) {
+      expect(mcpWriteLeaseSchema.safeParse(value).success).toBe(false);
+    }
+  });
+});
+
+describe("isForeverLease", () => {
+  it("recognises the sentinel as a Date and as its JSON string", () => {
+    expect(isForeverLease(FOREVER_LEASE_UNTIL)).toBe(true);
+    expect(isForeverLease(FOREVER_LEASE_UNTIL.toISOString())).toBe(true);
+  });
+
+  it("does not mistake a year-long lease for forever", () => {
+    const aYearOut = new Date(Date.now() + MAX_WRITE_LEASE_MINUTES * 60_000);
+    expect(isForeverLease(aYearOut)).toBe(false);
   });
 });

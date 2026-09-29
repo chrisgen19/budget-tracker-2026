@@ -162,9 +162,22 @@ export const MAX_TOKEN_EXPIRY_DAYS = 365;
  *  leak goes unnoticed. */
 export const MAX_WRITE_TOKEN_EXPIRY_DAYS = 90;
 
-/** Ceiling on a single MCP write lease: 30 days. Long enough for "leave it on while I work
- *  through the backlog", short enough that a forgotten lease still closes itself. */
-export const MAX_WRITE_LEASE_MINUTES = 30 * 24 * 60;
+/** Ceiling on a single timed MCP write lease: 365 days. It was 30, and the Telegram bot writes
+ *  through `/api/mcp`, so every lapse silently broke logging from chat until someone reopened
+ *  Profile > MCP Access. A lease with no end is `MCP_WRITE_LEASE_FOREVER`, not a larger number. */
+export const MAX_WRITE_LEASE_MINUTES = 365 * 24 * 60;
+
+/** Sent as `mcpWriteMinutes` to open writes until they are switched off by hand. */
+export const MCP_WRITE_LEASE_FOREVER = "forever";
+
+/** What a forever lease stores in `users.mcp_writes_enabled_until`. A far-future instant rather
+ *  than a new column, so `resolveWritePermission` and "Turn off now" (null) work unchanged. */
+export const FOREVER_LEASE_UNTIL = new Date("9999-12-31T23:59:59.999Z");
+
+/** True when a stored lease is the forever sentinel, so the UI can say "until you turn it off"
+ *  instead of printing the year 9999. Compares by year to survive a round trip through JSON. */
+export const isForeverLease = (until: Date | string): boolean =>
+  new Date(until).getUTCFullYear() >= FOREVER_LEASE_UNTIL.getUTCFullYear();
 
 /** Idempotency key accepted by POST /api/transactions/batch, so an ambiguous failure
  *  (committed, response lost) can be retried without creating the receipts twice. */
@@ -695,13 +708,13 @@ export const mcpTransactionSchema = batchTransactionSchema.extend({
  * Minutes rather than an absolute instant so the client never sends a time its clock disagrees
  * with, `null` to switch writes off, and a strict number rather than a coerced one: `Number(true)`
  * is 1 and `Number("60")` is 60, so a coercing check would let a stray boolean or string quietly
- * open the write window.
+ * open the write window. `"forever"` is the one string accepted, and only as that exact literal.
  */
 export const mcpWriteLeaseSchema = z
-  .number()
-  .int()
-  .positive()
-  .max(MAX_WRITE_LEASE_MINUTES)
+  .union([
+    z.number().int().positive().max(MAX_WRITE_LEASE_MINUTES),
+    z.literal(MCP_WRITE_LEASE_FOREVER),
+  ])
   .nullable();
 
 /**
