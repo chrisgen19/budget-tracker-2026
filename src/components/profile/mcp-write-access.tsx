@@ -9,6 +9,10 @@ import { isForeverLease, MCP_WRITE_LEASE_FOREVER } from "@/lib/validations";
  *  immediately. */
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
+/** Extends a pill's 30px height to a 44px touch target without making the row taller. */
+const HIT_AREA =
+  "relative before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']";
+
 /** Minutes from now, `"forever"` until switched off by hand, `null` to switch writes off. */
 export type McpWriteLease = number | typeof MCP_WRITE_LEASE_FOREVER | null;
 
@@ -121,14 +125,20 @@ export function McpWriteAccess({ enabledUntil, onChange, onReload }: McpWriteAcc
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      {/* Each pill is 30px tall with a 44px hit area (HIT_AREA). The 14px row gap is what keeps
+          wrapped rows' hit areas from overlapping: 30 + 14 = 44, so they meet exactly. Overlap
+          would send a tap on "1 hour" to whichever pill below it rendered later, "forever" included. */}
+      <div className="mt-3 flex flex-wrap gap-x-2 gap-y-3.5">
         {LEASE_OPTIONS.map((option) => (
           <button
             key={option.label}
             type="button"
             disabled={saving}
             onClick={() => apply(option.lease)}
-            className="px-3 py-1.5 rounded-full text-xs font-medium border border-cream-300 text-warm-500 hover:bg-cream-100 transition-colors disabled:opacity-50"
+            className={cn(
+              HIT_AREA,
+              "px-3 py-1.5 rounded-full text-xs font-medium border border-cream-300 text-warm-500 hover:bg-cream-100 transition-colors disabled:opacity-50"
+            )}
           >
             {live ? `Set to ${option.label}` : `Enable ${option.label}`}
           </button>
@@ -138,7 +148,10 @@ export function McpWriteAccess({ enabledUntil, onChange, onReload }: McpWriteAcc
             type="button"
             disabled={saving}
             onClick={() => apply(null)}
-            className="px-3 py-1.5 rounded-full text-xs font-medium bg-red-600 hover:bg-red-700 text-white transition-colors disabled:opacity-50"
+            className={cn(
+              HIT_AREA,
+              "px-3 py-1.5 rounded-full text-xs font-medium bg-red-600 hover:bg-red-700 text-white transition-colors disabled:opacity-50"
+            )}
           >
             Turn off now
           </button>
