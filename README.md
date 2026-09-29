@@ -36,7 +36,7 @@ A personal budget tracking app built with Next.js, TypeScript, and PostgreSQL. T
 - **Savings Goals & Sinking Funds** — Targets with an optional deadline, funded by explicit contributions rather than by whatever was left over at the end of a month; a contribution is never written as a transaction, so putting money aside is not counted as spending it anywhere in the app. Each goal shows what is funded, what is left, the rate it needs and the rate it is actually getting, and where that rate lands it. Off-pace and never-started goals reach the Watchlist. A goal with no target date reports progress and stays honest about not knowing its pace
 - **Progressive Web App** — Installable PWA with offline support via Serwist service worker; install prompt banner (Android + iOS Safari guide); standalone mode with safe-area handling; smart caching for API responses and static assets
 - **Timezone-Aware Dates** — All date queries respect the user's local timezone offset for accurate day boundaries and month grouping
-- **MCP Server** - [Model Context Protocol](https://modelcontextprotocol.io/) access to your budget data in natural language, over stdio (local) or HTTP with a scoped bearer token (remote); 12 read-only tools (spending by category, top expenses, monthly summary, spending trends, search transactions, budget overview, upcoming bills, category list, label breakdown, label list, bill history, receipt items) plus two write tools — `create_transactions` and `update_transactions` — both behind the `transactions:write` scope, a time-limited write lease, and provenance columns recording which credential created and which last edited every row; nothing can delete; shared query library reusable for future in-app AI chat
+- **MCP Server** - [Model Context Protocol](https://modelcontextprotocol.io/) access to your budget data in natural language, over stdio (local) or HTTP with a scoped bearer token (remote); 12 read-only tools (spending by category, top expenses, monthly summary, spending trends, search transactions, budget overview, upcoming bills, category list, label breakdown, label list, bill history, receipt items) plus two write tools — `create_transactions` and `update_transactions` — both behind the `transactions:write` scope, a write lease (timed, or open until switched off), and provenance columns recording which credential created and which last edited every row; nothing can delete; shared query library reusable for future in-app AI chat
 - **Telegram Bot** - Log spending by messaging a personal Telegram bot (`100 breakfast`, `spent 350 for groceries yesterday`) and ask for summaries, recent transactions, or upcoming bills; runs inside the app on boot; talks to the app as an MCP client, so it inherits the token scope, write lease, rate limit, and audit trail rather than touching the database; Gemini only classifies each message, so every figure it reports comes from real data
 - **Analytics** - Dedicated reporting page with monthly Budget vs Actual plans, safe-to-spend pace, deterministic forecasts, rollover, income vs expenses, category and label breakdowns, like-for-like partial-period comparisons with coverage warnings, records, transparent cash-flow signals, and flexible time range controls (weekly/monthly/yearly/custom); a Watchlist tab shows live findings without an AI run, grouped into "In this period" and "Outstanding" so an overdue bill is never passed off as part of an old period, with per-finding transaction, bill or goal drill-downs and Resolve/Snooze actions. It now covers eight families: budget thresholds and forecast-to-exceed, spending spikes and unusual transactions, possible duplicates, recurring-charge changes (a subscription that appears, stops, renews soon or changes price), bill behaviour (due soon, repeatedly put off, or costing consistently more than budgeted), an expected deposit that was never logged, savings goals behind their pace, data coverage too thin to conclude anything from, and a directional warning when the tracked balance is projected to run short before money next comes in
 - **Design** — Warm paper-ledger aesthetic with Young Serif + Outfit fonts, Plus Jakarta Sans for currency amounts, amber accents, and Framer Motion animations
@@ -204,7 +204,7 @@ default.
 The two remaining tools write, and both sit behind the same `transactions:write` scope:
 `create_transactions` adds a transaction, and `update_transactions` changes an existing one's
 amount, description, type, date, category or labels. A token minted before editing existed picks
-it up with no re-mint. Both additionally require a time-limited write lease to be open
+it up with no re-mint. Both additionally require the write lease to be open
 (Profile > MCP Access).
 
 Nothing in the server can **delete** a transaction. See [MCP writes](#mcp-writes) for how the
@@ -390,8 +390,10 @@ Two tools write, and the server refuses either unless **both** of these are true
    A token without it cannot see either tool at all — they are removed from the server rather
    than refused on call. The scope caps the token at 90 days and forbids "Never" expires.
 2. Writes are switched on under **Profile > MCP Access > Write access**. This is a lease, not a
-   toggle: pick 1 hour, 8 hours, or 30 days, and it closes itself. Every token is refused while it
-   is off, so it works as a kill switch when you are away from your machine.
+   toggle: pick 1 hour, 8 hours, 30 days, 90 days or 1 year, and it closes itself. **Forever** is
+   the exception: it stays open until you press **Turn off now**, so it gives up the self-closing
+   protection in exchange for the Telegram bot never going quiet when a lease runs out. Every token
+   is refused while it is off, so it works as a kill switch when you are away from your machine.
 
 Separately, both tools omit `readOnlyHint`, so clients that support tool approval prompt you before
 each call rather than auto-approving it. `update_transactions` also declares `destructiveHint`,
@@ -457,7 +459,7 @@ three independent controls. None of them substitutes for another:
 | Control | What it is | Why |
 |---|---|---|
 | Write scope | `transactions:write`, covering both creating and changing. Chosen when the token is minted and fixed for its life, and it caps the token at 90 days and forbids "Never" expires | Least privilege. A read token can never be talked into writing |
-| Write lease | `users.mcp_writes_enabled_until`, a timestamp rather than a boolean, set from Profile > MCP Access | Forgetting to switch writes off cannot leave them open for days |
+| Write lease | `users.mcp_writes_enabled_until`, a timestamp rather than a boolean, set from Profile > MCP Access. Forever is stored as 9999-12-31 | Every timed option (up to 1 year) closes itself, so forgetting to switch writes off cannot leave them open past the expiry you chose. Forever opts out of that on purpose: a leaked write token stays useful until you notice and switch writes off |
 | Provenance | `created_via` + `mcp_token_id` for creation, `updated_via` + `updated_by_mcp_token_id` for the last edit, all set server-side | An audit trail. A compromised token cannot forge or omit it, and an edit cannot erase who created the row |
 
 Creating a row and rewriting one are arguably different powers — a leaked create-only credential
@@ -504,7 +506,9 @@ You ──▶ Telegram ──(long poll)──▶ bot ──(HTTPS + scoped toke
 
 It is an **MCP client, not a database client**. It holds no database credentials: it calls
 `/api/mcp` with a scoped token like any other client, so it inherits the scope, the write lease,
-the rate limit, and the audit trail rather than going around them.
+the rate limit, and the audit trail rather than going around them. The lease is the one to watch:
+when it lapses the bot stops saving and logs `Writes are currently switched off for this account`,
+which is what the 90-day, 1-year and Forever options exist to prevent.
 
 **Gemini only classifies a message.** It is never given transactions, totals, or balances, and
 every figure the bot sends comes from an MCP read tool via the same handlers the slash commands

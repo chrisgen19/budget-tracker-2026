@@ -5,7 +5,7 @@ import { Check, Copy, Plug } from "lucide-react";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { McpTokenCreate } from "@/components/profile/mcp-token-create";
 import { McpTokenList, type McpTokenRecord } from "@/components/profile/mcp-token-list";
-import { McpWriteAccess } from "@/components/profile/mcp-write-access";
+import { McpWriteAccess, type McpWriteLease } from "@/components/profile/mcp-write-access";
 import type { McpScope } from "@/lib/mcp/scopes";
 import type { McpTokenSource } from "@/lib/validations";
 
@@ -136,13 +136,13 @@ export function McpTokensForm() {
     }
   };
 
-  const handleWriteLease = async (minutes: number | null) => {
+  const handleWriteLease = async (lease: McpWriteLease) => {
     setError("");
     try {
       const res = await fetch("/api/preferences", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mcpWriteMinutes: minutes }),
+        body: JSON.stringify({ mcpWriteMinutes: lease }),
       });
       if (!res.ok) throw new Error("Failed to update write access");
       setWritesUntil((await res.json()).mcpWritesEnabledUntil ?? null);

@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import {
+  FOREVER_LEASE_UNTIL,
   HH_MM,
+  MCP_WRITE_LEASE_FOREVER,
   mcpWriteLeaseSchema,
   quickPickIdsSchema,
   watchlistLargeAmountSchema,
@@ -81,15 +83,19 @@ export async function PATCH(request: Request) {
   }
 
   // MCP write lease. Accepts minutes-from-now so the client never sends an absolute instant its
-  // clock disagrees with, `null` to switch writes off, and a bounded ceiling so a mis-sent value
-  // cannot leave writes open indefinitely.
+  // clock disagrees with, `null` to switch writes off, and a bounded ceiling so a mis-sent number
+  // cannot leave writes open indefinitely. An open-ended lease has to be asked for by name.
   if ("mcpWriteMinutes" in body) {
     const lease = mcpWriteLeaseSchema.safeParse(body.mcpWriteMinutes);
     if (!lease.success) {
       return NextResponse.json({ error: "Invalid write lease" }, { status: 400 });
     }
     data.mcpWritesEnabledUntil =
-      lease.data === null ? null : new Date(Date.now() + lease.data * 60_000);
+      lease.data === null
+        ? null
+        : lease.data === MCP_WRITE_LEASE_FOREVER
+          ? FOREVER_LEASE_UNTIL
+          : new Date(Date.now() + lease.data * 60_000);
   }
 
   // Handle quick-pick preferences. Each list is capped and must hold distinct ids: the pickers

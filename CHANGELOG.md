@@ -2,6 +2,23 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-29 - MCP write access can stay on for 90 days, a year, or until turned off
+
+Profile > MCP Access > Write access offered 1 hour, 8 hours and 30 days, and the server refused
+anything longer. The Telegram bot writes through `/api/mcp`, so the bot stopped saving anything
+every time a lease lapsed and logged only `Writes are currently switched off for this account`
+until someone reopened the profile page.
+
+The panel now also offers 90 days, 1 year and forever. The timed ceiling rises from 30 days to 365.
+Forever is sent as the literal `"forever"`, never as a large number, and stored as
+9999-12-31T23:59:59.999Z, so the write gate and "Turn off now" need no change and no migration.
+The panel says "until you turn it off" for it rather than printing the year 9999. A numeric lease
+above a year is still refused, so a mis-sent value cannot quietly become forever.
+
+Forever gives up the lease's main protection: a leaked write-scoped token stays useful until you
+notice and switch writes off. A write-scoped token is still capped at 90 days by itself, so the
+bot's token has to be re-minted on that schedule regardless.
+
 ## 2026-09-29 - MCP totals are rounded, and the server instructions match the token
 
 Transaction amounts are stored as `Float`, and every total in `budget-queries.ts` was a bare
