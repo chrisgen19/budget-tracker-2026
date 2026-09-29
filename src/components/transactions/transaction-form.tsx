@@ -92,7 +92,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     watch,
     setValue,
     getValues,
-    formState: { errors, isSubmitting, submitCount },
+    formState: { errors, isSubmitting },
   } = useForm<TransactionInput>({
     resolver: zodResolver(transactionSchema),
     defaultValues: {
@@ -556,7 +556,6 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               timezoneOffset={user.timezoneOffset}
               dateWarning={dateWarning}
               error={errors.date?.message}
-              submitCount={submitCount}
               onChange={(date) =>
                 // A native date control reports `""` while its segments are being retyped, and
                 // the field collapses either half being empty to the same `""`. Validating that

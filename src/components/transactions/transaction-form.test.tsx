@@ -102,18 +102,6 @@ vi.mock("@/components/transactions/label-picker", () => ({
 
 afterEach(() => vi.useRealTimers());
 
-const openDateTimeEditor = () => {
-  fireEvent.click(screen.getByRole("button", { name: /^Date and time,/ }));
-};
-
-/**
- * The submit button, found by type rather than by accessible name.
- *
- * While `isSubmitting` is true its label is a bare spinner with no text, so a name query cannot
- * see it in precisely the state a test may need to wait out.
- */
-const submitButton = () => document.querySelector('button[type="submit"]') as HTMLButtonElement;
-
 describe("TransactionForm account-local dates", () => {
   it("passes an absolute instant to schedule matching instead of account wall time", () => {
     render(
@@ -161,6 +149,24 @@ describe("TransactionForm account-local dates", () => {
     });
   });
 
+  // The inputs used to sit behind a collapsed summary button below `sm`, which cost a tap before
+  // either native picker could open. iOS Safari has no `showPicker()`, so the tap has to land on
+  // the input itself; anything in front of it is a step the user pays for on every edit.
+  it("shows the date and time inputs without an expand step", () => {
+    render(
+      <TransactionForm
+        initialData={{ amount: 12, date: "2026-08-27T17:30", categoryId: "food" }}
+        onSubmit={() => Promise.resolve()}
+        onCancel={() => {}}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /^Date and time/ })).toBeNull();
+    for (const label of ["Date", "Time"]) {
+      expect(screen.getByLabelText(label).closest(".hidden"), label).toBeNull();
+    }
+  });
+
   it("prefills Today from the account clock rather than the browser clock", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-31T17:00:00.000Z"));
@@ -172,16 +178,8 @@ describe("TransactionForm account-local dates", () => {
       />,
     );
 
-    const trigger = screen.getByRole("button", { name: /^Date and time,/ });
-    const editor = document.getElementById(trigger.getAttribute("aria-controls")!);
-    expect(trigger.getAttribute("aria-expanded")).toBe("false");
-    expect(editor?.classList.contains("hidden")).toBe(true);
-
-    openDateTimeEditor();
     expect((screen.getByLabelText("Date") as HTMLInputElement).value).toBe("2026-08-31");
     expect((screen.getByLabelText("Time") as HTMLInputElement).value).toBe("10:00");
-    expect(trigger.getAttribute("aria-expanded")).toBe("true");
-    expect(editor?.classList.contains("hidden")).toBe(false);
   });
 
   it("adds the account-local current time when initial data contains only a date", async () => {
@@ -197,7 +195,6 @@ describe("TransactionForm account-local dates", () => {
       />,
     );
 
-    openDateTimeEditor();
     expect((screen.getByLabelText("Date") as HTMLInputElement).value).toBe("2026-08-15");
     expect((screen.getByLabelText("Time") as HTMLInputElement).value).toBe("10:00");
 
@@ -206,7 +203,7 @@ describe("TransactionForm account-local dates", () => {
     expect(onSubmit.mock.calls[0][0].date).toBe("2026-08-15T17:00:00.000Z");
   });
 
-  it("lets the user expand and edit separate date and time fields", async () => {
+  it("edits separate date and time fields", async () => {
     render(
       <TransactionForm
         initialData={{
@@ -221,7 +218,6 @@ describe("TransactionForm account-local dates", () => {
       />,
     );
 
-    openDateTimeEditor();
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-09-05" } });
     fireEvent.change(screen.getByLabelText("Time"), { target: { value: "21:15" } });
 
@@ -231,9 +227,8 @@ describe("TransactionForm account-local dates", () => {
         "EXPENSE",
       ),
     );
-    expect(
-      screen.getByRole("button", { name: /September 5, 2026 at 9:15 PM/ }),
-    ).toBeTruthy();
+    expect((screen.getByLabelText("Date") as HTMLInputElement).value).toBe("2026-09-05");
+    expect((screen.getByLabelText("Time") as HTMLInputElement).value).toBe("21:15");
   });
 
   it("reports which half of the date and time is missing", async () => {
@@ -246,7 +241,6 @@ describe("TransactionForm account-local dates", () => {
       />,
     );
 
-    openDateTimeEditor();
     fireEvent.change(screen.getByLabelText("Time"), { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: "Add Transaction" }));
 
@@ -254,7 +248,7 @@ describe("TransactionForm account-local dates", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("opens the editor automatically for a suspicious receipt date", () => {
+  it("shows the receipt-date warning beside the inputs", () => {
     render(
       <TransactionForm
         initialData={{ amount: 12, date: "2023-08-15T08:45", categoryId: "food" }}
@@ -264,52 +258,8 @@ describe("TransactionForm account-local dates", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: /^Date and time,/ }).getAttribute("aria-expanded"))
-      .toBe("true");
-    expect(screen.getByLabelText("Date")).toBeTruthy();
+    expect((screen.getByLabelText("Date") as HTMLInputElement).value).toBe("2023-08-15");
     expect(screen.getByText(/receipt date year looks incorrect/i)).toBeTruthy();
-  });
-
-  it("reopens a collapsed editor on submit so the error is never reported into a hidden panel", async () => {
-    const onSubmit = vi.fn((_data: TransactionInput) => Promise.resolve());
-    render(
-      <TransactionForm
-        initialData={{ amount: 12, categoryId: "food" }}
-        onSubmit={onSubmit}
-        onCancel={() => {}}
-      />,
-    );
-
-    const trigger = screen.getByRole("button", { name: /^Date and time,/ });
-    const editor = document.getElementById(trigger.getAttribute("aria-controls")!);
-
-    openDateTimeEditor();
-    fireEvent.change(screen.getByLabelText("Time"), { target: { value: "" } });
-
-    // First submit surfaces the error, then the user collapses the editor on top of it. The
-    // error string does not change on the next submit, so only the submit count can reopen it.
-    fireEvent.click(screen.getByRole("button", { name: "Add Transaction" }));
-    await screen.findByText("Choose a time.");
-    // Let the submit settle completely before collapsing. react-hook-form delivers `errors` while
-    // it validates, but `submitCount` only in its final formState batch, alongside
-    // `isSubmitting: false` -- so the `findByText` above can resolve *between* those two renders.
-    // The field re-expands itself from an effect keyed on `submitCount`, so a collapse landing in
-    // that window is undone by the second render and the assertion below then burns its whole
-    // timeout. Locally the two renders batch into one flush, which is why this only ever failed
-    // on a loaded CI runner.
-    await waitFor(() => expect(submitButton().disabled).toBe(false));
-    fireEvent.click(trigger);
-    // Awaited, like the identical assertion below. fireEvent does not flush a
-    // React state update synchronously, so asserting the class immediately is a
-    // race: it held locally and failed once under CI's slower scheduling.
-    await waitFor(() => expect(editor?.classList.contains("hidden")).toBe(true));
-
-    fireEvent.click(screen.getByRole("button", { name: "Add Transaction" }));
-
-    await waitFor(() => expect(editor?.classList.contains("hidden")).toBe(false));
-    expect(trigger.getAttribute("aria-expanded")).toBe("true");
-    expect(trigger.getAttribute("aria-label")).toContain("Choose a time.");
-    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("leaves an incomplete native date control unvalidated until submit", async () => {
@@ -321,7 +271,6 @@ describe("TransactionForm account-local dates", () => {
       />,
     );
 
-    openDateTimeEditor();
     // Chrome reports "" between segments while a date is retyped.
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "" } });
 
@@ -334,7 +283,7 @@ describe("TransactionForm account-local dates", () => {
     expect(await screen.findByText("Choose a date.")).toBeTruthy();
   });
 
-  it("keeps the chosen date in the summary when the time is cleared", () => {
+  it("keeps the date when the time is cleared", () => {
     render(
       <TransactionForm
         initialData={{ amount: 12, date: "2026-09-05T21:15", categoryId: "food" }}
@@ -343,12 +292,9 @@ describe("TransactionForm account-local dates", () => {
       />,
     );
 
-    openDateTimeEditor();
     fireEvent.change(screen.getByLabelText("Time"), { target: { value: "" } });
 
-    const trigger = screen.getByRole("button", { name: /^Date and time,/ });
-    expect(trigger.getAttribute("aria-label")).toContain("September 5, 2026, time not set");
-    expect(screen.getByText("Sep 5 · Not set")).toBeTruthy();
+    expect((screen.getByLabelText("Date") as HTMLInputElement).value).toBe("2026-09-05");
   });
 
   // A class assertion rather than a behavioural one on purpose: the failure is that iOS Safari
@@ -364,7 +310,6 @@ describe("TransactionForm account-local dates", () => {
       />,
     );
 
-    openDateTimeEditor();
     for (const label of ["Date", "Time"]) {
       expect(screen.getByLabelText(label).className, label).toContain("appearance-none");
     }
