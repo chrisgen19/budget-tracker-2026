@@ -2,6 +2,21 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-29 - A transaction's date and time open in one tap on mobile
+
+Below `sm`, the transaction form hid its Date and Time inputs behind a collapsed "Date & time"
+summary row, so changing either one cost a tap to expand the row before the native picker could
+even open. The inputs are now always shown side by side at every width: one tap on Date opens the
+calendar, one tap on Time opens the time picker. The field grows from 48px to 72px, and desktop is
+unchanged apart from the legend it already showed.
+
+A button that opens the picker was ruled out rather than overlooked: iOS Safari does not implement
+`HTMLInputElement.showPicker()`, so the picker only opens when the input itself is touched, and
+anything in front of it is a step paid on every edit. Removing the collapse also removes the
+machinery it needed. The summary formatter and the `submitCount` effect existed to reopen the
+editor, so a validation error or the receipt-year warning never reported into a hidden panel. Both
+are now simply visible beside the inputs.
+
 ## 2026-09-28 - A card payment retried after a lost response is recorded once
 
 Purchases on a card were already protected against a lost response; payments were not. If a payment
