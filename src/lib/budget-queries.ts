@@ -13,6 +13,7 @@ import { formatLocalDate } from "@/lib/validations";
 // so a due date cannot be truncated one way going in and another coming out.
 import { utcDayStart } from "@/lib/bill-dates";
 import { estimateBillAmount, buildEstimateSamples } from "@/lib/bill-estimate";
+import { roundMoney } from "@/lib/money";
 import {
   daysBetweenCalendarDays as daysBetween,
   daysInCalendarMonth as daysInMonth,
@@ -269,10 +270,13 @@ const safeLimit = (value: number | undefined, fallback: number): number =>
 const currentMonth = (tzOffset = 0): string => monthKey(toLocal(new Date(), tzOffset));
 
 /**
- * Spending grouped by category for a given month.
- * Returns expense categories sorted by amount (highest first).
+ * The unrounded sums behind `getSpendingByCategory`.
+ *
+ * Kept separate for `getSpendingTrends`, which adds categories together: summing amounts already
+ * rounded per category loses up to half a centavo each, so two categories at 0.004 reported a
+ * total of 0 rather than 0.01. Round only once a sum is complete.
  */
-export const getSpendingByCategory = async (
+const sumSpendingByCategory = async (
   prisma: PrismaClient,
   userId: string,
   params: SpendingByCategoryParams = {}
@@ -321,6 +325,20 @@ export const getSpendingByCategory = async (
           : 0,
     }));
 };
+
+/**
+ * Spending grouped by category for a given month.
+ * Returns expense categories sorted by amount (highest first), each rounded to centavos.
+ */
+export const getSpendingByCategory = async (
+  prisma: PrismaClient,
+  userId: string,
+  params: SpendingByCategoryParams = {}
+): Promise<CategorySpending[]> =>
+  (await sumSpendingByCategory(prisma, userId, params)).map((c) => ({
+    ...c,
+    amount: roundMoney(c.amount),
+  }));
 
 /**
  * Largest individual expense transactions.
@@ -415,9 +433,9 @@ export const getMonthlySummary = async (
     result.push({
       month: monthLabel,
       monthKey: key,
-      income,
-      expenses,
-      net: income - expenses,
+      income: roundMoney(income),
+      expenses: roundMoney(expenses),
+      net: roundMoney(income - expenses),
       isPartial: elapsed.isPartial,
       daysInMonth: monthDays,
       daysElapsed: elapsed.daysElapsed ?? 0,
@@ -479,8 +497,9 @@ export const getSpendingTrends = async (
   const previousWindow = clipMonthTo(params.previousMonth, throughDay);
 
   const [currentSpending, previousSpending] = await Promise.all([
-    getSpendingByCategory(prisma, userId, { ...currentWindow, timezoneOffset: tz }),
-    getSpendingByCategory(prisma, userId, { ...previousWindow, timezoneOffset: tz }),
+    // Raw sums: the totals below add categories together, so rounding happens once, at the end.
+    sumSpendingByCategory(prisma, userId, { ...currentWindow, timezoneOffset: tz }),
+    sumSpendingByCategory(prisma, userId, { ...previousWindow, timezoneOffset: tz }),
   ]);
 
   const currentTotal = currentSpending.reduce((sum, c) => sum + c.amount, 0);
@@ -498,9 +517,9 @@ export const getSpendingTrends = async (
     const change = curr - prev;
     return {
       name,
-      current: curr,
-      previous: prev,
-      change,
+      current: roundMoney(curr),
+      previous: roundMoney(prev),
+      change: roundMoney(change),
       changePercent: prev > 0 ? Math.round((change / prev) * 100) : null,
     };
   });
@@ -509,9 +528,9 @@ export const getSpendingTrends = async (
   byCategory.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
 
   return {
-    currentTotal,
-    previousTotal,
-    totalChange,
+    currentTotal: roundMoney(currentTotal),
+    previousTotal: roundMoney(previousTotal),
+    totalChange: roundMoney(totalChange),
     totalChangePercent:
       previousTotal > 0
         ? Math.round((totalChange / previousTotal) * 100)
@@ -631,14 +650,14 @@ export const searchTransactions = async (
 
   const totals: TransactionTotals = {
     count: total,
-    income,
-    expenses,
-    net: income - expenses,
+    income: roundMoney(income),
+    expenses: roundMoney(expenses),
+    net: roundMoney(income - expenses),
     byCategory: byCategory
       .map((g) => ({
         categoryId: g.categoryId,
         categoryName: categoryNames.get(g.categoryId) ?? "Unknown",
-        amount: g._sum.amount ?? 0,
+        amount: roundMoney(g._sum.amount ?? 0),
         count: g._count._all,
       }))
       .sort((a, b) => b.amount - a.amount),
@@ -726,10 +745,10 @@ export const getBudgetOverview = async (
     period,
     today: formatLocalDate(new Date(), tz),
     timezoneOffset: tz,
-    totalIncome,
-    totalExpenses,
-    net: totalIncome - totalExpenses,
-    runningBalance,
+    totalIncome: roundMoney(totalIncome),
+    totalExpenses: roundMoney(totalExpenses),
+    net: roundMoney(totalIncome - totalExpenses),
+    runningBalance: roundMoney(runningBalance),
     transactionCount: transactions.length,
   };
 };
@@ -817,7 +836,7 @@ export const getUpcomingBills = async (
 
   return {
     count: upcomingBills.length,
-    totalAmount,
+    totalAmount: roundMoney(totalAmount),
     // True when any component was derived, so a caller can say "about" of the
     // total rather than implying a figure it cannot know.
     totalIsEstimate: upcomingBills.some((b) => b.isEstimate),
@@ -906,14 +925,18 @@ export const buildLabelBreakdown = (rows: LabelBreakdownRow[], total: number): L
   }
 
   const pct = (amount: number) => (total > 0 ? Math.round((amount / total) * 100) : 0);
-  const labels = Array.from(byLabel.values()).map((item) => ({ ...item, percentage: pct(item.amount) }));
+  const labels = Array.from(byLabel.values()).map((item) => ({
+    ...item,
+    amount: roundMoney(item.amount),
+    percentage: pct(item.amount),
+  }));
 
   if (unlabeledCount > 0) {
     labels.push({
       id: "unlabeled",
       name: "Unlabeled",
       color: "#9CA3AF",
-      amount: unlabeledAmount,
+      amount: roundMoney(unlabeledAmount),
       percentage: pct(unlabeledAmount),
       transactionCount: unlabeledCount,
     });
@@ -943,7 +966,7 @@ export const getLabelBreakdown = async (
   const total = transactions.reduce((sum, t) => sum + t.amount, 0);
   const labels = buildLabelBreakdown(transactions, total);
 
-  return { month: period.month, period, type, total, labels };
+  return { month: period.month, period, type, total: roundMoney(total), labels };
 };
 
 /**
@@ -1335,7 +1358,7 @@ export const getReceiptItems = async (
     month: resolved?.period.month ?? null,
     period: resolved?.period ?? null,
     itemCount: items.length,
-    totalAmount: items.reduce((sum, i) => sum + i.amount, 0),
+    totalAmount: roundMoney(items.reduce((sum, i) => sum + i.amount, 0)),
     truncated: items.length > limit,
     items: items.slice(0, limit),
   };
