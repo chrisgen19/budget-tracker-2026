@@ -52,7 +52,7 @@ export const MCP_SCOPE_LABELS: Record<McpScope, string> = {
   "receipts:scan":
     "Read a receipt photo with AI and return the amount, date, and category. Spends one scan from your monthly allowance per call",
   "transactions:write":
-    "Create new transactions, and change existing ones — amount, description, type, date, category and labels. Cannot delete anything. Also requires writes to be switched on below, and must expire within 90 days unless the token is used by the Telegram bot",
+    "Create new transactions, and change existing ones — amount, description, type, date, category and labels. Cannot delete anything. Also requires writes to be switched on below, and must expire within 90 days unless “Used by” is set to Telegram bot",
   "bills:write":
     "Settle a recurring bill (pay, skip, snooze, or link a payment already recorded), and create or change bills. Paying writes a transaction and advances the schedule. Cannot delete a bill, only switch it off",
   "labels:write":
