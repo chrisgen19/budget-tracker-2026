@@ -2,6 +2,25 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-29 - MCP totals are rounded, and the server instructions match the token
+
+Transaction amounts are stored as `Float`, and every total in `budget-queries.ts` was a bare
+`.reduce()` returned as-is, so float noise reached clients: `get_budget_overview` reported
+September's expenses as `81578.35000000002` and the net as `-1624.6900000000169`. Totals are now
+rounded to centavos by a shared `roundMoney` (`src/lib/money.ts`) at the point each one leaves the
+query layer: the overview, monthly summary, category spending, trends, search totals, upcoming
+bills, label breakdown and receipt items. Stored amounts are not rounded (they already hold what
+was typed), and neither are running sums mid-loop, which would compound the error. The same
+queries feed Telegram and the AI tip, which now see the rounded figures too.
+
+The server instructions were one fixed string. They opened with "Read-only access" for tokens that
+can write, and told every client to settle bills with `pay_bill`, including a
+`transactions:write`-only token that never has that tool, since out-of-scope tools are removed
+before serving. That left a client falling back on `create_transactions`, the loose row the same
+sentence warns against. `buildInstructions(scopes)` now writes the text from the grant: it names
+only the write tools the token has, and when a token can log transactions but not settle bills it
+says so and points the user at the app or the `bills:write` scope.
+
 ## 2026-09-29 - A transaction's date and time open in one tap on mobile
 
 Below `sm`, the transaction form hid its Date and Time inputs behind a collapsed "Date & time"

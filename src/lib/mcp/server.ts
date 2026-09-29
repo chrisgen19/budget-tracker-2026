@@ -100,6 +100,66 @@ import {
 const structured = (value: object): Record<string, unknown> =>
   Object.fromEntries(Object.entries(value));
 
+/**
+ * Server instructions for one token's grant.
+ *
+ * Built from the scopes rather than fixed, because out-of-scope tools are removed before the
+ * server is served. A fixed text opened with "Read-only access" to tokens that can write, and
+ * told a `transactions:write`-only token to use `pay_bill` -- a tool it does not have -- leaving
+ * the client to fall back on `create_transactions`, the loose row that very sentence warns about.
+ */
+export const buildInstructions = (scopes: readonly McpScope[]): string => {
+  const has = (tool: McpToolName) => grantCoversTool(scopes, tool);
+  const canWrite = has("create_transactions") || has("pay_bill") || has("create_label");
+
+  const parts = [
+    `${canWrite ? "Access" : "Read-only access"} to one person's personal budget: transactions, ` +
+      "categories, recurring bills, and monthly summaries. Use it for questions about their own " +
+      "spending, income, or upcoming bills. Months are YYYY-MM and are resolved in the user's own " +
+      "timezone, so results match what they see in the app. Amounts are plain numbers in the " +
+      "user's configured currency, rounded to 2 decimal places. Every tool whose name begins " +
+      "with `get_` or `search_` is read-only.",
+  ];
+
+  if (canWrite) {
+    const writers = [
+      has("create_transactions") &&
+        "`create_transactions` and `update_transactions` for individual rows",
+      has("pay_bill") &&
+        "`pay_bill` to settle an occurrence of a recurring bill, `create_bill` and `update_bill` to define one",
+      has("create_label") && "`create_label`",
+    ].filter(Boolean);
+    parts.push(
+      `The tools that write are ${writers.join("; ")}. Nothing here can delete anything: a bill ` +
+        "can only be switched off, and it keeps its history."
+    );
+  }
+
+  if (has("get_assessment_facts")) {
+    parts.push(
+      "For an open question about how the user is doing, start with `get_assessment_facts` " +
+        "rather than assembling an answer out of raw totals -- it already excludes months that " +
+        "were barely logged, which a comparison built from totals cannot see and will report as " +
+        "an improvement."
+    );
+  }
+
+  if (has("pay_bill")) {
+    parts.push(
+      "When the user says they paid a bill, use `pay_bill`, not `create_transactions`: the " +
+        "latter writes a loose row that leaves the schedule stalled and the reminder still firing."
+    );
+  } else if (has("create_transactions")) {
+    parts.push(
+      "This connection cannot settle bills. When the user says they paid a bill, do not log it " +
+        "with `create_transactions` -- that leaves the schedule stalled and the reminder still " +
+        "firing. Tell them to mark it paid in the app, or to grant the `bills:write` scope."
+    );
+  }
+
+  return parts.join(" ");
+};
+
 const LOCAL_DAY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
@@ -414,24 +474,7 @@ export const createBudgetMcpServer = ({
       name: "budgettracker",
       version: "1.0.0",
     },
-    {
-      instructions:
-        "Read-only access to one person's personal budget: transactions, categories, " +
-        "recurring bills, and monthly summaries. Use it for questions about their own " +
-        "spending, income, or upcoming bills. Months are YYYY-MM and are resolved in the " +
-        "user's own timezone, so results match what they see in the app. Amounts are plain " +
-        "numbers in the user's configured currency. Every tool whose name begins with `get_` " +
-        "or `search_` is read-only. The tools that write, when present, are " +
-        "`create_transactions` and `update_transactions` for individual rows, `pay_bill` to " +
-        "settle an occurrence of a recurring bill, `create_bill` and `update_bill` to define " +
-        "one, and `create_label`. Nothing here can delete anything: a bill can only be switched " +
-        "off, and it keeps its history. For an open question about how the user is doing, start " +
-        "with `get_assessment_facts` rather than assembling an answer out of raw totals -- it " +
-        "already excludes months that were barely logged, which a comparison built from totals " +
-        "cannot see and will report as an improvement. When the user says they paid a bill, use " +
-        "`pay_bill`, not `create_transactions`: the latter writes a loose row that leaves the " +
-        "schedule stalled and the reminder still firing.",
-    }
+    { instructions: buildInstructions(scopes) }
   );
 
   // --- Tool registrations ---
