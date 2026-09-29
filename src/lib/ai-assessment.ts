@@ -296,6 +296,13 @@ const buildFactsDigest = (f: AssessmentFacts): string =>
       unlabeledPctOfSpend: f.hygiene.unlabeled.pctOfSpend,
       sameThingSpelledSeveralWays: f.hygiene.fragmentation.map((x) => x.variants),
       incomeConcentrationPct: f.hygiene.incomeConcentrationPct,
+      underLoggedInTrustedMonths: f.hygiene.underLogged.map((x) => ({
+        month: x.month, category: x.category, rows: x.count, usualRows: x.typicalCount,
+      })),
+      labelsOnlyAppliedInsideTheirSchedule: f.hygiene.scheduledLabels
+        .filter((s) => s.clockOnly.length > 0)
+        .map((s) => ({ label: s.label, window: s.window, categories: s.clockOnly.map((c) => c.category) })),
+      likelyAmPmSlips: f.hygiene.clockSlips.length,
     },
   });
 
@@ -355,6 +362,12 @@ HOW TO READ THE FINDINGS:
   that they happened "this period" or "this month".
 - \`dataQuality.unlabeledFromBills\`: bill payments bypass label auto-apply. That is the app's
   behaviour, not the user's carelessness -- attribute it honestly and never lecture about it.
+- \`dataQuality.underLoggedInTrustedMonths\`: a category far below its usual rows in a month that
+  passed the coverage gate, so its figures still count toward the rates. Say the month's total is
+  probably understated; never read it as a saving in that category.
+- \`dataQuality.labelsOnlyAppliedInsideTheirSchedule\`: a label with an auto-apply schedule that
+  these categories receive only inside its clock window. Present it as a question (did the schedule
+  put it there?), since a real purchase made in those hours looks the same.
 - A bill marked isEstimate (or a total marked totalIsEstimate) is derived from past payments, not a
   sum owed. Qualify it ("about", "roughly") and never present it as an amount due.
 
@@ -384,8 +397,9 @@ SECTIONS:
   bill finding above, with a severity of "high" | "medium" | "low".
 - "trends": 2-4 categories heading somewhere, each with a direction of "up" | "down" | "new" | "stable".
   Only use the trustworthy months as the baseline.
-- "dataQuality": 1-3 accuracy problems (logging gaps, duplicates, unlinked bill payments, unlabeled
-  spend, inconsistent descriptions), each with a concrete "fix". Empty array if the data is clean.
+- "dataQuality": 1-3 accuracy problems (logging gaps, under-logged categories, duplicates, unlinked
+  bill payments, unlabeled spend, schedule-applied labels, inconsistent descriptions, AM/PM slips),
+  each with a concrete "fix". Empty array if the data is clean.
 - "watchList": 2-4 areas to keep an eye on, each with a severity.
 - "cutBack": 2-4 concrete categories/habits to reduce, each with a reason, a suggestion, and
   estimatedMonthlySaving (a number in the user's currency, or null if unknown).

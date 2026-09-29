@@ -861,6 +861,53 @@ export interface AssessmentFragmentation {
   transactions: number;
 }
 
+/**
+ * A category logged far less than usual in a month that still passed the coverage gate.
+ *
+ * Coverage counts days, not rows, so a month backfilled from ride history can clear the gate with
+ * every commute and almost no meals. This is the finding the gate cannot make.
+ */
+export interface AssessmentUnderLoggedCategory {
+  /** "YYYY-MM", always a trustworthy month. */
+  month: string;
+  category: string;
+  count: number;
+  /** Median row count across the other trustworthy months. */
+  typicalCount: number;
+  total: number;
+  /** Median total across the other trustworthy months. */
+  typicalTotal: number;
+}
+
+/**
+ * How a label with an auto-apply schedule is actually used.
+ *
+ * A schedule tags by the clock, and a row's time is often when it was logged rather than when it
+ * was spent, so the label can land on whatever was typed during office hours. `clockOnly` names the
+ * categories the label reaches only inside its window: never once chosen outside it.
+ */
+export interface AssessmentScheduledLabel {
+  label: string;
+  /** The schedule in words, e.g. "Mon–Fri 05:00–17:00". */
+  window: string;
+  /** Rows carrying the label, and how many of them fall inside its window. */
+  rows: number;
+  inWindow: number;
+  /** `total` is the gross amount of those rows, not the label's split share. */
+  clockOnly: Array<{ category: string; count: number; total: number }>;
+}
+
+/** A row timed in the small hours but written about twelve hours later: likely AM typed for PM. */
+export interface AssessmentClockSlip {
+  transactionId: string;
+  date: string;
+  /** "HH:mm" as stored, and when the row was written, both in the user's clock. */
+  time: string;
+  loggedAt: string;
+  description: string;
+  amount: number;
+}
+
 export interface AssessmentHygieneFacts {
   duplicates: AssessmentDuplicateGroup[];
   /**
@@ -879,6 +926,9 @@ export interface AssessmentHygieneFacts {
   topIncomeSource: string | null;
   /** Every income source in the trustworthy months, largest first. */
   incomeSources: Array<{ source: string; count: number; total: number; pct: number | null }>;
+  underLogged: AssessmentUnderLoggedCategory[];
+  scheduledLabels: AssessmentScheduledLabel[];
+  clockSlips: AssessmentClockSlip[];
 }
 
 /** One contribution into a goal, or a withdrawal back out of it (a negative amount). */

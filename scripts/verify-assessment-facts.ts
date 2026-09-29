@@ -103,6 +103,11 @@ async function main() {
   console.log(`  duplicates: ${facts.hygiene.duplicates.length}`);
   console.log(`  unlabeled:  ${facts.hygiene.unlabeled.pctOfSpend}% of spend (${facts.hygiene.unlabeled.fromBills.count} from bills, ${facts.hygiene.unlabeled.manual.count} manual)`);
   console.log(`  spellings:  ${facts.hygiene.fragmentation.length} groups`);
+  console.log(`  under-logged: ${facts.hygiene.underLogged.map((x) => `${x.month} ${x.category}`).join(", ") || "none"}`);
+  for (const l of facts.hygiene.scheduledLabels) {
+    console.log(`  schedule: ${l.label} ${l.inWindow}/${l.rows} in window; clock-only ${l.clockOnly.map((c) => c.category).join(", ") || "none"}`);
+  }
+  console.log(`  AM/PM slips: ${facts.hygiene.clockSlips.length}`);
   console.log(`  income concentration: ${facts.hygiene.incomeConcentrationPct ?? "-"}%`);
 }
 
