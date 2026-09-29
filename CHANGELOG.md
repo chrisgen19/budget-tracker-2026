@@ -13,6 +13,13 @@ bills, label breakdown and receipt items. Stored amounts are not rounded (they a
 was typed), and neither are running sums mid-loop, which would compound the error. The same
 queries feed Telegram and the AI tip, which now see the rounded figures too.
 
+The Telegram bot had a visible bug from this. It formats with `toLocaleString`, which hid the noise
+in most replies, but `handleTrends` tests `change === 0`. A category whose rows summed to
+300.29999999999995 one month and 300.3 the next came out as a change of -5.7e-14, so the bot listed
+it under "Biggest changes" as "₱0.00 less". Rounding the trend figures on the server fixes that.
+The bot's `/monthly` reply also rounds its own sum of the monthly nets, since adding already-rounded
+figures brings the noise back, and a break-even period would otherwise read "₱0.00 overspent".
+
 The server instructions were one fixed string. They opened with "Read-only access" for tokens that
 can write, and told every client to settle bills with `pay_bill`, including a
 `transactions:write`-only token that never has that tool, since out-of-scope tools are removed

@@ -72,6 +72,7 @@ import {
   shouldRetryWrite,
 } from "@/lib/telegram/errors";
 import { userToday, utcDayKey } from "@/lib/bill-dates";
+import { roundMoney } from "@/lib/money";
 import { isPlainShorthand } from "@/lib/telegram/shorthand";
 import { parseShorthandEntries } from "@/lib/telegram/multi-shorthand";
 import {
@@ -813,7 +814,9 @@ async function handleMonthly(chatId: number, months: number): Promise<void> {
     msg += `   ${sign} net *${peso(Math.abs(m.net))}*\n`;
   }
 
-  const net = result.months.reduce((sum, m) => sum + m.net, 0);
+  // Rounded: each month's net arrives rounded, but summing them reintroduces float noise, and a
+  // break-even period at -1e-13 would read "₱0.00 overspent".
+  const net = roundMoney(result.months.reduce((sum, m) => sum + m.net, 0));
   msg += `\nOver the period: *${peso(Math.abs(net))}* ${net >= 0 ? "saved" : "overspent"}`;
 
   await sendMessage(chatId, msg);
