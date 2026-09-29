@@ -6,7 +6,12 @@
  * not individual stored amounts, which already hold what the user typed -- and never round a
  * partial sum mid-loop, which would compound the error the rounding exists to hide.
  *
- * Same formula as `money` in `cash-flow-forecast.ts`.
+ * Rounds the magnitude half away from zero, then restores the sign. `Math.round` alone rounds
+ * halves toward +Infinity, so -1.005 became -1 while 1.005 became 1.01, and a net derived from a
+ * rounded expense total stopped equalling income minus expenses.
  */
-export const roundMoney = (value: number): number =>
-  Math.round((value + Number.EPSILON) * 100) / 100;
+export const roundMoney = (value: number): number => {
+  const rounded = Math.round((Math.abs(value) + Number.EPSILON) * 100) / 100;
+  // `|| 0` folds the -0 that tiny negative noise rounds to: it serialises as 0 but fails `Object.is`.
+  return Math.sign(value) * rounded || 0;
+};

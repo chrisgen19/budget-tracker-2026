@@ -270,10 +270,13 @@ const safeLimit = (value: number | undefined, fallback: number): number =>
 const currentMonth = (tzOffset = 0): string => monthKey(toLocal(new Date(), tzOffset));
 
 /**
- * Spending grouped by category for a given month.
- * Returns expense categories sorted by amount (highest first).
+ * The unrounded sums behind `getSpendingByCategory`.
+ *
+ * Kept separate for `getSpendingTrends`, which adds categories together: summing amounts already
+ * rounded per category loses up to half a centavo each, so two categories at 0.004 reported a
+ * total of 0 rather than 0.01. Round only once a sum is complete.
  */
-export const getSpendingByCategory = async (
+const sumSpendingByCategory = async (
   prisma: PrismaClient,
   userId: string,
   params: SpendingByCategoryParams = {}
@@ -316,13 +319,26 @@ export const getSpendingByCategory = async (
     .map(([categoryId, item]) => ({
       categoryId,
       ...item,
-      amount: roundMoney(item.amount),
       percentage:
         totalExpenses > 0
           ? Math.round((item.amount / totalExpenses) * 100)
           : 0,
     }));
 };
+
+/**
+ * Spending grouped by category for a given month.
+ * Returns expense categories sorted by amount (highest first), each rounded to centavos.
+ */
+export const getSpendingByCategory = async (
+  prisma: PrismaClient,
+  userId: string,
+  params: SpendingByCategoryParams = {}
+): Promise<CategorySpending[]> =>
+  (await sumSpendingByCategory(prisma, userId, params)).map((c) => ({
+    ...c,
+    amount: roundMoney(c.amount),
+  }));
 
 /**
  * Largest individual expense transactions.
@@ -481,8 +497,9 @@ export const getSpendingTrends = async (
   const previousWindow = clipMonthTo(params.previousMonth, throughDay);
 
   const [currentSpending, previousSpending] = await Promise.all([
-    getSpendingByCategory(prisma, userId, { ...currentWindow, timezoneOffset: tz }),
-    getSpendingByCategory(prisma, userId, { ...previousWindow, timezoneOffset: tz }),
+    // Raw sums: the totals below add categories together, so rounding happens once, at the end.
+    sumSpendingByCategory(prisma, userId, { ...currentWindow, timezoneOffset: tz }),
+    sumSpendingByCategory(prisma, userId, { ...previousWindow, timezoneOffset: tz }),
   ]);
 
   const currentTotal = currentSpending.reduce((sum, c) => sum + c.amount, 0);
@@ -500,8 +517,8 @@ export const getSpendingTrends = async (
     const change = curr - prev;
     return {
       name,
-      current: curr,
-      previous: prev,
+      current: roundMoney(curr),
+      previous: roundMoney(prev),
       change: roundMoney(change),
       changePercent: prev > 0 ? Math.round((change / prev) * 100) : null,
     };

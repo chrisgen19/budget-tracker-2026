@@ -126,6 +126,26 @@ describe("getSpendingTrends clips a running month against the same days (#236)",
     expect(result.byCategory.find((c) => c.name === "Groceries")?.change).toBe(0);
   });
 
+  it("rounds the trend total once, after summing categories, not each category first", async () => {
+    pinManilaDay("2026-09-07");
+
+    // Sub-cent amounts are schema-legal (`z.number().positive()`, a Float column). Rounded per
+    // category first, each 0.004 became 0 and the total read 0 instead of 0.01.
+    const { prisma } = fakePrisma([
+      tx("2026-08-10", 0.004, "Groceries"),
+      tx("2026-08-11", 0.004, "Transport"),
+    ]);
+
+    const result = await getSpendingTrends(prisma, "u1", {
+      currentMonth: "2026-08",
+      previousMonth: "2026-07",
+      timezoneOffset: MANILA,
+    });
+
+    expect(result.currentTotal).toBe(0.01);
+    expect(result.totalChange).toBe(0.01);
+  });
+
   it("clips both months to the current day of the month", async () => {
     pinManilaDay("2026-09-07");
     const { prisma, seen } = fakePrisma([]);

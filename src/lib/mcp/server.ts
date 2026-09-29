@@ -101,6 +101,36 @@ const structured = (value: object): Record<string, unknown> =>
   Object.fromEntries(Object.entries(value));
 
 /**
+ * The opening sentence: which parts of the budget this grant can read.
+ *
+ * One subject per read scope, keyed on a tool that scope serves, so a narrowed token is not told
+ * about data whose tools were removed -- a `labels:write`-only token was promised transactions,
+ * bills and monthly summaries, and a client may promise the user answers it cannot fetch.
+ */
+const describeReadAccess = (has: (tool: McpToolName) => boolean, canWrite: boolean): string => {
+  const subjects = [
+    has("get_monthly_summary") && "monthly totals and category breakdowns",
+    has("search_transactions") && "individual transactions",
+    has("get_upcoming_bills") && "recurring bills and what is due",
+    has("get_label_list") && "labels",
+    has("get_receipt_items") && "scanned receipt line items",
+  ].filter((s): s is string => Boolean(s));
+
+  if (subjects.length === 0) {
+    return (
+      "This connection cannot read the user's budget; it can only use the tools it offers. " +
+      "Do not offer to look up spending, transactions or bills."
+    );
+  }
+
+  return (
+    `${canWrite ? "Access" : "Read-only access"} to one person's personal budget, covering ` +
+    `${subjects.join(", ")}. Answer questions about their own finances only from these. Every ` +
+    "tool whose name begins with `get_` or `search_` is read-only."
+  );
+};
+
+/**
  * Server instructions for one token's grant.
  *
  * Built from the scopes rather than fixed, because out-of-scope tools are removed before the
@@ -113,12 +143,10 @@ export const buildInstructions = (scopes: readonly McpScope[]): string => {
   const canWrite = has("create_transactions") || has("pay_bill") || has("create_label");
 
   const parts = [
-    `${canWrite ? "Access" : "Read-only access"} to one person's personal budget: transactions, ` +
-      "categories, recurring bills, and monthly summaries. Use it for questions about their own " +
-      "spending, income, or upcoming bills. Months are YYYY-MM and are resolved in the user's own " +
-      "timezone, so results match what they see in the app. Amounts are plain numbers in the " +
-      "user's configured currency, rounded to 2 decimal places. Every tool whose name begins " +
-      "with `get_` or `search_` is read-only.",
+    describeReadAccess(has, canWrite),
+    "Months are YYYY-MM and are resolved in the user's own timezone, so results match what they " +
+      "see in the app. Amounts are plain numbers in the user's configured currency, rounded to 2 " +
+      "decimal places.",
   ];
 
   if (canWrite) {

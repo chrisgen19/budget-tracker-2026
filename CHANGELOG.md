@@ -13,6 +13,13 @@ bills, label breakdown and receipt items. Stored amounts are not rounded (they a
 was typed), and neither are running sums mid-loop, which would compound the error. The same
 queries feed Telegram and the AI tip, which now see the rounded figures too.
 
+`roundMoney` rounds the magnitude and restores the sign, since `Math.round` sends halves toward
++Infinity: -1.005 became -1 while 1.005 became 1.01, so a net stopped equalling income minus
+expenses. It also returns 0 rather than -0 for negative noise. Amounts are not limited to two
+decimals by any schema, so `getSpendingTrends` now sums raw per-category figures and rounds only
+its outputs. Summing categories already rounded lost up to half a centavo each: two at 0.004
+totalled 0 rather than 0.01.
+
 The Telegram bot had a visible bug from this. It formats with `toLocaleString`, which hid the noise
 in most replies, but `handleTrends` tests `change === 0`. A category whose rows summed to
 300.29999999999995 one month and 300.3 the next came out as a change of -5.7e-14, so the bot listed
@@ -26,7 +33,9 @@ can write, and told every client to settle bills with `pay_bill`, including a
 before serving. That left a client falling back on `create_transactions`, the loose row the same
 sentence warns against. `buildInstructions(scopes)` now writes the text from the grant: it names
 only the write tools the token has, and when a token can log transactions but not settle bills it
-says so and points the user at the app or the `bills:write` scope.
+says so and points the user at the app or the `bills:write` scope. The opening sentence lists only
+the subjects the grant can read (one per read scope), and a grant with no read scope is told it
+cannot read the budget, rather than being promised transactions, bills and monthly summaries.
 
 ## 2026-09-29 - A transaction's date and time open in one tap on mobile
 

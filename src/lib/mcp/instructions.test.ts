@@ -27,4 +27,33 @@ describe("buildInstructions", () => {
   it("omits get_assessment_facts guidance when the grant lacks it", () => {
     expect(buildInstructions(["budget:read"])).not.toContain("get_assessment_facts");
   });
+
+  it("names only the subjects a narrowed read grant covers", () => {
+    const text = buildInstructions(["bills:read"]);
+    expect(text).toContain("recurring bills");
+    expect(text).not.toContain("transactions");
+    expect(text).not.toContain("monthly totals");
+    expect(text).not.toContain("labels");
+  });
+
+  it("tells a grant with no read scopes that it cannot read the budget", () => {
+    const text = buildInstructions(["labels:write"]);
+    expect(text).toMatch(/^This connection cannot read the user's budget/);
+    expect(text).toContain("`create_label`");
+    expect(text).not.toContain("recurring bills");
+    expect(text).not.toContain("monthly");
+  });
+
+  it("lists every subject for the default read-only grant", () => {
+    const text = buildInstructions(READ_ONLY_SCOPES);
+    for (const subject of [
+      "monthly totals",
+      "individual transactions",
+      "recurring bills",
+      "labels",
+      "receipt line items",
+    ]) {
+      expect(text).toContain(subject);
+    }
+  });
 });
