@@ -12,6 +12,7 @@ import {
   isWriteScope,
   parseScopes,
 } from "./scopes";
+import { MAX_WRITE_TOKEN_EXPIRY_DAYS } from "@/lib/validations";
 
 describe("parseScopes", () => {
   it("keeps known scopes", () => {
@@ -34,6 +35,20 @@ describe("MCP_SCOPE_LABELS", () => {
     for (const scope of MCP_SCOPES) {
       expect(MCP_SCOPE_LABELS[scope]).toBeTruthy();
     }
+  });
+
+  // The label is shown beside the checkbox at mint time, so it has to state the rule the API
+  // applies. It said "cannot be granted to a token that never expires" after #402 made that false
+  // for the Telegram bot, and the cap is written as a literal because scopes.ts cannot import it.
+  //
+  // It names the form's own setting, not how the token is used: `tokenExpiryRefusal` reads the
+  // stored source, and nothing checks which client presents the token (#403 review).
+  it("states the write-token expiry rule the API actually enforces", () => {
+    const label = MCP_SCOPE_LABELS["transactions:write"];
+
+    expect(label).toContain(`${MAX_WRITE_TOKEN_EXPIRY_DAYS} days`);
+    expect(label).toContain("“Used by” is set to Telegram bot");
+    expect(label).not.toContain("never expires");
   });
 });
 
