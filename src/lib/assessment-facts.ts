@@ -23,7 +23,7 @@ import { MONTH_NAMES } from "@/lib/analytics-buckets";
 import { computeNextDueDate } from "@/lib/bill-utils";
 import { utcDayStart, utcDayKey } from "@/lib/bill-dates";
 import { buildEstimateSamples, estimateBillAmount } from "@/lib/bill-estimate";
-import { scheduleRuleMatches } from "@/lib/schedule-matching";
+import { getScheduledLabelId, type ScheduleRule } from "@/lib/schedule-matching";
 import {
   MIN_COVERAGE_PCT,
   daysBetweenCalendarDays as daysBetween,
@@ -98,16 +98,14 @@ export interface FactTransaction {
   labelIds?: string[];
 }
 
-/** One auto-apply rule of a label: the clock window it tags every new row inside. */
-export interface FactLabelSchedule {
-  labelId: string;
+/**
+ * One auto-apply rule of a label: the clock window it tags every new row inside.
+ *
+ * Exactly the rule auto-apply runs (`days` 0 = Sunday, `applicableTo` and the label's creation
+ * date, which decides between overlapping schedules), plus a name to report it by.
+ */
+export interface FactLabelSchedule extends ScheduleRule {
   labelName: string;
-  /** "EXPENSE" | "INCOME" | "BOTH", as `schedule-matching.ts` reads it. */
-  applicableTo: string;
-  /** 0 = Sunday, the `getUTCDay` convention the schedules are stored in. */
-  days: number[];
-  startTime: string;
-  endTime: string;
 }
 
 /** A bill plus everything needed to judge it: its schedule, its payments, its settled occurrences. */
@@ -351,11 +349,14 @@ const UNDER_LOGGED_SHARE = 0.4;
 /** A category must usually see this many rows a month before a thin month means anything. */
 const UNDER_LOGGED_MIN_TYPICAL_ROWS = 4;
 /**
- * And it must be steady: its second-lowest other month at least this share of its typical one.
+ * And it must be steady: its low other month at least this share of its typical one.
  *
  * A lumpy category's quiet month is behaviour, not a gap. On the owner's account Fun ran 7, 4, 10,
- * 1, 2, 0 and 13 rows, and without this its May read as missing rows. The second-lowest rather
- * than the lowest, so two thin months in a row cannot each excuse the other.
+ * 1, 2, 0 and 13 rows, and without this its May read as missing rows. "Low" is the second-lowest
+ * other month, so two thin months in a row cannot each excuse the other -- except when there are
+ * only three others. There the second-lowest *is* the median, the test compares a figure with
+ * itself and never fires (#404 review), so the lowest stands in: one thin month among three then
+ * hides another, which three months cannot tell apart from lumpiness anyway.
  */
 const UNDER_LOGGED_STEADY_SHARE = 0.5;
 /**
@@ -1074,8 +1075,9 @@ export const findUnderLoggedCategories = (
       const typicalTotal = median(others.map((o) => o.total));
       if (typicalCount < UNDER_LOGGED_MIN_TYPICAL_ROWS) continue;
       // At least three others, guaranteed by the baseline check above.
-      const secondLowest = others.map((o) => o.count).sort((a, b) => a - b)[1];
-      if (secondLowest < typicalCount * UNDER_LOGGED_STEADY_SHARE) continue;
+      const ascending = others.map((o) => o.count).sort((a, b) => a - b);
+      const low = ascending[others.length > 3 ? 1 : 0];
+      if (low < typicalCount * UNDER_LOGGED_STEADY_SHARE) continue;
       if (cell.count > typicalCount * UNDER_LOGGED_SHARE || cell.total > typicalTotal * UNDER_LOGGED_SHARE) continue;
       found.push({
         month: cell.month,
@@ -1120,6 +1122,11 @@ const describeScheduleDays = (days: number[]): string => {
  * clock chose. That is a question to put to the user, not a verdict, since a purchase that really
  * is work and always happens in office hours looks the same. Reads the whole window: it asks
  * whether a mislabel exists, and a thin month withholds rows rather than falsifying them.
+ *
+ * "Inside" means auto-apply would have picked *this* label at that moment, asked of
+ * `getScheduledLabelId` itself rather than of each label's own rules. Where two schedules overlap
+ * only the earliest-created label is ever applied, so a later label found there was chosen by hand
+ * and must not be blamed on the clock (#404 review).
  */
 export const auditScheduledLabels = (
   transactions: FactTransaction[],
@@ -1137,8 +1144,8 @@ export const auditScheduledLabels = (
     let inWindow = 0;
     const byCategory = new Map<string, { inside: number; outside: number; total: number }>();
     for (const { t, time } of carrying) {
-      const day = parseDay(t.localDate).getUTCDay();
-      const inside = rules.some((rule) => scheduleRuleMatches(rule, day, time, t.type));
+      // The row's own calendar day and clock, read back at offset zero: already local, so no shift.
+      const inside = getScheduledLabelId(new Date(`${t.localDate}T${time}:00.000Z`), 0, schedules, t.type) === labelId;
       if (inside) inWindow += 1;
       const g = byCategory.get(t.categoryName) ?? { inside: 0, outside: 0, total: 0 };
       if (inside) {
@@ -1198,13 +1205,24 @@ export const findClockSlips = (transactions: FactTransaction[]): AssessmentClock
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 8);
 
-/** Unlabeled spend split by cause, plus how concentrated income is. */
+/**
+ * Unlabeled spend split by cause, plus how concentrated income is, plus the accuracy checks.
+ *
+ * `window` is the facts window the report covers. The loader reads rows on through today whatever
+ * the period, so a past report's bills can see payments made since; without the bound a February
+ * report listed a September AM/PM slip as one of its own problems (#404 review). Omitted, the
+ * whole array is read, which is what a caller holding only the window already has.
+ */
 export const computeHygiene = (
   transactions: FactTransaction[],
   trustworthy: string[],
   period: { from: string; to: string },
   labelSchedules: FactLabelSchedule[] = [],
+  window?: { from: string; to: string },
 ): AssessmentHygieneFacts => {
+  const windowed = window
+    ? transactions.filter((t) => t.localDate >= window.from && t.localDate <= window.to)
+    : transactions;
   const trusted = new Set(trustworthy);
   const scoped = transactions.filter((t) => trusted.has(monthOf(t.localDate)));
   const expenses = scoped.filter((t) => t.type === "EXPENSE");
@@ -1242,11 +1260,13 @@ export const computeHygiene = (
       total: round(g.total),
       pct: pct(g.total, totalIncome),
     })),
-    // Gated like every rate, since "usual" needs months worth averaging. The other two ask whether
-    // a mistake exists, so they read the whole window, as duplicates and fragmentation do.
+    // Gated like every rate, since "usual" needs months worth averaging, and trustworthy months lie
+    // inside the window by construction. The other two ask whether a mistake exists, so they read
+    // every month of the window, excluded ones included, and nothing after it. Duplicates and
+    // fragmentation above still read the rows past the window; bounding those is its own change.
     underLogged: findUnderLoggedCategories(transactions, trustworthy),
-    scheduledLabels: auditScheduledLabels(transactions, labelSchedules),
-    clockSlips: findClockSlips(transactions),
+    scheduledLabels: auditScheduledLabels(windowed, labelSchedules),
+    clockSlips: findClockSlips(windowed),
   };
 };
 
@@ -2777,7 +2797,10 @@ export const buildAssessmentFacts = (input: FactsInput): AssessmentFacts => {
   // charge, the payload wants the top 15.
   const { allItems: recurringAll, ...recurring } =
     computeRecurring(transactions, today, trends.avgMonthlyBurn, input.historyFirstSeen, input.historyCharges);
-  const hygiene = computeHygiene(transactions, confidence.trustworthyMonths, period, input.labelSchedules);
+  const hygiene = computeHygiene(transactions, confidence.trustworthyMonths, period, input.labelSchedules, {
+    from: window.dataFrom,
+    to: window.dataTo,
+  });
   const headline = computeHeadline(trends, input.allTimeTotals ?? null);
   // Falls back to the window when the caller supplies no wider set, so a test or
   // a caller that has only the window still gets an answer -- a narrower one,

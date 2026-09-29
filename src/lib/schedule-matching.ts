@@ -32,24 +32,6 @@ export const toLocalComponents = (dateUTC: Date, timezoneOffset: number) => {
 };
 
 /**
- * Whether one rule covers a moment already resolved to the user's day and time.
- *
- * The single definition of "inside a schedule": auto-apply uses it to tag a row, and the
- * assessment's label audit uses it to ask which tagged rows the clock could have tagged. Two
- * copies of the window test would let the audit judge a schedule by a rule it does not run.
- */
-export const scheduleRuleMatches = (
-  rule: Pick<ScheduleRule, "days" | "startTime" | "endTime" | "applicableTo">,
-  day: number,
-  time: string,
-  transactionType?: string
-): boolean =>
-  rule.days.includes(day) &&
-  rule.startTime <= time &&
-  time < rule.endTime &&
-  (!transactionType || rule.applicableTo === "BOTH" || rule.applicableTo === transactionType);
-
-/**
  * Given a transaction date (UTC) and the user's timezone offset,
  * returns the ID of the single scheduled label that should auto-apply,
  * or null if none match.
@@ -67,7 +49,13 @@ export const getScheduledLabelId = (
   const { day, time } = toLocalComponents(transactionDateUTC, timezoneOffset);
 
   // Find all rules that match this day + time window + transaction type
-  const matching = scheduleRules.filter((r) => scheduleRuleMatches(r, day, time, transactionType));
+  const matching = scheduleRules.filter(
+    (r) =>
+      r.days.includes(day) &&
+      r.startTime <= time &&
+      time < r.endTime &&
+      (!transactionType || r.applicableTo === "BOTH" || r.applicableTo === transactionType)
+  );
 
   if (matching.length === 0) return null;
 

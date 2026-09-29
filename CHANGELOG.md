@@ -23,8 +23,10 @@ card, the AI assessment's input and the MCP `get_assessment_facts` output:
   question, since nothing records whether the clock or the user applied a label.
 - **AM/PM slips**: rows timed before 05:00 but written about twelve hours later the same day.
 
-`scheduleRuleMatches` is now the one definition of "inside a schedule", shared by auto-apply
-and the audit. The `/finance-assess` report template gains dark-mode `color-scheme` and a
+The audit decides "inside the window" with `getScheduledLabelId`, the function auto-apply
+itself runs, so overlapping schedules follow the same first-created priority. The schedule
+audit and the AM/PM check read only the report's own window, never the later rows the loader
+fetches for bills. The `/finance-assess` report template gains dark-mode `color-scheme` and a
 text-table style for recommendation sections.
 
 ## 2026-09-29 - The Telegram bot's token can be set to never expire, without replacing it

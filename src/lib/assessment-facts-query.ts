@@ -197,7 +197,11 @@ export const collectAssessmentFacts = async (
     // Every auto-apply rule, for the audit of what the clock has been labelling.
     prisma.labelSchedule.findMany({
       where: { label: { userId } },
-      select: { labelId: true, days: true, startTime: true, endTime: true, label: { select: { name: true, applicableTo: true } } },
+      select: {
+        labelId: true, days: true, startTime: true, endTime: true,
+        // `createdAt` decides between overlapping schedules, exactly as auto-apply does.
+        label: { select: { name: true, applicableTo: true, createdAt: true } },
+      },
     }),
   ]);
 
@@ -233,6 +237,7 @@ export const collectAssessmentFacts = async (
   const labelSchedules: FactLabelSchedule[] = schedules.map((s) => ({
     labelId: s.labelId,
     labelName: s.label.name,
+    labelCreatedAt: s.label.createdAt,
     applicableTo: s.label.applicableTo,
     days: s.days,
     startTime: s.startTime,

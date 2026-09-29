@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   auditScheduledLabels,
+  buildAssessmentFacts,
   computeHygiene,
   findClockSlips,
   findUnderLoggedCategories,
@@ -79,6 +80,19 @@ describe("findUnderLoggedCategories", () => {
     expect(findUnderLoggedCategories(data, counts.map(([m]) => m))).toEqual([]);
   });
 
+  it("still tells a lumpy category apart at the minimum baseline of four trusted months", () => {
+    // #404 review: with three others the second-lowest is the median, so steadiness never fired.
+    const counts: Array<[string, number]> = [["2026-04", 10], ["2026-05", 1], ["2026-06", 2], ["2026-07", 13]];
+    const data = counts.flatMap(([m, n]) => rows(m, n, 250, { categoryName: "Fun" }));
+    expect(findUnderLoggedCategories(data, counts.map(([m]) => m))).toEqual([]);
+  });
+
+  it("finds a thin month in a steady category at the minimum baseline of four trusted months", () => {
+    const counts: Array<[string, number]> = [["2026-04", 50], ["2026-05", 48], ["2026-06", 55], ["2026-07", 12]];
+    const data = counts.flatMap(([m, n]) => rows(m, n, 300, { categoryName: "Food & Dining" }));
+    expect(findUnderLoggedCategories(data, counts.map(([m]) => m)).map((x) => x.month)).toEqual(["2026-07"]);
+  });
+
   it("still finds two thin months in a row, which the lowest month alone would excuse", () => {
     const counts: Array<[string, number]> = [["2026-02", 6], ["2026-03", 7], ["2026-04", 6], ["2026-05", 9], ["2026-06", 1], ["2026-07", 1], ["2026-08", 8]];
     const data = counts.flatMap(([m, n]) => rows(m, n, 1000, { categoryName: "Groceries" }));
@@ -106,7 +120,8 @@ describe("findUnderLoggedCategories", () => {
 });
 
 const WORK: FactLabelSchedule = {
-  labelId: "work", labelName: "Work Budget", applicableTo: "EXPENSE", days: [1, 2, 3, 4, 5], startTime: "05:00", endTime: "17:00",
+  labelId: "work", labelName: "Work Budget", labelCreatedAt: "2026-01-01T00:00:00Z", applicableTo: "EXPENSE",
+  days: [1, 2, 3, 4, 5], startTime: "05:00", endTime: "17:00",
 };
 // 2026-09-07 is a Monday; 2026-09-12 a Saturday.
 const labelled = (localDate: string, localTime: string, categoryName: string, amount = 100): FactTransaction =>
@@ -154,6 +169,18 @@ describe("auditScheduledLabels", () => {
     expect(audit.inWindow).toBe(1);
   });
 
+  it("blames the clock only for the label auto-apply would actually pick where schedules overlap", () => {
+    // #404 review: the earliest-created label wins an overlap, so a later one found there was chosen by hand.
+    const side: FactLabelSchedule = { ...WORK, labelId: "side", labelName: "Side Gig", labelCreatedAt: "2026-06-01T00:00:00Z" };
+    const bySide = (localDate: string) =>
+      tx({ localDate, localTime: "10:00", categoryName: "Shopping", labelIds: ["side"], labelCount: 1 });
+    const [audit] = auditScheduledLabels([bySide("2026-09-07"), bySide("2026-09-08")], [WORK, side]);
+    expect(audit).toMatchObject({ label: "Side Gig", rows: 2, inWindow: 0, clockOnly: [] });
+
+    const [alone] = auditScheduledLabels([bySide("2026-09-07"), bySide("2026-09-08")], [side]);
+    expect(alone.clockOnly).toEqual([{ category: "Shopping", count: 2, total: 200 }]);
+  });
+
   it("treats a row of the wrong type for the label's schedule as outside it", () => {
     const income = tx({ localDate: "2026-09-07", localTime: "10:00", type: "INCOME", labelIds: ["work"], labelCount: 1 });
     expect(auditScheduledLabels([income], [WORK])[0].inWindow).toBe(0);
@@ -183,6 +210,34 @@ describe("findClockSlips", () => {
   it("leaves a real late night alone, and rows missing either field", () => {
     expect(findClockSlips([timed("00:09", 1801)])).toEqual([]);
     expect(findClockSlips([tx({ localDate: "2026-05-11", localTime: "04:36" }), tx({ localDate: "2026-05-11", loggedMinutesAfter: 720 })])).toEqual([]);
+  });
+});
+
+describe("the checks stay inside the facts window", () => {
+  // #404 review: the loader reads rows through today so a past report's bills can see later
+  // payments, and a February report listed a September slip as one of its own problems.
+  const slip = (localDate: string) =>
+    tx({ localDate, localTime: "04:36", loggedMinutesAfter: 720, description: "Jeep & UV", labelIds: ["work"], labelCount: 1 });
+
+  it("bounds the audit and the AM/PM check to the window computeHygiene is given", () => {
+    const period = { from: "2026-02-01", to: "2026-02-28" };
+    const hygiene = computeHygiene([slip("2026-02-10"), slip("2026-09-10")], [], period, [WORK], { from: "2025-09-01", to: "2026-02-28" });
+    expect(hygiene.clockSlips.map((c) => c.date)).toEqual(["2026-02-10"]);
+    expect(hygiene.scheduledLabels[0].rows).toBe(1);
+  });
+
+  it("is wired to the resolved window for a past period", () => {
+    const facts = buildAssessmentFacts({
+      currency: "PHP",
+      period: { from: "2026-02-01", to: "2026-02-28", label: "Feb 2026", granularity: "monthly" },
+      today: "2026-09-29",
+      timezoneOffset: -480,
+      historyMonths: 6,
+      transactions: [slip("2026-02-10"), slip("2026-09-10")],
+      bills: [],
+      labelSchedules: [WORK],
+    });
+    expect(facts.hygiene.clockSlips.map((c) => c.date)).toEqual(["2026-02-10"]);
   });
 });
 
