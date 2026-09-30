@@ -97,7 +97,7 @@ const features = [
     icon: TrendingUp,
     title: "Balance Trend",
     description:
-      "A 30-day chart shows whether you're building wealth or need to adjust.",
+      "Follow your balance day by day and lay it over last month's to see if you're ahead.",
     color: "text-[#3b82f6]",
     bg: "bg-[#3b82f6]/10",
   },
