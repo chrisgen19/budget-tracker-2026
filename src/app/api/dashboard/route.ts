@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { getOwedOnCards } from "@/lib/credit-account-queries";
 import { userCanUseCreditCards } from "@/lib/credit-card-access";
-import { buildBalanceMonths } from "@/lib/balance-trend";
+import { buildBalanceMonths, legacyBalanceTrend } from "@/lib/balance-trend";
 
 export async function GET(request: Request) {
   const userId = await getAuthUserId();
@@ -191,7 +191,7 @@ export async function GET(request: Request) {
     recentTransactions,
     categoryBreakdown,
     monthlyTrend,
-    balanceTrend: balanceMonths.current.days, // deprecated: read by tabs open on the previous build
+    balanceTrend: legacyBalanceTrend(balanceMonths), // deprecated: read by tabs open on the previous build
     balanceMonths,
   });
 }

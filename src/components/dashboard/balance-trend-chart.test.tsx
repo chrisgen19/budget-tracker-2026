@@ -21,7 +21,7 @@ const makeMonth = (month: string, openingBalance: number, deltas: Record<number,
     balance += deltas[i + 1] ?? 0;
     return { date: `${month}-${String(i + 1).padStart(2, "0")}`, balance };
   });
-  return { month, openingBalance, days };
+  return { month, openingBalance, transactionCount: Object.keys(deltas).length, days };
 };
 
 // Aug gains 20,000 by the 15th and 12,000 over the month; Sep gains 16,000 by the 15th and 15,000
@@ -51,6 +51,7 @@ describe("BalanceTrendChart", () => {
     renderChart();
 
     expect(screen.getByText("Balance today")).toBeTruthy();
+    expect(screen.getByText("This month")).toBeTruthy();
     expect(screen.getByText("₱78,000.00")).toBeTruthy();
     expect(screen.getByText("+₱16,000.00")).toBeTruthy();
     expect(screen.queryByText(/%/)).toBeNull();
@@ -115,6 +116,9 @@ describe("BalanceTrendChart", () => {
     renderChart();
 
     expect(screen.getByText("End of Sep")).toBeTruthy();
+    // The change beside it is September's, so it must not claim to be this month's.
+    expect(screen.getByText("In Sep")).toBeTruthy();
+    expect(screen.queryByText("This month")).toBeNull();
     expect(screen.getByText("₱77,000.00")).toBeTruthy();
     expect(screen.getByText("Sep ended ₱3,000.00 ahead of Aug")).toBeTruthy();
     expect(screen.getByTestId("plot").getAttribute("data-today")).toBe("null");

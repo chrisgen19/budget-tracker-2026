@@ -4,6 +4,7 @@ import {
   buildBalanceChartRows,
   buildBalanceMonths,
   formatSignedAmount,
+  legacyBalanceTrend,
   monthShortName,
   previousMonthKey,
   summarizeBalance,
@@ -22,7 +23,7 @@ const makeMonth = (month: string, openingBalance: number, deltas: Record<number,
     balance += deltas[i + 1] ?? 0;
     return { date: `${month}-${String(i + 1).padStart(2, "0")}`, balance };
   });
-  return { month, openingBalance, days };
+  return { month, openingBalance, transactionCount: Object.keys(deltas).length, days };
 };
 
 describe("month keys", () => {
@@ -63,6 +64,8 @@ describe("buildBalanceMonths", () => {
     expect(current.days).toHaveLength(30);
     expect(current.days[2]).toEqual({ date: "2026-09-03", balance: 10_000 });
     expect(current.days[29]).toEqual({ date: "2026-09-30", balance: 10_000 });
+    expect(previous.transactionCount).toBe(2);
+    expect(current.transactionCount).toBe(1);
   });
 
   it("puts a row on the user's calendar day, not the UTC one", () => {
@@ -165,6 +168,22 @@ describe("summarizeBalance", () => {
     expect(summary.previousChange).toBe(1000);
   });
 
+  it("still compares against a month whose rows cancel out on the same day", () => {
+    const { current, previous } = buildBalanceMonths({
+      month: "2026-09",
+      closingBalance: 2_000,
+      rows: [
+        { amount: 500, type: "INCOME", date: "2026-08-10T02:00:00.000Z" },
+        { amount: 500, type: "EXPENSE", date: "2026-08-10T03:00:00.000Z" },
+        { amount: 2_000, type: "INCOME", date: "2026-09-05T02:00:00.000Z" },
+      ],
+      timezoneOffset: MANILA,
+    });
+
+    // Every August closing balance equals its opening, yet August was logged: 0, not null.
+    expect(summarizeBalance(current, previous, "2026-09-15").previousChange).toBe(0);
+  });
+
   it("does not compare against a month with nothing logged", () => {
     const empty = makeMonth("2026-08", 62_000);
     expect(summarizeBalance(current, empty, "2026-09-15").previousChange).toBeNull();
@@ -178,6 +197,20 @@ describe("summarizeBalance", () => {
       change: 0,
       previousChange: null,
     });
+  });
+});
+
+describe("legacyBalanceTrend", () => {
+  it("keeps the old 30 days ending on the selected month's last day", () => {
+    const october = legacyBalanceTrend({ previous: makeMonth("2026-09", 0), current: makeMonth("2026-10", 0) });
+    expect(october).toHaveLength(30);
+    expect(october[0].date).toBe("2026-10-02");
+    expect(october[29].date).toBe("2026-10-31");
+
+    const february = legacyBalanceTrend({ previous: makeMonth("2026-01", 0), current: makeMonth("2026-02", 0) });
+    expect(february).toHaveLength(30);
+    expect(february[0].date).toBe("2026-01-30");
+    expect(february[29].date).toBe("2026-02-28");
   });
 });
 

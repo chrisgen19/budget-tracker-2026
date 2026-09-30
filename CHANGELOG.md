@@ -29,8 +29,9 @@ The card itself was reworked, because several of its figures were wrong:
 
 `GET /api/dashboard` adds `balanceMonths: { current, previous }`, one `BalanceMonth` each
 (`month`, `openingBalance`, `days`), built by `buildBalanceMonths` in
-`src/lib/balance-trend.ts` from one query over both months. `balanceTrend` is still returned,
-now equal to `balanceMonths.current.days`, for tabs open on the previous build; drop it in the
+`src/lib/balance-trend.ts` from one query over both months. `balanceTrend` keeps its old meaning,
+the 30 days ending on the selected month's last day (`legacyBalanceTrend`), because a tab open on
+the previous build still computes its "Last 30 Days" figure from its first entry; drop it in the
 next release.
 
 ## 2026-09-29 - The assessment finds thin months, clock-applied labels and AM/PM slips

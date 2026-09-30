@@ -1,6 +1,6 @@
 import { accountDateKey } from "@/lib/account-time";
 import { formatCurrency, maskCurrency } from "@/lib/utils";
-import type { BalanceMonth } from "@/types";
+import type { BalanceMonth, BalanceTrendItem } from "@/types";
 
 /**
  * The dashboard's Balance Trend: the running balance day by day for the selected month and the
@@ -70,12 +70,17 @@ export const buildBalanceMonths = ({
   timezoneOffset: number;
 }): { current: BalanceMonth; previous: BalanceMonth } => {
   const netByDay = new Map<string, number>();
+  // Counted from the rows, not inferred from the balances: a purchase and its refund on the same
+  // day leave every closing balance unchanged, and that month still had something logged.
+  const rowsByMonth = new Map<string, number>();
   let windowNet = 0;
   for (const row of rows) {
     const delta = row.type === "INCOME" ? row.amount : -row.amount;
     windowNet += delta;
     const key = accountDateKey(row.date, timezoneOffset);
     netByDay.set(key, (netByDay.get(key) ?? 0) + delta);
+    const monthKey = key.slice(0, 7);
+    rowsByMonth.set(monthKey, (rowsByMonth.get(monthKey) ?? 0) + 1);
   }
 
   // Accumulate unrounded and round only what is returned, so cents never drift across 60 days.
@@ -86,13 +91,27 @@ export const buildBalanceMonths = ({
       running += netByDay.get(date) ?? 0;
       return { date, balance: cents(running) };
     });
-    return { month: key, openingBalance, days };
+    return { month: key, openingBalance, transactionCount: rowsByMonth.get(key) ?? 0, days };
   };
 
   const previous = walk(previousMonthKey(month));
   const current = walk(month);
   return { current, previous };
 };
+
+/**
+ * The 30 days ending on the selected month's last day: what `balanceTrend` meant before
+ * `balanceMonths` existed. A tab still running that build takes its "Last 30 Days" figure from the
+ * first entry, so the field keeps its old meaning for one release instead of changing under it.
+ * The two months always hold at least 56 days, so the slice is always a full 30.
+ */
+export const legacyBalanceTrend = ({
+  current,
+  previous,
+}: {
+  current: BalanceMonth;
+  previous: BalanceMonth;
+}): BalanceTrendItem[] => [...previous.days, ...current.days].slice(-30);
 
 /** How many days of `month` have happened by `todayKey`: 0 for a month still ahead. */
 const countElapsedDays = (month: BalanceMonth, todayKey: string): number =>
@@ -148,7 +167,7 @@ export type BalanceSummary = {
   change: number;
   /**
    * The previous month's change by the same day of month, or over the whole month once the
-   * selected one is over. Null when the previous month had no activity at all, since "ahead of a
+   * selected one is over. Null when nothing was logged in the previous month, since "ahead of a
    * month you never logged" is not a comparison.
    */
   previousChange: number | null;
@@ -170,7 +189,7 @@ export const summarizeBalance = (
   }
 
   const balance = current.days[elapsedDays - 1].balance;
-  const hasPreviousActivity = previous.days.some((day) => day.balance !== previous.openingBalance);
+  const hasPreviousActivity = previous.transactionCount > 0;
   // Mar 31 is compared with Feb 28, and a finished month with the whole of the one before it.
   const compareDay =
     status === "past" ? previous.days.length : Math.min(elapsedDays, previous.days.length);

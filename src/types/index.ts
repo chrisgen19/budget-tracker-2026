@@ -81,8 +81,9 @@ export interface DashboardStats {
   categoryBreakdown: CategoryBreakdownItem[];
   monthlyTrend: MonthlyTrendItem[];
   /**
-   * @deprecated Kept for one release so an open tab running the previous build still renders its
-   * chart; it is `balanceMonths.current.days`. Read `balanceMonths` instead.
+   * @deprecated The 30 days ending on the selected month's last day, kept with that meaning for one
+   * release so an open tab running the previous build still computes its chart correctly. Read
+   * `balanceMonths` instead.
    */
   balanceTrend: BalanceTrendItem[];
   /** Daily closing balances for the selected month and the month before it, for the overlay. */
@@ -113,6 +114,8 @@ export interface BalanceMonth {
   month: string;          // YYYY-MM
   /** The running balance before the 1st: the previous month's closing balance. */
   openingBalance: number;
+  /** Rows logged in the month, so a month whose rows net to zero still counts as logged. */
+  transactionCount: number;
   /** Closing balance for every calendar day of the month, future days included. */
   days: BalanceTrendItem[];
 }

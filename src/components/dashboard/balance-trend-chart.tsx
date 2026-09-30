@@ -149,6 +149,7 @@ interface MetricsProps {
 function BalanceMetrics({ summary, currentName, hideAmounts, currency }: MetricsProps) {
   const balanceLabel =
     summary.status === "current" ? "Balance today" : summary.status === "past" ? `End of ${currentName}` : "Opening balance";
+  const changeLabel = summary.status === "past" ? `In ${currentName}` : "This month";
   const Icon = summary.change > 0 ? TrendingUp : summary.change < 0 ? TrendingDown : Minus;
 
   return (
@@ -161,7 +162,7 @@ function BalanceMetrics({ summary, currentName, hideAmounts, currency }: Metrics
       </div>
       {summary.elapsedDays > 0 && (
         <div className="text-right shrink-0">
-          <p className="text-[10px] font-medium tracking-wider text-warm-400 uppercase">This month</p>
+          <p className="text-[10px] font-medium tracking-wider text-warm-400 uppercase">{changeLabel}</p>
           <span
             className={cn(
               "inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-sm font-medium tabular-nums",
