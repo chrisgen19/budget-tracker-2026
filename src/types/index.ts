@@ -80,7 +80,13 @@ export interface DashboardStats {
   recentTransactions: TransactionWithCategory[];
   categoryBreakdown: CategoryBreakdownItem[];
   monthlyTrend: MonthlyTrendItem[];
+  /**
+   * @deprecated Kept for one release so an open tab running the previous build still renders its
+   * chart; it is `balanceMonths.current.days`. Read `balanceMonths` instead.
+   */
   balanceTrend: BalanceTrendItem[];
+  /** Daily closing balances for the selected month and the month before it, for the overlay. */
+  balanceMonths: { current: BalanceMonth; previous: BalanceMonth };
 }
 
 export interface CategoryBreakdownItem {
@@ -100,6 +106,15 @@ export interface MonthlyTrendItem {
 export interface BalanceTrendItem {
   date: string;   // YYYY-MM-DD
   balance: number;
+}
+
+/** One calendar month of the running balance, day by day, in the user's timezone. */
+export interface BalanceMonth {
+  month: string;          // YYYY-MM
+  /** The running balance before the 1st: the previous month's closing balance. */
+  openingBalance: number;
+  /** Closing balance for every calendar day of the month, future days included. */
+  days: BalanceTrendItem[];
 }
 
 /** Scheduled transaction with its category relation */

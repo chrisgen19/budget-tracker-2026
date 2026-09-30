@@ -2,6 +2,37 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-09-30 - Balance Trend compares this month with last month
+
+The dashboard's Balance Trend card gains a "vs Aug" toggle that overlays the previous month.
+While it is on, both months are drawn as the change since their own 1st, lined up by day of
+month, and the header says how far ahead or behind last month you are at the same day (a
+finished month is compared with the whole of the one before it). The toggle is remembered on
+the device in localStorage.
+
+The card itself was reworked, because several of its figures were wrong:
+
+- **The window was mislabeled.** It plotted the 30 days ending at the end of the selected
+  month under a "Last 30 Days" heading, so mid-month half of it was in the future. It now
+  plots the selected calendar month.
+- **The "projected" line was not a projection.** It was today's balance copied forward, moving
+  only for future-dated rows. The line now stops at a today marker, and a "See forecast" link
+  opens `/analytics?tab=forecast`, which includes bills and card payments.
+- **Today was the UTC day.** From 00:00 to 07:59 in Manila, today was drawn as projected and
+  "Today" showed yesterday's balance. It now uses the saved timezone offset.
+- **A percentage of a running balance** (₱1,000 to ₱20,000 read "+1900%") is replaced with the
+  change in pesos since the 1st. A past month is labeled "End of Aug" rather than "Today".
+- **Hide amounts leaked the balance** through the Y axis (`193.4K`). The axis labels are now
+  dropped while amounts are hidden.
+- The Y axis no longer stretches a ₱200 wobble to full height, and its ticks fall on round
+  numbers. The line uses the app's amber instead of an off-palette blue.
+
+`GET /api/dashboard` adds `balanceMonths: { current, previous }`, one `BalanceMonth` each
+(`month`, `openingBalance`, `days`), built by `buildBalanceMonths` in
+`src/lib/balance-trend.ts` from one query over both months. `balanceTrend` is still returned,
+now equal to `balanceMonths.current.days`, for tabs open on the previous build; drop it in the
+next release.
+
 ## 2026-09-29 - The assessment finds thin months, clock-applied labels and AM/PM slips
 
 A manual audit of the owner's data found three problems the assessment could not see. July

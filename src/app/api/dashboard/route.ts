@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { getOwedOnCards } from "@/lib/credit-account-queries";
 import { userCanUseCreditCards } from "@/lib/credit-card-access";
+import { buildBalanceMonths } from "@/lib/balance-trend";
 
 export async function GET(request: Request) {
   const userId = await getAuthUserId();
@@ -28,18 +29,12 @@ export async function GET(request: Request) {
     endDate = new Date(Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth() + 1, 0, 23, 59, 59, 999) + tzMs);
   }
 
-  // 30-day window for balance trend (ends at end of selected month)
-  const trendStart = new Date(endDate.getTime() - 29 * 24 * 60 * 60 * 1000);
-  // Align to start of day in user's timezone
-  const trendStartLocal = new Date(trendStart.getTime() - tzMs);
-  trendStartLocal.setUTCHours(0, 0, 0, 0);
-  const trendStartAligned = new Date(trendStartLocal.getTime() + tzMs);
-
-  // Helper: convert UTC timestamp to user's local date key
-  const toLocalDateKey = (date: Date) => {
-    const local = new Date(date.getTime() - tzMs);
-    return `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, "0")}-${String(local.getUTCDate()).padStart(2, "0")}`;
-  };
+  // Balance trend window: the 1st of the month before the selected one, so the chart can overlay
+  // the two months by day of month
+  const selectedLocal = new Date(startDate.getTime() - tzMs);
+  const trendStart = new Date(
+    Date.UTC(selectedLocal.getUTCFullYear(), selectedLocal.getUTCMonth() - 1, 1) + tzMs
+  );
 
   // Helper: convert UTC timestamp to user's local month key
   const toLocalMonthKey = (date: Date) => {
@@ -101,11 +96,11 @@ export async function GET(request: Request) {
       _sum: { amount: true },
     }),
 
-    // Transactions within the 30-day trend window (for balance trend chart)
+    // Transactions from the 1st of the previous month (for the balance trend chart)
     prisma.transaction.findMany({
       where: {
         userId,
-        date: { gte: trendStartAligned, lte: endDate },
+        date: { gte: trendStart, lte: endDate },
       },
       select: { amount: true, type: true, date: true },
       orderBy: { date: "asc" },
@@ -179,31 +174,12 @@ export async function GET(request: Request) {
     });
   }
 
-  // Balance trend: daily running balance over the 30-day window
-  // Derive prior balance from all-time totals minus window transactions
-  const windowNet = trendWindowTx.reduce(
-    (sum, t) => sum + (t.type === "INCOME" ? t.amount : -t.amount),
-    0
-  );
-  const priorBalance = runningBalance - windowNet;
-
-  // Group window transactions by day (in user's timezone)
-  const txByDay = new Map<string, number>();
-  for (const t of trendWindowTx) {
-    const key = toLocalDateKey(new Date(t.date));
-    const delta = t.type === "INCOME" ? t.amount : -t.amount;
-    txByDay.set(key, (txByDay.get(key) ?? 0) + delta);
-  }
-
-  // Walk 30 days, accumulating from priorBalance
-  const balanceTrend = [];
-  let bal = priorBalance;
-  for (let i = 0; i < 30; i++) {
-    const d = new Date(trendStartAligned.getTime() + i * 24 * 60 * 60 * 1000);
-    const key = toLocalDateKey(d);
-    bal += txByDay.get(key) ?? 0;
-    balanceTrend.push({ date: key, balance: bal });
-  }
+  const balanceMonths = buildBalanceMonths({
+    month: toLocalMonthKey(startDate),
+    closingBalance: runningBalance,
+    rows: trendWindowTx,
+    timezoneOffset: tz,
+  });
 
   return NextResponse.json({
     owedOnCards,
@@ -215,6 +191,7 @@ export async function GET(request: Request) {
     recentTransactions,
     categoryBreakdown,
     monthlyTrend,
-    balanceTrend,
+    balanceTrend: balanceMonths.current.days, // deprecated: read by tabs open on the previous build
+    balanceMonths,
   });
 }

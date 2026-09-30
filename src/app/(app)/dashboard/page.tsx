@@ -25,7 +25,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { TransactionForm } from "@/components/transactions/transaction-form";
-import { SpendingChart, TrendChart, BalanceTrendChart } from "@/components/dashboard/charts";
+import { SpendingChart, TrendChart } from "@/components/dashboard/charts";
+import { BalanceTrendChart } from "@/components/dashboard/balance-trend-chart";
 import { DropdownButton, type DropdownItem } from "@/components/ui/dropdown-button";
 import { PageHeader } from "@/components/ui/page-header";
 import { usePrivacy } from "@/components/privacy-provider";
@@ -347,20 +348,12 @@ export default function DashboardPage() {
 
           {/* Balance Trend */}
           <motion.div variants={fadeUp} className="card p-5 mb-8">
-            {stats.balanceTrend.length > 0 ? (
-              <BalanceTrendChart
-                data={stats.balanceTrend}
-                hideAmounts={hideAmounts}
-                currency={currency}
-              />
-            ) : (
-              <div>
-                <h2 className="font-serif text-lg text-warm-700">Balance Trend</h2>
-                <div className="h-[220px] flex items-center justify-center">
-                  <p className="text-warm-300 text-sm">No data yet</p>
-                </div>
-              </div>
-            )}
+            <BalanceTrendChart
+              months={stats.balanceMonths}
+              hideAmounts={hideAmounts}
+              timezoneOffset={user.timezoneOffset}
+              currency={currency}
+            />
           </motion.div>
 
           {/* Charts Row */}
@@ -619,8 +612,13 @@ function DashboardSkeleton() {
 
       {/* Balance Trend */}
       <div className="card p-5 mb-8">
-        <div className="w-32 h-5 rounded animate-shimmer mb-2" />
-        <div className="w-48 h-3 rounded animate-shimmer mb-4" />
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <div className="w-32 h-5 rounded animate-shimmer mb-2" />
+            <div className="w-48 h-3 rounded animate-shimmer" />
+          </div>
+          <div className="w-20 h-7 rounded-full animate-shimmer" />
+        </div>
         <div className="flex items-start justify-between mb-4">
           <div className="space-y-1">
             <div className="w-12 h-3 rounded animate-shimmer" />

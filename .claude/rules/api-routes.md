@@ -19,7 +19,7 @@ paths:
 - `PATCH /api/watchlist/findings` — persist a resolve or seven-day snooze decision for one versioned live Watchlist finding. The database stores only a SHA-256 finding hash, never the underlying description or amounts
 - `POST /api/assessment/generate` — generate/refresh the AI report for a period (Gemini structured analysis + grounded web tips); caches it and enforces a per-day cap
 - `GET /api/assessment/daily-tip` — today's lightweight AI save/earn tip (lazily generated + cached per local day)
-- `GET /api/dashboard` — aggregated stats, category breakdown, monthly trends
+- `GET /api/dashboard` — aggregated stats, category breakdown, monthly trends, and `balanceMonths`: the daily running balance for the selected month and the one before it, for the Balance Trend overlay. `balanceTrend` duplicates `balanceMonths.current.days` for one release so an open tab on the previous build still renders
 - `GET/POST /api/categories` — list (defaults + custom) + create
 - `PUT/DELETE /api/categories/[id]` — update/delete (custom only)
 - `GET/POST /api/goals` — list savings goals with funded amount and pace, + create. `?includeArchived=true` widens the list. A duplicate name is a 409, not a 500: `@@unique([userId, name])` exists because two goals called "House" are indistinguishable in every list the app shows
