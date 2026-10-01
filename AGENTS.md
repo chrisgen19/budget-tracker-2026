@@ -137,7 +137,7 @@ Active tasks:
 
 ## Database
 - `DATABASE_URL` in `.env` points to local PostgreSQL
-- Default categories are seeded (19 total: 14 expense, 5 income) from `src/lib/default-categories.ts`.
+- Default categories are seeded (20 total: 15 expense, 5 income) from `src/lib/default-categories.ts`.
   The seed checks each one individually, so a category added to that list reaches an already-seeded
   database; it used to skip the whole block whenever any default existed. `@@unique([name, type,
   userId])` does not constrain defaults, since their `userId` is NULL and Postgres treats NULLs as

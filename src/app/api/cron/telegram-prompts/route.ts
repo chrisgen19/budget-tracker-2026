@@ -9,8 +9,14 @@ import { telegramPromptOwnerId } from "@/lib/telegram/prompt-owner";
 import { miniAppButtonRow, miniAppUrl } from "@/lib/telegram/mini-app";
 import { sendWatchlistDigest } from "@/lib/telegram/watchlist-digest-send";
 
-/** The categories the prompt asks about, by their seeded names. */
-const FARE_CATEGORY = "Transportation";
+/**
+ * The categories the prompt asks about, by their seeded names.
+ *
+ * A fare is either one. A Grab ride to the office answers "Fare today?" as well as a jeep fare
+ * does, and since Ride Hailing was split out of Transportation, checking only Transportation
+ * would ask about a commute the user already logged.
+ */
+const FARE_CATEGORIES = ["Transportation", "Ride Hailing"];
 const LUNCH_CATEGORY = "Food & Dining";
 
 /**
@@ -58,14 +64,14 @@ async function sendEveningPrompt(user: PromptUser, chatId: number, now: Date): P
       userId: user.id,
       type: "EXPENSE",
       date: { gte: dayStart, lt: dayEnd },
-      category: { name: { in: [FARE_CATEGORY, LUNCH_CATEGORY] } },
+      category: { name: { in: [...FARE_CATEGORIES, LUNCH_CATEGORY] } },
     },
     select: { category: { select: { name: true } } },
   });
 
   const names = new Set(logged.map((t) => t.category.name));
   const text = composePrompt({
-    hasFare: names.has(FARE_CATEGORY),
+    hasFare: FARE_CATEGORIES.some((name) => names.has(name)),
     hasLunch: names.has(LUNCH_CATEGORY),
   });
 
