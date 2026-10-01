@@ -16,6 +16,11 @@ export const DEFAULT_CATEGORIES = [
   { name: "Food & Dining", type: TransactionType.EXPENSE, icon: "UtensilsCrossed", color: "#E07C4F" },
   { name: "Groceries", type: TransactionType.EXPENSE, icon: "ShoppingCart", color: "#2D8B5A" },
   { name: "Transportation", type: TransactionType.EXPENSE, icon: "Car", color: "#5B8DEF" },
+  // Grab, inDrive, GSM Green and taxis: a car booked for one trip. Split out of Transportation
+  // because a ₱250 ride and a ₱38 jeep fare in one category made its trend and its outliers
+  // describe neither, and the TNVS label that tracked rides before this was optional, where a
+  // category is not. Routed by name in `category-match.ts` and `SCAN_CATEGORY_RULES`.
+  { name: "Ride Hailing", type: TransactionType.EXPENSE, icon: "CarTaxiFront", color: "#6366F1" },
   { name: "Housing", type: TransactionType.EXPENSE, icon: "Home", color: "#8B6FC0" },
   { name: "Home Supplies", type: TransactionType.EXPENSE, icon: "Droplets", color: "#14B8A6" },
   { name: "Utilities", type: TransactionType.EXPENSE, icon: "Zap", color: "#F5A623" },

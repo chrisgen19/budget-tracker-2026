@@ -150,6 +150,24 @@ describe("what it asks about", () => {
     expect(text).not.toContain("Fare today?");
   });
 
+  // A Grab ride to the office is the day's fare. Since rides moved out of Transportation, checking
+  // that category alone would ask about a commute already logged.
+  it("counts a Ride Hailing expense as the day's fare", async () => {
+    loggedIn("Ride Hailing");
+    await call();
+    const text = mocks.sendMessage.mock.calls[0][1];
+    expect(text).toContain("lunch");
+    expect(text).not.toContain("Fare today?");
+  });
+
+  it("reads Ride Hailing rows as well as Transportation and Food & Dining", async () => {
+    await call();
+    const where = mocks.transactionFindMany.mock.calls[0][0].where;
+    expect(where.category.name.in).toEqual(
+      expect.arrayContaining(["Transportation", "Ride Hailing", "Food & Dining"])
+    );
+  });
+
   // The point of the whole feature: a prompt that arrives when nothing is missing trains the
   // reader to ignore it, and an ignored prompt is worth less than none.
   it("says nothing at all when both are already logged", async () => {

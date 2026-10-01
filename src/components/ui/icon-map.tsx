@@ -16,6 +16,7 @@ import {
   CupSoda,
   // Transportation
   Car,
+  CarTaxiFront,
   Plane,
   Bus,
   Train,
@@ -141,6 +142,7 @@ const ICON_REGISTRY: Record<string, ComponentType<LucideProps>> = {
   CupSoda,
   // Transportation
   Car,
+  CarTaxiFront,
   Plane,
   Bus,
   Train,

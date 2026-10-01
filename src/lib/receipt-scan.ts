@@ -80,8 +80,13 @@ export const SCAN_CATEGORY_RULES: readonly CategoryRule[] = [
       "raw or packaged food bought to cook, prepare or keep at home: supermarkets, grocery stores, wet markets, palengke, seafood markets, butchers, sari-sari stores, bakeries selling bread to take home, fresh produce, meat, seafood, dairy, eggs, bread, rice, noodles, condiments, cooking ingredients, canned food, frozen food, household snacks and beverages bought by the pack",
   },
   {
+    category: "Ride Hailing",
+    matches:
+      "a booked car or motorcycle ride: Grab, inDrive, GSM Green, Angkas, Gojek, taxis. Rides only: a GrabFood or other delivery order is Food & Dining",
+  },
+  {
     category: "Transportation",
-    matches: "ride-hailing (Grab, Gojek), taxis, MRT/bus top-ups, parking, fuel/petrol, tolls",
+    matches: "public transport fares, MRT/LRT/bus top-ups, parking, fuel/petrol, tolls",
   },
   {
     category: "Shopping",

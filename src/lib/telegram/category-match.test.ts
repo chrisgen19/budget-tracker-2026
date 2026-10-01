@@ -35,6 +35,9 @@ describe("matchCategory", () => {
   // The modes people actually use here. Before these were listed, "250 jeepney" and
   // "80 uv express" matched nothing: they were filed under Other Expense with no Gemini key,
   // or cost a model call with one, for the two most ordinary fares in the country.
+  //
+  // CATEGORIES has no Ride Hailing, so the ride apps here also prove the fallback: an account
+  // seeded before that category existed still files a ride under Transportation.
   it("matches Philippine transport modes", () => {
     for (const desc of [
       "jeepney fare",
@@ -129,6 +132,44 @@ describe("matchCategory", () => {
 
   it("returns null when there are no categories at all", () => {
     expect(matchCategory("lunch", "EXPENSE", [])).toBeNull();
+  });
+});
+
+describe("matchCategory with Ride Hailing seeded", () => {
+  const WITH_RIDES: BotCategory[] = [
+    ...CATEGORIES,
+    { id: "ride hailing", name: "Ride Hailing", type: "EXPENSE" },
+  ];
+
+  it("files a booked ride under Ride Hailing", () => {
+    for (const desc of [
+      "grab to work",
+      "grabcar home",
+      "gsm green to mega tower",
+      "(work) green gsm: mirea to csmc",
+      "indrive: mirea to cardinal",
+      "joyride to bgc",
+      "angkas",
+      "taxi",
+      "tnvs to the office",
+    ]) {
+      expect(matchCategory(desc, "EXPENSE", WITH_RIDES)?.name, desc).toBe("Ride Hailing");
+    }
+  });
+
+  // The split is the point: a ₱38 jeep fare beside a ₱250 car ride is what made Transportation's
+  // trend describe neither.
+  it("keeps public transport and fuel in Transportation", () => {
+    for (const desc of ["uv express & jeep fare", "jeepney", "mrt ticket", "tricycle", "fuel"]) {
+      expect(matchCategory(desc, "EXPENSE", WITH_RIDES)?.name, desc).toBe("Transportation");
+    }
+  });
+
+  // The food hint is checked first, so a delivery order is never mistaken for a ride.
+  it("leaves a GrabFood order in Food & Dining", () => {
+    expect(matchCategory("grab food: indian food", "EXPENSE", WITH_RIDES)?.name).toBe(
+      "Food & Dining"
+    );
   });
 });
 

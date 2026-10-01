@@ -2,6 +2,31 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-10-01 - Ride Hailing is its own category
+
+Grab, inDrive, GSM Green, Angkas and taxis move out of Transportation into a new default
+category, **Ride Hailing** (`CarTaxiFront`, `#6366F1`). An audit of the owner's ledger through
+the MCP found 132 rides tracked only by the optional TNVS label, ₱32,191.70 of Transportation's
+₱44,022.70 (73%). With a ₱38 jeep fare and a ₱250 car ride in one category, Transportation's
+trend, its Watchlist outliers and any budget allocation described neither: July's ₱10,662 of
+Transportation was ₱10,411 of rides and ₱251 of fares.
+
+- `DEFAULT_CATEGORIES` gains Ride Hailing (20 defaults: 15 expense, 5 income).
+- `matchCategory` checks a ride hint ahead of the transport hint. The transport hint keeps the
+  ride apps too, so an account without Ride Hailing still files a ride under Transportation
+  rather than Other Expense. A GrabFood order still reaches Food & Dining, since the food hint
+  runs first.
+- The receipt scan prompt gets a Ride Hailing rule, and the Transportation rule no longer names
+  ride-hailing or taxis.
+- The evening prompt counts a Ride Hailing expense as the day's fare, so a Grab commute no longer
+  draws "Fare today?".
+
+**After deploying, run `pnpm db:seed` from a Coolify terminal**, or the scan prompt names a
+category production does not have yet. The same run also creates Interest & Fees, which is
+missing from production for the same reason. Moving existing rides is a data change, not a
+migration: re-file the TNVS rows with the MCP `update_transactions` tool, and point the GSM
+Green quick-log button at Ride Hailing on `/quick-log`.
+
 ## 2026-09-30 - Balance Trend compares this month with last month
 
 The dashboard's Balance Trend card gains a "vs Aug" toggle that overlays the previous month.

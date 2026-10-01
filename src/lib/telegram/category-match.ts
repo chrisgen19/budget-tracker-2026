@@ -27,6 +27,16 @@ const HINTS: { pattern: RegExp; name: string }[] = [
     name: "food",
   },
   {
+    // Booked rides go to Ride Hailing, ahead of the transport hint below, which lists the same
+    // apps again on purpose: an account seeded before Ride Hailing existed finds no category
+    // named for this hint, the loop moves on, and the ride still lands in Transportation rather
+    // than in Other Expense or a Gemini call.
+    pattern: words(
+      "grab", "grabcar", "angkas", "taxi", "tnvs", "green gsm", "gsm green", "indrive", "joyride"
+    ),
+    name: "ride hailing",
+  },
+  {
     // Philippine modes are listed outright. `jeep` does not reach `jeepney`, because the
     // optional trailing `s` is the only inflection `words` allows and `\b` stops the
     // alternation running past "jeep" into "ney". Before these, "250 jeepney" and "80 uv
