@@ -615,6 +615,8 @@ describe("scan prompt category routing", () => {
     expect(rides).toContain("GrabFood");
     expect(transport).toContain("parking");
     expect(transport).not.toContain("Grab");
+    // Until the seed adds Ride Hailing, a ride still has a rule to follow.
+    expect(transport).toContain("only when CATEGORIES has no Ride Hailing");
   });
 
   it("gives Housing its own rule so rent stops relying on name matching", async () => {

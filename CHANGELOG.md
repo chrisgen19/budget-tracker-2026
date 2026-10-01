@@ -16,13 +16,14 @@ Transportation was ₱10,411 of rides and ₱251 of fares.
   ride apps too, so an account without Ride Hailing still files a ride under Transportation
   rather than Other Expense. A GrabFood order still reaches Food & Dining, since the food hint
   runs first.
-- The receipt scan prompt gets a Ride Hailing rule, and the Transportation rule no longer names
-  ride-hailing or taxis.
+- The receipt scan prompt gets a Ride Hailing rule. The Transportation rule keeps ride-hailing and
+  taxis only for an account with no Ride Hailing, the same fallback the matcher has, so a Grab
+  receipt scanned before the seed runs still has a rule to follow.
 - The evening prompt counts a Ride Hailing expense as the day's fare, so a Grab commute no longer
   draws "Fare today?".
 
-**After deploying, run `pnpm db:seed` from a Coolify terminal**, or the scan prompt names a
-category production does not have yet. The same run also creates Interest & Fees, which is
+**After deploying, run `pnpm db:seed` from a Coolify terminal**, or rides keep filing under
+Transportation. The same run also creates Interest & Fees, which is
 missing from production for the same reason. Moving existing rides is a data change, not a
 migration: re-file the TNVS rows with the MCP `update_transactions` tool, and point the GSM
 Green quick-log button at Ride Hailing on `/quick-log`.

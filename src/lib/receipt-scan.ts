@@ -85,8 +85,12 @@ export const SCAN_CATEGORY_RULES: readonly CategoryRule[] = [
       "a booked car or motorcycle ride: Grab, inDrive, GSM Green, Angkas, Gojek, taxis. Rides only: a GrabFood or other delivery order is Food & Dining",
   },
   {
+    // The ride clause is the fallback for an account whose categories predate Ride Hailing, the
+    // same one `category-match.ts` keeps: without it a Grab receipt there has no rule naming a
+    // category it can pick, and goes wherever name similarity sends it.
     category: "Transportation",
-    matches: "public transport fares, MRT/LRT/bus top-ups, parking, fuel/petrol, tolls",
+    matches:
+      "public transport fares, MRT/LRT/bus top-ups, parking, fuel/petrol, tolls. Ride-hailing and taxis too, but only when CATEGORIES has no Ride Hailing",
   },
   {
     category: "Shopping",
