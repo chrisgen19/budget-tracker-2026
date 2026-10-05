@@ -202,7 +202,7 @@ jobs:
         # fails. Deleting this line hands that decision back to a signal that
         # cannot tell the two apart.
         continue-on-error: true
-        uses: anthropics/claude-code-action@cfc3eb22bfed5c26ef66e3223c982af27e4524de # v1
+        uses: anthropics/claude-code-action@ed670b4cf9de2a5a570d130d2f6197b9e543cd64 # v1
         env:
           # Keeps the review subagents in the foreground, so the session cannot end
           # while they are still working. On #335 the agents were sent to the
