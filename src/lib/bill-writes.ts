@@ -53,6 +53,14 @@ const WALK_BUDGET = 20_000;
 export const PAYMENT_WINDOW_DAYS = 14;
 
 /**
+ * How recently a row must have been created for `createdForOccurrence` to count.
+ *
+ * Pay & Edit links the transaction straight after creating it, so a real one is seconds old. The
+ * margin is for a slow connection; what it rules out is naming a payment logged earlier.
+ */
+const OCCURRENCE_PAYMENT_MAX_AGE_MS = 5 * 60_000;
+
+/**
  * The instants bounding a payment window around a due date, in the user's own calendar days.
  *
  * A due date is date-only at UTC midnight; a transaction's `date` is an *instant*. Under UTC+8 a
@@ -148,6 +156,12 @@ export interface SettleBillParams {
   amount?: number;
   /** The payment to attach, for `pay_existing`. */
   transactionId?: string;
+  /**
+   * `pay_existing` only: the caller says it just created this row to settle this occurrence
+   * (Pay & Edit). A claim from the request body, so it skips the payment window only for a row
+   * younger than `OCCURRENCE_PAYMENT_MAX_AGE_MS`. Passed by the app route alone; MCP never sets it.
+   */
+  createdForOccurrence?: boolean;
   /** Days to defer, for `snooze`. Defaults to 1. */
   snoozeDays?: number;
   /** Minutes, `getTimezoneOffset()` convention. Decides which calendar day a snooze starts from. */
@@ -240,6 +254,7 @@ export const settleBill = async ({
   dueDate,
   amount: paidAmount,
   transactionId: existingTransactionId,
+  createdForOccurrence,
   snoozeDays,
   timezoneOffset,
   createdVia,
@@ -462,7 +477,7 @@ export const settleBill = async ({
     // Verify the target transaction belongs to the authenticated user.
     const existingTx = await prisma.transaction.findFirst({
       where: { id: existingTransactionId ?? "", userId },
-      select: { id: true, amount: true, type: true, categoryId: true, date: true },
+      select: { id: true, amount: true, type: true, categoryId: true, date: true, createdAt: true },
     });
     if (!existingTx) return { ok: false, reason: "TRANSACTION_NOT_FOUND" };
 
@@ -477,14 +492,29 @@ export const settleBill = async ({
      *
      * Type and window are refusals. An income row cannot settle an expense bill under any reading,
      * and a payment two months from the due date is not settling this occurrence.
+     *
+     * The window has one exception. It exists to stop the wrong existing row being named, and Pay &
+     * Edit creates its row for this occurrence, dated when it was really paid. That date can sit
+     * far from the due date either way: a bill settled two months late, or a reminder acted on up
+     * to 30 days early. Refusing it would strand the saved transaction with the reminder still
+     * firing, and paying again from there records the money twice.
+     *
+     * `createdForOccurrence` comes from the request body, so it is not trusted alone: the row's own
+     * `createdAt` has to agree. An older payment keeps the window whatever the caller says.
      */
     if (existingTx.type !== bill.type) {
       return { ok: false, reason: "TRANSACTION_TYPE_MISMATCH" };
     }
 
-    const window = paymentWindow(dueDate, timezoneOffset);
-    if (existingTx.date < window.start || existingTx.date > window.end) {
-      return { ok: false, reason: "TRANSACTION_OUTSIDE_WINDOW" };
+    const isFreshPayment =
+      createdForOccurrence === true &&
+      Date.now() - existingTx.createdAt.getTime() <= OCCURRENCE_PAYMENT_MAX_AGE_MS;
+
+    if (!isFreshPayment) {
+      const window = paymentWindow(dueDate, timezoneOffset);
+      if (existingTx.date < window.start || existingTx.date > window.end) {
+        return { ok: false, reason: "TRANSACTION_OUTSIDE_WINDOW" };
+      }
     }
 
     /**

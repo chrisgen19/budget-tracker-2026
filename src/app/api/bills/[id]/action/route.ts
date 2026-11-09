@@ -56,7 +56,8 @@ export async function POST(
 
   try {
     const body = await request.json();
-    const { action, dueDate, transactionId, snoozeDays, amount } = billActionSchema.parse(body);
+    const { action, dueDate, transactionId, snoozeDays, amount, createdForOccurrence } =
+      billActionSchema.parse(body);
 
     // "Snooze for a day" means a day in the user's calendar, not the server's and not UTC's.
     const { timezoneOffset } = (await prisma.user.findUnique({
@@ -72,6 +73,7 @@ export async function POST(
       dueDate: new Date(dueDate),
       amount,
       transactionId,
+      createdForOccurrence,
       snoozeDays,
       timezoneOffset: timezoneOffset ?? 0,
       // Named rather than left to the fallback. It reaches both audit columns -- `created_via` on

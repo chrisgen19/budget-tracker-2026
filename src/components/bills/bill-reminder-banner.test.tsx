@@ -54,7 +54,7 @@ afterEach(() => {
 });
 
 describe("BillReminderBanner account-local dates", () => {
-  it("prefills Pay & Edit with the saved account clock", () => {
+  it("prefills Pay & Edit with now on the account clock, not the due date", () => {
     vi.stubEnv("TZ", "UTC");
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-28T00:30:00.000Z"));
@@ -63,8 +63,12 @@ describe("BillReminderBanner account-local dates", () => {
     render(<BillReminderBanner onPayAndEdit={onPayAndEdit} />);
     fireEvent.click(screen.getByRole("button", { name: "Pay & Edit" }));
 
+    // The offset is 420 (UTC-7), so 00:30Z is still the previous evening for this account.
     expect(onPayAndEdit).toHaveBeenCalledWith(
-      expect.objectContaining({ date: "2026-09-05T17:30" }),
+      expect.objectContaining({
+        date: "2026-08-27T17:30",
+        billDueDate: "2026-09-05T00:00:00.000Z",
+      }),
     );
   });
 });
