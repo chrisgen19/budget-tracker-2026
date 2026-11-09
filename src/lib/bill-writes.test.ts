@@ -58,7 +58,14 @@ interface StubOptions {
   /** How many rows `transaction.updateMany` claims — 0 means the payment already had a bill. */
   claimCount?: number;
   existingTransaction?:
-    | { id: string; amount: number; type?: "INCOME" | "EXPENSE"; categoryId?: string; date?: Date }
+    | {
+        id: string;
+        amount: number;
+        type?: "INCOME" | "EXPENSE";
+        categoryId?: string;
+        date?: Date;
+        createdAt?: Date;
+      }
     | null;
   timezoneOffset?: number;
 }
@@ -151,6 +158,7 @@ const makePrisma = (options: StubOptions = {}) => {
               type: bill.type,
               categoryId: bill.categoryId,
               date: new Date("2026-09-04T10:00:00.000Z"),
+              createdAt: new Date("2026-09-04T10:00:00.000Z"),
               ...options.existingTransaction,
             }
           : null
@@ -218,6 +226,8 @@ const makePrisma = (options: StubOptions = {}) => {
     logReads: () => logReads,
   };
 };
+
+const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000);
 
 const settle = (client: PrismaClient, overrides: Record<string, unknown> = {}) =>
   settleBill({
@@ -581,7 +591,12 @@ describe("settleBill — linking a payment the user already logged", () => {
    */
   it("settles a late payment created for this occurrence", async () => {
     const { client, logWrites } = makePrisma({
-      existingTransaction: { id: "tx_late", amount: 5990, date: new Date("2026-11-06T10:00:00Z") },
+      existingTransaction: {
+        id: "tx_late",
+        amount: 5990,
+        date: new Date("2026-11-06T10:00:00Z"),
+        createdAt: minutesAgo(4),
+      },
     });
 
     const result = await settle(client, {
@@ -597,7 +612,12 @@ describe("settleBill — linking a payment the user already logged", () => {
   // A reminder can show up to 30 days ahead, so paying "now" can fall before the window too.
   it("settles an early payment created for this occurrence", async () => {
     const { client, logWrites } = makePrisma({
-      existingTransaction: { id: "tx_early", amount: 5990, date: new Date("2026-08-08T10:00:00Z") },
+      existingTransaction: {
+        id: "tx_early",
+        amount: 5990,
+        date: new Date("2026-08-08T10:00:00Z"),
+        createdAt: minutesAgo(4),
+      },
     });
 
     const result = await settle(client, {
@@ -608,6 +628,31 @@ describe("settleBill — linking a payment the user already logged", () => {
 
     expect(result.ok).toBe(true);
     expect(logWrites).toHaveLength(1);
+  });
+
+  /**
+   * The flag arrives in the request body, so it is a claim and not proof. The row's own `createdAt`
+   * is what the server can check: a payment logged a while ago was not made by this settlement,
+   * and a wrong link cannot be undone.
+   */
+  it("keeps the window for an older row that claims to be new", async () => {
+    const { client, logWrites } = makePrisma({
+      existingTransaction: {
+        id: "tx_stale",
+        amount: 5990,
+        date: new Date("2026-11-06T10:00:00Z"),
+        createdAt: minutesAgo(6),
+      },
+    });
+
+    const result = await settle(client, {
+      action: "pay_existing",
+      transactionId: "tx_stale",
+      createdForOccurrence: true,
+    });
+
+    expect(result).toEqual({ ok: false, reason: "TRANSACTION_OUTSIDE_WINDOW" });
+    expect(logWrites).toHaveLength(0);
   });
 
   it("still refuses the opposite type for a payment created for this occurrence", async () => {

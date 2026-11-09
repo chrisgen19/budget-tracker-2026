@@ -11,6 +11,7 @@ was due.
 - The link step used to refuse any payment more than 14 days from the due date, which left the
   transaction saved, the reminder still firing, and paying again recording the money twice. A
   payment created by this flow now settles its occurrence however far from the due date it is.
+  The server honours this only for a transaction created in the last 5 minutes.
 - MCP and the bills page's link-a-payment panel keep the 14-day limit.
 
 ## 2026-10-01 - Ride Hailing is its own category
