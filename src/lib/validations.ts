@@ -258,6 +258,8 @@ export const billActionSchema = z.object({
    */
   amount: z.number().positive().optional(),
   transactionId: z.string().optional(),
+  /** `pay_existing` only: the row was just created to settle this occurrence (Pay & Edit). */
+  createdForOccurrence: z.boolean().optional(),
   snoozeDays: z.number().int().min(1).max(7).optional(),
 }).refine(
   (data) => data.action !== "pay_existing" || (data.transactionId != null && data.transactionId.length > 0),

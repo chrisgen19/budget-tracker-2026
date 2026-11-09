@@ -148,6 +148,11 @@ export interface SettleBillParams {
   amount?: number;
   /** The payment to attach, for `pay_existing`. */
   transactionId?: string;
+  /**
+   * `pay_existing` only: the row was just created to settle this occurrence (Pay & Edit), so it
+   * skips the payment window. Passed by the app route alone; MCP never sets it.
+   */
+  createdForOccurrence?: boolean;
   /** Days to defer, for `snooze`. Defaults to 1. */
   snoozeDays?: number;
   /** Minutes, `getTimezoneOffset()` convention. Decides which calendar day a snooze starts from. */
@@ -240,6 +245,7 @@ export const settleBill = async ({
   dueDate,
   amount: paidAmount,
   transactionId: existingTransactionId,
+  createdForOccurrence,
   snoozeDays,
   timezoneOffset,
   createdVia,
@@ -477,14 +483,22 @@ export const settleBill = async ({
      *
      * Type and window are refusals. An income row cannot settle an expense bill under any reading,
      * and a payment two months from the due date is not settling this occurrence.
+     *
+     * The window has one exception. It exists to stop the wrong existing row being named, and a
+     * row Pay & Edit created for this occurrence cannot be the wrong one. Dated when it was really
+     * paid, it can sit far from the due date either way: a bill settled two months late, or a
+     * reminder acted on up to 30 days early. Refusing it would strand the saved transaction with
+     * the reminder still firing, and paying again from there records the money twice.
      */
     if (existingTx.type !== bill.type) {
       return { ok: false, reason: "TRANSACTION_TYPE_MISMATCH" };
     }
 
-    const window = paymentWindow(dueDate, timezoneOffset);
-    if (existingTx.date < window.start || existingTx.date > window.end) {
-      return { ok: false, reason: "TRANSACTION_OUTSIDE_WINDOW" };
+    if (!createdForOccurrence) {
+      const window = paymentWindow(dueDate, timezoneOffset);
+      if (existingTx.date < window.start || existingTx.date > window.end) {
+        return { ok: false, reason: "TRANSACTION_OUTSIDE_WINDOW" };
+      }
     }
 
     /**

@@ -184,6 +184,7 @@ export function AppShell({ children }: AppShellProps) {
             action: "pay_existing",
             dueDate: billEditData.billDueDate,
             transactionId: newTx.id,
+            createdForOccurrence: true,
           },
         });
         showToast(`${billEditData.description || "Bill"} paid`);

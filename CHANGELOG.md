@@ -2,6 +2,17 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-09 - Pay & Edit records when the bill was really paid
+
+**Enter amount** and **Pay & Edit** on the bill reminder now pre-fill the date with now rather than
+the due date, matching one-tap Pay. A bill paid two months late no longer lands in the month it
+was due.
+
+- The link step used to refuse any payment more than 14 days from the due date, which left the
+  transaction saved, the reminder still firing, and paying again recording the money twice. A
+  payment created by this flow now settles its occurrence however far from the due date it is.
+- MCP and the bills page's link-a-payment panel keep the 14-day limit.
+
 ## 2026-10-01 - Ride Hailing is its own category
 
 Grab, inDrive, GSM Green, Angkas and taxis move out of Transportation into a new default

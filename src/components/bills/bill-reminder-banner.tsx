@@ -16,7 +16,7 @@ import {
   BILL_BANNER_BASE_DESKTOP_REM,
   BILL_BANNER_BASE_REM,
 } from "@/components/ui/bottom-overlay-clearance";
-import { combineAccountDateWithTime } from "@/lib/account-time";
+import { formatAccountDateInput } from "@/lib/account-time";
 
 /** Derive display text entirely from server-provided values to stay consistent
  *  with the OVERDUE badge and sort order (avoids client/server timezone mismatch). */
@@ -131,16 +131,13 @@ export function BillReminderBanner({ onPayAndEdit }: BillReminderBannerProps) {
   const handlePayAndEditClick = () => {
     if (!reminder || !bill) return;
 
-    // Take the calendar date straight off the ISO string. Reading local
-    // getFullYear/getMonth/getDate shifted the prefilled date back a day for
-    // anyone behind UTC.
-    const datePart = reminder.dueDate.slice(0, 10);
-
     onPayAndEdit({
       amount: bill.amount,
       description: bill.description,
       type: bill.type,
-      date: combineAccountDateWithTime(datePart, new Date(), user.timezoneOffset),
+      // When it was paid, not when it was due, matching one-tap Pay. The occurrence being settled
+      // travels separately in `billDueDate`.
+      date: formatAccountDateInput(new Date(), user.timezoneOffset),
       categoryId: bill.categoryId,
       billId: bill.id,
       billDueDate: reminder.dueDate,

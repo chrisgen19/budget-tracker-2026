@@ -574,6 +574,57 @@ describe("settleBill — linking a payment the user already logged", () => {
     expect(logWrites).toHaveLength(0);
   });
 
+  /**
+   * Pay & Edit writes the transaction first and links it second, dated when it was really paid. The
+   * window guards against naming the wrong existing row, which cannot happen to a row made for this
+   * occurrence, so a 62-day-late payment must settle rather than strand a saved transaction.
+   */
+  it("settles a late payment created for this occurrence", async () => {
+    const { client, logWrites } = makePrisma({
+      existingTransaction: { id: "tx_late", amount: 5990, date: new Date("2026-11-06T10:00:00Z") },
+    });
+
+    const result = await settle(client, {
+      action: "pay_existing",
+      transactionId: "tx_late",
+      createdForOccurrence: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(logWrites).toHaveLength(1);
+  });
+
+  // A reminder can show up to 30 days ahead, so paying "now" can fall before the window too.
+  it("settles an early payment created for this occurrence", async () => {
+    const { client, logWrites } = makePrisma({
+      existingTransaction: { id: "tx_early", amount: 5990, date: new Date("2026-08-08T10:00:00Z") },
+    });
+
+    const result = await settle(client, {
+      action: "pay_existing",
+      transactionId: "tx_early",
+      createdForOccurrence: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(logWrites).toHaveLength(1);
+  });
+
+  it("still refuses the opposite type for a payment created for this occurrence", async () => {
+    const { client, logWrites } = makePrisma({
+      existingTransaction: { id: "tx_salary", amount: 40000, type: "INCOME" },
+    });
+
+    const result = await settle(client, {
+      action: "pay_existing",
+      transactionId: "tx_salary",
+      createdForOccurrence: true,
+    });
+
+    expect(result).toEqual({ ok: false, reason: "TRANSACTION_TYPE_MISMATCH" });
+    expect(logWrites).toHaveLength(0);
+  });
+
   it("accepts a payment at the far edge of the window", async () => {
     const { client } = makePrisma({
       existingTransaction: { id: "tx_edge", amount: 5990, date: new Date("2026-09-19T10:00:00Z") },
