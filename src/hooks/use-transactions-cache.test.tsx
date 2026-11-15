@@ -62,14 +62,18 @@ const idsIn = (data: unknown) =>
 afterEach(() => vi.unstubAllGlobals());
 
 describe("useBatchCreateTransactions cache insertion", () => {
-  it("splices into unfiltered caches but not into an MCP-filtered one", async () => {
+  it("splices into unfiltered caches but not into one filtered to another source", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     const anyFilters = { ...baseFilters, createdVia: "ALL" as const };
     const mcpFilters = { ...baseFilters, createdVia: "MCP" as const };
     const appFilters = { ...baseFilters, createdVia: "APP" as const };
+    const telegramFilters = { ...baseFilters, createdVia: "TELEGRAM" as const };
+    const denseFilters = { ...baseFilters, createdVia: "DENSE" as const };
 
     client.setQueryData(queryKeys.transactions.infinite(anyFilters, -480), seedPage());
+    client.setQueryData(queryKeys.transactions.infinite(telegramFilters, -480), seedPage());
+    client.setQueryData(queryKeys.transactions.infinite(denseFilters, -480), seedPage());
     client.setQueryData(queryKeys.transactions.infinite(mcpFilters, -480), seedPage());
     client.setQueryData(queryKeys.transactions.infinite(appFilters, -480), seedPage());
 
@@ -108,6 +112,14 @@ describe("useBatchCreateTransactions cache insertion", () => {
     expect(idsIn(client.getQueryData(queryKeys.transactions.infinite(mcpFilters, -480)))).not.toContain(
       "tx_app"
     );
+
+    // Nor under any other source. The predicate is an allow-list, so this holds for DENSE without
+    // it being named, and will for whatever source comes next.
+    for (const filters of [telegramFilters, denseFilters]) {
+      expect(idsIn(client.getQueryData(queryKeys.transactions.infinite(filters, -480)))).toEqual([
+        "tx_existing",
+      ]);
+    }
 
     // The MCP cache is left intact rather than emptied.
     expect(idsIn(client.getQueryData(queryKeys.transactions.infinite(mcpFilters, -480)))).toEqual([

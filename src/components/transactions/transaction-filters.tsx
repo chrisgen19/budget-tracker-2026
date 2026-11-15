@@ -43,7 +43,7 @@ export interface TransactionFilters {
    */
   creditAccountId?: string | null;
   /** Which surface created the row. "MCP" surfaces what the remote endpoint wrote. */
-  createdVia: "ALL" | "APP" | "MCP" | "TELEGRAM";
+  createdVia: "ALL" | "APP" | "MCP" | "TELEGRAM" | "DENSE";
   amountMin: number | null;
   amountMax: number | null;
   sortBy: "date" | "amount";

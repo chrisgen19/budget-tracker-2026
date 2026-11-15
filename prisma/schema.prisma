@@ -90,10 +90,14 @@ enum AiInsightKind {
 /// are a spending dimension here: `getLabelBreakdown` reports every label as spending, so a
 /// provenance label would sit in the breakdown beside Work and Family as if it were a budget. A
 /// label is also user-deletable, and an audit marker the actor can erase is not an audit marker.
+///
+/// `DENSE` is budgettrackerdense, the second app on this database, whose quick-entry line writes
+/// through the same `createTransactionBatch`. Expand-only: nothing here writes it.
 enum TransactionSource {
   APP
   MCP
   TELEGRAM
+  DENSE
 }
 
 enum ScanStatus {

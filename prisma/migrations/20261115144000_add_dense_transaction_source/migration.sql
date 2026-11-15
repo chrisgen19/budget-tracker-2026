@@ -1,0 +1,12 @@
+-- A fourth transaction source, for rows typed into budgettrackerdense's quick-entry line. That app
+-- writes through the same `createTransactionBatch` and stamps `created_via = 'DENSE'`.
+--
+-- Expand only: a new enum value changes no existing row and no code path in the release still
+-- serving during the deploy. Hand-written rather than generated, because `prisma migrate dev` also
+-- offers to "add" a plain unique on labels(name, user_id), which is the case-insensitive index from
+-- 20260405120000 that Prisma cannot express, and a new unique on existing data is a contract change.
+--
+-- Order matters after this ships: a Prisma client generated without DENSE throws while reading a
+-- DENSE row (the failure #192 describes for a category enum). This release must be live in
+-- production before budgettrackerdense writes a single row there.
+ALTER TYPE "TransactionSource" ADD VALUE 'DENSE';

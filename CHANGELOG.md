@@ -2,6 +2,29 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-15 - A fourth transaction source, DENSE
+
+`TransactionSource` gains `DENSE`, for rows typed into budgettrackerdense: a second, desktop
+review app on the same database whose quick-entry line writes through this repo's
+`createTransactionBatch`. This release only teaches the app to read and filter such rows;
+nothing here writes one.
+
+- Expand-only migration (`20261115144000_add_dense_transaction_source`), one
+  `ALTER TYPE ... ADD VALUE`. Hand-written, because `prisma migrate dev` also offers a plain
+  unique on `labels(name, user_id)` that the `LOWER(name)` index from `20260405120000` already
+  enforces.
+- Every list of sources accepts it: the transactions filter (a "Dense" option and chip), the
+  `GET /api/transactions` and MCP `search_transactions` provenance filters, and a row badge,
+  "Added from the desktop review app".
+- A row saved in the app is now spliced only into caches filtered to All or In app. It was
+  "anything but MCP or Telegram", so it would have appeared under "Source: Dense"; an allow-list
+  keeps the next source out by default.
+- The MCP test for "every source a row can carry" reads the generated enum, so the next new
+  source fails it until the filter accepts it.
+
+**Order:** this must be live in production before budgettrackerdense writes a single DENSE row.
+A Prisma client generated without the value throws while reading one, the failure #192 describes.
+
 ## 2026-11-09 - Pay & Edit records when the bill was really paid
 
 **Enter amount** and **Pay & Edit** on the bill reminder now pre-fill the date with now rather than

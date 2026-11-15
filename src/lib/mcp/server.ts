@@ -725,12 +725,13 @@ export const createBudgetMcpServer = ({
             "Only transactions carrying at least one of these label IDs. Use get_label_list to find IDs."
           ),
         createdVia: z
-          .enum(["APP", "MCP", "TELEGRAM"])
+          .enum(["APP", "MCP", "TELEGRAM", "DENSE"])
           .optional()
           .describe(
             "Where the row was created: APP for the app itself, MCP for rows an assistant wrote " +
-              "through this endpoint, TELEGRAM for rows the user's Telegram bot wrote. Use it to " +
-              "review what you added."
+              "through this endpoint, TELEGRAM for rows the user's Telegram bot wrote, DENSE for " +
+              "rows typed into the desktop review app's quick-entry line. Use it to review what " +
+              "you added."
           ),
         compact: z
           .boolean()

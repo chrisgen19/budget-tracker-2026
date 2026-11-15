@@ -13,12 +13,14 @@ export const SOURCE_OPTIONS = [
   { value: "APP" as const, label: "In app" },
   { value: "MCP" as const, label: "Claude" },
   { value: "TELEGRAM" as const, label: "Telegram" },
+  { value: "DENSE" as const, label: "Dense" },
 ];
 
 export const SOURCE_CHIP_LABELS: Record<Exclude<TransactionFilters["createdVia"], "ALL">, string> = {
   APP: "Source: In app",
   MCP: "Source: Claude",
   TELEGRAM: "Source: Telegram",
+  DENSE: "Source: Dense",
 };
 
 export const getSortLabel = (sortBy: TransactionFilters["sortBy"], sortDir: TransactionFilters["sortDir"]) =>
