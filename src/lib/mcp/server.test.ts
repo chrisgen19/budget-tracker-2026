@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { TransactionSource } from "@prisma/client";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createBudgetMcpServer } from "./server";
@@ -163,7 +164,9 @@ describe("search_transactions provenance filter", () => {
       | Record<string, { enum?: string[] }>
       | undefined;
 
-    expect(properties?.createdVia.enum).toEqual(["APP", "MCP", "TELEGRAM"]);
+    // Read from the generated enum rather than restated, so the next source added to the schema
+    // fails here until the filter accepts it (DENSE was the fourth).
+    expect(properties?.createdVia.enum).toEqual(Object.values(TransactionSource));
   });
 });
 

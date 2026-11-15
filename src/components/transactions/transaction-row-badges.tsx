@@ -1,4 +1,4 @@
-import { CalendarClock, CreditCard, Receipt, Send, Sparkles } from "lucide-react";
+import { CalendarClock, CreditCard, Receipt, Send, Sparkles, Terminal } from "lucide-react";
 import type { TransactionSource } from "@prisma/client";
 
 interface TransactionRowBadgesProps {
@@ -73,6 +73,16 @@ export function TransactionRowBadges({
           className="shrink-0 inline-flex items-center text-warm-400"
         >
           <Send className="w-3 h-3" />
+        </span>
+      )}
+      {createdVia === "DENSE" && (
+        <span
+          title="Added from the desktop review app"
+          aria-label="Added from the desktop review app"
+          role="img"
+          className="shrink-0 inline-flex items-center text-warm-400"
+        >
+          <Terminal className="w-3 h-3" />
         </span>
       )}
     </>

@@ -27,7 +27,7 @@ export const transactionFilterFields = z.object({
   labelId: z.string().min(1).max(100).nullable().default(null),
   /** Paid with this credit card. */
   creditAccountId: z.string().min(1).max(100).nullable().default(null),
-  createdVia: z.enum(["ALL", "APP", "MCP", "TELEGRAM"]).default("ALL"),
+  createdVia: z.enum(["ALL", "APP", "MCP", "TELEGRAM", "DENSE"]).default("ALL"),
   amountMin: z.number().finite().nonnegative().nullable().default(null),
   amountMax: z.number().finite().nonnegative().nullable().default(null),
   sortBy: z.enum(["date", "amount"]).default("date"),

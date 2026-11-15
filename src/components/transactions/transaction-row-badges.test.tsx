@@ -24,6 +24,18 @@ describe("TransactionRowBadges", () => {
     expect(screen.queryByLabelText("Added by Claude")).toBeNull();
   });
 
+  it("marks a row typed into the desktop review app, distinct from the other sources", () => {
+    render(<TransactionRowBadges createdVia="DENSE" />);
+    expect(screen.getByLabelText("Added from the desktop review app")).toBeDefined();
+    expect(screen.queryByLabelText("Added via Telegram")).toBeNull();
+    expect(screen.queryByLabelText("Added by Claude")).toBeNull();
+  });
+
+  it("does not mark an app row as from the desktop review app", () => {
+    render(<TransactionRowBadges createdVia="APP" />);
+    expect(screen.queryByLabelText("Added from the desktop review app")).toBeNull();
+  });
+
   it("does not mark an app row as Telegram", () => {
     render(<TransactionRowBadges createdVia="APP" />);
     expect(screen.queryByLabelText("Added via Telegram")).toBeNull();
