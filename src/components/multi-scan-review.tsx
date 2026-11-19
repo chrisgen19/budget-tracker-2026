@@ -3,6 +3,12 @@
 import { Pencil, Trash2, AlertCircle, CheckCircle2, Loader2, Rows3, RotateCw } from "lucide-react";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { ReceiptBreakdown } from "@/components/transactions/receipt-breakdown";
+import { ScanFullPicker } from "@/components/scan-review/scan-full-picker";
+import {
+  ScanQuickChips,
+  type ScanItemPatch,
+  type ScanPickerKind,
+} from "@/components/scan-review/scan-quick-chips";
 import { formatCurrency, cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
 import { useCategoriesQuery } from "@/hooks/use-categories";
@@ -11,6 +17,12 @@ import type { MultiScanItem } from "@/types";
 interface MultiScanReviewProps {
   items: MultiScanItem[];
   onEdit: (id: string) => void;
+  /** Category or label change from the quick chips. Refused upstream for a frozen row. */
+  onUpdate: (id: string, patch: ScanItemPatch) => void;
+  /** The receipt whose More picker is open, owned by the app shell (see `useScanReviewPicker`). */
+  picker: { kind: ScanPickerKind; item: MultiScanItem } | null;
+  onOpenPicker: (itemId: string, kind: ScanPickerKind) => void;
+  onClosePicker: () => void;
   onRemove: (id: string) => void;
   onItemize: (id: string) => void;
   onRetry: (id: string) => void;
@@ -24,6 +36,10 @@ interface MultiScanReviewProps {
 export function MultiScanReview({
   items,
   onEdit,
+  onUpdate,
+  picker,
+  onOpenPicker,
+  onClosePicker,
   onRemove,
   onItemize,
   onRetry,
@@ -60,6 +76,18 @@ export function MultiScanReview({
           Close
         </button>
       </div>
+    );
+  }
+
+  // More swaps the list for a full picker in the same sheet, so the user never leaves the review.
+  if (picker) {
+    return (
+      <ScanFullPicker
+        item={picker.item}
+        kind={picker.kind}
+        onUpdate={onUpdate}
+        onClose={onClosePicker}
+      />
     );
   }
 
@@ -336,6 +364,13 @@ export function MultiScanReview({
                   </button>
                 </div>
               </div>
+
+              <ScanQuickChips
+                item={item}
+                disabled={actionsDisabled}
+                onUpdate={onUpdate}
+                onMore={(kind) => onOpenPicker(item.id, kind)}
+              />
 
               {/* Line items from itemized receipts — collapsed to keep the list compact */}
               {item.data?.receiptBreakdown && (

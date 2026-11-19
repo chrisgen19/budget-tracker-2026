@@ -28,6 +28,7 @@ import { ScanReceiptSheet } from "@/components/scan-receipt-sheet";
 import { Modal } from "@/components/ui/modal";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import { MultiScanReview } from "@/components/multi-scan-review";
+import { useScanReviewPicker } from "@/hooks/use-scan-review-picker";
 import { useBillPayAndEdit } from "@/hooks/use-bill-pay-and-edit";
 import { useMultiScan } from "@/hooks/use-multi-scan";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
@@ -98,6 +99,7 @@ export function AppShell({ children }: AppShellProps) {
 
   const scan = useMultiScan();
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const reviewPicker = useScanReviewPicker(scan.items);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   // Scan limit calculations
@@ -152,6 +154,8 @@ export function AppShell({ children }: AppShellProps) {
   /** Closing discards every reviewed row, so confirm when there is anything to lose —
    *  scanned rows waiting to be saved, or failed rows still holding a retryable image. */
   const handleMultiScanClose = () => {
+    // With More open, every dismiss gesture means "back to the list", never "discard the batch".
+    if (reviewPicker.interceptClose()) return;
     if (scan.isBusy || scan.isSavingAll) return;
     if (scan.unsavedCount > 0 || scan.retryableCount > 0) {
       setConfirmDiscard(true);
@@ -159,12 +163,14 @@ export function AppShell({ children }: AppShellProps) {
     }
     scan.reset();
     setEditingItemId(null);
+    reviewPicker.close();
   };
 
   const handleConfirmDiscard = () => {
     setConfirmDiscard(false);
     scan.reset();
     setEditingItemId(null);
+    reviewPicker.close();
   };
 
   return (
@@ -363,12 +369,16 @@ export function AppShell({ children }: AppShellProps) {
       <Modal
         open={scan.showReview && editingItemId === null}
         onClose={handleMultiScanClose}
-        title="Review Scanned Receipts"
+        title={reviewPicker.title}
       >
         {scan.showReview && editingItemId === null && (
           <MultiScanReview
             items={scan.items}
             onEdit={setEditingItemId}
+            onUpdate={scan.updateItem}
+            picker={reviewPicker.picker}
+            onOpenPicker={reviewPicker.open}
+            onClosePicker={reviewPicker.close}
             onRemove={scan.removeItem}
             onItemize={scan.itemizeItem}
             onRetry={scan.retryItem}

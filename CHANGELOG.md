@@ -2,6 +2,24 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-19 - Pick category and labels straight from the receipt review
+
+**Review Scanned Receipts** shows two chip rows under each receipt, so fixing the category or
+adding a label is one tap instead of pencil, full Edit Transaction form, save.
+
+- **Category:** the receipt's quick categories for its type (the same four as the form), with the
+  current pick leading when it is not one of them. **Labels:** the same quick labels the form
+  offers, now resolved by `resolveQuickLabels` in `src/lib/quick-labels.ts`, which `LabelPicker`
+  also uses so the two cannot drift.
+- A **More** chip on either row swaps the list for a searchable picker in the same sheet, and the
+  sheet's title names it. Escape, the backdrop, the X and the mobile drag-down close the picker
+  back to the list rather than asking to discard every receipt: the picker state lives in the app
+  shell (`useScanReviewPicker`), beside the Modal whose `onClose` all four gestures share.
+- An untouched receipt still saves with no `labelIds`, so label schedules keep running. Its
+  scheduled label shows selected with a clock, and the first tap seeds from it rather than
+  dropping it.
+- Chips are disabled while saving and on rows frozen by an unconfirmed batch.
+
 ## 2026-11-15 - A fourth transaction source, DENSE
 
 `TransactionSource` gains `DENSE`, for rows typed into budgettrackerdense: a second, desktop
