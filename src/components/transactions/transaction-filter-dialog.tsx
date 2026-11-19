@@ -138,7 +138,7 @@ export function TransactionFilterDialog({
           <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-warm-400">Added via</legend>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {SOURCE_OPTIONS.map((option) => (
-              <button key={option.value} type="button" onClick={() => setDraft((current) => ({ ...current, createdVia: option.value }))} aria-pressed={draft.createdVia === option.value} className={cn("min-h-11 rounded-xl border px-3 text-sm font-medium transition-colors", draft.createdVia === option.value ? "border-amber/40 bg-amber-light/30 text-amber-dark" : "border-cream-200 text-warm-500 hover:bg-cream-50")}>
+              <button key={option.value} type="button" onClick={() => setDraft((current) => ({ ...current, createdVia: option.value }))} aria-pressed={draft.createdVia === option.value} className={cn("min-h-11 rounded-xl border px-3 text-sm font-medium transition-colors", option.value === "ALL" && "col-span-2 sm:col-span-4", draft.createdVia === option.value ? "border-amber/40 bg-amber-light/30 text-amber-dark" : "border-cream-200 text-warm-500 hover:bg-cream-50")}>
                 {option.label}
               </button>
             ))}
