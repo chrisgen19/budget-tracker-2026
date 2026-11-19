@@ -185,24 +185,35 @@ describe("CardDetailPage", () => {
 
     // The review finding on #397: reopening Pay showed a blank form over a key still armed for the
     // old payment, so a new payment was answered with it. A pinned payment shows its retry instead.
-    it("offers only the pinned payment's retry or a discard when Pay is opened over one", async () => {
+    // Retry and discard are separate tests because a saved retry closes the modal: discarding after
+    // it raced framer-motion's exit animation, and failed whenever the exit finished first.
+    const openPayOverPinned = async () => {
       hooks.pinned.payment = { kind: "PAYMENT", amount: 5000, description: "", date: "2026-09-28" };
+      render(<CardDetailPage />);
+      fireEvent.click(screen.getByRole("button", { name: "Pay" }));
+      expect(await screen.findByText(/Couldn't confirm 1 payment \(₱5,000.00\) was saved/)).toBeTruthy();
+      expect(screen.queryByLabelText(/Amount/)).toBeNull();
+    };
+
+    it("offers only the pinned payment's retry when Pay is opened over one", async () => {
       hooks.retryPayment.mockResolvedValue({
         outcome: "saved",
         payment: { id: "pay-2", kind: "PAYMENT", amount: 5000, description: "", date: "2026-09-27T16:00:00.000Z" },
       });
-      render(<CardDetailPage />);
-
-      fireEvent.click(screen.getByRole("button", { name: "Pay" }));
-      expect(await screen.findByText(/Couldn't confirm 1 payment \(₱5,000.00\) was saved/)).toBeTruthy();
-      expect(screen.queryByLabelText(/Amount/)).toBeNull();
+      await openPayOverPinned();
 
       fireEvent.click(screen.getByRole("button", { name: "Retry" }));
       await waitFor(() => expect(hooks.showToast).toHaveBeenCalledWith("Payment recorded", "success"));
       expect(hooks.retryPayment).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    });
+
+    it("discards the pinned payment when Pay is opened over one", async () => {
+      await openPayOverPinned();
 
       fireEvent.click(screen.getByRole("button", { name: /discard these payments/i }));
       expect(hooks.discardPayment).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     });
   });
 });
