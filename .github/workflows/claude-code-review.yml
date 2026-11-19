@@ -95,15 +95,38 @@ jobs:
         run: |
           set -euo pipefail
 
+          # `gh api`, retried. A transient 5xx or rate-limit page arrives as plain text, and
+          # `--jq` fails on it with "invalid character 'S' looking for beginning of value":
+          # run 44543011727 died here on one, and passed on a plain rerun. Each attempt is
+          # buffered, so a `--paginate` call failing on a later page cannot emit the earlier
+          # pages twice and double-count ids. Empty output stays empty: printing a bare
+          # newline would read as one prior comment through `wc -l` and skip the review.
+          # Still fails the step after the last attempt. Defined again in "Report what the
+          # review did": this step runs before checkout, so there is no file to share.
+          gh_api() {
+            local attempt out
+            for attempt in 1 2 3; do
+              if out=$(gh api "$@"); then
+                [ -z "$out" ] || printf '%s\n' "$out"
+                return 0
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                echo "::warning title=gh api retry::gh api $* failed (attempt $attempt of 3), retrying" >&2
+                sleep $((attempt * 5))
+              fi
+            done
+            return 1
+          }
+
           # The live PR, not the event payload, which is as old as the event.
-          pr=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '{state, draft}')
+          pr=$(gh_api "repos/$REPO/pulls/$PR_NUMBER" --jq '{state, draft}')
           state=$(jq -r .state <<<"$pr")
           draft=$(jq -r .draft <<<"$pr")
 
           # One id per line from all three places a review can land, every page.
           prior=0
           for path in issues/$PR_NUMBER/comments pulls/$PR_NUMBER/reviews pulls/$PR_NUMBER/comments; do
-            n=$(gh api --paginate "repos/$REPO/$path" \
+            n=$(gh_api --paginate "repos/$REPO/$path" \
               --jq ".[] | select(.user.login == \"$CLAUDE_BOT_LOGIN\") | .id" | wc -l)
             prior=$((prior + n))
           done
@@ -513,6 +536,24 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Same retrying `gh api` as the gate step, which explains it. Here a transient
+          # failure would not crash the step (the lookup below tolerates one), but it would
+          # drop a real comment from the count and fail the job as "nothing posted".
+          gh_api() {
+            local attempt out
+            for attempt in 1 2 3; do
+              if out=$(gh api "$@"); then
+                [ -z "$out" ] || printf '%s\n' "$out"
+                return 0
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                echo "::warning title=gh api retry::gh api $* failed (attempt $attempt of 3), retrying" >&2
+                sleep $((attempt * 5))
+              fi
+            done
+            return 1
+          }
+
           # No transcript means Claude never started. The action skips itself on a PR
           # that edits this file (it will not run a reviewer the PR has changed), and a
           # setup failure has already failed the step above.
@@ -609,7 +650,7 @@ jobs:
           while read -r kind id; do
             [ -n "${id:-}" ] || continue
             if [ "$kind" = pulls ]; then field=pull_request_url; else field=issue_url; fi
-            parent=$(gh api "repos/$REPO/$kind/comments/$id" --jq ".$field" || true)
+            parent=$(gh_api "repos/$REPO/$kind/comments/$id" --jq ".$field" || true)
             case "$parent" in
               */"$PR_NUMBER") ;;
               *) continue ;;
