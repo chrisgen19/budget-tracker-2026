@@ -106,18 +106,19 @@ function LabelList({ item, search, onUpdate, onClose }: ScanFullPickerProps & { 
 export function ScanFullPicker(props: ScanFullPickerProps) {
   const [search, setSearch] = useState("");
   const isCategory = props.kind === "category";
-  const name = props.item.data?.description || "this receipt";
 
+  // No heading of its own: the sheet's title already names this picker (`useScanReviewPicker`),
+  // and a second one left the dialog's `aria-labelledby` pointing at a stale title.
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2">
-        <button type="button" onClick={props.onClose} aria-label="Back to receipts" className="-ml-2 flex min-h-11 min-w-11 items-center justify-center rounded-xl text-warm-400 transition-colors hover:bg-cream-100 hover:text-warm-600">
-          <ArrowLeft className="h-5 w-5" />
-        </button>
-        <h3 className="min-w-0 truncate font-serif text-lg text-warm-700">
-          {isCategory ? "Category" : "Labels"} for {name}
-        </h3>
-      </div>
+      <button
+        type="button"
+        onClick={props.onClose}
+        className="-ml-2 inline-flex min-h-11 items-center gap-1.5 self-start rounded-lg px-2 text-sm font-medium text-warm-500 transition-colors hover:bg-cream-100 hover:text-warm-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/50"
+      >
+        <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+        Back to receipts
+      </button>
       <label className="relative block">
         <span className="sr-only">{isCategory ? "Search categories" : "Search labels"}</span>
         <Search aria-hidden="true" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-warm-300" />

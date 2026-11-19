@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { Pencil, Trash2, AlertCircle, CheckCircle2, Loader2, Rows3, RotateCw } from "lucide-react";
 import { CategoryIcon } from "@/components/ui/icon-map";
 import { ReceiptBreakdown } from "@/components/transactions/receipt-breakdown";
@@ -20,6 +19,10 @@ interface MultiScanReviewProps {
   onEdit: (id: string) => void;
   /** Category or label change from the quick chips. Refused upstream for a frozen row. */
   onUpdate: (id: string, patch: ScanItemPatch) => void;
+  /** The receipt whose More picker is open, owned by the app shell (see `useScanReviewPicker`). */
+  picker: { kind: ScanPickerKind; item: MultiScanItem } | null;
+  onOpenPicker: (itemId: string, kind: ScanPickerKind) => void;
+  onClosePicker: () => void;
   onRemove: (id: string) => void;
   onItemize: (id: string) => void;
   onRetry: (id: string) => void;
@@ -34,6 +37,9 @@ export function MultiScanReview({
   items,
   onEdit,
   onUpdate,
+  picker,
+  onOpenPicker,
+  onClosePicker,
   onRemove,
   onItemize,
   onRetry,
@@ -46,11 +52,6 @@ export function MultiScanReview({
   // Shares the cached categories query with the rest of the app rather than refetching on
   // every open, and gives the lookup a defined shape when the request is loading or failed.
   const { data: categories = [], isError: categoriesFailed } = useCategoriesQuery();
-
-  // The More chips swap the list for a full picker in the same sheet, so the user never leaves
-  // the review. Keyed by item id: a row removed meanwhile simply drops back to the list.
-  const [picker, setPicker] = useState<{ itemId: string; kind: ScanPickerKind } | null>(null);
-  const pickerItem = picker ? items.find((i) => i.id === picker.itemId && i.status === "success") : undefined;
 
   const resolveCategory = (categoryId?: string) =>
     categories.find((c) => c.id === categoryId);
@@ -78,13 +79,14 @@ export function MultiScanReview({
     );
   }
 
-  if (picker && pickerItem) {
+  // More swaps the list for a full picker in the same sheet, so the user never leaves the review.
+  if (picker) {
     return (
       <ScanFullPicker
-        item={pickerItem}
+        item={picker.item}
         kind={picker.kind}
         onUpdate={onUpdate}
-        onClose={() => setPicker(null)}
+        onClose={onClosePicker}
       />
     );
   }
@@ -367,7 +369,7 @@ export function MultiScanReview({
                 item={item}
                 disabled={actionsDisabled}
                 onUpdate={onUpdate}
-                onMore={(kind) => setPicker({ itemId: item.id, kind })}
+                onMore={(kind) => onOpenPicker(item.id, kind)}
               />
 
               {/* Line items from itemized receipts — collapsed to keep the list compact */}

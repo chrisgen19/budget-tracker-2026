@@ -11,7 +11,10 @@ adding a label is one tap instead of pencil, full Edit Transaction form, save.
   current pick leading when it is not one of them. **Labels:** the same quick labels the form
   offers, now resolved by `resolveQuickLabels` in `src/lib/quick-labels.ts`, which `LabelPicker`
   also uses so the two cannot drift.
-- A **More** chip on either row swaps the list for a searchable picker in the same sheet.
+- A **More** chip on either row swaps the list for a searchable picker in the same sheet, and the
+  sheet's title names it. Escape, the backdrop, the X and the mobile drag-down close the picker
+  back to the list rather than asking to discard every receipt: the picker state lives in the app
+  shell (`useScanReviewPicker`), beside the Modal whose `onClose` all four gestures share.
 - An untouched receipt still saves with no `labelIds`, so label schedules keep running. Its
   scheduled label shows selected with a clock, and the first tap seeds from it rather than
   dropping it.
