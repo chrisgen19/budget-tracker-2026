@@ -369,6 +369,7 @@ export function AppShell({ children }: AppShellProps) {
           <MultiScanReview
             items={scan.items}
             onEdit={setEditingItemId}
+            onUpdate={scan.updateItem}
             onRemove={scan.removeItem}
             onItemize={scan.itemizeItem}
             onRetry={scan.retryItem}
