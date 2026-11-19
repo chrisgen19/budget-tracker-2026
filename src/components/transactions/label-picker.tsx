@@ -4,10 +4,9 @@ import { useId, useMemo, useState } from "react";
 import { AlertTriangle, ArrowLeft, Check, ChevronRight, Clock, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLabelsQuery, useQuickLabelsQuery } from "@/hooks/use-labels";
+import { byLabelName, isLabelCompatible, resolveQuickLabels } from "@/lib/quick-labels";
 import type { LabelWithCountAndSchedules } from "@/types";
 
-/** Minimum number of stable quick choices shown before the full picker. */
-const QUICK_LABEL_COUNT = 4;
 /** Search is useful once the full checkbox list is no longer easy to scan at a glance. */
 const SEARCH_LABEL_THRESHOLD = 8;
 const EMPTY_LABELS: LabelWithCountAndSchedules[] = [];
@@ -30,40 +29,6 @@ interface LabelPickerProps {
   categoryId?: string;
 }
 
-const isCompatible = (
-  label: LabelWithCountAndSchedules,
-  transactionType?: "INCOME" | "EXPENSE",
-) =>
-  !transactionType ||
-  label.applicableTo === "BOTH" ||
-  label.applicableTo === transactionType;
-
-const byName = (a: LabelWithCountAndSchedules, b: LabelWithCountAndSchedules) =>
-  a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-
-/**
- * Most-used in this category first, then most-used overall, then alphabetical.
- *
- * The category tier is what makes the chips useful: filing Transportation should surface the label
- * used for Transportation, not the one with the largest total. The total tier still decides when a
- * category has no history -- on a new category every count is zero, and falling straight to
- * alphabetical would put Alpha ahead of a label carrying four hundred transactions.
- *
- * A missing entry is zero, never an exclusion. Every compatible label remains reachable; this only
- * decides which four are shown before "show all".
- */
-const byUsageThenName =
-  (categoryId?: string) =>
-  (a: LabelWithCountAndSchedules, b: LabelWithCountAndSchedules) => {
-    const here = (label: LabelWithCountAndSchedules) =>
-      categoryId ? (label.categoryCounts[categoryId] ?? 0) : 0;
-    return (
-      here(b) - here(a) ||
-      b._count.transactions - a._count.transactions ||
-      byName(a, b)
-    );
-  };
-
 export function LabelPicker({
   selectedIds,
   onChange,
@@ -82,7 +47,7 @@ export function LabelPicker({
   const quickLabelIds = quickLabelsQuery.data ?? EMPTY_QUICK_LABEL_IDS;
 
   const compatibleLabels = useMemo(
-    () => labels.filter((label) => isCompatible(label, transactionType)),
+    () => labels.filter((label) => isLabelCompatible(label, transactionType)),
     [labels, transactionType],
   );
 
@@ -95,23 +60,11 @@ export function LabelPicker({
   );
 
   // Quick choices never depend on selection, so choosing a label cannot make the
-  // buttons jump around. Respect the user's pin order, then backfill with labels
-  // they use most often (alphabetical for equal counts).
-  const quickLabels = useMemo(() => {
-    const compatibleById = new Map(compatibleLabels.map((label) => [label.id, label]));
-    const pinned = quickLabelIds
-      .map((id) => compatibleById.get(id))
-      .filter((label): label is LabelWithCountAndSchedules => label != null);
-    const pinnedIds = new Set(pinned.map((label) => label.id));
-    const backfill = compatibleLabels
-      .filter((label) => !pinnedIds.has(label.id))
-      .sort(byUsageThenName(categoryId));
-
-    return [...pinned, ...backfill].slice(
-      0,
-      Math.max(QUICK_LABEL_COUNT, pinned.length),
-    );
-  }, [compatibleLabels, quickLabelIds, categoryId]);
+  // buttons jump around. Shared with the scan review chips (`resolveQuickLabels`).
+  const quickLabels = useMemo(
+    () => resolveQuickLabels(labels, quickLabelIds, transactionType, categoryId),
+    [labels, quickLabelIds, transactionType, categoryId],
+  );
 
   const quickIds = useMemo(() => new Set(quickLabels.map((label) => label.id)), [quickLabels]);
   const selectedOutsideQuick = selectedLabels.filter((label) => !quickIds.has(label.id));
@@ -133,7 +86,7 @@ export function LabelPicker({
     () =>
       new Set(
         selectedLabels
-          .filter((label) => !isCompatible(label, transactionType))
+          .filter((label) => !isLabelCompatible(label, transactionType))
           .map((label) => label.id),
       ),
     [selectedLabels, transactionType],
@@ -141,7 +94,7 @@ export function LabelPicker({
   const fullLabels = useMemo(() => {
     const compatibleIds = new Set(compatibleLabels.map((label) => label.id));
     const selectedIncompatible = selectedLabels.filter((label) => !compatibleIds.has(label.id));
-    return [...selectedIncompatible, ...compatibleLabels].sort(byName);
+    return [...selectedIncompatible, ...compatibleLabels].sort(byLabelName);
   }, [compatibleLabels, selectedLabels]);
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const visibleFullLabels = normalizedSearch
@@ -167,7 +120,7 @@ export function LabelPicker({
       .filter((label) => (label.categoryCounts[categoryId] ?? 0) > 0)
       .sort(
         (a, b) =>
-          (b.categoryCounts[categoryId] ?? 0) - (a.categoryCounts[categoryId] ?? 0) || byName(a, b),
+          (b.categoryCounts[categoryId] ?? 0) - (a.categoryCounts[categoryId] ?? 0) || byLabelName(a, b),
       );
     if (usedHere.length === 0) return null;
     const usedHereIds = new Set(usedHere.map((label) => label.id));
