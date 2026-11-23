@@ -206,9 +206,12 @@ const consumeRateLimit = async (tokenId: string) => {
 /**
  * Authenticate a remote MCP request.
  *
- * Failure reasons are distinguished for logging and for the `WWW-Authenticate` description, but
- * callers must render every non-rate-limit failure as a bare 401: telling an unauthenticated
- * caller that its token exists but is revoked confirms the token is real.
+ * Failure reasons are distinguished for logging, but callers must render every non-rate-limit
+ * failure as a bare 401: telling an unauthenticated caller that its token exists but is revoked
+ * confirms the token is real. That includes the `WWW-Authenticate` challenge, which is one
+ * constant for every reason (`WWW_AUTHENTICATE` in `src/app/api/mcp/route.ts`) and must not be
+ * varied by `reason` -- it would leak the same distinction the body withholds, and the challenge
+ * also decides whether a client answers a bad credential by starting an OAuth flow.
  */
 export const authenticateMcpRequest = async (
   headers: Headers,

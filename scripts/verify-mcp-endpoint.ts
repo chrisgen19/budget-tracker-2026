@@ -111,12 +111,23 @@ async function main() {
   // --- Rejections ---
   const anonymous = await rawStatus(null);
   check("an unauthenticated request is 401", anonymous.status, 401);
+  // Not `Bearer`: that is RFC 6750's OAuth challenge, and a client reads it as grounds to start
+  // discovery and dynamic client registration against an app that is not an authorization
+  // server. The dead end then gets reported as a sign-in failure rather than a bad credential.
   check(
-    "the 401 advertises bearer auth, so a client knows what to send",
+    "the 401 challenge names the api key, not bearer auth, so no client starts an OAuth flow",
     anonymous.headers.get("www-authenticate"),
-    'Bearer realm="budgettracker"'
+    'ApiKey realm="budgettracker", header="x-api-key"'
   );
-  check("an unknown token is 401", (await rawStatus("Bearer btmcp_nope")).status, 401);
+  const unknownToken = await rawStatus("Bearer btmcp_nope");
+  check("an unknown token is 401", unknownToken.status, 401);
+  // An expired or revoked token lands here too, and it is the ordinary way a working connector
+  // breaks. Fixing only the no-credential case would leave that one still starting the cascade.
+  check(
+    "a rejected token gets the same non-OAuth challenge, not just a missing one",
+    unknownToken.headers.get("www-authenticate"),
+    'ApiKey realm="budgettracker", header="x-api-key"'
+  );
 
   // --- Full access ---
   const fullScopes: McpScope[] = [

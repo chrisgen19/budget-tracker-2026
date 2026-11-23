@@ -38,6 +38,46 @@ const JSONRPC_INVALID_REQUEST = -32600;
  */
 const MAX_MCP_BODY_BYTES = MAX_BASE64_LENGTH + 2 * 1024 * 1024;
 
+/**
+ * The 401 challenge, deliberately **not** `Bearer`.
+ *
+ * `WWW-Authenticate: Bearer` is not a neutral description of "send a token": it is RFC 6750's
+ * OAuth challenge, and an MCP client reads it as an instruction to go and get one. claude.ai's
+ * connector did exactly that against an endpoint that is not an authorization server (see the
+ * handler comment below, and #123) -- metadata discovery, then dynamic client registration
+ * against a `/register` that 404s -- and reported the dead end as "Couldn't register with this
+ * connector's sign-in service." The credential was merely expired. A user reading that message
+ * re-runs the sign-in that cannot work rather than re-minting the token that would, which is the
+ * whole bug: the response named the wrong problem.
+ *
+ * `mcp-remote` starts the same cascade from the same header, which is why the README tells
+ * Desktop users to send `x-api-key`. That advice works and does not scale: it asks every client
+ * to route around a challenge this endpoint should not be making.
+ *
+ * Two things were considered and rejected:
+ *
+ * - **Serving `/.well-known/oauth-protected-resource`** (RFC 9728). That document exists to point
+ *   a client at the authorization servers protecting a resource, and there are none. Published
+ *   without `authorization_servers` it tells a client nothing and invites the legacy fallback --
+ *   discovery at the resource origin, 404, registration -- so the cascade survives; published
+ *   *with* one it would name a server that does not exist. Describing our OAuth more precisely is
+ *   the wrong direction when the correct answer is that there is no OAuth here.
+ * - **Omitting the header.** RFC 9110 15.5.2 makes it mandatory on a 401, and a challenge is the
+ *   one place a response can say how to authenticate at all.
+ *
+ * So the scheme changes instead. No OAuth client treats a non-`Bearer` challenge as grounds to
+ * begin discovery, the 401 stays conformant, and `ApiKey` plus the header name says what this
+ * endpoint actually accepts. `x-api-key` is named rather than `authorization` because it is the
+ * one that works in every client (`Authorization` is still accepted; `authenticateMcpRequest`
+ * prefers it when both arrive).
+ *
+ * This applies to **every** auth failure, not just a missing credential. An invalid, revoked or
+ * expired token returns the same 401 and started the same cascade, and expiry is the likely way
+ * a working connector breaks -- write tokens are capped at `MAX_WRITE_TOKEN_EXPIRY_DAYS`. Fixing
+ * only the missing-credential case would leave the one that actually happens broken.
+ */
+const WWW_AUTHENTICATE = 'ApiKey realm="budgettracker", header="x-api-key"';
+
 /** A JSON-RPC error envelope. An MCP client parses these, not a framework error page. */
 const jsonRpcError = (status: number, code: number, message: string) =>
   NextResponse.json({ jsonrpc: "2.0", error: { code, message }, id: null }, { status });
@@ -48,6 +88,10 @@ const jsonRpcError = (status: number, code: number, message: string) =>
  * Every reason except rate limiting collapses to the same bare 401 body: distinguishing
  * "revoked" from "no such token" would confirm to an unauthenticated caller that the token it
  * presented is real. The distinction stays server-side, in the returned `reason`.
+ *
+ * "Invalid or missing MCP token" is the whole report a client gets, and with `WWW_AUTHENTICATE`
+ * no longer advertising OAuth it is the report a client now surfaces, rather than the
+ * registration failure it used to go looking for.
  */
 const unauthorized = (failure: McpAuthFailure) => {
   if (failure.reason === "RATE_LIMITED") {
@@ -69,7 +113,7 @@ const unauthorized = (failure: McpAuthFailure) => {
     },
     {
       status: 401,
-      headers: { "WWW-Authenticate": 'Bearer realm="budgettracker"' },
+      headers: { "WWW-Authenticate": WWW_AUTHENTICATE },
     }
   );
 };
