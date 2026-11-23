@@ -182,13 +182,15 @@ describe("POST /api/mcp body ceiling", () => {
 });
 
 /**
- * The 401 challenge must not invite an OAuth flow.
+ * The 401 challenge must not advertise OAuth.
  *
- * `WWW-Authenticate: Bearer` is RFC 6750's OAuth challenge, so a client reads it as an
- * instruction to go and get a token: metadata discovery, then dynamic client registration
- * against a `/register` this app does not serve. claude.ai reported that dead end as
- * "Couldn't register with this connector's sign-in service" for a credential that had merely
- * expired, sending the user to re-run a sign-in that cannot work instead of re-minting a token.
+ * `WWW-Authenticate: Bearer` is RFC 6750's OAuth challenge, which this app is not an
+ * authorization server for. These tests pin the **header value** and nothing about how a client
+ * reacts to it: the MCP SDK's client enters its OAuth flow on any 401 when it has an
+ * `authProvider`, so a bridge such as `mcp-remote` can still reach `/register` whatever this says.
+ * See `WWW_AUTHENTICATE` in `route.ts`. The original connector error ("Couldn't register with
+ * this connector's sign-in service", for a credential that had merely expired) is remedied by
+ * re-minting the token, not by this header.
  */
 describe("POST /api/mcp 401 challenge", () => {
   const EXPECTED = 'ApiKey realm="budgettracker", header="x-api-key"';
@@ -200,7 +202,7 @@ describe("POST /api/mcp 401 challenge", () => {
     mocks.handleRequest.mockResolvedValue(new Response("{}", { status: 200 }));
   });
 
-  it("does not advertise bearer auth, which is what starts the registration cascade", async () => {
+  it("does not advertise bearer auth", async () => {
     mocks.authenticateMcpRequest.mockResolvedValue({ ok: false, failure: { reason: "MISSING" } });
 
     const response = await POST(postRequest(call("get_budget_overview", {})));
@@ -244,7 +246,7 @@ describe("POST /api/mcp 401 challenge", () => {
     },
   );
 
-  it("reports a bad credential in the body, which is what a client now surfaces", async () => {
+  it("reports a bad credential in the body", async () => {
     mocks.authenticateMcpRequest.mockResolvedValue({ ok: false, failure: { reason: "EXPIRED" } });
 
     const response = await POST(postRequest(call("get_budget_overview", {})));

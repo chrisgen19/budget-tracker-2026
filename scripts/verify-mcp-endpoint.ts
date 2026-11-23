@@ -111,20 +111,21 @@ async function main() {
   // --- Rejections ---
   const anonymous = await rawStatus(null);
   check("an unauthenticated request is 401", anonymous.status, 401);
-  // Not `Bearer`: that is RFC 6750's OAuth challenge, and a client reads it as grounds to start
-  // discovery and dynamic client registration against an app that is not an authorization
-  // server. The dead end then gets reported as a sign-in failure rather than a bad credential.
+  // Not `Bearer`: that is RFC 6750's OAuth challenge, which this app is not an authorization
+  // server for. This pins the header value only. It does not prove how any client reacts: the MCP
+  // SDK's client enters its OAuth flow on any 401 when it has an authProvider, so a client such as
+  // `mcp-remote` can still start discovery whatever this says (see `WWW_AUTHENTICATE` in route.ts).
   check(
-    "the 401 challenge names the api key, not bearer auth, so no client starts an OAuth flow",
+    "the 401 challenge names the api key rather than advertising bearer auth",
     anonymous.headers.get("www-authenticate"),
     'ApiKey realm="budgettracker", header="x-api-key"'
   );
   const unknownToken = await rawStatus("Bearer btmcp_nope");
   check("an unknown token is 401", unknownToken.status, 401);
   // An expired or revoked token lands here too, and it is the ordinary way a working connector
-  // breaks. Fixing only the no-credential case would leave that one still starting the cascade.
+  // breaks, so the challenge must not differ between a missing credential and a rejected one.
   check(
-    "a rejected token gets the same non-OAuth challenge, not just a missing one",
+    "a rejected token gets the same challenge as a missing one",
     unknownToken.headers.get("www-authenticate"),
     'ApiKey realm="budgettracker", header="x-api-key"'
   );
