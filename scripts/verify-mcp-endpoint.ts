@@ -111,12 +111,24 @@ async function main() {
   // --- Rejections ---
   const anonymous = await rawStatus(null);
   check("an unauthenticated request is 401", anonymous.status, 401);
+  // Not `Bearer`: that is RFC 6750's OAuth challenge, which this app is not an authorization
+  // server for. This pins the header value only. It does not prove how any client reacts: the MCP
+  // SDK's client enters its OAuth flow on any 401 when it has an authProvider, so a client such as
+  // `mcp-remote` can still start discovery whatever this says (see `WWW_AUTHENTICATE` in route.ts).
   check(
-    "the 401 advertises bearer auth, so a client knows what to send",
+    "the 401 challenge names the api key rather than advertising bearer auth",
     anonymous.headers.get("www-authenticate"),
-    'Bearer realm="budgettracker"'
+    'ApiKey realm="budgettracker", header="x-api-key"'
   );
-  check("an unknown token is 401", (await rawStatus("Bearer btmcp_nope")).status, 401);
+  const unknownToken = await rawStatus("Bearer btmcp_nope");
+  check("an unknown token is 401", unknownToken.status, 401);
+  // An expired or revoked token lands here too, and it is the ordinary way a working connector
+  // breaks, so the challenge must not differ between a missing credential and a rejected one.
+  check(
+    "a rejected token gets the same challenge as a missing one",
+    unknownToken.headers.get("www-authenticate"),
+    'ApiKey realm="budgettracker", header="x-api-key"'
+  );
 
   // --- Full access ---
   const fullScopes: McpScope[] = [

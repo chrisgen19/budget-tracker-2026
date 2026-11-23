@@ -2,6 +2,38 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-23 - The MCP 401 stops advertising OAuth (effect on clients unverified)
+
+`POST /api/mcp` answered an auth failure with `WWW-Authenticate: Bearer realm="budgettracker"`.
+That is RFC 6750's OAuth challenge, for an app that is not an authorization server and has no
+`/register` (#123). claude.ai's connector answered the 401 by attempting dynamic client
+registration and reported **"Couldn't register with this connector's sign-in service"** for a
+token that had merely expired, so a bad credential read as a sign-in failure.
+
+**This is a hedge, not a fix, and its effect on clients is unverified.** The MCP SDK's client
+(read against 1.30.0) enters its OAuth flow on *any* 401 when it has an `authProvider`, and reads
+the challenge only afterwards, and only a `Bearer` one, to find `resource_metadata` and `scope`.
+So `mcp-remote`, which supplies a provider, still goes 401, discovery, `/register` for an expired
+`x-api-key`, whatever the header says. Whether claude.ai's own client keyed on the `Bearer` scheme
+is unknown: its client is not open source, and attributing the symptom to this header was an
+inference. **An expired or revoked token is fixed by re-minting it** under Profile > MCP Access and
+re-adding the connector with an `x-api-key` header.
+
+- The challenge is now `ApiKey realm="budgettracker", header="x-api-key"`. It withholds the one
+  signal (`Bearer`) that a scheme-reading client acts on, stays RFC 9110 conformant, and names the
+  header that works in every client. `Authorization: Bearer <token>` is still accepted and still
+  preferred when both arrive; nothing about what the endpoint accepts changed.
+- Applies to **every** auth failure, not just a missing credential, since expiry and revocation
+  return the same 401 and expiry is how a working connector breaks (write tokens are capped at
+  `MAX_WRITE_TOKEN_EXPIRY_DAYS`).
+- Serving `/.well-known/oauth-protected-resource` (RFC 9728) was considered and rejected: it
+  exists to point a client at the authorization servers protecting a resource, and there are
+  none. Published without `authorization_servers` it invites the legacy fallback, published with
+  one it names a server that does not exist. Omitting the header was rejected too, since RFC 9110
+  15.5.2 makes a challenge mandatory on a 401.
+- The 429 is untouched and still carries no challenge: a rate-limited credential may be fine.
+- Tests and `scripts/verify-mcp-endpoint.ts` pin the header **value** only.
+
 ## 2026-11-19 - Pick category and labels straight from the receipt review
 
 **Review Scanned Receipts** shows two chip rows under each receipt, so fixing the category or

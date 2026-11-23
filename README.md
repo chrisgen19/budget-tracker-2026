@@ -346,6 +346,14 @@ connector dialog refuses the name outright ("OAuth already sets the Authorizatio
 client registration, which fails against an app that is not an OAuth server. Authenticating on
 the first request avoids emitting the 401 that starts either cascade.
 
+> The endpoint's 401 now says `ApiKey realm="budgettracker", header="x-api-key"` instead of
+> `Bearer`. That is a hedge, not a fix, and its effect on clients is **unverified**: an SDK-based
+> client that has an auth provider, `mcp-remote` included, starts OAuth discovery on *any* 401
+> whatever the challenge says. If you see **"Couldn't register with this connector's sign-in
+> service"**, the cause is almost always an expired or revoked token. Re-mint it in
+> **Profile → MCP Access** and re-add the connector with an `x-api-key` header, rather than
+> retrying the sign-in.
+
 **Custom connector.** Settings → Connectors → Add custom connector, leave the OAuth Client ID and
 Secret **blank** (this app is not an OAuth authorization server, and its discovery endpoints
 return 404), then add a request header named `x-api-key` with the raw token as its value, no
