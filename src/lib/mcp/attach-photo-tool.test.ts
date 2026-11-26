@@ -30,6 +30,7 @@ vi.mock("@/lib/receipt-photo-storage", async (importOriginal) => ({
 }));
 
 import { createBudgetMcpServer } from "./server";
+import { BATCH_TX_OPTIONS } from "../transaction-writes";
 import type { PrismaClient } from "../budget-query-types";
 import type { McpScope } from "./scopes";
 
@@ -256,6 +257,14 @@ describe("attach_receipt_photo", () => {
     expect(transactions.get("tx_1")?.receiptPhotoId).toBe(out.photoId);
     expect(transactions.get("tx_2")?.receiptPhotoId).toBe(out.photoId);
     expect(storage.put).toHaveBeenCalledTimes(1);
+  });
+
+  // Up to 50 rows, each a few awaited statements: Prisma's 5s default could roll the links back
+  // after the photo was stored. The same bounds `updateTransactions` runs under.
+  it("links inside a transaction with the batch timeout, not Prisma's 5s default", async () => {
+    const { client } = makePrisma([{ id: "tx_1" }]);
+    await call(client, { transactionIds: ["tx_1"], imageBase64: IMAGE, photoKey: "key-1" });
+    expect(client.$transaction).toHaveBeenCalledWith(expect.any(Function), BATCH_TX_OPTIONS);
   });
 
   it("stamps the link with the token's provenance, not APP", async () => {

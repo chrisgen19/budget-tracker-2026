@@ -92,9 +92,9 @@ describe("storeReceiptPhoto", () => {
     });
   });
 
-  it("deletes the object and rethrows when the insert fails", async () => {
+  it("deletes the object and rethrows when Postgres refuses the insert", async () => {
     const storage = makeStorage();
-    const boom = new Error("db down");
+    const boom = new Prisma.PrismaClientKnownRequestError("fk", { code: "P2003", clientVersion: "x" });
     const prisma = {
       receiptPhoto: {
         findUnique: vi.fn(async () => null),
@@ -111,6 +111,28 @@ describe("storeReceiptPhoto", () => {
     ).rejects.toBe(boom);
     expect(storage.delete).toHaveBeenCalledTimes(1);
     expect(storage.delete.mock.calls[0][0]).toMatch(/^receipts\/u1\/.+\.jpg$/);
+  });
+
+  // A connection lost after the commit reports an error for a row that exists. Deleting the
+  // object then would leave that row, and every replay of its key, pointing at nothing.
+  it("keeps the object when the insert outcome is unknown, and rethrows", async () => {
+    const storage = makeStorage();
+    const lost = new Error("Connection terminated unexpectedly");
+    const prisma = {
+      receiptPhoto: {
+        findUnique: vi.fn(async () => null),
+        create: vi.fn(async () => {
+          throw lost;
+        }),
+      },
+    };
+    await expect(
+      storeReceiptPhoto(
+        { prisma: prisma as never, storage },
+        { userId: "u1", photoKey: "k1", bytes: new Uint8Array([9]) },
+      ),
+    ).rejects.toBe(lost);
+    expect(storage.delete).not.toHaveBeenCalled();
   });
 
   it("on a P2002 race deletes its object and returns the winner as a replay", async () => {

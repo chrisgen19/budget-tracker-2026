@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
  * Byte ceilings on request bodies, and the only two ways to enforce one.
  *
  * A module with no imports beyond `next/server`, for the reason `receipt-limits.ts` has none:
- * `receipt-guard.ts` — where `checkBodySize` used to live alone — pulls in the Prisma singleton
+ * `receipt-guard.ts`, where the multipart ceiling lives, pulls in the Prisma singleton
  * and the scan-quota layer, so any route wanting a size ceiling had to take a database client
  * with it. That is most of why `POST /api/transactions/batch` never got one (#138).
  *
@@ -49,12 +49,44 @@ export async function readJsonWithinLimit(
   request: Request,
   limit: number,
 ): Promise<{ ok: true; value: unknown } | { ok: false }> {
+  const read = await readBytesWithinLimit(request, limit);
+  if (!read.ok) return read;
+  // No stream to meter — an empty body, or a Request built without one. Fall back to the
+  // built-in read: there is nothing here to be large.
+  if (!read.bytes) return { ok: true, value: await request.json() };
+  return { ok: true, value: JSON.parse(new TextDecoder().decode(read.bytes)) };
+}
+
+/**
+ * Read and parse a multipart body, refusing once more than `limit` bytes have arrived.
+ *
+ * `request.formData()` has no metered read, so the bytes are counted here first and the parse
+ * then runs on a `Response` rebuilt from them with the original `content-type` (which carries
+ * the multipart boundary). Peak memory is the capped body plus its parsed parts, rather than
+ * whatever a chunked sender chose to stream. A malformed body still throws from `formData()`,
+ * as it did before, so the routes' existing 400 handling is unchanged.
+ */
+export async function readFormDataWithinLimit(
+  request: Request,
+  limit: number,
+): Promise<{ ok: true; value: FormData } | { ok: false }> {
+  const read = await readBytesWithinLimit(request, limit);
+  if (!read.ok) return read;
+  if (!read.bytes) return { ok: true, value: await request.formData() };
+  const contentType = request.headers.get("content-type") ?? "";
+  const rebuilt = new Response(read.bytes as BodyInit, { headers: { "content-type": contentType } });
+  return { ok: true, value: await rebuilt.formData() };
+}
+
+/** The metered read both parsers share. `bytes: null` means the request has no stream at all. */
+async function readBytesWithinLimit(
+  request: Request,
+  limit: number,
+): Promise<{ ok: true; bytes: Uint8Array | null } | { ok: false }> {
   if (overBodySizeLimit(request, limit)) return { ok: false };
 
   const body = request.body;
-  // No stream to meter — an empty body, or a Request built without one. Fall back to the
-  // built-in read: there is nothing here to be large.
-  if (!body) return { ok: true, value: await request.json() };
+  if (!body) return { ok: true, bytes: null };
 
   const reader = body.getReader();
   let buffer = new Uint8Array(Math.min(limit, INITIAL_BUFFER_BYTES));
@@ -82,7 +114,7 @@ export async function readJsonWithinLimit(
     total += value.byteLength;
   }
 
-  return { ok: true, value: JSON.parse(new TextDecoder().decode(buffer.subarray(0, total))) };
+  return { ok: true, bytes: buffer.subarray(0, total) };
 }
 
 /**

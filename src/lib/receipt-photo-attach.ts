@@ -11,6 +11,7 @@ import { UnreadableImageError } from "@/lib/receipt-photo-image";
 import { applyPhotoChange, type PhotoEditStamp } from "@/lib/receipt-photo-links";
 import type { PhotoStorage } from "@/lib/receipt-photo-storage";
 import { deleteUnreferencedPhotos, storeReceiptPhoto } from "@/lib/receipt-photos";
+import { BATCH_TX_OPTIONS } from "@/lib/transaction-writes";
 
 /** What the tool returns on success. Pinned by `attachReceiptPhotoOutput` with `assertExact`. */
 export interface AttachReceiptPhotoPayload {
@@ -99,7 +100,9 @@ const linkInsideTransaction = async (
       orderBy: { id: "asc" },
     });
     return { attachedTo: attached.map((t) => t.id), orphaned };
-  });
+    // Up to 50 rows, each two or three awaited statements: past Prisma's 5s default on a slow
+    // day, which would roll the links back after the photo was already stored.
+  }, BATCH_TX_OPTIONS);
 
 /** Best effort: a committed attach must not fail because a stale object could not be removed. */
 const cleanUp = async (deps: { prisma: PrismaClient; storage: PhotoStorage }, userId: string, ids: string[]) => {

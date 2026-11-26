@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthUserId } from "@/lib/session";
 import { parseLocalDate } from "@/lib/receipt-date";
-import { checkBodySize, refusalResponse, resolveMimeType } from "@/lib/receipt-guard";
+import { readUploadForm, refusalResponse, resolveMimeType } from "@/lib/receipt-guard";
 import { scanReceipt, type ScanFailure } from "@/lib/receipt-scan";
 
 /** The status and wording each post-authorization failure has always returned. */
@@ -29,12 +29,10 @@ export async function POST(request: Request) {
   const userId = await getAuthUserId();
   if (userId instanceof NextResponse) return userId;
 
-  // Rejected before request.formData() buffers the body into memory.
-  const oversized = checkBodySize(request);
-  if (oversized) return oversized;
-
   try {
-    const formData = await request.formData();
+    // Metered: refused at 5 MB as the bytes arrive, whether or not a content-length was sent.
+    const formData = await readUploadForm(request);
+    if (formData instanceof NextResponse) return formData;
     const file = formData.get("receipt");
     if (!(file instanceof File)) {
       return NextResponse.json({ error: "No receipt image provided" }, { status: 400 });

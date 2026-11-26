@@ -1,5 +1,7 @@
+// @vitest-environment node
+// Server code: jsdom swaps in its own `File`, which undici's multipart parser refuses to build.
 import { describe, expect, it } from "vitest";
-import { overBodySizeLimit, readJsonWithinLimit } from "@/lib/request-size";
+import { overBodySizeLimit, readFormDataWithinLimit, readJsonWithinLimit } from "@/lib/request-size";
 
 const LIMIT = 1024;
 
@@ -113,5 +115,58 @@ describe("readJsonWithinLimit", () => {
     await expect(readJsonWithinLimit(chunkedRequest("{not json"), LIMIT)).rejects.toThrow(
       SyntaxError,
     );
+  });
+});
+
+describe("readFormDataWithinLimit", () => {
+  const BOUNDARY = "test-boundary-1234";
+  type Part = { name: string; value: string; filename?: string; type?: string };
+  /**
+   * A real multipart body, streamed with no content-length, as a chunked upload sends it.
+   * Encoded by hand: jsdom's FormData is not one undici's `Response` knows how to serialise.
+   */
+  const chunkedMultipart = (parts: Part[]) => {
+    const text =
+      parts
+        .map((p) => {
+          const disposition = `Content-Disposition: form-data; name="${p.name}"${p.filename ? `; filename="${p.filename}"` : ""}`;
+          const type = p.type ? `\r\nContent-Type: ${p.type}` : "";
+          return `--${BOUNDARY}\r\n${disposition}${type}\r\n\r\n${p.value}\r\n`;
+        })
+        .join("") + `--${BOUNDARY}--\r\n`;
+    const bytes = new TextEncoder().encode(text);
+    return new Request("http://localhost/api/test", {
+      method: "POST",
+      headers: { "content-type": `multipart/form-data; boundary=${BOUNDARY}` },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (let at = 0; at < bytes.byteLength; at += 64) controller.enqueue(bytes.slice(at, at + 64));
+          controller.close();
+        },
+      }),
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
+  };
+
+  it("parses a multipart body under the limit, keeping the boundary", async () => {
+    const request = chunkedMultipart([
+      { name: "photoKey", value: "k1" },
+      { name: "photo", value: "jpeg", filename: "r.jpg", type: "image/jpeg" },
+    ]);
+    const result = await readFormDataWithinLimit(request, LIMIT);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.get("photoKey")).toBe("k1");
+    const photo = result.value.get("photo") as File;
+    expect(photo.name).toBe("r.jpg");
+    expect(await photo.text()).toBe("jpeg");
+  });
+
+  // The gap the multipart routes had: a chunked upload declares no length, so the header check
+  // passed it and request.formData() buffered the whole thing.
+  it("refuses an oversized multipart body that declares no content-length", async () => {
+    const request = chunkedMultipart([{ name: "padding", value: "x".repeat(LIMIT * 4) }]);
+    const result = await readFormDataWithinLimit(request, LIMIT);
+    expect(result.ok).toBe(false);
   });
 });

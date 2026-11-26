@@ -64,8 +64,9 @@ const isUniqueViolation = (error: unknown): boolean =>
  * Re-encodes and stores a receipt photo. Idempotent on `(userId, photoKey)`: a retry returns the
  * existing photo with `replayed: true` and writes nothing to R2.
  *
- * Order is object first, row second, so a row never points at a missing object. If the row
- * insert fails the object is deleted again (best effort) and the error rethrown.
+ * Order is object first, row second, so a row never points at a missing object. If Postgres
+ * refuses the insert the object is deleted again (best effort) and the error rethrown; when the
+ * outcome is unknown the object is kept, for the prune to reclaim if no row ever named it.
  *
  * @throws {UnreadableImageError} when the bytes are not an image.
  */
@@ -99,7 +100,12 @@ export const storeReceiptPhoto = async (
     });
     return { photo: toView(created), replayed: false };
   } catch (error) {
-    await storage.delete(objectKey).catch(() => undefined);
+    // Only a refusal Postgres answered for proves the row is not there. Anything else, such as
+    // a connection dropped after the commit, may have left a row naming this object, and
+    // deleting it would break that row for good; an object with no row is the prune's to take.
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      await storage.delete(objectKey).catch(() => undefined);
+    }
     if (isUniqueViolation(error)) {
       const winner = await prisma.receiptPhoto.findUnique(lookup);
       if (winner) return { photo: toView(winner), replayed: true };

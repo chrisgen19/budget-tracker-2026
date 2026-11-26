@@ -49,8 +49,8 @@ describe("scanReceipt", () => {
   // The bug this covers: the route used to encode the image before anything checked its size,
   // allocating the decoded buffer and its larger base64 form first. The pre-refactor guard
   // validated the upload before the route ever called arrayBuffer(), and passing an already
-  // encoded string gave that up. checkBodySize does not cover it: a chunked request carries no
-  // content-length.
+  // encoded string gave that up. A body ceiling alone does not cover it: an image under the
+  // ceiling still costs its buffers.
   it("does not read the image when the scan is refused", async () => {
     authorize.mockResolvedValue({ ok: false, refusal: { reason: "TOO_LARGE" } });
     const readBase64 = vi.fn(() => "should-never-be-called");

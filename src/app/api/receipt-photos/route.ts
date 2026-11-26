@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
-import { ALLOWED_TYPES, checkBodySize, resolveMimeType } from "@/lib/receipt-guard";
+import { ALLOWED_TYPES, readUploadForm, resolveMimeType } from "@/lib/receipt-guard";
 import { MAX_FILE_SIZE } from "@/lib/receipt-limits";
 import { looksLikeHeicBytes } from "@/lib/heic";
 import { UnreadableImageError } from "@/lib/receipt-photo-image";
@@ -25,12 +25,11 @@ export async function POST(request: Request) {
   if (!receiptPhotosEnabled()) {
     return fail("Receipt photos are not enabled.", 503, "PHOTOS_DISABLED");
   }
-  const tooLarge = checkBodySize(request);
-  if (tooLarge) return tooLarge;
-
   let formData: FormData;
   try {
-    formData = await request.formData();
+    const read = await readUploadForm(request);
+    if (read instanceof NextResponse) return read;
+    formData = read;
   } catch {
     return fail("Invalid form data.", 400);
   }
