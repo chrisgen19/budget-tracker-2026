@@ -38,6 +38,16 @@ the multi-scan review and the Telegram bot.
   (`LOCK_ONLY=1` runs that half without a bucket).
 - **Migration** `20261126120000_add_receipt_photos` is expand-only: a new table and a nullable
   `transactions.receipt_photo_id` with an index.
+- **Review fixes before merge.** The form waits for a photo still compressing before it saves,
+  ignores a compression a later choice or Remove replaced, locks the photo controls during the
+  save, and writes nothing when Cancel is pressed mid-upload. Editing or deleting a transaction
+  refreshes the viewer's linked rows. The viewer's Replace works while the category picker is open.
+  Upload bodies on `/api/receipt-photos` and the receipt scan routes are now metered as they
+  arrive (`readUploadForm`), so a chunked request cannot skip the 5 MB ceiling. A photo whose row
+  insert had an unknown outcome keeps its object, `attach_receipt_photo` links under the batch
+  timeout, a zoomed photo re-clamps on resize and pans with the arrow keys, expired Telegram drafts
+  release their image, and `verify-receipt-photos.ts` fails instead of passing when it never sees
+  the lock wait.
 
 ## 2026-11-26 - The UI talks to the API only through `src/hooks`, and redesigns cannot change the backend
 
