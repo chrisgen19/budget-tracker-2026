@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui/toast";
@@ -50,7 +50,7 @@ const scanHtmlFault = () => ({
 /** One client per setup() call. Building it inside the wrapper's render body would hand a
  *  fresh client to every re-render, discarding in-flight mutation state the moment any test
  *  calls rerender. */
-const createWrapper = () => {
+const createWrapper = (userOverrides: { receiptPhotosEnabled?: boolean } = {}) => {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -87,6 +87,7 @@ const createWrapper = () => {
             watchlistOutlierRatio: 3,
             watchlistLargeAmount: null,
             watchlistDuplicateAlerts: true,
+            ...userOverrides,
           }}
         >
           <ToastProvider>{children}</ToastProvider>
@@ -96,7 +97,8 @@ const createWrapper = () => {
   };
 };
 
-const setup = () => renderHook(() => useMultiScan(), { wrapper: createWrapper() });
+const setup = (userOverrides: { receiptPhotosEnabled?: boolean } = {}) =>
+  renderHook(() => useMultiScan(), { wrapper: createWrapper(userOverrides) });
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -797,5 +799,216 @@ describe("discard accounting", () => {
     // and destroy the retry queue on Escape or a swipe-down.
     expect(result.current.unsavedCount).toBe(0);
     expect(result.current.retryableCount).toBe(2);
+  });
+});
+
+describe("scans keep their photo", () => {
+  const PHOTO_FAILED = "Saved. The photo didn't upload: attach it from the transaction.";
+
+  const splitScan = () =>
+    scanOk({
+      multiCategory: true,
+      breakdown: [
+        { amount: 70, categoryId: "cat-food", description: "Groceries", lineItems: [{ name: "Rice", amount: 70 }] },
+        { amount: 50, categoryId: "cat-household", description: "Cleaning", lineItems: [{ name: "Bleach", amount: 50 }] },
+      ],
+    });
+
+  type Route = {
+    batch?: () => unknown;
+    upload?: (name: string, photoKey: string) => unknown;
+  };
+
+  /** Answer each endpoint by URL, since scans and uploads run concurrently. "split.jpg"
+   *  scans as a two-category receipt, anything else as a single one. */
+  const routeFetch = (route: Route) => {
+    fetchMock.mockImplementation(async (url: string, init: { body: FormData | string }) => {
+      if (url === "/api/receipts/scan") {
+        const name = ((init.body as FormData).get("receipt") as File).name;
+        return name === "split.jpg" ? splitScan() : scanOk();
+      }
+      if (url === "/api/receipt-photos") {
+        const body = init.body as FormData;
+        const name = (body.get("photo") as File).name;
+        return route.upload!(name, body.get("photoKey") as string);
+      }
+      if (url === "/api/transactions/batch") return route.batch!();
+      throw new Error(`unexpected fetch ${url}`);
+    });
+  };
+
+  const photoOk = (id: string) => ({
+    ok: true,
+    status: 201,
+    json: async () => ({ photo: { id, width: 1, height: 1, byteSize: 1, createdAt: "" } }),
+  });
+  const saved = () => ({ ok: true, status: 201, json: async () => ({ transactions: [] }) });
+  const lost = () => ({ ok: false, status: 500, json: async () => ({}) });
+
+  const callsTo = (url: string) => fetchMock.mock.calls.filter((c) => c[0] === url);
+  const batchBodies = () =>
+    callsTo("/api/transactions/batch").map(
+      (c) => JSON.parse((c[1] as { body: string }).body) as {
+        clientBatchId: string;
+        transactions: Record<string, unknown>[];
+      },
+    );
+  const uploadKeys = () =>
+    callsTo("/api/receipt-photos").map((c) => {
+      const body = (c[1] as { body: FormData }).body;
+      return [(body.get("photo") as File).name, body.get("photoKey")];
+    });
+
+  /** One receipt itemized into two rows, plus a single receipt. */
+  const scanTwoReceipts = async (result: ReturnType<typeof setup>["result"]) => {
+    await act(async () => {
+      await result.current.scanMultiple([receipt("split.jpg"), receipt("single.jpg")]);
+    });
+    const splitId = result.current.items.find((i) => i.fileName === "split.jpg")!.id;
+    await act(async () => {
+      await result.current.itemizeItem(splitId);
+    });
+    expect(result.current.items).toHaveLength(3);
+  };
+
+  it("uploads each receipt once and sends its photo id on every row of that receipt", async () => {
+    routeFetch({ upload: (name) => photoOk(`photo-${name}`), batch: saved });
+    const { result } = setup({ receiptPhotosEnabled: true });
+    await scanTwoReceipts(result);
+
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    expect(uploadKeys().map(([name]) => name).sort()).toEqual(["single.jpg", "split.jpg"]);
+    const [body] = batchBodies();
+    const byDescription = Object.fromEntries(
+      body.transactions.map((t) => [t.description, t.receiptPhotoId]),
+    );
+    expect(byDescription).toEqual({
+      Groceries: "photo-split.jpg",
+      Cleaning: "photo-split.jpg",
+      Merchant: "photo-single.jpg",
+    });
+    // Every upload finished before the batch went out.
+    const order = fetchMock.mock.calls.map((c) => c[0]);
+    expect(order.lastIndexOf("/api/receipt-photos")).toBeLessThan(
+      order.indexOf("/api/transactions/batch"),
+    );
+    expect(screen.queryByText(PHOTO_FAILED)).toBeNull();
+  });
+
+  it("replays the pinned photo ids after an unconfirmed save, without uploading again", async () => {
+    const batches = [lost, saved];
+    routeFetch({ upload: (name) => photoOk(`photo-${name}`), batch: () => batches.shift()!() });
+    const { result } = setup({ receiptPhotosEnabled: true });
+    await scanTwoReceipts(result);
+
+    await act(async () => {
+      await result.current.saveAll();
+    });
+    const keysAfterFirst = uploadKeys();
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    const [first, retry] = batchBodies();
+    expect(retry).toEqual(first);
+    // The pinned photo keys were spent once: the server already holds those photos.
+    expect(uploadKeys()).toEqual(keysAfterFirst);
+    expect(keysAfterFirst).toHaveLength(2);
+    await waitFor(() => expect(result.current.items).toHaveLength(0));
+  });
+
+  it("saves a receipt whose upload failed without a photo id, and says so once", async () => {
+    routeFetch({
+      upload: (name) =>
+        name === "split.jpg"
+          ? { ok: false, status: 503, json: async () => ({ code: "PHOTOS_DISABLED" }) }
+          : photoOk(`photo-${name}`),
+      batch: saved,
+    });
+    const { result } = setup({ receiptPhotosEnabled: true });
+    await scanTwoReceipts(result);
+
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    const [body] = batchBodies();
+    for (const row of body.transactions) {
+      if (row.description === "Merchant") expect(row.receiptPhotoId).toBe("photo-single.jpg");
+      else expect(row).not.toHaveProperty("receiptPhotoId");
+    }
+    expect(await screen.findAllByText(PHOTO_FAILED)).toHaveLength(1);
+  });
+
+  it("keeps the same absence when a save with a failed upload is replayed", async () => {
+    const batches = [lost, saved];
+    routeFetch({
+      upload: () => ({ ok: false, status: 500, json: async () => ({}) }),
+      batch: () => batches.shift()!(),
+    });
+    const { result } = setup({ receiptPhotosEnabled: true });
+    await act(async () => {
+      await result.current.scanMultiple([receipt("single.jpg")]);
+    });
+
+    await act(async () => {
+      await result.current.saveAll();
+    });
+    // No toast for a save that was not confirmed.
+    expect(screen.queryByText(PHOTO_FAILED)).toBeNull();
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    const [first, retry] = batchBodies();
+    expect(retry).toEqual(first);
+    expect(retry.transactions[0]).not.toHaveProperty("receiptPhotoId");
+    // Once the batch went out without the photo, uploading it now could not attach it.
+    expect(uploadKeys()).toHaveLength(1);
+    expect(await screen.findAllByText(PHOTO_FAILED)).toHaveLength(1);
+  });
+
+  it("uploads nothing and sends the batch unchanged when photos are off", async () => {
+    routeFetch({ upload: () => photoOk("never"), batch: saved });
+    const { result } = setup({ receiptPhotosEnabled: false });
+    await scanTwoReceipts(result);
+    const groupId = result.current.items.find((i) => i.parentId)!.data!.receiptGroupId;
+
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    expect(callsTo("/api/receipt-photos")).toHaveLength(0);
+    const [body] = batchBodies();
+    expect(body.transactions).toEqual([
+      {
+        amount: 70,
+        description: "Groceries",
+        type: "EXPENSE",
+        date: expect.any(String),
+        categoryId: "cat-food",
+        receiptGroupId: groupId,
+        receiptBreakdown: { total: 70, items: [{ name: "Rice", amount: 70 }] },
+      },
+      {
+        amount: 50,
+        description: "Cleaning",
+        type: "EXPENSE",
+        date: expect.any(String),
+        categoryId: "cat-household",
+        receiptGroupId: groupId,
+        receiptBreakdown: { total: 50, items: [{ name: "Bleach", amount: 50 }] },
+      },
+      {
+        amount: 120,
+        description: "Merchant",
+        type: "EXPENSE",
+        date: expect.any(String),
+        categoryId: "cat-food",
+      },
+    ]);
   });
 });

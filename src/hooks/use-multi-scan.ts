@@ -10,11 +10,31 @@ import {
 import { useUser } from "@/components/user-provider";
 import { useToast } from "@/components/ui/toast";
 import { BatchSaveError, useBatchCreateTransactions } from "@/hooks/use-transactions";
+import {
+  photoIdsByReceipt,
+  planScanPhotos,
+  receiptKeyOf,
+  uploadScanPhotos,
+  type ScanPhoto,
+} from "@/hooks/upload-scan-photos";
 import { MAX_BATCH_TRANSACTIONS } from "@/lib/validations";
 import type { MultiScanItem } from "@/types";
 
 /** Parallel scan requests in flight. */
 const CONCURRENCY = 3;
+
+const PHOTO_UPLOAD_FAILED = "Saved. The photo didn't upload: attach it from the transaction.";
+
+/** An unacknowledged batch save. See `pendingSaveRef`. */
+interface PendingSave {
+  key: string;
+  items: MultiScanItem[];
+  /** One per receipt, empty when receipt photos are off. */
+  photos: ScanPhoto[];
+  /** True once the batch has gone out. From then on the server replays what that request
+   *  carried, so the photo ids are frozen with the rows: a late upload could never attach. */
+  sent: boolean;
+}
 
 type ScanData = NonNullable<MultiScanItem["data"]>;
 type ScanBreakdown = NonNullable<ScanData["breakdown"]>;
@@ -32,6 +52,24 @@ const readJson = async (res: Response): Promise<Record<string, unknown>> => {
 
 const errorFrom = (body: Record<string, unknown>, fallback: string): string =>
   typeof body.error === "string" ? body.error : fallback;
+
+/** One batch row. `receiptPhotoId` is omitted, never null, when the receipt has no photo,
+ *  so a save with photos off sends exactly the body it always did. */
+const toBatchRow = (item: MultiScanItem, receiptPhotoId: string | undefined) => {
+  const data = item.data!;
+  return {
+    amount: data.amount!,
+    description: data.description!,
+    type: data.type!,
+    date: data.date ? new Date(data.date).toISOString() : new Date().toISOString(),
+    categoryId: data.categoryId!,
+    ...(data.labelIds !== undefined && { labelIds: data.labelIds }),
+    ...(data.creditAccountId && { creditAccountId: data.creditAccountId }),
+    ...(data.receiptGroupId && { receiptGroupId: data.receiptGroupId }),
+    ...(data.receiptBreakdown && { receiptBreakdown: data.receiptBreakdown }),
+    ...(receiptPhotoId && { receiptPhotoId }),
+  };
+};
 
 interface ScanInput {
   itemId: string;
@@ -71,7 +109,10 @@ export function useMultiScan() {
   // replays whatever the key already created, so resending a *grown* payload under the same
   // key would return only the original rows while the client marked the additions saved,
   // dropping them silently. Cleared once a save is acknowledged.
-  const pendingSaveRef = useRef<{ key: string; items: MultiScanItem[] } | null>(null);
+  //
+  // The receipt photos are pinned with it: each receipt's upload key, and the photo id once
+  // stored, so a retry neither uploads again nor sends ids that differ from the first try.
+  const pendingSaveRef = useRef<PendingSave | null>(null);
 
   // Ids of rows sitting in an unacknowledged batch. Mirrored into state so the review can
   // stop offering edits that a replay would silently ignore.
@@ -345,10 +386,15 @@ export function useMultiScan() {
         const index = prev.findIndex((i) => i.id === id);
         if (index === -1) return prev;
         // One receipt was paid one way, so a card picked before itemizing stays on every part.
-        const card = prev[index].data?.creditAccountId;
-        const parts = card
-          ? children.map((child) => ({ ...child, data: { ...child.data, creditAccountId: card } }))
-          : children;
+        // Each part also keeps the receipt's image: the parent leaves the queue here, and the
+        // save uploads the photo once per receipt group from whichever part it meets first.
+        const { imageFile, data: parentData } = prev[index];
+        const card = parentData?.creditAccountId;
+        const parts = children.map((child) => ({
+          ...child,
+          imageFile,
+          ...(card && { data: { ...child.data, creditAccountId: card } }),
+        }));
         const next = [...prev];
         next.splice(index, 1, ...parts);
         return next;
@@ -366,7 +412,9 @@ export function useMultiScan() {
       // is what actually holds.
       if (savingRef.current || unconfirmedIds.has(id)) return;
       const item = itemsRef.current.find((i) => i.id === id);
-      if (!item) return;
+      // A part already came from an itemization. It holds the whole receipt's image, so
+      // itemizing it again would split the full receipt a second time.
+      if (!item || item.parentId) return;
 
       // Already present from the combined scan: no second call, no extra credit.
       if (item.data?.breakdown?.length) {
@@ -493,6 +541,9 @@ export function useMultiScan() {
    * disappear with no way back to them short of re-picking the files.
    */
   const saveAll = useCallback(async () => {
+    // Uploading photos widens the window between pressing Save and the batch going out.
+    if (savingRef.current) return;
+
     // A previous attempt that was never acknowledged is resent exactly as it went out,
     // rather than rebuilt from a queue the user may have added to since.
     const pending = pendingSaveRef.current;
@@ -510,24 +561,27 @@ export function useMultiScan() {
 
     savingRef.current = true;
     setIsSavingAll(true);
-    pendingSaveRef.current = pending ?? { key: crypto.randomUUID(), items: submitItems };
+    const save: PendingSave = pending ?? {
+      key: crypto.randomUUID(),
+      items: submitItems,
+      photos: user.receiptPhotosEnabled ? planScanPhotos(submitItems) : [],
+      sent: false,
+    };
+    pendingSaveRef.current = save;
 
+    let photoFailed = false;
     try {
+      // Uploaded first and unlinked, because a replayed batch returns its rows in no fixed
+      // order and they could not be matched back to receipts afterwards.
+      if (!save.sent) {
+        save.photos = await uploadScanPhotos(save.photos);
+        save.sent = true;
+      }
+      const photoIds = photoIdsByReceipt(save.photos);
+      photoFailed = save.photos.some((photo) => !photo.photoId);
       await batchCreateMutation.mutateAsync({
-        clientBatchId: pendingSaveRef.current.key,
-        transactions: submitItems.map((item) => ({
-          amount: item.data!.amount!,
-          description: item.data!.description!,
-          type: item.data!.type!,
-          date: item.data!.date
-            ? new Date(item.data!.date).toISOString()
-            : new Date().toISOString(),
-          categoryId: item.data!.categoryId!,
-          ...(item.data!.labelIds !== undefined && { labelIds: item.data!.labelIds }),
-          ...(item.data!.creditAccountId && { creditAccountId: item.data!.creditAccountId }),
-          ...(item.data!.receiptGroupId && { receiptGroupId: item.data!.receiptGroupId }),
-          ...(item.data!.receiptBreakdown && { receiptBreakdown: item.data!.receiptBreakdown }),
-        })),
+        clientBatchId: save.key,
+        transactions: submitItems.map((item) => toBatchRow(item, photoIds.get(receiptKeyOf(item)))),
       });
     } catch (error) {
       // A definitive rejection wrote nothing, so the pin is dropped and the user's
@@ -556,6 +610,7 @@ export function useMultiScan() {
     // Acknowledged, so the next save is a new intent and needs its own key.
     pendingSaveRef.current = null;
     setUnconfirmedIds(new Set());
+    if (photoFailed) showToast(PHOTO_UPLOAD_FAILED, "error");
 
     // Only the rows actually submitted are removed. Anything added while the save was
     // unacknowledged is still unsaved and stays in the queue for the next attempt.
@@ -576,7 +631,7 @@ export function useMultiScan() {
         ? `Saved ${savedIds.size} transaction${savedIds.size === 1 ? "" : "s"}. ${savable} still to save.`
         : `Saved ${savedIds.size} transaction${savedIds.size === 1 ? "" : "s"}. ${remaining.length} receipt${remaining.length === 1 ? "" : "s"} still need attention.`,
     );
-  }, [batchCreateMutation, reset, showToast]);
+  }, [batchCreateMutation, reset, showToast, user.receiptPhotosEnabled]);
 
   /** True while any row is mid-flight; closing or saving must wait for these. */
   const isBusy = items.some((i) => i.status === "scanning" || i.status === "breaking_down");

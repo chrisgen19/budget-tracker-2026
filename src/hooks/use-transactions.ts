@@ -613,6 +613,8 @@ export function useBatchCreateTransactions() {
         categoryId: string;
         receiptGroupId?: string;
         receiptBreakdown?: unknown;
+        /** An uploaded receipt photo to link. Omitted, not null, when there is none. */
+        receiptPhotoId?: string;
       }>;
       /** Idempotency key so retrying an ambiguous failure cannot double-post. */
       clientBatchId?: string;
