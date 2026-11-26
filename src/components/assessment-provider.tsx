@@ -4,9 +4,8 @@ import { createContext, useCallback, useContext, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/components/ui/toast";
 import { useUser } from "@/components/user-provider";
-import { assessmentKeys } from "@/hooks/use-assessment";
+import { assessmentKeys, generateAssessment } from "@/hooks/use-assessment";
 import type { AssessmentPayload } from "@/lib/ai-assessment";
-import type { AiAssessmentResponse } from "@/types";
 
 interface GenerateArgs {
   from: string;
@@ -54,16 +53,7 @@ export function AssessmentProvider({ children }: { children: React.ReactNode }) 
       // Fire-and-forget: not tied to any component, so it survives navigation.
       (async () => {
         try {
-          const res = await fetch("/api/assessment/generate", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ from, to, payload }),
-          });
-          if (!res.ok) {
-            const data = (await res.json().catch(() => null)) as { error?: string } | null;
-            throw new Error(data?.error ?? "Failed to generate assessment");
-          }
-          const data = (await res.json()) as AiAssessmentResponse;
+          const data = await generateAssessment({ from, to, payload });
           // Prime the cache so the tab shows the report immediately on return.
           queryClient.setQueryData(assessmentKeys.report(user.email, { granularity, from, to }), data);
           showToast("AI assessment ready ✨");

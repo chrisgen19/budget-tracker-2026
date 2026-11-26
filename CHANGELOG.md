@@ -2,6 +2,42 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-26 - The UI talks to the API only through `src/hooks`, and redesigns cannot change the backend
+
+Groundwork for redesigning the web app repeatedly without the redesigns leaking into the API that
+MCP, the Telegram bot, the Mini App and a planned mobile app all depend on.
+
+- **Every `/api` request from the web UI now lives in `src/hooks`.** Seven files called `fetch`
+  directly (18 calls): `privacy-provider.tsx`, `assessment-provider.tsx`,
+  `admin/credit-cards-access-card.tsx`, `profile/mcp-tokens-form.tsx`, and the `/profile`,
+  `/admin` and `/admin/settings` pages. Their requests moved to `profile-api.ts`, `admin-api.ts`,
+  `mcp-tokens-api.ts`, and into the existing `use-preferences.ts` and `use-assessment.ts`. A
+  redesign can now replace components and pages without touching a URL, a request body or an
+  error message. Behaviour is unchanged on purpose: the components keep their own optimistic
+  state, write queues and wording, and moving any of them onto React Query is a separate change.
+- **`ApiRefusedError`** (`src/hooks/api-error.ts`) keeps "the server refused" apart from "the
+  request never arrived". The privacy toggle and `/admin/settings` give different advice for the
+  two, and that distinction would otherwise have been lost when the `res.ok` check moved out of
+  the component. `api-error.test.ts` pins it.
+- **New `Redesign scope` workflow.** A PR from a `feature/redesign-*` branch fails if it changes
+  backend code: `src/app/api/`, `prisma/`, `mcp-server/`, `src/lib/mcp/`, `src/lib/telegram/`,
+  `src/lib/validations.ts`, middleware, instrumentation, `nixpacks.toml`, `.github/`, or any
+  `src/lib` module that is server code by content: it imports the Prisma client (either quote
+  style, alias or relative path), a server-only package (`next/server`, `next-auth`, `resend`,
+  `@google/genai`, ...), or one of `session`/`auth`/`email`/`gemini`. Matching by content means a
+  new `*-writes.ts` is covered without editing a list, and it is what catches `session.ts`, where
+  a change rewrites API access control without touching the database. The backend half goes in
+  its own PR, merged first. Other branches skip the job. Run it locally with
+  `.github/scripts/check-redesign-scope.sh origin/main HEAD`; a missing base ref now fails rather
+  than reporting an empty diff as clean. Checked against history: it flags `7891c2c`, the
+  filter-bar redesign that also changed `/api/transactions` search, and passes the UI-only
+  redesigns `fec180c` and `e2a61bc`.
+- **The check runs from `main`, not from the PR** (`pull_request_target`). Under `pull_request`
+  a redesign PR could rewrite the script to `exit 0` or delete the step and pass its own check.
+  Safe under this trigger because nothing from the PR is checked out or executed: the head is
+  fetched as git objects and read with `git diff`/`git show`, with a read-only token that is not
+  persisted. The workflow therefore takes effect only once it is on `main`.
+
 ## 2026-11-23 - The MCP 401 stops advertising OAuth (effect on clients unverified)
 
 `POST /api/mcp` answered an auth failure with `WWW-Authenticate: Bearer realm="budgettracker"`.

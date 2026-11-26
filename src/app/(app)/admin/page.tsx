@@ -4,16 +4,8 @@ import { useEffect, useState } from "react";
 import { Shield, Users, ArrowLeftRight } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { fetchAdminUsers, updateUserRole, type AdminUser } from "@/hooks/admin-api";
 import type { UserRole } from "@prisma/client";
-
-interface AdminUser {
-  id: string;
-  name: string;
-  email: string;
-  role: UserRole;
-  createdAt: string;
-  _count: { transactions: number };
-}
 
 const ROLE_STYLES: Record<UserRole, { bg: string; text: string }> = {
   ADMIN: { bg: "bg-purple-100", text: "text-purple-700" },
@@ -30,10 +22,7 @@ export default function AdminPage() {
   useEffect(() => {
     const fetchUsers = async () => {
       try {
-        const res = await fetch("/api/admin/users");
-        if (!res.ok) throw new Error("Failed to fetch users");
-        const data = await res.json();
-        setUsers(data);
+        setUsers(await fetchAdminUsers());
       } catch {
         setError("Failed to load users. Please try again.");
       } finally {
@@ -47,18 +36,7 @@ export default function AdminPage() {
   const handleRoleChange = async (userId: string, newRole: "FREE" | "PAID") => {
     setUpdatingId(userId);
     try {
-      const res = await fetch(`/api/admin/users/${userId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: newRole }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error ?? "Failed to update role");
-      }
-
-      const updated = await res.json();
+      const updated = await updateUserRole(userId, newRole);
       setUsers((prev) =>
         prev.map((u) => (u.id === userId ? { ...u, role: updated.role } : u))
       );

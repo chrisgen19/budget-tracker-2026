@@ -3,6 +3,9 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
 
 import { useToast } from "@/components/ui/toast";
+import { ApiRefusedError } from "@/hooks/api-error";
+import { fetchPreferences, savePreferences } from "@/hooks/use-preferences";
+
 interface PrivacyContextValue {
   hideAmounts: boolean;
   toggleHideAmounts: () => void;
@@ -101,9 +104,7 @@ export function PrivacyProvider({
 
     const fetchPreference = async () => {
       try {
-        const res = await fetch("/api/preferences");
-        if (!res.ok) return;
-        const data = await res.json();
+        const data = await fetchPreferences();
         if (abandoned || toggledLocally.current) return;
         confirmedValue.current = data.hideAmounts;
         setHideAmounts(data.hideAmounts);
@@ -145,22 +146,17 @@ export function PrivacyProvider({
 
     const write = writeQueue.current.then(async () => {
       try {
-        const res = await fetch("/api/preferences", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ hideAmounts: newValue }),
-        });
-
-        if (res.ok) {
-          confirmedValue.current = newValue;
-        } else {
-          // The two failures need different advice: the server refused this value, versus the
-          // request never arrived. Telling someone to check their connection when the server
-          // rejected the value sends them to look at the wrong thing.
-          rollBack("Could not save that. Please try again.");
-        }
-      } catch {
-        rollBack("Could not save that. Check your connection.");
+        await savePreferences({ hideAmounts: newValue });
+        confirmedValue.current = newValue;
+      } catch (error) {
+        // The two failures need different advice: the server refused this value, versus the
+        // request never arrived. Telling someone to check their connection when the server
+        // rejected the value sends them to look at the wrong thing.
+        rollBack(
+          error instanceof ApiRefusedError
+            ? "Could not save that. Please try again."
+            : "Could not save that. Check your connection."
+        );
       }
     });
 
