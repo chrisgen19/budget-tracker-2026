@@ -233,7 +233,13 @@ async function main() {
       const out = scanned.structuredContent as Record<string, unknown> | undefined;
       if (out) {
         report("it returns a positive amount", typeof out.amount === "number" && (out.amount as number) > 0, String(out.amount));
-        report("it returns a YYYY-MM-DD date", /^\d{4}-\d{2}-\d{2}$/.test(String(out.date)), String(out.date));
+        // A bare date normally, but a full capture timestamp when the receipt's own date was
+        // unreadable and the photo's EXIF time was used instead (see scanReceipt).
+        report(
+          "it returns a YYYY-MM-DD date, with a time only on a photo fallback",
+          /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?$/.test(String(out.date)),
+          String(out.date)
+        );
 
         // The category must be one the user can actually write to, or create_transactions would
         // reject it and the scan would be wasted.
