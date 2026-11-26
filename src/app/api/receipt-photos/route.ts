@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { ALLOWED_TYPES, checkBodySize, resolveMimeType } from "@/lib/receipt-guard";
 import { MAX_FILE_SIZE } from "@/lib/receipt-limits";
+import { looksLikeHeicBytes } from "@/lib/heic";
 import { UnreadableImageError } from "@/lib/receipt-photo-image";
 import {
   createPhotoStorage,
@@ -43,8 +44,9 @@ export async function POST(request: Request) {
   }
   if (file.size > MAX_FILE_SIZE) return fail("File too large. Maximum size is 4 MB.", 413);
 
+  let bytes: Uint8Array = new Uint8Array();
   try {
-    const bytes = new Uint8Array(await file.arrayBuffer());
+    bytes = new Uint8Array(await file.arrayBuffer());
     const { photo, replayed } = await storeReceiptPhoto(
       { prisma, storage: createPhotoStorage() },
       { userId, photoKey: photoKey.data, bytes },
@@ -52,6 +54,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ photo }, { status: replayed ? 200 : 201 });
   } catch (error) {
     if (error instanceof UnreadableImageError) {
+      // The sharp build decodes HEIF for AVIF only, so a HEIC upload always lands here.
+      const mime = resolveMimeType(file);
+      if (mime === "image/heic" || mime === "image/heif" || looksLikeHeicBytes(bytes)) {
+        return fail("HEIC photos aren't supported. Send a JPEG or PNG.", 415);
+      }
       return fail("That file isn't a readable image.", 422);
     }
     if (error instanceof PhotoStorageError) return fail("Photo storage failed.", 502);

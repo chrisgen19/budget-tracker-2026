@@ -88,6 +88,18 @@ describe("POST /api/receipt-photos", () => {
     expect(mocks.put).not.toHaveBeenCalled();
   });
 
+  it("415 for a HEIC upload sharp cannot decode, by declared type", async () => {
+    const res = await post(new File([new Uint8Array([1, 2, 3, 4])], "r.heic", { type: "image/heic" }));
+    expect(res.status).toBe(415);
+    expect(await res.json()).toEqual({ error: "HEIC photos aren't supported. Send a JPEG or PNG." });
+    expect(mocks.put).not.toHaveBeenCalled();
+  });
+
+  it("415 for HEIC bytes mislabelled as a JPEG", async () => {
+    const bytes = new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0, 0, 0, 0]);
+    expect((await post(jpeg(bytes))).status).toBe(415);
+  });
+
   it("400 for a missing or non-UUID photoKey", async () => {
     expect((await post(jpeg(), null)).status).toBe(400);
     expect((await post(jpeg(), "not-a-uuid")).status).toBe(400);

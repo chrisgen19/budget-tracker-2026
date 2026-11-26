@@ -6,6 +6,7 @@
  * lazily inside the tool handler, the way `scan_receipt` imports `receipt-scan`.
  */
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { looksLikeHeicBytes } from "@/lib/heic";
 import { UnreadableImageError } from "@/lib/receipt-photo-image";
 import { applyPhotoChange, type PhotoEditStamp } from "@/lib/receipt-photo-links";
 import type { PhotoStorage } from "@/lib/receipt-photo-storage";
@@ -25,6 +26,7 @@ export type AttachReceiptPhotoResult =
   | ({ ok: true } & AttachReceiptPhotoPayload)
   | { ok: false; reason: "TRANSACTIONS_NOT_OWNED"; ids: string[] }
   | { ok: false; reason: "UNREADABLE_IMAGE" }
+  | { ok: false; reason: "UNSUPPORTED_HEIC" }
   | { ok: false; reason: "NO_LONGER_PERMITTED" };
 
 export interface AttachReceiptPhotoParams {
@@ -64,8 +66,11 @@ const linkInsideTransaction = async (
     if (!(await params.assertStillPermitted(tx))) {
       throw new LinkRefused({ ok: false, reason: "NO_LONGER_PERMITTED" });
     }
-    // First statement, ordered by id, as `lockTransactionRows` does, so the previous photo read
-    // here is the one the write replaces and two attaches over the same rows wait, not deadlock.
+    // The first statement on the transaction rows (`assertStillPermitted` reads the user row
+    // before it, which is harmless under READ COMMITTED), ordered by id as `lockTransactionRows`
+    // does, so the previous photo read here is the one the write replaces and two attaches over
+    // the same rows wait, not deadlock. A concurrent MCP replace and app replace on overlapping
+    // rows can still deadlock; Postgres then aborts one side and the data stays correct.
     const locked = await tx.$queryRaw<{ id: string; receiptPhotoId: string | null }[]>`
       SELECT id, receipt_photo_id AS "receiptPhotoId" FROM transactions
       WHERE user_id = ${params.userId} AND id = ANY(${ids})
@@ -140,7 +145,10 @@ export const attachReceiptPhoto = async (
       bytes: params.bytes,
     });
   } catch (error) {
-    if (error instanceof UnreadableImageError) return { ok: false, reason: "UNREADABLE_IMAGE" };
+    if (error instanceof UnreadableImageError) {
+      const heic = looksLikeHeicBytes(params.bytes);
+      return { ok: false, reason: heic ? "UNSUPPORTED_HEIC" : "UNREADABLE_IMAGE" };
+    }
     throw error;
   }
   const photoId = stored.photo.id;

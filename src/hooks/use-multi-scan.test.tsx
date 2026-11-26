@@ -804,6 +804,7 @@ describe("discard accounting", () => {
 
 describe("scans keep their photo", () => {
   const PHOTO_FAILED = "Saved. The photo didn't upload: attach it from the transaction.";
+  const HEIC_SKIPPED = "Saved. This browser can't convert HEIC photos, so the photo wasn't kept.";
 
   const splitScan = () =>
     scanOk({
@@ -940,6 +941,46 @@ describe("scans keep their photo", () => {
       if (row.description === "Merchant") expect(row.receiptPhotoId).toBe("photo-single.jpg");
       else expect(row).not.toHaveProperty("receiptPhotoId");
     }
+    expect(await screen.findAllByText(PHOTO_FAILED)).toHaveLength(1);
+  });
+
+  it("skips a still-HEIC image without uploading and says so instead of the generic toast", async () => {
+    routeFetch({ upload: (name) => photoOk(`photo-${name}`), batch: saved });
+    const { result } = setup({ receiptPhotosEnabled: true });
+    await act(async () => {
+      await result.current.scanMultiple([
+        new File(["x"], "single.jpg", { type: "image/jpeg" }),
+        new File(["x"], "phone.heic", { type: "image/heic" }),
+      ]);
+    });
+
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    expect(uploadKeys().map(([name]) => name)).toEqual(["single.jpg"]);
+    const [body] = batchBodies();
+    expect(body.transactions).toHaveLength(2);
+    expect(body.transactions.filter((r) => "receiptPhotoId" in r)).toHaveLength(1);
+    expect(await screen.findAllByText(HEIC_SKIPPED)).toHaveLength(1);
+    expect(screen.queryByText(PHOTO_FAILED)).toBeNull();
+  });
+
+  it("shows both messages once each when a HEIC skip and an upload failure share a save", async () => {
+    routeFetch({ upload: () => ({ ok: false, status: 500, json: async () => ({}) }), batch: saved });
+    const { result } = setup({ receiptPhotosEnabled: true });
+    await act(async () => {
+      await result.current.scanMultiple([
+        new File(["x"], "single.jpg", { type: "image/jpeg" }),
+        new File(["x"], "phone.heic", { type: "image/heic" }),
+      ]);
+    });
+
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
+    expect(await screen.findAllByText(HEIC_SKIPPED)).toHaveLength(1);
     expect(await screen.findAllByText(PHOTO_FAILED)).toHaveLength(1);
   });
 

@@ -60,6 +60,8 @@ export const ATTACH_PHOTO_ERROR_MESSAGES = {
     `These transaction IDs do not exist on this account: ${ids.join(", ")}. Nothing was stored or changed. Call search_transactions for current IDs.`,
   UNREADABLE_IMAGE:
     "That file is not a readable image. Nothing was stored or changed. Send the photo's raw bytes, base64 encoded.",
+  UNSUPPORTED_HEIC:
+    "HEIC photos are not supported. Nothing was stored or changed. Convert the photo to JPEG or PNG and send it again.",
   NOT_BASE64:
     "imageBase64 is not valid base64. Send the raw image bytes, base64 encoded, with no data: URL prefix.",
   NO_LONGER_PERMITTED:

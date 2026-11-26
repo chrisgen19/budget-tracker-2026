@@ -17,6 +17,7 @@ import {
   uploadScanPhotos,
   type ScanPhoto,
 } from "@/hooks/upload-scan-photos";
+import { HEIC_UNSUPPORTED_SCAN_MESSAGE } from "@/lib/heic";
 import { MAX_BATCH_TRANSACTIONS } from "@/lib/validations";
 import type { MultiScanItem } from "@/types";
 
@@ -570,6 +571,7 @@ export function useMultiScan() {
     pendingSaveRef.current = save;
 
     let photoFailed = false;
+    let heicSkipped = false;
     try {
       // Uploaded first and unlinked, because a replayed batch returns its rows in no fixed
       // order and they could not be matched back to receipts afterwards.
@@ -578,7 +580,8 @@ export function useMultiScan() {
         save.sent = true;
       }
       const photoIds = photoIdsByReceipt(save.photos);
-      photoFailed = save.photos.some((photo) => !photo.photoId);
+      heicSkipped = save.photos.some((photo) => photo.unsupported);
+      photoFailed = save.photos.some((photo) => !photo.photoId && !photo.unsupported);
       await batchCreateMutation.mutateAsync({
         clientBatchId: save.key,
         transactions: submitItems.map((item) => toBatchRow(item, photoIds.get(receiptKeyOf(item)))),
@@ -610,6 +613,7 @@ export function useMultiScan() {
     // Acknowledged, so the next save is a new intent and needs its own key.
     pendingSaveRef.current = null;
     setUnconfirmedIds(new Set());
+    if (heicSkipped) showToast(HEIC_UNSUPPORTED_SCAN_MESSAGE, "error");
     if (photoFailed) showToast(PHOTO_UPLOAD_FAILED, "error");
 
     // Only the rows actually submitted are removed. Anything added while the save was

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { useToast } from "@/components/ui/toast";
+import { HEIC_UNSUPPORTED_FIELD_MESSAGE, isHeicFile } from "@/lib/heic";
 import { compressImage } from "@/lib/utils";
 import { receiptPhotoUrl, uploadReceiptPhoto } from "@/hooks/use-receipt-photos";
 
@@ -23,15 +25,26 @@ interface PendingPhoto {
 export function useReceiptPhotoDraft(initialPhotoId: string | null) {
   const [removedInitial, setRemovedInitial] = useState(false);
   const [pending, setPending] = useState<PendingPhoto | null>(null);
+  const { showToast } = useToast();
 
   useEffect(() => {
     if (!pending) return;
     return () => URL.revokeObjectURL(pending.previewUrl);
   }, [pending]);
 
-  const choose = useCallback((file: File) => {
-    setPending({ file, previewUrl: URL.createObjectURL(file), photoKey: crypto.randomUUID() });
-  }, []);
+  const choose = useCallback(
+    async (chosen: File) => {
+      // A file the browser cannot decode comes back as chosen; the server has the last word on it.
+      const file = await compressImage(chosen).catch(() => chosen);
+      // Desktop Chrome and Firefox cannot convert HEIC, and the server cannot decode it either.
+      if (isHeicFile(file)) {
+        showToast(HEIC_UNSUPPORTED_FIELD_MESSAGE, "error");
+        return;
+      }
+      setPending({ file, previewUrl: URL.createObjectURL(file), photoKey: crypto.randomUUID() });
+    },
+    [showToast],
+  );
 
   const remove = useCallback(() => {
     setPending(null);
@@ -48,9 +61,7 @@ export function useReceiptPhotoDraft(initialPhotoId: string | null) {
     const chosen = pending;
     if (chosen) {
       try {
-        // A file the browser cannot decode is sent as chosen; the server has the last word on it.
-        const file = await compressImage(chosen.file).catch(() => chosen.file);
-        const uploaded = await uploadReceiptPhoto(file, chosen.photoKey);
+        const uploaded = await uploadReceiptPhoto(chosen.file, chosen.photoKey);
         return { patch: { receiptPhotoId: uploaded.id }, uploadFailed: false };
       } catch {
         return { patch: unlinked, uploadFailed: true };

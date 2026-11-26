@@ -1,4 +1,5 @@
 import { uploadReceiptPhoto } from "@/hooks/use-receipt-photos";
+import { isHeicFile } from "@/lib/heic";
 import type { MultiScanItem } from "@/types";
 
 /** Photo uploads in flight at once during a scan save. */
@@ -13,6 +14,8 @@ export interface ScanPhoto {
   photoKey: string;
   /** Set once the server has stored the photo. */
   photoId?: string;
+  /** The image is still HEIC (this browser could not convert it), so it is never uploaded. */
+  unsupported?: boolean;
 }
 
 /** Which receipt a row came from: itemized rows share their group, anything else stands alone. */
@@ -24,7 +27,12 @@ export const planScanPhotos = (items: MultiScanItem[]): ScanPhoto[] => {
   for (const item of items) {
     const receiptKey = receiptKeyOf(item);
     if (!item.imageFile || byReceipt.has(receiptKey)) continue;
-    byReceipt.set(receiptKey, { receiptKey, file: item.imageFile, photoKey: crypto.randomUUID() });
+    byReceipt.set(receiptKey, {
+      receiptKey,
+      file: item.imageFile,
+      photoKey: crypto.randomUUID(),
+      ...(isHeicFile(item.imageFile) && { unsupported: true }),
+    });
   }
   return [...byReceipt.values()];
 };
@@ -41,7 +49,7 @@ export const uploadScanPhotos = async (photos: ScanPhoto[]): Promise<ScanPhoto[]
   const worker = async (): Promise<void> => {
     while (next < results.length) {
       const photo = results[next++];
-      if (photo.photoId) continue;
+      if (photo.photoId || photo.unsupported) continue;
       try {
         photo.photoId = (await uploadReceiptPhoto(photo.file, photo.photoKey)).id;
       } catch {

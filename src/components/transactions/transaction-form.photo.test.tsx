@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import type { TransactionInput } from "@/lib/validations";
@@ -81,10 +81,13 @@ beforeEach(() => {
 
 const submit = () =>
   fireEvent.click(document.querySelector('button[type="submit"]') as HTMLButtonElement);
-const chooseFile = () => {
+const chooseFile = async () => {
   const file = new File(["jpeg"], "receipt.jpg", { type: "image/jpeg" });
-  fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, {
-    target: { files: [file] },
+  // Choosing compresses first, so the draft is only set once the microtasks have flushed.
+  await act(async () => {
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, {
+      target: { files: [file] },
+    });
   });
   return file;
 };
@@ -139,7 +142,7 @@ describe("TransactionForm receipt photo", () => {
     const onPresence = vi.fn();
     const onSubmit = renderForm({ onPhotoPresenceChange: onPresence });
 
-    const file = chooseFile();
+    const file = await chooseFile();
     await waitFor(() => expect(onPresence).toHaveBeenLastCalledWith(true));
     expect(mocks.upload).not.toHaveBeenCalled();
 
@@ -153,11 +156,46 @@ describe("TransactionForm receipt photo", () => {
     expect(mocks.showToast).not.toHaveBeenCalled();
   });
 
+  it("refuses a file that is still HEIC after compression: toast, no preview, no upload", async () => {
+    const onPresence = vi.fn();
+    const onSubmit = renderForm({ onPhotoPresenceChange: onPresence });
+    const heic = new File(["x"], "receipt.heic", { type: "image/heic" });
+
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, {
+      target: { files: [heic] },
+    });
+
+    await waitFor(() =>
+      expect(mocks.showToast).toHaveBeenCalledWith(
+        "This browser can't convert HEIC photos. Attach a JPEG, or attach it from your phone.",
+        "error",
+      ),
+    );
+    expect(onPresence).not.toHaveBeenCalledWith(true);
+    expect(screen.getByRole("button", { name: "Attach photo" })).toBeTruthy();
+    submit();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(mocks.upload).not.toHaveBeenCalled();
+  });
+
+  it("accepts a HEIC file that compression converted to JPEG", async () => {
+    mocks.compress.mockResolvedValueOnce(new File(["j"], "receipt.jpg", { type: "image/jpeg" }));
+    const onPresence = vi.fn();
+    renderForm({ onPhotoPresenceChange: onPresence });
+
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, {
+      target: { files: [new File(["x"], "receipt.heic", { type: "image/heic" })] },
+    });
+
+    await waitFor(() => expect(onPresence).toHaveBeenLastCalledWith(true));
+    expect(mocks.showToast).not.toHaveBeenCalled();
+  });
+
   it("still saves without the photo when the upload fails, and says so once", async () => {
     mocks.upload.mockRejectedValue(new Error("upload refused"));
     const onSubmit = renderForm();
 
-    chooseFile();
+    await chooseFile();
     submit();
 
     await waitFor(() => expect(mocks.showToast).toHaveBeenCalledTimes(1));
@@ -179,7 +217,7 @@ describe("TransactionForm receipt photo", () => {
       const onSubmit = vi.fn((_data: TransactionInput) => Promise.reject(new Error("save failed")));
       renderForm({}, onSubmit);
 
-      chooseFile();
+      await chooseFile();
       submit();
       await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
       submit();
@@ -214,7 +252,7 @@ describe("TransactionForm receipt photo", () => {
     const onSubmit = renderForm({ transaction: withPhoto, initialData: undefined });
 
     fireEvent.click(screen.getByRole("button", { name: "Remove photo" }));
-    chooseFile();
+    await chooseFile();
     submit();
 
     await waitFor(() => expect(mocks.showToast).toHaveBeenCalledTimes(1));
@@ -226,7 +264,7 @@ describe("TransactionForm receipt photo", () => {
     mocks.upload.mockRejectedValue(new Error("upload refused"));
     const onSubmit = renderForm({ transaction: withPhoto, initialData: undefined });
 
-    chooseFile();
+    await chooseFile();
     submit();
 
     await waitFor(() => expect(mocks.showToast).toHaveBeenCalledTimes(1));
