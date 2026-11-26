@@ -68,3 +68,6 @@ public/sw.js.map
 # Point-in-time production dumps from scripts/backup-prod-db.ts.
 # Full database copies: password hashes, MCP token hashes, every transaction.
 .db-backups/
+
+# Subagent-driven-development scratch
+.superpowers/
