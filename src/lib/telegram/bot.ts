@@ -1148,7 +1148,7 @@ async function handleReceiptPhoto(
   reply += `\ud83d\udcb0 *Amount:* ${SYMBOL}${scan.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}\n`;
   reply += `\ud83d\udcc1 *Category:* ${categoryName}\n`;
   reply += `\ud83d\udcc5 *Date:* ${scan.date}\n`;
-  if (scan.dateWarning) reply += `\n\u26a0\ufe0f The year on the receipt looks wrong. Check the date.\n`;
+  if (scan.dateWarning) reply += `\n\u26a0\ufe0f The date on the receipt looks wrong. Check it.\n`;
   if (scan.usedPhotoFallback) {
     reply += photoTakenAt
       ? `\n\u26a0\ufe0f I could not read a date on it, so I used when the photo was taken.\n`

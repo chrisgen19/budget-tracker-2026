@@ -259,7 +259,7 @@ describe("TransactionForm account-local dates", () => {
     );
 
     expect((screen.getByLabelText("Date") as HTMLInputElement).value).toBe("2023-08-15");
-    expect(screen.getByText(/receipt date year looks incorrect/i)).toBeTruthy();
+    expect(screen.getByText(/receipt date looks unlikely/i)).toBeTruthy();
   });
 
   it("leaves an incomplete native date control unvalidated until submit", async () => {

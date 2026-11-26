@@ -1227,7 +1227,8 @@ export const createBudgetMcpServer = ({
             " photo's while the month and day matched exactly, so it was corrected to the date" +
             " above. Tell the user, and put it back if they say the receipt really is that old."
           : r.dateWarning
-            ? " The year on the receipt looks wrong, so confirm the date."
+            ? " The date read off the receipt looks wrong (a different year, or weeks before the" +
+              " photo), so confirm it with the user."
             : "") +
         (r.usedPhotoFallback
           ? // Which fallback was used is not cosmetic. A model that reads "today's was used"
