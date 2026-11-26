@@ -22,12 +22,21 @@ MCP, the Telegram bot, the Mini App and a planned mobile app all depend on.
 - **New `Redesign scope` workflow.** A PR from a `feature/redesign-*` branch fails if it changes
   backend code: `src/app/api/`, `prisma/`, `mcp-server/`, `src/lib/mcp/`, `src/lib/telegram/`,
   `src/lib/validations.ts`, middleware, instrumentation, `nixpacks.toml`, `.github/`, or any
-  `src/lib` module that reaches the database (matched by content, so a new `*-writes.ts` is
-  covered without editing a list). The backend half goes in its own PR, merged first. Other
-  branches skip the job. Run it locally with
-  `.github/scripts/check-redesign-scope.sh origin/main HEAD`. Checked against history: it flags
-  `7891c2c`, the filter-bar redesign that also changed `/api/transactions` search, and passes
-  the UI-only redesigns `fec180c` and `e2a61bc`.
+  `src/lib` module that is server code by content: it imports the Prisma client (either quote
+  style, alias or relative path), a server-only package (`next/server`, `next-auth`, `resend`,
+  `@google/genai`, ...), or one of `session`/`auth`/`email`/`gemini`. Matching by content means a
+  new `*-writes.ts` is covered without editing a list, and it is what catches `session.ts`, where
+  a change rewrites API access control without touching the database. The backend half goes in
+  its own PR, merged first. Other branches skip the job. Run it locally with
+  `.github/scripts/check-redesign-scope.sh origin/main HEAD`; a missing base ref now fails rather
+  than reporting an empty diff as clean. Checked against history: it flags `7891c2c`, the
+  filter-bar redesign that also changed `/api/transactions` search, and passes the UI-only
+  redesigns `fec180c` and `e2a61bc`.
+- **The check runs from `main`, not from the PR** (`pull_request_target`). Under `pull_request`
+  a redesign PR could rewrite the script to `exit 0` or delete the step and pass its own check.
+  Safe under this trigger because nothing from the PR is checked out or executed: the head is
+  fetched as git objects and read with `git diff`/`git show`, with a read-only token that is not
+  persisted. The workflow therefore takes effect only once it is on `main`.
 
 ## 2026-11-23 - The MCP 401 stops advertising OAuth (effect on clients unverified)
 

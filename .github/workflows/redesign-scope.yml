@@ -5,28 +5,48 @@ name: Redesign scope
 #
 # Only branches named `feature/redesign-*` are checked. Every other PR skips the job, which
 # GitHub reports as passing, so making this a required check does not block normal work.
+#
+# `pull_request_target`, not `pull_request`, so this workflow and the script it runs always come
+# from `main`. Under `pull_request` both are read from the PR itself, so a redesign PR could
+# rewrite the script to `exit 0` or delete the step, and the check would judge itself. The likely
+# culprit is not a person but an agent told to make CI green on a redesign branch.
+#
+# That trigger is dangerous when it executes PR code, because it runs with the base repo's token.
+# This job never does: it checks out `main`, fetches the PR head as git objects only, and reads
+# them with `git diff` and `git show`. Nothing from the PR is checked out, installed or run, the
+# token is read-only, and it is not persisted into the checkout. Keep it that way: never add a
+# step here that checks out or executes the PR head.
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [main]
 
 concurrency:
-  group: redesign-scope-${{ github.ref }}
+  # Per PR. Under `pull_request_target`, `github.ref` is the base branch, so keying on it would
+  # put every open PR in one group and cancel them against each other.
+  group: redesign-scope-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   scope:
     if: startsWith(github.head_ref, 'feature/redesign-')
-    # Reads the repo and nothing else: no install, no secrets.
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      # Same pinned SHA as `ci.yml`. Full history so both ends of the PR, and the merge base
-      # between them, are present for `git diff base...head` and `git show`.
+      # `main` (the default under this trigger), not the PR. Same pinned SHA as `ci.yml`. Full
+      # history so the merge base between `main` and the PR head is present.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
+
+      # The PR head as data only. The repository is public, so this needs no credentials, and
+      # it works the same for a branch in this repo and for a fork.
+      - name: Fetch PR head
+        run: git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head"
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
 
       - name: Check for backend changes
         run: bash .github/scripts/check-redesign-scope.sh "$BASE_SHA" "$HEAD_SHA"
