@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   PhotoNotFoundError,
   PhotoStorageError,
@@ -174,5 +174,38 @@ describe("createPhotoStorage list", () => {
     await expect(createPhotoStorage(ENV, fetchImpl).list("receipts/")).rejects.toThrow(
       PhotoStorageError,
     );
+  });
+});
+
+describe("request timeout", () => {
+  it("gives up on a request that hangs for 10 seconds, as a PhotoStorageError", async () => {
+    vi.useFakeTimers();
+    try {
+      const hung = (async (input: RequestInfo | URL) => {
+        const signal = (input as Request).signal;
+        return new Promise<Response>((_, reject) => {
+          if (signal.aborted) return reject(signal.reason);
+          signal.addEventListener("abort", () => reject(signal.reason));
+        });
+      }) as typeof fetch;
+      const pending = createPhotoStorage(ENV, hung).delete("k");
+      const settled = expect(pending).rejects.toThrow(PhotoStorageError);
+      await vi.advanceTimersByTimeAsync(10_000);
+      await settled;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["TimeoutError", "AbortError"])("maps a %s to PhotoStorageError", async (name) => {
+    const fetchImpl = (async () => {
+      throw new DOMException("The operation timed out.", name);
+    }) as unknown as typeof fetch;
+    const storage = createPhotoStorage(ENV, fetchImpl);
+
+    await expect(storage.put("k", new Uint8Array(), "image/jpeg")).rejects.toThrow(PhotoStorageError);
+    await expect(storage.get("k")).rejects.toThrow(PhotoStorageError);
+    await expect(storage.delete("k")).rejects.toThrow(PhotoStorageError);
+    await expect(storage.list("receipts/")).rejects.toThrow(PhotoStorageError);
   });
 });

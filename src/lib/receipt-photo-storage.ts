@@ -12,6 +12,9 @@ const REQUIRED_VARS = [
   "R2_BUCKET",
 ] as const;
 
+/** Longest a single R2 request may take before it is abandoned. */
+const STORAGE_TIMEOUT_MS = 10_000;
+
 export class PhotosDisabledError extends Error {
   constructor() {
     super("Receipt photos are not configured");
@@ -125,13 +128,25 @@ export function createPhotoStorage(
   const base = `https://${readVar(env, "R2_ACCOUNT_ID")}.r2.cloudflarestorage.com/${readVar(env, "R2_BUCKET")}`;
 
   const sendTo = async (method: string, url: string, init: RequestInit = {}): Promise<Response> => {
-    const signed = await client.sign(url, { ...init, method });
+    // Aborts a hung request: cleanup is awaited on PUT and DELETE request paths, so an
+    // unresponsive bucket would otherwise stall the user's edit. Covers the wait for headers.
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(new DOMException("R2 request timed out", "TimeoutError")),
+      STORAGE_TIMEOUT_MS,
+    );
     try {
+      const signed = await client.sign(url, { ...init, method, signal: controller.signal });
       return await fetchImpl(signed);
     } catch (error) {
+      const timedOut = controller.signal.aborted;
       throw new PhotoStorageError(
-        `R2 ${method} failed: ${error instanceof Error ? error.message : "network error"}`,
+        timedOut
+          ? `R2 ${method} timed out after ${STORAGE_TIMEOUT_MS} ms`
+          : `R2 ${method} failed: ${error instanceof Error ? error.message : "network error"}`,
       );
+    } finally {
+      clearTimeout(timer);
     }
   };
   const send = (method: string, key: string, init: RequestInit = {}): Promise<Response> =>
