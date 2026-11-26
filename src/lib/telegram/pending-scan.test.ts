@@ -63,6 +63,23 @@ describe("pending scans", () => {
     expect(takePendingScan(1, now)).toBeNull();
   });
 
+  // An abandoned review held its photo's bytes until that chat sent another photo. The next
+  // write from anyone now drops it, so the image lives no longer than the draft's TTL says.
+  it("releases an expired draft, photo included, on the next write from any chat", () => {
+    const then = Date.now();
+    putPendingScan(2, scan({ createdAt: then, imageBase64: "aGVsbG8=" }));
+    putPendingScan(1, scan(), then + PENDING_TTL_MS + 1);
+    // Asked at a moment the draft would still have been fresh: it is gone, not merely stale.
+    expect(takePendingScan(2, then)).toBeNull();
+  });
+
+  it("keeps a live draft for another chat when one chat writes", () => {
+    const now = Date.now();
+    putPendingScan(2, scan({ createdAt: now }));
+    putPendingScan(1, scan(), now + 1_000);
+    expect(takePendingScan(2, now + 1_000)).not.toBeNull();
+  });
+
   it("is still valid just inside the window", () => {
     const now = Date.now();
     putPendingScan(1, scan({ createdAt: now - PENDING_TTL_MS + 1_000 }));

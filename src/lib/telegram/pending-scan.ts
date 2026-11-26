@@ -72,7 +72,19 @@ const pending = new Map<number, PendingScan>();
  *  the user has forgotten about. */
 export const PENDING_TTL_MS = 10 * 60 * 1000;
 
-export const putPendingScan = (chatId: number, scan: PendingScan): void => {
+/**
+ * Drafts past their TTL, which nothing will ever confirm. Each holds a receipt photo, so an
+ * abandoned review used to keep those bytes in memory until that chat sent another photo.
+ * Swept on every write rather than on a timer: a write is the only moment the map grows.
+ */
+const sweepExpired = (now: number): void => {
+  for (const [chatId, scan] of pending) {
+    if (now - scan.createdAt > PENDING_TTL_MS) pending.delete(chatId);
+  }
+};
+
+export const putPendingScan = (chatId: number, scan: PendingScan, now = Date.now()): void => {
+  sweepExpired(now);
   pending.set(chatId, scan);
 };
 

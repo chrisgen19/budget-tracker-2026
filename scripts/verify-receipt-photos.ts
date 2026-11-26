@@ -102,13 +102,24 @@ const blocksSomebody = async (pid: number | null): Promise<boolean> => {
   return Number(count) > 0;
 };
 
-/** Waits until `pid` is blocking someone, or `settled` says the other side finished without. */
-const waitForWaiter = async (pid: number, settled: () => boolean, timeoutMs = 3_000) => {
+/**
+ * Waits until `pid` is blocking someone, or `settled` says the other side finished without, and
+ * says which. A timeout is reported rather than swallowed: returning quietly let the writer
+ * commit before the cleaner had even started, after which the cleaner reads the committed link,
+ * deletes nothing, and every later assertion passes with or without the lock under test.
+ */
+const waitForWaiter = async (
+  pid: number,
+  settled: () => boolean,
+  timeoutMs = 3_000,
+): Promise<"blocked" | "settled" | "timeout"> => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (settled() || (await blocksSomebody(pid))) return;
+    if (settled()) return "settled";
+    if (await blocksSomebody(pid)) return "blocked";
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
+  return "timeout";
 };
 
 /** A storage double for the lock check. The survive case must never reach it. */
@@ -182,8 +193,13 @@ async function lockCheck(userId: string, categoryId: string) {
       .finally(() => {
         cleanerSettled = true;
       });
-    await waitForWaiter(writerPid, () => cleanerSettled);
-    check("the cleanup waited on the uncommitted writer", !cleanerSettled);
+    const waited = await waitForWaiter(writerPid, () => cleanerSettled);
+    check("the cleanup waited on the uncommitted writer", waited === "blocked", waited);
+    if (waited === "timeout") {
+      // Never commit without having seen the wait: the rest of this case would then pass on
+      // ordering alone and prove nothing. Rolling back ends it here, failed.
+      throw new Error("the cleaner never reached the writer's lock within the deadline");
+    }
     // Wrapped, not returned bare: Prisma awaits a returned promise before committing, and the
     // cleaner is waiting on exactly that commit.
     return { cleaner };

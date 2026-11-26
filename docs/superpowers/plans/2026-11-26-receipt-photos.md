@@ -125,7 +125,7 @@ Two smaller consequences, for one shape across the web:
   - `storeReceiptPhoto(deps: { prisma; storage: PhotoStorage }, params: { userId: string; photoKey: string; bytes: Uint8Array }): Promise<{ photo: ReceiptPhotoView; replayed: boolean }>`
   - `type ReceiptPhotoView = { id: string; width: number; height: number; byteSize: number; createdAt: string }`
   - `getReceiptPhotoInfo(prisma, userId: string, photoId: string): Promise<{ photo: ReceiptPhotoView; transactions: { id: string; description: string; amount: number; type: "INCOME" | "EXPENSE"; categoryName: string; localDate: string }[]; total: number } | null>`
-  - `deleteUnreferencedPhotos(deps: { prisma; storage }, photoIds: string[]): Promise<string[]>` (returns deleted ids; deletes the R2 object, then the row; skips any photo still referenced)
+  - `deleteUnreferencedPhotos(deps: { prisma; storage }, userId: string, photoIds: string[]): Promise<string[]>` (returns deleted ids; per photo, takes `FOR UPDATE` on the photo row as its own first statement, runs the guarded row delete on the fresh snapshot that follows, and deletes the R2 object only when that row was really deleted; skips any photo still referenced. Row first, never object first: an object deleted before the re-check can be one a transaction linked a moment earlier. See "Cleanup and its locking" in `.claude/rules/receipts.md`)
   - `POST /api/receipt-photos`: multipart `photo` (File), `photoKey` (UUID). 201 `{ photo: ReceiptPhotoView }`; 200 on replay of the same `photoKey`.
   - `GET /api/receipt-photos/[id]`: `image/jpeg` stream.
   - `GET /api/receipt-photos/[id]/info`: the `getReceiptPhotoInfo` result as JSON, 404 when null.
@@ -133,7 +133,7 @@ Two smaller consequences, for one shape across the web:
 - [ ] **Step 1: Write failing service tests** (Prisma and storage stubbed):
   - `storeReceiptPhoto` normalises, PUTs to `receipts/{userId}/{id}.jpg`, then creates the row; a second call with the same `userId` + `photoKey` returns `replayed: true` and calls `storage.put` zero more times.
   - if the row insert throws, the just-written object is deleted and the error is rethrown.
-  - `deleteUnreferencedPhotos(["p1", "p2"])` where p1 still has a transaction deletes only p2, object before row.
+  - `deleteUnreferencedPhotos(deps, "u1", ["p1", "p2"])` where p1 still has a transaction deletes only p2: the lock, then the row, then the object, in that order.
   - `getReceiptPhotoInfo` returns null for another user's photo; `total` is the sum of linked amounts.
 - [ ] **Step 2: Write failing route tests:**
   - POST without a session → 401; with R2 disabled → 503 `PHOTOS_DISABLED`; `application/pdf` → 415; a body over `MAX_FILE_SIZE` → 413; undecodable bytes → 422 `{ error: "That file isn't a readable image." }`; missing or non-UUID `photoKey` → 400. None of these call `storage.put`.
