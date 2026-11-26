@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useLayoutEffect, useState, useRef, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion, AnimatePresence } from "framer-motion";
@@ -25,6 +25,10 @@ import { TransactionDateTimeField } from "@/components/transactions/transaction-
 import { PaidWithField } from "@/components/transactions/paid-with-field";
 import { useScheduledLabel } from "@/hooks/use-scheduled-label";
 import { useLabelsQuery } from "@/hooks/use-labels";
+import { useReceiptPhotoDraft } from "@/hooks/use-receipt-photo-draft";
+import { useToast } from "@/components/ui/toast";
+import { AttachPhotoField } from "@/components/transactions/attach-photo-field";
+import { TransactionPhotoLayout } from "@/components/transactions/transaction-photo-layout";
 import type { TransactionWithCategory } from "@/types";
 
 export interface InitialTransactionData {
@@ -45,10 +49,19 @@ interface TransactionFormProps {
   dateWarning?: boolean;
   /** Hide the label picker (e.g. in scan-review flows where labels aren't persisted) */
   hideLabelPicker?: boolean;
+  /**
+   * Offer the receipt photo field and layout. Opt-in, so the scan review and Pay & Edit, which
+   * reuse this form with no photo flow of their own, post exactly what they did before.
+   */
+  allowReceiptPhoto?: boolean;
+  /** Told whether a photo is shown, so the caller can pass `size="wide"` to its Modal. */
+  onPhotoPresenceChange?: (hasPhoto: boolean) => void;
   onSubmit: (data: TransactionInput) => Promise<void>;
   onCancel: () => void;
   onDelete?: () => void;
 }
+
+const PHOTO_UPLOAD_FAILED = "Saved. The photo didn't upload: attach it from the transaction.";
 
 const formatAmountDisplay = (value: number) =>
   new Intl.NumberFormat("en-US", {
@@ -76,8 +89,14 @@ const slideVariants = {
 };
 
 
-export function TransactionForm({ transaction, initialData, dateWarning, hideLabelPicker, onSubmit, onCancel, onDelete }: TransactionFormProps) {
+export function TransactionForm({ transaction, initialData, dateWarning, hideLabelPicker, allowReceiptPhoto, onPhotoPresenceChange, onSubmit, onCancel, onDelete }: TransactionFormProps) {
   const { user } = useUser();
+  const { showToast } = useToast();
+  // With photos switched off the image route answers 503, so even a stored photo is not shown.
+  const photosOn = !!allowReceiptPhoto && user.receiptPhotosEnabled;
+  const photo = useReceiptPhotoDraft(photosOn ? (transaction?.receiptPhotoId ?? null) : null);
+  const photoSrc = photosOn ? photo.src : null;
+  const hasPhoto = photoSrc !== null;
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [displayAmount, setDisplayAmount] = useState<string>(() => {
     if (transaction?.amount != null) return formatAmountDisplay(transaction.amount);
@@ -222,6 +241,12 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scheduledLabelId, hideLabelPicker]);
 
+  // Layout, not passive: the Modal has to widen before paint, or it opens narrow and jumps.
+  const presenceRef = useRef(onPhotoPresenceChange);
+  presenceRef.current = onPhotoPresenceChange;
+  useLayoutEffect(() => presenceRef.current?.(hasPhoto), [hasPhoto]);
+  useLayoutEffect(() => () => presenceRef.current?.(false), []);
+
   // Incompatible labels are KEPT when the type changes, and marked by `LabelPicker` rather than
   // removed here. See #305.
   //
@@ -242,6 +267,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   // into a failed save.
 
   return (
+    <TransactionPhotoLayout photoSrc={photoSrc}>
     <AnimatePresence mode="wait" initial={false}>
       {showCategoryPicker ? (
         <motion.div
@@ -316,7 +342,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
           transition={{ type: "spring", stiffness: 300, damping: 30 }}
         >
           <form
-            onSubmit={handleSubmit((data) => {
+            onSubmit={handleSubmit(async (data) => {
               const { labelIds, creditAccountId, ...rest } = data;
               const payload = {
                 ...rest,
@@ -339,7 +365,14 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                 || userRemovedAutoLabels.current.size > 0
                 || autoAppliedLabels.current.size > 0;
               const includeLabelIds = !hideLabelPicker && userInteractedWithLabels;
-              return onSubmit(includeLabelIds ? { ...payload, labelIds } : payload);
+              // A chosen photo uploads now, at save, so a cancelled form stores nothing. A failed
+              // upload never costs the transaction: it saves without the photo and says so.
+              const photoResult = photosOn ? await photo.resolveForSubmit() : null;
+              await onSubmit({
+                ...(includeLabelIds ? { ...payload, labelIds } : payload),
+                ...photoResult?.patch,
+              });
+              if (photoResult?.uploadFailed) showToast(PHOTO_UPLOAD_FAILED, "error");
             })}
             className="space-y-6"
           >
@@ -551,6 +584,10 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               />
             )}
 
+            {photosOn && (
+              <AttachPhotoField hasPhoto={hasPhoto} onSelect={photo.choose} onRemove={photo.remove} />
+            )}
+
             <TransactionDateTimeField
               value={watchedDate}
               timezoneOffset={user.timezoneOffset}
@@ -626,5 +663,6 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
         </motion.div>
       )}
     </AnimatePresence>
+    </TransactionPhotoLayout>
   );
 }

@@ -120,9 +120,14 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: React.ReactNode;
+  /**
+   * `wide` is 840px at `lg` and up, for a form with a receipt photo beside it. Below `lg`
+   * nothing changes: there the photo is a strip above the form, not a column.
+   */
+  size?: "default" | "wide";
 }
 
-export function Modal({ open, onClose, title, children }: ModalProps) {
+export function Modal({ open, onClose, title, children, size = "default" }: ModalProps) {
   /**
    * `createPortal` needs a document, so the first render has to stay on the server's
    * output. A modal is never open on first paint, so nothing is missing before this
@@ -296,7 +301,8 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
               "relative bg-white shadow-soft-lg w-full grain-overlay flex flex-col",
               isMobile
                 ? "rounded-t-2xl"
-                : "rounded-2xl max-w-lg max-h-[85vh]"
+                : "rounded-2xl max-w-lg max-h-[85vh]",
+              !isMobile && size === "wide" && "lg:max-w-[840px]"
             )}
             style={isMobile ? { maxHeight: mobileMaxHeight } : undefined}
             variants={isMobile ? mobileVariants : desktopVariants}
