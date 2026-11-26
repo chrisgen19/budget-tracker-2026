@@ -69,8 +69,10 @@ export function ReceiptPhotoPanel({ src, sharedWith, onOpen, className }: Receip
     const next = keyboardPan(event.key, x.get(), y.get(), bounds);
     if (!next) return;
     event.preventDefault();
-    animate(x, next.x);
-    animate(y, next.y);
+    // Set, not animated: each press must start from where the last one ended, and an animation
+    // still running would hand a held key its mid-flight value and swallow most of each step.
+    x.set(next.x);
+    y.set(next.y);
   };
 
   // Bounds follow the zoom, and an offset left past the new edge (3x to 2x) is pulled back in.
@@ -94,7 +96,7 @@ export function ReceiptPhotoPanel({ src, sharedWith, onOpen, className }: Receip
         role={zoom > MIN_ZOOM ? "group" : undefined}
         aria-label={zoom > MIN_ZOOM ? "Zoomed receipt photo. Use the arrow keys to move it." : undefined}
         onKeyDown={onPanKey}
-        className="relative flex-1 overflow-hidden bg-[#3a3125] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-amber"
+        className="group relative flex-1 overflow-hidden bg-[#3a3125] focus-visible:outline-none"
       >
         {status === "loading" && <div className="absolute inset-0 animate-pulse bg-white/5" />}
         {status === "error" ? (
@@ -125,6 +127,12 @@ export function ReceiptPhotoPanel({ src, sharedWith, onOpen, className }: Receip
           />
         )}
         {blurred && status !== "error" && <PhotoRevealCover onReveal={reveal} />}
+        {/* The focus ring, drawn above the image: an outline or ring on the frame itself sits
+            underneath a zoomed photo that fills it, so a keyboard user saw no focus at all. */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 hidden ring-[3px] ring-inset ring-amber-dark group-focus-visible:block"
+        />
       </div>
       <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs text-cream-300">
         <span className="min-w-0 truncate">
