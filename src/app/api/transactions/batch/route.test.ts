@@ -29,6 +29,10 @@ const mocks = vi.hoisted(() => {
     createTransactionBatch: vi.fn(),
     findSavedBatch: vi.fn(),
     findSavedBatchUnderLock: vi.fn(),
+    photoFindMany: vi.fn(),
+    photoDeleteMany: vi.fn(),
+    photosEnabled: vi.fn(),
+    storageDelete: vi.fn(),
     tx: {
       transaction: {
         findMany: transactionFindMany,
@@ -47,7 +51,16 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: { $transaction: mocks.databaseTransaction },
+  prisma: {
+    $transaction: mocks.databaseTransaction,
+    receiptPhoto: { findMany: mocks.photoFindMany, deleteMany: mocks.photoDeleteMany },
+  },
+}));
+// R2 stubbed at the factory, so the real `deleteUnreferencedPhotos` runs against the mocked rows.
+vi.mock("@/lib/receipt-photo-storage", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/receipt-photo-storage")>()),
+  receiptPhotosEnabled: mocks.photosEnabled,
+  createPhotoStorage: () => ({ put: vi.fn(), get: vi.fn(), delete: mocks.storageDelete }),
 }));
 vi.mock("@/lib/session", () => ({ getAuthUserId: mocks.getAuthUserId }));
 vi.mock("@/lib/transaction-writes", () => ({
@@ -191,6 +204,27 @@ describe("POST /api/transactions/batch", () => {
     expect(mocks.createTransactionBatch).not.toHaveBeenCalled();
   });
 
+  it("refuses a batch naming a photo that is not the caller's with 400", async () => {
+    mocks.createTransactionBatch.mockResolvedValue({ ok: false, reason: "PHOTO_NOT_FOUND" });
+
+    const response = await POST(
+      postRequest({
+        transactions: [row({ receiptPhotoId: "p-own" }), row({ receiptPhotoId: "p-foreign" })],
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Photo not found" });
+    expect(mocks.createTransactionBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        items: [
+          expect.objectContaining({ receiptPhotoId: "p-own" }),
+          expect.objectContaining({ receiptPhotoId: "p-foreign" }),
+        ],
+      }),
+    );
+  });
+
   it("still replays a committed batch whose body is within the ceiling", async () => {
     mocks.findSavedBatch.mockResolvedValue([{ id: "tx-1" }]);
 
@@ -223,10 +257,65 @@ describe("DELETE /api/transactions/batch", () => {
     expect(await response.json()).toEqual({ deleted: 1, ids: ["tx-1"] });
     expect(mocks.transactionFindMany).toHaveBeenCalledWith({
       where: { id: { in: ["tx-1", "stale"] }, userId: "user-1" },
-      select: { id: true },
+      select: { id: true, receiptPhotoId: true },
     });
     expect(mocks.transactionDeleteMany).toHaveBeenCalledWith({
       where: { id: { in: ["tx-1"] }, userId: "user-1" },
+    });
+  });
+
+  describe("receipt photos", () => {
+    const stubRefs = (refs: Record<string, number>) =>
+      mocks.photoFindMany.mockImplementation(async ({ where }: { where: { id: { in: string[] } } }) =>
+        where.id.in.map((id) => ({ id, objectKey: `receipts/user-1/${id}.jpg`, _count: { transactions: refs[id] ?? 0 } })),
+      );
+
+    beforeEach(() => {
+      mocks.photosEnabled.mockReturnValue(true);
+      mocks.photoDeleteMany.mockResolvedValue({ count: 1 });
+      mocks.storageDelete.mockResolvedValue(undefined);
+      mocks.transactionFindMany.mockResolvedValue([
+        { id: "tx-1", receiptPhotoId: "pA" },
+        { id: "tx-2", receiptPhotoId: "pA" },
+        { id: "tx-3", receiptPhotoId: null },
+      ]);
+    });
+
+    it("reads the photo links inside the transaction and deletes an orphaned photo after it", async () => {
+      stubRefs({ pA: 0 });
+
+      const response = await DELETE(deleteRequest({ ids: ["tx-1", "tx-2", "tx-3"] }));
+
+      expect(response.status).toBe(200);
+      expect(mocks.transactionFindMany).toHaveBeenCalledWith({
+        where: { id: { in: ["tx-1", "tx-2", "tx-3"] }, userId: "user-1" },
+        select: { id: true, receiptPhotoId: true },
+      });
+      expect(mocks.photoFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: { in: ["pA"] }, userId: "user-1" } }),
+      );
+      expect(mocks.storageDelete).toHaveBeenCalledWith("receipts/user-1/pA.jpg");
+    });
+
+    it("keeps a photo that rows outside the selection still use", async () => {
+      stubRefs({ pA: 1 });
+
+      const response = await DELETE(deleteRequest({ ids: ["tx-1", "tx-2"] }));
+
+      expect(response.status).toBe(200);
+      expect(mocks.storageDelete).not.toHaveBeenCalled();
+    });
+
+    it("still answers 200 when storage cleanup fails", async () => {
+      stubRefs({ pA: 0 });
+      mocks.storageDelete.mockRejectedValue(new Error("R2 down"));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      const response = await DELETE(deleteRequest({ ids: ["tx-1"] }));
+
+      expect(response.status).toBe(200);
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
     });
   });
 });

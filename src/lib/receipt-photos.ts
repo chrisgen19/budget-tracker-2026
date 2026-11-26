@@ -1,7 +1,21 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { normaliseReceiptPhoto } from "@/lib/receipt-photo-image";
-import { photoObjectKey, type PhotoStorage } from "@/lib/receipt-photo-storage";
+import {
+  createPhotoStorage,
+  photoObjectKey,
+  receiptPhotosEnabled,
+  type PhotoStorage,
+} from "@/lib/receipt-photo-storage";
 import { formatLocalDate } from "@/lib/validations";
+
+// The linking helpers live in their own module so the shared create path can use them without
+// loading sharp or the R2 client; re-exported so this stays the one place to import photo rules.
+export {
+  applyPhotoChange,
+  PHOTO_NOT_FOUND_MESSAGE,
+  photosAreOwned,
+  ReceiptPhotoNotOwnedError,
+} from "@/lib/receipt-photo-links";
 
 export type ReceiptPhotoView = {
   id: string;
@@ -165,4 +179,29 @@ export const deleteUnreferencedPhotos = async (
     deleted.push(photo.id);
   }
   return deleted;
+};
+
+/**
+ * Deletes whichever of these photos no transaction references any more. Call it only after the
+ * write that unlinked them has committed.
+ *
+ * Never throws, so a storage failure cannot fail a transaction write that already succeeded: it
+ * warns and leaves the orphan for the prune script. With photos disabled there is no storage to
+ * call, so it does nothing and the orphans wait for the same script.
+ */
+export const cleanUpReceiptPhotos = async (
+  prisma: PrismaClient,
+  userId: string,
+  photoIds: string[],
+): Promise<void> => {
+  const ids = [...new Set(photoIds)];
+  if (ids.length === 0 || !receiptPhotosEnabled()) return;
+  try {
+    await deleteUnreferencedPhotos({ prisma, storage: createPhotoStorage() }, userId, ids);
+  } catch (error) {
+    console.warn(
+      "[receipt-photos] cleanup failed, leaving orphans for the prune script:",
+      error instanceof Error ? error.message : error,
+    );
+  }
 };

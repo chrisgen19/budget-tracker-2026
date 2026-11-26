@@ -11,6 +11,21 @@ const mocks = vi.hoisted(() => ({
   findUniqueOrThrow: vi.fn(),
   creditAccountFindMany: vi.fn(),
   canUseCreditCards: vi.fn(),
+  queryRaw: vi.fn(),
+  updateMany: vi.fn(),
+  deleteTransaction: vi.fn(),
+  photoFindMany: vi.fn(),
+  photoDeleteMany: vi.fn(),
+  photosEnabled: vi.fn(),
+  storageDelete: vi.fn(),
+  order: [] as string[],
+}));
+
+// R2 stubbed at the factory, so the real `deleteUnreferencedPhotos` runs against the mocked rows.
+vi.mock("@/lib/receipt-photo-storage", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/receipt-photo-storage")>()),
+  receiptPhotosEnabled: mocks.photosEnabled,
+  createPhotoStorage: () => ({ put: vi.fn(), get: vi.fn(), delete: mocks.storageDelete }),
 }));
 
 // The /admin/settings switch, stubbed at its own seam rather than through the user and settings
@@ -25,8 +40,12 @@ vi.mock("@/lib/prisma", () => {
     transaction: {
       findFirst: mocks.findFirst,
       update: mocks.update,
+      updateMany: mocks.updateMany,
+      delete: mocks.deleteTransaction,
       findUniqueOrThrow: mocks.findUniqueOrThrow,
     },
+    receiptPhoto: { findMany: mocks.photoFindMany, deleteMany: mocks.photoDeleteMany },
+    $queryRaw: mocks.queryRaw,
     category: { findMany: mocks.categoryFindMany },
     creditAccount: { findMany: mocks.creditAccountFindMany },
     label: { findMany: mocks.labelFindMany },
@@ -34,13 +53,18 @@ vi.mock("@/lib/prisma", () => {
       deleteMany: mocks.transactionLabelDeleteMany,
       createMany: mocks.transactionLabelCreateMany,
     },
-    $transaction: vi.fn((run: (tx: unknown) => unknown) => run(client)),
+    $transaction: vi.fn(async (run: (tx: unknown) => unknown) => {
+      mocks.order.push("tx:open");
+      const result = await run(client);
+      mocks.order.push("tx:commit");
+      return result;
+    }),
   };
   return { prisma: client };
 });
 vi.mock("@/lib/session", () => ({ getAuthUserId: mocks.getAuthUserId }));
 
-import { GET, PUT } from "@/app/api/transactions/[id]/route";
+import { DELETE, GET, PUT } from "@/app/api/transactions/[id]/route";
 
 const context = (id: string) => ({ params: Promise.resolve({ id }) });
 
@@ -449,5 +473,203 @@ describe("PUT /api/transactions/[id]", () => {
     expect(response.status).toBe(404);
     expect(mocks.categoryFindMany).not.toHaveBeenCalled();
     expect(mocks.update).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Photo rows as the two reads see them: the ownership check selects only `id`, the cleanup also
+ * counts references. `refs` is how many transactions still point at each photo after the write.
+ */
+const stubPhotos = (owned: string[], refs: Record<string, number> = {}) => {
+  mocks.photoFindMany.mockImplementation(
+    async ({ where, select }: { where: { id: { in: string[] } }; select: Record<string, unknown> }) => {
+      const ids = where.id.in.filter((id) => owned.includes(id));
+      if (!select._count) return ids.map((id) => ({ id }));
+      mocks.order.push("cleanup");
+      return ids.map((id) => ({ id, objectKey: `receipts/user-1/${id}.jpg`, _count: { transactions: refs[id] ?? 0 } }));
+    },
+  );
+};
+
+describe("PUT /api/transactions/[id] receipt photos", () => {
+  const stored = {
+    id: "tx-1",
+    userId: "user-1",
+    amount: 250,
+    description: "Groceries",
+    type: "EXPENSE",
+    date: new Date("2026-09-07T02:00:00.000Z"),
+    categoryId: "cat-1",
+    creditAccountId: null,
+    receiptPhotoId: "pA",
+    labels: [],
+  };
+  const body = (overrides: Record<string, unknown> = {}) => ({
+    amount: 250,
+    description: "Groceries",
+    type: "EXPENSE",
+    date: "2026-09-07T02:00:00.000Z",
+    categoryId: "cat-1",
+    ...overrides,
+  });
+  const put = (payload: Record<string, unknown>) =>
+    PUT(
+      new Request("http://localhost/api/transactions/tx-1", { method: "PUT", body: JSON.stringify(payload) }),
+      context("tx-1"),
+    );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.order.length = 0;
+    mocks.getAuthUserId.mockResolvedValue("user-1");
+    mocks.findFirst.mockResolvedValue(stored);
+    mocks.categoryFindMany.mockResolvedValue([{ id: "cat-1", type: "EXPENSE" }]);
+    mocks.findUniqueOrThrow.mockResolvedValue({ id: "tx-1" });
+    mocks.queryRaw.mockResolvedValue([]);
+    mocks.updateMany.mockResolvedValue({ count: 2 });
+    mocks.photoDeleteMany.mockResolvedValue({ count: 1 });
+    mocks.storageDelete.mockResolvedValue(undefined);
+    mocks.photosEnabled.mockReturnValue(true);
+    stubPhotos(["pA", "pB"]);
+  });
+
+  it("replacing A with B moves every row on A, then cleans A up after the commit", async () => {
+    const response = await put(body({ receiptPhotoId: "pB" }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { userId: "user-1", OR: [{ receiptPhotoId: "pA" }, { id: "tx-1" }] },
+      data: { receiptPhotoId: "pB", updatedVia: "APP", updatedByMcpTokenId: null },
+    });
+    // The row lock is the first thing the transaction does.
+    expect(mocks.queryRaw).toHaveBeenCalledTimes(1);
+    expect(mocks.order).toEqual(["tx:open", "tx:commit", "cleanup"]);
+    expect(mocks.photoFindMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { id: { in: ["pA"] }, userId: "user-1" } }),
+    );
+    expect(mocks.storageDelete).toHaveBeenCalledWith("receipts/user-1/pA.jpg");
+    // Nothing but the photo moved, so the scalar write does not run.
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it("null unlinks only this row and keeps A while its sibling still uses it", async () => {
+    stubPhotos(["pA", "pB"], { pA: 1 });
+
+    const response = await put(body({ receiptPhotoId: null }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { id: "tx-1", userId: "user-1" },
+      data: { receiptPhotoId: null, updatedVia: "APP", updatedByMcpTokenId: null },
+    });
+    expect(mocks.photoDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.storageDelete).not.toHaveBeenCalled();
+  });
+
+  it("omitting the field leaves the link alone and an unchanged save writes nothing", async () => {
+    const response = await put(body());
+
+    expect(response.status).toBe(200);
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.queryRaw).not.toHaveBeenCalled();
+    expect(mocks.photoFindMany).not.toHaveBeenCalled();
+  });
+
+  it("re-sending the stored photo id is not a change", async () => {
+    const response = await put(body({ receiptPhotoId: "pA" }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.photoFindMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses another user's photo with 400 and writes nothing", async () => {
+    stubPhotos(["pA"]);
+
+    const response = await put(body({ receiptPhotoId: "someone-elses" }));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Photo not found" });
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+    expect(mocks.storageDelete).not.toHaveBeenCalled();
+  });
+
+  it("still saves when storage cleanup fails, warning instead", async () => {
+    mocks.storageDelete.mockRejectedValue(new Error("R2 down"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const response = await put(body({ receiptPhotoId: "pB" }));
+
+    expect(response.status).toBe(200);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("still links when photos are disabled, skipping only the cleanup", async () => {
+    mocks.photosEnabled.mockReturnValue(false);
+
+    const response = await put(body({ receiptPhotoId: "pB" }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.updateMany).toHaveBeenCalled();
+    expect(mocks.order).toEqual(["tx:open", "tx:commit"]);
+  });
+});
+
+describe("DELETE /api/transactions/[id]", () => {
+  const del = () =>
+    DELETE(new Request("http://localhost/api/transactions/tx-1", { method: "DELETE" }), context("tx-1"));
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.order.length = 0;
+    mocks.getAuthUserId.mockResolvedValue("user-1");
+    mocks.findFirst.mockResolvedValue({ id: "tx-1", userId: "user-1", receiptPhotoId: "pA" });
+    mocks.deleteTransaction.mockResolvedValue({ receiptPhotoId: "pA" });
+    mocks.photoDeleteMany.mockResolvedValue({ count: 1 });
+    mocks.storageDelete.mockResolvedValue(undefined);
+    mocks.photosEnabled.mockReturnValue(true);
+  });
+
+  it("deletes the photo from storage when this was its last row", async () => {
+    stubPhotos(["pA"], { pA: 0 });
+
+    const response = await del();
+
+    expect(response.status).toBe(200);
+    expect(mocks.deleteTransaction).toHaveBeenCalledWith({
+      where: { id: "tx-1" },
+      select: { receiptPhotoId: true },
+    });
+    expect(mocks.storageDelete).toHaveBeenCalledWith("receipts/user-1/pA.jpg");
+  });
+
+  it("keeps the photo while another row still uses it", async () => {
+    stubPhotos(["pA"], { pA: 1 });
+
+    const response = await del();
+
+    expect(response.status).toBe(200);
+    expect(mocks.storageDelete).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing about photos for a row that had none", async () => {
+    mocks.deleteTransaction.mockResolvedValue({ receiptPhotoId: null });
+
+    const response = await del();
+
+    expect(response.status).toBe(200);
+    expect(mocks.photoFindMany).not.toHaveBeenCalled();
+  });
+
+  it("404s a transaction that is not the caller's", async () => {
+    mocks.findFirst.mockResolvedValue(null);
+
+    const response = await del();
+
+    expect(response.status).toBe(404);
+    expect(mocks.deleteTransaction).not.toHaveBeenCalled();
   });
 });

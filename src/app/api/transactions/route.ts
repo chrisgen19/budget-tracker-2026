@@ -4,6 +4,7 @@ import { getAuthUserId } from "@/lib/session";
 import { transactionSchema } from "@/lib/validations";
 import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 import { categoriesAreUsable, categoriesAreUsableForWrite } from "@/lib/transaction-writes";
+import { PHOTO_NOT_FOUND_MESSAGE, photosAreOwned } from "@/lib/receipt-photo-links";
 import { CARD_PURCHASE_REFUSAL_MESSAGES, checkCardPurchases } from "@/lib/card-purchase-rule";
 import { userCanUseCreditCards } from "@/lib/credit-card-access";
 import { creditCardsUnavailableResponse } from "@/lib/credit-account-http";
@@ -132,9 +133,15 @@ export async function POST(request: Request) {
 
     const result = await prisma.$transaction(async (tx) => {
       // Re-checked under a row lock, because the pre-flight read above takes none and a concurrent
-      // type flip can commit between it and the insert. Returning null rather than throwing keeps
-      // the refusal a 400 instead of reaching the catch as a 500.
-      if (!(await categoriesAreUsableForWrite(tx, userId, [validated]))) return null;
+      // type flip can commit between it and the insert. Returning a reason rather than throwing
+      // keeps the refusal a 400 instead of reaching the catch as a 500.
+      if (!(await categoriesAreUsableForWrite(tx, userId, [validated]))) {
+        return "CATEGORY" as const;
+      }
+      // Beside the category re-check, inside the write: another user's photo and a missing one
+      // get the same refusal.
+      const photoIds = validated.receiptPhotoId ? [validated.receiptPhotoId] : [];
+      if (!(await photosAreOwned(tx, userId, photoIds))) return "PHOTO" as const;
 
       const transaction = await tx.transaction.create({
         data: {
@@ -145,6 +152,7 @@ export async function POST(request: Request) {
           categoryId: validated.categoryId,
           userId,
           ...(validated.creditAccountId && { creditAccountId: validated.creditAccountId }),
+          ...(validated.receiptPhotoId && { receiptPhotoId: validated.receiptPhotoId }),
         },
       });
 
@@ -168,7 +176,10 @@ export async function POST(request: Request) {
       });
     });
 
-    if (result === null) {
+    if (result === "PHOTO") {
+      return NextResponse.json({ error: PHOTO_NOT_FOUND_MESSAGE }, { status: 400 });
+    }
+    if (result === "CATEGORY") {
       return NextResponse.json(
         { error: "That category does not exist, or its type does not match the transaction's" },
         { status: 400 }

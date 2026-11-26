@@ -138,6 +138,53 @@ describe("create_transactions provenance", () => {
   });
 });
 
+describe("create_transactions and receipt photos", () => {
+  /**
+   * Photos are linked through the app only. The tool declares its own input shape, so zod strips
+   * a `receiptPhotoId` a model sends, and it never reaches the shared create path.
+   */
+  it("does not pass a receiptPhotoId through to the write", async () => {
+    const { client: writePrisma, created } = makeWritePrisma();
+    const server = createBudgetMcpServer({
+      prisma: writePrisma,
+      userId: "user_1",
+      timezoneOffset: -480,
+      scopes: ["transactions:write"],
+      writesEnabledUntil: new Date(Date.now() + 60_000),
+      tokenId: "tok_claude",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const { tools } = await client.listTools();
+    const result = await client.callTool({
+      name: "create_transactions",
+      arguments: {
+        clientBatchId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+        transactions: [
+          {
+            amount: 100,
+            description: "Lunch",
+            type: "EXPENSE",
+            date: "2026-08-25",
+            categoryId: "cat_1",
+            labelIds: [],
+            receiptPhotoId: "photo_someone_else",
+          },
+        ],
+      },
+    });
+    await client.close();
+
+    const item = tools.find((t) => t.name === "create_transactions")?.inputSchema.properties
+      ?.transactions as { items?: { properties?: Record<string, unknown> } } | undefined;
+    expect(item?.items?.properties).not.toHaveProperty("receiptPhotoId");
+    expect(result.isError).toBeFalsy();
+    expect(created).toHaveLength(1);
+    expect(created[0]).not.toHaveProperty("receiptPhotoId");
+  });
+});
+
 describe("search_transactions provenance filter", () => {
   /**
    * The filter has to know about every value `created_via` can hold.

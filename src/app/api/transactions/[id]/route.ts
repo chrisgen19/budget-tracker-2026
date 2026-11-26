@@ -7,6 +7,12 @@ import { categoriesAreUsable } from "@/lib/transaction-writes";
 import { CARD_PURCHASE_REFUSAL_MESSAGES, checkCardPurchases } from "@/lib/card-purchase-rule";
 import { userCanUseCreditCards } from "@/lib/credit-card-access";
 import { creditCardsUnavailableResponse } from "@/lib/credit-account-http";
+import {
+  applyPhotoChange,
+  cleanUpReceiptPhotos,
+  PHOTO_NOT_FOUND_MESSAGE,
+  ReceiptPhotoNotOwnedError,
+} from "@/lib/receipt-photos";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -175,7 +181,20 @@ export async function PUT(request: Request, { params }: RouteParams) {
 
     const moved = scalarsMoved || labelsMoved;
 
-    const result = await prisma.$transaction(async (tx) => {
+    // Tri-state, like `creditAccountId`: omitted keeps the stored link, null removes it from this
+    // row only, an id replaces it. Re-sending the stored id is not a change and writes nothing.
+    const nextPhotoId =
+      validated.receiptPhotoId === undefined ? existing.receiptPhotoId : validated.receiptPhotoId;
+    const photoMoved = nextPhotoId !== existing.receiptPhotoId;
+
+    const outcome = await prisma.$transaction(async (tx) => {
+      // First, so a replace takes its row lock as the transaction's first statement. It stamps the
+      // rows it moves itself, which is why `moved` above does not count the photo: a save that
+      // moves only the photo writes nothing else.
+      const { orphaned } = photoMoved
+        ? await applyPhotoChange(tx, userId, id, nextPhotoId, existing.receiptPhotoId)
+        : { orphaned: [] as string[] };
+
       // Only a save that moves something writes anything. An unchanged save must leave the row
       // exactly as it is: opening the edit modal and pressing Update with no edits would
       // otherwise rewrite `updated_via` to APP and null the token id, erasing a genuine MCP trail
@@ -208,7 +227,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
         }
       }
 
-      return tx.transaction.findUniqueOrThrow({
+      const row = await tx.transaction.findUniqueOrThrow({
         where: { id },
         include: {
         category: true,
@@ -217,10 +236,17 @@ export async function PUT(request: Request, { params }: RouteParams) {
         creditAccount: { select: { id: true, name: true, color: true } },
       },
       });
+      return { row, orphaned };
     });
 
-    return NextResponse.json(result);
+    // After the commit, never inside it, and never failing the response.
+    await cleanUpReceiptPhotos(prisma, userId, outcome.orphaned);
+
+    return NextResponse.json(outcome.row);
   } catch (error) {
+    if (error instanceof ReceiptPhotoNotOwnedError) {
+      return NextResponse.json({ error: PHOTO_NOT_FOUND_MESSAGE }, { status: 400 });
+    }
     if (error instanceof Error && error.name === "ZodError") {
       return NextResponse.json({ error: "Invalid input" }, { status: 400 });
     }
@@ -242,7 +268,15 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
   }
 
-  await prisma.transaction.delete({ where: { id } });
+  // The photo link comes back from the delete itself (`DELETE ... RETURNING`), so it is the value
+  // the row held when it went, not one read before.
+  const deleted = await prisma.transaction.delete({
+    where: { id },
+    select: { receiptPhotoId: true },
+  });
+
+  // After the delete has committed, and never failing the response.
+  await cleanUpReceiptPhotos(prisma, userId, deleted.receiptPhotoId ? [deleted.receiptPhotoId] : []);
 
   return NextResponse.json({ message: "Transaction deleted" });
 }

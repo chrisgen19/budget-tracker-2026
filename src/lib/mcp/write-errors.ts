@@ -23,6 +23,9 @@ export const WRITE_ERROR_MESSAGES: Record<BatchFailureReason, string> = {
     "One or more category IDs are not this user's. Call get_category_list for valid IDs.",
   CARD_NOT_USABLE:
     "A credit card named as the payment method is not this user's, is archived, or was put on an income. Nothing was written.",
+  // Unreachable from the tool today: its input schema strips `receiptPhotoId`, so it never sends
+  // one. Present because the map is exhaustive over every reason the shared create path returns.
+  PHOTO_NOT_FOUND: "A receipt photo named on a transaction is not this user's. Nothing was written.",
   // Writes were switched off between the request arriving and the rows being written. The check
   // runs inside the transaction before anything is created, so nothing was saved. Saying so
   // matters: it used to share the "could not confirm" wording below, which sent the caller

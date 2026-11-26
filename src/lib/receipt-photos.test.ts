@@ -4,8 +4,27 @@ vi.mock("@/lib/receipt-photo-image", () => ({
   normaliseReceiptPhoto: vi.fn(async () => ({ bytes: new Uint8Array([1, 2, 3]), width: 10, height: 20 })),
 }));
 
+const storageMocks = vi.hoisted(() => ({
+  enabled: vi.fn(() => true),
+  create: vi.fn(),
+}));
+
+vi.mock("@/lib/receipt-photo-storage", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/receipt-photo-storage")>()),
+  receiptPhotosEnabled: storageMocks.enabled,
+  createPhotoStorage: storageMocks.create,
+}));
+
 import { Prisma } from "@prisma/client";
-import { deleteUnreferencedPhotos, getReceiptPhotoInfo, storeReceiptPhoto } from "@/lib/receipt-photos";
+import {
+  applyPhotoChange,
+  cleanUpReceiptPhotos,
+  deleteUnreferencedPhotos,
+  getReceiptPhotoInfo,
+  photosAreOwned,
+  ReceiptPhotoNotOwnedError,
+  storeReceiptPhoto,
+} from "@/lib/receipt-photos";
 
 const row = (over: Record<string, unknown> = {}) => ({
   id: "p1",
@@ -190,5 +209,160 @@ describe("getReceiptPhotoInfo", () => {
       localDate: "2026-01-02",
     });
     expect(info?.photo.createdAt).toBe("2026-01-01T00:00:00.000Z");
+  });
+});
+
+/** A write-transaction stub that records the order of what it was asked to do. */
+const makeTx = (ownedPhotoIds: string[] = ["pB"]) => {
+  const order: string[] = [];
+  const tx = {
+    $queryRaw: vi.fn(async (..._args: unknown[]) => {
+      order.push("lock");
+      return [];
+    }),
+    receiptPhoto: {
+      findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) => {
+        order.push("owned");
+        return where.id.in.filter((id) => ownedPhotoIds.includes(id)).map((id) => ({ id }));
+      }),
+    },
+    transaction: {
+      updateMany: vi.fn(async (..._args: unknown[]) => {
+        order.push("write");
+        return { count: 1 };
+      }),
+    },
+  };
+  return { tx, order };
+};
+
+const lockSql = (tx: ReturnType<typeof makeTx>["tx"]) =>
+  (tx.$queryRaw.mock.calls[0][0] as TemplateStringsArray).join("?");
+
+describe("photosAreOwned", () => {
+  it("is true for the caller's own photos, deduped, scoped to the user", async () => {
+    const { tx } = makeTx(["pA", "pB"]);
+    expect(await photosAreOwned(tx as never, "u1", ["pA", "pB", "pA"])).toBe(true);
+    expect(tx.receiptPhoto.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ["pA", "pB"] }, userId: "u1" },
+      select: { id: true },
+    });
+  });
+
+  it("is false when any id is not the caller's or does not exist", async () => {
+    const { tx } = makeTx(["pA"]);
+    expect(await photosAreOwned(tx as never, "u1", ["pA", "someone-elses"])).toBe(false);
+  });
+
+  it("asks nothing when there is nothing to check", async () => {
+    const { tx } = makeTx();
+    expect(await photosAreOwned(tx as never, "u1", [])).toBe(true);
+    expect(tx.receiptPhoto.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("applyPhotoChange", () => {
+  const stamp = { updatedVia: "APP", updatedByMcpTokenId: null };
+
+  it("replace: locks the affected rows first, then repoints every row on the old photo", async () => {
+    const { tx, order } = makeTx(["pB"]);
+    const result = await applyPhotoChange(tx as never, "u1", "t1", "pB", "pA");
+
+    expect(order).toEqual(["lock", "owned", "write"]);
+    const sql = lockSql(tx);
+    expect(sql).toContain("FROM transactions");
+    expect(sql).toContain("receipt_photo_id");
+    expect(sql).toMatch(/ORDER BY id\s+FOR UPDATE\s*$/);
+    expect(sql).not.toContain("NO KEY");
+    expect(tx.$queryRaw.mock.calls[0].slice(1)).toEqual(["u1", "pA", "t1"]);
+    expect(tx.transaction.updateMany).toHaveBeenCalledWith({
+      where: { userId: "u1", OR: [{ receiptPhotoId: "pA" }, { id: "t1" }] },
+      data: { receiptPhotoId: "pB", ...stamp },
+    });
+    expect(result).toEqual({ orphaned: ["pA"] });
+  });
+
+  it("remove: unlinks only this row and reports the old photo as possibly orphaned", async () => {
+    const { tx, order } = makeTx();
+    const result = await applyPhotoChange(tx as never, "u1", "t1", null, "pA");
+
+    expect(order).toEqual(["write"]);
+    expect(tx.transaction.updateMany).toHaveBeenCalledWith({
+      where: { id: "t1", userId: "u1" },
+      data: { receiptPhotoId: null, ...stamp },
+    });
+    expect(result).toEqual({ orphaned: ["pA"] });
+  });
+
+  it("link: attaches a photo to a row that had none, orphaning nothing", async () => {
+    const { tx, order } = makeTx(["pB"]);
+    const result = await applyPhotoChange(tx as never, "u1", "t1", "pB", null);
+
+    expect(order).toEqual(["owned", "write"]);
+    expect(tx.transaction.updateMany).toHaveBeenCalledWith({
+      where: { id: "t1", userId: "u1" },
+      data: { receiptPhotoId: "pB", ...stamp },
+    });
+    expect(result).toEqual({ orphaned: [] });
+  });
+
+  it("writes nothing when the link does not move", async () => {
+    const { tx, order } = makeTx();
+    expect(await applyPhotoChange(tx as never, "u1", "t1", "pA", "pA")).toEqual({ orphaned: [] });
+    expect(await applyPhotoChange(tx as never, "u1", "t1", null, null)).toEqual({ orphaned: [] });
+    expect(order).toEqual([]);
+  });
+
+  it("throws before writing when the new photo is not the caller's", async () => {
+    const { tx } = makeTx([]);
+    await expect(applyPhotoChange(tx as never, "u1", "t1", "foreign", "pA")).rejects.toBeInstanceOf(
+      ReceiptPhotoNotOwnedError,
+    );
+    expect(tx.transaction.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("cleanUpReceiptPhotos", () => {
+  const prismaWith = (count: number) => ({
+    receiptPhoto: {
+      findMany: vi.fn(async () => [{ id: "pA", objectKey: "k/pA", _count: { transactions: count } }]),
+      deleteMany: vi.fn(async () => ({ count: 1 })),
+    },
+  });
+
+  it("deletes an unreferenced photo from storage", async () => {
+    const storage = makeStorage();
+    storageMocks.enabled.mockReturnValue(true);
+    storageMocks.create.mockReturnValue(storage);
+    await cleanUpReceiptPhotos(prismaWith(0) as never, "u1", ["pA"]);
+    expect(storage.delete).toHaveBeenCalledWith("k/pA");
+  });
+
+  it("does nothing at all when there are no ids", async () => {
+    const prisma = prismaWith(0);
+    storageMocks.create.mockClear();
+    await cleanUpReceiptPhotos(prisma as never, "u1", []);
+    expect(prisma.receiptPhoto.findMany).not.toHaveBeenCalled();
+    expect(storageMocks.create).not.toHaveBeenCalled();
+  });
+
+  it("skips cleanup when photos are disabled, leaving orphans for the prune script", async () => {
+    const prisma = prismaWith(0);
+    storageMocks.enabled.mockReturnValue(false);
+    storageMocks.create.mockClear();
+    await cleanUpReceiptPhotos(prisma as never, "u1", ["pA"]);
+    expect(storageMocks.create).not.toHaveBeenCalled();
+    expect(prisma.receiptPhoto.findMany).not.toHaveBeenCalled();
+    storageMocks.enabled.mockReturnValue(true);
+  });
+
+  it("never throws: a storage failure is warned about and swallowed", async () => {
+    const storage = makeStorage();
+    storage.delete.mockRejectedValue(new Error("R2 down"));
+    storageMocks.create.mockReturnValue(storage);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(cleanUpReceiptPhotos(prismaWith(0) as never, "u1", ["pA"])).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
