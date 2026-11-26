@@ -64,7 +64,7 @@ ${renderCategoryRules(BREAKDOWN_CATEGORY_RULES, BREAKDOWN_GUIDANCE_RULES)}
 
 RESPONSE FORMAT — return ONLY valid JSON, no markdown or explanation:
 {
-  "date": "<YYYY-MM-DD — the TRANSACTION/purchase date, usually near the top of the receipt next to the time. IGNORE any 'Date of Issuance', PTU accreditation, permit, or BIR registration dates. Use ${photoDateStr} if unreadable>",
+  "date": "<YYYY-MM-DD — the TRANSACTION/purchase date, usually near the top of the receipt next to the time. IGNORE any 'Date of Issuance', PTU accreditation, permit, or BIR registration dates, including a footer 'DATE ISSUED:' printed next to a 'PTU No.', 'MIN#', 'SN#' or 'Accreditation No.' line, which is the BIR permit date and never the purchase date. If that footer date is the only date visible, treat the date as unreadable. Use ${photoDateStr} if unreadable>",
   "dateSource": "<\"OCR\" if you read the date from the receipt, or \"PHOTO_FALLBACK\" if you used the fallback ${photoDateStr} because the date was unreadable. Always include this field.>",
   "items": [
     {

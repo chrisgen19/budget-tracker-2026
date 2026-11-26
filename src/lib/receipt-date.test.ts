@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkReceiptDate } from "./receipt-date";
+import { checkReceiptDate, STALE_RECEIPT_DAYS } from "./receipt-date";
 
 /** The photo was taken 2026-08-26; "today" is the same day, as it is for a live scan. */
 const TODAY = "2026-08-26";
@@ -126,5 +126,47 @@ describe("year slips", () => {
     const result = checkReceiptDate("2025-12-30", "2026-01-04", "2026-01-04");
     expect(result.date).toBe("2025-12-30");
     expect(result.dateWarning).toBe(true);
+  });
+});
+
+describe("dates well before the photo", () => {
+  // Observed in production: a receipt photographed 2026-11-26 was cropped above its purchase
+  // date, and the model read the BIR permit's footer "DATE ISSUED: 10/29/2026" instead. Same
+  // year, so the year check stayed silent and the review showed nothing to question.
+  it("warns on the PTU permit date read off a receipt photographed four weeks later", () => {
+    expect(checkReceiptDate("2026-10-29", "2026-11-26", "2026-11-26")).toEqual({
+      date: "2026-10-29",
+      dateWarning: true,
+      usedPhotoFallback: false,
+    });
+  });
+
+  it(`warns one day past the ${STALE_RECEIPT_DAYS}-day threshold`, () => {
+    expect(checkReceiptDate("2026-11-18", "2026-11-26", "2026-11-26").dateWarning).toBe(true);
+  });
+
+  it(`does not warn at exactly ${STALE_RECEIPT_DAYS} days`, () => {
+    expect(checkReceiptDate("2026-11-19", "2026-11-26", "2026-11-26").dateWarning).toBe(false);
+  });
+
+  it("does not warn on a receipt from a few days ago", () => {
+    expect(checkReceiptDate("2026-11-24", "2026-11-26", "2026-11-26").dateWarning).toBe(false);
+  });
+
+  // Warn only: an old receipt scanned late is legitimate, so the date the model read is kept.
+  it("never rewrites the date it warns about", () => {
+    expect(checkReceiptDate("2026-09-01", "2026-11-26", "2026-11-26").date).toBe("2026-09-01");
+  });
+
+  // The photo, not today, bounds when the purchase happened: a receipt photographed on the 20th
+  // and uploaded on the 26th is not stale for having been bought on the 18th.
+  it("measures from the photo's date, not today's", () => {
+    expect(checkReceiptDate("2026-11-18", "2026-11-26", "2026-11-20").dateWarning).toBe(false);
+  });
+
+  // Counted in calendar days via UTC, so a span crossing a month boundary is not off by one.
+  it("counts across a month boundary", () => {
+    expect(checkReceiptDate("2026-02-21", "2026-03-01", "2026-03-01").dateWarning).toBe(true);
+    expect(checkReceiptDate("2026-02-22", "2026-03-01", "2026-03-01").dateWarning).toBe(false);
   });
 });

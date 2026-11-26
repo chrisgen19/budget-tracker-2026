@@ -291,7 +291,7 @@ export function MultiScanReview({
                           <span className="text-[10px] text-amber-500 ml-1">
                             {item.data.repairedFromYear
                               ? `(year corrected from ${item.data.repairedFromYear})`
-                              : "(check year)"}
+                              : "(check date)"}
                           </span>
                         )}
                       </span>

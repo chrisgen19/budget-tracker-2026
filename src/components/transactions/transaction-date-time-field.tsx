@@ -155,8 +155,8 @@ export function TransactionDateTimeField({
         >
           <AlertCircle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
           <p className="text-xs text-amber-700">
-            The receipt date year looks incorrect (possible POS error). Please verify and correct
-            the date.
+            The receipt date looks unlikely: a different year, or weeks before the photo. Please
+            verify and correct the date.
           </p>
         </div>
       )}

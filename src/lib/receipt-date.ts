@@ -8,7 +8,8 @@ export const parseLocalDate = (raw: FormDataEntryValue | null, fallback: string)
 
 export interface ReceiptDateCheck {
   date: string;
-  /** The date is worth confirming: the year disagrees with today's, or was repaired below. */
+  /** The date is worth confirming: the year disagrees with today's, the date is more than
+   *  `STALE_RECEIPT_DAYS` before the photo, or the year was repaired below. */
   dateWarning: boolean;
   usedPhotoFallback: boolean;
   /** The year actually printed on the receipt, when `date` no longer carries it. Present only on
@@ -48,6 +49,34 @@ const isRealCalendarDate = (dateOnly: string, parsed: Date): boolean => {
  */
 const isYearSlip = (dateOnly: string, photoDate: string): boolean =>
   dateOnly.slice(5) === photoDate.slice(5) && dateOnly.slice(0, 4) !== photoDate.slice(0, 4);
+
+/** How many days a receipt date may precede its photo before the review asks the user to check. */
+export const STALE_RECEIPT_DAYS = 7;
+
+const MS_PER_DAY = 86_400_000;
+
+/** Calendar days from one YYYY-MM-DD to another, in UTC so no DST shift can skew the count. */
+const daysBetween = (from: string, to: string): number => {
+  const toUtc = (d: string) => {
+    const [y, m, day] = d.split("-").map(Number);
+    return Date.UTC(y, m - 1, day);
+  };
+  return Math.round((toUtc(to) - toUtc(from)) / MS_PER_DAY);
+};
+
+/**
+ * Whether an OCR date sits well before the photo it was read from.
+ *
+ * Observed in production: an SM Supermarket receipt photographed on 2026-11-26 was cropped above
+ * its transaction date, and the only date left in frame was the BIR permit's `DATE ISSUED:
+ * 10/29/2026`. The model filed that, same year, so the year check had nothing to say and the
+ * purchase landed four weeks early with no warning in the review.
+ *
+ * Warn only, never rewrite: an old receipt scanned late is legitimate, and the user can see the
+ * receipt while this code cannot.
+ */
+const isStaleForPhoto = (dateOnly: string, photoDate: string): boolean =>
+  daysBetween(dateOnly, photoDate) > STALE_RECEIPT_DAYS;
 
 /**
  * Normalize a receipt date returned by Gemini and decide whether it needs confirming.
@@ -89,7 +118,8 @@ export const checkReceiptDate = (
 
   return {
     date: dateOnly,
-    dateWarning: parsed.getFullYear() !== todayYear,
+    dateWarning:
+      parsed.getFullYear() !== todayYear || isStaleForPhoto(dateOnly, photoFallback),
     usedPhotoFallback: false,
   };
 };
