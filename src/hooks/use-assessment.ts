@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUser } from "@/components/user-provider";
 import { analyticsKeys } from "@/hooks/use-analytics";
+import { refusalFrom } from "@/hooks/api-error";
+import type { AssessmentPayload } from "@/lib/ai-assessment";
 import type { AiAssessmentResponse, AiDailyTipResponse, AssessmentFactsResponse } from "@/types";
 
 /* ------------------------------------------------------------------ */
@@ -48,6 +50,24 @@ const fetchReport = async (p: AssessmentPeriod): Promise<AiAssessmentResponse> =
   const search = new URLSearchParams({ granularity: p.granularity, from: p.from, to: p.to });
   const res = await fetch(`/api/assessment?${search}`);
   if (!res.ok) throw new Error("Failed to load assessment");
+  return res.json();
+};
+
+/**
+ * Generate (or regenerate) the AI report for a period. Rejects with the server's own message
+ * when it refuses, since that is what the toast shows (a daily limit, a coverage gate).
+ */
+export const generateAssessment = async (args: {
+  from: string;
+  to: string;
+  payload: AssessmentPayload;
+}): Promise<AiAssessmentResponse> => {
+  const res = await fetch("/api/assessment/generate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args),
+  });
+  if (!res.ok) throw await refusalFrom(res, "Failed to generate assessment");
   return res.json();
 };
 

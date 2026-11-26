@@ -12,6 +12,7 @@ import {
 } from "@/lib/validations";
 import { cn } from "@/lib/utils";
 import { useUser } from "@/components/user-provider";
+import { changePassword, fetchProfile as requestProfile, updateProfile } from "@/hooks/profile-api";
 import { PageHeader } from "@/components/ui/page-header";
 import { PersonalInfoForm } from "@/components/profile/personal-info-form";
 import { PasswordForm } from "@/components/profile/password-form";
@@ -49,9 +50,7 @@ export default function ProfilePage() {
 
   const fetchProfile = useCallback(async () => {
     try {
-      const res = await fetch("/api/profile");
-      if (!res.ok) throw new Error("Failed to fetch profile");
-      const data = await res.json();
+      const data = await requestProfile();
       profileForm.reset({
         name: data.name,
         email: data.email,
@@ -74,17 +73,7 @@ export default function ProfilePage() {
     setProfileError("");
 
     try {
-      const res = await fetch("/api/profile", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Failed to update profile");
-      }
-
+      await updateProfile(data);
       setUser({ name: data.name, email: data.email, currency: data.currency, timezoneOffset: data.timezoneOffset });
 
       setProfileSuccess("Profile updated successfully");
@@ -101,17 +90,7 @@ export default function ProfilePage() {
     setPasswordError("");
 
     try {
-      const res = await fetch("/api/profile/password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Failed to change password");
-      }
-
+      await changePassword(data);
       setPasswordSuccess("Password changed successfully");
       passwordForm.reset();
       setTimeout(() => setPasswordSuccess(""), 3000);

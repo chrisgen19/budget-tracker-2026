@@ -3,8 +3,11 @@
 import { useEffect, useState } from "react";
 import { CreditCard, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-type Access = "ADMIN" | "EVERYONE";
+import {
+  fetchCreditCardsAccess,
+  saveCreditCardsAccess,
+  type CreditCardsAccess as Access,
+} from "@/hooks/admin-api";
 
 const OPTIONS: { value: Access; label: string; hint: string }[] = [
   { value: "ADMIN", label: "Admin only", hint: "Only admins see Cards and Paid with." },
@@ -25,9 +28,8 @@ export function CreditCardsAccessCard() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetch("/api/admin/feature-access")
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error("load failed"))))
-      .then((data: { creditCardsAccess: Access }) => setAccess(data.creditCardsAccess))
+    fetchCreditCardsAccess()
+      .then(setAccess)
       .catch(() => setLoadFailed(true));
   }, []);
 
@@ -38,12 +40,7 @@ export function CreditCardsAccessCard() {
     setSaving(true);
     setError("");
     try {
-      const res = await fetch("/api/admin/feature-access", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ creditCardsAccess: next }),
-      });
-      if (!res.ok) throw new Error("save failed");
+      await saveCreditCardsAccess(next);
     } catch {
       setAccess(previous);
       setError("Couldn't save. The previous setting is still in effect.");

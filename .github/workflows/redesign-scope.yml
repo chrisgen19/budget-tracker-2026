@@ -1,0 +1,35 @@
+name: Redesign scope
+
+# Keeps UI redesigns from changing the backend in the same PR. See
+# `.github/scripts/check-redesign-scope.sh` for what counts as backend and why.
+#
+# Only branches named `feature/redesign-*` are checked. Every other PR skips the job, which
+# GitHub reports as passing, so making this a required check does not block normal work.
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: redesign-scope-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scope:
+    if: startsWith(github.head_ref, 'feature/redesign-')
+    # Reads the repo and nothing else: no install, no secrets.
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      # Same pinned SHA as `ci.yml`. Full history so both ends of the PR, and the merge base
+      # between them, are present for `git diff base...head` and `git show`.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Check for backend changes
+        run: bash .github/scripts/check-redesign-scope.sh "$BASE_SHA" "$HEAD_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}

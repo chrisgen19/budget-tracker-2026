@@ -6,15 +6,16 @@ import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { McpTokenCreate } from "@/components/profile/mcp-token-create";
 import { McpTokenList, type McpTokenRecord } from "@/components/profile/mcp-token-list";
 import { McpWriteAccess, type McpWriteLease } from "@/components/profile/mcp-write-access";
-import type { McpScope } from "@/lib/mcp/scopes";
-import type { McpTokenSource } from "@/lib/validations";
-
-interface CreateInput {
-  name: string;
-  scopes: McpScope[];
-  expiresInDays: number | null;
-  source: McpTokenSource;
-}
+import {
+  changeMcpTokenExpiry,
+  createMcpToken,
+  deleteMcpToken,
+  fetchMcpWriteLease,
+  listMcpTokens,
+  revokeMcpToken,
+  setMcpWriteLease,
+  type McpTokenCreateInput as CreateInput,
+} from "@/hooks/mcp-tokens-api";
 
 export function McpTokensForm() {
   const [tokens, setTokens] = useState<McpTokenRecord[] | null>(null);
@@ -47,9 +48,7 @@ export function McpTokensForm() {
     setError("");
 
     try {
-      const res = await fetch("/api/mcp/tokens");
-      if (!res.ok) throw new Error("request failed");
-      setTokens((await res.json()).tokens);
+      setTokens(await listMcpTokens());
       setLoadFailed(false);
     } catch {
       // Deliberately not `setTokens([])`: an empty list renders "No tokens yet", which would tell
@@ -58,9 +57,7 @@ export function McpTokensForm() {
     }
 
     try {
-      const prefs = await fetch("/api/preferences");
-      if (!prefs.ok) throw new Error("request failed");
-      setWritesUntil((await prefs.json()).mcpWritesEnabledUntil ?? null);
+      setWritesUntil(await fetchMcpWriteLease());
     } catch {
       // Left unknown rather than `null`: "off" is the safe-looking answer, not the true one, and
       // it would hide the kill switch while writes were possibly still live.
@@ -78,13 +75,7 @@ export function McpTokensForm() {
     setCreating(true);
     setError("");
     try {
-      const res = await fetch("/api/mcp/tokens", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-      });
-      if (!res.ok) throw new Error("Failed to create token");
-      const data = await res.json();
+      const data = await createMcpToken(input);
       // Held in state, not refetchable: this is the only time the plaintext exists outside
       // the user's clipboard.
       setMinted(data.token);
@@ -104,11 +95,9 @@ export function McpTokensForm() {
     setRevokingId(revoking.id);
     setError("");
     try {
-      const res = await fetch(`/api/mcp/tokens/${revoking.id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to revoke token");
-      const data = await res.json();
+      const record = await revokeMcpToken(revoking.id);
       setTokens((current) =>
-        (current ?? []).map((token) => (token.id === data.record.id ? data.record : token))
+        (current ?? []).map((token) => (token.id === record.id ? record : token))
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to revoke token");
@@ -127,15 +116,9 @@ export function McpTokensForm() {
     setChangingExpiryId(token.id);
     setError("");
     try {
-      const res = await fetch(`/api/mcp/tokens/${token.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ expiresInDays }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? "Failed to change expiry");
+      const record = await changeMcpTokenExpiry(token.id, expiresInDays);
       setTokens((current) =>
-        (current ?? []).map((item) => (item.id === data.record.id ? data.record : item))
+        (current ?? []).map((item) => (item.id === record.id ? record : item))
       );
       return true;
     } catch (err) {
@@ -152,10 +135,7 @@ export function McpTokensForm() {
     setDeletingId(deleting.id);
     setError("");
     try {
-      const res = await fetch(`/api/mcp/tokens/${deleting.id}?permanent=true`, {
-        method: "DELETE",
-      });
-      if (!res.ok) throw new Error("Failed to delete token");
+      await deleteMcpToken(deleting.id);
       setTokens((current) => (current ?? []).filter((token) => token.id !== deleting.id));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete token");
@@ -168,13 +148,7 @@ export function McpTokensForm() {
   const handleWriteLease = async (lease: McpWriteLease) => {
     setError("");
     try {
-      const res = await fetch("/api/preferences", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mcpWriteMinutes: lease }),
-      });
-      if (!res.ok) throw new Error("Failed to update write access");
-      setWritesUntil((await res.json()).mcpWritesEnabledUntil ?? null);
+      setWritesUntil(await setMcpWriteLease(lease));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update write access");
     }

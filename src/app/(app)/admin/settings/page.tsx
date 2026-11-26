@@ -4,15 +4,13 @@ import { useEffect, useState } from "react";
 import { ScanLine, ImagePlus, CalendarClock, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CreditCardsAccessCard } from "@/components/admin/credit-cards-access-card";
-import type { UserRole } from "@prisma/client";
-
-interface RoleSettings {
-  receiptScanEnabled: boolean;
-  maxUploadFiles: number;
-  monthlyScanLimit: number;
-}
-
-type SettingsMap = Partial<Record<UserRole, RoleSettings>>;
+import { ApiRefusedError } from "@/hooks/api-error";
+import {
+  fetchAdminSettings,
+  updateRoleSetting,
+  type RoleSettings,
+  type SettingsMap,
+} from "@/hooks/admin-api";
 
 const ROLE_LABELS: Record<string, { title: string; description: string }> = {
   FREE: {
@@ -34,10 +32,7 @@ export default function AdminSettingsPage() {
   useEffect(() => {
     const fetchSettings = async () => {
       try {
-        const res = await fetch("/api/admin/settings");
-        if (!res.ok) throw new Error("Failed to fetch settings");
-        const data = await res.json();
-        setSettings(data);
+        setSettings(await fetchAdminSettings());
       } catch {
         setError("Failed to load settings. Please try again.");
       } finally {
@@ -65,20 +60,15 @@ export default function AdminSettingsPage() {
     setSavingKey(key);
 
     try {
-      const res = await fetch("/api/admin/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role, [field]: value }),
-      });
-
-      if (!res.ok) {
-        // Revert on failure
-        setSettings((s) => ({ ...s, [role]: prev }));
-        setError("Failed to save. Please try again.");
-      }
-    } catch {
+      await updateRoleSetting(role, field, value);
+    } catch (err) {
+      // Revert on failure, and say which kind it was: refused versus never arrived.
       setSettings((s) => ({ ...s, [role]: prev }));
-      setError("Network error. Please try again.");
+      setError(
+        err instanceof ApiRefusedError
+          ? "Failed to save. Please try again."
+          : "Network error. Please try again."
+      );
     } finally {
       setSavingKey(null);
     }
