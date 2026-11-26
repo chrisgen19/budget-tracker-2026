@@ -27,3 +27,31 @@ export const clampPan = (x: number, y: number, bounds: PanBounds): { x: number; 
   x: Math.min(bounds.right, Math.max(bounds.left, x)),
   y: Math.min(bounds.bottom, Math.max(bounds.top, y)),
 });
+
+/** How far one arrow key press moves a zoomed photo, in px. */
+export const KEYBOARD_PAN_STEP = 40;
+
+const ARROW_DELTAS: Record<string, { dx: number; dy: number }> = {
+  // The key names the part of the receipt to bring into view, so the image moves the other way.
+  ArrowLeft: { dx: 1, dy: 0 },
+  ArrowRight: { dx: -1, dy: 0 },
+  ArrowUp: { dx: 0, dy: 1 },
+  ArrowDown: { dx: 0, dy: -1 },
+};
+
+/**
+ * The offset an arrow key moves a zoomed photo to, kept inside `bounds`, or null for any other
+ * key so the caller lets it through. The keyboard half of dragging: without it a zoomed photo
+ * clips the receipt text past its frame and only a pointer can bring it back.
+ */
+export const keyboardPan = (
+  key: string,
+  x: number,
+  y: number,
+  bounds: PanBounds,
+  step = KEYBOARD_PAN_STEP,
+): { x: number; y: number } | null => {
+  const delta = ARROW_DELTAS[key];
+  if (!delta) return null;
+  return clampPan(x + delta.dx * step, y + delta.dy * step, bounds);
+};

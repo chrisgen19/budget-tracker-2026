@@ -58,6 +58,16 @@ export function useReceiptPhotoZoom(frameRef: RefObject<HTMLElement | null>) {
     return () => frame.removeEventListener("wheel", onWheel);
   }, [frameRef, scale, zoomTo]);
 
+  // The limits depend on the frame's size, so a rotated phone or a resized window re-clamps the
+  // offset; without this a zoomed photo could sit past its frame until the next gesture.
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => moveTo(x.get(), y.get(), scale.get()));
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, [frameRef, moveTo, scale, x, y]);
+
   const onPointerDown = (event: PointerEvent<HTMLElement>) => {
     event.currentTarget.setPointerCapture?.(event.pointerId);
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });

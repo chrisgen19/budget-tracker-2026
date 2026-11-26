@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { clampPan, panBounds } from "@/components/transactions/receipt-photo-pan";
+import {
+  clampPan,
+  KEYBOARD_PAN_STEP,
+  keyboardPan,
+  panBounds,
+} from "@/components/transactions/receipt-photo-pan";
 
 describe("panBounds", () => {
   it("allows no pan at fit", () => {
@@ -28,5 +33,25 @@ describe("clampPan", () => {
 
   it("recentres at fit", () => {
     expect(clampPan(-150, 80, panBounds(400, 600, 1))).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe("keyboardPan", () => {
+  const bounds = panBounds(400, 600, 2); // ±200 across, ±300 down
+
+  it("moves the photo opposite the arrow, so the arrow names the part brought into view", () => {
+    expect(keyboardPan("ArrowRight", 0, 0, bounds)).toEqual({ x: -KEYBOARD_PAN_STEP, y: 0 });
+    expect(keyboardPan("ArrowLeft", 0, 0, bounds)).toEqual({ x: KEYBOARD_PAN_STEP, y: 0 });
+    expect(keyboardPan("ArrowDown", 0, 0, bounds)).toEqual({ x: 0, y: -KEYBOARD_PAN_STEP });
+    expect(keyboardPan("ArrowUp", 0, 0, bounds)).toEqual({ x: 0, y: KEYBOARD_PAN_STEP });
+  });
+
+  it("stops at the edge rather than pushing the photo off its frame", () => {
+    expect(keyboardPan("ArrowRight", -190, 0, bounds)).toEqual({ x: -200, y: 0 });
+  });
+
+  it("returns null for any other key, so Tab and Escape still work", () => {
+    expect(keyboardPan("Tab", 0, 0, bounds)).toBeNull();
+    expect(keyboardPan("Escape", 0, 0, bounds)).toBeNull();
   });
 });

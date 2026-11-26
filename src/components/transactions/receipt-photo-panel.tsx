@@ -1,10 +1,15 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { animate, motion, useMotionValue } from "framer-motion";
 import { Expand, ImageOff, Maximize, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { clampPan, panBounds, type PanBounds } from "@/components/transactions/receipt-photo-pan";
+import {
+  clampPan,
+  keyboardPan,
+  panBounds,
+  type PanBounds,
+} from "@/components/transactions/receipt-photo-pan";
 import { PhotoRevealCover, usePhotoReveal } from "@/components/transactions/receipt-photo-reveal";
 
 const MIN_ZOOM = 1;
@@ -33,10 +38,40 @@ export function ReceiptPhotoPanel({ src, sharedWith, onOpen, className }: Receip
   const { blurred, reveal } = usePhotoReveal();
   const frameRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(MIN_ZOOM);
+  // Read by the resize observer, which is set up once and must see the current zoom.
+  const zoomRef = useRef(zoom);
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
   const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
   const [bounds, setBounds] = useState<PanBounds>(() => panBounds(0, 0, MIN_ZOOM));
   const x = useMotionValue(0);
   const y = useMotionValue(0);
+
+  // A resize changes the limits too (a window narrowed, the viewport height moving), so the same
+  // pull-back runs then; otherwise a zoomed photo could sit past its frame until the next drag.
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const nextBounds = panBounds(frame.clientWidth, frame.clientHeight, zoomRef.current);
+      const inside = clampPan(x.get(), y.get(), nextBounds);
+      setBounds(nextBounds);
+      x.set(inside.x);
+      y.set(inside.y);
+    });
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, [x, y]);
+
+  const onPanKey = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (zoom <= MIN_ZOOM) return;
+    const next = keyboardPan(event.key, x.get(), y.get(), bounds);
+    if (!next) return;
+    event.preventDefault();
+    animate(x, next.x);
+    animate(y, next.y);
+  };
 
   // Bounds follow the zoom, and an offset left past the new edge (3x to 2x) is pulled back in.
   const setZoomTo = (next: number) => {
@@ -52,7 +87,15 @@ export function ReceiptPhotoPanel({ src, sharedWith, onOpen, className }: Receip
 
   return (
     <div className={cn("flex-col overflow-hidden rounded-2xl bg-warm-700", className)}>
-      <div ref={frameRef} className="relative flex-1 overflow-hidden bg-[#3a3125]">
+      <div
+        ref={frameRef}
+        // Focusable only while zoomed, when there is something to move: arrow keys pan it.
+        tabIndex={zoom > MIN_ZOOM ? 0 : -1}
+        role={zoom > MIN_ZOOM ? "group" : undefined}
+        aria-label={zoom > MIN_ZOOM ? "Zoomed receipt photo. Use the arrow keys to move it." : undefined}
+        onKeyDown={onPanKey}
+        className="relative flex-1 overflow-hidden bg-[#3a3125] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-amber"
+      >
         {status === "loading" && <div className="absolute inset-0 animate-pulse bg-white/5" />}
         {status === "error" ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center text-sm text-cream-300">
