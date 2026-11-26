@@ -75,7 +75,8 @@ afterAll(() => {
 beforeEach(() => {
   mocks.photosEnabled = true;
   mocks.upload.mockReset();
-  mocks.compress.mockClear();
+  mocks.compress.mockReset();
+  mocks.compress.mockImplementation(async (file: File) => file);
   mocks.showToast.mockClear();
 });
 
@@ -271,6 +272,12 @@ describe("TransactionForm receipt photo", () => {
     expect(onSubmit.mock.calls[0][0]).not.toHaveProperty("receiptPhotoId");
   });
 
+  it("mounts exactly one file input, outside the view the category picker swaps out", () => {
+    renderForm();
+
+    expect(document.querySelectorAll('input[type="file"]')).toHaveLength(1);
+  });
+
   it("omits receiptPhotoId from an untouched form", async () => {
     const onSubmit = renderForm({ transaction: withPhoto, initialData: undefined });
 
@@ -279,5 +286,100 @@ describe("TransactionForm receipt photo", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0]).not.toHaveProperty("receiptPhotoId");
     expect(mocks.upload).not.toHaveBeenCalled();
+  });
+});
+
+/** Compressions the test finishes by hand, in any order, to put a Save or a Remove mid-way. */
+const heldCompressions = () => {
+  const releases: Array<() => void> = [];
+  mocks.compress.mockImplementation(
+    (file: File) => new Promise<File>((resolve) => releases.push(() => resolve(file))),
+  );
+  return (i: number) => act(async () => releases[i]());
+};
+const pick = (name: string) =>
+  fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, {
+    target: { files: [new File([name], name, { type: "image/jpeg" })] },
+  });
+const held = () => {
+  let finish: (v: { id: string }) => void = () => {};
+  mocks.upload.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+  return (id: string) => act(async () => finish({ id }));
+};
+
+describe("TransactionForm receipt photo races", () => {
+  it("a Save tapped while the photo is still compressing waits for it and uploads it", async () => {
+    mocks.upload.mockResolvedValue({ id: "photo-9" });
+    const release = heldCompressions();
+    const onSubmit = renderForm();
+
+    pick("a.jpg");
+    submit();
+    await act(async () => {});
+    expect(onSubmit).not.toHaveBeenCalled();
+    await release(0);
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(mocks.upload).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ receiptPhotoId: "photo-9" });
+  });
+
+  it("discards a compression that finishes after Remove, so the removed photo is not saved", async () => {
+    const release = heldCompressions();
+    const onSubmit = renderForm({ transaction: withPhoto, initialData: undefined });
+
+    pick("replacement.jpg");
+    fireEvent.click(screen.getByRole("button", { name: "Remove photo" }));
+    await release(0);
+
+    expect(screen.getByRole("button", { name: "Attach photo" })).toBeTruthy();
+    submit();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(mocks.upload).not.toHaveBeenCalled();
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ receiptPhotoId: null });
+  });
+
+  it("keeps the newer pick when an older compression finishes last", async () => {
+    mocks.upload.mockResolvedValue({ id: "photo-9" });
+    const release = heldCompressions();
+    const onSubmit = renderForm();
+
+    pick("older.jpg");
+    pick("newer.jpg");
+    await release(1);
+    await release(0);
+    submit();
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect((mocks.upload.mock.calls[0][0] as File).name).toBe("newer.jpg");
+  });
+
+  it("disables the photo controls while the save is in flight", async () => {
+    const finishUpload = held();
+    renderForm();
+
+    await chooseFile();
+    submit();
+
+    await waitFor(() =>
+      expect((screen.getByRole("button", { name: "Remove photo" }) as HTMLButtonElement).disabled).toBe(true),
+    );
+    expect((screen.getByRole("button", { name: "Replace photo" }) as HTMLButtonElement).disabled).toBe(true);
+    await finishUpload("photo-9");
+  });
+
+  it("does not save when Cancel is pressed while the photo uploads", async () => {
+    const finishUpload = held();
+    const onCancel = vi.fn();
+    const onSubmit = renderForm({ onCancel });
+
+    await chooseFile();
+    submit();
+    await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await finishUpload("photo-9");
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });

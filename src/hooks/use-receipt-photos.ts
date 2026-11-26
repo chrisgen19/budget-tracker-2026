@@ -4,6 +4,9 @@ import { refusalFrom } from "@/hooks/api-error";
 import type { ReceiptPhotoInfo, ReceiptPhotoView } from "@/lib/receipt-photos";
 
 export const receiptPhotoKeys = {
+  /** Prefix of every info query. Transaction writes invalidate it: the linked rows and the
+   *  total are derived from transactions, so an edit or delete makes them stale. */
+  all: ["receipt-photo-info"] as const,
   info: (photoId: string | null) => ["receipt-photo-info", photoId] as const,
 };
 

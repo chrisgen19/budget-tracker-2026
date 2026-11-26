@@ -12,6 +12,7 @@ import { labelKeys } from "@/hooks/use-labels";
 import { analyticsKeys } from "@/hooks/use-analytics";
 import { creditAccountKeys } from "@/hooks/use-credit-accounts";
 import { cashFlowForecastKeys } from "@/hooks/use-cash-flow-forecast";
+import { receiptPhotoKeys } from "@/hooks/use-receipt-photos";
 import type { TransactionSelectionItem } from "@/lib/transaction-bulk";
 
 /* ------------------------------------------------------------------ */
@@ -364,6 +365,7 @@ export function useCreateTransaction() {
       queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] });
       // A purchase paid with a card moves that card's balance and its month.
       queryClient.invalidateQueries({ queryKey: creditAccountKeys.all });
+      queryClient.invalidateQueries({ queryKey: receiptPhotoKeys.all });
     },
   });
 }
@@ -415,6 +417,7 @@ export function useUpdateTransaction() {
       queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] });
       // A purchase paid with a card moves that card's balance and its month.
       queryClient.invalidateQueries({ queryKey: creditAccountKeys.all });
+      queryClient.invalidateQueries({ queryKey: receiptPhotoKeys.all });
     },
   });
 }
@@ -452,6 +455,7 @@ export function useDeleteTransaction() {
         queryClient.invalidateQueries({ queryKey: labelKeys.all }),
         queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] }),
         queryClient.invalidateQueries({ queryKey: creditAccountKeys.all }),
+        queryClient.invalidateQueries({ queryKey: receiptPhotoKeys.all }),
       ]);
     },
   });
@@ -500,6 +504,7 @@ export function useBulkDeleteTransactions() {
         queryClient.invalidateQueries({ queryKey: labelKeys.all }),
         queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] }),
         queryClient.invalidateQueries({ queryKey: creditAccountKeys.all }),
+        queryClient.invalidateQueries({ queryKey: receiptPhotoKeys.all }),
       ]);
     },
   });
@@ -577,6 +582,7 @@ export function useBulkUpdateTransactions() {
         queryClient.invalidateQueries({ queryKey: labelKeys.all }),
         queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] }),
         queryClient.invalidateQueries({ queryKey: creditAccountKeys.all }),
+        queryClient.invalidateQueries({ queryKey: receiptPhotoKeys.all }),
       ]);
     },
   });
@@ -692,6 +698,7 @@ export function useBatchCreateTransactions() {
       queryClient.invalidateQueries({ queryKey: labelKeys.all });
       // A reviewed receipt can be paid with a card, which moves that card's balance and month.
       queryClient.invalidateQueries({ queryKey: creditAccountKeys.all });
+      queryClient.invalidateQueries({ queryKey: receiptPhotoKeys.all });
     },
   });
 }
@@ -742,6 +749,7 @@ export function useRemoveTransactionLabel() {
       queryClient.invalidateQueries({ queryKey: ["bills", "candidates"] });
       // A purchase paid with a card moves that card's balance and its month.
       queryClient.invalidateQueries({ queryKey: creditAccountKeys.all });
+      queryClient.invalidateQueries({ queryKey: receiptPhotoKeys.all });
     },
     onError: () => {
       // Refetch to restore consistent state (pill stays visible since cache

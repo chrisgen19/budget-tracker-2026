@@ -27,7 +27,7 @@ import { useScheduledLabel } from "@/hooks/use-scheduled-label";
 import { useLabelsQuery } from "@/hooks/use-labels";
 import { useReceiptPhotoDraft } from "@/hooks/use-receipt-photo-draft";
 import { useToast } from "@/components/ui/toast";
-import { AttachPhotoField } from "@/components/transactions/attach-photo-field";
+import { AttachPhotoField, ReceiptPhotoInput } from "@/components/transactions/attach-photo-field";
 import { TransactionPhotoLayout } from "@/components/transactions/transaction-photo-layout";
 import type { TransactionWithCategory } from "@/types";
 
@@ -98,6 +98,15 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   const photoSrc = photosOn ? photo.src : null;
   const hasPhoto = photoSrc !== null;
   const photoInputRef = useRef<HTMLInputElement>(null);
+  // Set by Cancel and by unmounting (the modal closed some other way), and checked after the
+  // photo upload a submit waits on, so a save the user walked away from is not written.
+  const abandoned = useRef(false);
+  useEffect(() => {
+    abandoned.current = false;
+    return () => {
+      abandoned.current = true;
+    };
+  }, []);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [displayAmount, setDisplayAmount] = useState<string>(() => {
     if (transaction?.amount != null) return formatAmountDisplay(transaction.amount);
@@ -272,8 +281,11 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
       photoSrc={photoSrc}
       photoId={photosOn ? photo.photoId : null}
       transactionId={transaction?.id}
-      onReplacePhoto={() => photoInputRef.current?.click()}
+      onReplacePhoto={isSubmitting ? undefined : () => photoInputRef.current?.click()}
     >
+    {/* Mounted outside the view switch: the viewer's Replace opens it while the category
+        picker hides the field that would otherwise own it. */}
+    {photosOn && <ReceiptPhotoInput inputRef={photoInputRef} onSelect={photo.choose} />}
     <AnimatePresence mode="wait" initial={false}>
       {showCategoryPicker ? (
         <motion.div
@@ -373,7 +385,11 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               const includeLabelIds = !hideLabelPicker && userInteractedWithLabels;
               // A chosen photo uploads now, at save, so a cancelled form stores nothing. A failed
               // upload never costs the transaction: it saves without the photo and says so.
+              abandoned.current = false;
               const photoResult = photosOn ? await photo.resolveForSubmit() : null;
+              // Cancelled or closed while the photo uploaded: the user walked away from this save,
+              // so it must not land behind their back. An uploaded photo is left for the prune.
+              if (abandoned.current) return;
               await onSubmit({
                 ...(includeLabelIds ? { ...payload, labelIds } : payload),
                 ...photoResult?.patch,
@@ -596,6 +612,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                 onSelect={photo.choose}
                 onRemove={photo.remove}
                 inputRef={photoInputRef}
+                disabled={isSubmitting}
               />
             )}
 
@@ -635,7 +652,10 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               <div className="flex gap-3">
                 <button
                   type="button"
-                  onClick={onCancel}
+                  onClick={() => {
+                    abandoned.current = true;
+                    onCancel();
+                  }}
                   className={cn(
                     "inline-flex items-center justify-center py-3 rounded-xl border border-cream-300 text-warm-500 font-medium text-sm hover:bg-cream-100 transition-colors",
                     onDelete ? "w-1/4" : "w-1/3"
