@@ -5,7 +5,7 @@ import { MAX_FILE_SIZE } from "@/lib/receipt-limits";
 import { overBodySizeLimit } from "@/lib/request-size";
 
 /** Formats Gemini accepts inline and the client can realistically produce. */
-const ALLOWED_TYPES = new Set([
+export const ALLOWED_TYPES = new Set([
   "image/jpeg",
   "image/png",
   "image/webp",
