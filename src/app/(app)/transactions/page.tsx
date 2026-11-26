@@ -860,6 +860,7 @@ export default function TransactionsPage() {
                               billId={tx.billId}
                               createdVia={tx.createdVia}
                               creditAccount={user.creditCardsEnabled ? tx.creditAccount : null}
+                              receiptPhotoId={user.receiptPhotosEnabled ? tx.receiptPhotoId : null}
                             />
                           </div>
                           <div className="flex items-center gap-1 min-w-0 overflow-hidden">

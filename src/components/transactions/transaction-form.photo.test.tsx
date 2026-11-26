@@ -51,6 +51,7 @@ vi.mock("@/components/transactions/label-picker", () => ({ LabelPicker: () => nu
 vi.mock("@/hooks/use-receipt-photos", () => ({
   receiptPhotoUrl: (id: string) => `/api/receipt-photos/${id}`,
   uploadReceiptPhoto: mocks.upload,
+  useReceiptPhotoInfo: () => ({ data: undefined, isLoading: true, isError: false }),
 }));
 vi.mock("@/lib/utils", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/utils")>()),

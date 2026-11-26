@@ -2,9 +2,10 @@
 
 import { useRef, useState } from "react";
 import { animate, motion, useMotionValue } from "framer-motion";
-import { ImageOff, Maximize, Minus, Plus } from "lucide-react";
+import { Expand, ImageOff, Maximize, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { clampPan, panBounds, type PanBounds } from "@/components/transactions/receipt-photo-pan";
+import { PhotoRevealCover, usePhotoReveal } from "@/components/transactions/receipt-photo-reveal";
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
@@ -13,8 +14,10 @@ const ZOOM_STEP = 0.5;
 interface ReceiptPhotoPanelProps {
   /** `receiptPhotoUrl(id)` for a saved photo, or an object URL for one chosen but not yet saved. */
   src: string;
-  /** Categories of the other transactions sharing this photo (filled by the viewer task). */
+  /** Categories of the other transactions sharing this photo. */
   sharedWith?: string[];
+  /** Opens the full-screen viewer; offered only for a stored photo. */
+  onOpen?: () => void;
   className?: string;
 }
 
@@ -26,7 +29,8 @@ const zoomButtonClass =
  * Desktop pane beside the form: the photo, zoomed with a CSS transform and dragged with the
  * pointer once zoomed in, so a date or total can be read against the fields at the same time.
  */
-export function ReceiptPhotoPanel({ src, sharedWith, className }: ReceiptPhotoPanelProps) {
+export function ReceiptPhotoPanel({ src, sharedWith, onOpen, className }: ReceiptPhotoPanelProps) {
+  const { blurred, reveal } = usePhotoReveal();
   const frameRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(MIN_ZOOM);
   const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
@@ -72,10 +76,12 @@ export function ReceiptPhotoPanel({ src, sharedWith, className }: ReceiptPhotoPa
             style={{ x, y }}
             className={cn(
               "h-full w-full select-none object-contain",
+              blurred && "blur-md",
               zoom > MIN_ZOOM ? "cursor-grab active:cursor-grabbing" : "cursor-default",
             )}
           />
         )}
+        {blurred && status !== "error" && <PhotoRevealCover onReveal={reveal} />}
       </div>
       <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs text-cream-300">
         <span className="min-w-0 truncate">
@@ -109,6 +115,11 @@ export function ReceiptPhotoPanel({ src, sharedWith, className }: ReceiptPhotoPa
           >
             <Maximize className="h-4 w-4" aria-hidden="true" />
           </button>
+          {onOpen && (
+            <button type="button" aria-label="Open full screen" onClick={onOpen} className={zoomButtonClass}>
+              <Expand className="h-4 w-4" aria-hidden="true" />
+            </button>
+          )}
         </div>
       </div>
     </div>

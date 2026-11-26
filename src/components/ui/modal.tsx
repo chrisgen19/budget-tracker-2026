@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { useDialogLifecycle } from "@/components/ui/use-dialog-lifecycle";
 
 /** Returns true when viewport width < 640px (Tailwind `sm` breakpoint) */
 const useIsMobile = () => {
@@ -64,45 +65,6 @@ const useVisualViewport = (enabled: boolean) => {
   return viewport;
 };
 
-/**
- * Body scroll lock, ref-counted across every mounted Modal.
- *
- * Each instance used to snapshot and restore `body.style.overflow` itself. With two modals
- * open (a ConfirmModal over the review sheet), the second snapshots the first's `"hidden"`,
- * and when both close in one commit the cleanups run in tree order -- the outer restores the
- * real value, then the inner restores `"hidden"` over it, leaving the page unscrollable until
- * a reload. Counting makes the restore order-independent: only the last unlock restores.
- */
-let scrollLockCount = 0;
-let savedOverflow = "";
-let savedScrollY = 0;
-const modalStack: symbol[] = [];
-const FOCUSABLE_SELECTOR = [
-  "a[href]",
-  "button:not([disabled])",
-  "input:not([disabled])",
-  "select:not([disabled])",
-  "textarea:not([disabled])",
-  "[tabindex]:not([tabindex='-1'])",
-].join(",");
-
-const lockBodyScroll = () => {
-  if (scrollLockCount === 0) {
-    savedScrollY = window.scrollY;
-    savedOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-  }
-  scrollLockCount += 1;
-};
-
-const unlockBodyScroll = () => {
-  scrollLockCount = Math.max(0, scrollLockCount - 1);
-  if (scrollLockCount === 0) {
-    document.body.style.overflow = savedOverflow;
-    window.scrollTo(0, savedScrollY);
-  }
-};
-
 const desktopVariants = {
   initial: { opacity: 0, scale: 0.95, y: 10 },
   animate: { opacity: 1, scale: 1, y: 0 },
@@ -138,77 +100,12 @@ export function Modal({ open, onClose, title, children, size = "default" }: Moda
   useEffect(() => setMounted(true), []);
 
   const titleId = useId();
-  const modalTokenRef = useRef(Symbol("modal"));
-  const overlayRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const onCloseRef = useRef(onClose);
   const isMobile = useIsMobile();
   const viewport = useVisualViewport(isMobile && open);
 
-  // Keep ref in sync so the effect doesn't re-run on every render
-  useEffect(() => {
-    onCloseRef.current = onClose;
-  }, [onClose]);
-
-  useEffect(() => {
-    if (!open) return;
-
-    lockBodyScroll();
-    const modalToken = modalTokenRef.current;
-    const previouslyFocused =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    modalStack.push(modalToken);
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (modalStack.at(-1) !== modalToken) return;
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onCloseRef.current();
-        return;
-      }
-      if (event.key !== "Tab") return;
-
-      const dialog = dialogRef.current;
-      if (!dialog) return;
-      const focusable = Array.from(
-        dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-      ).filter((element) => element.getAttribute("aria-hidden") !== "true");
-      const first = focusable[0];
-      const last = focusable.at(-1);
-
-      if (!first || !last) {
-        event.preventDefault();
-        dialog.focus();
-      } else if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-
-    // Move focus into the modal if no child has autoFocus.
-    // Delay slightly so the animation can render the content first.
-    const focusTimer = setTimeout(() => {
-      const content = contentRef.current;
-      if (content && !content.contains(document.activeElement)) {
-        content.focus({ preventScroll: true });
-      }
-    }, 50);
-
-    return () => {
-      clearTimeout(focusTimer);
-      document.removeEventListener("keydown", handleKeyDown);
-      const stackIndex = modalStack.lastIndexOf(modalToken);
-      if (stackIndex !== -1) modalStack.splice(stackIndex, 1);
-      unlockBodyScroll();
-      if (previouslyFocused?.isConnected) previouslyFocused.focus({ preventScroll: true });
-    };
-  }, [open]);
+  useDialogLifecycle(open, dialogRef, contentRef, onClose);
 
   // On mobile, scroll the focused input into view within the modal's
   // scroll container after the keyboard finishes animating
@@ -282,7 +179,6 @@ export function Modal({ open, onClose, title, children, size = "default" }: Moda
         >
           {/* Overlay */}
           <motion.div
-            ref={overlayRef}
             className="absolute inset-0 bg-warm-900/30 backdrop-blur-sm"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

@@ -89,4 +89,15 @@ describe("TransactionRowBadges", () => {
     expect(screen.getByText("Bill")).toBeDefined();
     expect(screen.getByLabelText("Added by Claude")).toBeDefined();
   });
+
+  it("marks a row that has a receipt photo", () => {
+    render(<TransactionRowBadges receiptPhotoId="photo_1" />);
+    expect(screen.getByText("Photo")).toBeDefined();
+  });
+
+  it("shows no photo badge on a row without one", () => {
+    render(<TransactionRowBadges receiptGroupId="grp_1" receiptPhotoId={null} />);
+    expect(screen.getByText("Itemized")).toBeDefined();
+    expect(screen.queryByText("Photo")).toBeNull();
+  });
 });

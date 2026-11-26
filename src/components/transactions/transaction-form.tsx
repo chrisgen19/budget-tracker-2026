@@ -97,6 +97,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   const photo = useReceiptPhotoDraft(photosOn ? (transaction?.receiptPhotoId ?? null) : null);
   const photoSrc = photosOn ? photo.src : null;
   const hasPhoto = photoSrc !== null;
+  const photoInputRef = useRef<HTMLInputElement>(null);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [displayAmount, setDisplayAmount] = useState<string>(() => {
     if (transaction?.amount != null) return formatAmountDisplay(transaction.amount);
@@ -267,7 +268,12 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   // into a failed save.
 
   return (
-    <TransactionPhotoLayout photoSrc={photoSrc}>
+    <TransactionPhotoLayout
+      photoSrc={photoSrc}
+      photoId={photosOn ? photo.photoId : null}
+      transactionId={transaction?.id}
+      onReplacePhoto={() => photoInputRef.current?.click()}
+    >
     <AnimatePresence mode="wait" initial={false}>
       {showCategoryPicker ? (
         <motion.div
@@ -585,7 +591,12 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
             )}
 
             {photosOn && (
-              <AttachPhotoField hasPhoto={hasPhoto} onSelect={photo.choose} onRemove={photo.remove} />
+              <AttachPhotoField
+                hasPhoto={hasPhoto}
+                onSelect={photo.choose}
+                onRemove={photo.remove}
+                inputRef={photoInputRef}
+              />
             )}
 
             <TransactionDateTimeField

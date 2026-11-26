@@ -59,5 +59,8 @@ export function useReceiptPhotoDraft(initialPhotoId: string | null) {
     return { patch: unlinked, uploadFailed: false };
   }, [pending, initialPhotoId, removedInitial]);
 
-  return { src, hasPhoto: src !== null, choose, remove, resolveForSubmit };
+  // Only a stored photo has an id: a chosen file is a local preview until submit uploads it.
+  const photoId = pending ? null : shownInitialId;
+
+  return { src, photoId, hasPhoto: src !== null, choose, remove, resolveForSubmit };
 }

@@ -1,12 +1,14 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, type RefObject } from "react";
 import { Paperclip } from "lucide-react";
 
 interface AttachPhotoFieldProps {
   hasPhoto: boolean;
   onSelect: (file: File) => void;
   onRemove: () => void;
+  /** Lets the form open this same picker from elsewhere, e.g. the viewer's Replace. */
+  inputRef?: RefObject<HTMLInputElement | null>;
 }
 
 /**
@@ -14,8 +16,9 @@ interface AttachPhotoFieldProps {
  * "Replace photo · Remove photo" when one is shown. No `capture`, so a phone offers the
  * library as well as the camera: a receipt is as often a saved screenshot as a fresh shot.
  */
-export function AttachPhotoField({ hasPhoto, onSelect, onRemove }: AttachPhotoFieldProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
+export function AttachPhotoField({ hasPhoto, onSelect, onRemove, inputRef: sharedRef }: AttachPhotoFieldProps) {
+  const ownRef = useRef<HTMLInputElement>(null);
+  const inputRef = sharedRef ?? ownRef;
   const openPicker = () => inputRef.current?.click();
 
   const input = (
