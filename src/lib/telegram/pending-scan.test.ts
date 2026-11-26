@@ -50,6 +50,13 @@ describe("pending scans", () => {
     expect(takePendingScan(1)?.amount).toBe(999);
   });
 
+  it("keeps the photo through a correction, so the corrected save still attaches it", () => {
+    putPendingScan(1, scan({ imageBase64: "aW1hZ2U=" }));
+    const result = revisePendingScan(1, { description: "Groceries at SM" });
+    expect(result.status).toBe("revised");
+    expect(takePendingScan(1)?.imageBase64).toBe("aW1hZ2U=");
+  });
+
   it("expires, so a forgotten yes cannot save something stale", () => {
     const now = Date.now();
     putPendingScan(1, scan({ createdAt: now - PENDING_TTL_MS - 1 }));

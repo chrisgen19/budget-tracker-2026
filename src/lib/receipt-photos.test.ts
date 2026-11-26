@@ -39,6 +39,7 @@ const makeStorage = () => ({
   put: vi.fn(async (..._args: unknown[]) => {}),
   get: vi.fn(),
   delete: vi.fn(async (..._args: unknown[]) => {}),
+  list: vi.fn(async () => []),
 });
 
 describe("storeReceiptPhoto", () => {

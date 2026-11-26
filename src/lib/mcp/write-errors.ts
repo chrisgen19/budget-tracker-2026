@@ -46,6 +46,27 @@ export const isAmbiguousWriteFailure = (message: string): boolean =>
   message.trim() === WRITE_ERROR_MESSAGES.UNKNOWN_WHETHER_SAVED;
 
 /**
+ * What `attach_receipt_photo` says when this server has no photo storage configured.
+ *
+ * Exported because the Telegram bot recognises it: on a deployment without R2 a scanned receipt
+ * still saves, and telling the user after every save that "the photo didn't upload" would report a
+ * missing feature as a failure.
+ */
+export const PHOTOS_NOT_CONFIGURED_MESSAGE = "Receipt photos are not configured on this server.";
+
+/** What `attach_receipt_photo` says for each refusal. Every one leaves every row untouched. */
+export const ATTACH_PHOTO_ERROR_MESSAGES = {
+  TRANSACTIONS_NOT_OWNED: (ids: string[]) =>
+    `These transaction IDs do not exist on this account: ${ids.join(", ")}. Nothing was stored or changed. Call search_transactions for current IDs.`,
+  UNREADABLE_IMAGE:
+    "That file is not a readable image. Nothing was stored or changed. Send the photo's raw bytes, base64 encoded.",
+  NOT_BASE64:
+    "imageBase64 is not valid base64. Send the raw image bytes, base64 encoded, with no data: URL prefix.",
+  NO_LONGER_PERMITTED:
+    "Writes were switched off before the photo could be attached, so nothing was changed. Turn them on in Profile > MCP Access, then try again.",
+} as const;
+
+/**
  * What `update_transactions` says when an edit fails, in the same voice as the create table above.
  *
  * A separate map rather than entries bolted onto `WRITE_ERROR_MESSAGES`, which is total over

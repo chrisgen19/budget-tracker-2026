@@ -30,6 +30,15 @@ export interface PendingScan {
    * which had in fact been saved.
    */
   reviewMessageId?: number;
+  /**
+   * The photo itself, base64, so it can be kept on the saved row once the user confirms.
+   *
+   * Held here rather than in a second store: this map already holds one draft per chat for at
+   * most `PENDING_TTL_MS`, so the bytes live exactly as long as the draft and a newer photo
+   * replaces them. Every path that re-stores a draft spreads it (`revisePendingScan`, the restore
+   * after a failed save), so a correction keeps the image without naming it.
+   */
+  imageBase64?: string;
   createdAt: number;
   /**
    * Set when a save failed without settling, so nobody knows whether the row exists.

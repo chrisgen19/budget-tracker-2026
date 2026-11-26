@@ -92,3 +92,87 @@ describe("createPhotoStorage", () => {
     );
   });
 });
+
+describe("createPhotoStorage list", () => {
+  const page = (keys: { key: string; modified: string }[], next?: string) =>
+    `<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Name>bucket</Name>
+  <IsTruncated>${next ? "true" : "false"}</IsTruncated>
+  ${keys
+    .map(
+      (k) =>
+        `<Contents><Key>${k.key}</Key><LastModified>${k.modified}</LastModified><Size>3</Size></Contents>`,
+    )
+    .join("")}
+  ${next ? `<NextContinuationToken>${next}</NextContinuationToken>` : ""}
+</ListBucketResult>`;
+
+  const pagedFetch = (pages: string[]) => {
+    const calls: Request[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(input instanceof Request ? input : new Request(input, init));
+      return new Response(pages[calls.length - 1] ?? "", { status: 200 });
+    }) as typeof fetch;
+    return { calls, fetchImpl };
+  };
+
+  it("sends a signed ListObjectsV2 for the prefix", async () => {
+    const { calls, fetchImpl } = pagedFetch([page([])]);
+    await createPhotoStorage(ENV, fetchImpl).list("receipts/");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe("GET");
+    const url = new URL(calls[0].url);
+    expect(`${url.origin}${url.pathname}`).toBe("https://acct.r2.cloudflarestorage.com/bucket");
+    expect(url.searchParams.get("list-type")).toBe("2");
+    expect(url.searchParams.get("prefix")).toBe("receipts/");
+    expect(url.searchParams.has("continuation-token")).toBe(false);
+    expect(calls[0].headers.get("authorization")).toMatch(/^AWS4-HMAC-SHA256/);
+  });
+
+  it("returns every key with its last-modified time", async () => {
+    const { fetchImpl } = pagedFetch([
+      page([
+        { key: "receipts/u1/p1.jpg", modified: "2026-11-01T00:00:00.000Z" },
+        { key: "receipts/u2/p2.jpg", modified: "2026-11-02T00:00:00.000Z" },
+      ]),
+    ]);
+    expect(await createPhotoStorage(ENV, fetchImpl).list("receipts/")).toEqual([
+      { key: "receipts/u1/p1.jpg", lastModified: new Date("2026-11-01T00:00:00.000Z") },
+      { key: "receipts/u2/p2.jpg", lastModified: new Date("2026-11-02T00:00:00.000Z") },
+    ]);
+  });
+
+  it("follows continuation tokens until the listing is complete", async () => {
+    const { calls, fetchImpl } = pagedFetch([
+      page([{ key: "receipts/a.jpg", modified: "2026-11-01T00:00:00Z" }], "tok/1+="),
+      page([{ key: "receipts/b.jpg", modified: "2026-11-01T00:00:00Z" }]),
+    ]);
+    const objects = await createPhotoStorage(ENV, fetchImpl).list("receipts/");
+    expect(objects.map((o) => o.key)).toEqual(["receipts/a.jpg", "receipts/b.jpg"]);
+    expect(calls).toHaveLength(2);
+    expect(new URL(calls[1].url).searchParams.get("continuation-token")).toBe("tok/1+=");
+  });
+
+  it("decodes XML entities in keys", async () => {
+    const { fetchImpl } = pagedFetch([
+      page([{ key: "receipts/a&amp;b&lt;c&#39;.jpg", modified: "2026-11-01T00:00:00Z" }]),
+    ]);
+    const [object] = await createPhotoStorage(ENV, fetchImpl).list("receipts/");
+    expect(object.key).toBe("receipts/a&b<c'.jpg");
+  });
+
+  it("throws PhotoStorageError on a failed page", async () => {
+    await expect(createPhotoStorage(ENV, stub(403).fetchImpl).list("receipts/")).rejects.toThrow(
+      PhotoStorageError,
+    );
+  });
+
+  it("refuses a truncated page with no continuation token rather than looping", async () => {
+    const broken = page([]).replace("<IsTruncated>false", "<IsTruncated>true");
+    const { fetchImpl } = pagedFetch([broken]);
+    await expect(createPhotoStorage(ENV, fetchImpl).list("receipts/")).rejects.toThrow(
+      PhotoStorageError,
+    );
+  });
+});

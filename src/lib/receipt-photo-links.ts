@@ -4,7 +4,7 @@
  * Database only, on purpose: `createTransactionBatch` imports this, and it is shared by the MCP
  * server and the Telegram paths, which must not load sharp or the R2 client to create a row.
  */
-import type { Prisma } from "@prisma/client";
+import type { Prisma, TransactionSource } from "@prisma/client";
 
 /** The one refusal every transaction write gives for an unowned or missing photo id. */
 export const PHOTO_NOT_FOUND_MESSAGE = "Photo not found";
@@ -47,8 +47,14 @@ export const photosAreOwned = async (
   return owned.length === ids.length;
 };
 
+/** Who made a photo-link change, written onto every row it moves. */
+export interface PhotoEditStamp {
+  updatedVia: TransactionSource;
+  updatedByMcpTokenId: string | null;
+}
+
 /** A photo-link change is an edit made in the app, so it is stamped like any other. */
-const APP_EDIT_STAMP = { updatedVia: "APP", updatedByMcpTokenId: null } as const;
+const APP_EDIT_STAMP: PhotoEditStamp = { updatedVia: "APP", updatedByMcpTokenId: null };
 
 /**
  * Moves one transaction's photo link, inside the caller's write transaction.
@@ -63,7 +69,10 @@ const APP_EDIT_STAMP = { updatedVia: "APP", updatedByMcpTokenId: null } as const
  * - **Remove** (`next` null): unlinks `transactionId` only. Its siblings keep the photo.
  * - **Link** (`previous` null): attaches `next` to `transactionId` only.
  *
- * Rows that change are stamped `updated_via: APP` and lose their MCP token id. An unchanged link
+ * Rows that change are stamped with `stamp`: by default `updated_via: APP` with no MCP token id,
+ * which is what every app route wants. The MCP `attach_receipt_photo` tool passes its own token's
+ * source and id instead, so a photo attached by the Telegram bot does not claim the app did it.
+ * An unchanged link
  * writes nothing. Returns the photo ids that may now be unreferenced, for the caller to hand to
  * `cleanUpReceiptPhotos` **after** the transaction commits.
  *
@@ -75,6 +84,7 @@ export const applyPhotoChange = async (
   transactionId: string,
   next: string | null,
   previous: string | null,
+  stamp: PhotoEditStamp = APP_EDIT_STAMP,
 ): Promise<{ orphaned: string[] }> => {
   if (next === previous) return { orphaned: [] };
 
@@ -88,7 +98,7 @@ export const applyPhotoChange = async (
     if (!(await photosAreOwned(tx, userId, [next]))) throw new ReceiptPhotoNotOwnedError();
     await tx.transaction.updateMany({
       where: { userId, OR: [{ receiptPhotoId: previous }, { id: transactionId }] },
-      data: { receiptPhotoId: next, ...APP_EDIT_STAMP },
+      data: { receiptPhotoId: next, ...stamp },
     });
     return { orphaned: [previous] };
   }
@@ -98,7 +108,7 @@ export const applyPhotoChange = async (
   }
   await tx.transaction.updateMany({
     where: { id: transactionId, userId },
-    data: { receiptPhotoId: next, ...APP_EDIT_STAMP },
+    data: { receiptPhotoId: next, ...stamp },
   });
   return { orphaned: previous === null ? [] : [previous] };
 };

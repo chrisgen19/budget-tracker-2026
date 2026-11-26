@@ -27,6 +27,7 @@ import type {
 } from "../budget-query-types";
 import type { ResolvedPeriod, TransactionTotals } from "../budget-query-types";
 import type { ScanResultPayload } from "../receipt-scan";
+import type { AttachReceiptPhotoPayload } from "../receipt-photo-attach";
 import type { QuickTileLabelView, QuickTileView } from "../telegram/tile-queries";
 import type { FrequentTileView } from "../telegram/frequent-tiles";
 import type {
@@ -634,6 +635,21 @@ export const updateTransactionsOutput = {
   updated: z.number(),
   transactions: z.array(updatedTransaction),
 };
+
+/** What `attach_receipt_photo` returns, pinned to the service's own payload type. */
+export const attachReceiptPhotoOutput = {
+  photoId: z.string().describe("The stored photo's id."),
+  attachedTo: z
+    .array(z.string())
+    .describe(
+      "Every transaction now showing this photo. Can include rows that were not listed: " +
+        "replacing a photo moves every row that shared the old one, since they are one receipt."
+    ),
+  replayed: z
+    .boolean()
+    .describe("True when this photoKey had been stored before, so nothing new was uploaded."),
+};
+assertExact<z.infer<z.ZodObject<typeof attachReceiptPhotoOutput>>, AttachReceiptPhotoPayload>(true);
 
 /**
  * What `scan_receipt` returns: a draft, never a saved row.

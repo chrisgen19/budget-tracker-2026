@@ -46,7 +46,11 @@ import { parseReportIntent } from "@/lib/telegram/report-intent";
 import { RECEIPT_ITEM_SHOW, renderReceiptItems } from "@/lib/telegram/receipt-reply";
 import { renderLabelBreakdown } from "@/lib/telegram/label-reply";
 import { monthsSince, previousMonthOf } from "@/lib/telegram/month-window";
-import { confirmPendingScan, scanToTransaction } from "@/lib/telegram/confirm-scan";
+import {
+  confirmPendingScan,
+  photoNotice,
+  scanToTransaction,
+} from "@/lib/telegram/confirm-scan";
 import {
   hasPendingScan,
   isConfirmation,
@@ -326,9 +330,10 @@ async function confirmCreated(
    */
   notice = ""
 ): Promise<void> {
-  // The bot cannot edit or delete: `create_transactions` is its only write, and that is
-  // deliberate, so a mistyped amount is fixed in the app rather than by giving a chat token
-  // destructive powers. One row per batch today, and the link is only meaningful for one.
+  // The bot cannot edit or delete: `create_transactions` is its only write besides attaching a
+  // scanned receipt's photo to the rows it just wrote, and that is deliberate, so a mistyped
+  // amount is fixed in the app rather than by giving a chat token destructive powers. One row
+  // per batch today, and the link is only meaningful for one.
   const keyboard =
     result.transactions.length === 1
       ? openInAppKeyboard(APP_URL, result.transactions[0].id)
@@ -1111,8 +1116,12 @@ async function handleReceiptPhoto(
 
   let scan: ScannedReceipt;
   let photoTakenAt: string | null = null;
+  let imageBase64: string;
   try {
     const image = await downloadTelegramFile(pick.fileId);
+    // Encoded once and kept on the draft, so the confirmed save can attach the same photo with
+    // `attach_receipt_photo` without downloading it again.
+    imageBase64 = image.toString("base64");
     // Only survives when the image was sent as a file. Telegram re-encodes anything sent as a
     // photo, which strips the metadata, so this is null for most uploads and the scan falls back
     // to today exactly as it did before.
@@ -1123,7 +1132,7 @@ async function handleReceiptPhoto(
     // the description afterwards: "here you go" is an ordinary thing to send with a photo, and
     // overwriting a correctly-read merchant name with it would be worse than ignoring it.
     scan = await callTool<ScannedReceipt>("scan_receipt", {
-      imageBase64: image.toString("base64"),
+      imageBase64,
       mimeType: pick.mimeType,
       localDate: localTimestamp(TZ_OFFSET).slice(0, 10),
       ...(photoTakenAt && { photoTakenAt }),
@@ -1204,6 +1213,7 @@ async function handleReceiptPhoto(
     createdAt: Date.now(),
     labelIds: directive.ids,
     labelNames: directive.names,
+    imageBase64,
   });
 }
 
@@ -1224,10 +1234,23 @@ async function saveConfirmedScan(chatId: number, scan: PendingScan): Promise<voi
     // user a scan they can no longer confirm.
     restore: (s, { frozen }) => putPendingScan(chatId, { ...s, createdAt: Date.now(), frozen }),
     batchKey: (s) => updateBatchId(BOT_ID, s.updateId),
+    // Only ever reached after a save that landed. The photo key is the batch key, so a
+    // redelivered "yes" replays the stored photo rather than uploading a second one.
+    attachPhoto: async (transactionIds, photoKey, s) => {
+      await callTool("attach_receipt_photo", {
+        transactionIds,
+        imageBase64: s.imageBase64,
+        photoKey,
+      });
+    },
   });
 
   if (outcome.status === "saved") {
-    await confirmCreated(chatId, outcome.batch as CreatedBatch);
+    const notice = photoNotice(outcome);
+    if (outcome.photo === "failed") {
+      console.error("[telegram] saved a receipt but could not attach its photo.");
+    }
+    await confirmCreated(chatId, outcome.batch as CreatedBatch, notice ? `\n\n${notice}` : "");
     return;
   }
 
@@ -2138,6 +2161,7 @@ const REQUIRED_TOOLS = [
   "get_receipt_items",
   "create_transactions",
   "scan_receipt",
+  "attach_receipt_photo",
 ] as const;
 
 /** Attempts the MCP handshake with backoff, and gives up quietly rather than ending the bot. */

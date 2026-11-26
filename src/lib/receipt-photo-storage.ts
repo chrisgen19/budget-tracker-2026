@@ -42,7 +42,63 @@ export interface PhotoStorage {
   get(key: string): Promise<Response>;
   /** Idempotent: a missing object counts as deleted. */
   delete(key: string): Promise<void>;
+  /**
+   * Every object under `prefix`, following continuation tokens to the end. Carries each object's
+   * last-modified time so a sweep can leave alone an object whose row is still being written.
+   */
+  list(prefix: string): Promise<StoredObject[]>;
 }
+
+export interface StoredObject {
+  key: string;
+  lastModified: Date;
+}
+
+const XML_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+};
+
+const decodeXml = (text: string): string =>
+  text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, entity: string) => {
+    if (entity[0] === "#") {
+      const code =
+        entity[1] === "x" || entity[1] === "X"
+          ? parseInt(entity.slice(2), 16)
+          : parseInt(entity.slice(1), 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+    }
+    return XML_ENTITIES[entity] ?? match;
+  });
+
+const firstTag = (xml: string, tag: string): string | null => {
+  const found = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(xml);
+  return found ? decodeXml(found[1]) : null;
+};
+
+/**
+ * One ListObjectsV2 page, parsed with regexes rather than a DOM parser (none exists in Node, and
+ * the response shape is fixed). Throws when a page claims to be truncated but names no token,
+ * since following it would loop on the first page for ever.
+ */
+const parseListPage = (xml: string): { objects: StoredObject[]; next: string | null } => {
+  const objects: StoredObject[] = [];
+  for (const match of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
+    const key = firstTag(match[1], "Key");
+    const modified = firstTag(match[1], "LastModified");
+    if (key === null || modified === null) continue;
+    objects.push({ key, lastModified: new Date(modified) });
+  }
+  const truncated = firstTag(xml, "IsTruncated") === "true";
+  const next = firstTag(xml, "NextContinuationToken");
+  if (truncated && !next) {
+    throw new PhotoStorageError("R2 LIST returned a truncated page with no continuation token");
+  }
+  return { objects, next: truncated ? next : null };
+};
 
 const readVar = (env: NodeJS.ProcessEnv, name: string): string => env[name]?.trim() ?? "";
 
@@ -68,8 +124,8 @@ export function createPhotoStorage(
   });
   const base = `https://${readVar(env, "R2_ACCOUNT_ID")}.r2.cloudflarestorage.com/${readVar(env, "R2_BUCKET")}`;
 
-  const send = async (method: string, key: string, init: RequestInit = {}): Promise<Response> => {
-    const signed = await client.sign(`${base}/${key}`, { ...init, method });
+  const sendTo = async (method: string, url: string, init: RequestInit = {}): Promise<Response> => {
+    const signed = await client.sign(url, { ...init, method });
     try {
       return await fetchImpl(signed);
     } catch (error) {
@@ -78,6 +134,8 @@ export function createPhotoStorage(
       );
     }
   };
+  const send = (method: string, key: string, init: RequestInit = {}): Promise<Response> =>
+    sendTo(method, `${base}/${key}`, init);
 
   return {
     async put(key, body, contentType) {
@@ -98,6 +156,20 @@ export function createPhotoStorage(
       if (!res.ok && res.status !== 404) {
         throw new PhotoStorageError(`R2 DELETE returned ${res.status}`, res.status);
       }
+    },
+    async list(prefix) {
+      const objects: StoredObject[] = [];
+      let token: string | null = null;
+      do {
+        const query = new URLSearchParams({ "list-type": "2", prefix });
+        if (token) query.set("continuation-token", token);
+        const res = await sendTo("GET", `${base}?${query.toString()}`);
+        if (!res.ok) throw new PhotoStorageError(`R2 LIST returned ${res.status}`, res.status);
+        const parsed = parseListPage(await res.text());
+        objects.push(...parsed.objects);
+        token = parsed.next;
+      } while (token);
+      return objects;
     },
   };
 }

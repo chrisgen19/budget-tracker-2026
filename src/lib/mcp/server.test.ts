@@ -240,8 +240,9 @@ describe("createBudgetMcpServer", () => {
   });
 
   it("exposes the write tools only with transactions:write", async () => {
-    // Both of them: the scope covers adding a transaction and changing one.
+    // All three: the scope covers adding a transaction, changing one, and attaching its photo.
     expect(await listToolNames(["transactions:write"])).toEqual([
+      "attach_receipt_photo",
       "create_transactions",
       "update_transactions",
     ]);
@@ -290,6 +291,7 @@ describe("createBudgetMcpServer", () => {
     const PROMPTS_BEFORE_RUNNING = [
       "create_transactions",
       "update_transactions",
+      "attach_receipt_photo",
       "scan_receipt",
       "pay_bill",
       "create_bill",
@@ -326,6 +328,12 @@ describe("createBudgetMcpServer", () => {
     expect(tools.find((t) => t.name === "update_transactions")?.annotations?.idempotentHint).toBe(true);
     expect(tools.find((t) => t.name === "scan_receipt")?.annotations?.idempotentHint).toBe(false);
 
+    // Attaching a photo can replace, and so delete, one already attached: destructive. A retry
+    // under the same photoKey stores nothing new and leaves the rows where they are: idempotent.
+    const attach = tools.find((t) => t.name === "attach_receipt_photo");
+    expect(attach?.annotations?.destructiveHint).toBe(true);
+    expect(attach?.annotations?.idempotentHint).toBe(true);
+
     // The bill tools follow the same rule. `update_bill` is the only one of the four that
     // overwrites a stored value; `pay_bill` adds a payment and moves a cursor, and its occurrence
     // guard means a retry after a lost response refuses rather than paying twice, which is
@@ -346,6 +354,7 @@ describe("createBudgetMcpServer", () => {
     // One scope, so a token minted before editing existed gains it without being re-minted.
     // The trade is deliberate: that token can now rewrite rows as well as add them.
     expect(await listToolNames(["transactions:write"])).toEqual([
+      "attach_receipt_photo",
       "create_transactions",
       "update_transactions",
     ]);
@@ -360,6 +369,7 @@ describe("createBudgetMcpServer", () => {
    */
   it("keeps the bill tools out of transactions:write", async () => {
     expect(await listToolNames(["transactions:write"])).toEqual([
+      "attach_receipt_photo",
       "create_transactions",
       "update_transactions",
     ]);

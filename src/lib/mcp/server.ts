@@ -1,6 +1,8 @@
 import { McpServer, type RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { TransactionSource } from "@prisma/client";
 import {
+  ATTACH_PHOTO_ERROR_MESSAGES,
+  PHOTOS_NOT_CONFIGURED_MESSAGE,
   BILL_ACTION_ERROR_MESSAGES,
   BILL_WRITE_ERROR_MESSAGES,
   LABEL_WRITE_ERROR_MESSAGES,
@@ -82,6 +84,7 @@ import {
   receiptItemsOutput,
   createTransactionsOutput,
   updateTransactionsOutput,
+  attachReceiptPhotoOutput,
   scanReceiptOutput,
   assessmentFactsOutput,
   payBillOutput,
@@ -153,13 +156,18 @@ export const buildInstructions = (scopes: readonly McpScope[]): string => {
     const writers = [
       has("create_transactions") &&
         "`create_transactions` and `update_transactions` for individual rows",
+      has("attach_receipt_photo") &&
+        "`attach_receipt_photo` to keep a receipt photo on rows already saved",
       has("pay_bill") &&
         "`pay_bill` to settle an occurrence of a recurring bill, `create_bill` and `update_bill` to define one",
       has("create_label") && "`create_label`",
     ].filter(Boolean);
     parts.push(
-      `The tools that write are ${writers.join("; ")}. Nothing here can delete anything: a bill ` +
-        "can only be switched off, and it keeps its history."
+      `The tools that write are ${writers.join("; ")}. Nothing here can delete a transaction, a ` +
+        "bill or a label: a bill can only be switched off, and it keeps its history." +
+        (has("attach_receipt_photo")
+          ? " The one thing that is ever deleted is a replaced receipt photo, once no row uses it."
+          : "")
     );
   }
 
@@ -1578,6 +1586,118 @@ export const createBudgetMcpServer = ({
 
       return {
         content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+        structuredContent: structured(payload),
+      };
+    }
+  );
+
+  registered.attach_receipt_photo = server.registerTool(
+    "attach_receipt_photo",
+    {
+      title: "Attach a receipt photo",
+      description:
+        "Keep a photo of a receipt on transactions that already exist, so the user can see it " +
+        "in the app. Call it after create_transactions has saved the rows, with their IDs. " +
+        "Send the raw image as base64 (4 MB or smaller before encoding); it is re-encoded as a " +
+        "JPEG with every bit of metadata, location included, removed. " +
+        "`photoKey` is your idempotency key for this photo: retrying with the same key returns " +
+        "the photo already stored instead of uploading a second copy, so reuse it on a retry and " +
+        "choose a new one for a different photo. " +
+        "A transaction that already had a different photo has it REPLACED, and every other " +
+        "transaction sharing the old photo moves to the new one with it (they are one receipt). " +
+        "The old photo is then deleted, so confirm with the user before replacing one. " +
+        "Any ID that is not this user's refuses the whole call and nothing is stored.",
+      inputSchema: {
+        transactionIds: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(50)
+          .describe("IDs of the transactions the photo belongs to, from create_transactions or a read tool."),
+        imageBase64: z
+          .string()
+          .min(1)
+          // Bounded on the encoded length for the reason scan_receipt gives: it is the only length
+          // available before decoding.
+          .max(MAX_BASE64_LENGTH)
+          .describe("The photo, base64 encoded, with no data: URL prefix."),
+        photoKey: z
+          .string()
+          .min(1)
+          .max(100)
+          .describe(
+            "A key naming this photo, stable across retries of the same upload, such as the " +
+              "clientBatchId the rows were saved with."
+          ),
+      },
+      outputSchema: attachReceiptPhotoOutput,
+      // Not read-only. Destructive because it can replace, and so delete, a photo already
+      // attached. Idempotent because a retry under the same photoKey stores nothing new and
+      // leaves the rows exactly where the first call put them.
+      annotations: { destructiveHint: true, idempotentHint: true },
+    },
+    async ({ transactionIds, imageBase64, photoKey }) => {
+      const refuse = (text: string) => ({
+        content: [{ type: "text" as const, text }],
+        isError: true,
+      });
+
+      const permission = resolveWritePermission(scopes, writesEnabledUntil, "transactions:write");
+      if (!permission.allowed) {
+        return refuse(
+          permission.reason === "SCOPE_NOT_GRANTED"
+            ? "This token cannot change transactions. Mint a new token with the transactions:write scope in Profile > MCP Access."
+            : "Writes are currently switched off for this account. Turn them on in Profile > MCP Access, then try again."
+        );
+      }
+
+      // Imported here for the reason `scan_receipt` gives: these load sharp and the R2 client, and
+      // the stdio entry point must start on a machine that has neither configured.
+      const { createPhotoStorage, receiptPhotosEnabled } = await import(
+        "@/lib/receipt-photo-storage"
+      );
+      // Listed even when storage is off, matching how `scan_receipt` stays listed and refuses at
+      // call time: whether R2 is configured is a fact about the deployment, not about the token.
+      if (!receiptPhotosEnabled()) return refuse(PHOTOS_NOT_CONFIGURED_MESSAGE);
+      if (!isBase64(imageBase64)) return refuse(ATTACH_PHOTO_ERROR_MESSAGES.NOT_BASE64);
+
+      const { attachReceiptPhoto } = await import("@/lib/receipt-photo-attach");
+      const result = await attachReceiptPhoto(
+        { prisma, storage: createPhotoStorage() },
+        {
+          userId,
+          transactionIds,
+          photoKey,
+          bytes: Buffer.from(imageBase64, "base64"),
+          stamp: { updatedVia: createdVia, updatedByMcpTokenId: tokenId ?? null },
+          assertStillPermitted: async (tx) => {
+            const current = await tx.user.findUnique({
+              where: { id: userId },
+              select: { mcpWritesEnabledUntil: true },
+            });
+            return resolveWritePermission(
+              scopes,
+              current?.mcpWritesEnabledUntil ?? null,
+              "transactions:write"
+            ).allowed;
+          },
+        }
+      );
+
+      if (!result.ok) {
+        return refuse(
+          result.reason === "TRANSACTIONS_NOT_OWNED"
+            ? ATTACH_PHOTO_ERROR_MESSAGES.TRANSACTIONS_NOT_OWNED(result.ids)
+            : ATTACH_PHOTO_ERROR_MESSAGES[result.reason]
+        );
+      }
+
+      const payload = {
+        photoId: result.photoId,
+        attachedTo: result.attachedTo,
+        replayed: result.replayed,
+      };
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload) }],
         structuredContent: structured(payload),
       };
     }

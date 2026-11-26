@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { confirmPendingScan, scanToTransaction } from "@/lib/telegram/confirm-scan";
+import {
+  confirmPendingScan,
+  photoNotice,
+  scanToTransaction,
+  type ConfirmScanDeps,
+} from "@/lib/telegram/confirm-scan";
+import { PHOTOS_NOT_CONFIGURED_MESSAGE } from "@/lib/mcp/write-errors";
 import { McpToolError, UnconfirmedWriteError } from "@/lib/telegram/errors";
 import type { PendingScan } from "@/lib/telegram/pending-scan";
 
@@ -90,6 +96,92 @@ describe("confirmPendingScan", () => {
 
     expect(outcome.status).toBe("retryable");
     expect(restore).toHaveBeenCalledWith(SCAN, { frozen: false });
+  });
+});
+
+describe("confirmPendingScan and the receipt photo", () => {
+  const WITH_PHOTO: PendingScan = { ...SCAN, imageBase64: "aW1hZ2U=" };
+  const saved = () => vi.fn(async () => ({ transactions: [{ id: "tx_1" }, { id: "tx_2" }] }));
+  const withAttach = (save: Save, attachPhoto: ConfirmScanDeps["attachPhoto"]) => ({
+    save,
+    restore: vi.fn(),
+    batchKey: (s: PendingScan) => `key-${s.updateId}`,
+    attachPhoto,
+  });
+
+  it("attaches the photo to the saved rows, keyed off the photo's update", async () => {
+    const attachPhoto = vi.fn(async () => {});
+    const outcome = await confirmPendingScan(WITH_PHOTO, withAttach(saved(), attachPhoto));
+
+    expect(outcome).toMatchObject({ status: "saved", photo: "attached" });
+    expect(attachPhoto).toHaveBeenCalledWith(["tx_1", "tx_2"], "key-42", WITH_PHOTO);
+  });
+
+  it("still reports the save when the photo fails, flagged for the notice", async () => {
+    const attachPhoto = vi.fn(async () => {
+      throw new McpToolError("R2 PUT returned 500");
+    });
+    const outcome = await confirmPendingScan(WITH_PHOTO, withAttach(saved(), attachPhoto));
+
+    expect(outcome).toMatchObject({ status: "saved", photo: "failed" });
+    expect(photoNotice(outcome)).toBe("The photo didn't upload: attach it from the app.");
+  });
+
+  it("says nothing when this server has no photo storage at all", async () => {
+    const attachPhoto = vi.fn(async () => {
+      throw new McpToolError(PHOTOS_NOT_CONFIGURED_MESSAGE);
+    });
+    const outcome = await confirmPendingScan(WITH_PHOTO, withAttach(saved(), attachPhoto));
+
+    expect(outcome).toMatchObject({ status: "saved", photo: "unavailable" });
+    expect(photoNotice(outcome)).toBe("");
+  });
+
+  it("never attaches when the save came back empty", async () => {
+    const attachPhoto = vi.fn(async () => {});
+    const outcome = await confirmPendingScan(
+      WITH_PHOTO,
+      withAttach(vi.fn(async () => ({ transactions: [] })), attachPhoto),
+    );
+
+    expect(outcome.status).toBe("retryable");
+    expect(attachPhoto).not.toHaveBeenCalled();
+  });
+
+  it("never attaches when the save threw", async () => {
+    const attachPhoto = vi.fn(async () => {});
+    await expect(
+      confirmPendingScan(
+        WITH_PHOTO,
+        withAttach(
+          vi.fn(async () => {
+            throw new UnconfirmedWriteError("unresolved");
+          }),
+          attachPhoto,
+        ),
+      ),
+    ).rejects.toThrow(UnconfirmedWriteError);
+    expect(attachPhoto).not.toHaveBeenCalled();
+  });
+
+  it("does not try to attach a scan that carries no image", async () => {
+    const attachPhoto = vi.fn(async () => {});
+    const outcome = await confirmPendingScan(SCAN, withAttach(saved(), attachPhoto));
+
+    expect(outcome).toMatchObject({ status: "saved", photo: "none" });
+    expect(attachPhoto).not.toHaveBeenCalled();
+    expect(photoNotice(outcome)).toBe("");
+  });
+
+  it("does not attach when the saved rows carry no ids", async () => {
+    const attachPhoto = vi.fn(async () => {});
+    const outcome = await confirmPendingScan(
+      WITH_PHOTO,
+      withAttach(vi.fn(async () => ({ transactions: [{}] })), attachPhoto),
+    );
+
+    expect(outcome).toMatchObject({ status: "saved", photo: "failed" });
+    expect(attachPhoto).not.toHaveBeenCalled();
   });
 });
 
