@@ -69,6 +69,15 @@ describe("GET /api/receipt-photos/[id]/info", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getAuthUserId.mockResolvedValue("user-1");
+    mocks.enabled.mockReturnValue(true);
+  });
+
+  it("503 PHOTOS_DISABLED when R2 is not configured", async () => {
+    mocks.enabled.mockReturnValue(false);
+    const res = await GET_INFO(req(), context("p1"));
+    expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("PHOTOS_DISABLED");
+    expect(mocks.findFirst).not.toHaveBeenCalled();
   });
 
   it("404 for another user's photo", async () => {

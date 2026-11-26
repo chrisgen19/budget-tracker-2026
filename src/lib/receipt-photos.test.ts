@@ -115,26 +115,45 @@ describe("storeReceiptPhoto", () => {
 });
 
 describe("deleteUnreferencedPhotos", () => {
-  it("deletes only unreferenced photos, object before row", async () => {
+  const photos = [
+    { id: "p1", objectKey: "k/p1", _count: { transactions: 1 } },
+    { id: "p2", objectKey: "k/p2", _count: { transactions: 0 } },
+  ];
+
+  it("deletes only unreferenced photos, row before object, guarded by owner and no links", async () => {
     const order: string[] = [];
     const storage = makeStorage();
     storage.delete.mockImplementation(async () => void order.push("object"));
     const prisma = {
       receiptPhoto: {
-        findMany: vi.fn(async () => [
-          { id: "p1", objectKey: "k/p1", _count: { transactions: 1 } },
-          { id: "p2", objectKey: "k/p2", _count: { transactions: 0 } },
-        ]),
+        findMany: vi.fn(async () => photos),
         deleteMany: vi.fn(async () => {
           order.push("row");
           return { count: 1 };
         }),
       },
     };
-    const deleted = await deleteUnreferencedPhotos({ prisma: prisma as never, storage }, ["p1", "p2"]);
+    const deleted = await deleteUnreferencedPhotos({ prisma: prisma as never, storage }, "u1", ["p1", "p2"]);
     expect(deleted).toEqual(["p2"]);
+    expect(prisma.receiptPhoto.deleteMany).toHaveBeenCalledTimes(1);
+    expect(prisma.receiptPhoto.deleteMany).toHaveBeenCalledWith({
+      where: { id: "p2", userId: "u1", transactions: { none: {} } },
+    });
     expect(storage.delete).toHaveBeenCalledWith("k/p2");
-    expect(order).toEqual(["object", "row"]);
+    expect(order).toEqual(["row", "object"]);
+  });
+
+  it("keeps the object and omits the id when the photo was relinked concurrently", async () => {
+    const storage = makeStorage();
+    const prisma = {
+      receiptPhoto: {
+        findMany: vi.fn(async () => photos),
+        deleteMany: vi.fn(async () => ({ count: 0 })),
+      },
+    };
+    const deleted = await deleteUnreferencedPhotos({ prisma: prisma as never, storage }, "u1", ["p1", "p2"]);
+    expect(deleted).toEqual([]);
+    expect(storage.delete).not.toHaveBeenCalled();
   });
 });
 
