@@ -2,6 +2,43 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-26 - Receipt photos are kept, in R2, on the transactions they belong to
+
+A scanned or attached receipt photo is now stored and shown on its transaction, from the web app,
+the multi-scan review and the Telegram bot.
+
+- **Storage is a private Cloudflare R2 bucket** (`src/lib/receipt-photo-storage.ts`), signed with
+  `aws4fetch`. Four new variables, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and
+  `R2_BUCKET`; any blank one turns the feature off, the photo routes answer **503**
+  `PHOTOS_DISABLED` and no attach UI renders. Object keys are `receipts/{userId}/{photoId}.jpg`,
+  never a description or an amount.
+- **Every photo is re-encoded and stripped of metadata** before it is stored: JPEG at quality 80,
+  upright, longest side at most 1500px and never enlarged, with EXIF (GPS included), ICC and XMP
+  dropped.
+- **Upload first, link at save.** `POST /api/receipt-photos` stores a photo, idempotent on a
+  `photoKey`; transaction writes name it as `receiptPhotoId`. Replacing a photo moves every row of
+  the same split receipt with it; removing it unlinks one row. A photo no row uses any more is
+  deleted after the write commits, row first and object second, behind a `FOR UPDATE` that keeps a
+  concurrent link from being wiped. A failed upload still saves the transaction and says so.
+- **New routes:** `POST /api/receipt-photos`, `GET /api/receipt-photos/[id]` (`private, no-store`)
+  and `GET /api/receipt-photos/[id]/info`. Another user's photo is a 404, never a 403.
+- **The transaction form and the row list** show the photo: a full-screen viewer with zoom and pan,
+  a photo badge on the row, and attach, replace and remove in the form.
+- **New MCP tool `attach_receipt_photo`** (`transactions:write`, destructive and idempotent), 23
+  tools in all. It attaches one photo to transactions that already exist, refuses the whole call
+  naming any id that is not the user's, and replays on the same `photoKey`. With R2 unconfigured it
+  stays listed and refuses with `Receipt photos are not configured on this server.`
+- **The Telegram bot keeps the photo it scanned.** The image rides on the pending draft and, once
+  the save lands, is attached under the save's own batch key. If that fails the confirmation adds
+  "The photo didn't upload: attach it from the app." and the transaction stays saved.
+- **New scripts.** `scripts/prune-orphan-receipt-photos.ts` removes photo rows no transaction uses
+  and R2 objects with no row, older than 24 hours only; dry run by default, `--apply` to delete,
+  and `--allow-remote` required for a non-local database. `scripts/verify-receipt-photos.ts` checks
+  the whole lifecycle against a dev bucket, and the cleanup lock on two real connections
+  (`LOCK_ONLY=1` runs that half without a bucket).
+- **Migration** `20261126120000_add_receipt_photos` is expand-only: a new table and a nullable
+  `transactions.receipt_photo_id` with an index.
+
 ## 2026-11-26 - The UI talks to the API only through `src/hooks`, and redesigns cannot change the backend
 
 Groundwork for redesigning the web app repeatedly without the redesigns leaking into the API that
