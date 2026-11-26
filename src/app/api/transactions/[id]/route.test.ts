@@ -481,14 +481,24 @@ describe("PUT /api/transactions/[id]", () => {
  * counts references. `refs` is how many transactions still point at each photo after the write.
  */
 const stubPhotos = (owned: string[], refs: Record<string, number> = {}) => {
-  mocks.photoFindMany.mockImplementation(
-    async ({ where, select }: { where: { id: { in: string[] } }; select: Record<string, unknown> }) => {
-      const ids = where.id.in.filter((id) => owned.includes(id));
-      if (!select._count) return ids.map((id) => ({ id }));
-      mocks.order.push("cleanup");
-      return ids.map((id) => ({ id, objectKey: `receipts/user-1/${id}.jpg`, _count: { transactions: refs[id] ?? 0 } }));
-    },
-  );
+  mocks.photoFindMany.mockImplementation(async ({ where }: { where: { id: { in: string[] } } }) => {
+    mocks.order.push("cleanup");
+    return where.id.in
+      .filter((id) => owned.includes(id))
+      .map((id) => ({ id, objectKey: `receipts/user-1/${id}.jpg`, _count: { transactions: refs[id] ?? 0 } }));
+  });
+  // Three raw statements: the replace's transaction lock, the ownership FOR KEY SHARE, and the
+  // cleanup's per-photo FOR UPDATE.
+  mocks.queryRaw.mockImplementation(async (sql: TemplateStringsArray, ...values: unknown[]) => {
+    const text = sql.join("?");
+    if (!text.includes("receipt_photos")) return [];
+    if (text.includes("FOR KEY SHARE")) {
+      const [ids] = values as [string[]];
+      return ids.filter((id) => owned.includes(id)).map((id) => ({ id }));
+    }
+    const [id] = values as [string];
+    return owned.includes(id) ? [{ id }] : [];
+  });
 };
 
 describe("PUT /api/transactions/[id] receipt photos", () => {
@@ -525,7 +535,6 @@ describe("PUT /api/transactions/[id] receipt photos", () => {
     mocks.findFirst.mockResolvedValue(stored);
     mocks.categoryFindMany.mockResolvedValue([{ id: "cat-1", type: "EXPENSE" }]);
     mocks.findUniqueOrThrow.mockResolvedValue({ id: "tx-1" });
-    mocks.queryRaw.mockResolvedValue([]);
     mocks.updateMany.mockResolvedValue({ count: 2 });
     mocks.photoDeleteMany.mockResolvedValue({ count: 1 });
     mocks.storageDelete.mockResolvedValue(undefined);
@@ -541,9 +550,11 @@ describe("PUT /api/transactions/[id] receipt photos", () => {
       where: { userId: "user-1", OR: [{ receiptPhotoId: "pA" }, { id: "tx-1" }] },
       data: { receiptPhotoId: "pB", updatedVia: "APP", updatedByMcpTokenId: null },
     });
-    // The row lock is the first thing the transaction does.
-    expect(mocks.queryRaw).toHaveBeenCalledTimes(1);
-    expect(mocks.order).toEqual(["tx:open", "tx:commit", "cleanup"]);
+    // The row lock on the transactions is the first thing the write does.
+    expect((mocks.queryRaw.mock.calls[0][0] as TemplateStringsArray).join("?")).toContain(
+      "FROM transactions",
+    );
+    expect(mocks.order.slice(0, 3)).toEqual(["tx:open", "tx:commit", "cleanup"]);
     expect(mocks.photoFindMany).toHaveBeenLastCalledWith(
       expect.objectContaining({ where: { id: { in: ["pA"] }, userId: "user-1" } }),
     );

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { MAX_BULK_TRANSACTIONS } from "@/lib/transaction-bulk";
 import { MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => {
   // here: what is under test is that the stamp follows the delete's own `RETURNING` rows rather
   // than a pre-write snapshot, and mocking the helper away would assert only that it was called.
   const queryRaw = vi.fn();
+  const photoDeleteMany = vi.fn();
   return {
     transactionFindMany,
     transactionUpdateMany,
@@ -30,7 +31,7 @@ const mocks = vi.hoisted(() => {
     findSavedBatch: vi.fn(),
     findSavedBatchUnderLock: vi.fn(),
     photoFindMany: vi.fn(),
-    photoDeleteMany: vi.fn(),
+    photoDeleteMany,
     photosEnabled: vi.fn(),
     storageDelete: vi.fn(),
     tx: {
@@ -41,6 +42,7 @@ const mocks = vi.hoisted(() => {
       },
       category: { findFirst: categoryFindFirst },
       label: { findMany: labelFindMany },
+      receiptPhoto: { deleteMany: photoDeleteMany },
       transactionLabel: {
         findMany: transactionLabelFindMany,
         createManyAndReturn: transactionLabelCreateManyAndReturn,
@@ -53,7 +55,7 @@ const mocks = vi.hoisted(() => {
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: mocks.databaseTransaction,
-    receiptPhoto: { findMany: mocks.photoFindMany, deleteMany: mocks.photoDeleteMany },
+    receiptPhoto: { findMany: mocks.photoFindMany },
   },
 }));
 // R2 stubbed at the factory, so the real `deleteUnreferencedPhotos` runs against the mocked rows.
@@ -270,10 +272,14 @@ describe("DELETE /api/transactions/batch", () => {
         where.id.in.map((id) => ({ id, objectKey: `receipts/user-1/${id}.jpg`, _count: { transactions: refs[id] ?? 0 } })),
       );
 
+    afterEach(() => mocks.queryRaw.mockReset());
+
     beforeEach(() => {
       mocks.photosEnabled.mockReturnValue(true);
       mocks.photoDeleteMany.mockResolvedValue({ count: 1 });
       mocks.storageDelete.mockResolvedValue(undefined);
+      // The cleanup's per-photo FOR UPDATE, inside its own transaction.
+      mocks.queryRaw.mockImplementation(async (_sql: unknown, id: string) => [{ id }]);
       mocks.transactionFindMany.mockResolvedValue([
         { id: "tx-1", receiptPhotoId: "pA" },
         { id: "tx-2", receiptPhotoId: "pA" },
@@ -294,6 +300,9 @@ describe("DELETE /api/transactions/batch", () => {
       expect(mocks.photoFindMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: { in: ["pA"] }, userId: "user-1" } }),
       );
+      expect(mocks.photoDeleteMany).toHaveBeenCalledWith({
+        where: { id: "pA", userId: "user-1", transactions: { none: {} } },
+      });
       expect(mocks.storageDelete).toHaveBeenCalledWith("receipts/user-1/pA.jpg");
     });
 

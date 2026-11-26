@@ -4,7 +4,6 @@ const mocks = vi.hoisted(() => ({
   getAuthUserId: vi.fn(),
   categoryFindMany: vi.fn(),
   queryRaw: vi.fn(),
-  photoFindMany: vi.fn(),
   create: vi.fn(),
   findUniqueOrThrow: vi.fn(),
   order: [] as string[],
@@ -20,10 +19,9 @@ vi.mock("@/lib/prisma", () => {
   const client = {
     category: { findMany: mocks.categoryFindMany },
     label: { findMany: vi.fn(async () => []) },
-    receiptPhoto: { findMany: mocks.photoFindMany },
     transaction: { create: mocks.create, findUniqueOrThrow: mocks.findUniqueOrThrow },
     transactionLabel: { createMany: vi.fn() },
-    // The locking category re-check inside the write transaction.
+    // The locking category re-check and the photo ownership check, both inside the write.
     $queryRaw: mocks.queryRaw,
     $transaction: vi.fn(async (run: (tx: unknown) => unknown) => {
       mocks.order.push("tx");
@@ -53,10 +51,11 @@ describe("POST /api/transactions receipt photos", () => {
     mocks.order.length = 0;
     mocks.getAuthUserId.mockResolvedValue("user-1");
     mocks.categoryFindMany.mockResolvedValue([{ id: "cat-1", type: "EXPENSE" }]);
-    mocks.queryRaw.mockResolvedValue([{ id: "cat-1", type: "EXPENSE" }]);
-    mocks.photoFindMany.mockImplementation(async ({ where }: { where: { id: { in: string[] } } }) => {
+    mocks.queryRaw.mockImplementation(async (sql: TemplateStringsArray, ...values: unknown[]) => {
+      if (!sql.join("?").includes("receipt_photos")) return [{ id: "cat-1", type: "EXPENSE" }];
       mocks.order.push("photos");
-      return where.id.in.filter((id) => id === "p-own").map((id) => ({ id }));
+      const [ids] = values as [string[]];
+      return ids.filter((id) => id === "p-own").map((id) => ({ id }));
     });
     mocks.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
       mocks.order.push("create");
@@ -71,10 +70,7 @@ describe("POST /api/transactions receipt photos", () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "Photo not found" });
     expect(mocks.create).not.toHaveBeenCalled();
-    expect(mocks.photoFindMany).toHaveBeenCalledWith({
-      where: { id: { in: ["p-foreign"] }, userId: "user-1" },
-      select: { id: true },
-    });
+    expect(mocks.order).toEqual(["tx", "photos"]);
   });
 
   it("links the caller's own photo, checking it inside the write transaction", async () => {
@@ -91,7 +87,7 @@ describe("POST /api/transactions receipt photos", () => {
     const response = await post(body());
 
     expect(response.status).toBe(201);
-    expect(mocks.photoFindMany).not.toHaveBeenCalled();
+    expect(mocks.order).not.toContain("photos");
     expect(mocks.create.mock.calls[0][0].data).not.toHaveProperty("receiptPhotoId");
   });
 });

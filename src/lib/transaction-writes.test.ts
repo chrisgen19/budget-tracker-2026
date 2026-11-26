@@ -51,21 +51,20 @@ const makePrisma = ({
     // The locking category re-check inside the write transaction. A stub cannot take a row lock,
     // so what it answers is the same set the unlocked read would -- the lock's real behaviour is
     // proved against a live Postgres by `scripts/verify-category-lock.ts`.
-    $queryRaw: vi.fn(async (_sql: unknown, ids: string[]) =>
-      (ids ?? [])
+    // Also the photo ownership check, which takes FOR KEY SHARE on `receipt_photos`.
+    $queryRaw: vi.fn(async (sql: TemplateStringsArray, ids: string[]) => {
+      if (sql.join("?").includes("receipt_photos")) {
+        order.push("photos");
+        return ids.filter((id) => ownedPhotoIds.includes(id)).map((id) => ({ id }));
+      }
+      return (ids ?? [])
         .filter((id) => usableCategoryIds.includes(id))
-        .map((id) => ({ id, type: categoryType }))
-    ),
+        .map((id) => ({ id, type: categoryType }));
+    }),
     label: {
       findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
         ownedLabels.filter((l) => where.id.in.includes(l.id))
       ),
-    },
-    receiptPhoto: {
-      findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) => {
-        order.push("photos");
-        return where.id.in.filter((id) => ownedPhotoIds.includes(id)).map((id) => ({ id }));
-      }),
     },
     transaction: {
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
@@ -491,10 +490,10 @@ describe("receipt photos on create", () => {
 
     expect(result).toEqual({ ok: false, reason: "PHOTO_NOT_FOUND" });
     expect(created).toHaveLength(0);
-    expect(raw.receiptPhoto.findMany).toHaveBeenCalledWith({
-      where: { id: { in: ["photo_own", "photo_someone_else"] }, userId: "u1" },
-      select: { id: true },
-    });
+    const photoCall = raw.$queryRaw.mock.calls.find(([sql]) =>
+      (sql as TemplateStringsArray).join("?").includes("receipt_photos")
+    );
+    expect(photoCall?.slice(1)).toEqual([["photo_own", "photo_someone_else"], "u1"]);
   });
 
   it("refuses under a key too, inside the locked transaction", async () => {
@@ -526,11 +525,11 @@ describe("receipt photos on create", () => {
   });
 
   it("asks nothing about photos when no item carries one, so other callers are unaffected", async () => {
-    const { client, raw, created } = makePrisma();
+    const { client, order, created } = makePrisma();
 
     await createTransactionBatch({ prisma: client, userId: "u1", items: [ITEM], createdVia: "MCP" });
 
-    expect(raw.receiptPhoto.findMany).not.toHaveBeenCalled();
+    expect(order).not.toContain("photos");
     expect(created[0]).not.toHaveProperty("receiptPhotoId");
   });
 });

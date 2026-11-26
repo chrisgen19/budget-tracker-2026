@@ -20,7 +20,9 @@ export class ReceiptPhotoNotOwnedError extends Error {
 /**
  * Whether every id names a photo this user owns. Called inside the write transaction, before any
  * insert or update references the ids, the same placement as `categoriesAreUsableForWrite`.
- * Another user's photo and a nonexistent one are deliberately indistinguishable.
+ * Another user's photo and a nonexistent one are deliberately indistinguishable. Takes `FOR KEY
+ * SHARE` on the photo rows, so a concurrent `deleteUnreferencedPhotos` that commits first turns
+ * into a clean "Photo not found" refusal rather than a foreign-key failure at the insert.
  */
 export const photosAreOwned = async (
   tx: Prisma.TransactionClient,
@@ -29,10 +31,19 @@ export const photosAreOwned = async (
 ): Promise<boolean> => {
   const ids = [...new Set(photoIds)];
   if (ids.length === 0) return true;
-  const owned = await tx.receiptPhoto.findMany({
-    where: { id: { in: ids }, userId },
-    select: { id: true },
-  });
+  ids.sort();
+  // FOR KEY SHARE, the lock the foreign key takes anyway, taken before the decision rather than at
+  // the insert. If `deleteUnreferencedPhotos` holds its FOR UPDATE first, this waits, then reads
+  // the photo as gone and the write is refused with "Photo not found" instead of failing the
+  // insert on the foreign key. If this gets there first, the cleanup waits and then sees the new
+  // link. Shared, so concurrent writers onto one photo do not serialise; `ORDER BY id` so two
+  // writers naming the same photos cannot deadlock.
+  const owned = await tx.$queryRaw<{ id: string }[]>`
+    SELECT id FROM receipt_photos
+    WHERE id = ANY(${ids}) AND user_id = ${userId}
+    ORDER BY id
+    FOR KEY SHARE
+  `;
   return owned.length === ids.length;
 };
 

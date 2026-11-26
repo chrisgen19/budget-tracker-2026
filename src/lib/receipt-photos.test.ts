@@ -133,6 +133,42 @@ describe("storeReceiptPhoto", () => {
   });
 });
 
+/**
+ * A client for `deleteUnreferencedPhotos`: the reference read on the client, then per photo a
+ * transaction holding the row lock and the conditional delete. `order` records what ran, with
+ * the transaction's edges, so the lock can be shown to precede the delete inside it.
+ */
+const makeCleanupPrisma = (
+  photos: { id: string; objectKey: string; _count: { transactions: number } }[],
+  { deleteCount = 1, lockedIds }: { deleteCount?: number; lockedIds?: string[] } = {},
+) => {
+  const order: string[] = [];
+  const tx = {
+    $queryRaw: vi.fn(async (sql: TemplateStringsArray, ...values: unknown[]) => {
+      const [id] = values as [string];
+      order.push(`lock:${id}`);
+      void sql;
+      return (lockedIds ?? photos.map((p) => p.id)).includes(id) ? [{ id }] : [];
+    }),
+    receiptPhoto: {
+      deleteMany: vi.fn(async ({ where }: { where: { id: string } }) => {
+        order.push(`row:${where.id}`);
+        return { count: deleteCount };
+      }),
+    },
+  };
+  const prisma = {
+    receiptPhoto: { findMany: vi.fn(async () => photos) },
+    $transaction: vi.fn(async (run: (t: typeof tx) => unknown) => {
+      order.push("tx:open");
+      const result = await run(tx);
+      order.push("tx:commit");
+      return result;
+    }),
+  };
+  return { prisma, tx, order };
+};
+
 describe("deleteUnreferencedPhotos", () => {
   const photos = [
     { id: "p1", objectKey: "k/p1", _count: { transactions: 1 } },
@@ -140,36 +176,54 @@ describe("deleteUnreferencedPhotos", () => {
   ];
 
   it("deletes only unreferenced photos, row before object, guarded by owner and no links", async () => {
-    const order: string[] = [];
     const storage = makeStorage();
+    const { prisma, tx, order } = makeCleanupPrisma(photos);
     storage.delete.mockImplementation(async () => void order.push("object"));
-    const prisma = {
-      receiptPhoto: {
-        findMany: vi.fn(async () => photos),
-        deleteMany: vi.fn(async () => {
-          order.push("row");
-          return { count: 1 };
-        }),
-      },
-    };
     const deleted = await deleteUnreferencedPhotos({ prisma: prisma as never, storage }, "u1", ["p1", "p2"]);
     expect(deleted).toEqual(["p2"]);
-    expect(prisma.receiptPhoto.deleteMany).toHaveBeenCalledTimes(1);
-    expect(prisma.receiptPhoto.deleteMany).toHaveBeenCalledWith({
+    expect(tx.receiptPhoto.deleteMany).toHaveBeenCalledTimes(1);
+    expect(tx.receiptPhoto.deleteMany).toHaveBeenCalledWith({
       where: { id: "p2", userId: "u1", transactions: { none: {} } },
     });
     expect(storage.delete).toHaveBeenCalledWith("k/p2");
-    expect(order).toEqual(["row", "object"]);
+    expect(order).toEqual(["tx:open", "lock:p2", "row:p2", "tx:commit", "object"]);
+  });
+
+  /**
+   * The lock is a separate statement before the delete, inside one transaction per photo. A single
+   * conditional DELETE that waits on a writer's FOR KEY SHARE resumes without re-checking its
+   * NOT EXISTS, and the SET NULL then wipes the link that writer just committed.
+   */
+  it("takes FOR UPDATE on the photo row, scoped to the owner, before each delete", async () => {
+    const storage = makeStorage();
+    const both = photos.map((p) => ({ ...p, _count: { transactions: 0 } }));
+    const { prisma, tx, order } = makeCleanupPrisma(both);
+    await deleteUnreferencedPhotos({ prisma: prisma as never, storage }, "u1", ["p1", "p2"]);
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(order.filter((o) => o !== "object")).toEqual([
+      "tx:open", "lock:p1", "row:p1", "tx:commit",
+      "tx:open", "lock:p2", "row:p2", "tx:commit",
+    ]);
+    const sql = (tx.$queryRaw.mock.calls[0][0] as TemplateStringsArray).join("?");
+    expect(sql).toContain("FROM receipt_photos");
+    expect(sql).toContain("user_id");
+    expect(sql).toMatch(/FOR UPDATE\s*$/);
+    expect(tx.$queryRaw.mock.calls[0].slice(1)).toEqual(["p1", "u1"]);
+  });
+
+  it("skips the delete and the object when the photo row is already gone", async () => {
+    const storage = makeStorage();
+    const { prisma, tx } = makeCleanupPrisma(photos, { lockedIds: [] });
+    const deleted = await deleteUnreferencedPhotos({ prisma: prisma as never, storage }, "u1", ["p2"]);
+    expect(deleted).toEqual([]);
+    expect(tx.receiptPhoto.deleteMany).not.toHaveBeenCalled();
+    expect(storage.delete).not.toHaveBeenCalled();
   });
 
   it("keeps the object and omits the id when the photo was relinked concurrently", async () => {
     const storage = makeStorage();
-    const prisma = {
-      receiptPhoto: {
-        findMany: vi.fn(async () => photos),
-        deleteMany: vi.fn(async () => ({ count: 0 })),
-      },
-    };
+    const { prisma } = makeCleanupPrisma(photos, { deleteCount: 0 });
     const deleted = await deleteUnreferencedPhotos({ prisma: prisma as never, storage }, "u1", ["p1", "p2"]);
     expect(deleted).toEqual([]);
     expect(storage.delete).not.toHaveBeenCalled();
@@ -216,16 +270,15 @@ describe("getReceiptPhotoInfo", () => {
 const makeTx = (ownedPhotoIds: string[] = ["pB"]) => {
   const order: string[] = [];
   const tx = {
-    $queryRaw: vi.fn(async (..._args: unknown[]) => {
+    $queryRaw: vi.fn(async (sql: TemplateStringsArray, ...values: unknown[]) => {
+      if (sql.join("?").includes("receipt_photos")) {
+        order.push("owned");
+        const [ids] = values as [string[]];
+        return ids.filter((id) => ownedPhotoIds.includes(id)).map((id) => ({ id }));
+      }
       order.push("lock");
       return [];
     }),
-    receiptPhoto: {
-      findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) => {
-        order.push("owned");
-        return where.id.in.filter((id) => ownedPhotoIds.includes(id)).map((id) => ({ id }));
-      }),
-    },
     transaction: {
       updateMany: vi.fn(async (..._args: unknown[]) => {
         order.push("write");
@@ -242,11 +295,19 @@ const lockSql = (tx: ReturnType<typeof makeTx>["tx"]) =>
 describe("photosAreOwned", () => {
   it("is true for the caller's own photos, deduped, scoped to the user", async () => {
     const { tx } = makeTx(["pA", "pB"]);
-    expect(await photosAreOwned(tx as never, "u1", ["pA", "pB", "pA"])).toBe(true);
-    expect(tx.receiptPhoto.findMany).toHaveBeenCalledWith({
-      where: { id: { in: ["pA", "pB"] }, userId: "u1" },
-      select: { id: true },
-    });
+    expect(await photosAreOwned(tx as never, "u1", ["pB", "pA", "pB"])).toBe(true);
+    expect(tx.$queryRaw.mock.calls[0].slice(1)).toEqual([["pA", "pB"], "u1"]);
+  });
+
+  /** Shared, so writers onto one photo do not serialise, and conflicting with the cleanup's
+   *  FOR UPDATE, so a photo deleted first reads as gone rather than failing the insert. */
+  it("takes FOR KEY SHARE on the photo rows, scoped by user_id", async () => {
+    const { tx } = makeTx(["pA"]);
+    await photosAreOwned(tx as never, "u1", ["pA"]);
+    const sql = (tx.$queryRaw.mock.calls[0][0] as TemplateStringsArray).join("?");
+    expect(sql).toContain("FROM receipt_photos");
+    expect(sql).toContain("user_id");
+    expect(sql).toMatch(/ORDER BY id\s+FOR KEY SHARE\s*$/);
   });
 
   it("is false when any id is not the caller's or does not exist", async () => {
@@ -257,7 +318,7 @@ describe("photosAreOwned", () => {
   it("asks nothing when there is nothing to check", async () => {
     const { tx } = makeTx();
     expect(await photosAreOwned(tx as never, "u1", [])).toBe(true);
-    expect(tx.receiptPhoto.findMany).not.toHaveBeenCalled();
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
   });
 });
 
@@ -323,12 +384,8 @@ describe("applyPhotoChange", () => {
 });
 
 describe("cleanUpReceiptPhotos", () => {
-  const prismaWith = (count: number) => ({
-    receiptPhoto: {
-      findMany: vi.fn(async () => [{ id: "pA", objectKey: "k/pA", _count: { transactions: count } }]),
-      deleteMany: vi.fn(async () => ({ count: 1 })),
-    },
-  });
+  const prismaWith = (count: number) =>
+    makeCleanupPrisma([{ id: "pA", objectKey: "k/pA", _count: { transactions: count } }]).prisma;
 
   it("deletes an unreferenced photo from storage", async () => {
     const storage = makeStorage();

@@ -154,7 +154,10 @@ export const getReceiptPhotoInfo = async (
  * Deletes photos no transaction references any more. The row goes first, through a guarded
  * `deleteMany`, and the R2 object only follows when that row was really removed: a transaction
  * may link the photo between the read and the delete, and deleting the object first would leave
- * a still-referenced row pointing at nothing. If the object delete then fails, the row deletion
+ * a still-referenced row pointing at nothing. Each row delete runs in its own transaction, behind
+ * a `FOR UPDATE` on the photo taken as a separate first statement: a writer that linked the photo
+ * but had not yet committed would otherwise see its committed link nulled by `SET NULL` and its
+ * object deleted. If the object delete then fails, the row deletion
  * stands (an orphaned object is harmless and a prune script can remove it) and the error
  * surfaces. Returns the ids actually deleted.
  */
@@ -171,8 +174,23 @@ export const deleteUnreferencedPhotos = async (
   const deleted: string[] = [];
   for (const photo of photos) {
     if (photo._count.transactions > 0) continue;
-    const { count } = await prisma.receiptPhoto.deleteMany({
-      where: { id: photo.id, userId, transactions: { none: {} } },
+    const count = await prisma.$transaction(async (tx) => {
+      // The row lock is its own statement, before the conditional delete. A writer that has just
+      // inserted a transaction on this photo holds FOR KEY SHARE on it through the foreign key
+      // until it commits. A single DELETE whose NOT EXISTS ran on a snapshot without that row
+      // would wait on the lock, then go ahead without re-checking, and the SET NULL would wipe the
+      // link the writer just committed. Waiting here first means the deleteMany below runs on a
+      // fresh READ COMMITTED snapshot that sees the new transaction, so it deletes nothing.
+      const locked = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM receipt_photos
+        WHERE id = ${photo.id} AND user_id = ${userId}
+        FOR UPDATE
+      `;
+      if (locked.length === 0) return 0;
+      const result = await tx.receiptPhoto.deleteMany({
+        where: { id: photo.id, userId, transactions: { none: {} } },
+      });
+      return result.count;
     });
     if (count !== 1) continue;
     await storage.delete(photo.objectKey);
