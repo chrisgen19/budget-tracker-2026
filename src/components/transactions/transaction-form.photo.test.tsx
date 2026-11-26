@@ -207,6 +207,31 @@ describe("TransactionForm receipt photo", () => {
     expect(onSubmit.mock.calls[0][0]).toMatchObject({ receiptPhotoId: null });
   });
 
+  // The user removed the stored photo; a failed upload of its successor must not bring it back.
+  it("still unlinks a removed photo when the new one attached after it fails to upload", async () => {
+    mocks.upload.mockRejectedValue(new Error("upload refused"));
+    const onSubmit = renderForm({ transaction: withPhoto, initialData: undefined });
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove photo" }));
+    chooseFile();
+    submit();
+
+    await waitFor(() => expect(mocks.showToast).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ receiptPhotoId: null });
+    expect(mocks.showToast.mock.calls[0][0]).toBe(FAILED_UPLOAD_TOAST);
+  });
+
+  it("keeps the stored photo when a plain Replace fails to upload", async () => {
+    mocks.upload.mockRejectedValue(new Error("upload refused"));
+    const onSubmit = renderForm({ transaction: withPhoto, initialData: undefined });
+
+    chooseFile();
+    submit();
+
+    await waitFor(() => expect(mocks.showToast).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0]).not.toHaveProperty("receiptPhotoId");
+  });
+
   it("omits receiptPhotoId from an untouched form", async () => {
     const onSubmit = renderForm({ transaction: withPhoto, initialData: undefined });
 

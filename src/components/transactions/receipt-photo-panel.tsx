@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { animate, motion, useMotionValue } from "framer-motion";
 import { ImageOff, Maximize, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { clampPan, panBounds, type PanBounds } from "@/components/transactions/receipt-photo-pan";
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
@@ -29,16 +30,20 @@ export function ReceiptPhotoPanel({ src, sharedWith, className }: ReceiptPhotoPa
   const frameRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(MIN_ZOOM);
   const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
+  const [bounds, setBounds] = useState<PanBounds>(() => panBounds(0, 0, MIN_ZOOM));
   const x = useMotionValue(0);
   const y = useMotionValue(0);
 
+  // Bounds follow the zoom, and an offset left past the new edge (3x to 2x) is pulled back in.
   const setZoomTo = (next: number) => {
     const clamped = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
+    const frame = frameRef.current;
+    const nextBounds = panBounds(frame?.clientWidth ?? 0, frame?.clientHeight ?? 0, clamped);
+    const inside = clampPan(x.get(), y.get(), nextBounds);
     setZoom(clamped);
-    if (clamped === MIN_ZOOM) {
-      animate(x, 0);
-      animate(y, 0);
-    }
+    setBounds(nextBounds);
+    animate(x, inside.x);
+    animate(y, inside.y);
   };
 
   return (
@@ -59,7 +64,7 @@ export function ReceiptPhotoPanel({ src, sharedWith, className }: ReceiptPhotoPa
             onLoad={() => setStatus("loaded")}
             onError={() => setStatus("error")}
             drag={zoom > MIN_ZOOM}
-            dragConstraints={frameRef}
+            dragConstraints={bounds}
             dragElastic={0.1}
             dragMomentum={false}
             animate={{ scale: zoom }}

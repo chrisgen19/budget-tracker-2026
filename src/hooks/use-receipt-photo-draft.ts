@@ -42,6 +42,9 @@ export function useReceiptPhotoDraft(initialPhotoId: string | null) {
   const src = pending?.previewUrl ?? (shownInitialId ? receiptPhotoUrl(shownInitialId) : null);
 
   const resolveForSubmit = useCallback(async (): Promise<ReceiptPhotoSubmit> => {
+    // Removed on purpose stays removed. Without a Remove, omitting the key keeps the stored link,
+    // so a plain Replace that fails to upload leaves the old photo where it was.
+    const unlinked: ReceiptPhotoSubmit["patch"] = initialPhotoId && removedInitial ? { receiptPhotoId: null } : {};
     const chosen = pending;
     if (chosen) {
       try {
@@ -50,11 +53,10 @@ export function useReceiptPhotoDraft(initialPhotoId: string | null) {
         const uploaded = await uploadReceiptPhoto(file, chosen.photoKey);
         return { patch: { receiptPhotoId: uploaded.id }, uploadFailed: false };
       } catch {
-        return { patch: {}, uploadFailed: true };
+        return { patch: unlinked, uploadFailed: true };
       }
     }
-    if (initialPhotoId && removedInitial) return { patch: { receiptPhotoId: null }, uploadFailed: false };
-    return { patch: {}, uploadFailed: false };
+    return { patch: unlinked, uploadFailed: false };
   }, [pending, initialPhotoId, removedInitial]);
 
   return { src, hasPhoto: src !== null, choose, remove, resolveForSubmit };
