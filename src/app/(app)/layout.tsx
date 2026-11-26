@@ -11,6 +11,7 @@ import { ToastProvider } from "@/components/ui/toast";
 import { AssessmentProvider } from "@/components/assessment-provider";
 import { countScansUsed, monthStartForUser } from "@/lib/scan-quota";
 
+import { receiptPhotosEnabled } from "@/lib/receipt-photo-storage";
 import { telegramPromptOwnerId } from "@/lib/telegram/prompt-owner";
 import { canUseCreditCards, readCreditCardsAccess } from "@/lib/credit-card-access";
 export default async function AppLayout({
@@ -114,6 +115,7 @@ export default async function AppLayout({
           monthlyScanLimit,
           scansUsedThisMonth,
           creditCardsEnabled,
+          receiptPhotosEnabled: receiptPhotosEnabled(),
         }}
       >
         {/* ToastProvider sits outside PrivacyProvider so the latter can report a failed save.

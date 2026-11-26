@@ -35,6 +35,8 @@ export interface UserInfo {
    * switch. Hides the UI only; every card route checks the switch again on its own.
    */
   creditCardsEnabled: boolean;
+  /** Whether receipt photo storage (R2) is configured on the server. Hides the attach UI only. */
+  receiptPhotosEnabled: boolean;
   /** Multiples of a category's typical charge before the Watchlist calls one expense unusual. */
   watchlistOutlierRatio: number;
   /** An absolute figure that is unusual whatever the category's history, or null for ratio only. */
@@ -51,7 +53,7 @@ interface UserContextValue {
 }
 
 const UserContext = createContext<UserContextValue>({
-  user: { name: "", email: "", currency: "PHP", timezoneOffset: -480, receiptScanEnabled: false, transactionLayout: "infinite", transactionAmountAutofocus: true, defaultLabelType: "EXPENSE", showDayName: true, dayNameFormat: "SHORT", emailBillReminders: false, telegramPromptAvailable: false, telegramDailyPrompt: false, telegramDailyPromptTime: "20:00", telegramWatchlistDigest: false, telegramWatchlistDigestTime: "08:00", emailVerified: false, role: "FREE", roleScanEnabled: false, maxUploadFiles: 10, monthlyScanLimit: 0, scansUsedThisMonth: 0, creditCardsEnabled: false, watchlistOutlierRatio: 3, watchlistLargeAmount: null, watchlistDuplicateAlerts: true },
+  user: { name: "", email: "", currency: "PHP", timezoneOffset: -480, receiptScanEnabled: false, transactionLayout: "infinite", transactionAmountAutofocus: true, defaultLabelType: "EXPENSE", showDayName: true, dayNameFormat: "SHORT", emailBillReminders: false, telegramPromptAvailable: false, telegramDailyPrompt: false, telegramDailyPromptTime: "20:00", telegramWatchlistDigest: false, telegramWatchlistDigestTime: "08:00", emailVerified: false, role: "FREE", roleScanEnabled: false, maxUploadFiles: 10, monthlyScanLimit: 0, scansUsedThisMonth: 0, creditCardsEnabled: false, receiptPhotosEnabled: false, watchlistOutlierRatio: 3, watchlistLargeAmount: null, watchlistDuplicateAlerts: true },
   setUser: () => {},
 });
 
