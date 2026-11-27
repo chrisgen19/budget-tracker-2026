@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "buildAptPackages": ["...", "openssl"],
+  "packages": {
+    "node": "20"
+  },
+  "steps": {
+    "build": {
+      "commands": [
+        "pnpm build:deploy",
+        "cp -r .next/static .next/standalone/.next/static",
+        "cp -r public .next/standalone/public"
+      ]
+    }
+  },
+  "deploy": {
+    "startCommand": "node .next/standalone/server.js",
+    "aptPackages": ["...", "openssl", "curl", "wget"],
+    "variables": {
+      "HOSTNAME": "0.0.0.0",
+      "PORT": "3000"
+    }
+  }
+}

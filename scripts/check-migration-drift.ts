@@ -28,8 +28,8 @@
  * *image build* time, so a type error or a failing lint already leaves a migrated database behind
  * an un-deployed image. That is a property of building and migrating in one step, and it is still
  * true after #192 -- what #192 changed is *who* can do it. The command now lives behind a script
- * name only `nixpacks.toml` calls, so a builder that runs `pnpm build` by convention no longer
- * migrates anything.
+ * name only `nixpacks.toml` and `railpack.json` call, so a builder that runs `pnpm build` by
+ * convention no longer migrates anything.
  *
  * Since #306 this checks two different things, and they catch opposite failures:
  *

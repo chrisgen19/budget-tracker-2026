@@ -87,8 +87,8 @@ describe("build scripts", () => {
     expect(scripts["build:deploy"].endsWith("next build")).toBe(true);
   });
 
-  // nixpacks is the only builder that should reach the production database, and it reaches it by
-  // calling the migrating script by name. Comment lines are stripped first: this file explains the
+  // nixpacks and railpack are the only builders that should reach the production database, and they
+  // reach it by calling the migrating script by name. Comment lines are stripped first: this file explains the
   // history in prose that names `pnpm build`, and matching that would assert the opposite of what
   // it says.
   it("is wired to nixpacks", () => {
@@ -98,5 +98,41 @@ describe("build scripts", () => {
       .join("\n");
     expect(nixpacks).toContain("pnpm build:deploy");
     expect(nixpacks).not.toMatch(/pnpm build(?!:deploy)/);
+  });
+
+  /**
+   * Railpack is the successor builder Coolify recommends. Its Node provider runs the `build` script
+   * by default, which deploys code without its migrations, and an array in `railpack.json` keeps
+   * the provider's own commands wherever it contains `"..."`. So the build step has to call
+   * `build:deploy` by name and must not spread the defaults back in.
+   */
+  it("is wired to railpack", () => {
+    const raw = readFileSync(join(__dirname, "..", "railpack.json"), "utf8");
+    const railpack = JSON.parse(raw);
+    const commands: unknown = railpack.steps?.build?.commands;
+    expect(Array.isArray(commands)).toBe(true);
+    expect(commands).toContain("pnpm build:deploy");
+    expect(commands).not.toContain("...");
+    // Over the whole file, not just the build step: a `pnpm build` in another step or in the start
+    // command reinstates the non-migrating path just as well.
+    expect(raw).not.toMatch(/pnpm build(?!:deploy)/);
+  });
+
+  /**
+   * The apt arrays are the opposite case from the build commands: an array without `"..."` REPLACES
+   * the packages Railpack generates rather than adding to them. Coolify's Railpack wrapper also
+   * appends `curl` and `wget` to the runtime list, and both Coolify Scheduled Tasks (bill reminders,
+   * the Telegram evening prompt) run `curl` inside the container, so a replaced list breaks them
+   * with `curl: command not found` and nothing in the deploy fails. Railpack does not document
+   * whether this file or Coolify's `RAILPACK_DEPLOY_APT_PACKAGES` wins, so the list names `curl`
+   * and `wget` itself as well as spreading the defaults.
+   */
+  it("extends railpack's apt packages rather than replacing them", () => {
+    const railpack = JSON.parse(readFileSync(join(__dirname, "..", "railpack.json"), "utf8"));
+    expect(railpack.buildAptPackages).toContain("...");
+    expect(railpack.buildAptPackages).toContain("openssl");
+    for (const pkg of ["...", "openssl", "curl", "wget"]) {
+      expect(railpack.deploy?.aptPackages).toContain(pkg);
+    }
   });
 });

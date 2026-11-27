@@ -29,6 +29,25 @@ All notable development history for the Budget Tracker app.
   cancelled.
 - **A page restored by Back after a hand-off is marked stale**, since its worker is already the
   controller by then and there is nothing left to ask to take over.
+## 2026-11-27 - Railpack build config alongside Nixpacks
+
+- **`railpack.json` added** so the Coolify app can move off Nixpacks, which is deprecated upstream
+  and flagged in Coolify. It mirrors `nixpacks.toml`: the build step calls `pnpm build:deploy` by
+  name (Railpack's Node provider would otherwise run plain `pnpm build`, which does not migrate),
+  copies `.next/static` and `public` into the standalone output, and starts
+  `node .next/standalone/server.js` on `0.0.0.0:3000`.
+- **`openssl` is installed in both the build and the runtime image**, so `prisma generate` picks
+  the engine for the OpenSSL the container actually runs with.
+- **Both apt lists start with `"..."`**, which is how Railpack extends its generated package list
+  instead of replacing it. The runtime list also names `curl` and `wget`: Coolify appends those two
+  itself, both Coolify Scheduled Tasks (bill reminders, the Telegram evening prompt) call `curl`
+  inside the container, and Railpack does not document whether this file or Coolify's
+  `RAILPACK_DEPLOY_APT_PACKAGES` wins when both set the list. A replaced list would not fail the
+  deploy - the crons would just stop running.
+- **Node stays on 20**, the version `nixpacks.toml` and CI already run, so switching builders
+  changes only the builder. Moving to Node 24 is a separate step that has to move CI with it.
+- **Nothing changes until the Build Pack is switched in Coolify.** `nixpacks.toml` stays until a
+  Railpack deploy has succeeded. `scripts/build-scripts.test.ts` pins `build:deploy` in both files.
 
 ## 2026-11-27 - Receipt photos stored as AVIF at 1200px
 
