@@ -36,7 +36,11 @@ All notable development history for the Budget Tracker app.
   on screen, so any navigation would have closed it.
 - **The update banner stays hidden while a scan is in memory**, because its Reload is a plain page
   reload and would destroy the queue the rest of this protects. It returns as soon as nothing is
-  held in memory.
+  held in memory, and Reload refuses on its own while busy rather than trusting the banner to be
+  gone: it stays clickable through its 0.4s exit animation.
+- **The banner's Reload waits the same way a link tap does.** It asks the worker to take over and
+  the reload follows whenever that lands, with no 3s bound, so a scan started inside that wait is
+  kept and the tab is marked stale instead.
 
 ## 2026-11-27 - Railpack build config alongside Nixpacks
 

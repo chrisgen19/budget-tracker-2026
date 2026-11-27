@@ -71,7 +71,8 @@ The gate is read **three** times, because the queue can be destroyed by three di
 
 **At the tap**, which decides whether the hand-off starts at all.
 
-**When the hand-off finishes**, up to 3s later, since a scan can start in between. Busy by then,
+**When a hand-off finishes**, up to 3s later for a link tap and after an unbounded wait for the
+banner's Reload, since a scan can start in between. Busy by then,
 the full load is **abandoned and the tap is dropped** -- not deferred, and not turned into a client
 navigation. A `router.push` here would be the only place that runs an old bundle under a *new*
 controller: `sw.ts` precaches the build manifest, so the activating worker evicts the old build's
@@ -88,10 +89,17 @@ means the new worker is in charge, so this bundle is old and there is nothing le
 still ours to ask: the handle is kept and the status stays `waiting`. Clearing it there cost the
 banner's Reload its worker and left a refresh that activates nothing.
 
-**At the banner.** `applyUpdate` for a `stale` tab is an unguarded `window.location.reload()`, so
-without this the amber bar would appear over the review sheet the moment a hand-off marked the tab
-stale, and one tap would destroy the queue with its credits spent. `UpdateNavigationProvider`
-reports `updateAvailable: false` while busy, and the banner is `applyUpdate`'s only caller.
+**At the banner**, in two places, because hiding it is not a guard. `UpdateNavigationProvider`
+reports `updateAvailable: false` while busy, so the bar does not appear over the review sheet when
+a hand-off marks the tab stale. But `UpdatePromptBanner` wraps it in `AnimatePresence` with a 0.4s
+exit, so when `busy` flips true the Reload button stays mounted and clickable for the length of the
+animation. `applyUpdate` therefore refuses on its own as well. A conditional render decides what is
+on screen; it must not be what decides whether the queue survives.
+
+Both halves of the banner path are covered: the tap itself, and the wait that follows it. The
+second matters more than it looks, since `applyUpdate` arms its `reload` intent with **no** fallback
+timer, so unlike a link tap it has no 3s bound and the swap may land much later, after a scan has
+begun.
 
 **Wiring** (new `src/components/pwa/update-navigation-provider.tsx`):
 - `AppShell` calls the hook once and passes `status` and `applyUpdate` down to `UpdatePromptBanner`

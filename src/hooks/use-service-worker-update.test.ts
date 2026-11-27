@@ -426,6 +426,40 @@ describe("useServiceWorkerUpdate", () => {
     expect(assign).toHaveBeenCalledWith("/labels");
   });
 
+  // The banner path has the same hole and a wider window: `applyUpdate` arms a `reload` intent and
+  // no fallback, so the wait for the swap is unbounded and a scan can begin anywhere inside it.
+  it("does not reload on the banner path when a scan starts before the swap lands", async () => {
+    let busy = false;
+    const waiting = new FakeWorker();
+    registration.waiting = waiting;
+    const { result } = renderHook(() => useServiceWorkerUpdate(() => busy));
+    await waitFor(() => expect(result.current.status).toBe("waiting"));
+
+    act(() => result.current.applyUpdate());
+    expect(waiting.postMessage).toHaveBeenCalledWith({ type: "SKIP_WAITING" });
+
+    busy = true;
+    act(() => {
+      container.dispatchEvent(new Event("controllerchange"));
+    });
+
+    expect(reload).not.toHaveBeenCalled();
+    expect(result.current.status).toBe("stale");
+  });
+
+  // `AnimatePresence` keeps the banner mounted and clickable through its 0.4s exit, so hiding it
+  // when `busy` flips is not the guard. The action has to refuse on its own.
+  it("ignores the banner's Reload while a scan is busy", async () => {
+    const waiting = new FakeWorker();
+    registration.waiting = waiting;
+    const { result } = renderHook(() => useServiceWorkerUpdate(() => true));
+    await waitFor(() => expect(result.current.status).toBe("waiting"));
+
+    act(() => result.current.applyUpdate());
+    expect(reload).not.toHaveBeenCalled();
+    expect(waiting.postMessage).not.toHaveBeenCalled();
+  });
+
   // The ordinary case must not change: nothing in memory, so the hand-off is still a full load.
   it("still full-loads the target when nothing is busy", async () => {
     registration.waiting = new FakeWorker();
