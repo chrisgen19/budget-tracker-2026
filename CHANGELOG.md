@@ -29,6 +29,46 @@ All notable development history for the Budget Tracker app.
   cancelled.
 - **A page restored by Back after a hand-off is marked stale**, since its worker is already the
   controller by then and there is nothing left to ask to take over.
+
+## 2026-11-27 - Node 24 in production
+
+- **`railpack.json` pins Node 24.** Node 20 reached end of life in April 2026.
+- **`nixpacks.toml` stays on `nodejs_20`.** It is the fallback for the deploy that happens before
+  Railpack is confirmed, so it has to be the configuration production is known to build with, not
+  a newer one nothing has tried. Nixpacks also picks its nixpkgs archive from the *detected* Node
+  version (`engines.node`, via `AVAILABLE_NODE_VERSIONS`) rather than from the `nixPkgs` override,
+  and Node 24 is in that table only on recent nixpacks — on an older one `nodejs_24` is a missing
+  attribute that fails the setup phase. Coolify chooses the nixpacks version, which is the same
+  outside-the-repo unknown as the Build Pack setting.
+- **`nixpacks.toml` stays until a Railpack deploy has succeeded on production.** The Build Pack
+  setting lives in Coolify's General settings, outside this repo, so nothing here can tell which
+  one the next deploy uses. Deleting it while Nixpacks is still selected does not fail the build:
+  Nixpacks falls back to auto-detection, which runs plain `pnpm build` with no
+  `prisma migrate deploy` and no drift check, skips the two static copies, and starts `next start`
+  against an `output: "standalone"` build it does not own. That is #192 inverted - code shipped
+  ahead of its schema, silently and green. Deleting the file is a one-line follow-up once a
+  Railpack deploy is confirmed.
+- **CI runs Node 20 and Node 24.** The matrix legs report as `checks (20)` and `checks (24)`, and a
+  separate `ci` job aggregates them. That job exists only to keep the required check's name stable:
+  "Protect main" requires a status check named exactly `ci`, and putting the matrix on a job called
+  `ci` would rename it to `ci (20)` / `ci (24)`, leaving the required name reporting nothing and
+  every PR unmergeable. The aggregator uses `if: ${{ !cancelled() }}`, not `always()`: a status
+  function is needed or a failed leg skips the job and a skipped required check reports neutral,
+  but `always()` also runs through cancellation, which `cancel-in-progress: true` makes routine -
+  a superseded run would then report `ci` as failed rather than cancelled.
+- **`scripts/build-scripts.test.ts` now asserts each build pack's Node pin is a major the CI
+  matrix lists**, reading the matrix out of the `checks` job rather than the first `node: [...]` in
+  the workflow, comparing majors so a patch pin still matches, and stripping comments before
+  reading `nixpacks.toml`'s pin. The two build packs are deliberately not required to agree; what
+  matters is that CI runs both versions. The numbers previously sat in three files with nothing
+  tying them together, which is how a builder switch could have moved production to a Node version
+  CI never ran.
+- **Node 20 stays in the matrix** until `package.json` engines moves off `>=20.19.0`. Dropping it
+  from CI and leaving the floor declared would mean shipping a version nothing tests.
+- **`check-redesign-scope.sh` counts both build-pack files as backend.** It listed only
+  `nixpacks.toml`, so a redesign branch could change `railpack.json` - the production build
+  command, Node version and runtime apt list - and be reported as containing no backend changes.
+
 ## 2026-11-27 - Railpack build config alongside Nixpacks
 
 - **`railpack.json` added** so the Coolify app can move off Nixpacks, which is deprecated upstream

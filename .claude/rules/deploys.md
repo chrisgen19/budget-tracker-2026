@@ -3,8 +3,8 @@ paths:
   - prisma/schema.prisma
   - "prisma/migrations/**"
   - scripts/check-migration-drift.ts
-  - nixpacks.toml
   - railpack.json
+  - nixpacks.toml
   - src/app/sw.ts
 ---
 
