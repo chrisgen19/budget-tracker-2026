@@ -57,8 +57,10 @@ export function ReceiptPhotoPanel({ src, sharedWith, onOpen, className }: Receip
       const nextBounds = panBounds(frame.clientWidth, frame.clientHeight, zoomRef.current);
       const inside = clampPan(x.get(), y.get(), nextBounds);
       setBounds(nextBounds);
-      x.set(inside.x);
-      y.set(inside.y);
+      // `jump`, not `set`: a zoom step may still be animating the offset, and `set` leaves that
+      // animation running to write its old target back over the clamp, past the new edge.
+      x.jump(inside.x);
+      y.jump(inside.y);
     });
     observer.observe(frame);
     return () => observer.disconnect();

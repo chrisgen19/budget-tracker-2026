@@ -6,6 +6,7 @@ import type { TransactionWithCategory } from "@/types";
 
 const mocks = vi.hoisted(() => ({
   photosEnabled: true,
+  manyCategories: false,
   upload: vi.fn(),
   compress: vi.fn(async (file: File) => file),
   showToast: vi.fn(),
@@ -25,15 +26,23 @@ vi.mock("@/components/user-provider", () => ({
 }));
 
 vi.mock("@/hooks/use-categories", () => {
-  // Built once, for the stable identity the form's category effects depend on.
+  // Built once, for the stable identity the form's category effects depend on. The longer list
+  // passes MAX_QUICK_CATEGORIES, which is what makes the form offer the category picker.
+  const food = { id: "food", name: "Food", type: "EXPENSE", icon: "utensils", color: "#000000" };
+  const many = [food, ...["a", "b", "c", "d", "e"].map((id) => ({ ...food, id, name: `Cat ${id}` }))];
   const byType = {
-    EXPENSE: [{ id: "food", name: "Food", type: "EXPENSE", icon: "utensils", color: "#000000" }],
+    EXPENSE: [food],
     INCOME: [{ id: "salary", name: "Salary", type: "INCOME", icon: "wallet", color: "#000000" }],
   };
   const quickPreferences = { quickExpenseCategories: ["food"], quickIncomeCategories: [] };
   return {
     useCategoriesQuery: (type?: "INCOME" | "EXPENSE") => ({
-      data: type ? byType[type] : [...byType.EXPENSE, ...byType.INCOME],
+      data:
+        type === "EXPENSE" && mocks.manyCategories
+          ? many
+          : type
+            ? byType[type]
+            : [...byType.EXPENSE, ...byType.INCOME],
       isLoading: false,
     }),
     useQuickPreferencesQuery: () => ({ data: quickPreferences }),
@@ -278,6 +287,31 @@ describe("TransactionForm receipt photo", () => {
     expect(document.querySelectorAll('input[type="file"]')).toHaveLength(1);
   });
 
+  // The input used to live inside the field, which the category picker swaps out, so the viewer's
+  // Replace clicked a null ref and nothing happened.
+  it("opens the file picker from the viewer's Replace while the category picker is open", async () => {
+    const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
+    mocks.manyCategories = true;
+    try {
+      renderForm({ transaction: withPhoto, initialData: undefined });
+
+      fireEvent.click(screen.getByRole("button", { name: /more categories/i }));
+      // The field that used to own the input is gone once the picker has animated in.
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Replace photo" })).toBeNull(), {
+        timeout: 5000,
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Open receipt photo" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Replace" }));
+
+      expect(click).toHaveBeenCalledTimes(1);
+      expect((click.mock.contexts[0] as HTMLInputElement).type).toBe("file");
+    } finally {
+      click.mockRestore();
+      mocks.manyCategories = false;
+    }
+  });
+
   it("omits receiptPhotoId from an untouched form", async () => {
     const onSubmit = renderForm({ transaction: withPhoto, initialData: undefined });
 
@@ -352,6 +386,21 @@ describe("TransactionForm receipt photo races", () => {
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect((mocks.upload.mock.calls[0][0] as File).name).toBe("newer.jpg");
+  });
+
+  // A late compression made a preview URL after unmount, where nothing was left to revoke it.
+  it("discards a compression that finishes after the form closes", async () => {
+    const release = heldCompressions();
+    vi.mocked(URL.createObjectURL).mockClear();
+    const { unmount } = render(
+      <TransactionForm initialData={{ amount: 250, categoryId: "food" }} allowReceiptPhoto onSubmit={vi.fn()} onCancel={() => {}} />,
+    );
+
+    pick("late.jpg");
+    unmount();
+    await release(0);
+
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
   });
 
   it("disables the photo controls while the save is in flight", async () => {

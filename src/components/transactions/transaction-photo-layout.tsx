@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { cn } from "@/lib/utils";
 import { ReceiptPhotoPanel } from "@/components/transactions/receipt-photo-panel";
 import { ReceiptPhotoStrip } from "@/components/transactions/receipt-photo-strip";
 import { ReceiptPhotoViewer } from "@/components/transactions/receipt-photo-viewer";
@@ -27,27 +28,22 @@ interface TransactionPhotoLayoutProps {
  * `size="wide"`); below `lg` it is a 150px strip bled to the sheet's edges above the form.
  * Lives with the form rather than the pages, so a page only has to pass the modal size.
  * The negative margins undo the Modal content's `p-6`.
+ *
+ * The element tree is the same with or without a photo, and only the photo parts and the grid
+ * classes switch. It used to return the children bare when there was no photo and wrapped when
+ * there was, and that change of parent made React remount the whole form on attach and on
+ * remove: local state reset and the amount field's autofocus fired again, popping a phone's
+ * keyboard mid-edit.
  */
-export function TransactionPhotoLayout({ photoSrc, ...rest }: TransactionPhotoLayoutProps) {
-  if (!photoSrc) return <>{rest.children}</>;
-  return <PhotoLayout photoSrc={photoSrc} {...rest} />;
-}
-
-/** Split out so a form with no photo never mounts the info query (or needs a QueryClient). */
-function PhotoLayout({
+export function TransactionPhotoLayout({
   photoSrc,
   photoId = null,
   transactionId,
   onReplacePhoto,
   children,
-}: TransactionPhotoLayoutProps & { photoSrc: string }) {
+}: TransactionPhotoLayoutProps) {
   const [viewerOpen, setViewerOpen] = useState(false);
-  const storedId = photoId;
-  const info = useReceiptPhotoInfo(storedId);
-
-  const sharedWith = info.data?.transactions
-    .filter((t) => t.id !== transactionId)
-    .map((t) => t.categoryName);
+  const storedId = photoSrc ? photoId : null;
   const openViewer = storedId ? () => setViewerOpen(true) : undefined;
   const replace = onReplacePhoto
     ? () => {
@@ -57,22 +53,26 @@ function PhotoLayout({
     : undefined;
 
   return (
-    <div className="lg:grid lg:grid-cols-[320px_minmax(0,1fr)] lg:gap-6">
-      {/* Keyed by src so a replaced photo starts from its own loading state, not the old one's. */}
-      <ReceiptPhotoPanel
-        key={`panel-${photoSrc}`}
-        src={photoSrc}
-        sharedWith={storedId ? sharedWith : undefined}
-        onOpen={openViewer}
-        className="hidden lg:sticky lg:top-0 lg:flex lg:h-[min(560px,calc(85vh-9rem))]"
-      />
-      <div className="min-w-0">
-        <ReceiptPhotoStrip
-          key={`strip-${photoSrc}`}
+    <div className={cn(photoSrc && "lg:grid lg:grid-cols-[320px_minmax(0,1fr)] lg:gap-6")}>
+      {photoSrc && (
+        <PanelWithInfo
+          key={`panel-${photoSrc}`}
           src={photoSrc}
+          storedId={storedId}
+          transactionId={transactionId}
           onOpen={openViewer}
-          className="-mx-6 -mt-6 mb-6 w-[calc(100%+3rem)] lg:hidden"
         />
+      )}
+      <div className={cn(photoSrc && "min-w-0")}>
+        {/* Keyed by src so a replaced photo starts from its own loading state, not the old one's. */}
+        {photoSrc && (
+          <ReceiptPhotoStrip
+            key={`strip-${photoSrc}`}
+            src={photoSrc}
+            onOpen={openViewer}
+            className="-mx-6 -mt-6 mb-6 w-[calc(100%+3rem)] lg:hidden"
+          />
+        )}
         {children}
       </div>
       {storedId && (
@@ -84,5 +84,34 @@ function PhotoLayout({
         />
       )}
     </div>
+  );
+}
+
+/**
+ * The desktop panel and the info query behind its "Also on" line. Split out so a form with no
+ * photo never mounts the query (or needs a QueryClient).
+ */
+function PanelWithInfo({
+  src,
+  storedId,
+  transactionId,
+  onOpen,
+}: {
+  src: string;
+  storedId: string | null;
+  transactionId?: string;
+  onOpen?: () => void;
+}) {
+  const info = useReceiptPhotoInfo(storedId);
+  const sharedWith = info.data?.transactions
+    .filter((t) => t.id !== transactionId)
+    .map((t) => t.categoryName);
+  return (
+    <ReceiptPhotoPanel
+      src={src}
+      sharedWith={storedId ? sharedWith : undefined}
+      onOpen={onOpen}
+      className="hidden lg:sticky lg:top-0 lg:flex lg:h-[min(560px,calc(85vh-9rem))]"
+    />
   );
 }

@@ -21,7 +21,7 @@ interface ReceiptPhotoZoomFrameProps {
 export function ReceiptPhotoZoomFrame({ src, blurred, onReveal }: ReceiptPhotoZoomFrameProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState(false);
-  const { zoomed, style, handlers } = useReceiptPhotoZoom(frameRef);
+  const { zoomed, style, handlers } = useReceiptPhotoZoom(frameRef, !(blurred || failed));
 
   return (
     <div

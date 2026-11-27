@@ -36,6 +36,32 @@ afterEach(() => {
 });
 
 describe("useReceiptPhotoZoom", () => {
+  // The pointer handlers were switched off while blurred, but the native wheel listener was not,
+  // so scrolling over a hidden photo zoomed it and swallowed the scroll.
+  it("leaves the wheel alone while disabled, so a blurred photo neither zooms nor eats the scroll", () => {
+    const frame = frameOfSize(800, 600);
+    const { result } = renderHook(() => useReceiptPhotoZoom({ current: frame }, false));
+    const wheel = new WheelEvent("wheel", { deltaY: -2000, cancelable: true });
+
+    act(() => {
+      frame.dispatchEvent(wheel);
+    });
+
+    expect(result.current.style.scale.get()).toBe(1);
+    expect(wheel.defaultPrevented).toBe(false);
+  });
+
+  it("zooms on the wheel once enabled", () => {
+    const frame = frameOfSize(800, 600);
+    const { result } = renderHook(() => useReceiptPhotoZoom({ current: frame }, true));
+
+    act(() => {
+      frame.dispatchEvent(new WheelEvent("wheel", { deltaY: -2000, cancelable: true }));
+    });
+
+    expect(result.current.style.scale.get()).toBe(5);
+  });
+
   // At 5x an 800px frame lets the photo move 1600px; narrowed to 400px the limit is 800px. The
   // stored offset stayed at 1600 and the photo sat off the frame until the next gesture.
   it("pulls a zoomed photo back inside its frame when the frame shrinks", () => {

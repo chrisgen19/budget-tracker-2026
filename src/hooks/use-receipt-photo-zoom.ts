@@ -15,8 +15,12 @@ const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
  * framer-motion's `drag`: one finger pans and two pinch, and a drag gesture would claim the
  * first finger before the second arrives. Pan limits come from `panBounds`/`clampPan`, the
  * same rules as the desktop panel, so a zoomed photo can never be pushed off its frame.
+ *
+ * `enabled` false (the photo is blurred or failed to load) switches the wheel off too. The
+ * pointer handlers are left off by the caller, but the wheel is a native listener attached here,
+ * so it went on zooming a blurred photo and swallowing the scroll.
  */
-export function useReceiptPhotoZoom(frameRef: RefObject<HTMLElement | null>) {
+export function useReceiptPhotoZoom(frameRef: RefObject<HTMLElement | null>, enabled = true) {
   const [zoomed, setZoomed] = useState(false);
   const scale = useMotionValue(MIN_ZOOM);
   const x = useMotionValue(0);
@@ -49,14 +53,14 @@ export function useReceiptPhotoZoom(frameRef: RefObject<HTMLElement | null>) {
   // ctrl+wheel, which the browser would otherwise take as a page zoom.
   useEffect(() => {
     const frame = frameRef.current;
-    if (!frame) return;
+    if (!frame || !enabled) return;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
       zoomTo(scale.get() * Math.exp(-event.deltaY * WHEEL_SENSITIVITY));
     };
     frame.addEventListener("wheel", onWheel, { passive: false });
     return () => frame.removeEventListener("wheel", onWheel);
-  }, [frameRef, scale, zoomTo]);
+  }, [enabled, frameRef, scale, zoomTo]);
 
   // The limits depend on the frame's size, so a rotated phone or a resized window re-clamps the
   // offset; without this a zoomed photo could sit past its frame until the next gesture.

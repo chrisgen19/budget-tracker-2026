@@ -47,6 +47,15 @@ export function useReceiptPhotoDraft(initialPhotoId: string | null) {
     return () => URL.revokeObjectURL(pending.previewUrl);
   }, [pending]);
 
+  // A form closed mid-compression supersedes it, as a Remove does. Otherwise the late result made
+  // a preview URL after unmount, where no effect remained to revoke it.
+  useEffect(
+    () => () => {
+      generation.current++;
+    },
+    [],
+  );
+
   const choose = useCallback(
     (chosen: File): Promise<void> => {
       const mine = ++generation.current;
