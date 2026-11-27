@@ -116,13 +116,16 @@ jobs:
   # The one check "Protect main" requires, by name. It holds no steps of its own: its only job is
   # to turn the matrix's results into a single pass or fail under a name that never changes.
   #
-  # `if: always()` is what makes it a gate rather than a formality -- without it the job is
-  # skipped when a matrix leg fails, a skipped required check reports neutral, and the PR is
-  # mergeable with a red matrix. The result is then asserted explicitly, because `needs` alone
-  # would let a cancelled or skipped leg through.
+  # A status function is required or the default `success()` skips this job the moment a leg
+  # fails -- a skipped required check reports neutral, and the PR is mergeable with a red matrix.
+  # `!cancelled()` rather than `always()`: `always()` runs through cancellation too, and with
+  # `cancel-in-progress: true` above that is routine here, so a superseded run would report the
+  # required `ci` check as *failed* on that SHA instead of cancelled. GitHub's expressions docs
+  # name `!cancelled()` as the alternative for exactly this. The result is then asserted
+  # explicitly, because `needs` alone would let a skipped leg through.
   ci:
     needs: checks
-    if: always()
+    if: ${{ !cancelled() }}
     permissions:
       contents: read
     runs-on: ubuntu-latest

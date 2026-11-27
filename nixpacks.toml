@@ -1,0 +1,31 @@
+# Kept alongside `railpack.json` until a Railpack deploy has succeeded on production. The Build
+# Pack lives in Coolify's General settings, outside this repo, so nothing here can tell which one
+# the next deploy uses. Delete this file with Nixpacks selected and the build does not fail -- it
+# falls back to auto-detection, which runs plain `pnpm build` (no `prisma migrate deploy`, no
+# drift check), skips the two static copies below, and starts `next start` against an
+# `output: "standalone"` build it does not own. Silent, and green.
+#
+# `nodejs_24` tracks `railpack.json`; `scripts/build-scripts.test.ts` asserts the two agree and
+# that both are a version the CI matrix runs.
+[phases.setup]
+nixPkgs = ["nodejs_24", "openssl"]
+
+[phases.install]
+cmds = ["corepack enable && pnpm install --frozen-lockfile"]
+cacheDirectories = ["/root/.local/share/pnpm/store", "node_modules/.cache"]
+
+# `build:deploy`, not `build`. This is the ONE builder that may touch the production database, and
+# it says so by name.
+#
+# `prisma migrate deploy` used to live in `pnpm build`, which is the script every CI provider runs
+# by convention. A Vercel project connected to this repo held a production `DATABASE_URL` and built
+# every branch push, so every migration was applied to production ~40 seconds after being pushed to
+# a branch -- before review, before merge, and whether or not the PR was ever merged (issue #192).
+# Moving the migration behind a name nothing calls by default fixes that for every builder, present
+# and future, rather than for the one that was found.
+[phases.build]
+cmds = ["pnpm build:deploy && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public"]
+cacheDirectories = [".next/cache"]
+
+[start]
+cmd = "HOSTNAME=0.0.0.0 PORT=3000 node .next/standalone/server.js"

@@ -22,7 +22,12 @@ head="${2:?head ref required}"
 # Backend by location. `validations.ts` is listed because its Zod schemas are what the API routes
 # accept: a form tweak there changes the contract for every client, not only this one.
 # `.github/` is listed so a redesign PR that edits CI is reported for it.
-STATIC_PATTERN='^(src/app/api/|prisma/|mcp-server/|src/lib/(mcp|telegram)/|\.github/)|^src/(middleware|instrumentation)\.ts$|^src/lib/validations\.ts$|^nixpacks\.toml$'
+#
+# Both build-pack files are listed, not just the one Coolify happens to be set to. They hold the
+# production build command, the production Node version and the runtime apt list, and a redesign
+# branch that changed one of them would otherwise be reported as "none of them backend" and
+# reviewed as visual work.
+STATIC_PATTERN='^(src/app/api/|prisma/|mcp-server/|src/lib/(mcp|telegram)/|\.github/)|^src/(middleware|instrumentation)\.ts$|^src/lib/validations\.ts$|^(nixpacks\.toml|railpack\.json)$'
 
 # Backend by content, for `src/lib` modules. A fixed list of file names would go stale the first
 # time a new `*-writes.ts` or query module was added; these rules follow the code instead.

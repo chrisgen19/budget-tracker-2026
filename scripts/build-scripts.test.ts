@@ -47,7 +47,7 @@ describe("build scripts", () => {
     }
   });
 
-  // The whole point of the split: the migrating build has to exist, or `railpack.json` calls a
+  // The whole point of the split: the migrating build has to exist, or the build packs call a
   // script that is not there and Coolify ships code ahead of its schema.
   it("migrates in `build:deploy`", () => {
     expect(scripts["build:deploy"]).toContain("prisma migrate deploy");
@@ -88,11 +88,28 @@ describe("build scripts", () => {
   });
 
   /**
-   * Railpack is the only builder left, and the only one that should reach the production database.
-   * It reaches it by calling the migrating script by name: its Node provider runs the `build`
-   * script by default, which deploys code without its migrations, and an array in `railpack.json`
-   * keeps the provider's own commands wherever it contains `"..."`. So the build step has to call
-   * `build:deploy` by name and must not spread the defaults back in.
+   * `nixpacks.toml` is kept until a Railpack deploy has succeeded on production, because the Build
+   * Pack setting lives in Coolify and not in this repo. While it is there it has to stay correct:
+   * deleting it with Nixpacks still selected falls back to auto-detection and plain `pnpm build`,
+   * which is #192 inverted -- code shipped ahead of its schema, silently and green.
+   *
+   * Comment lines are stripped first: this file explains the history in prose that names
+   * `pnpm build`, and matching that would assert the opposite of what it says.
+   */
+  it("is wired to nixpacks", () => {
+    const nixpacks = readFileSync(join(__dirname, "..", "nixpacks.toml"), "utf8")
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .join("\n");
+    expect(nixpacks).toContain("pnpm build:deploy");
+    expect(nixpacks).not.toMatch(/pnpm build(?!:deploy)/);
+  });
+
+  /**
+   * Railpack is the builder Coolify recommends and the one production is moving to. Its Node
+   * provider runs the `build` script by default, which deploys code without its migrations, and an
+   * array in `railpack.json` keeps the provider's own commands wherever it contains `"..."`. So the
+   * build step has to call `build:deploy` by name and must not spread the defaults back in.
    */
   it("is wired to railpack", () => {
     const raw = readFileSync(join(__dirname, "..", "railpack.json"), "utf8");
@@ -125,21 +142,45 @@ describe("build scripts", () => {
   });
 
   /**
-   * Production's Node version has to be one CI actually runs. These two numbers lived in different
-   * files with nothing tying them together, and the gap is silent in the direction that matters: a
-   * green pipeline on one version while the image ships another, so a behaviour change in a
-   * dependency path -- deprecations, OpenSSL defaults, undici -- surfaces only in production.
+   * Production's Node version has to be one CI actually runs, and the two build-pack files have to
+   * agree with each other. These numbers live in three files with nothing tying them together, and
+   * the gap is silent in the direction that matters: a green pipeline on one version while the
+   * image ships another, so a behaviour change in a dependency path -- deprecations, OpenSSL
+   * defaults, undici -- surfaces only in production.
    *
-   * The matrix is read out of the workflow rather than hardcoded here, so adding a version to CI
-   * is enough and this test never has to be the second place to edit.
+   * The matrix is read out of the workflow rather than hardcoded, so adding a version to CI is
+   * enough and this test never has to be the second place to edit. It is read out of the `checks`
+   * job specifically: a first-match `node: [...]` over the whole file would silently bind to a
+   * second matrix job added above it, and pass while the leg that actually runs lint, type-check,
+   * build and test covered something else.
+   *
+   * Majors are compared, so a legitimate patch pin (`"24.5.0"`) still satisfies a `node: [24]` leg.
    */
   it("deploys a Node version the CI matrix covers", () => {
-    const railpack = JSON.parse(readFileSync(join(__dirname, "..", "railpack.json"), "utf8"));
+    const major = (version: string) => version.trim().replace(/^[^0-9]*/, "").split(".")[0];
+
     const workflow = readFileSync(join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8");
-    const matrix = workflow.match(/^\s*node:\s*\[([^\]]*)\]/m);
+    const start = workflow.search(/^  checks:$/m);
+    expect(start).toBeGreaterThan(-1);
+    const rest = workflow.slice(start + 1);
+    const end = rest.search(/^  \S/m);
+    const checksJob = end === -1 ? rest : rest.slice(0, end);
+
+    const matrix = checksJob.match(/^\s*node:\s*\[([^\]]*)\]/m);
     expect(matrix).not.toBeNull();
-    const versions = matrix![1].split(",").map((v) => v.trim().replace(/["']/g, ""));
+    const versions = matrix![1].split(",").map((v) => major(v.replace(/["']/g, "")));
     expect(versions.length).toBeGreaterThan(0);
-    expect(versions).toContain(String(railpack.packages?.node));
+
+    const railpack = JSON.parse(readFileSync(join(__dirname, "..", "railpack.json"), "utf8"));
+    const railpackNode = major(String(railpack.packages?.node));
+
+    const nixpacks = readFileSync(join(__dirname, "..", "nixpacks.toml"), "utf8");
+    const nixpacksPin = nixpacks.match(/nodejs_(\d+)/);
+    expect(nixpacksPin).not.toBeNull();
+
+    // Both build packs, because either one can be the one Coolify is set to.
+    expect(versions).toContain(railpackNode);
+    expect(versions).toContain(nixpacksPin![1]);
+    expect(nixpacksPin![1]).toBe(railpackNode);
   });
 });
