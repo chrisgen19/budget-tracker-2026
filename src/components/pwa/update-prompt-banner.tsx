@@ -2,7 +2,7 @@
 
 import { RefreshCw } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useServiceWorkerUpdate } from "@/hooks/use-service-worker-update";
+import { useUpdateNavigation } from "@/components/pwa/update-navigation-provider";
 import { useOnlineStatus } from "@/hooks/use-online-status";
 
 /**
@@ -16,9 +16,13 @@ import { useOnlineStatus } from "@/hooks/use-online-status";
  * Hidden while offline, because it shares those offsets with `OfflineBanner` and two banners at one
  * position is a bug rather than a stack. Nothing is lost: the waiting worker stays waiting, and the
  * prompt returns when the connection does.
+ *
+ * It is also the fallback for the update taken on navigation (`UpdateNavigationProvider`): shown
+ * whether a worker is waiting or another tab already swapped it in (`stale`), where Reload is a
+ * plain refresh.
  */
 export function UpdatePromptBanner() {
-  const { updateAvailable, applyUpdate } = useServiceWorkerUpdate();
+  const { updateAvailable, applyUpdate } = useUpdateNavigation();
   const isOnline = useOnlineStatus();
 
   return (
