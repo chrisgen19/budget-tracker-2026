@@ -246,8 +246,25 @@ async function routeChecks(userId: string, categoryId: string, storage: PhotoSto
     form.set("photo", new Blob([new Uint8Array(bytes)], { type: "image/jpeg" }), "receipt.jpg");
     form.set("photoKey", photoKey);
     const res = await call("/api/receipt-photos", { method: "POST", body: form });
-    const body = (await res.json()) as { photo?: { id: string } };
-    return { status: res.status, id: body.photo?.id ?? "" };
+    const body = (await res.json()) as { photo?: { id: string }; error?: string };
+    return { status: res.status, id: body.photo?.id ?? "", error: body.error ?? "" };
+  };
+  /**
+   * An upload a later step depends on. A failed one is reported as itself and ends the run:
+   * carrying on with an empty id made a storage hiccup read as a broken replace (the edit then
+   * sent `receiptPhotoId: ""`, which validation refuses), which is a wrong diagnosis.
+   */
+  const uploadFor = async (step: string, bytes: Buffer) => {
+    const result = await upload(bytes, crypto.randomUUID());
+    const ok = result.status === 201 && result.id !== "";
+    check(`upload for ${step} answers 201`, ok, `got ${result.status} ${result.error}`.trim());
+    if (!ok) {
+      throw new Error(
+        `upload for ${step} failed (${result.status}); the dev server's log has R2's reason. ` +
+          "The checks after it would only repeat that failure, so the run stops here.",
+      );
+    }
+    return result;
   };
   const json = (body: unknown) => ({
     headers: { "content-type": "application/json" },
@@ -266,7 +283,10 @@ async function routeChecks(userId: string, categoryId: string, storage: PhotoSto
 
   const key1 = crypto.randomUUID();
   const first = await upload(await gpsJpeg("#c96"), key1);
-  check("upload answers 201", first.status === 201, `got ${first.status}`);
+  check("upload answers 201", first.status === 201, `got ${first.status} ${first.error}`.trim());
+  if (first.status !== 201) {
+    throw new Error(`the first upload failed (${first.status}); every check after it needs that photo.`);
+  }
   const replay = await upload(await gpsJpeg("#c96"), key1);
   check("replaying the photoKey answers 200 with the same photo", replay.status === 200 && replay.id === first.id);
 
@@ -284,7 +304,7 @@ async function routeChecks(userId: string, categoryId: string, storage: PhotoSto
   const linked = await prisma.transaction.findUnique({ where: { id: txId }, select: { receiptPhotoId: true } });
   check("a transaction created with the photo is linked to it", linked?.receiptPhotoId === first.id);
 
-  const second = await upload(await gpsJpeg("#69c"), crypto.randomUUID());
+  const second = await uploadFor("the replace", await gpsJpeg("#69c"));
   await call(`/api/transactions/${txId}`, { method: "PUT", ...json({ ...base, receiptPhotoId: second.id }) });
   const replaced = await prisma.transaction.findUnique({ where: { id: txId }, select: { receiptPhotoId: true } });
   check("replace links the new photo", replaced?.receiptPhotoId === second.id);
@@ -293,7 +313,7 @@ async function routeChecks(userId: string, categoryId: string, storage: PhotoSto
   await call(`/api/transactions/${txId}`, { method: "PUT", ...json({ ...base, receiptPhotoId: null }) });
   check("remove deletes the now unreferenced photo", await gone(second.id));
 
-  const third = await upload(await gpsJpeg("#9c6"), crypto.randomUUID());
+  const third = await uploadFor("the delete", await gpsJpeg("#9c6"));
   const doomed = await call("/api/transactions", { method: "POST", ...json({ ...base, receiptPhotoId: third.id }) });
   const doomedId = ((await doomed.json()) as { id?: string }).id ?? "";
   await call(`/api/transactions/${doomedId}`, { method: "DELETE" });

@@ -60,7 +60,13 @@ export async function POST(request: Request) {
       }
       return fail("That file isn't a readable image.", 422);
     }
-    if (error instanceof PhotoStorageError) return fail("Photo storage failed.", 502);
+    if (error instanceof PhotoStorageError) {
+      // The client keeps the generic message; the reason goes to the server log. A bare 502 left
+      // no way to tell R2 refusing the token (403) or the bucket (404) from a passing 5xx or a
+      // timeout. The message is the method and status, or the network error, never a credential.
+      console.warn("[receipt-photos] upload failed in storage:", error.message);
+      return fail("Photo storage failed.", 502);
+    }
     return fail("Failed to save the photo.", 500);
   }
 }
