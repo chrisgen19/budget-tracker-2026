@@ -143,7 +143,19 @@ export function useServiceWorkerUpdate() {
       })
       .catch(() => {});
 
+    // A full-load hand-off leaves this page in the back/forward cache. Restored by Back, it is the
+    // old bundle again and nothing is in flight, so the hand-off state is cleared; otherwise every
+    // later tap would be swallowed as "already pending" and do nothing.
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      if (fallbackRef.current !== null) window.clearTimeout(fallbackRef.current);
+      fallbackRef.current = null;
+      intentRef.current = { kind: "none" };
+      reloadingRef.current = false;
+    };
+
     const poll = window.setInterval(check, UPDATE_POLL_MS);
+    window.addEventListener("pageshow", onPageShow);
     document.addEventListener("visibilitychange", onVisible);
     navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
 
@@ -153,6 +165,7 @@ export function useServiceWorkerUpdate() {
       document.removeEventListener("visibilitychange", onVisible);
       registration?.removeEventListener("updatefound", onUpdateFound);
       navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
+      window.removeEventListener("pageshow", onPageShow);
       if (fallbackRef.current !== null) window.clearTimeout(fallbackRef.current);
     };
   }, [changeStatus]);

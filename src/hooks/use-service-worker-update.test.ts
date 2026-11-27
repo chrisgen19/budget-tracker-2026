@@ -243,6 +243,27 @@ describe("useServiceWorkerUpdate", () => {
     expect(waiting.postMessage).not.toHaveBeenCalled();
   });
 
+  // A full load leaves this page in the back/forward cache. Restored by Back, it must not still
+  // think a hand-off is in flight, or every later tap is swallowed and does nothing.
+  it("takes navigations again after the page is restored from the back/forward cache", async () => {
+    const { result } = await renderStale();
+    act(() => {
+      result.current.applyOnNavigation("/labels");
+    });
+    expect(assign).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      const restored = new Event("pageshow");
+      Object.defineProperty(restored, "persisted", { value: true });
+      window.dispatchEvent(restored);
+    });
+    act(() => {
+      result.current.applyOnNavigation("/goals");
+    });
+    expect(assign).toHaveBeenCalledTimes(2);
+    expect(assign).toHaveBeenLastCalledWith("/goals");
+  });
+
   it("prefers a newer waiting worker over a stale state", async () => {
     const { result } = await renderStale();
     const installing = new FakeWorker();
