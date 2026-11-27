@@ -33,13 +33,33 @@ describe("useImageLoadState", () => {
 
   it("treats an image already complete when mounted as loaded", () => {
     const { result } = renderHook(() => useImageLoadState("/a"));
-    act(() => result.current.ref({ complete: true, naturalWidth: 900 } as HTMLImageElement));
+    act(() =>
+      result.current.ref({
+        complete: true,
+        naturalWidth: 900,
+        currentSrc: "/a",
+      } as HTMLImageElement),
+    );
     expect(result.current.status).toBe("loaded");
   });
 
-  it("does not treat a broken complete image as loaded", () => {
+  // A photo that 404s or 503s before React attaches `onError` never fires one, so reading the
+  // element is the only chance to say so. Left as `loading` it pulses over nothing forever.
+  it("reports an image that failed before mount as an error, not an endless skeleton", () => {
     const { result } = renderHook(() => useImageLoadState("/a"));
-    act(() => result.current.ref({ complete: true, naturalWidth: 0 } as HTMLImageElement));
+    act(() =>
+      result.current.ref({ complete: true, naturalWidth: 0, currentSrc: "/a" } as HTMLImageElement),
+    );
+    expect(result.current.status).toBe("error");
+  });
+
+  // `complete` is true for an element the browser has not selected a source for either, and that
+  // one has not failed: it has not started.
+  it("leaves an image the browser has not started on loading", () => {
+    const { result } = renderHook(() => useImageLoadState("/a"));
+    act(() =>
+      result.current.ref({ complete: true, naturalWidth: 0, currentSrc: "" } as HTMLImageElement),
+    );
     expect(result.current.status).toBe("loading");
   });
 });

@@ -6,7 +6,8 @@
  * - modifier keys and non-primary buttons open a new tab or window, which the user asked for;
  * - an already-prevented click belongs to someone else;
  * - `download` and a non-`_self` target are not navigations of this tab;
- * - another origin is not the app, and `/api/` is a file or JSON, not a page;
+ * - another origin is not the app, `/api/` is a file or JSON rather than a page, and a path
+ *   beginning `//` is read back as a host by whoever navigates with it;
  * - a hash-only change scrolls within the current page, and a full load would throw that away.
  *
  * The `href` attribute is resolved against `current` rather than read from `anchor.href`, so the
@@ -25,6 +26,9 @@ export const getInAppHref = (event: MouseEvent, current: URL): string | null => 
   const url = new URL(anchor.getAttribute("href") ?? "", current);
   if (url.origin !== current.origin) return null;
   if (url.pathname.startsWith("/api/")) return null;
+  // `https://app.test//other.test/x` passes the origin check above and leaves `//other.test/x` as
+  // the pathname, which `location.assign` reads as another host. Same origin, external destination.
+  if (url.pathname.startsWith("//")) return null;
   const hashOnly =
     url.hash !== "" && url.pathname === current.pathname && url.search === current.search;
   if (hashOnly) return null;

@@ -53,6 +53,12 @@ describe("getInAppHref", () => {
     expect(getInAppHref(clickOn(anchor("/api/export")), current)).toBeNull();
   });
 
+  // Same origin, external destination: `location.assign("//other.test/bills")` leaves the app.
+  it("leaves a path that is really another host alone", () => {
+    expect(getInAppHref(clickOn(anchor("//other.test/bills")), current)).toBeNull();
+    expect(getInAppHref(clickOn(anchor(`${current.origin}//other.test/bills`)), current)).toBeNull();
+  });
+
   it("leaves hash-only links on the current page alone", () => {
     expect(getInAppHref(clickOn(anchor("#top")), current)).toBeNull();
     expect(getInAppHref(clickOn(anchor("/bills#top")), current)).toBe("/bills#top");

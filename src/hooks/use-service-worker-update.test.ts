@@ -35,6 +35,9 @@ const install = (controller: unknown, ready?: Promise<unknown>) => {
 /** A tab with a worker already waiting when it mounts. */
 const renderWaiting = async () => {
   const waiting = new FakeWorker();
+  // `registration.waiting` is an installed worker by definition; the hook reads the state back to
+  // tell one still waiting from one that has since taken over.
+  waiting.state = "installed";
   registration.waiting = waiting;
   const hook = renderHook(() => useServiceWorkerUpdate());
   await waitFor(() => expect(hook.result.current.status).toBe("waiting"));
@@ -262,6 +265,84 @@ describe("useServiceWorkerUpdate", () => {
     });
     expect(assign).toHaveBeenCalledTimes(2);
     expect(assign).toHaveBeenLastCalledWith("/goals");
+  });
+
+  // The banner posts `SKIP_WAITING` and waits for `controllerchange` with no fallback of its own.
+  // When that never arrives -- a redundant worker, or one that is already the controller -- the
+  // pending intent must not cancel every later link tap, which is what the provider does with a
+  // swallowed click. Before this guard the tab's navigation was dead until a manual reload.
+  it("keeps navigation working after a banner Reload that never takes over", async () => {
+    const { result, waiting } = await renderWaiting();
+    act(() => result.current.applyUpdate());
+    expect(waiting.postMessage).toHaveBeenCalledTimes(1);
+
+    let taken: boolean | undefined;
+    act(() => {
+      taken = result.current.applyOnNavigation("/goals");
+    });
+    // The worker is still waiting, so the tap takes the update properly rather than going nowhere.
+    expect(taken).toBe(true);
+    expect(waiting.postMessage).toHaveBeenCalledTimes(2);
+    act(() => {
+      container.dispatchEvent(new Event("controllerchange"));
+    });
+    expect(assign).toHaveBeenCalledWith("/goals");
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("lets the navigation through when a failed Reload left no worker to take", async () => {
+    const { result, waiting } = await renderWaiting();
+    act(() => result.current.applyUpdate());
+    waiting.state = "redundant";
+    expect(result.current.applyOnNavigation("/goals")).toBe(false);
+    // Nothing is armed either, so a later swap from another tab is not read as this tab's reload.
+    act(() => {
+      container.dispatchEvent(new Event("controllerchange"));
+    });
+    expect(reload).not.toHaveBeenCalled();
+    await waitFor(() => expect(result.current.status).toBe("stale"));
+  });
+
+  // The banner is still up during a navigation hand-off, so Reload is reachable for those 3s.
+  it("ignores the banner Reload while a navigation hand-off is in flight", async () => {
+    const { result, waiting } = await renderWaiting();
+    act(() => {
+      result.current.applyOnNavigation("/goals");
+    });
+    act(() => result.current.applyUpdate());
+    expect(waiting.postMessage).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      container.dispatchEvent(new Event("controllerchange"));
+    });
+    expect(assign).toHaveBeenCalledWith("/goals");
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  // The hand-off leaves `waiting` behind because the page is replaced. Restored from the cache it
+  // is the old bundle under a worker that is already the controller: Reload would post
+  // `SKIP_WAITING` to it and never hear back, and every tap would sit out the full fallback.
+  it("marks the page stale when Back restores it after a waiting hand-off", async () => {
+    const { result, waiting } = await renderWaiting();
+    act(() => {
+      result.current.applyOnNavigation("/goals");
+    });
+    act(() => {
+      container.dispatchEvent(new Event("controllerchange"));
+    });
+    waiting.state = "activated";
+
+    act(() => {
+      const restored = new Event("pageshow");
+      Object.defineProperty(restored, "persisted", { value: true });
+      window.dispatchEvent(restored);
+    });
+    await waitFor(() => expect(result.current.status).toBe("stale"));
+
+    reload.mockClear();
+    act(() => result.current.applyUpdate());
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(waiting.postMessage).toHaveBeenCalledTimes(1);
   });
 
   it("prefers a newer waiting worker over a stale state", async () => {

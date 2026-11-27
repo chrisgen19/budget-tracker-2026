@@ -2,6 +2,16 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-27 - Receipt photos pulse while they load
+
+- **The mobile strip and the full-screen viewer now show a skeleton and fade the photo in**, as
+  the desktop panel already did. An AVIF is painted only once it has fully decoded, so a slow
+  connection used to show an empty box and then a sudden photo.
+- **Pinch and wheel zoom start once the photo has loaded**, rather than being live over an empty
+  frame.
+- **A photo that failed before the page hydrated says so** instead of pulsing forever: the
+  skeleton gives way to "The photo couldn't load."
+
 ## 2026-11-27 - App updates apply on the next in-app navigation
 
 - **A new build is taken on the next in-app link tap or profile-menu pick**, as one full load of
@@ -14,7 +24,11 @@ All notable development history for the Budget Tracker app.
   banner (Reload is a plain refresh there) and update on their own next safe navigation, so a tab
   mid-scan or mid-form is not reloaded out from under the user.
 - **The banner stays as the fallback** for back/forward, other programmatic navigations, offline
-  taps and a tab that never navigates.
+  taps and a tab that never navigates. Tapping it during a link hand-off is ignored, so the
+  destination is not lost, and a Reload that never takes over can no longer leave the tab's links
+  cancelled.
+- **A page restored by Back after a hand-off is marked stale**, since its worker is already the
+  controller by then and there is nothing left to ask to take over.
 
 ## 2026-11-27 - Receipt photos stored as AVIF at 1200px
 

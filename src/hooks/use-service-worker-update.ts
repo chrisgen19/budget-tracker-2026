@@ -152,6 +152,15 @@ export function useServiceWorkerUpdate() {
       fallbackRef.current = null;
       intentRef.current = { kind: "none" };
       reloadingRef.current = false;
+      // A navigate hand-off leaves `waiting` in place -- the page is replaced, so there is nothing
+      // to re-render -- and this restores it anyway. The worker it points at took over while the
+      // page sat in the cache, and `skipWaiting` on an *active* worker is a no-op that fires no
+      // `controllerchange`: Reload would do nothing and every tap would sit out the full fallback.
+      // The bundle here really is old with a newer worker in charge, which is exactly `stale`.
+      if (statusRef.current === "waiting" && waitingRef.current?.state !== "installed") {
+        waitingRef.current = null;
+        changeStatus("stale");
+      }
     };
 
     const poll = window.setInterval(check, UPDATE_POLL_MS);
@@ -176,6 +185,10 @@ export function useServiceWorkerUpdate() {
    * has nothing to message and just refreshes.
    */
   const applyUpdate = useCallback(() => {
+    // A link tap is already handing over to this worker and will load its own target. The banner is
+    // still up during that wait, and overwriting the intent here would reload the page the user is
+    // leaving and drop the destination on the floor.
+    if (intentRef.current.kind === "navigate") return;
     if (statusRef.current === "stale") {
       window.location.reload();
       return;
@@ -193,27 +206,42 @@ export function useServiceWorkerUpdate() {
    * client navigation happen (no update, or offline, where a full load could land on the offline
    * fallback). A second tap while one is pending is swallowed rather than navigated twice.
    */
-  const applyOnNavigation = useCallback((href: string): boolean => {
-    if (intentRef.current.kind !== "none" || reloadingRef.current) return true;
-    if (statusRef.current === "none" || !navigator.onLine) return false;
+  const applyOnNavigation = useCallback(
+    (href: string): boolean => {
+      if (reloadingRef.current) return true;
+      // A hand-off of our own is in flight and the fallback covers it, so a repeat tap is swallowed.
+      if (intentRef.current.kind === "navigate") return true;
+      // A `reload` intent has no fallback behind it: if `controllerchange` never came, swallowing
+      // taps on the strength of it would cancel every link and menu pick in the tab until the user
+      // reloaded by hand. Drop it instead and handle this tap normally -- re-arming the banner's
+      // worker if it is still waiting, so the navigation takes the update under the 3s fallback,
+      // and forgetting it otherwise rather than leaving a stale reload armed for the next swap.
+      if (intentRef.current.kind === "reload") {
+        intentRef.current = { kind: "none" };
+        if (waitingRef.current?.state === "installed") changeStatus("waiting");
+        else waitingRef.current = null;
+      }
+      if (statusRef.current === "none" || !navigator.onLine) return false;
 
-    if (statusRef.current === "stale") {
-      reloadingRef.current = true;
-      window.location.assign(href);
+      if (statusRef.current === "stale") {
+        reloadingRef.current = true;
+        window.location.assign(href);
+        return true;
+      }
+
+      const waiting = waitingRef.current;
+      if (!waiting) return false;
+      intentRef.current = { kind: "navigate", href };
+      waiting.postMessage({ type: "SKIP_WAITING" });
+      fallbackRef.current = window.setTimeout(() => {
+        if (reloadingRef.current) return;
+        reloadingRef.current = true;
+        window.location.assign(href);
+      }, NAVIGATION_UPDATE_TIMEOUT_MS);
       return true;
-    }
-
-    const waiting = waitingRef.current;
-    if (!waiting) return false;
-    intentRef.current = { kind: "navigate", href };
-    waiting.postMessage({ type: "SKIP_WAITING" });
-    fallbackRef.current = window.setTimeout(() => {
-      if (reloadingRef.current) return;
-      reloadingRef.current = true;
-      window.location.assign(href);
-    }, NAVIGATION_UPDATE_TIMEOUT_MS);
-    return true;
-  }, []);
+    },
+    [changeStatus],
+  );
 
   return { status, updateAvailable: status !== "none", applyUpdate, applyOnNavigation };
 }
