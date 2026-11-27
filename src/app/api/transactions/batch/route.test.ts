@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { MAX_BULK_TRANSACTIONS } from "@/lib/transaction-bulk";
 import { MAX_BREAKDOWN_LINE_ITEMS } from "@/lib/receipt-limits";
@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => {
   // here: what is under test is that the stamp follows the delete's own `RETURNING` rows rather
   // than a pre-write snapshot, and mocking the helper away would assert only that it was called.
   const queryRaw = vi.fn();
+  const photoDeleteMany = vi.fn();
   return {
     transactionFindMany,
     transactionUpdateMany,
@@ -29,6 +30,10 @@ const mocks = vi.hoisted(() => {
     createTransactionBatch: vi.fn(),
     findSavedBatch: vi.fn(),
     findSavedBatchUnderLock: vi.fn(),
+    photoFindMany: vi.fn(),
+    photoDeleteMany,
+    photosEnabled: vi.fn(),
+    storageDelete: vi.fn(),
     tx: {
       transaction: {
         findMany: transactionFindMany,
@@ -37,6 +42,7 @@ const mocks = vi.hoisted(() => {
       },
       category: { findFirst: categoryFindFirst },
       label: { findMany: labelFindMany },
+      receiptPhoto: { deleteMany: photoDeleteMany },
       transactionLabel: {
         findMany: transactionLabelFindMany,
         createManyAndReturn: transactionLabelCreateManyAndReturn,
@@ -47,7 +53,16 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: { $transaction: mocks.databaseTransaction },
+  prisma: {
+    $transaction: mocks.databaseTransaction,
+    receiptPhoto: { findMany: mocks.photoFindMany },
+  },
+}));
+// R2 stubbed at the factory, so the real `deleteUnreferencedPhotos` runs against the mocked rows.
+vi.mock("@/lib/receipt-photo-storage", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/receipt-photo-storage")>()),
+  receiptPhotosEnabled: mocks.photosEnabled,
+  createPhotoStorage: () => ({ put: vi.fn(), get: vi.fn(), delete: mocks.storageDelete }),
 }));
 vi.mock("@/lib/session", () => ({ getAuthUserId: mocks.getAuthUserId }));
 vi.mock("@/lib/transaction-writes", () => ({
@@ -191,6 +206,27 @@ describe("POST /api/transactions/batch", () => {
     expect(mocks.createTransactionBatch).not.toHaveBeenCalled();
   });
 
+  it("refuses a batch naming a photo that is not the caller's with 400", async () => {
+    mocks.createTransactionBatch.mockResolvedValue({ ok: false, reason: "PHOTO_NOT_FOUND" });
+
+    const response = await POST(
+      postRequest({
+        transactions: [row({ receiptPhotoId: "p-own" }), row({ receiptPhotoId: "p-foreign" })],
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Photo not found" });
+    expect(mocks.createTransactionBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        items: [
+          expect.objectContaining({ receiptPhotoId: "p-own" }),
+          expect.objectContaining({ receiptPhotoId: "p-foreign" }),
+        ],
+      }),
+    );
+  });
+
   it("still replays a committed batch whose body is within the ceiling", async () => {
     mocks.findSavedBatch.mockResolvedValue([{ id: "tx-1" }]);
 
@@ -201,14 +237,30 @@ describe("POST /api/transactions/batch", () => {
   });
 });
 
+/**
+ * Routes the raw statements a batch delete makes: the locked read of the rows it deletes, which
+ * answers with whichever of `rows` the request named, and the cleanup's per-photo FOR UPDATE.
+ */
+const stubDeleteReads = (rows: { id: string; receiptPhotoId: string | null }[]) =>
+  mocks.queryRaw.mockImplementation(async (sql: TemplateStringsArray, ...values: unknown[]) => {
+    const text = sql.join("?");
+    if (text.includes("FROM transactions")) {
+      const [, ids] = values as [string, string[]];
+      return rows.filter((row) => ids.includes(row.id));
+    }
+    return [{ id: values[0] as string }];
+  });
+
 describe("DELETE /api/transactions/batch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getAuthUserId.mockResolvedValue("user-1");
     mocks.databaseTransaction.mockImplementation((callback) => callback(mocks.tx));
-    mocks.transactionFindMany.mockResolvedValue([{ id: "tx-1" }]);
+    stubDeleteReads([{ id: "tx-1", receiptPhotoId: null }]);
     mocks.transactionDeleteMany.mockResolvedValue({ count: 1 });
   });
+
+  afterEach(() => mocks.queryRaw.mockReset());
 
   it("refuses an oversized body before opening a database transaction", async () => {
     const response = await DELETE(chunkedRequest({ ids: floodOfIds() }, "DELETE"));
@@ -221,12 +273,69 @@ describe("DELETE /api/transactions/batch", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ deleted: 1, ids: ["tx-1"] });
-    expect(mocks.transactionFindMany).toHaveBeenCalledWith({
-      where: { id: { in: ["tx-1", "stale"] }, userId: "user-1" },
-      select: { id: true },
-    });
+    expect(mocks.queryRaw.mock.calls[0].slice(1)).toEqual(["user-1", ["tx-1", "stale"]]);
     expect(mocks.transactionDeleteMany).toHaveBeenCalledWith({
       where: { id: { in: ["tx-1"] }, userId: "user-1" },
+    });
+  });
+
+  describe("receipt photos", () => {
+    const stubRefs = (refs: Record<string, number>) =>
+      mocks.photoFindMany.mockImplementation(async ({ where }: { where: { id: { in: string[] } } }) =>
+        where.id.in.map((id) => ({ id, objectKey: `receipts/user-1/${id}.jpg`, _count: { transactions: refs[id] ?? 0 } })),
+      );
+
+    beforeEach(() => {
+      mocks.photosEnabled.mockReturnValue(true);
+      mocks.photoDeleteMany.mockResolvedValue({ count: 1 });
+      mocks.storageDelete.mockResolvedValue(undefined);
+      stubDeleteReads([
+        { id: "tx-1", receiptPhotoId: "pA" },
+        { id: "tx-2", receiptPhotoId: "pA" },
+        { id: "tx-3", receiptPhotoId: null },
+      ]);
+    });
+
+    it("reads the photo links under a row lock and deletes an orphaned photo after it", async () => {
+      stubRefs({ pA: 0 });
+
+      const response = await DELETE(deleteRequest({ ids: ["tx-1", "tx-2", "tx-3"] }));
+
+      expect(response.status).toBe(200);
+      // A plain read let a replace commit between it and the delete, so the row went holding a
+      // photo cleanup was never told about. The lock holds the photo still until the delete.
+      const read = (mocks.queryRaw.mock.calls[0][0] as TemplateStringsArray).join("?");
+      expect(read).toContain("FROM transactions");
+      expect(read).toContain("ORDER BY id");
+      expect(read).toContain("FOR UPDATE");
+      expect(mocks.photoFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: { in: ["pA"] }, userId: "user-1" } }),
+      );
+      expect(mocks.photoDeleteMany).toHaveBeenCalledWith({
+        where: { id: "pA", userId: "user-1", transactions: { none: {} } },
+      });
+      expect(mocks.storageDelete).toHaveBeenCalledWith("receipts/user-1/pA.jpg");
+    });
+
+    it("keeps a photo that rows outside the selection still use", async () => {
+      stubRefs({ pA: 1 });
+
+      const response = await DELETE(deleteRequest({ ids: ["tx-1", "tx-2"] }));
+
+      expect(response.status).toBe(200);
+      expect(mocks.storageDelete).not.toHaveBeenCalled();
+    });
+
+    it("still answers 200 when storage cleanup fails", async () => {
+      stubRefs({ pA: 0 });
+      mocks.storageDelete.mockRejectedValue(new Error("R2 down"));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      const response = await DELETE(deleteRequest({ ids: ["tx-1"] }));
+
+      expect(response.status).toBe(200);
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
     });
   });
 });

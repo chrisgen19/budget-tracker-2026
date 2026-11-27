@@ -46,6 +46,9 @@ import { accountMonthKey } from "@/lib/account-time";
 export default function DashboardPage() {
   const router = useRouter();
   const [showForm, setShowForm] = useState(false);
+  // One per modal: a closing form reports "no photo" as it unmounts, which must not narrow the other.
+  const [newFormHasPhoto, setNewFormHasPhoto] = useState(false);
+  const [editFormHasPhoto, setEditFormHasPhoto] = useState(false);
   const [shouldScrollToRecent, setShouldScrollToRecent] = useState(false);
   const recentTransactionsRef = useRef<HTMLDivElement>(null);
   const { hideAmounts } = usePrivacy();
@@ -540,8 +543,11 @@ export default function DashboardPage() {
         open={showForm}
         onClose={() => setShowForm(false)}
         title="New Transaction"
+        size={newFormHasPhoto ? "wide" : "default"}
       >
         <TransactionForm
+          allowReceiptPhoto
+          onPhotoPresenceChange={setNewFormHasPhoto}
           onSubmit={handleCreate}
           onCancel={() => setShowForm(false)}
         />
@@ -552,10 +558,13 @@ export default function DashboardPage() {
         open={!!editingTransaction}
         onClose={() => setEditingTransaction(null)}
         title="Edit Transaction"
+        size={editFormHasPhoto ? "wide" : "default"}
       >
         {editingTransaction && (
           <TransactionForm
             transaction={editingTransaction}
+            allowReceiptPhoto
+            onPhotoPresenceChange={setEditFormHasPhoto}
             onSubmit={handleUpdate}
             onCancel={() => setEditingTransaction(null)}
             onDelete={() => {

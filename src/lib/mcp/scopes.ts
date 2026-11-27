@@ -149,6 +149,9 @@ export const MCP_TOOL_SCOPES = {
   scan_receipt: "receipts:scan",
   create_transactions: "transactions:write",
   update_transactions: "transactions:write",
+  // Attaching a photo is an edit to rows that already exist, so it rides on the scope that
+  // already covers editing them. The Telegram bot's token holds it, so no re-mint.
+  attach_receipt_photo: "transactions:write",
   pay_bill: "bills:write",
   create_bill: "bills:write",
   update_bill: "bills:write",

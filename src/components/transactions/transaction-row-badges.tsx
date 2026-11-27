@@ -1,4 +1,4 @@
-import { CalendarClock, CreditCard, Receipt, Send, Sparkles, Terminal } from "lucide-react";
+import { CalendarClock, Camera, CreditCard, Receipt, Send, Sparkles, Terminal } from "lucide-react";
 import type { TransactionSource } from "@prisma/client";
 
 interface TransactionRowBadgesProps {
@@ -10,6 +10,8 @@ interface TransactionRowBadgesProps {
   createdVia?: TransactionSource;
   /** The credit card this purchase was paid with. A card payment is never a transaction. */
   creditAccount?: { name: string; color: string } | null;
+  /** Set when a receipt photo is attached to the row. */
+  receiptPhotoId?: string | null;
 }
 
 /**
@@ -30,6 +32,7 @@ export function TransactionRowBadges({
   billId,
   createdVia,
   creditAccount,
+  receiptPhotoId,
 }: TransactionRowBadgesProps) {
   return (
     <>
@@ -37,6 +40,12 @@ export function TransactionRowBadges({
         <span className="shrink-0 inline-flex items-center gap-0.5 bg-amber-light/60 text-amber-dark text-[10px] font-medium px-1.5 py-0.5 rounded">
           <Receipt className="w-2.5 h-2.5" />
           Itemized
+        </span>
+      )}
+      {receiptPhotoId && (
+        <span className="shrink-0 inline-flex items-center gap-0.5 bg-cream-200 text-warm-500 text-[10px] font-medium px-1.5 py-0.5 rounded">
+          <Camera className="w-2.5 h-2.5" />
+          Photo
         </span>
       )}
       {billId && (

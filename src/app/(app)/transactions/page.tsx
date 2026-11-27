@@ -167,6 +167,9 @@ export default function TransactionsPage() {
 
   // Modal states
   const [showForm, setShowForm] = useState(false);
+  // One per modal: a closing form reports "no photo" as it unmounts, which must not narrow the other.
+  const [newFormHasPhoto, setNewFormHasPhoto] = useState(false);
+  const [editFormHasPhoto, setEditFormHasPhoto] = useState(false);
   const [editingTransaction, setEditingTransaction] =
     useState<TransactionWithCategory | null>(null);
   const [deletingTransaction, setDeletingTransaction] =
@@ -857,6 +860,7 @@ export default function TransactionsPage() {
                               billId={tx.billId}
                               createdVia={tx.createdVia}
                               creditAccount={user.creditCardsEnabled ? tx.creditAccount : null}
+                              receiptPhotoId={user.receiptPhotosEnabled ? tx.receiptPhotoId : null}
                             />
                           </div>
                           <div className="flex items-center gap-1 min-w-0 overflow-hidden">
@@ -978,8 +982,18 @@ export default function TransactionsPage() {
       {/* ---- Modals ---- */}
 
       {/* Add Transaction */}
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="New Transaction">
-        <TransactionForm onSubmit={handleCreate} onCancel={() => setShowForm(false)} />
+      <Modal
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        title="New Transaction"
+        size={newFormHasPhoto ? "wide" : "default"}
+      >
+        <TransactionForm
+          allowReceiptPhoto
+          onPhotoPresenceChange={setNewFormHasPhoto}
+          onSubmit={handleCreate}
+          onCancel={() => setShowForm(false)}
+        />
       </Modal>
 
       {/* Edit Transaction */}
@@ -987,10 +1001,13 @@ export default function TransactionsPage() {
         open={!!editingTransaction}
         onClose={() => setEditingTransaction(null)}
         title="Edit Transaction"
+        size={editFormHasPhoto ? "wide" : "default"}
       >
         {editingTransaction && (
           <TransactionForm
             transaction={editingTransaction}
+            allowReceiptPhoto
+            onPhotoPresenceChange={setEditFormHasPhoto}
             onSubmit={handleUpdate}
             onCancel={() => setEditingTransaction(null)}
             onDelete={() => {

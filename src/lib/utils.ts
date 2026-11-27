@@ -1,3 +1,5 @@
+import { MAX_IMAGE_DIMENSION } from "@/lib/receipt-limits";
+
 /** Merge class names, filtering out falsy values */
 export const cn = (...classes: (string | boolean | undefined | null)[]) =>
   classes.filter(Boolean).join(" ");
@@ -90,7 +92,6 @@ export const getCurrentMonthRange = () => {
   return { start, end };
 };
 
-const MAX_IMAGE_DIMENSION = 1500;
 const JPEG_QUALITY = 0.75;
 
 /** Check if a file is HEIC/HEIF by MIME type or extension (browsers often report "" or "application/octet-stream" for HEIC) */

@@ -21,6 +21,7 @@ import { removeTransactionLabels } from "@/lib/label-writes";
 import { userCanUseCreditCards } from "@/lib/credit-card-access";
 import { creditCardsUnavailableResponse } from "@/lib/credit-account-http";
 import { bodyTooLargeResponse, readJsonWithinLimit } from "@/lib/request-size";
+import { cleanUpReceiptPhotos, PHOTO_NOT_FOUND_MESSAGE } from "@/lib/receipt-photos";
 
 /**
  * Ceiling on one request to this route, in bytes.
@@ -160,7 +161,9 @@ export async function POST(request: Request) {
           ? "One or more labels are invalid or do not belong to you"
           : result.reason === "CARD_NOT_USABLE"
             ? "A card is not yours, is archived, or was used on an income"
-            : "One or more categories are invalid or do not belong to you";
+            : result.reason === "PHOTO_NOT_FOUND"
+              ? PHOTO_NOT_FOUND_MESSAGE
+              : "One or more categories are invalid or do not belong to you";
       return rejectUnlessAlreadySaved(
         userId,
         clientBatchId,
@@ -200,17 +203,30 @@ export async function DELETE(request: NextRequest) {
     if (!read.ok) return bodyTooLargeResponse();
     const { ids } = batchDeleteSchema.parse(read.value);
 
-    const ownedIds = await prisma.$transaction(async (tx) => {
-      const owned = await tx.transaction.findMany({
-        where: { id: { in: ids }, userId },
-        select: { id: true },
-      });
+    const { ownedIds, photoIds } = await prisma.$transaction(async (tx) => {
+      // The photo links are read with the rows, under FOR UPDATE, so the cleanup after the commit
+      // knows which photos these rows held *when they went*. A plain read let a replace commit
+      // between it and the delete: the row was deleted holding the new photo, cleanup was handed
+      // the old one, and the new photo was left in the bucket for the prune script. Ordered by id
+      // so two overlapping deletes wait rather than deadlock.
+      const owned = await tx.$queryRaw<{ id: string; receiptPhotoId: string | null }[]>`
+        SELECT id, receipt_photo_id AS "receiptPhotoId" FROM transactions
+        WHERE user_id = ${userId} AND id = ANY(${ids})
+        ORDER BY id
+        FOR UPDATE
+      `;
       const matchedIds = owned.map((transaction) => transaction.id);
       if (matchedIds.length > 0) {
         await tx.transaction.deleteMany({ where: { id: { in: matchedIds }, userId } });
       }
-      return matchedIds;
+      return {
+        ownedIds: matchedIds,
+        photoIds: owned.flatMap((t) => (t.receiptPhotoId ? [t.receiptPhotoId] : [])),
+      };
     });
+
+    // After the commit, never inside it, and never failing the response.
+    await cleanUpReceiptPhotos(prisma, userId, photoIds);
 
     return NextResponse.json({ deleted: ownedIds.length, ids: ownedIds });
   } catch (error) {

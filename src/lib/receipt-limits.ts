@@ -10,6 +10,9 @@
 /** The largest image the scan pipeline accepts, decoded. */
 export const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB
 
+/** Longest side, in pixels, an image is scaled down to before upload or storage. Never enlarged. */
+export const MAX_IMAGE_DIMENSION = 1500;
+
 /**
  * Ceiling on the line items a single breakdown group may carry.
  *

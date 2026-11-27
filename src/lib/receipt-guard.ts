@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { reserveScanCredit } from "@/lib/scan-quota";
 import { MAX_FILE_SIZE } from "@/lib/receipt-limits";
-import { overBodySizeLimit } from "@/lib/request-size";
+import { readFormDataWithinLimit } from "@/lib/request-size";
 
 /** Formats Gemini accepts inline and the client can realistically produce. */
-const ALLOWED_TYPES = new Set([
+export const ALLOWED_TYPES = new Set([
   "image/jpeg",
   "image/png",
   "image/webp",
@@ -86,21 +86,22 @@ interface ScanPermissions {
 }
 
 /**
- * Reject oversized multipart bodies before request.formData() buffers them into memory.
+ * Read a receipt upload's multipart body, or the 413 that refuses it.
  *
- * The `content-length` reading moved to `request-size.ts` so a route that is not a receipt route
- * can have a ceiling without importing this module's Prisma client. The limit and the wording
- * stay here: 5 MB is derived from `MAX_FILE_SIZE` plus multipart framing, and the message names
- * a file because a file is what the caller sent.
+ * The limit and the wording stay here: 5 MB is derived from `MAX_FILE_SIZE` plus multipart
+ * framing, and the message names a file because a file is what the caller sent. The read itself
+ * is `readFormDataWithinLimit`, which counts the bytes as they arrive. This used to be a
+ * `content-length` check only, in front of a bare `request.formData()`, so a chunked request
+ * (which declares no length) was buffered whole, at any size, by any signed-in user.
  *
- * Unlike the JSON routes this stays a header check only. `request.formData()` gives no metered
- * read, so closing the chunked gap here would mean re-implementing multipart parsing.
+ * @throws whatever `formData()` throws on a malformed body; callers answer that with a 400.
  */
-export const checkBodySize = (request: Request): NextResponse | null => {
-  if (overBodySizeLimit(request, MAX_BODY_SIZE)) {
+export const readUploadForm = async (request: Request): Promise<NextResponse | FormData> => {
+  const read = await readFormDataWithinLimit(request, MAX_BODY_SIZE);
+  if (!read.ok) {
     return NextResponse.json({ error: "File too large. Maximum size is 4 MB." }, { status: 413 });
   }
-  return null;
+  return read.value;
 };
 
 /** Resolve whether this user may scan at all, and under what monthly allowance. */
@@ -245,10 +246,8 @@ export async function guardReceiptRequest(
   request: Request,
   userId: string,
 ): Promise<NextResponse | ReceiptScanContext> {
-  const oversized = checkBodySize(request);
-  if (oversized) return oversized;
-
-  const formData = await request.formData();
+  const formData = await readUploadForm(request);
+  if (formData instanceof NextResponse) return formData;
   const file = formData.get("receipt");
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "No receipt image provided" }, { status: 400 });

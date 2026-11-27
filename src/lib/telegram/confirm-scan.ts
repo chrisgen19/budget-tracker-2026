@@ -1,5 +1,6 @@
 import type { PendingScan } from "@/lib/telegram/pending-scan";
 import { UnconfirmedWriteError } from "@/lib/telegram/errors";
+import { PHOTOS_NOT_CONFIGURED_MESSAGE } from "@/lib/mcp/write-errors";
 
 /**
  * The row a confirmed scan writes.
@@ -43,12 +44,59 @@ export interface ConfirmScanDeps {
   restore: (scan: PendingScan, opts: { frozen: boolean }) => void;
   /** The idempotency key for this scan. Derived from the photo's update id. */
   batchKey: (scan: PendingScan) => string;
+  /**
+   * Keeps the receipt photo on the rows just saved (`attach_receipt_photo`). Called only after a
+   * save that landed, with the same key the save used, which doubles as the photo's idempotency
+   * key: a redelivered "yes" replays both halves rather than uploading a second copy.
+   */
+  attachPhoto?: (transactionIds: string[], photoKey: string, scan: PendingScan) => Promise<void>;
 }
 
+/**
+ * What happened to the photo after a save landed. `none` means there was nothing to attach;
+ * `unavailable` means this server has no photo storage, which is not a failure worth reporting.
+ */
+export type PhotoOutcome = "attached" | "failed" | "unavailable" | "none";
+
 export type ConfirmOutcome =
-  | { status: "saved"; batch: SavedBatch }
+  | { status: "saved"; batch: SavedBatch; photo: PhotoOutcome }
   /** Nothing was written and the scan is pending again, so the user can simply answer yes. */
   | { status: "retryable" };
+
+/** Appended to the save confirmation when the photo did not make it. The save itself stands. */
+export const PHOTO_UPLOAD_FAILED_NOTICE = "The photo didn't upload: attach it from the app.";
+
+/** The notice for an outcome, or "" when there is nothing to say. */
+export const photoNotice = (outcome: ConfirmOutcome): string =>
+  outcome.status === "saved" && outcome.photo === "failed" ? PHOTO_UPLOAD_FAILED_NOTICE : "";
+
+const savedIds = (batch: SavedBatch): string[] =>
+  batch.transactions
+    .map((t) => (t && typeof t === "object" ? (t as { id?: unknown }).id : undefined))
+    .filter((id): id is string => typeof id === "string" && id !== "");
+
+/**
+ * Attach the scan's photo to a batch that has already been saved. Never throws: the rows exist,
+ * and a photo that failed is a line in the confirmation, never a failed save.
+ */
+const attachSavedPhoto = async (
+  scan: PendingScan,
+  batch: SavedBatch,
+  deps: ConfirmScanDeps
+): Promise<PhotoOutcome> => {
+  if (!scan.imageBase64 || !deps.attachPhoto) return "none";
+  const ids = savedIds(batch);
+  if (ids.length === 0) return "failed";
+  try {
+    await deps.attachPhoto(ids, deps.batchKey(scan), scan);
+    return "attached";
+  } catch (err) {
+    if (err instanceof Error && err.message.trim() === PHOTOS_NOT_CONFIGURED_MESSAGE) {
+      return "unavailable";
+    }
+    return "failed";
+  }
+};
 
 /**
  * Save a scan the user has just confirmed, keeping it recoverable if the save does not land.
@@ -80,7 +128,9 @@ export async function confirmPendingScan(
     throw err;
   }
 
-  if (batch.transactions.length > 0) return { status: "saved", batch };
+  if (batch.transactions.length > 0) {
+    return { status: "saved", batch, photo: await attachSavedPhoto(scan, batch, deps) };
+  }
 
   // The call returned and wrote nothing, so there is nothing to be ambiguous about.
   deps.restore(scan, { frozen: false });

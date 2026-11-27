@@ -188,7 +188,8 @@ export interface MultiScanItem {
   error?: string;
   /** Compressed image kept in memory for breakdown and retry requests. Set as soon as
    *  compression finishes, including for items whose scan then failed, so a failed row
-   *  can be retried without asking the user to pick the photo again. */
+   *  can be retried without asking the user to pick the photo again. Itemized parts carry
+   *  the receipt's image too, so the save can upload it as the receipt's photo. */
   imageFile?: File;
   /** Photo capture date (YYYY-MM-DD) sent to the scan API as the OCR date fallback. */
   photoDate?: string;

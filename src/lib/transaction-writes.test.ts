@@ -25,6 +25,8 @@ interface StubOptions {
   ownedLabels?: { id: string; applicableTo: string }[];
   /** Type every stub category reports, so type-mismatch rejection is testable. */
   categoryType?: "INCOME" | "EXPENSE";
+  /** Receipt photo ids the caller owns. */
+  ownedPhotoIds?: string[];
 }
 
 /** Minimal Prisma stub. Records what was written so the assertions can inspect it. */
@@ -32,8 +34,11 @@ const makePrisma = ({
   usableCategoryIds = ["cat_own"],
   ownedLabels = [],
   categoryType = "EXPENSE",
+  ownedPhotoIds = [],
 }: StubOptions = {}) => {
   const created: Record<string, unknown>[] = [];
+  /** Coarse call order, so a check can be shown to run inside the write transaction. */
+  const order: string[] = [];
 
   const client = {
     category: {
@@ -46,11 +51,16 @@ const makePrisma = ({
     // The locking category re-check inside the write transaction. A stub cannot take a row lock,
     // so what it answers is the same set the unlocked read would -- the lock's real behaviour is
     // proved against a live Postgres by `scripts/verify-category-lock.ts`.
-    $queryRaw: vi.fn(async (_sql: unknown, ids: string[]) =>
-      (ids ?? [])
+    // Also the photo ownership check, which takes FOR KEY SHARE on `receipt_photos`.
+    $queryRaw: vi.fn(async (sql: TemplateStringsArray, ids: string[]) => {
+      if (sql.join("?").includes("receipt_photos")) {
+        order.push("photos");
+        return ids.filter((id) => ownedPhotoIds.includes(id)).map((id) => ({ id }));
+      }
+      return (ids ?? [])
         .filter((id) => usableCategoryIds.includes(id))
-        .map((id) => ({ id, type: categoryType }))
-    ),
+        .map((id) => ({ id, type: categoryType }));
+    }),
     label: {
       findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
         ownedLabels.filter((l) => where.id.in.includes(l.id))
@@ -58,19 +68,21 @@ const makePrisma = ({
     },
     transaction: {
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+        order.push("create");
         created.push(data);
         return { id: `tx_${created.length}`, ...data };
       }),
       findMany: vi.fn(async () => []),
     },
     // Array form is the unkeyed path; the callback form is only used by the keyed path.
-    $transaction: vi.fn(async (arg: unknown) =>
-      Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => unknown)(client)
-    ),
+    $transaction: vi.fn(async (arg: unknown) => {
+      order.push("tx");
+      return Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => unknown)(client);
+    }),
     $executeRaw: vi.fn(async () => 1),
   };
 
-  return { client: client as unknown as PrismaClient, created, raw: client };
+  return { client: client as unknown as PrismaClient, created, raw: client, order };
 };
 
 beforeEach(() => vi.clearAllMocks());
@@ -442,5 +454,82 @@ describe("permission re-checked at the moment of the write", () => {
 
     expect(result.ok).toBe(true);
     expect(created).toHaveLength(1);
+  });
+});
+
+describe("receipt photos on create", () => {
+  it("writes the photo link when the photo is the caller's", async () => {
+    const { client, created } = makePrisma({ ownedPhotoIds: ["photo_own"] });
+
+    const result = await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [
+        { ...ITEM, receiptPhotoId: "photo_own" },
+        { ...ITEM, receiptPhotoId: "photo_own" },
+      ],
+      createdVia: "APP",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(created.map((c) => c.receiptPhotoId)).toEqual(["photo_own", "photo_own"]);
+  });
+
+  it("refuses the whole batch when one photo is not the caller's", async () => {
+    const { client, created, raw } = makePrisma({ ownedPhotoIds: ["photo_own"] });
+
+    const result = await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [
+        { ...ITEM, receiptPhotoId: "photo_own" },
+        { ...ITEM, receiptPhotoId: "photo_someone_else" },
+      ],
+      createdVia: "APP",
+    });
+
+    expect(result).toEqual({ ok: false, reason: "PHOTO_NOT_FOUND" });
+    expect(created).toHaveLength(0);
+    const photoCall = raw.$queryRaw.mock.calls.find(([sql]) =>
+      (sql as TemplateStringsArray).join("?").includes("receipt_photos")
+    );
+    expect(photoCall?.slice(1)).toEqual([["photo_own", "photo_someone_else"], "u1"]);
+  });
+
+  it("refuses under a key too, inside the locked transaction", async () => {
+    const { client, created } = makePrisma({ ownedPhotoIds: [] });
+
+    const result = await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [{ ...ITEM, receiptPhotoId: "photo_someone_else" }],
+      clientBatchId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+      createdVia: "APP",
+    });
+
+    expect(result).toEqual({ ok: false, reason: "PHOTO_NOT_FOUND" });
+    expect(created).toHaveLength(0);
+  });
+
+  it("checks ownership inside the write transaction, before any insert", async () => {
+    const { client, order } = makePrisma({ ownedPhotoIds: ["photo_own"] });
+
+    await createTransactionBatch({
+      prisma: client,
+      userId: "u1",
+      items: [{ ...ITEM, receiptPhotoId: "photo_own" }],
+      createdVia: "APP",
+    });
+
+    expect(order).toEqual(["tx", "photos", "create"]);
+  });
+
+  it("asks nothing about photos when no item carries one, so other callers are unaffected", async () => {
+    const { client, order, created } = makePrisma();
+
+    await createTransactionBatch({ prisma: client, userId: "u1", items: [ITEM], createdVia: "MCP" });
+
+    expect(order).not.toContain("photos");
+    expect(created[0]).not.toHaveProperty("receiptPhotoId");
   });
 });

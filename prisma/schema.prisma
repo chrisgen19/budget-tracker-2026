@@ -195,6 +195,7 @@ model User {
   /// writes on for days, which fails silently. Null means writes are off.
   mcpWritesEnabledUntil       DateTime?                 @map("mcp_writes_enabled_until")
   transactions                Transaction[]
+  receiptPhotos               ReceiptPhoto[]
   categories                  Category[]
   scanLogs                    ScanLog[]
   scheduledTransactions       ScheduledTransaction[]
@@ -443,11 +444,16 @@ model Transaction {
   /// purchases can only be archived: deleting it would leave them naming a card that is gone.
   creditAccountId     String?               @map("credit_account_id")
   creditAccount       CreditAccount?        @relation(fields: [creditAccountId], references: [id], onDelete: Restrict)
+  /// The stored photo of the receipt this row came from. Rows of one split receipt share one photo,
+  /// so it is its own table; SetNull, since removing a photo must never remove a transaction.
+  receiptPhotoId      String?               @map("receipt_photo_id")
+  receiptPhoto        ReceiptPhoto?         @relation(fields: [receiptPhotoId], references: [id], onDelete: SetNull)
   labels              TransactionLabel[]
   createdAt           DateTime              @default(now()) @map("created_at")
   updatedAt           DateTime              @updatedAt @map("updated_at")
 
   @@index([userId, date])
+  @@index([receiptPhotoId])
   @@index([userId, type])
   @@index([receiptGroupId])
   @@index([billId])
@@ -456,6 +462,28 @@ model Transaction {
   @@index([userId, createdVia])
   @@index([userId, updatedVia])
   @@map("transactions")
+}
+
+/// A receipt photo kept in R2. Its own row because a split receipt's transactions share one photo.
+model ReceiptPhoto {
+  id           String        @id @default(cuid())
+  userId       String        @map("user_id")
+  /// receipts/{userId}/{id}.jpg: ids only, never a description or amount.
+  objectKey    String        @unique @map("object_key")
+  /// Always image/jpeg after re-encode.
+  contentType  String        @map("content_type")
+  byteSize     Int           @map("byte_size")
+  width        Int
+  height       Int
+  /// The client's idempotency key, so a retried upload returns the existing photo.
+  photoKey     String        @map("photo_key")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@unique([userId, photoKey])
+  @@index([userId])
+  @@map("receipt_photos")
 }
 
 model AppSettings {

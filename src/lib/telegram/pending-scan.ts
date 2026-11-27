@@ -30,6 +30,15 @@ export interface PendingScan {
    * which had in fact been saved.
    */
   reviewMessageId?: number;
+  /**
+   * The photo itself, base64, so it can be kept on the saved row once the user confirms.
+   *
+   * Held here rather than in a second store: this map already holds one draft per chat for at
+   * most `PENDING_TTL_MS`, so the bytes live exactly as long as the draft and a newer photo
+   * replaces them. Every path that re-stores a draft spreads it (`revisePendingScan`, the restore
+   * after a failed save), so a correction keeps the image without naming it.
+   */
+  imageBase64?: string;
   createdAt: number;
   /**
    * Set when a save failed without settling, so nobody knows whether the row exists.
@@ -63,7 +72,19 @@ const pending = new Map<number, PendingScan>();
  *  the user has forgotten about. */
 export const PENDING_TTL_MS = 10 * 60 * 1000;
 
-export const putPendingScan = (chatId: number, scan: PendingScan): void => {
+/**
+ * Drafts past their TTL, which nothing will ever confirm. Each holds a receipt photo, so an
+ * abandoned review used to keep those bytes in memory until that chat sent another photo.
+ * Swept on every write rather than on a timer: a write is the only moment the map grows.
+ */
+const sweepExpired = (now: number): void => {
+  for (const [chatId, scan] of pending) {
+    if (now - scan.createdAt > PENDING_TTL_MS) pending.delete(chatId);
+  }
+};
+
+export const putPendingScan = (chatId: number, scan: PendingScan, now = Date.now()): void => {
+  sweepExpired(now);
   pending.set(chatId, scan);
 };
 

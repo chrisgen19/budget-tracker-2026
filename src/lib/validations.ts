@@ -33,6 +33,10 @@ export const transactionSchema = z.object({
   /** The credit card this purchase was paid with. On an edit, omitted keeps the stored link and null
    *  removes it. Validated by `checkCardPurchases`. */
   creditAccountId: z.string().min(1).max(100).nullable().optional(),
+  /** The stored receipt photo this row came from. On an edit, omitted keeps the stored link, null
+   *  removes it from this row only, and a different id replaces it on every row sharing the old
+   *  photo. Ownership is checked inside the write transaction. */
+  receiptPhotoId: z.string().min(1).max(100).nullable().optional(),
 });
 
 /** A Resolve or Snooze action is allowed only for a versioned, bounded finding key. */
@@ -725,7 +729,9 @@ export const resolveTransactionDate = (
   return new Date(utcMs + timezoneOffset * 60_000).toISOString();
 };
 
-export const mcpTransactionSchema = batchTransactionSchema.extend({
+/** Photos are linked through the app only: the tool's own input shape already strips
+ *  `receiptPhotoId`, and omitting it here keeps this second parse from ever letting one through. */
+export const mcpTransactionSchema = batchTransactionSchema.omit({ receiptPhotoId: true }).extend({
   date: z.string().refine(isRealDate, {
     message: "date must be a real calendar date, e.g. 2026-08-25",
   }),

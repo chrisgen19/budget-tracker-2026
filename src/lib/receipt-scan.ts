@@ -217,8 +217,8 @@ export async function scanReceipt(params: {
    * Lazy on purpose. Encoding eagerly allocated the decoded buffer and its base64 form, which is
    * a third larger again, *before* anything had checked the size: the pre-refactor guard
    * validated the upload before the route ever called `arrayBuffer()`, and passing an already
-   * encoded string here quietly gave that up. `checkBodySize` does not cover it, since a chunked
-   * request carries no `content-length` to check.
+   * encoded string here quietly gave that up. A body ceiling alone does not cover it: an image
+   * under the ceiling still costs its buffers, and a refused scan should cost none.
    */
   readBase64: () => Promise<string> | string;
   todayStr: string;

@@ -18,6 +18,14 @@ describe("buildInstructions", () => {
     expect(text).toContain("cannot settle bills");
   });
 
+  it("names attach_receipt_photo for a transactions writer, and the one thing it deletes", () => {
+    const text = buildInstructions([...READ_ONLY_SCOPES, "transactions:write"]);
+    expect(text).toContain("`attach_receipt_photo`");
+    // "Nothing here can delete anything" stopped being true: replacing a photo deletes the old one.
+    expect(text).toContain("replaced receipt photo");
+    expect(buildInstructions(["bills:write"])).not.toContain("attach_receipt_photo");
+  });
+
   it("routes paid bills to pay_bill when bills:write is granted", () => {
     const text = buildInstructions([...READ_ONLY_SCOPES, "transactions:write", "bills:write"]);
     expect(text).toContain("use `pay_bill`, not `create_transactions`");

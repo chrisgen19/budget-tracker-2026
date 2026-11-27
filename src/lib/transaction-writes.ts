@@ -3,6 +3,7 @@ import { getScheduleContext, matchScheduledLabel } from "@/lib/schedule-server";
 import { isDateOnly, resolveTransactionDate, type BatchTransactionInput } from "@/lib/validations";
 import type { PrismaClient } from "@/lib/budget-query-types";
 import { checkCardPurchases } from "@/lib/card-purchase-rule";
+import { photosAreOwned } from "@/lib/receipt-photo-links";
 
 /** Bounds for the keyed batch transaction. Prisma defaults to 5s, which a full
  *  MAX_BATCH_TRANSACTIONS batch can exceed: the keyed path awaits each create in turn, so a
@@ -22,6 +23,8 @@ export type BatchFailureReason =
   | "CATEGORIES_NOT_OWNED"
   /** A card named as the payment method is not the caller's, is archived, or was put on income. */
   | "CARD_NOT_USABLE"
+  /** A receipt photo id was not the caller's, or does not exist. Only the app sends one. */
+  | "PHOTO_NOT_FOUND"
   /** Permission was withdrawn between the request arriving and the write starting. */
   | "NO_LONGER_PERMITTED"
   /** The advisory lock could not be taken, so whether the batch exists is genuinely unknown. */
@@ -263,6 +266,11 @@ export const createTransactionBatch = async ({
     return rejectUnlessSaved("CARD_NOT_USABLE");
   }
 
+  // Receipt photos are checked only inside the write transaction, below. Only the app sends them
+  // (the MCP tool's own schema strips the key), so for every other caller this is empty and asks
+  // nothing.
+  const photoIds = items.flatMap((t) => (t.receiptPhotoId ? [t.receiptPhotoId] : []));
+
   // Fetch schedule context only when at least one item needs auto-tagging
   const needsAutoLabel = items.some((t) => t.labelIds === undefined);
   const ctx = needsAutoLabel ? await getScheduleContext(userId) : null;
@@ -303,6 +311,7 @@ export const createTransactionBatch = async ({
           ...(t.creditAccountId && { creditAccountId: t.creditAccountId }),
           ...(t.receiptGroupId && { receiptGroupId: t.receiptGroupId }),
           ...(t.receiptBreakdown && { receiptBreakdown: t.receiptBreakdown }),
+          ...(t.receiptPhotoId && { receiptPhotoId: t.receiptPhotoId }),
           ...(resolvedLabelIds.length > 0 && {
             labels: { createMany: { data: resolvedLabelIds.map((labelId) => ({ labelId })) } },
           }),
@@ -320,12 +329,15 @@ export const createTransactionBatch = async ({
       return { ok: false, reason: "NO_LONGER_PERMITTED" };
     }
     const outcome = await prisma.$transaction(async (tx) => {
-      if (!(await categoriesAreUsableForWrite(tx, userId, items))) return null;
+      if (!(await categoriesAreUsableForWrite(tx, userId, items))) {
+        return "CATEGORIES_NOT_OWNED" as const;
+      }
+      if (!(await photosAreOwned(tx, userId, photoIds))) return "PHOTO_NOT_FOUND" as const;
       const rows: TransactionWithRelations[] = [];
       for (const create of buildCreates(tx)) rows.push(await create);
       return rows;
     }, BATCH_TX_OPTIONS);
-    if (outcome === null) return rejectUnlessSaved("CATEGORIES_NOT_OWNED");
+    if (typeof outcome === "string") return rejectUnlessSaved(outcome);
     return { ok: true, transactions: outcome, replayed: false };
   }
 
@@ -359,6 +371,11 @@ export const createTransactionBatch = async ({
       // never make.
       if (!(await categoriesAreUsableForWrite(tx, userId, items))) {
         return { ok: false as const, reason: "CATEGORIES_NOT_OWNED" as const };
+      }
+      // Beside the category re-check and for the same reason: only a read inside the write can
+      // be the authority on what the insert is about to reference.
+      if (!(await photosAreOwned(tx, userId, photoIds))) {
+        return { ok: false as const, reason: "PHOTO_NOT_FOUND" as const };
       }
 
       const rows: TransactionWithRelations[] = [];
