@@ -12,7 +12,7 @@ import { Modal } from "@/components/ui/modal";
  * up below the fold - which is exactly the reported bug: the amount you are typing is
  * invisible behind the keyboard. iOS Safari hides this by scrolling the page itself.
  *
- * Both cases below fail against the previous implementation, which corrected the scroll
+ * The first two cases fail against the previous implementation, which corrected the scroll
  * position once, on a `focusin` listener attached too late to ever see `autoFocus`.
  */
 
@@ -25,10 +25,28 @@ const setLayoutHeight = (height: number) => {
   });
 };
 
+/**
+ * The layout viewport's width, which `Modal` watches for a rotation. jsdom reports 0 for
+ * every `clientWidth`, so a case that rotates has to force it.
+ */
+const setLayoutWidth = (width: number) => {
+  Object.defineProperty(document.documentElement, "clientWidth", {
+    value: width,
+    configurable: true,
+  });
+};
+
 /** jsdom implements neither, and both are load-bearing here. */
 class FakeVisualViewport extends EventTarget {
   height = 800;
   offsetTop = 0;
+  scale = 1;
+
+  /** What a pinch-zoom looks like: the same screen holds fewer CSS pixels. */
+  zoomTo(scale: number) {
+    this.scale = scale;
+    this.shrinkTo(800 / scale);
+  }
 
   /** What the keyboard opening looks like: the visual viewport loses its height. */
   shrinkTo(height: number) {
@@ -45,6 +63,8 @@ describe("Modal keeps the focused field visible as the keyboard opens", () => {
   const originalMatchMedia = window.matchMedia;
   const originalRaf = window.requestAnimationFrame;
   const originalInnerHeight = window.innerHeight;
+  // jsdom has no `scrollIntoView`, so this is `undefined`, and that is what goes back.
+  const originalScrollIntoView = Element.prototype.scrollIntoView;
 
   beforeEach(() => {
     // One case moves this, and the sheet-height case asserts on it.
@@ -82,6 +102,9 @@ describe("Modal keeps the focused field visible as the keyboard opens", () => {
 
   afterEach(() => {
     setLayoutHeight(originalInnerHeight);
+    // Drops the instance override so the prototype's own getter answers again.
+    Reflect.deleteProperty(document.documentElement, "clientWidth");
+    Element.prototype.scrollIntoView = originalScrollIntoView;
     window.matchMedia = originalMatchMedia;
     window.requestAnimationFrame = originalRaf;
     Object.defineProperty(window, "visualViewport", {
@@ -194,5 +217,115 @@ describe("Modal keeps the focused field visible as the keyboard opens", () => {
 
     viewport.shrinkTo(400);
     expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Android Chrome focuses a button when it is tapped, and the old handler only ever acted
+   * on form fields. Re-centring the form under a category chip as it is tapped moves the
+   * control before the finger lifts, and no keyboard is coming to justify it.
+   */
+  it("does not scroll when a button inside the modal takes focus", () => {
+    vi.useFakeTimers();
+    render(
+      <Modal open onClose={() => {}} title="New Transaction">
+        <input aria-label="Amount" autoFocus />
+        <button type="button">Food</button>
+        <input type="checkbox" aria-label="Recurring" />
+      </Modal>,
+    );
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    scrollIntoView.mockClear();
+
+    act(() => {
+      screen.getByRole("button", { name: "Food" }).focus();
+    });
+    act(() => {
+      screen.getByRole("checkbox", { name: "Recurring" }).focus();
+    });
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    viewport.shrinkTo(400);
+
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  /**
+   * With no autofocused field the dialog lifecycle focuses the content container itself,
+   * with `preventScroll: true`. Scrolling it into view from `focusin` would undo exactly
+   * the thing that option asked for.
+   */
+  it("does not scroll when the modal focuses its own content as a fallback", () => {
+    vi.useFakeTimers();
+    render(
+      <Modal open onClose={() => {}} title="Edit Category">
+        <button type="button">Save</button>
+      </Modal>,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+
+    expect(screen.getByRole("dialog").contains(document.activeElement)).toBe(true);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  /**
+   * iOS ignores `maximumScale: 1` for a user's own pinch, and every frame of one is a
+   * `visualViewport` resize. Zoom shrinks the viewport in CSS pixels just as a keyboard
+   * does, so it must neither yank the content back to the field nor read as a keyboard.
+   */
+  it("treats a pinch-zoom as neither a keyboard nor a reason to scroll", () => {
+    render(
+      <Modal open onClose={() => {}} title="New Transaction">
+        <input aria-label="Amount" autoFocus />
+      </Modal>,
+    );
+    const dialog = screen.getByRole("dialog");
+    scrollIntoView.mockClear();
+
+    viewport.zoomTo(2);
+
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(dialog.style.maxHeight).toBe("360px"); // 400 * 0.9: still a sheet
+  });
+
+  /** A keyboard raised while zoomed in still takes its share of the screen. */
+  it("still detects a keyboard opened while zoomed in", () => {
+    render(
+      <Modal open onClose={() => {}} title="New Transaction">
+        <input aria-label="Amount" autoFocus />
+      </Modal>,
+    );
+    const dialog = screen.getByRole("dialog");
+
+    viewport.scale = 2;
+    viewport.shrinkTo(200); // 400 unzoomed pixels of an 800 screen
+
+    expect(dialog.style.maxHeight).toBe("200px");
+  });
+
+  /**
+   * The tallest height is a portrait figure once the phone turns. A landscape phone that
+   * stays under 640px wide, or an Android split-screen resize, would otherwise compare a
+   * short landscape viewport against it and read a keyboard that is not there.
+   */
+  it("forgets the tallest height when the viewport is rotated", () => {
+    setLayoutWidth(390);
+    render(
+      <Modal open onClose={() => {}} title="New Transaction">
+        <input aria-label="Amount" autoFocus />
+      </Modal>,
+    );
+    const dialog = screen.getByRole("dialog");
+
+    setLayoutWidth(568);
+    setLayoutHeight(320);
+    viewport.shrinkTo(320);
+
+    expect(dialog.style.maxHeight).toBe("288px"); // 320 * 0.9: no keyboard
   });
 });

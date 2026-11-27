@@ -50,6 +50,10 @@ interface VisualViewport {
    * screen: every phone keyboard takes well over a quarter of it, while the things that
    * move these numbers without a keyboard (a collapsing browser toolbar, a few pixels of
    * rounding) are nowhere near that.
+   *
+   * Heights are compared at `scale` 1. A pinch-zoom shrinks the visual viewport in CSS
+   * pixels exactly as a keyboard does (iOS ignores `maximumScale: 1` for a user's own
+   * pinch), so 1.5x would otherwise read as a keyboard taking a third of the screen.
    */
   keyboardOpen: boolean;
 }
@@ -67,17 +71,30 @@ const SHEET_VIEWPORT_FRACTION = 0.9;
 
 const useVisualViewport = (enabled: boolean) => {
   const [viewport, setViewport] = useState<VisualViewport | null>(null);
-  /** Tallest seen while open; reset on close, so a rotation cannot strand a stale one. */
+  /** Tallest unzoomed height seen while open, at the width in `widthRef`. */
   const tallestRef = useRef(0);
+  /**
+   * The layout viewport's width when `tallestRef` was taken. A change means a rotation or
+   * a split-screen resize, after which the old tallest is a portrait figure a landscape
+   * viewport can never reach. `clientWidth` rather than `innerWidth`, since Safari's
+   * `innerWidth` moves with pinch-zoom and neither moves for a keyboard.
+   */
+  const widthRef = useRef(0);
 
   const update = useCallback(() => {
     const vv = window.visualViewport;
     if (vv) {
-      tallestRef.current = Math.max(tallestRef.current, vv.height, window.innerHeight);
+      const width = document.documentElement.clientWidth;
+      if (width !== widthRef.current) {
+        widthRef.current = width;
+        tallestRef.current = 0;
+      }
+      const unzoomedHeight = vv.height * vv.scale;
+      tallestRef.current = Math.max(tallestRef.current, unzoomedHeight, window.innerHeight);
       setViewport({
         height: vv.height,
         offsetTop: vv.offsetTop,
-        keyboardOpen: vv.height < tallestRef.current * KEYBOARD_OPEN_RATIO,
+        keyboardOpen: unzoomedHeight < tallestRef.current * KEYBOARD_OPEN_RATIO,
       });
     }
   }, []);
@@ -86,6 +103,7 @@ const useVisualViewport = (enabled: boolean) => {
     if (!enabled) {
       setViewport(null);
       tallestRef.current = 0;
+      widthRef.current = 0;
       return;
     }
 
@@ -111,6 +129,36 @@ const useVisualViewport = (enabled: boolean) => {
  * backstop, not the whole correction.
  */
 const KEYBOARD_SETTLE_MS = 350;
+
+/** Input types that raise no keyboard, so focusing one is no reason to scroll. */
+const NON_TEXT_INPUT_TYPES = new Set([
+  "button",
+  "checkbox",
+  "color",
+  "file",
+  "hidden",
+  "image",
+  "radio",
+  "range",
+  "reset",
+  "submit",
+]);
+
+/**
+ * Whether focusing `element` is about to put a keyboard (or a picker) under it. Android
+ * Chrome focuses a button when it is tapped, so without this every tap on a category chip
+ * re-centred the form under the finger.
+ */
+const isTextEntry = (element: Element): element is HTMLElement => {
+  if (element instanceof HTMLInputElement) return !NON_TEXT_INPUT_TYPES.has(element.type);
+  if (element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) {
+    return true;
+  }
+  return element instanceof HTMLElement && element.isContentEditable;
+};
+
+/** Zoomed in by the user's own pinch, when a resize is them panning, not a keyboard. */
+const isPinchZoomed = () => Math.abs((window.visualViewport?.scale ?? 1) - 1) > 0.01;
 
 /**
  * Keeps the focused field inside the modal's scroll port while the keyboard opens.
@@ -150,7 +198,9 @@ const useKeepFocusedFieldVisible = (
 
     const revealFocusedField = (behavior: ScrollBehavior) => {
       const focused = document.activeElement;
-      if (!(focused instanceof HTMLElement) || !content.contains(focused)) return;
+      // `content` itself is the dialog's fallback focus target, taken with `preventScroll`.
+      if (!focused || focused === content || !content.contains(focused)) return;
+      if (!isTextEntry(focused)) return;
       focused.scrollIntoView({ block: "center", behavior });
     };
 
@@ -171,15 +221,20 @@ const useKeepFocusedFieldVisible = (
       settleTimer = setTimeout(() => revealFocusedField("smooth"), KEYBOARD_SETTLE_MS);
     };
 
+    /** Every frame of a pinch is a resize too, and snapping back each one fights the pan. */
+    const handleResize = () => {
+      if (!isPinchZoomed()) revealAfterReflow();
+    };
+
     content.addEventListener("focusin", handleFocusIn);
-    window.visualViewport?.addEventListener("resize", revealAfterReflow);
+    window.visualViewport?.addEventListener("resize", handleResize);
 
     // Catches a field `autoFocus` focused before this effect ran.
     handleFocusIn();
 
     return () => {
       content.removeEventListener("focusin", handleFocusIn);
-      window.visualViewport?.removeEventListener("resize", revealAfterReflow);
+      window.visualViewport?.removeEventListener("resize", handleResize);
       cancelAnimationFrame(frame);
       clearTimeout(settleTimer);
     };
