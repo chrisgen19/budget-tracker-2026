@@ -5,10 +5,20 @@
 # drift check), skips the two static copies below, and starts `next start` against an
 # `output: "standalone"` build it does not own. Silent, and green.
 #
-# `nodejs_24` tracks `railpack.json`; `scripts/build-scripts.test.ts` asserts the two agree and
-# that both are a version the CI matrix runs.
+# This file stays on Node 20 while `railpack.json` moves to 24, and the difference is the point.
+# This is the fallback for the deploy that happens before Railpack is confirmed, so it has to be
+# the configuration production is known to build with, not a newer one nothing has tried.
+#
+# Nixpacks also picks the nixpkgs archive from the *detected* Node version -- `engines.node` in
+# package.json, via `NodeProvider::get_nix_archive` -> `AVAILABLE_NODE_VERSIONS` -- and not from
+# this override. Node 24 is in that table only on recent nixpacks; on an older one the archive
+# resolves to 22 and `nodejs_24` is a missing attribute that fails the setup phase. Coolify
+# chooses the nixpacks version, which is the same outside-the-repo unknown as the Build Pack
+# setting above. 20 is in every version of that table.
+#
+# `scripts/build-scripts.test.ts` asserts this pin is one the CI matrix runs.
 [phases.setup]
-nixPkgs = ["nodejs_24", "openssl"]
+nixPkgs = ["nodejs_20", "openssl"]
 
 [phases.install]
 cmds = ["corepack enable && pnpm install --frozen-lockfile"]

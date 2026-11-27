@@ -142,11 +142,15 @@ describe("build scripts", () => {
   });
 
   /**
-   * Production's Node version has to be one CI actually runs, and the two build-pack files have to
-   * agree with each other. These numbers live in three files with nothing tying them together, and
-   * the gap is silent in the direction that matters: a green pipeline on one version while the
-   * image ships another, so a behaviour change in a dependency path -- deprecations, OpenSSL
-   * defaults, undici -- surfaces only in production.
+   * Every build pack's Node pin has to be a version CI actually runs. These numbers live in three
+   * files with nothing tying them together, and the gap is silent in the direction that matters: a
+   * green pipeline on one version while the image ships another, so a behaviour change in a
+   * dependency path -- deprecations, OpenSSL defaults, undici -- surfaces only in production.
+   *
+   * The two build packs are deliberately *not* required to match. `railpack.json` is on 24, the
+   * version production is moving to; `nixpacks.toml` stays on 20, the version production is known
+   * to build with today, because it is the fallback for the deploy that happens before Railpack is
+   * confirmed. What both must satisfy is that the matrix runs them, and it runs both.
    *
    * The matrix is read out of the workflow rather than hardcoded, so adding a version to CI is
    * enough and this test never has to be the second place to edit. It is read out of the `checks`
@@ -156,15 +160,15 @@ describe("build scripts", () => {
    *
    * Majors are compared, so a legitimate patch pin (`"24.5.0"`) still satisfies a `node: [24]` leg.
    */
-  it("deploys a Node version the CI matrix covers", () => {
+  it("pins every build pack to a Node version the CI matrix covers", () => {
     const major = (version: string) => version.trim().replace(/^[^0-9]*/, "").split(".")[0];
 
     const workflow = readFileSync(join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8");
-    const start = workflow.search(/^  checks:$/m);
-    expect(start).toBeGreaterThan(-1);
-    const rest = workflow.slice(start + 1);
-    const end = rest.search(/^  \S/m);
-    const checksJob = end === -1 ? rest : rest.slice(0, end);
+    const jobStart = workflow.search(/^  checks:$/m);
+    expect(jobStart).toBeGreaterThan(-1);
+    const rest = workflow.slice(jobStart + 1);
+    const jobEnd = rest.search(/^  \S/m);
+    const checksJob = jobEnd === -1 ? rest : rest.slice(0, jobEnd);
 
     const matrix = checksJob.match(/^\s*node:\s*\[([^\]]*)\]/m);
     expect(matrix).not.toBeNull();
@@ -172,15 +176,18 @@ describe("build scripts", () => {
     expect(versions.length).toBeGreaterThan(0);
 
     const railpack = JSON.parse(readFileSync(join(__dirname, "..", "railpack.json"), "utf8"));
-    const railpackNode = major(String(railpack.packages?.node));
+    expect(versions).toContain(major(String(railpack.packages?.node)));
 
-    const nixpacks = readFileSync(join(__dirname, "..", "nixpacks.toml"), "utf8");
+    // Comments stripped first, the same way the nixpacks test above does it. That file's header
+    // names other Node versions in prose -- it explains why the pin is 20 and not 24 -- and an
+    // unanchored match reads the first of those instead of the pin. It did, and this assertion
+    // passed while `nixPkgs` said something else entirely.
+    const nixpacks = readFileSync(join(__dirname, "..", "nixpacks.toml"), "utf8")
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .join("\n");
     const nixpacksPin = nixpacks.match(/nodejs_(\d+)/);
     expect(nixpacksPin).not.toBeNull();
-
-    // Both build packs, because either one can be the one Coolify is set to.
-    expect(versions).toContain(railpackNode);
     expect(versions).toContain(nixpacksPin![1]);
-    expect(nixpacksPin![1]).toBe(railpackNode);
   });
 });
