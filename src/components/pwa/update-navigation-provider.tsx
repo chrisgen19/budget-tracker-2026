@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useIsMutating } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useServiceWorkerUpdate, type UpdateStatus } from "@/hooks/use-service-worker-update";
 import { getInAppHref } from "@/lib/in-app-link";
@@ -36,9 +37,14 @@ export function UpdateNavigationProvider({ busy, children }: UpdateNavigationPro
   const router = useRouter();
   const { status, updateAvailable, applyUpdate, applyOnNavigation } = useServiceWorkerUpdate();
 
+  // A write still in flight counts as busy too: a full load would abort it. Saves made from a
+  // modal are already safe (the overlay covers the nav until they resolve), but a quick-log tap or
+  // a preference toggle has no modal.
+  const mutating = useIsMutating() > 0;
+
   // A ref, so the listener registered once reads the current value rather than the one at mount.
-  const busyRef = useRef(busy);
-  busyRef.current = busy;
+  const busyRef = useRef(busy || mutating);
+  busyRef.current = busy || mutating;
 
   useEffect(() => {
     const onClick = (event: MouseEvent) => {

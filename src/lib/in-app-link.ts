@@ -9,6 +9,12 @@
  * - another origin is not the app, and `/api/` is a file or JSON, not a page;
  * - a hash-only change scrolls within the current page, and a full load would throw that away.
  *
+ * Known limit: the caller listens in the capture phase, before any React `onClick`, so the
+ * `defaultPrevented` check only sees an earlier capture listener. An `<a href>` whose own `onClick`
+ * cancels the click to do something else (open a modal, guard unsaved changes) would still be
+ * taken over while an update waits. Don't build that on an `<a href>`; use a `<button>`, or add an
+ * explicit opt-out here when the first such link is needed.
+ *
  * The `href` attribute is resolved against `current` rather than read from `anchor.href`, so the
  * result follows the URL the caller says the page is on.
  */

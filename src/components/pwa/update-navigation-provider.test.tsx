@@ -4,6 +4,7 @@ import { UpdateNavigationProvider, useUpdateNavigation } from "./update-navigati
 
 const applyOnNavigation = vi.fn();
 const push = vi.fn();
+const isMutating = vi.fn();
 
 vi.mock("@/hooks/use-service-worker-update", () => ({
   useServiceWorkerUpdate: () => ({
@@ -12,6 +13,9 @@ vi.mock("@/hooks/use-service-worker-update", () => ({
     applyUpdate: vi.fn(),
     applyOnNavigation: (href: string) => applyOnNavigation(href),
   }),
+}));
+vi.mock("@tanstack/react-query", () => ({
+  useIsMutating: () => isMutating(),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
@@ -37,6 +41,7 @@ const renderShell = (busy = false) =>
 beforeEach(() => {
   vi.clearAllMocks();
   applyOnNavigation.mockReturnValue(true);
+  isMutating.mockReturnValue(0);
 });
 
 describe("UpdateNavigationProvider", () => {
@@ -57,6 +62,17 @@ describe("UpdateNavigationProvider", () => {
     renderShell(true);
     expect(fireEvent.click(screen.getByRole("link", { name: "Bills" }))).toBe(true);
     expect(applyOnNavigation).not.toHaveBeenCalled();
+  });
+
+  // A write with no modal over the nav (a quick-log tap, a preference toggle) may still be in
+  // flight when a link is tapped; a full load would abort it, a client navigation lets it land.
+  it("leaves links and menu picks alone while a save is in flight", () => {
+    isMutating.mockReturnValue(1);
+    renderShell();
+    expect(fireEvent.click(screen.getByRole("link", { name: "Bills" }))).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Goals" }));
+    expect(applyOnNavigation).not.toHaveBeenCalled();
+    expect(push).toHaveBeenCalledWith("/goals");
   });
 
   it("reads busy as it changes", () => {

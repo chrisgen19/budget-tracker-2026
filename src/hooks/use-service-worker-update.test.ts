@@ -264,6 +264,53 @@ describe("useServiceWorkerUpdate", () => {
     expect(assign).toHaveBeenLastCalledWith("/goals");
   });
 
+  // After a link hand-off the waiting worker is active, and Back can restore this page from the
+  // back/forward cache still showing the banner. Posting SKIP_WAITING to an active worker does
+  // nothing, so the page has to know it is stale: Reload then refreshes instead of hanging.
+  it("treats a page restored after a hand-off as stale", async () => {
+    const { result, waiting } = await renderWaiting();
+    act(() => {
+      result.current.applyOnNavigation("/bills");
+    });
+    act(() => {
+      // As in a browser: activating moves the worker out of `registration.waiting`.
+      registration.waiting = null;
+      waiting.become("activated");
+      container.dispatchEvent(new Event("controllerchange"));
+    });
+    expect(assign).toHaveBeenCalledWith("/bills");
+
+    act(() => {
+      const restored = new Event("pageshow");
+      Object.defineProperty(restored, "persisted", { value: true });
+      window.dispatchEvent(restored);
+    });
+    expect(result.current.status).toBe("stale");
+    act(() => result.current.applyUpdate());
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  // A Reload whose worker never takes over (it went redundant, or the message was lost) must not
+  // leave the intent pending for good: that swallows every later link tap and menu pick.
+  it("reloads anyway if the worker never takes over after Reload", async () => {
+    const { result } = await renderWaiting();
+    vi.useFakeTimers();
+    try {
+      act(() => result.current.applyUpdate());
+      expect(reload).not.toHaveBeenCalled();
+      act(() => {
+        vi.advanceTimersByTime(NAVIGATION_UPDATE_TIMEOUT_MS);
+      });
+      expect(reload).toHaveBeenCalledTimes(1);
+      act(() => {
+        container.dispatchEvent(new Event("controllerchange"));
+      });
+      expect(reload).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("prefers a newer waiting worker over a stale state", async () => {
     const { result } = await renderStale();
     const installing = new FakeWorker();

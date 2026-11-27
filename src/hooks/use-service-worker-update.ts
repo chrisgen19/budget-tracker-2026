@@ -152,6 +152,16 @@ export function useServiceWorkerUpdate() {
       fallbackRef.current = null;
       intentRef.current = { kind: "none" };
       reloadingRef.current = false;
+      // The worker this page handed off to is active now (or was replaced), so posting to it would
+      // do nothing. The page is the old bundle under a new worker: stale, unless a newer build is
+      // already waiting, which `note` then prefers.
+      const handedOff = waitingRef.current;
+      if (handedOff && handedOff.state !== "installed") {
+        waitingRef.current = null;
+        changeStatus("stale");
+        const newer = registration?.waiting ?? null;
+        if (newer !== handedOff) note(newer);
+      }
     };
 
     const poll = window.setInterval(check, UPDATE_POLL_MS);
@@ -185,6 +195,14 @@ export function useServiceWorkerUpdate() {
     intentRef.current = { kind: "reload" };
     changeStatus("none");
     waiting.postMessage({ type: "SKIP_WAITING" });
+    // Same guard as a navigation: if the worker never takes over (it went redundant, or the message
+    // was lost), reload anyway rather than leave the intent pending, which would swallow every
+    // later link tap and menu pick.
+    fallbackRef.current = window.setTimeout(() => {
+      if (reloadingRef.current) return;
+      reloadingRef.current = true;
+      window.location.reload();
+    }, NAVIGATION_UPDATE_TIMEOUT_MS);
   }, [changeStatus]);
 
   /**
