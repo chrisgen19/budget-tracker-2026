@@ -29,6 +29,18 @@ All notable development history for the Budget Tracker app.
   cancelled.
 - **A page restored by Back after a hand-off is marked stale**, since its worker is already the
   controller by then and there is nothing left to ask to take over.
+- **A scan that starts during the hand-off keeps its queue.** The scan check is read again when
+  the hand-off finishes, up to 3s after the tap, and not only when the tap is handled. Busy by
+  then, the load is abandoned and the tap is dropped: the page stays where it is, with the queue
+  intact. Starting a scan seconds after tapping a link is a change of mind, and the scan sheet is
+  on screen, so any navigation would have closed it.
+- **The update banner stays hidden while a scan is in memory**, because its Reload is a plain page
+  reload and would destroy the queue the rest of this protects. It returns as soon as nothing is
+  held in memory, and Reload refuses on its own while busy rather than trusting the banner to be
+  gone: it stays clickable through its 0.4s exit animation.
+- **The banner's Reload waits the same way a link tap does.** It asks the worker to take over and
+  the reload follows whenever that lands, with no 3s bound, so a scan started inside that wait is
+  kept and the tab is marked stale instead.
 
 ## 2026-11-27 - Node 24 in production
 

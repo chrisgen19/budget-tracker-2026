@@ -345,6 +345,136 @@ describe("useServiceWorkerUpdate", () => {
     expect(waiting.postMessage).toHaveBeenCalledTimes(1);
   });
 
+  // `busy` is read when the tap is handled, and the load follows up to 3s later. A scan started in
+  // between lives only in memory with its credits already spent, so the full load is abandoned --
+  // and not swapped for a client navigation, which on this path would run the old bundle under the
+  // worker that has just evicted its chunks.
+  it("drops the navigation and marks the tab stale when a scan starts during the hand-off", async () => {
+    let busy = false;
+    const waiting = new FakeWorker();
+    registration.waiting = waiting;
+    const { result } = renderHook(() => useServiceWorkerUpdate(() => busy));
+    await waitFor(() => expect(result.current.status).toBe("waiting"));
+
+    act(() => {
+      result.current.applyOnNavigation("/bills");
+    });
+    busy = true;
+    act(() => {
+      container.dispatchEvent(new Event("controllerchange"));
+    });
+
+    expect(assign).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+    // The worker is in charge now, so there is nothing left to ask and the bundle really is old.
+    expect(result.current.status).toBe("stale");
+  });
+
+  // The fallback fires *because* no takeover came, so the worker is still installed. Clearing it
+  // here left the banner's Reload with nothing to message: a refresh that activates nothing.
+  it("keeps the waiting worker when the fallback fires while busy", async () => {
+    let busy = false;
+    const waiting = new FakeWorker();
+    registration.waiting = waiting;
+    const { result } = renderHook(() => useServiceWorkerUpdate(() => busy));
+    await waitFor(() => expect(result.current.status).toBe("waiting"));
+
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        result.current.applyOnNavigation("/goals");
+      });
+      busy = true;
+      act(() => {
+        vi.advanceTimersByTime(NAVIGATION_UPDATE_TIMEOUT_MS);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(assign).not.toHaveBeenCalled();
+    expect(result.current.status).toBe("waiting");
+
+    // The handle survived, so the banner still hands over rather than refreshing for nothing.
+    busy = false;
+    act(() => result.current.applyUpdate());
+    expect(waiting.postMessage).toHaveBeenCalledTimes(2);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  // A dropped hand-off must leave nothing armed, or the next tap is swallowed as already pending.
+  it("takes a later navigation normally after one was dropped while busy", async () => {
+    let busy = false;
+    registration.waiting = new FakeWorker();
+    const { result } = renderHook(() => useServiceWorkerUpdate(() => busy));
+    await waitFor(() => expect(result.current.status).toBe("waiting"));
+
+    act(() => {
+      result.current.applyOnNavigation("/bills");
+    });
+    busy = true;
+    act(() => {
+      container.dispatchEvent(new Event("controllerchange"));
+    });
+
+    busy = false;
+    let taken = false;
+    act(() => {
+      taken = result.current.applyOnNavigation("/labels");
+    });
+    expect(taken).toBe(true);
+    expect(assign).toHaveBeenCalledWith("/labels");
+  });
+
+  // The banner path has the same hole and a wider window: `applyUpdate` arms a `reload` intent and
+  // no fallback, so the wait for the swap is unbounded and a scan can begin anywhere inside it.
+  it("does not reload on the banner path when a scan starts before the swap lands", async () => {
+    let busy = false;
+    const waiting = new FakeWorker();
+    registration.waiting = waiting;
+    const { result } = renderHook(() => useServiceWorkerUpdate(() => busy));
+    await waitFor(() => expect(result.current.status).toBe("waiting"));
+
+    act(() => result.current.applyUpdate());
+    expect(waiting.postMessage).toHaveBeenCalledWith({ type: "SKIP_WAITING" });
+
+    busy = true;
+    act(() => {
+      container.dispatchEvent(new Event("controllerchange"));
+    });
+
+    expect(reload).not.toHaveBeenCalled();
+    expect(result.current.status).toBe("stale");
+  });
+
+  // `AnimatePresence` keeps the banner mounted and clickable through its 0.4s exit, so hiding it
+  // when `busy` flips is not the guard. The action has to refuse on its own.
+  it("ignores the banner's Reload while a scan is busy", async () => {
+    const waiting = new FakeWorker();
+    registration.waiting = waiting;
+    const { result } = renderHook(() => useServiceWorkerUpdate(() => true));
+    await waitFor(() => expect(result.current.status).toBe("waiting"));
+
+    act(() => result.current.applyUpdate());
+    expect(reload).not.toHaveBeenCalled();
+    expect(waiting.postMessage).not.toHaveBeenCalled();
+  });
+
+  // The ordinary case must not change: nothing in memory, so the hand-off is still a full load.
+  it("still full-loads the target when nothing is busy", async () => {
+    registration.waiting = new FakeWorker();
+    const { result } = renderHook(() => useServiceWorkerUpdate(() => false));
+    await waitFor(() => expect(result.current.status).toBe("waiting"));
+
+    act(() => {
+      result.current.applyOnNavigation("/labels");
+    });
+    act(() => {
+      container.dispatchEvent(new Event("controllerchange"));
+    });
+    expect(assign).toHaveBeenCalledWith("/labels");
+  });
+
   it("prefers a newer waiting worker over a stale state", async () => {
     const { result } = await renderStale();
     const installing = new FakeWorker();

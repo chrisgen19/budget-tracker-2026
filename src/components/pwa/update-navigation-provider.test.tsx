@@ -1,17 +1,24 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { IsBusy } from "@/hooks/use-service-worker-update";
 import { UpdateNavigationProvider, useUpdateNavigation } from "./update-navigation-provider";
 
 const applyOnNavigation = vi.fn();
 const push = vi.fn();
 
+/** What the provider handed the hook on its last render, for the busy re-check. */
+let isBusy: IsBusy | undefined;
+
 vi.mock("@/hooks/use-service-worker-update", () => ({
-  useServiceWorkerUpdate: () => ({
-    status: "waiting",
-    updateAvailable: true,
-    applyUpdate: vi.fn(),
-    applyOnNavigation: (href: string) => applyOnNavigation(href),
-  }),
+  useServiceWorkerUpdate: (given?: IsBusy) => {
+    isBusy = given;
+    return {
+      status: "waiting",
+      updateAvailable: true,
+      applyUpdate: vi.fn(),
+      applyOnNavigation: (href: string) => applyOnNavigation(href),
+    };
+  },
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
@@ -24,6 +31,11 @@ function GoToGoals() {
       Goals
     </button>
   );
+}
+
+function ShowAvailability() {
+  const { updateAvailable } = useUpdateNavigation();
+  return <span data-testid="available">{updateAvailable ? "yes" : "no"}</span>;
 }
 
 const renderShell = (busy = false) =>
@@ -87,6 +99,41 @@ describe("UpdateNavigationProvider", () => {
     fireEvent.click(screen.getByRole("button", { name: "Goals" }));
     expect(applyOnNavigation).not.toHaveBeenCalled();
     expect(push).toHaveBeenCalledWith("/goals");
+  });
+
+  // The hand-off can finish up to 3s after the tap, so the hook asks again then. A scan started in
+  // between must still be seen by a check the provider handed over at mount.
+  it("hands the hook a busy check that tracks the prop", () => {
+    const { rerender } = renderShell(false);
+    expect(isBusy?.()).toBe(false);
+
+    rerender(
+      <UpdateNavigationProvider busy>
+        <a href="/bills">Bills</a>
+        <GoToGoals />
+      </UpdateNavigationProvider>,
+    );
+    expect(isBusy?.()).toBe(true);
+  });
+
+  // `applyUpdate` for a stale tab is an unguarded reload and the banner is its only caller, so
+  // hiding the banner is what keeps a tap on it from destroying the queue.
+  it("reports no update available while a scan is busy", () => {
+    render(
+      <UpdateNavigationProvider busy>
+        <ShowAvailability />
+      </UpdateNavigationProvider>,
+    );
+    expect(screen.getByTestId("available").textContent).toBe("no");
+  });
+
+  it("reports the update again once nothing is busy", () => {
+    render(
+      <UpdateNavigationProvider busy={false}>
+        <ShowAvailability />
+      </UpdateNavigationProvider>,
+    );
+    expect(screen.getByTestId("available").textContent).toBe("yes");
   });
 
   it("falls back to router.push without a provider", () => {

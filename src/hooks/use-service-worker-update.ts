@@ -23,6 +23,12 @@ export type UpdateStatus = "none" | "waiting" | "stale";
 type Intent = { kind: "none" } | { kind: "reload" } | { kind: "navigate"; href: string };
 
 /**
+ * Whether work that lives only in memory (the receipt scan queue) is in flight, so a full load
+ * would lose it. Read again when a hand-off finishes, not only when the tap is handled.
+ */
+export type IsBusy = () => boolean;
+
+/**
  * Whether a new build is installed and waiting, and how to take it.
  *
  * A deploy swaps the server while an open tab keeps running the bundle it loaded. `/api/*` is
@@ -44,7 +50,7 @@ type Intent = { kind: "none" } | { kind: "reload" } | { kind: "navigate"; href: 
  * (`applyOnNavigation`, called by `UpdateNavigationProvider`), which full-loads the target instead of
  * reloading the page the user is leaving.
  */
-export function useServiceWorkerUpdate() {
+export function useServiceWorkerUpdate(isBusy?: IsBusy) {
   const [status, setStatus] = useState<UpdateStatus>("none");
   const statusRef = useRef<UpdateStatus>("none");
   const waitingRef = useRef<ServiceWorker | null>(null);
@@ -52,10 +58,65 @@ export function useServiceWorkerUpdate() {
   const reloadingRef = useRef(false);
   const fallbackRef = useRef<number | null>(null);
 
+  // A ref, so a hand-off finishing later reads the current value rather than the one at mount.
+  const isBusyRef = useRef(isBusy);
+  isBusyRef.current = isBusy;
+
   const changeStatus = useCallback((next: UpdateStatus) => {
     statusRef.current = next;
     setStatus(next);
   }, []);
+
+  /**
+   * Finish a hand-off by running `take` -- the full load it was arming -- unless work that lives
+   * only in memory turned up while it was in flight, in which case **nothing happens at all**.
+   *
+   * All three ways a hand-off ends come through here: the navigation's `controllerchange`, its 3s
+   * fallback, and the banner's Reload once its own `controllerchange` lands. The last one has no
+   * fallback behind it, so its wait is unbounded and the busy window is wider, not narrower.
+   *
+   * `busy` is read when the tap is handled and the load follows up to
+   * `NAVIGATION_UPDATE_TIMEOUT_MS` later, so a receipt scan can start in between. A full load would
+   * throw that queue away with its scan credits already spent, which is the one thing this feature
+   * must not do.
+   *
+   * The tap is **dropped** rather than turned into a client navigation. A client `router.push` here
+   * would be the one place in this hook that navigates an old bundle under a *new* controller:
+   * `sw.ts` precaches the build manifest, so the activating worker evicts the old build's chunks,
+   * and the container serving them has been replaced. That is the client/server skew #306 exists to
+   * close, and it is exactly why a `stale` tab's taps go through `window.location.assign` instead.
+   * Pushing the original `href` is also wrong by then: while busy, `UpdateNavigationProvider` stops
+   * swallowing taps, so the user may have navigated somewhere else since.
+   *
+   * Dropping it is the honest reading of what happened. Starting a scan seconds after tapping a
+   * link is a change of mind, the scan sheet is on screen, and any navigation would close it.
+   *
+   * `tookOver` separates the callers, and the tab is left in a different state for each:
+   * `controllerchange` means the new worker is in charge, so this bundle is the old one and there
+   * is nothing left to message -- `stale`. The fallback timer fires *because* no takeover came, so
+   * the worker is still installed and still ours to ask: the handle is kept and the status stays
+   * `waiting`. Clearing it there cost the banner's Reload its worker, leaving a plain refresh that
+   * activates nothing and a banner that only works on the remount after it.
+   */
+  const finishHandoff = useCallback(
+    (take: () => void, tookOver: boolean) => {
+      if (fallbackRef.current !== null) window.clearTimeout(fallbackRef.current);
+      fallbackRef.current = null;
+      if (reloadingRef.current) return;
+
+      if (isBusyRef.current?.()) {
+        intentRef.current = { kind: "none" };
+        if (tookOver) {
+          waitingRef.current = null;
+          changeStatus("stale");
+        }
+        return;
+      }
+      reloadingRef.current = true;
+      take();
+    },
+    [changeStatus],
+  );
 
   useEffect(() => {
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
@@ -122,9 +183,14 @@ export function useServiceWorkerUpdate() {
         changeStatus("stale");
         return;
       }
-      reloadingRef.current = true;
-      if (intent.kind === "navigate") window.location.assign(intent.href);
-      else window.location.reload();
+      if (intent.kind === "navigate") {
+        finishHandoff(() => window.location.assign(intent.href), true);
+        return;
+      }
+      // The banner's Reload runs the same gauntlet. `applyUpdate` arms this intent and arms no
+      // fallback, so the wait for the swap is unbounded: a scan begun anywhere inside it would
+      // otherwise be full-loaded away here, which is the navigate path's bug on the other branch.
+      finishHandoff(() => window.location.reload(), true);
     };
 
     // `ready`, not `getRegistration()`. `@serwist/window` defers `register()` until the window's
@@ -177,7 +243,7 @@ export function useServiceWorkerUpdate() {
       window.removeEventListener("pageshow", onPageShow);
       if (fallbackRef.current !== null) window.clearTimeout(fallbackRef.current);
     };
-  }, [changeStatus]);
+  }, [changeStatus, finishHandoff]);
 
   /**
    * The banner's Reload. A waiting worker is told to take over and the reload follows from
@@ -185,6 +251,10 @@ export function useServiceWorkerUpdate() {
    * has nothing to message and just refreshes.
    */
   const applyUpdate = useCallback(() => {
+    // Hiding the banner while a scan is in memory is *not* the guard: `AnimatePresence` keeps it
+    // mounted and clickable through its 0.4s exit, so a tap lands after `busy` has already flipped.
+    // A reload here destroys the queue with its credits spent, which no animation should decide.
+    if (isBusyRef.current?.()) return;
     // A link tap is already handing over to this worker and will load its own target. The banner is
     // still up during that wait, and overwriting the intent here would reload the page the user is
     // leaving and drop the destination on the floor.
@@ -233,14 +303,13 @@ export function useServiceWorkerUpdate() {
       if (!waiting) return false;
       intentRef.current = { kind: "navigate", href };
       waiting.postMessage({ type: "SKIP_WAITING" });
-      fallbackRef.current = window.setTimeout(() => {
-        if (reloadingRef.current) return;
-        reloadingRef.current = true;
-        window.location.assign(href);
-      }, NAVIGATION_UPDATE_TIMEOUT_MS);
+      fallbackRef.current = window.setTimeout(
+        () => finishHandoff(() => window.location.assign(href), false),
+        NAVIGATION_UPDATE_TIMEOUT_MS,
+      );
       return true;
     },
-    [changeStatus],
+    [changeStatus, finishHandoff],
   );
 
   return { status, updateAvailable: status !== "none", applyUpdate, applyOnNavigation };
