@@ -99,4 +99,18 @@ describe("build scripts", () => {
     expect(nixpacks).toContain("pnpm build:deploy");
     expect(nixpacks).not.toMatch(/pnpm build(?!:deploy)/);
   });
+
+  /**
+   * Railpack is the successor builder Coolify recommends. Its Node provider runs the `build` script
+   * by default, which deploys code without its migrations, and an array in `railpack.json` keeps
+   * the provider's own commands wherever it contains `"..."`. So the build step has to call
+   * `build:deploy` by name and must not spread the defaults back in.
+   */
+  it("is wired to railpack", () => {
+    const railpack = JSON.parse(readFileSync(join(__dirname, "..", "railpack.json"), "utf8"));
+    const commands: string[] = railpack.steps.build.commands;
+    expect(commands).toContain("pnpm build:deploy");
+    expect(commands).not.toContain("...");
+    expect(commands.join("\n")).not.toMatch(/pnpm build(?!:deploy)/);
+  });
 });

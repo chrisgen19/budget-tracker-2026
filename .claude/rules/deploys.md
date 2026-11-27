@@ -4,6 +4,7 @@ paths:
   - "prisma/migrations/**"
   - scripts/check-migration-drift.ts
   - nixpacks.toml
+  - railpack.json
   - src/app/sw.ts
 ---
 
