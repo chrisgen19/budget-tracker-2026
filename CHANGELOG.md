@@ -48,6 +48,13 @@ the multi-scan review and the Telegram bot.
   timeout, a zoomed photo re-clamps on resize and pans with the arrow keys, expired Telegram drafts
   release their image, and `verify-receipt-photos.ts` fails instead of passing when it never sees
   the lock wait.
+- **Second review round.** Editing a transaction decides a photo change against the photo the row
+  holds under its lock, so a concurrent replace cannot leave a split receipt on two photos, and
+  bulk delete reads its rows' photos under `FOR UPDATE` so none escapes cleanup. Attaching or
+  removing a photo no longer remounts the form. A retried multi-scan save retries failed photo
+  uploads, and its "photo didn't upload" toast is read from the saved rows. Cleanup carries on
+  past a failed R2 delete, the receipt total nets out income, a blurred photo no longer zooms on
+  the wheel, and `sharp` moved to `dependencies`, since the upload route loads it at runtime.
 
 ## 2026-11-26 - The UI talks to the API only through `src/hooks`, and redesigns cannot change the backend
 

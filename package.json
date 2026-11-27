@@ -42,6 +42,7 @@
     "react-hook-form": "^7.54.0",
     "recharts": "^2.15.0",
     "resend": "^6.9.3",
+    "sharp": "^0.34.5",
     "vaul": "^1.1.2",
     "zod": "^3.24.0"
   },
@@ -67,7 +68,6 @@
     "postcss": "^8.4.0",
     "prisma": "^6.2.0",
     "serwist": "^9.5.6",
-    "sharp": "^0.34.5",
     "tailwindcss": "^3.4.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",

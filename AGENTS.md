@@ -127,10 +127,10 @@ other agent tools do not load them, so open the file directly when you need the 
 - `EMAIL_FROM` — Sender address (optional; defaults to `Budget Tracker <noreply@resend.dev>` if unset). Use a verified Resend domain in production, e.g. `Budget Tracker <noreply@yourdomain.com>`.
 - `AUTH_URL` — Optional; used in preview/staging deployments
 - `ALLOW_REMOTE_DB` — Local only, and never set it in `.env`: `1` lets `pnpm db:migrate` / `pnpm db:push` run against a database that is not on this machine. The guard was written believing two migrations from the closed PR #187 had been applied straight to production from a dev machine; #192 established that a Vercel preview build did it. It is kept regardless — the accident it prevents is one keystroke away, it is simply not the one that happened — and this is the deliberate way past it, one command at a time (`ALLOW_REMOTE_DB=1 pnpm db:push`). Migrations otherwise reach production only by merging to main and letting Coolify deploy them
-- `R2_ACCOUNT_ID` — Cloudflare account id for receipt photo storage. Any blank or missing `R2_*` value disables photos (routes answer 503 `PHOTOS_DISABLED`, no attach UI)
-- `R2_ACCESS_KEY_ID` — R2 API token key id, scoped to the receipt bucket with Object Read and Write
-- `R2_SECRET_ACCESS_KEY` — Secret for that R2 token
-- `R2_BUCKET` — Private R2 bucket holding receipt photos; use a separate dev bucket locally
+- `R2_ACCOUNT_ID`: Cloudflare account id for receipt photo storage. Any blank or missing `R2_*` value disables photos (routes answer 503 `PHOTOS_DISABLED`, no attach UI)
+- `R2_ACCESS_KEY_ID`: R2 API token key id, scoped to the receipt bucket with Object Read and Write
+- `R2_SECRET_ACCESS_KEY`: Secret for that R2 token
+- `R2_BUCKET`: Private R2 bucket holding receipt photos; use a separate dev bucket locally
 - `CRON_SECRET` — Shared secret required by `/api/cron/bill-reminders`. Set in the production (Coolify) environment; a Coolify Scheduled Task reuses the same env var to call the endpoint daily (see **Cron Jobs** below).
 
 ## Cron Jobs
