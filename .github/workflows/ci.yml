@@ -11,13 +11,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
+  # The matrix legs report as `checks (20)` and `checks (24)`, and the `ci` job below aggregates
+  # them. That split exists for one reason: the "Protect main" ruleset requires a status check
+  # named exactly `ci`. Putting the matrix on a job called `ci` renames it to `ci (20)` and
+  # `ci (24)`, the required name then never reports, and every PR becomes unmergeable. The
+  # aggregator keeps that one name stable no matter how many versions this matrix grows.
+  checks:
     # The job only reads the repo and runs checks. Pinned here rather than relying on the
     # repository default, which is set outside the repo and can change without a diff --
     # this workflow runs install scripts and test code, so the token it holds matters.
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    strategy:
+      # Both versions run to the end: which Node a failure is specific to is the whole
+      # question this matrix exists to answer, and cancelling the other leg hides it.
+      fail-fast: false
+      matrix:
+        # 20 is the floor `package.json` engines declares and what the previous production
+        # image ran. 24 is what `railpack.json` now deploys, so it is the one that has to be
+        # green for a release to be trustworthy; 20 stays until the engines floor moves.
+        node: [20, 24]
+    name: checks (${{ matrix.node }})
     steps:
       # Pinned to commit SHAs for the reason given in `claude.yml`. The stakes are
       # lower here - this job holds no secrets and only `contents: read` - but a
@@ -32,13 +47,14 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 20
+          node-version: ${{ matrix.node }}
           cache: pnpm
 
       # --engine-strict fails the install when any dependency's engines.node excludes the
       # Node version above, instead of letting it surface later as an obscure crash inside
       # a test worker. jsdom 30 and @testing-library/jest-dom 7 both floor at Node 22 and
-      # were caught this way.
+      # were caught this way. With the matrix it now guards both ends: a dependency that
+      # drops Node 20 fails the 20 leg, and one that has not yet admitted 24 fails the 24 leg.
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --engine-strict
 
@@ -96,3 +112,25 @@ jobs:
       - name: Type check MCP server
         run: pnpm type-check
         working-directory: mcp-server
+
+  # The one check "Protect main" requires, by name. It holds no steps of its own: its only job is
+  # to turn the matrix's results into a single pass or fail under a name that never changes.
+  #
+  # A status function is required or the default `success()` skips this job the moment a leg
+  # fails -- a skipped required check reports neutral, and the PR is mergeable with a red matrix.
+  # `!cancelled()` rather than `always()`: `always()` runs through cancellation too, and with
+  # `cancel-in-progress: true` above that is routine here, so a superseded run would report the
+  # required `ci` check as *failed* on that SHA instead of cancelled. GitHub's expressions docs
+  # name `!cancelled()` as the alternative for exactly this. The result is then asserted
+  # explicitly, because `needs` alone would let a skipped leg through.
+  ci:
+    needs: checks
+    if: ${{ !cancelled() }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check matrix result
+        run: |
+          echo "checks result: ${{ needs.checks.result }}"
+          test "${{ needs.checks.result }}" = "success"

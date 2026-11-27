@@ -9,13 +9,15 @@ paths:
   - package.json
   - pnpm-lock.yaml
   - railpack.json
+  - nixpacks.toml
+  - .github/workflows/ci.yml
 ---
 
 # Testing
 
 ## Testing
 - **Vitest + React Testing Library**, jsdom environment. Config in `vitest.config.mts`, global setup in `vitest.setup.ts` (RTL cleanup, and the `matchMedia`/`scrollTo` stubs jsdom lacks)
-- **Node floor**: CI runs Node 20 (`.github/workflows/ci.yml`), and so does production, which pins Node 20 in both `nixpacks.toml` and `railpack.json`. Moving production to a newer Node means moving CI with it. Test dependencies have to admit 20. `jsdom` stays on 29.x and `@testing-library/jest-dom` is not installed at all — both 30.x and 7.x floor at Node 22. CI installs with `--engine-strict` so a dependency that excludes the Node version fails at install with a named cause, rather than crashing later inside a test worker
+- **Node floor**: CI runs Node 20 **and** Node 24 (`.github/workflows/ci.yml`), and production runs whichever build pack Coolify is set to: `railpack.json` pins 24, the version production is moving to, while `nixpacks.toml` stays on `nodejs_20`, the version production is known to build with today, since it is the fallback until a Railpack deploy is confirmed. The matrix legs report as `checks (20)` and `checks (24)`; the required status check is the separate `ci` job that aggregates them, because a matrix on a job named `ci` renames the check to `ci (20)` / `ci (24)` and the "Protect main" ruleset then blocks every PR on a name that never reports. `scripts/build-scripts.test.ts` asserts each build pack's pin is a major the matrix lists — not that the two agree — reading the matrix out of the `checks` job rather than the first `node: [...]` in the file, and stripping `nixpacks.toml`'s comments before reading its pin, since its header names other Node versions in prose. Both of those are first-match hazards that made the guard pass against the wrong text. Test dependencies have to admit **both** ends of the matrix. `jsdom` stays on 29.x and `@testing-library/jest-dom` is not installed at all — both 30.x and 7.x floor at Node 22. CI installs with `--engine-strict` so a dependency that excludes either Node version fails at install with a named cause, rather than crashing later inside a test worker
 - Tests are colocated: `src/**/*.test.ts(x)`, plus `scripts/**/*.test.ts` for the pure helpers there (the `.env` parser, the connection-string host check, the Prisma error classifier). Nothing imports them, so they stay out of the Next.js bundle. The `scripts/` tests declare `@vitest-environment node`, since they run under `tsx` in Node; `vitest.setup.ts` is DOM-only and guards on `typeof window` so it is a no-op for them
 - Import test globals explicitly (`import { describe, it, expect } from "vitest"`) rather than enabling `globals`
 - A test should fail if you revert the fix it covers. When adding one for a bug, confirm that before committing
