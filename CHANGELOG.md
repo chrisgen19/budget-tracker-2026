@@ -2,6 +2,20 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-27 - App updates apply on the next in-app navigation
+
+- **A new build is taken on the next in-app link tap or profile-menu pick**, as one full load of
+  the page being opened, so nobody has to tap "A new version is available. Reload". Before this,
+  most open tabs kept running the old bundle against the new API until they were closed (#306).
+- **Never while a receipt scan is pending.** The multi-scan queue lives only in memory and its
+  scan credits are already spent, so while it holds items, or a scan or save-all is running, the
+  tap stays an ordinary client navigation and the banner waits.
+- **Other open tabs no longer reload the moment one tab updates.** They are marked stale, show the
+  banner (Reload is a plain refresh there) and update on their own next safe navigation, so a tab
+  mid-scan or mid-form is not reloaded out from under the user.
+- **The banner stays as the fallback** for back/forward, other programmatic navigations, offline
+  taps and a tab that never navigates.
+
 ## 2026-11-27 - Receipt photos stored as AVIF at 1200px
 
 - **New receipt photos are stored as AVIF at quality 50, longest side 1200px**, instead of JPEG at
