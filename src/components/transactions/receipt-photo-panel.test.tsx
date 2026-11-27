@@ -58,4 +58,28 @@ describe("ReceiptPhotoPanel", () => {
 
     expect(translateX(img)).toBeGreaterThanOrEqual(-75);
   });
+
+  // An arrow press during a zoom step used `set`, which left the zoom's offset animation running,
+  // and the animation then landed on its old target and undid the press.
+  it("keeps an arrow press made while a zoom step is still animating", async () => {
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    render(<ReceiptPhotoPanel src="blob:receipt" />);
+    const img = screen.getByAltText("Receipt photo");
+    const frame = img.parentElement as HTMLElement;
+    setFrameSize(frame, 400, 400);
+    fireEvent.load(img);
+
+    const zoomIn = screen.getByRole("button", { name: "Zoom in" });
+    for (let i = 0; i < 4; i++) fireEvent.click(zoomIn); // 3x: ±400
+    await act(async () => new Promise((r) => setTimeout(r, 600)));
+    for (let i = 0; i < 8; i++) fireEvent.keyDown(frame, { key: "ArrowRight" }); // x = -320
+
+    // Zoom out a step: the offset animates toward -300 (the 2.5x bound). Press left mid-flight.
+    fireEvent.click(screen.getByRole("button", { name: "Zoom out" }));
+    fireEvent.keyDown(frame, { key: "ArrowLeft" });
+    await act(async () => new Promise((r) => setTimeout(r, 800)));
+
+    // The press moved it 40 to the right of where it stood, and nothing put it back to -300.
+    expect(translateX(img)).toBeGreaterThan(-300);
+  });
 });

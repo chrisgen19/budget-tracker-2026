@@ -71,10 +71,12 @@ export function ReceiptPhotoPanel({ src, sharedWith, onOpen, className }: Receip
     const next = keyboardPan(event.key, x.get(), y.get(), bounds);
     if (!next) return;
     event.preventDefault();
-    // Set, not animated: each press must start from where the last one ended, and an animation
-    // still running would hand a held key its mid-flight value and swallow most of each step.
-    x.set(next.x);
-    y.set(next.y);
+    // Not animated: each press must start from where the last one ended, and an animation still
+    // running would hand a held key its mid-flight value and swallow most of each step. `jump`,
+    // not `set`, for the same reason as the resize clamp: a zoom step still animating the offset
+    // would otherwise land on its old target afterwards and undo the press.
+    x.jump(next.x);
+    y.jump(next.y);
   };
 
   // Bounds follow the zoom, and an offset left past the new edge (3x to 2x) is pulled back in.
