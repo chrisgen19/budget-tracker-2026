@@ -31,21 +31,61 @@ const useIsMobile = () => {
 interface VisualViewport {
   height: number;
   offsetTop: number;
+  /**
+   * Whether a virtual keyboard is what took the missing height.
+   *
+   * Measured against the tallest this viewport has been since the modal opened, and
+   * deliberately not against `window.innerHeight`. Comparing against the layout viewport
+   * only works while the keyboard leaves it alone, which is the default (`resizes-visual`)
+   * but not a guarantee: wherever `interactive-widget: resizes-content` is in effect, the
+   * layout viewport shrinks along with the visual one, the two stay in step, and the
+   * comparison reads "no keyboard" for as long as the keyboard is up. The app does not
+   * set it today (it would lift `MobileTabBar` above the keyboard), but nothing here
+   * should silently break if that changes.
+   *
+   * A high-water mark holds under either behaviour, since the height before the keyboard
+   * is the height to beat whether or not CSS was told about it.
+   *
+   * A ratio rather than a pixel count because keyboards are sized in proportion to the
+   * screen: every phone keyboard takes well over a quarter of it, while the things that
+   * move these numbers without a keyboard (a collapsing browser toolbar, a few pixels of
+   * rounding) are nowhere near that.
+   */
+  keyboardOpen: boolean;
 }
+
+/** Below this share of its tallest measurement, only a keyboard explains the loss. */
+const KEYBOARD_OPEN_RATIO = 0.75;
+
+/**
+ * How much of the viewport a bottom sheet takes when there is no keyboard: a strip of the
+ * dimmed page stays visible above it, so the sheet reads as a sheet rather than a screen.
+ * With a keyboard open there is no such room to give away - that strip costs about 40px of
+ * the ~360px left, and the field being typed into is what loses it.
+ */
+const SHEET_VIEWPORT_FRACTION = 0.9;
 
 const useVisualViewport = (enabled: boolean) => {
   const [viewport, setViewport] = useState<VisualViewport | null>(null);
+  /** Tallest seen while open; reset on close, so a rotation cannot strand a stale one. */
+  const tallestRef = useRef(0);
 
   const update = useCallback(() => {
     const vv = window.visualViewport;
     if (vv) {
-      setViewport({ height: vv.height, offsetTop: vv.offsetTop });
+      tallestRef.current = Math.max(tallestRef.current, vv.height, window.innerHeight);
+      setViewport({
+        height: vv.height,
+        offsetTop: vv.offsetTop,
+        keyboardOpen: vv.height < tallestRef.current * KEYBOARD_OPEN_RATIO,
+      });
     }
   }, []);
 
   useEffect(() => {
     if (!enabled) {
       setViewport(null);
+      tallestRef.current = 0;
       return;
     }
 
@@ -197,7 +237,7 @@ export function Modal({ open, onClose, title, children, size = "default" }: Moda
     : undefined;
 
   const mobileMaxHeight = viewport
-    ? `${viewport.height * 0.9}px`
+    ? `${viewport.height * (viewport.keyboardOpen ? 1 : SHEET_VIEWPORT_FRACTION)}px`
     : "90vh";
 
   /**
