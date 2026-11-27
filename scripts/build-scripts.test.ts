@@ -88,28 +88,11 @@ describe("build scripts", () => {
   });
 
   /**
-   * `nixpacks.toml` is kept until a Railpack deploy has succeeded on production, because the Build
-   * Pack setting lives in Coolify and not in this repo. While it is there it has to stay correct:
-   * deleting it with Nixpacks still selected falls back to auto-detection and plain `pnpm build`,
-   * which is #192 inverted -- code shipped ahead of its schema, silently and green.
-   *
-   * Comment lines are stripped first: this file explains the history in prose that names
-   * `pnpm build`, and matching that would assert the opposite of what it says.
-   */
-  it("is wired to nixpacks", () => {
-    const nixpacks = readFileSync(join(__dirname, "..", "nixpacks.toml"), "utf8")
-      .split("\n")
-      .filter((line) => !line.trimStart().startsWith("#"))
-      .join("\n");
-    expect(nixpacks).toContain("pnpm build:deploy");
-    expect(nixpacks).not.toMatch(/pnpm build(?!:deploy)/);
-  });
-
-  /**
-   * Railpack is the builder Coolify recommends and the one production is moving to. Its Node
-   * provider runs the `build` script by default, which deploys code without its migrations, and an
-   * array in `railpack.json` keeps the provider's own commands wherever it contains `"..."`. So the
-   * build step has to call `build:deploy` by name and must not spread the defaults back in.
+   * Railpack is the only build pack: production switched to it from Nixpacks on 2026-11-27 and
+   * `nixpacks.toml` was deleted once that deploy succeeded. Its Node provider runs the `build`
+   * script by default, which deploys code without its migrations, and an array in `railpack.json`
+   * keeps the provider's own commands wherever it contains `"..."`. So the build step has to call
+   * `build:deploy` by name and must not spread the defaults back in.
    */
   it("is wired to railpack", () => {
     const raw = readFileSync(join(__dirname, "..", "railpack.json"), "utf8");
@@ -142,15 +125,10 @@ describe("build scripts", () => {
   });
 
   /**
-   * Every build pack's Node pin has to be a version CI actually runs. These numbers live in three
+   * The Railpack Node pin has to be a version CI actually runs. The two numbers live in different
    * files with nothing tying them together, and the gap is silent in the direction that matters: a
    * green pipeline on one version while the image ships another, so a behaviour change in a
    * dependency path -- deprecations, OpenSSL defaults, undici -- surfaces only in production.
-   *
-   * The two build packs are deliberately *not* required to match. `railpack.json` is on 24, the
-   * version production is moving to; `nixpacks.toml` stays on 20, the version production is known
-   * to build with today, because it is the fallback for the deploy that happens before Railpack is
-   * confirmed. What both must satisfy is that the matrix runs them, and it runs both.
    *
    * The matrix is read out of the workflow rather than hardcoded, so adding a version to CI is
    * enough and this test never has to be the second place to edit. It is read out of the `checks`
@@ -160,7 +138,7 @@ describe("build scripts", () => {
    *
    * Majors are compared, so a legitimate patch pin (`"24.5.0"`) still satisfies a `node: [24]` leg.
    */
-  it("pins every build pack to a Node version the CI matrix covers", () => {
+  it("pins railpack to a Node version the CI matrix covers", () => {
     const major = (version: string) => version.trim().replace(/^[^0-9]*/, "").split(".")[0];
 
     const workflow = readFileSync(join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8");
@@ -177,17 +155,5 @@ describe("build scripts", () => {
 
     const railpack = JSON.parse(readFileSync(join(__dirname, "..", "railpack.json"), "utf8"));
     expect(versions).toContain(major(String(railpack.packages?.node)));
-
-    // Comments stripped first, the same way the nixpacks test above does it. That file's header
-    // names other Node versions in prose -- it explains why the pin is 20 and not 24 -- and an
-    // unanchored match reads the first of those instead of the pin. It did, and this assertion
-    // passed while `nixPkgs` said something else entirely.
-    const nixpacks = readFileSync(join(__dirname, "..", "nixpacks.toml"), "utf8")
-      .split("\n")
-      .filter((line) => !line.trimStart().startsWith("#"))
-      .join("\n");
-    const nixpacksPin = nixpacks.match(/nodejs_(\d+)/);
-    expect(nixpacksPin).not.toBeNull();
-    expect(versions).toContain(nixpacksPin![1]);
   });
 });
