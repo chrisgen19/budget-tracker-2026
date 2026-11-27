@@ -60,6 +60,33 @@ describe("createPhotoStorage", () => {
     expect(calls[0].headers.get("content-type")).toBe("image/jpeg");
   });
 
+  it("put hands fetch the raw bytes, not a signed Request, so Content-Length survives", async () => {
+    // Next's patched fetch rebuilds a Request input from its body stream, which has no length:
+    // the PUT then went out chunked and R2 answered 411 Length Required. A Uint8Array passed
+    // as init.body keeps its length through that rebuild.
+    const seen: { input: RequestInfo | URL; init?: RequestInit }[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push({ input, init });
+      return new Response(null, { status: 200 });
+    }) as typeof fetch;
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+
+    await createPhotoStorage(ENV, fetchImpl).put("receipts/u1/p1.jpg", bytes, "image/jpeg");
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].input).not.toBeInstanceOf(Request);
+    expect(String(seen[0].input)).toBe(
+      "https://acct.r2.cloudflarestorage.com/bucket/receipts/u1/p1.jpg",
+    );
+    expect(seen[0].init?.body).toBe(bytes);
+    // Still signed. The payload is not part of the signature (S3 UNSIGNED-PAYLOAD), so sending
+    // the bytes separately from the signed Request cannot invalidate it.
+    const headers = new Headers(seen[0].init?.headers);
+    expect(headers.get("authorization")).toMatch(/^AWS4-HMAC-SHA256/);
+    expect(headers.get("x-amz-content-sha256")).toBe("UNSIGNED-PAYLOAD");
+    expect(headers.get("content-type")).toBe("image/jpeg");
+  });
+
   it("put throws PhotoStorageError on failure", async () => {
     const { fetchImpl } = stub(500);
     await expect(
@@ -181,8 +208,8 @@ describe("request timeout", () => {
   it("gives up on a request that hangs for 10 seconds, as a PhotoStorageError", async () => {
     vi.useFakeTimers();
     try {
-      const hung = (async (input: RequestInfo | URL) => {
-        const signal = (input as Request).signal;
+      const hung = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const signal = (init?.signal ?? (input as Request).signal) as AbortSignal;
         return new Promise<Response>((_, reject) => {
           if (signal.aborted) return reject(signal.reason);
           signal.addEventListener("abort", () => reject(signal.reason));
