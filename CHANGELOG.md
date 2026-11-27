@@ -29,6 +29,12 @@ All notable development history for the Budget Tracker app.
   cancelled.
 - **A page restored by Back after a hand-off is marked stale**, since its worker is already the
   controller by then and there is nothing left to ask to take over.
+- **A scan that starts during the hand-off keeps its queue.** The scan check is read again when the
+  hand-off finishes, up to 3s after the tap, and not only when the tap is handled. Busy by then,
+  the tap becomes an ordinary client navigation rather than a full load -- the queue lives in
+  `AppShell` and survives one -- and the tab is marked stale so the banner can offer the update
+  once nothing is held in memory.
+
 ## 2026-11-27 - Railpack build config alongside Nixpacks
 
 - **`railpack.json` added** so the Coolify app can move off Nixpacks, which is deprecated upstream

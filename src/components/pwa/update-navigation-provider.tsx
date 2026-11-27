@@ -31,14 +31,25 @@ interface UpdateNavigationProviderProps {
  *
  * Mounted once in `AppShell`, which also owns the scan queue `busy` is read from. The banner reads
  * the same context, so the service worker hook runs once per tab.
+ *
+ * `busy` gates the tap and, through the hand-off passed to the hook, the full load that follows it.
  */
 export function UpdateNavigationProvider({ busy, children }: UpdateNavigationProviderProps) {
   const router = useRouter();
-  const { status, updateAvailable, applyUpdate, applyOnNavigation } = useServiceWorkerUpdate();
 
   // A ref, so the listener registered once reads the current value rather than the one at mount.
   const busyRef = useRef(busy);
   busyRef.current = busy;
+
+  // `busy` is read again when the hand-off finishes, not only when the tap is handled: a scan can
+  // start inside the up-to-3s wait, and the full load would then discard its queue. The hook falls
+  // back to this client navigation in that case, which keeps the queue and leaves the tab stale.
+  // Passed fresh each render on purpose -- the hook keeps it in a ref, so there is nothing to
+  // memoize and no stale `router` to close over.
+  const { status, updateAvailable, applyUpdate, applyOnNavigation } = useServiceWorkerUpdate({
+    isBusy: () => busyRef.current,
+    navigate: (href) => router.push(href),
+  });
 
   useEffect(() => {
     const onClick = (event: MouseEvent) => {

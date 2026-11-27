@@ -22,6 +22,14 @@ export type UpdateStatus = "none" | "waiting" | "stale";
 /** What this tab asked for, which decides what its next `controllerchange` does. */
 type Intent = { kind: "none" } | { kind: "reload" } | { kind: "navigate"; href: string };
 
+/** How the hook reaches the app when a hand-off must not become a full load after all. */
+export interface NavigationHandoff {
+  /** True while work lives only in memory (the receipt scan queue), so a full load would lose it. */
+  isBusy: () => boolean;
+  /** An ordinary client navigation, used instead of the full load when that is the case. */
+  navigate: (href: string) => void;
+}
+
 /**
  * Whether a new build is installed and waiting, and how to take it.
  *
@@ -44,7 +52,7 @@ type Intent = { kind: "none" } | { kind: "reload" } | { kind: "navigate"; href: 
  * (`applyOnNavigation`, called by `UpdateNavigationProvider`), which full-loads the target instead of
  * reloading the page the user is leaving.
  */
-export function useServiceWorkerUpdate() {
+export function useServiceWorkerUpdate(handoff?: NavigationHandoff) {
   const [status, setStatus] = useState<UpdateStatus>("none");
   const statusRef = useRef<UpdateStatus>("none");
   const waitingRef = useRef<ServiceWorker | null>(null);
@@ -52,10 +60,45 @@ export function useServiceWorkerUpdate() {
   const reloadingRef = useRef(false);
   const fallbackRef = useRef<number | null>(null);
 
+  // A ref, so a hand-off finishing later reads the current value rather than the one at mount.
+  const handoffRef = useRef(handoff);
+  handoffRef.current = handoff;
+
   const changeStatus = useCallback((next: UpdateStatus) => {
     statusRef.current = next;
     setStatus(next);
   }, []);
+
+  /**
+   * Finish a navigation hand-off: a full load of `href` on the new build, unless work that lives
+   * only in memory turned up while the hand-off was in flight.
+   *
+   * `busy` is read when the tap is handled, and the load happens up to
+   * `NAVIGATION_UPDATE_TIMEOUT_MS` later, so a receipt scan can start in between. A full load would
+   * throw that queue away with its scan credits already spent, which is the one thing this feature
+   * must not do, so the tap becomes an ordinary client navigation instead and the tab is left
+   * `stale`: still the old bundle, with the banner offering the update once nothing is in memory.
+   * Taking the update late is the smaller cost, and is what every sibling tab already does.
+   */
+  const takeNavigation = useCallback(
+    (href: string) => {
+      if (fallbackRef.current !== null) window.clearTimeout(fallbackRef.current);
+      fallbackRef.current = null;
+      if (reloadingRef.current) return;
+
+      const pending = handoffRef.current;
+      if (pending?.isBusy()) {
+        intentRef.current = { kind: "none" };
+        waitingRef.current = null;
+        changeStatus("stale");
+        pending.navigate(href);
+        return;
+      }
+      reloadingRef.current = true;
+      window.location.assign(href);
+    },
+    [changeStatus],
+  );
 
   useEffect(() => {
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
@@ -122,9 +165,12 @@ export function useServiceWorkerUpdate() {
         changeStatus("stale");
         return;
       }
+      if (intent.kind === "navigate") {
+        takeNavigation(intent.href);
+        return;
+      }
       reloadingRef.current = true;
-      if (intent.kind === "navigate") window.location.assign(intent.href);
-      else window.location.reload();
+      window.location.reload();
     };
 
     // `ready`, not `getRegistration()`. `@serwist/window` defers `register()` until the window's
@@ -177,7 +223,7 @@ export function useServiceWorkerUpdate() {
       window.removeEventListener("pageshow", onPageShow);
       if (fallbackRef.current !== null) window.clearTimeout(fallbackRef.current);
     };
-  }, [changeStatus]);
+  }, [changeStatus, takeNavigation]);
 
   /**
    * The banner's Reload. A waiting worker is told to take over and the reload follows from
@@ -233,14 +279,13 @@ export function useServiceWorkerUpdate() {
       if (!waiting) return false;
       intentRef.current = { kind: "navigate", href };
       waiting.postMessage({ type: "SKIP_WAITING" });
-      fallbackRef.current = window.setTimeout(() => {
-        if (reloadingRef.current) return;
-        reloadingRef.current = true;
-        window.location.assign(href);
-      }, NAVIGATION_UPDATE_TIMEOUT_MS);
+      fallbackRef.current = window.setTimeout(
+        () => takeNavigation(href),
+        NAVIGATION_UPDATE_TIMEOUT_MS,
+      );
       return true;
     },
-    [changeStatus],
+    [changeStatus, takeNavigation],
   );
 
   return { status, updateAvailable: status !== "none", applyUpdate, applyOnNavigation };

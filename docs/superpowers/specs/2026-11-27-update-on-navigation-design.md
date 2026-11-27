@@ -67,12 +67,17 @@ against the new API, which is the client/server skew #306 exists to close.
 `busy = scan.items.length > 0 || scan.isScanning || scan.isSavingAll` from the `useMultiScan()` it
 already owns (`src/components/app-shell.tsx:100`).
 
-The gate is read **once, when the tap is handled**, and deliberately not re-checked by
-`controllerchange` or the 3s fallback. A scan started inside that window is therefore not protected
-by it. That is not a hole in the anti-goal above: the user has already chosen to leave the page, and
-an ordinary client navigation would unmount the scan sheet just the same. Deferring the load until
-the queue drains would strand the tab on a page it was told to leave, with nothing on screen saying
-why -- a worse failure than the one it avoids.
+The gate is read **twice**: when the tap is handled, and again when the hand-off finishes, which is
+up to 3s later. A scan started inside that window would otherwise be lost, because the hand-off ends
+in a full load. An ordinary client navigation does *not* cost the queue the way a full load does --
+`useMultiScan()` lives in `AppShell` (`src/components/app-shell.tsx:101`), inside the `(app)` layout,
+so it survives any navigation that keeps the document -- which is what makes the second read worth
+taking.
+
+Busy at that point, the hook does not defer the load: deferring would strand the tab on a page it
+was told to leave, with nothing on screen saying why. It falls back to `router.push` instead, so the
+tap still goes where it was aimed, and marks the tab `stale`. The update is then taken on a later
+navigation or from the banner, exactly as in a sibling tab that never accepted it.
 
 **Wiring** (new `src/components/pwa/update-navigation-provider.tsx`):
 - `AppShell` calls the hook once and passes `status` and `applyUpdate` down to `UpdatePromptBanner`

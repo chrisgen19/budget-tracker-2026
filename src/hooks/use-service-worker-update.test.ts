@@ -345,6 +345,83 @@ describe("useServiceWorkerUpdate", () => {
     expect(waiting.postMessage).toHaveBeenCalledTimes(1);
   });
 
+  // `busy` is read when the tap is handled, and the load happens up to 3s later. A scan started in
+  // between lives only in memory with its credits already spent, so the full load must give way to
+  // an ordinary client navigation; the tab keeps the old bundle and is marked stale for the banner.
+  it("client-navigates instead of loading when a scan starts during the hand-off", async () => {
+    let busy = false;
+    const navigate = vi.fn();
+    const waiting = new FakeWorker();
+    registration.waiting = waiting;
+    const { result } = renderHook(() =>
+      useServiceWorkerUpdate({ isBusy: () => busy, navigate }),
+    );
+    await waitFor(() => expect(result.current.status).toBe("waiting"));
+
+    act(() => {
+      result.current.applyOnNavigation("/bills");
+    });
+    busy = true;
+    act(() => {
+      container.dispatchEvent(new Event("controllerchange"));
+    });
+
+    expect(navigate).toHaveBeenCalledWith("/bills");
+    expect(assign).not.toHaveBeenCalled();
+    expect(result.current.status).toBe("stale");
+  });
+
+  it("gives way to the scan queue on the fallback too, and does not load afterwards", async () => {
+    let busy = false;
+    const navigate = vi.fn();
+    registration.waiting = new FakeWorker();
+    const { result } = renderHook(() =>
+      useServiceWorkerUpdate({ isBusy: () => busy, navigate }),
+    );
+    await waitFor(() => expect(result.current.status).toBe("waiting"));
+
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        result.current.applyOnNavigation("/goals");
+      });
+      busy = true;
+      act(() => {
+        vi.advanceTimersByTime(NAVIGATION_UPDATE_TIMEOUT_MS);
+      });
+      expect(navigate).toHaveBeenCalledWith("/goals");
+      expect(assign).not.toHaveBeenCalled();
+
+      // The worker taking over later must not turn it into the full load after all.
+      act(() => {
+        container.dispatchEvent(new Event("controllerchange"));
+      });
+      expect(assign).not.toHaveBeenCalled();
+      expect(result.current.status).toBe("stale");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The ordinary case must not change: nothing in memory, so the hand-off is still a full load.
+  it("still full-loads the target when nothing is busy", async () => {
+    const navigate = vi.fn();
+    registration.waiting = new FakeWorker();
+    const { result } = renderHook(() =>
+      useServiceWorkerUpdate({ isBusy: () => false, navigate }),
+    );
+    await waitFor(() => expect(result.current.status).toBe("waiting"));
+
+    act(() => {
+      result.current.applyOnNavigation("/labels");
+    });
+    act(() => {
+      container.dispatchEvent(new Event("controllerchange"));
+    });
+    expect(assign).toHaveBeenCalledWith("/labels");
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
   it("prefers a newer waiting worker over a stale state", async () => {
     const { result } = await renderStale();
     const installing = new FakeWorker();

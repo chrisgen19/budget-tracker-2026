@@ -1,17 +1,24 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { NavigationHandoff } from "@/hooks/use-service-worker-update";
 import { UpdateNavigationProvider, useUpdateNavigation } from "./update-navigation-provider";
 
 const applyOnNavigation = vi.fn();
 const push = vi.fn();
 
+/** What the provider handed the hook on its last render, for the busy re-check. */
+let handoff: NavigationHandoff | undefined;
+
 vi.mock("@/hooks/use-service-worker-update", () => ({
-  useServiceWorkerUpdate: () => ({
-    status: "waiting",
-    updateAvailable: true,
-    applyUpdate: vi.fn(),
-    applyOnNavigation: (href: string) => applyOnNavigation(href),
-  }),
+  useServiceWorkerUpdate: (given?: NavigationHandoff) => {
+    handoff = given;
+    return {
+      status: "waiting",
+      updateAvailable: true,
+      applyUpdate: vi.fn(),
+      applyOnNavigation: (href: string) => applyOnNavigation(href),
+    };
+  },
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
@@ -86,6 +93,24 @@ describe("UpdateNavigationProvider", () => {
     renderShell(true);
     fireEvent.click(screen.getByRole("button", { name: "Goals" }));
     expect(applyOnNavigation).not.toHaveBeenCalled();
+    expect(push).toHaveBeenCalledWith("/goals");
+  });
+
+  // The hand-off can finish up to 3s after the tap, so the hook asks again then. A scan started in
+  // between must still be seen, and the client navigation it falls back to is this router's.
+  it("hands the hook a busy check that tracks the prop, and a client navigation", () => {
+    const { rerender } = renderShell(false);
+    expect(handoff?.isBusy()).toBe(false);
+
+    rerender(
+      <UpdateNavigationProvider busy>
+        <a href="/bills">Bills</a>
+        <GoToGoals />
+      </UpdateNavigationProvider>,
+    );
+    expect(handoff?.isBusy()).toBe(true);
+
+    handoff?.navigate("/goals");
     expect(push).toHaveBeenCalledWith("/goals");
   });
 
