@@ -67,17 +67,31 @@ against the new API, which is the client/server skew #306 exists to close.
 `busy = scan.items.length > 0 || scan.isScanning || scan.isSavingAll` from the `useMultiScan()` it
 already owns (`src/components/app-shell.tsx:100`).
 
-The gate is read **twice**: when the tap is handled, and again when the hand-off finishes, which is
-up to 3s later. A scan started inside that window would otherwise be lost, because the hand-off ends
-in a full load. An ordinary client navigation does *not* cost the queue the way a full load does --
-`useMultiScan()` lives in `AppShell` (`src/components/app-shell.tsx:101`), inside the `(app)` layout,
-so it survives any navigation that keeps the document -- which is what makes the second read worth
-taking.
+The gate is read **three** times, because the queue can be destroyed by three different things.
 
-Busy at that point, the hook does not defer the load: deferring would strand the tab on a page it
-was told to leave, with nothing on screen saying why. It falls back to `router.push` instead, so the
-tap still goes where it was aimed, and marks the tab `stale`. The update is then taken on a later
-navigation or from the banner, exactly as in a sibling tab that never accepted it.
+**At the tap**, which decides whether the hand-off starts at all.
+
+**When the hand-off finishes**, up to 3s later, since a scan can start in between. Busy by then,
+the full load is **abandoned and the tap is dropped** -- not deferred, and not turned into a client
+navigation. A `router.push` here would be the only place that runs an old bundle under a *new*
+controller: `sw.ts` precaches the build manifest, so the activating worker evicts the old build's
+chunks while the container serving them has been replaced. That is the client/server skew #306
+exists to close, and it is why a `stale` tab's taps already go through `window.location.assign`
+instead. The original href is stale by then in any case -- while busy the provider stops swallowing
+taps, so the user may have navigated elsewhere. Dropping it is the honest reading: starting a scan
+seconds after tapping a link is a change of mind, the scan sheet is on screen, and any navigation
+would close it.
+
+The tab is left differently depending on which caller finished the hand-off. `controllerchange`
+means the new worker is in charge, so this bundle is old and there is nothing left to message:
+`stale`. The 3s fallback fires *because* no takeover came, so the worker is still installed and
+still ours to ask: the handle is kept and the status stays `waiting`. Clearing it there cost the
+banner's Reload its worker and left a refresh that activates nothing.
+
+**At the banner.** `applyUpdate` for a `stale` tab is an unguarded `window.location.reload()`, so
+without this the amber bar would appear over the review sheet the moment a hand-off marked the tab
+stale, and one tap would destroy the queue with its credits spent. `UpdateNavigationProvider`
+reports `updateAvailable: false` while busy, and the banner is `applyUpdate`'s only caller.
 
 **Wiring** (new `src/components/pwa/update-navigation-provider.tsx`):
 - `AppShell` calls the hook once and passes `status` and `applyUpdate` down to `UpdatePromptBanner`

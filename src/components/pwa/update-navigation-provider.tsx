@@ -32,7 +32,9 @@ interface UpdateNavigationProviderProps {
  * Mounted once in `AppShell`, which also owns the scan queue `busy` is read from. The banner reads
  * the same context, so the service worker hook runs once per tab.
  *
- * `busy` gates the tap and, through the hand-off passed to the hook, the full load that follows it.
+ * `busy` gates three things: the tap, the full load that follows it up to 3s later (through the
+ * callback passed to the hook), and the banner, which would otherwise offer a reload that destroys
+ * the very queue the first two protect.
  */
 export function UpdateNavigationProvider({ busy, children }: UpdateNavigationProviderProps) {
   const router = useRouter();
@@ -42,14 +44,11 @@ export function UpdateNavigationProvider({ busy, children }: UpdateNavigationPro
   busyRef.current = busy;
 
   // `busy` is read again when the hand-off finishes, not only when the tap is handled: a scan can
-  // start inside the up-to-3s wait, and the full load would then discard its queue. The hook falls
-  // back to this client navigation in that case, which keeps the queue and leaves the tab stale.
-  // Passed fresh each render on purpose -- the hook keeps it in a ref, so there is nothing to
-  // memoize and no stale `router` to close over.
-  const { status, updateAvailable, applyUpdate, applyOnNavigation } = useServiceWorkerUpdate({
-    isBusy: () => busyRef.current,
-    navigate: (href) => router.push(href),
-  });
+  // start inside the up-to-3s wait, and the full load would then discard its queue. Passed fresh
+  // each render on purpose -- the hook keeps it in a ref, so there is nothing to memoize.
+  const { status, updateAvailable, applyUpdate, applyOnNavigation } = useServiceWorkerUpdate(
+    () => busyRef.current,
+  );
 
   useEffect(() => {
     const onClick = (event: MouseEvent) => {
@@ -74,13 +73,18 @@ export function UpdateNavigationProvider({ busy, children }: UpdateNavigationPro
   const value = useMemo<UpdateNavigation>(
     () => ({
       status,
-      updateAvailable,
+      // The banner is hidden while the scan queue is in memory, and that is the whole guard on it:
+      // `applyUpdate` for a `stale` tab is an unguarded `window.location.reload()`, and the banner
+      // is its only caller. Without this the amber bar appears over the review sheet the moment a
+      // hand-off marks the tab stale, and one tap destroys the queue with its credits spent -- the
+      // anti-goal this feature is built around.
+      updateAvailable: updateAvailable && !busy,
       applyUpdate,
       navigate: (href) => {
         if (busyRef.current || !applyOnNavigation(href)) router.push(href);
       },
     }),
-    [status, updateAvailable, applyUpdate, applyOnNavigation, router],
+    [status, updateAvailable, busy, applyUpdate, applyOnNavigation, router],
   );
 
   return <UpdateNavigationContext.Provider value={value}>{children}</UpdateNavigationContext.Provider>;

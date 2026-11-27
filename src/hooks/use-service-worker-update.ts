@@ -22,13 +22,11 @@ export type UpdateStatus = "none" | "waiting" | "stale";
 /** What this tab asked for, which decides what its next `controllerchange` does. */
 type Intent = { kind: "none" } | { kind: "reload" } | { kind: "navigate"; href: string };
 
-/** How the hook reaches the app when a hand-off must not become a full load after all. */
-export interface NavigationHandoff {
-  /** True while work lives only in memory (the receipt scan queue), so a full load would lose it. */
-  isBusy: () => boolean;
-  /** An ordinary client navigation, used instead of the full load when that is the case. */
-  navigate: (href: string) => void;
-}
+/**
+ * Whether work that lives only in memory (the receipt scan queue) is in flight, so a full load
+ * would lose it. Read again when a hand-off finishes, not only when the tap is handled.
+ */
+export type IsBusy = () => boolean;
 
 /**
  * Whether a new build is installed and waiting, and how to take it.
@@ -52,7 +50,7 @@ export interface NavigationHandoff {
  * (`applyOnNavigation`, called by `UpdateNavigationProvider`), which full-loads the target instead of
  * reloading the page the user is leaving.
  */
-export function useServiceWorkerUpdate(handoff?: NavigationHandoff) {
+export function useServiceWorkerUpdate(isBusy?: IsBusy) {
   const [status, setStatus] = useState<UpdateStatus>("none");
   const statusRef = useRef<UpdateStatus>("none");
   const waitingRef = useRef<ServiceWorker | null>(null);
@@ -61,8 +59,8 @@ export function useServiceWorkerUpdate(handoff?: NavigationHandoff) {
   const fallbackRef = useRef<number | null>(null);
 
   // A ref, so a hand-off finishing later reads the current value rather than the one at mount.
-  const handoffRef = useRef(handoff);
-  handoffRef.current = handoff;
+  const isBusyRef = useRef(isBusy);
+  isBusyRef.current = isBusy;
 
   const changeStatus = useCallback((next: UpdateStatus) => {
     statusRef.current = next;
@@ -70,28 +68,44 @@ export function useServiceWorkerUpdate(handoff?: NavigationHandoff) {
   }, []);
 
   /**
-   * Finish a navigation hand-off: a full load of `href` on the new build, unless work that lives
-   * only in memory turned up while the hand-off was in flight.
+   * Finish a navigation hand-off with a full load of `href` on the new build -- unless work that
+   * lives only in memory turned up while it was in flight, in which case **nothing happens at all**.
    *
-   * `busy` is read when the tap is handled, and the load happens up to
+   * `busy` is read when the tap is handled and the load follows up to
    * `NAVIGATION_UPDATE_TIMEOUT_MS` later, so a receipt scan can start in between. A full load would
    * throw that queue away with its scan credits already spent, which is the one thing this feature
-   * must not do, so the tap becomes an ordinary client navigation instead and the tab is left
-   * `stale`: still the old bundle, with the banner offering the update once nothing is in memory.
-   * Taking the update late is the smaller cost, and is what every sibling tab already does.
+   * must not do.
+   *
+   * The tap is **dropped** rather than turned into a client navigation. A client `router.push` here
+   * would be the one place in this hook that navigates an old bundle under a *new* controller:
+   * `sw.ts` precaches the build manifest, so the activating worker evicts the old build's chunks,
+   * and the container serving them has been replaced. That is the client/server skew #306 exists to
+   * close, and it is exactly why a `stale` tab's taps go through `window.location.assign` instead.
+   * Pushing the original `href` is also wrong by then: while busy, `UpdateNavigationProvider` stops
+   * swallowing taps, so the user may have navigated somewhere else since.
+   *
+   * Dropping it is the honest reading of what happened. Starting a scan seconds after tapping a
+   * link is a change of mind, the scan sheet is on screen, and any navigation would close it.
+   *
+   * `tookOver` separates the two callers, and the tab is left in a different state for each:
+   * `controllerchange` means the new worker is in charge, so this bundle is the old one and there
+   * is nothing left to message -- `stale`. The fallback timer fires *because* no takeover came, so
+   * the worker is still installed and still ours to ask: the handle is kept and the status stays
+   * `waiting`. Clearing it there cost the banner's Reload its worker, leaving a plain refresh that
+   * activates nothing and a banner that only works on the remount after it.
    */
   const takeNavigation = useCallback(
-    (href: string) => {
+    (href: string, tookOver: boolean) => {
       if (fallbackRef.current !== null) window.clearTimeout(fallbackRef.current);
       fallbackRef.current = null;
       if (reloadingRef.current) return;
 
-      const pending = handoffRef.current;
-      if (pending?.isBusy()) {
+      if (isBusyRef.current?.()) {
         intentRef.current = { kind: "none" };
-        waitingRef.current = null;
-        changeStatus("stale");
-        pending.navigate(href);
+        if (tookOver) {
+          waitingRef.current = null;
+          changeStatus("stale");
+        }
         return;
       }
       reloadingRef.current = true;
@@ -166,7 +180,7 @@ export function useServiceWorkerUpdate(handoff?: NavigationHandoff) {
         return;
       }
       if (intent.kind === "navigate") {
-        takeNavigation(intent.href);
+        takeNavigation(intent.href, true);
         return;
       }
       reloadingRef.current = true;
@@ -280,7 +294,7 @@ export function useServiceWorkerUpdate(handoff?: NavigationHandoff) {
       intentRef.current = { kind: "navigate", href };
       waiting.postMessage({ type: "SKIP_WAITING" });
       fallbackRef.current = window.setTimeout(
-        () => takeNavigation(href),
+        () => takeNavigation(href, false),
         NAVIGATION_UPDATE_TIMEOUT_MS,
       );
       return true;
