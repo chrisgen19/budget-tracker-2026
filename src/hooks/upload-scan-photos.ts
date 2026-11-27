@@ -68,3 +68,22 @@ export const photoIdsByReceipt = (photos: ScanPhoto[]): Map<string, string> =>
   new Map(
     photos.flatMap((photo) => (photo.photoId ? [[photo.receiptKey, photo.photoId] as const] : [])),
   );
+
+/**
+ * Whether a saved batch is missing photo links its receipts should carry. Read from the rows the
+ * server returned, not from this attempt's uploads: a retried save replays the original batch, so
+ * a photo uploaded on the retry may never have reached a row, and a photo that failed first time
+ * may be on every row by now. Counted rather than matched, since a replay returns its rows in no
+ * fixed order. Without the rows (an older server), it falls back to the uploads.
+ */
+export const photosMissingFromSave = (
+  savedRows: { receiptPhotoId?: string | null }[] | undefined,
+  submitted: MultiScanItem[],
+  photos: ScanPhoto[],
+): boolean => {
+  if (!savedRows) return photos.some((photo) => !photo.photoId && !photo.unsupported);
+  const wanted = new Set(photos.filter((photo) => !photo.unsupported).map((photo) => photo.receiptKey));
+  const expected = submitted.filter((item) => wanted.has(receiptKeyOf(item))).length;
+  const linked = savedRows.filter((row) => row.receiptPhotoId).length;
+  return linked < expected;
+};

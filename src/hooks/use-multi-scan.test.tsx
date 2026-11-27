@@ -816,7 +816,7 @@ describe("scans keep their photo", () => {
     });
 
   type Route = {
-    batch?: () => unknown;
+    batch?: (body: string) => unknown;
     upload?: (name: string, photoKey: string) => unknown;
   };
 
@@ -833,7 +833,7 @@ describe("scans keep their photo", () => {
         const name = (body.get("photo") as File).name;
         return route.upload!(name, body.get("photoKey") as string);
       }
-      if (url === "/api/transactions/batch") return route.batch!();
+      if (url === "/api/transactions/batch") return route.batch!(init.body as string);
       throw new Error(`unexpected fetch ${url}`);
     });
   };
@@ -843,7 +843,14 @@ describe("scans keep their photo", () => {
     status: 201,
     json: async () => ({ photo: { id, width: 1, height: 1, byteSize: 1, createdAt: "" } }),
   });
-  const saved = () => ({ ok: true, status: 201, json: async () => ({ transactions: [] }) });
+  /** A save that lands, returning the rows it wrote: here, exactly what the request carried. */
+  const saved = (body: string) => ({
+    ok: true,
+    status: 201,
+    json: async () => ({ transactions: (JSON.parse(body) as { transactions: unknown[] }).transactions }),
+  });
+  /** The first attempt did commit, so the retry is a replay: the server answers with those rows. */
+  const replayOf = (firstBody: () => string) => () => saved(firstBody());
   const lost = () => ({ ok: false, status: 500, json: async () => ({}) });
 
   const callsTo = (url: string) => fetchMock.mock.calls.filter((c) => c[0] === url);
@@ -901,7 +908,7 @@ describe("scans keep their photo", () => {
 
   it("replays the pinned photo ids after an unconfirmed save, without uploading again", async () => {
     const batches = [lost, saved];
-    routeFetch({ upload: (name) => photoOk(`photo-${name}`), batch: () => batches.shift()!() });
+    routeFetch({ upload: (name) => photoOk(`photo-${name}`), batch: (body) => batches.shift()!(body) });
     const { result } = setup({ receiptPhotosEnabled: true });
     await scanTwoReceipts(result);
 
@@ -984,12 +991,12 @@ describe("scans keep their photo", () => {
     expect(await screen.findAllByText(PHOTO_FAILED)).toHaveLength(1);
   });
 
-  it("keeps the same absence when a save with a failed upload is replayed", async () => {
+  // Offline: the upload and the batch both fail. The retry used to skip uploads because the first
+  // attempt had "sent", so the receipt saved with no photo although nothing stopped it this time.
+  it("retries a failed upload under the same key when the save is retried, and attaches it", async () => {
+    const uploads = [() => ({ ok: false, status: 500, json: async () => ({}) }), () => photoOk("photo-single.jpg")];
     const batches = [lost, saved];
-    routeFetch({
-      upload: () => ({ ok: false, status: 500, json: async () => ({}) }),
-      batch: () => batches.shift()!(),
-    });
+    routeFetch({ upload: () => uploads.shift()!(), batch: (body) => batches.shift()!(body) });
     const { result } = setup({ receiptPhotosEnabled: true });
     await act(async () => {
       await result.current.scanMultiple([receipt("single.jpg")]);
@@ -1004,11 +1011,41 @@ describe("scans keep their photo", () => {
       await result.current.saveAll();
     });
 
+    const keys = uploadKeys();
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toEqual(keys[0]);
     const [first, retry] = batchBodies();
-    expect(retry).toEqual(first);
-    expect(retry.transactions[0]).not.toHaveProperty("receiptPhotoId");
-    // Once the batch went out without the photo, uploading it now could not attach it.
-    expect(uploadKeys()).toHaveLength(1);
+    expect(retry.clientBatchId).toBe(first.clientBatchId);
+    expect(retry.transactions[0].receiptPhotoId).toBe("photo-single.jpg");
+    await waitFor(() => expect(result.current.items).toHaveLength(0));
+    expect(screen.queryByText(PHOTO_FAILED)).toBeNull();
+  });
+
+  // The first attempt did commit, without the photo. The retry's upload succeeds, but the server
+  // replays the original rows, so the receipt really has no photo and the toast has to say so.
+  it("says the photo is missing when the retry is a replay of rows saved without it", async () => {
+    const uploads = [() => ({ ok: false, status: 500, json: async () => ({}) }), () => photoOk("photo-single.jpg")];
+    let firstBody = "";
+    const batches = [
+      (body: string) => {
+        firstBody = body;
+        return lost();
+      },
+      replayOf(() => firstBody),
+    ];
+    routeFetch({ upload: () => uploads.shift()!(), batch: (body) => batches.shift()!(body) });
+    const { result } = setup({ receiptPhotosEnabled: true });
+    await act(async () => {
+      await result.current.scanMultiple([receipt("single.jpg")]);
+    });
+
+    await act(async () => {
+      await result.current.saveAll();
+    });
+    await act(async () => {
+      await result.current.saveAll();
+    });
+
     expect(await screen.findAllByText(PHOTO_FAILED)).toHaveLength(1);
   });
 

@@ -12,6 +12,7 @@ import { useToast } from "@/components/ui/toast";
 import { BatchSaveError, useBatchCreateTransactions } from "@/hooks/use-transactions";
 import {
   photoIdsByReceipt,
+  photosMissingFromSave,
   planScanPhotos,
   receiptKeyOf,
   uploadScanPhotos,
@@ -30,11 +31,12 @@ const PHOTO_UPLOAD_FAILED = "Saved. The photo didn't upload: attach it from the 
 interface PendingSave {
   key: string;
   items: MultiScanItem[];
-  /** One per receipt, empty when receipt photos are off. */
+  /** One per receipt, empty when receipt photos are off. A retry uploads any still missing an id,
+   *  under the same `photoKey`. If the first batch did commit the server replays it and ignores
+   *  the new ids, and the late upload is an orphan for the prune; if it did not, the photo now
+   *  attaches. Freezing them after the first attempt lost every photo of a save retried after
+   *  going offline. */
   photos: ScanPhoto[];
-  /** True once the batch has gone out. From then on the server replays what that request
-   *  carried, so the photo ids are frozen with the rows: a late upload could never attach. */
-  sent: boolean;
 }
 
 type ScanData = NonNullable<MultiScanItem["data"]>;
@@ -566,7 +568,6 @@ export function useMultiScan() {
       key: crypto.randomUUID(),
       items: submitItems,
       photos: user.receiptPhotosEnabled ? planScanPhotos(submitItems) : [],
-      sent: false,
     };
     pendingSaveRef.current = save;
 
@@ -574,18 +575,17 @@ export function useMultiScan() {
     let heicSkipped = false;
     try {
       // Uploaded first and unlinked, because a replayed batch returns its rows in no fixed
-      // order and they could not be matched back to receipts afterwards.
-      if (!save.sent) {
-        save.photos = await uploadScanPhotos(save.photos);
-        save.sent = true;
-      }
+      // order and they could not be matched back to receipts afterwards. Every attempt uploads
+      // whatever is still missing; ones already stored are skipped.
+      save.photos = await uploadScanPhotos(save.photos);
       const photoIds = photoIdsByReceipt(save.photos);
       heicSkipped = save.photos.some((photo) => photo.unsupported);
-      photoFailed = save.photos.some((photo) => !photo.photoId && !photo.unsupported);
-      await batchCreateMutation.mutateAsync({
+      const result = await batchCreateMutation.mutateAsync({
         clientBatchId: save.key,
         transactions: submitItems.map((item) => toBatchRow(item, photoIds.get(receiptKeyOf(item)))),
       });
+      // From what was saved, not what was sent: a replay keeps the first attempt's links.
+      photoFailed = photosMissingFromSave(result?.transactions, submitItems, save.photos);
     } catch (error) {
       // A definitive rejection wrote nothing, so the pin is dropped and the user's
       // corrections take effect on the next attempt as a fresh intent. Anything less
