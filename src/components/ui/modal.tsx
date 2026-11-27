@@ -31,21 +31,79 @@ const useIsMobile = () => {
 interface VisualViewport {
   height: number;
   offsetTop: number;
+  /**
+   * Whether a virtual keyboard is what took the missing height.
+   *
+   * Measured against the tallest this viewport has been since the modal opened, and
+   * deliberately not against `window.innerHeight`. Comparing against the layout viewport
+   * only works while the keyboard leaves it alone, which is the default (`resizes-visual`)
+   * but not a guarantee: wherever `interactive-widget: resizes-content` is in effect, the
+   * layout viewport shrinks along with the visual one, the two stay in step, and the
+   * comparison reads "no keyboard" for as long as the keyboard is up. The app does not
+   * set it today (it would lift `MobileTabBar` above the keyboard), but nothing here
+   * should silently break if that changes.
+   *
+   * A high-water mark holds under either behaviour, since the height before the keyboard
+   * is the height to beat whether or not CSS was told about it.
+   *
+   * A ratio rather than a pixel count because keyboards are sized in proportion to the
+   * screen: every phone keyboard takes well over a quarter of it, while the things that
+   * move these numbers without a keyboard (a collapsing browser toolbar, a few pixels of
+   * rounding) are nowhere near that.
+   *
+   * Heights are compared at `scale` 1. A pinch-zoom shrinks the visual viewport in CSS
+   * pixels exactly as a keyboard does (iOS ignores `maximumScale: 1` for a user's own
+   * pinch), so 1.5x would otherwise read as a keyboard taking a third of the screen.
+   */
+  keyboardOpen: boolean;
 }
+
+/** Below this share of its tallest measurement, only a keyboard explains the loss. */
+const KEYBOARD_OPEN_RATIO = 0.75;
+
+/**
+ * How much of the viewport a bottom sheet takes when there is no keyboard: a strip of the
+ * dimmed page stays visible above it, so the sheet reads as a sheet rather than a screen.
+ * With a keyboard open there is no such room to give away - that strip costs about 40px of
+ * the ~360px left, and the field being typed into is what loses it.
+ */
+const SHEET_VIEWPORT_FRACTION = 0.9;
 
 const useVisualViewport = (enabled: boolean) => {
   const [viewport, setViewport] = useState<VisualViewport | null>(null);
+  /** Tallest unzoomed height seen while open, at the width in `widthRef`. */
+  const tallestRef = useRef(0);
+  /**
+   * The layout viewport's width when `tallestRef` was taken. A change means a rotation or
+   * a split-screen resize, after which the old tallest is a portrait figure a landscape
+   * viewport can never reach. `clientWidth` rather than `innerWidth`, since Safari's
+   * `innerWidth` moves with pinch-zoom and neither moves for a keyboard.
+   */
+  const widthRef = useRef(0);
 
   const update = useCallback(() => {
     const vv = window.visualViewport;
     if (vv) {
-      setViewport({ height: vv.height, offsetTop: vv.offsetTop });
+      const width = document.documentElement.clientWidth;
+      if (width !== widthRef.current) {
+        widthRef.current = width;
+        tallestRef.current = 0;
+      }
+      const unzoomedHeight = vv.height * vv.scale;
+      tallestRef.current = Math.max(tallestRef.current, unzoomedHeight, window.innerHeight);
+      setViewport({
+        height: vv.height,
+        offsetTop: vv.offsetTop,
+        keyboardOpen: unzoomedHeight < tallestRef.current * KEYBOARD_OPEN_RATIO,
+      });
     }
   }, []);
 
   useEffect(() => {
     if (!enabled) {
       setViewport(null);
+      tallestRef.current = 0;
+      widthRef.current = 0;
       return;
     }
 
@@ -63,6 +121,124 @@ const useVisualViewport = (enabled: boolean) => {
   }, [enabled, update]);
 
   return viewport;
+};
+
+/**
+ * How long the virtual keyboard takes to finish animating in. Android's settles in two
+ * steps - the key area, then the suggestion/toolbar strip above it - so this is a
+ * backstop, not the whole correction.
+ */
+const KEYBOARD_SETTLE_MS = 350;
+
+/** Input types that raise no keyboard, so focusing one is no reason to scroll. */
+const NON_TEXT_INPUT_TYPES = new Set([
+  "button",
+  "checkbox",
+  "color",
+  "file",
+  "hidden",
+  "image",
+  "radio",
+  "range",
+  "reset",
+  "submit",
+]);
+
+/**
+ * Whether focusing `element` is about to put a keyboard (or a picker) under it. Android
+ * Chrome focuses a button when it is tapped, so without this every tap on a category chip
+ * re-centred the form under the finger.
+ */
+const isTextEntry = (element: Element): element is HTMLElement => {
+  if (element instanceof HTMLInputElement) return !NON_TEXT_INPUT_TYPES.has(element.type);
+  if (element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) {
+    return true;
+  }
+  return element instanceof HTMLElement && element.isContentEditable;
+};
+
+/** Zoomed in by the user's own pinch, when a resize is them panning, not a keyboard. */
+const isPinchZoomed = () => Math.abs((window.visualViewport?.scale ?? 1) - 1) > 0.01;
+
+/**
+ * Keeps the focused field inside the modal's scroll port while the keyboard opens.
+ *
+ * iOS Safari does this itself: it scrolls the *page* to lift the focused field clear of
+ * the keyboard and reports the shift as `visualViewport.offsetTop`, which
+ * `useVisualViewport` above already compensates for. Android Chrome does not - under the
+ * default `interactive-widget: resizes-visual` the layout viewport never changes, so as
+ * far as Chrome is concerned nothing moved and nothing needs scrolling. The modal only
+ * lifts above the keyboard because *we* resize its container from the `visualViewport`
+ * resize event, and shrinking a scroll port does not move its `scrollTop`: whatever sat
+ * below the new fold stays below it. That is the whole of the Android bug - the amount
+ * field is still there, one scroll down, behind the keyboard the user is typing into.
+ *
+ * So the correction has to be driven by the resize, not by a timer:
+ *
+ * - on every `visualViewport` resize, because Android reports the keyboard's height more
+ *   than once as it and its toolbar strip animate in, and each report shrinks the modal
+ *   again under a scroll position that was correct a moment earlier. A single 350ms timer
+ *   fires between the two and is undone by the second.
+ * - once when the effect attaches, because `autoFocus` (the amount field on a new
+ *   transaction) focuses during React's commit phase - before this listener exists - so
+ *   `focusin` never fires for it and the old code corrected nothing at all.
+ */
+const useKeepFocusedFieldVisible = (
+  active: boolean,
+  contentRef: React.RefObject<HTMLDivElement | null>,
+) => {
+  useEffect(() => {
+    if (!active) return;
+
+    const content = contentRef.current;
+    if (!content) return;
+
+    let frame = 0;
+    let settleTimer: ReturnType<typeof setTimeout>;
+
+    const revealFocusedField = (behavior: ScrollBehavior) => {
+      const focused = document.activeElement;
+      // `content` itself is the dialog's fallback focus target, taken with `preventScroll`.
+      if (!focused || focused === content || !content.contains(focused)) return;
+      if (!isTextEntry(focused)) return;
+      focused.scrollIntoView({ block: "center", behavior });
+    };
+
+    /**
+     * One frame late, so the `visualViewport` resize that triggered this has been through
+     * React and the container is already its new height. A jump rather than a smooth
+     * scroll: a second resize mid-animation cancels a smooth one and leaves the field
+     * wherever it had got to.
+     */
+    const revealAfterReflow = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => revealFocusedField("auto"));
+    };
+
+    const handleFocusIn = () => {
+      revealAfterReflow();
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => revealFocusedField("smooth"), KEYBOARD_SETTLE_MS);
+    };
+
+    /** Every frame of a pinch is a resize too, and snapping back each one fights the pan. */
+    const handleResize = () => {
+      if (!isPinchZoomed()) revealAfterReflow();
+    };
+
+    content.addEventListener("focusin", handleFocusIn);
+    window.visualViewport?.addEventListener("resize", handleResize);
+
+    // Catches a field `autoFocus` focused before this effect ran.
+    handleFocusIn();
+
+    return () => {
+      content.removeEventListener("focusin", handleFocusIn);
+      window.visualViewport?.removeEventListener("resize", handleResize);
+      cancelAnimationFrame(frame);
+      clearTimeout(settleTimer);
+    };
+  }, [active, contentRef]);
 };
 
 const desktopVariants = {
@@ -107,37 +283,7 @@ export function Modal({ open, onClose, title, children, size = "default" }: Moda
 
   useDialogLifecycle(open, dialogRef, contentRef, onClose);
 
-  // On mobile, scroll the focused input into view within the modal's
-  // scroll container after the keyboard finishes animating
-  useEffect(() => {
-    if (!open || !isMobile) return;
-
-    const content = contentRef.current;
-    if (!content) return;
-
-    let pendingTimer: ReturnType<typeof setTimeout>;
-
-    const handleFocusIn = (e: FocusEvent) => {
-      const target = e.target;
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLSelectElement
-      ) {
-        // Delay to let the keyboard animation and viewport resize settle
-        clearTimeout(pendingTimer);
-        pendingTimer = setTimeout(() => {
-          target.scrollIntoView({ block: "center", behavior: "smooth" });
-        }, 350);
-      }
-    };
-
-    content.addEventListener("focusin", handleFocusIn);
-    return () => {
-      content.removeEventListener("focusin", handleFocusIn);
-      clearTimeout(pendingTimer);
-    };
-  }, [open, isMobile]);
+  useKeepFocusedFieldVisible(open && isMobile, contentRef);
 
   // On mobile, pin the container to the visual viewport so Safari's
   // scroll-to-focused-input doesn't push the modal off-screen
@@ -146,7 +292,7 @@ export function Modal({ open, onClose, title, children, size = "default" }: Moda
     : undefined;
 
   const mobileMaxHeight = viewport
-    ? `${viewport.height * 0.9}px`
+    ? `${viewport.height * (viewport.keyboardOpen ? 1 : SHEET_VIEWPORT_FRACTION)}px`
     : "90vh";
 
   /**
