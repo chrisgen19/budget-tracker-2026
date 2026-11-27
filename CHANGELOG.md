@@ -2,6 +2,19 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-27 - A failed receipt photo upload says why, in the log and in the verify script
+
+- **`POST /api/receipt-photos` logs R2's reason on a 502.** The first run of
+  `scripts/verify-receipt-photos.ts` against a real dev bucket hit one 502 in twenty uploads, and
+  the server log held only the status: nothing said whether R2 refused the token, could not find
+  the bucket, or simply blinked. The route now warns with the storage error's message (the method
+  and status, or the network error, never a credential). The client still gets the generic
+  `Photo storage failed.`
+- **`verify-receipt-photos.ts` checks every upload a later step depends on.** It used to carry on
+  with an empty photo id, so that one storage hiccup surfaced as a failed *replace*: the edit sent
+  `receiptPhotoId: ""`, which validation refuses with a 400. A failed upload is now its own FAIL
+  naming the status, and the run stops there.
+
 ## 2026-11-26 - Receipt photos are kept, in R2, on the transactions they belong to
 
 A scanned or attached receipt photo is now stored and shown on its transaction, from the web app,

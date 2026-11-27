@@ -21,6 +21,7 @@ vi.mock("@/lib/receipt-photo-storage", async (importOriginal) => ({
 }));
 
 import { POST } from "@/app/api/receipt-photos/route";
+import { PhotoStorageError } from "@/lib/receipt-photo-storage";
 
 const KEY = "3f2b8c1e-5a4d-4e6f-9b7a-1c2d3e4f5a6b";
 
@@ -108,6 +109,24 @@ describe("POST /api/receipt-photos", () => {
 
   it("400 for a missing photo", async () => {
     expect((await post(null)).status).toBe(400);
+  });
+
+  // A 502 used to leave nothing in the server log, so a refused token, a missing bucket and a
+  // passing R2 blip all looked the same. The client still gets the generic message.
+  it("502 when storage refuses, logging R2's reason for the server only", async () => {
+    const sharp = (await import("sharp")).default;
+    const real = await sharp({ create: { width: 4, height: 4, channels: 3, background: "#fff" } }).jpeg().toBuffer();
+    mocks.put.mockRejectedValue(new PhotoStorageError("R2 PUT returned 403", 403));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const res = await post(jpeg(new Uint8Array(real)));
+
+      expect(res.status).toBe(502);
+      expect(await res.json()).toEqual({ error: "Photo storage failed." });
+      expect(warn).toHaveBeenCalledWith("[receipt-photos] upload failed in storage:", "R2 PUT returned 403");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("200 on a replay of the same photoKey without storing again", async () => {
