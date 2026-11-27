@@ -37,6 +37,7 @@ import { InstallBannerProvider, useInstallBanner } from "@/components/pwa/instal
 import { InstallPromptBanner } from "@/components/pwa/install-prompt-banner";
 import { OfflineBanner } from "@/components/pwa/offline-banner";
 import { UpdatePromptBanner } from "@/components/pwa/update-prompt-banner";
+import { UpdateNavigationProvider } from "@/components/pwa/update-navigation-provider";
 import { useBillReminders } from "@/components/bills/bill-reminder-provider";
 import {
   getFabContentClearance,
@@ -175,6 +176,8 @@ export function AppShell({ children }: AppShellProps) {
 
   return (
     <InstallBannerProvider>
+    {/* A queued or running scan lives only in memory, so an update never full-loads over it. */}
+    <UpdateNavigationProvider busy={scan.items.length > 0 || scan.isScanning || scan.isSavingAll}>
     <div className="min-h-screen bg-cream-100">
       {/* Offline Banner */}
       <OfflineBanner />
@@ -447,6 +450,7 @@ export function AppShell({ children }: AppShellProps) {
           })()}
       </Modal>
     </div>
+    </UpdateNavigationProvider>
     </InstallBannerProvider>
   );
 }

@@ -2,6 +2,34 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-27 - Receipt photos pulse while they load
+
+- **The mobile strip and the full-screen viewer now show a skeleton and fade the photo in**, as
+  the desktop panel already did. An AVIF is painted only once it has fully decoded, so a slow
+  connection used to show an empty box and then a sudden photo.
+- **Pinch and wheel zoom start once the photo has loaded**, rather than being live over an empty
+  frame.
+- **A photo that failed before the page hydrated says so** instead of pulsing forever: the
+  skeleton gives way to "The photo couldn't load."
+
+## 2026-11-27 - App updates apply on the next in-app navigation
+
+- **A new build is taken on the next in-app link tap or profile-menu pick**, as one full load of
+  the page being opened, so nobody has to tap "A new version is available. Reload". Before this,
+  most open tabs kept running the old bundle against the new API until they were closed (#306).
+- **Never while a receipt scan is pending.** The multi-scan queue lives only in memory and its
+  scan credits are already spent, so while it holds items, or a scan or save-all is running, the
+  tap stays an ordinary client navigation and the banner waits.
+- **Other open tabs no longer reload the moment one tab updates.** They are marked stale, show the
+  banner (Reload is a plain refresh there) and update on their own next safe navigation, so a tab
+  mid-scan or mid-form is not reloaded out from under the user.
+- **The banner stays as the fallback** for back/forward, other programmatic navigations, offline
+  taps and a tab that never navigates. Tapping it during a link hand-off is ignored, so the
+  destination is not lost, and a Reload that never takes over can no longer leave the tab's links
+  cancelled.
+- **A page restored by Back after a hand-off is marked stale**, since its worker is already the
+  controller by then and there is nothing left to ask to take over.
+
 ## 2026-11-27 - Node 24 in production, Nixpacks removed
 
 - **`railpack.json` pins Node 24** and **`nixpacks.toml` is deleted.** Railpack is the only build

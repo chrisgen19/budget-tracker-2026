@@ -30,6 +30,7 @@ import {
   type LucideProps,
 } from "lucide-react";
 import { usePrivacy } from "@/components/privacy-provider";
+import { useUpdateNavigation } from "@/components/pwa/update-navigation-provider";
 import { useUser } from "@/components/user-provider";
 import { cn } from "@/lib/utils";
 
@@ -202,14 +203,15 @@ export function ProfileMenu({
   compact = false,
 }: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
-  const router = useRouter();
+  // Update-aware, so a menu pick can take a waiting app update the way a link tap does.
+  const { navigate } = useUpdateNavigation();
   const { hideAmounts, toggleHideAmounts } = usePrivacy();
 
   const { user } = useUser();
   const items = buildMenuItems({
     isAdmin,
     hideAmounts,
-    router,
+    router: { push: navigate },
     toggleHideAmounts,
     cardsEnabled: user.creditCardsEnabled,
   });
