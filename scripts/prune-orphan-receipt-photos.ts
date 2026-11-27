@@ -34,7 +34,7 @@ import {
   type PhotoStorage,
   type StoredObject,
 } from "../src/lib/receipt-photo-storage";
-import { deleteUnreferencedPhotos } from "../src/lib/receipt-photos";
+import { deleteUnreferencedPhotos, PhotoCleanupError } from "../src/lib/receipt-photos";
 import { isLocalDatabase } from "./db-host";
 
 const MIN_AGE_HOURS = 24;
@@ -77,7 +77,17 @@ const pruneRows = async (storage: PhotoStorage, rows: Awaited<ReturnType<typeof 
   let deleted = 0;
   for (const [userId, ids] of byUser) {
     // Re-checked under the lock, so a photo linked since the scan is left alone and not counted.
-    deleted += (await deleteUnreferencedPhotos({ prisma, storage }, userId, ids)).length;
+    try {
+      deleted += (await deleteUnreferencedPhotos({ prisma, storage }, userId, ids)).length;
+    } catch (error) {
+      // Rows went but some objects did not: count the rows, name the objects, and keep going, so
+      // one R2 error does not leave every later user's orphans for another run.
+      if (!(error instanceof PhotoCleanupError)) throw error;
+      deleted += error.deleted.length;
+      for (const failure of error.failures) {
+        console.warn(`  object left behind (the object sweep will catch it): ${failure.objectKey}`);
+      }
+    }
   }
   return deleted;
 };

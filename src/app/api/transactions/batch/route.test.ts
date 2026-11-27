@@ -237,14 +237,30 @@ describe("POST /api/transactions/batch", () => {
   });
 });
 
+/**
+ * Routes the raw statements a batch delete makes: the locked read of the rows it deletes, which
+ * answers with whichever of `rows` the request named, and the cleanup's per-photo FOR UPDATE.
+ */
+const stubDeleteReads = (rows: { id: string; receiptPhotoId: string | null }[]) =>
+  mocks.queryRaw.mockImplementation(async (sql: TemplateStringsArray, ...values: unknown[]) => {
+    const text = sql.join("?");
+    if (text.includes("FROM transactions")) {
+      const [, ids] = values as [string, string[]];
+      return rows.filter((row) => ids.includes(row.id));
+    }
+    return [{ id: values[0] as string }];
+  });
+
 describe("DELETE /api/transactions/batch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getAuthUserId.mockResolvedValue("user-1");
     mocks.databaseTransaction.mockImplementation((callback) => callback(mocks.tx));
-    mocks.transactionFindMany.mockResolvedValue([{ id: "tx-1" }]);
+    stubDeleteReads([{ id: "tx-1", receiptPhotoId: null }]);
     mocks.transactionDeleteMany.mockResolvedValue({ count: 1 });
   });
+
+  afterEach(() => mocks.queryRaw.mockReset());
 
   it("refuses an oversized body before opening a database transaction", async () => {
     const response = await DELETE(chunkedRequest({ ids: floodOfIds() }, "DELETE"));
@@ -257,10 +273,7 @@ describe("DELETE /api/transactions/batch", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ deleted: 1, ids: ["tx-1"] });
-    expect(mocks.transactionFindMany).toHaveBeenCalledWith({
-      where: { id: { in: ["tx-1", "stale"] }, userId: "user-1" },
-      select: { id: true, receiptPhotoId: true },
-    });
+    expect(mocks.queryRaw.mock.calls[0].slice(1)).toEqual(["user-1", ["tx-1", "stale"]]);
     expect(mocks.transactionDeleteMany).toHaveBeenCalledWith({
       where: { id: { in: ["tx-1"] }, userId: "user-1" },
     });
@@ -272,31 +285,29 @@ describe("DELETE /api/transactions/batch", () => {
         where.id.in.map((id) => ({ id, objectKey: `receipts/user-1/${id}.jpg`, _count: { transactions: refs[id] ?? 0 } })),
       );
 
-    afterEach(() => mocks.queryRaw.mockReset());
-
     beforeEach(() => {
       mocks.photosEnabled.mockReturnValue(true);
       mocks.photoDeleteMany.mockResolvedValue({ count: 1 });
       mocks.storageDelete.mockResolvedValue(undefined);
-      // The cleanup's per-photo FOR UPDATE, inside its own transaction.
-      mocks.queryRaw.mockImplementation(async (_sql: unknown, id: string) => [{ id }]);
-      mocks.transactionFindMany.mockResolvedValue([
+      stubDeleteReads([
         { id: "tx-1", receiptPhotoId: "pA" },
         { id: "tx-2", receiptPhotoId: "pA" },
         { id: "tx-3", receiptPhotoId: null },
       ]);
     });
 
-    it("reads the photo links inside the transaction and deletes an orphaned photo after it", async () => {
+    it("reads the photo links under a row lock and deletes an orphaned photo after it", async () => {
       stubRefs({ pA: 0 });
 
       const response = await DELETE(deleteRequest({ ids: ["tx-1", "tx-2", "tx-3"] }));
 
       expect(response.status).toBe(200);
-      expect(mocks.transactionFindMany).toHaveBeenCalledWith({
-        where: { id: { in: ["tx-1", "tx-2", "tx-3"] }, userId: "user-1" },
-        select: { id: true, receiptPhotoId: true },
-      });
+      // A plain read let a replace commit between it and the delete, so the row went holding a
+      // photo cleanup was never told about. The lock holds the photo still until the delete.
+      const read = (mocks.queryRaw.mock.calls[0][0] as TemplateStringsArray).join("?");
+      expect(read).toContain("FROM transactions");
+      expect(read).toContain("ORDER BY id");
+      expect(read).toContain("FOR UPDATE");
       expect(mocks.photoFindMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: { in: ["pA"] }, userId: "user-1" } }),
       );

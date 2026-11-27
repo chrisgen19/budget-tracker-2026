@@ -21,6 +21,8 @@ import {
   cleanUpReceiptPhotos,
   deleteUnreferencedPhotos,
   getReceiptPhotoInfo,
+  PhotoCleanupError,
+  receiptTotal,
   photosAreOwned,
   ReceiptPhotoNotOwnedError,
   storeReceiptPhoto,
@@ -212,6 +214,26 @@ describe("deleteUnreferencedPhotos", () => {
     expect(order).toEqual(["tx:open", "lock:p2", "row:p2", "tx:commit", "object"]);
   });
 
+  // One R2 error used to end the loop, so every later photo kept its row and its object until the
+  // prune script ran. Now each photo is attempted and the failures are reported together.
+  it("carries on past a failed object delete and reports it after the loop", async () => {
+    const storage = makeStorage();
+    const both = photos.map((p) => ({ ...p, _count: { transactions: 0 } }));
+    const { prisma } = makeCleanupPrisma(both);
+    storage.delete.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "k/p1") throw new Error("R2 500");
+    });
+
+    const error = await deleteUnreferencedPhotos({ prisma: prisma as never, storage }, "u1", ["p1", "p2"]).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(PhotoCleanupError);
+    expect(storage.delete).toHaveBeenCalledWith("k/p2");
+    expect((error as PhotoCleanupError).deleted).toEqual(["p1", "p2"]);
+    expect((error as PhotoCleanupError).failures.map((f) => f.objectKey)).toEqual(["k/p1"]);
+  });
+
   /**
    * The lock is a separate statement before the delete, inside one transaction per photo. A single
    * conditional DELETE that waits on a writer's FOR KEY SHARE resumes without re-checking its
@@ -286,6 +308,27 @@ describe("getReceiptPhotoInfo", () => {
       localDate: "2026-01-02",
     });
     expect(info?.photo.createdAt).toBe("2026-01-01T00:00:00.000Z");
+  });
+});
+
+describe("receiptTotal", () => {
+  // Summed blindly, a 200 refund recorded as income on the same receipt read as 1,200.
+  it("subtracts income on the same photo from its expenses", () => {
+    expect(
+      receiptTotal([
+        { amount: 1000, type: "EXPENSE" },
+        { amount: 200, type: "INCOME" },
+      ]),
+    ).toBe(800);
+  });
+
+  it("reports a photo of income alone as its income, not a negative", () => {
+    expect(receiptTotal([{ amount: 25000, type: "INCOME" }])).toBe(25000);
+  });
+
+  it("is zero with no rows and rounds to cents", () => {
+    expect(receiptTotal([])).toBe(0);
+    expect(receiptTotal([{ amount: 0.1, type: "EXPENSE" }, { amount: 0.2, type: "EXPENSE" }])).toBe(0.3);
   });
 });
 

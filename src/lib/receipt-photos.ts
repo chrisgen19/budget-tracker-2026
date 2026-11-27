@@ -12,6 +12,7 @@ import { formatLocalDate } from "@/lib/validations";
 // loading sharp or the R2 client; re-exported so this stays the one place to import photo rules.
 export {
   applyPhotoChange,
+  changePhotoUnderLock,
   PHOTO_NOT_FOUND_MESSAGE,
   photosAreOwned,
   ReceiptPhotoNotOwnedError,
@@ -152,8 +153,21 @@ export const getReceiptPhotoInfo = async (
     categoryName: t.category.name,
     localDate: formatLocalDate(t.date, offset),
   }));
-  const total = Math.round(transactions.reduce((sum, t) => sum + t.amount, 0) * 100) / 100;
-  return { photo: toView(photo), transactions, total };
+  return { photo: toView(photo), transactions, total: receiptTotal(transactions) };
+};
+
+/**
+ * What the receipt came to. Expenses less any income on the same photo, so a purchase with a
+ * refund recorded as income nets out rather than adding up (1,000 spent, 200 back reads 800, not
+ * 1,200). A photo carrying only income, a payslip say, is its income total rather than a negative.
+ */
+export const receiptTotal = (rows: { amount: number; type: string }[]): number => {
+  const allIncome = rows.length > 0 && rows.every((r) => r.type === "INCOME");
+  const sum = rows.reduce(
+    (acc, r) => acc + (allIncome || r.type !== "INCOME" ? r.amount : -r.amount),
+    0,
+  );
+  return Math.round(sum * 100) / 100;
 };
 
 /**
@@ -164,8 +178,12 @@ export const getReceiptPhotoInfo = async (
  * a `FOR UPDATE` on the photo taken as a separate first statement: a writer that linked the photo
  * but had not yet committed would otherwise see its committed link nulled by `SET NULL` and its
  * object deleted. If the object delete then fails, the row deletion
- * stands (an orphaned object is harmless and a prune script can remove it) and the error
- * surfaces. Returns the ids actually deleted.
+ * stands (an orphaned object is harmless and a prune script can remove it) and the loop carries
+ * on: one R2 error used to end it there, leaving every later photo's row and object behind.
+ * Returns the ids actually deleted.
+ *
+ * @throws {PhotoCleanupError} after the loop when any object delete failed, carrying both what
+ *   was deleted and which objects were left.
  */
 export const deleteUnreferencedPhotos = async (
   { prisma, storage }: PhotoDeps,
@@ -178,6 +196,7 @@ export const deleteUnreferencedPhotos = async (
     select: { id: true, objectKey: true, _count: { select: { transactions: true } } },
   });
   const deleted: string[] = [];
+  const failures: { objectKey: string; error: unknown }[] = [];
   for (const photo of photos) {
     if (photo._count.transactions > 0) continue;
     const count = await prisma.$transaction(async (tx) => {
@@ -199,11 +218,32 @@ export const deleteUnreferencedPhotos = async (
       return result.count;
     });
     if (count !== 1) continue;
-    await storage.delete(photo.objectKey);
+    // The row is gone either way, so it counts as deleted; a failed object delete is collected.
     deleted.push(photo.id);
+    try {
+      await storage.delete(photo.objectKey);
+    } catch (error) {
+      failures.push({ objectKey: photo.objectKey, error });
+    }
   }
+  if (failures.length > 0) throw new PhotoCleanupError(deleted, failures);
   return deleted;
 };
+
+/** Some photo rows were deleted but their R2 objects were not; the prune script will reclaim them. */
+export class PhotoCleanupError extends Error {
+  constructor(
+    readonly deleted: string[],
+    readonly failures: { objectKey: string; error: unknown }[],
+  ) {
+    const first = failures[0].error;
+    super(
+      `${failures.length} receipt photo object(s) could not be deleted; first error: ` +
+        (first instanceof Error ? first.message : String(first)),
+    );
+    this.name = "PhotoCleanupError";
+  }
+}
 
 /**
  * Deletes whichever of these photos no transaction references any more. Call it only after the

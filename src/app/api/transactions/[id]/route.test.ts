@@ -480,17 +480,23 @@ describe("PUT /api/transactions/[id]", () => {
  * Photo rows as the two reads see them: the ownership check selects only `id`, the cleanup also
  * counts references. `refs` is how many transactions still point at each photo after the write.
  */
-const stubPhotos = (owned: string[], refs: Record<string, number> = {}) => {
+const stubPhotos = (
+  owned: string[],
+  refs: Record<string, number> = {},
+  /** The photo the row holds when the write locks it, which may differ from what was read first. */
+  lockedPhoto: string | null = "pA",
+) => {
   mocks.photoFindMany.mockImplementation(async ({ where }: { where: { id: { in: string[] } } }) => {
     mocks.order.push("cleanup");
     return where.id.in
       .filter((id) => owned.includes(id))
       .map((id) => ({ id, objectKey: `receipts/user-1/${id}.jpg`, _count: { transactions: refs[id] ?? 0 } }));
   });
-  // Three raw statements: the replace's transaction lock, the ownership FOR KEY SHARE, and the
-  // cleanup's per-photo FOR UPDATE.
+  // Four raw statements: the edited row's own lock and photo read, the replace's lock on the rows
+  // it moves, the ownership FOR KEY SHARE, and the cleanup's per-photo FOR UPDATE.
   mocks.queryRaw.mockImplementation(async (sql: TemplateStringsArray, ...values: unknown[]) => {
     const text = sql.join("?");
+    if (text.includes('receipt_photo_id AS "receiptPhotoId"')) return [{ receiptPhotoId: lockedPhoto }];
     if (!text.includes("receipt_photos")) return [];
     if (text.includes("FOR KEY SHARE")) {
       const [ids] = values as [string[]];
@@ -561,6 +567,31 @@ describe("PUT /api/transactions/[id] receipt photos", () => {
     expect(mocks.storageDelete).toHaveBeenCalledWith("receipts/user-1/pA.jpg");
     // Nothing but the photo moved, so the scalar write does not run.
     expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  // The row was read holding A, but by the time the write locked it a concurrent replace had moved
+  // the whole receipt to Q. Judged against the stale A, the replace found no rows on A but this
+  // one and moved it alone, leaving its sibling on Q: one split receipt, two photos.
+  it("replaces the photo the row holds under its lock, not the one read before", async () => {
+    stubPhotos(["pA", "pB", "pQ"], {}, "pQ");
+
+    const response = await put(body({ receiptPhotoId: "pB" }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { userId: "user-1", OR: [{ receiptPhotoId: "pQ" }, { id: "tx-1" }] },
+      data: { receiptPhotoId: "pB", updatedVia: "APP", updatedByMcpTokenId: null },
+    });
+    expect(mocks.storageDelete).toHaveBeenCalledWith("receipts/user-1/pQ.jpg");
+    expect(mocks.storageDelete).not.toHaveBeenCalledWith("receipts/user-1/pA.jpg");
+  });
+
+  it("locks the edited row before anything else it does to the photo", async () => {
+    await put(body({ receiptPhotoId: "pB" }));
+
+    const first = (mocks.queryRaw.mock.calls[0][0] as TemplateStringsArray).join("?");
+    expect(first).toContain('receipt_photo_id AS "receiptPhotoId"');
+    expect(first).toContain("FOR UPDATE");
   });
 
   it("null unlinks only this row and keeps A while its sibling still uses it", async () => {

@@ -8,7 +8,7 @@ import { CARD_PURCHASE_REFUSAL_MESSAGES, checkCardPurchases } from "@/lib/card-p
 import { userCanUseCreditCards } from "@/lib/credit-card-access";
 import { creditCardsUnavailableResponse } from "@/lib/credit-account-http";
 import {
-  applyPhotoChange,
+  changePhotoUnderLock,
   cleanUpReceiptPhotos,
   PHOTO_NOT_FOUND_MESSAGE,
   ReceiptPhotoNotOwnedError,
@@ -183,16 +183,16 @@ export async function PUT(request: Request, { params }: RouteParams) {
 
     // Tri-state, like `creditAccountId`: omitted keeps the stored link, null removes it from this
     // row only, an id replaces it. Re-sending the stored id is not a change and writes nothing.
-    const nextPhotoId =
-      validated.receiptPhotoId === undefined ? existing.receiptPhotoId : validated.receiptPhotoId;
-    const photoMoved = nextPhotoId !== existing.receiptPhotoId;
+    // Whether it is a change is decided inside the transaction, against the row as it is then.
+    const photoNamed = validated.receiptPhotoId !== undefined;
 
     const outcome = await prisma.$transaction(async (tx) => {
-      // First, so a replace takes its row lock as the transaction's first statement. It stamps the
-      // rows it moves itself, which is why `moved` above does not count the photo: a save that
-      // moves only the photo writes nothing else.
-      const { orphaned } = photoMoved
-        ? await applyPhotoChange(tx, userId, id, nextPhotoId, existing.receiptPhotoId)
+      // First, so the row lock is the transaction's first statement, and the photo the change is
+      // judged against is read under it rather than taken from `existing`. It stamps the rows it
+      // moves itself, which is why `moved` above does not count the photo: a save that moves only
+      // the photo writes nothing else.
+      const { orphaned } = photoNamed
+        ? await changePhotoUnderLock(tx, userId, id, validated.receiptPhotoId ?? null)
         : { orphaned: [] as string[] };
 
       // Only a save that moves something writes anything. An unchanged save must leave the row

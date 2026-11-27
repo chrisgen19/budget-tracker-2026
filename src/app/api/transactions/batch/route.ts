@@ -204,12 +204,17 @@ export async function DELETE(request: NextRequest) {
     const { ids } = batchDeleteSchema.parse(read.value);
 
     const { ownedIds, photoIds } = await prisma.$transaction(async (tx) => {
-      // The photo links are read with the rows, before the delete, so the cleanup after the commit
-      // knows which photos these rows held.
-      const owned = await tx.transaction.findMany({
-        where: { id: { in: ids }, userId },
-        select: { id: true, receiptPhotoId: true },
-      });
+      // The photo links are read with the rows, under FOR UPDATE, so the cleanup after the commit
+      // knows which photos these rows held *when they went*. A plain read let a replace commit
+      // between it and the delete: the row was deleted holding the new photo, cleanup was handed
+      // the old one, and the new photo was left in the bucket for the prune script. Ordered by id
+      // so two overlapping deletes wait rather than deadlock.
+      const owned = await tx.$queryRaw<{ id: string; receiptPhotoId: string | null }[]>`
+        SELECT id, receipt_photo_id AS "receiptPhotoId" FROM transactions
+        WHERE user_id = ${userId} AND id = ANY(${ids})
+        ORDER BY id
+        FOR UPDATE
+      `;
       const matchedIds = owned.map((transaction) => transaction.id);
       if (matchedIds.length > 0) {
         await tx.transaction.deleteMany({ where: { id: { in: matchedIds }, userId } });

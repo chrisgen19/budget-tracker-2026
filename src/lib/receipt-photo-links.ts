@@ -78,6 +78,33 @@ const APP_EDIT_STAMP: PhotoEditStamp = { updatedVia: "APP", updatedByMcpTokenId:
  *
  * @throws {ReceiptPhotoNotOwnedError} when `next` is not this user's photo; nothing is written.
  */
+/**
+ * Moves one transaction onto `next` through `applyPhotoChange`, judged against the photo the row
+ * holds **now**, read under `FOR UPDATE` as the caller's first statement on it.
+ *
+ * The edit route used to pass the photo it had read before its transaction opened. A replace that
+ * committed in between (the receipt's rows moved from P to Q) then ran as a replace of P, found no
+ * rows on P but this one, and moved this row alone: a split receipt showing two photos. Same
+ * shape as `linkInsideTransaction` in `receipt-photo-attach.ts`, and the same accepted risk: a
+ * concurrent replace over overlapping rows can deadlock, and Postgres then aborts one side with
+ * the data intact. A row that has gone since moves nothing.
+ */
+export const changePhotoUnderLock = async (
+  tx: Prisma.TransactionClient,
+  userId: string,
+  transactionId: string,
+  next: string | null,
+  stamp: PhotoEditStamp = APP_EDIT_STAMP,
+): Promise<{ orphaned: string[] }> => {
+  const [current] = await tx.$queryRaw<{ receiptPhotoId: string | null }[]>`
+    SELECT receipt_photo_id AS "receiptPhotoId" FROM transactions
+    WHERE id = ${transactionId} AND user_id = ${userId}
+    FOR UPDATE
+  `;
+  if (!current) return { orphaned: [] };
+  return applyPhotoChange(tx, userId, transactionId, next, current.receiptPhotoId, stamp);
+};
+
 export const applyPhotoChange = async (
   tx: Prisma.TransactionClient,
   userId: string,
