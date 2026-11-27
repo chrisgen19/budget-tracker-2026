@@ -19,7 +19,8 @@
  *   pnpm tsx scripts/heal-bill-next-due-dates.ts --apply  # actually update
  */
 import { PrismaClient } from "@prisma/client";
-import { advanceToNextUnpaidOccurrence, computeNextDueDate } from "../src/lib/bill-utils";
+import type { computeNextDueDate } from "../src/lib/bill-utils";
+import { findUnreachableOccurrences, resolveCursor } from "./heal-bill-dates";
 
 const prisma = new PrismaClient();
 
@@ -62,18 +63,8 @@ async function main() {
       select: { dueDate: true, status: true },
     });
 
-    const resolved = advanceToNextUnpaidOccurrence(
-      bill.nextDueDate,
-      bill.frequency,
-      bill.startDate.getDate(),
-      bill.customIntervalDays,
-      logs,
-      { endDate: bill.endDate },
-    );
-
-    // No drift: same date (compared at day precision)
-    const current = new Date(bill.nextDueDate);
-    current.setHours(0, 0, 0, 0);
+    // Compared at UTC-day precision; see heal-bill-dates.ts for why never the host's day.
+    const { current, resolved, drifted } = resolveCursor(bill, logs);
 
     if (resolved === null) {
       // Walked past endDate — deactivate.
@@ -91,7 +82,7 @@ async function main() {
       continue;
     }
 
-    if (resolved.getTime() === current.getTime()) continue;
+    if (!drifted) continue;
 
     drift++;
     const label = bill.description || `(bill ${bill.id})`;
@@ -146,48 +137,14 @@ async function reportUnreachable(
       select: { dueDate: true },
     });
 
-    const terminal = new Set(
-      logs.map((l) => {
-        const d = new Date(l.dueDate);
-        d.setHours(0, 0, 0, 0);
-        return d.getTime();
-      }),
-    );
-
-    const next = new Date(bill.nextDueDate);
-    next.setHours(0, 0, 0, 0);
-
-    let cursor = new Date(bill.startDate);
-    cursor.setHours(0, 0, 0, 0);
-
-    const missing: string[] = [];
-    let scannedTo = new Date(cursor);
-    let truncated = false;
-
     // 20k covers ~55 years of a daily bill. The cap cannot be dropped entirely:
     // computeNextDueDate uses `customIntervalDays ?? 1`, which does not catch a
     // stored 0, so a CUSTOM bill with a zero interval would never advance.
-    for (let i = 0; ; i++) {
-      if (cursor.getTime() >= next.getTime()) break;
-      if (i >= MAX_SCAN_ITERATIONS) {
-        truncated = true;
-        break;
-      }
-
-      if (!terminal.has(cursor.getTime())) missing.push(cursor.toISOString().slice(0, 10));
-
-      const advanced = computeNextDueDate(cursor, bill.frequency, bill.startDate.getDate(), bill.customIntervalDays);
-      advanced.setHours(0, 0, 0, 0);
-
-      if (advanced.getTime() <= cursor.getTime()) {
-        // Zero/negative interval: bail rather than spin forever
-        truncated = true;
-        break;
-      }
-
-      cursor = advanced;
-      scannedTo = new Date(cursor);
-    }
+    const { next, missing, truncated, scannedTo } = findUnreachableOccurrences(
+      bill,
+      logs,
+      MAX_SCAN_ITERATIONS,
+    );
 
     const label = bill.description || `(bill ${bill.id})`;
 
