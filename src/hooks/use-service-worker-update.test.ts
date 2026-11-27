@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useServiceWorkerUpdate } from "./use-service-worker-update";
+import { NAVIGATION_UPDATE_TIMEOUT_MS, useServiceWorkerUpdate } from "./use-service-worker-update";
 
 /** A ServiceWorker is an EventTarget with a state and postMessage; that is all this hook touches. */
 class FakeWorker extends EventTarget {
@@ -21,6 +21,7 @@ class FakeRegistration extends EventTarget {
 let registration: FakeRegistration;
 let container: EventTarget & { controller: unknown; ready: Promise<unknown> };
 let reload: ReturnType<typeof vi.fn>;
+let assign: ReturnType<typeof vi.fn>;
 
 const install = (controller: unknown, ready?: Promise<unknown>) => {
   registration = new FakeRegistration();
@@ -31,12 +32,34 @@ const install = (controller: unknown, ready?: Promise<unknown>) => {
   Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: container });
 };
 
+/** A tab with a worker already waiting when it mounts. */
+const renderWaiting = async () => {
+  const waiting = new FakeWorker();
+  registration.waiting = waiting;
+  const hook = renderHook(() => useServiceWorkerUpdate());
+  await waitFor(() => expect(hook.result.current.status).toBe("waiting"));
+  return { ...hook, waiting };
+};
+
+/** A tab whose controller was swapped by another tab accepting the update. */
+const renderStale = async () => {
+  const hook = renderHook(() => useServiceWorkerUpdate());
+  await waitFor(() => expect(registration.update).toHaveBeenCalled());
+  act(() => {
+    container.dispatchEvent(new Event("controllerchange"));
+  });
+  await waitFor(() => expect(hook.result.current.status).toBe("stale"));
+  return hook;
+};
+
 beforeEach(() => {
   reload = vi.fn();
+  assign = vi.fn();
   Object.defineProperty(window, "location", {
     configurable: true,
-    value: { ...window.location, reload },
+    value: { ...window.location, reload, assign },
   });
+  Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
   install({});
 });
 
@@ -112,16 +135,126 @@ describe("useServiceWorkerUpdate", () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
-  // The mirror case, and why the guard is "was this page already controlled" rather than "did this
-  // tab accept": when another tab accepts the update, every sibling tab's controller changes too,
-  // and those tabs are the ones still running the old bundle.
-  it("reloads a sibling tab when another tab accepts the update", async () => {
-    renderHook(() => useServiceWorkerUpdate());
+  // The mirror case: when another tab accepts the update, every sibling tab's controller changes
+  // too. Those tabs still run the old bundle, but one may be mid-scan or mid-form, so it is marked
+  // stale and offered the banner rather than reloaded out from under the user.
+  it("marks a sibling tab stale instead of reloading it", async () => {
+    const { result } = renderHook(() => useServiceWorkerUpdate());
     await waitFor(() => expect(registration.update).toHaveBeenCalled());
     act(() => {
       container.dispatchEvent(new Event("controllerchange"));
     });
+    expect(reload).not.toHaveBeenCalled();
+    expect(assign).not.toHaveBeenCalled();
+    expect(result.current.status).toBe("stale");
+    expect(result.current.updateAvailable).toBe(true);
+  });
+
+  it("refreshes a stale tab when its banner Reload is tapped", async () => {
+    const { result } = await renderStale();
+    act(() => result.current.applyUpdate());
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("takes a waiting update on navigation and loads the target once the worker is in charge", async () => {
+    const { result, waiting } = await renderWaiting();
+    let taken = false;
+    act(() => {
+      taken = result.current.applyOnNavigation("/bills");
+    });
+    expect(taken).toBe(true);
+    expect(waiting.postMessage).toHaveBeenCalledWith({ type: "SKIP_WAITING" });
+    expect(assign).not.toHaveBeenCalled();
+
+    act(() => {
+      container.dispatchEvent(new Event("controllerchange"));
+    });
+    expect(assign).toHaveBeenCalledTimes(1);
+    expect(assign).toHaveBeenCalledWith("/bills");
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("falls back to loading the target if the worker never takes over", async () => {
+    const { result } = await renderWaiting();
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        result.current.applyOnNavigation("/goals");
+      });
+      act(() => {
+        vi.advanceTimersByTime(NAVIGATION_UPDATE_TIMEOUT_MS);
+      });
+      expect(assign).toHaveBeenCalledWith("/goals");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not load twice when the worker takes over after the fallback", async () => {
+    const { result } = await renderWaiting();
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        result.current.applyOnNavigation("/goals");
+      });
+      act(() => {
+        vi.advanceTimersByTime(NAVIGATION_UPDATE_TIMEOUT_MS);
+      });
+      act(() => {
+        container.dispatchEvent(new Event("controllerchange"));
+      });
+      expect(assign).toHaveBeenCalledTimes(1);
+      expect(reload).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores a second tap while an update is pending", async () => {
+    const { result, waiting } = await renderWaiting();
+    const taps: boolean[] = [];
+    act(() => {
+      taps.push(result.current.applyOnNavigation("/bills"));
+      taps.push(result.current.applyOnNavigation("/goals"));
+    });
+    expect(taps).toEqual([true, true]);
+    expect(waiting.postMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads the target straight away from a stale tab", async () => {
+    const { result } = await renderStale();
+    let taken = false;
+    act(() => {
+      taken = result.current.applyOnNavigation("/labels");
+    });
+    expect(taken).toBe(true);
+    expect(assign).toHaveBeenCalledWith("/labels");
+  });
+
+  it("lets the navigation through when there is no update or the tab is offline", async () => {
+    const idle = renderHook(() => useServiceWorkerUpdate());
+    await waitFor(() => expect(registration.update).toHaveBeenCalled());
+    expect(idle.result.current.applyOnNavigation("/bills")).toBe(false);
+    idle.unmount();
+
+    const { result, waiting } = await renderWaiting();
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: false });
+    expect(result.current.applyOnNavigation("/bills")).toBe(false);
+    expect(waiting.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("prefers a newer waiting worker over a stale state", async () => {
+    const { result } = await renderStale();
+    const installing = new FakeWorker();
+    registration.installing = installing;
+    act(() => {
+      registration.dispatchEvent(new Event("updatefound"));
+      installing.become("installed");
+    });
+    await waitFor(() => expect(result.current.status).toBe("waiting"));
+    act(() => result.current.applyUpdate());
+    expect(installing.postMessage).toHaveBeenCalledWith({ type: "SKIP_WAITING" });
+    expect(reload).not.toHaveBeenCalled();
   });
 
   // The trap the first-install guard opened: the claim consumed the only listener, so the tab that
