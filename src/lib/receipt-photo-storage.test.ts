@@ -36,8 +36,9 @@ describe("receiptPhotosEnabled", () => {
 });
 
 describe("photoObjectKey", () => {
-  it("builds the key", () => {
-    expect(photoObjectKey("u1", "p1")).toBe("receipts/u1/p1.jpg");
+  it("builds the key with the stored format's extension", () => {
+    expect(photoObjectKey("u1", "p1", "image/avif")).toBe("receipts/u1/p1.avif");
+    expect(photoObjectKey("u1", "p1", "image/jpeg")).toBe("receipts/u1/p1.jpg");
   });
 });
 

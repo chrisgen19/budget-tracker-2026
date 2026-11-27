@@ -7,6 +7,9 @@
  * - **Metadata really is stripped.** Uploads a JPEG carrying GPS EXIF, reads it back through
  *   `GET /api/receipt-photos/[id]`, and asserts the served bytes carry no EXIF at all. The unit
  *   test proves `normaliseReceiptPhoto` omits `withMetadata`; only this proves what reaches R2.
+ * - **It is stored as AVIF at the stored size.** The served bytes decode as AVIF, the response
+ *   says `image/avif`, the row and object key agree, and a 2400px upload comes back at
+ *   `STORED_PHOTO_MAX_DIMENSION`. Only a real server shows the deployed `sharp` can encode AVIF.
  * - **The lifecycle leaves nothing behind.** Upload, replay the same key, create a transaction on
  *   the photo, replace it, remove it, delete a transaction that had one, and then list the bucket
  *   under the user's prefix and assert it is empty. Each cleanup path deletes the row first and the
@@ -40,7 +43,10 @@ import {
   PhotoNotFoundError,
   receiptPhotosEnabled,
   type PhotoStorage,
+  photoObjectKey,
 } from "../src/lib/receipt-photo-storage";
+import { STORED_PHOTO_CONTENT_TYPE } from "../src/lib/receipt-photo-format";
+import { STORED_PHOTO_MAX_DIMENSION } from "../src/lib/receipt-limits";
 import { deleteUnreferencedPhotos } from "../src/lib/receipt-photos";
 import { isLocalDatabase } from "./db-host";
 
@@ -220,7 +226,8 @@ async function lockCheck(userId: string, categoryId: string) {
 
 /** A JPEG carrying GPS EXIF, and a marker string so its presence is checkable byte for byte. */
 const gpsJpeg = async (colour: string) => {
-  const bytes = await sharp({ create: { width: 120, height: 90, channels: 3, background: colour } })
+  // Larger than STORED_PHOTO_MAX_DIMENSION, so the stored size proves the downscale ran.
+  const bytes = await sharp({ create: { width: 2400, height: 1800, channels: 3, background: colour } })
     .jpeg()
     .withExif({
       IFD0: { Make: "ProbeCam" },
@@ -274,7 +281,7 @@ async function routeChecks(userId: string, categoryId: string, storage: PhotoSto
     const row = await prisma.receiptPhoto.findUnique({ where: { id: photoId } });
     let object = true;
     try {
-      await storage.get(`receipts/${userId}/${photoId}.jpg`);
+      await storage.get(photoObjectKey(userId, photoId, STORED_PHOTO_CONTENT_TYPE));
     } catch (error) {
       object = !(error instanceof PhotoNotFoundError);
     }
@@ -294,7 +301,23 @@ async function routeChecks(userId: string, categoryId: string, storage: PhotoSto
   check("served with Cache-Control private, no-store", served.headers.get("cache-control") === "private, no-store");
   const servedBytes = Buffer.from(await served.arrayBuffer());
   const servedMeta = await sharp(servedBytes).metadata();
-  check("served photo is a JPEG", servedMeta.format === "jpeg");
+  check("served as image/avif", served.headers.get("content-type") === STORED_PHOTO_CONTENT_TYPE);
+  check(
+    "served photo decodes as AVIF",
+    servedMeta.format === "heif" && servedMeta.compression === "av1",
+    `got ${servedMeta.format}/${servedMeta.compression}`,
+  );
+  check(
+    "a 2400x1800 upload is stored at the stored max dimension",
+    servedMeta.width === STORED_PHOTO_MAX_DIMENSION && servedMeta.height === 900,
+    `got ${servedMeta.width}x${servedMeta.height}`,
+  );
+  const firstRow = await prisma.receiptPhoto.findUnique({ where: { id: first.id } });
+  check(
+    "the row records image/avif under an .avif key",
+    firstRow?.contentType === STORED_PHOTO_CONTENT_TYPE && firstRow.objectKey.endsWith(".avif"),
+    `got ${firstRow?.contentType} ${firstRow?.objectKey}`,
+  );
   check("served photo carries no EXIF, so no GPS", servedMeta.exif === undefined);
   check("no GPS marker anywhere in the served bytes", !servedBytes.includes("WGS-84"));
 

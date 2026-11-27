@@ -4,6 +4,7 @@
  * Server-only: reads secret R2 credentials. Never import from client code.
  */
 import { AwsClient } from "aws4fetch";
+import { photoFileExtension } from "./receipt-photo-format";
 
 const REQUIRED_VARS = [
   "R2_ACCOUNT_ID",
@@ -109,9 +110,13 @@ const readVar = (env: NodeJS.ProcessEnv, name: string): string => env[name]?.tri
 export const receiptPhotosEnabled = (env: NodeJS.ProcessEnv = process.env): boolean =>
   REQUIRED_VARS.every((name) => readVar(env, name) !== "");
 
-/** Object key for a photo. Never derived from a description or amount. */
-export const photoObjectKey = (userId: string, photoId: string): string =>
-  `receipts/${userId}/${photoId}.jpg`;
+/**
+ * Object key for a photo, with the extension of its stored format. Never derived from a
+ * description or amount. Existing keys are read from the row, never rebuilt, so a photo stored
+ * as `.jpg` before the AVIF switch keeps its key.
+ */
+export const photoObjectKey = (userId: string, photoId: string, contentType: string): string =>
+  `receipts/${userId}/${photoId}.${photoFileExtension(contentType)}`;
 
 export function createPhotoStorage(
   env: NodeJS.ProcessEnv = process.env,

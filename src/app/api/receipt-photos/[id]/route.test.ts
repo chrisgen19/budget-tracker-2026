@@ -43,14 +43,22 @@ describe("GET /api/receipt-photos/[id]", () => {
     expect(mocks.get).not.toHaveBeenCalled();
   });
 
-  it("streams own photo as private jpeg", async () => {
-    mocks.findFirst.mockResolvedValue({ objectKey: "receipts/user-1/p1.jpg" });
+  it("streams own photo, private, with the row's content type", async () => {
+    mocks.findFirst.mockResolvedValue({ objectKey: "receipts/user-1/p1.avif", contentType: "image/avif" });
     mocks.get.mockResolvedValue(new Response(new Uint8Array([1, 2, 3])));
     const res = await GET(req(), context("p1"));
     expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toBe("image/jpeg");
+    expect(res.headers.get("content-type")).toBe("image/avif");
     expect(res.headers.get("cache-control")).toBe("private, no-store");
-    expect(mocks.get).toHaveBeenCalledWith("receipts/user-1/p1.jpg");
+    expect(mocks.get).toHaveBeenCalledWith("receipts/user-1/p1.avif");
+  });
+
+  it("still serves a photo stored before the AVIF switch as JPEG", async () => {
+    mocks.findFirst.mockResolvedValue({ objectKey: "receipts/user-1/p0.jpg", contentType: "image/jpeg" });
+    mocks.get.mockResolvedValue(new Response(new Uint8Array([1, 2, 3])));
+    const res = await GET(req(), context("p0"));
+    expect(res.headers.get("content-type")).toBe("image/jpeg");
+    expect(mocks.get).toHaveBeenCalledWith("receipts/user-1/p0.jpg");
   });
 
   it("404 when the object is missing from storage", async () => {

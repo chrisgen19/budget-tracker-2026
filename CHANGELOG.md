@@ -2,6 +2,18 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-27 - Receipt photos stored as AVIF at 1200px
+
+- **New receipt photos are stored as AVIF at quality 50, longest side 1200px**, instead of JPEG at
+  quality 80 and 1500px. Measured on the production photos: about a quarter of the size (roughly
+  60 KB against 250 KB) with the smallest receipt print still legible zoomed in.
+- **Scanning is unchanged.** Storage has its own cap, `STORED_PHOTO_MAX_DIMENSION`, so the 1500px
+  `MAX_IMAGE_DIMENSION` that Gemini reads stays where it was.
+- **Existing JPEG photos keep working.** `GET /api/receipt-photos/[id]` now serves each row's own
+  `content_type` rather than a fixed `image/jpeg`, object keys take the extension of the stored
+  format, and the viewer names a download `.avif` or `.jpg` to match. No migration: the type, size
+  and dimensions were already stored per row.
+
 ## 2026-11-27 - Receipt photo uploads work in production (R2 answered 411)
 
 - **Every production photo upload failed with `R2 PUT returned 411`** (Length Required), which the

@@ -1,7 +1,7 @@
 // @vitest-environment node
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
-import { MAX_IMAGE_DIMENSION } from "./receipt-limits";
+import { STORED_PHOTO_MAX_DIMENSION } from "./receipt-limits";
 import { UnreadableImageError, normaliseReceiptPhoto } from "./receipt-photo-image";
 
 /** A JPEG with EXIF (including a GPS IFD) and an orientation tag, built in-test. */
@@ -20,26 +20,28 @@ const makePhotoJpeg = async (): Promise<Uint8Array> => {
 };
 
 describe("normaliseReceiptPhoto", () => {
-  it("scales a large photo to the max dimension, upright, with all metadata stripped", async () => {
+  it("scales a large photo to the stored max dimension as AVIF, upright, with all metadata stripped", async () => {
     const input = await makePhotoJpeg();
     const inputMeta = await sharp(input).metadata();
     expect(inputMeta.exif).toBeDefined();
 
     const result = await normaliseReceiptPhoto(input);
 
-    expect(Math.max(result.width, result.height)).toBeLessThanOrEqual(MAX_IMAGE_DIMENSION);
+    expect(Math.max(result.width, result.height)).toBeLessThanOrEqual(STORED_PHOTO_MAX_DIMENSION);
     expect(result.width).toBeLessThan(result.height);
-    expect(result.width).toBe(1000);
-    expect(result.height).toBe(1500);
+    expect(result.width).toBe(800);
+    expect(result.height).toBe(1200);
+    expect(result.contentType).toBe("image/avif");
 
     const outMeta = await sharp(result.bytes).metadata();
-    expect(outMeta.format).toBe("jpeg");
+    expect(outMeta.format).toBe("heif");
+    expect(outMeta.compression).toBe("av1");
     expect(outMeta.exif).toBeUndefined();
     expect(outMeta.icc).toBeUndefined();
     expect(outMeta.xmp).toBeUndefined();
   });
 
-  it("re-encodes a small PNG as JPEG without enlarging it", async () => {
+  it("re-encodes a small PNG as AVIF without enlarging it", async () => {
     const png = await sharp({
       create: { width: 800, height: 600, channels: 3, background: { r: 10, g: 20, b: 30 } },
     })
@@ -52,7 +54,8 @@ describe("normaliseReceiptPhoto", () => {
     expect(result.height).toBe(600);
     expect(result.bytes).toBeInstanceOf(Uint8Array);
     const outMeta = await sharp(result.bytes).metadata();
-    expect(outMeta.format).toBe("jpeg");
+    expect(outMeta.format).toBe("heif");
+    expect(outMeta.compression).toBe("av1");
     expect(outMeta.width).toBe(800);
     expect(outMeta.height).toBe(600);
   });
