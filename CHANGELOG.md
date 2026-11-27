@@ -2,6 +2,17 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-27 - Production builds with Railpack; nixpacks.toml removed
+
+- **Coolify's Build Pack is now Railpack**, on Node 24.22.3. The first Railpack deploy (`eb0a12a`)
+  ran `pnpm build:deploy`, applied no pending migrations, passed the drift check and went healthy.
+- **`nixpacks.toml` is deleted.** It was kept only as the fallback until a Railpack deploy
+  succeeded on production. Setting the Build Pack back to Nixpacks now falls back to
+  auto-detection and plain `pnpm build`, which skips migrations, so do not switch it back without
+  restoring the file.
+- `scripts/build-scripts.test.ts` drops the Nixpacks wiring and Node-pin assertions; the Railpack
+  ones are unchanged.
+
 ## 2026-11-27 - Receipt photos pulse while they load
 
 - **The mobile strip and the full-screen viewer now show a skeleton and fade the photo in**, as
