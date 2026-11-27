@@ -65,6 +65,87 @@ const useVisualViewport = (enabled: boolean) => {
   return viewport;
 };
 
+/**
+ * How long the virtual keyboard takes to finish animating in. Android's settles in two
+ * steps - the key area, then the suggestion/toolbar strip above it - so this is a
+ * backstop, not the whole correction.
+ */
+const KEYBOARD_SETTLE_MS = 350;
+
+/**
+ * Keeps the focused field inside the modal's scroll port while the keyboard opens.
+ *
+ * iOS Safari does this itself: it scrolls the *page* to lift the focused field clear of
+ * the keyboard and reports the shift as `visualViewport.offsetTop`, which
+ * `useVisualViewport` above already compensates for. Android Chrome does not - under the
+ * default `interactive-widget: resizes-visual` the layout viewport never changes, so as
+ * far as Chrome is concerned nothing moved and nothing needs scrolling. The modal only
+ * lifts above the keyboard because *we* resize its container from the `visualViewport`
+ * resize event, and shrinking a scroll port does not move its `scrollTop`: whatever sat
+ * below the new fold stays below it. That is the whole of the Android bug - the amount
+ * field is still there, one scroll down, behind the keyboard the user is typing into.
+ *
+ * So the correction has to be driven by the resize, not by a timer:
+ *
+ * - on every `visualViewport` resize, because Android reports the keyboard's height more
+ *   than once as it and its toolbar strip animate in, and each report shrinks the modal
+ *   again under a scroll position that was correct a moment earlier. A single 350ms timer
+ *   fires between the two and is undone by the second.
+ * - once when the effect attaches, because `autoFocus` (the amount field on a new
+ *   transaction) focuses during React's commit phase - before this listener exists - so
+ *   `focusin` never fires for it and the old code corrected nothing at all.
+ */
+const useKeepFocusedFieldVisible = (
+  active: boolean,
+  contentRef: React.RefObject<HTMLDivElement | null>,
+) => {
+  useEffect(() => {
+    if (!active) return;
+
+    const content = contentRef.current;
+    if (!content) return;
+
+    let frame = 0;
+    let settleTimer: ReturnType<typeof setTimeout>;
+
+    const revealFocusedField = (behavior: ScrollBehavior) => {
+      const focused = document.activeElement;
+      if (!(focused instanceof HTMLElement) || !content.contains(focused)) return;
+      focused.scrollIntoView({ block: "center", behavior });
+    };
+
+    /**
+     * One frame late, so the `visualViewport` resize that triggered this has been through
+     * React and the container is already its new height. A jump rather than a smooth
+     * scroll: a second resize mid-animation cancels a smooth one and leaves the field
+     * wherever it had got to.
+     */
+    const revealAfterReflow = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => revealFocusedField("auto"));
+    };
+
+    const handleFocusIn = () => {
+      revealAfterReflow();
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => revealFocusedField("smooth"), KEYBOARD_SETTLE_MS);
+    };
+
+    content.addEventListener("focusin", handleFocusIn);
+    window.visualViewport?.addEventListener("resize", revealAfterReflow);
+
+    // Catches a field `autoFocus` focused before this effect ran.
+    handleFocusIn();
+
+    return () => {
+      content.removeEventListener("focusin", handleFocusIn);
+      window.visualViewport?.removeEventListener("resize", revealAfterReflow);
+      cancelAnimationFrame(frame);
+      clearTimeout(settleTimer);
+    };
+  }, [active, contentRef]);
+};
+
 const desktopVariants = {
   initial: { opacity: 0, scale: 0.95, y: 10 },
   animate: { opacity: 1, scale: 1, y: 0 },
@@ -107,37 +188,7 @@ export function Modal({ open, onClose, title, children, size = "default" }: Moda
 
   useDialogLifecycle(open, dialogRef, contentRef, onClose);
 
-  // On mobile, scroll the focused input into view within the modal's
-  // scroll container after the keyboard finishes animating
-  useEffect(() => {
-    if (!open || !isMobile) return;
-
-    const content = contentRef.current;
-    if (!content) return;
-
-    let pendingTimer: ReturnType<typeof setTimeout>;
-
-    const handleFocusIn = (e: FocusEvent) => {
-      const target = e.target;
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLSelectElement
-      ) {
-        // Delay to let the keyboard animation and viewport resize settle
-        clearTimeout(pendingTimer);
-        pendingTimer = setTimeout(() => {
-          target.scrollIntoView({ block: "center", behavior: "smooth" });
-        }, 350);
-      }
-    };
-
-    content.addEventListener("focusin", handleFocusIn);
-    return () => {
-      content.removeEventListener("focusin", handleFocusIn);
-      clearTimeout(pendingTimer);
-    };
-  }, [open, isMobile]);
+  useKeepFocusedFieldVisible(open && isMobile, contentRef);
 
   // On mobile, pin the container to the visual viewport so Safari's
   // scroll-to-focused-input doesn't push the modal off-screen
