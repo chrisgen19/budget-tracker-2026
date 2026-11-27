@@ -56,6 +56,17 @@ export function UpdateNavigationProvider({ busy, children }: UpdateNavigationPro
       const href = getInAppHref(event, new URL(window.location.href));
       if (href && !busyRef.current && applyOnNavigation(href)) event.preventDefault();
     };
+    // Capture, and it has to be: React attaches its own listeners to the root container, so a
+    // `document` listener in the bubble phase runs *after* `next/link`'s `onClick` has already
+    // called `router.push`, and there is nothing left to take over. Re-checking in a microtask is
+    // too late for the same reason -- `preventDefault` has to be decided synchronously.
+    //
+    // The price is that `getInAppHref`'s `event.defaultPrevented` check cannot see a component's
+    // own `preventDefault`, since that handler has not run yet. No link in the app does that
+    // today, so this is a trap for later rather than a live bug: an `<a>` whose `onClick` prevents
+    // the default to open a modal would be taken over here and full-load to its `href` instead.
+    // Such a link should be a `<button>`, or opt out another way -- moving this listener to the
+    // bubble phase breaks the mechanism outright.
     document.addEventListener("click", onClick, { capture: true });
     return () => document.removeEventListener("click", onClick, { capture: true });
   }, [applyOnNavigation]);
