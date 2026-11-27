@@ -2,6 +2,19 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-27 - Receipt photo uploads work in production (R2 answered 411)
+
+- **Every production photo upload failed with `R2 PUT returned 411`** (Length Required), which the
+  log line added the same day named on its first real failure. The storage client sent the
+  `Request` that `aws4fetch` signed straight to `fetch`. Next's patched server `fetch` rebuilds a
+  `Request` input from its `body`, a stream of unknown length, so the PUT went out
+  `transfer-encoding: chunked` with no `Content-Length`, and R2 refuses that. Reproduced on Node 20,
+  22 and 24 alike: the Node version was not the cause.
+- **`sendTo` now signs, then sends the original bytes as `init.body`**, which keeps its length
+  through Next's rebuild. The signature is unchanged, since `aws4fetch` signs S3 requests as
+  `UNSIGNED-PAYLOAD`. A unit test pins that `fetch` receives the raw bytes rather than a `Request`,
+  and fails against the old code.
+
 ## 2026-11-27 - A failed receipt photo upload says why, in the log and in the verify script
 
 - **`POST /api/receipt-photos` logs R2's reason on a 502.** The first run of

@@ -136,8 +136,18 @@ export function createPhotoStorage(
       STORAGE_TIMEOUT_MS,
     );
     try {
-      const signed = await client.sign(url, { ...init, method, signal: controller.signal });
-      return await fetchImpl(signed);
+      // Sign, then send the ORIGINAL body rather than the signed Request. Next's patched fetch
+      // rebuilds a Request input from `request.body`, which is a stream of unknown length, so
+      // the PUT went out chunked with no Content-Length and R2 answered 411. A Uint8Array in
+      // `init.body` survives that rebuild with its length. The signature is unaffected: for S3,
+      // aws4fetch signs the URL and headers with `X-Amz-Content-Sha256: UNSIGNED-PAYLOAD`.
+      const signed = await client.sign(url, { ...init, method });
+      return await fetchImpl(signed.url, {
+        method,
+        headers: signed.headers,
+        body: init.body,
+        signal: controller.signal,
+      });
     } catch (error) {
       const timedOut = controller.signal.aborted;
       throw new PhotoStorageError(
