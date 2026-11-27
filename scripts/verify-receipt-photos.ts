@@ -43,7 +43,6 @@ import {
   PhotoNotFoundError,
   receiptPhotosEnabled,
   type PhotoStorage,
-  photoObjectKey,
 } from "../src/lib/receipt-photo-storage";
 import { STORED_PHOTO_CONTENT_TYPE } from "../src/lib/receipt-photo-format";
 import { STORED_PHOTO_MAX_DIMENSION } from "../src/lib/receipt-limits";
@@ -277,11 +276,23 @@ async function routeChecks(userId: string, categoryId: string, storage: PhotoSto
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+  /**
+   * Each photo's real object key, read from its row while the row exists. Rebuilding the key from
+   * the current format would look in the wrong place for a photo stored in another one, get a
+   * 404, and report a leftover object as deleted.
+   */
+  const objectKeys = new Map<string, string>();
+  const rememberKey = async (photoId: string) => {
+    const row = await prisma.receiptPhoto.findUniqueOrThrow({ where: { id: photoId }, select: { objectKey: true } });
+    objectKeys.set(photoId, row.objectKey);
+  };
   const gone = async (photoId: string) => {
+    const key = objectKeys.get(photoId);
+    if (!key) throw new Error(`no object key recorded for ${photoId}; call rememberKey after its upload`);
     const row = await prisma.receiptPhoto.findUnique({ where: { id: photoId } });
     let object = true;
     try {
-      await storage.get(photoObjectKey(userId, photoId, STORED_PHOTO_CONTENT_TYPE));
+      await storage.get(key);
     } catch (error) {
       object = !(error instanceof PhotoNotFoundError);
     }
@@ -294,6 +305,7 @@ async function routeChecks(userId: string, categoryId: string, storage: PhotoSto
   if (first.status !== 201) {
     throw new Error(`the first upload failed (${first.status}); every check after it needs that photo.`);
   }
+  await rememberKey(first.id);
   const replay = await upload(await gpsJpeg("#c96"), key1);
   check("replaying the photoKey answers 200 with the same photo", replay.status === 200 && replay.id === first.id);
 
@@ -309,7 +321,8 @@ async function routeChecks(userId: string, categoryId: string, storage: PhotoSto
   );
   check(
     "a 2400x1800 upload is stored at the stored max dimension",
-    servedMeta.width === STORED_PHOTO_MAX_DIMENSION && servedMeta.height === 900,
+    // The fixture is 4:3, so the height follows the constant rather than being typed in.
+    servedMeta.width === STORED_PHOTO_MAX_DIMENSION && servedMeta.height === (STORED_PHOTO_MAX_DIMENSION * 1800) / 2400,
     `got ${servedMeta.width}x${servedMeta.height}`,
   );
   const firstRow = await prisma.receiptPhoto.findUnique({ where: { id: first.id } });
@@ -328,6 +341,7 @@ async function routeChecks(userId: string, categoryId: string, storage: PhotoSto
   check("a transaction created with the photo is linked to it", linked?.receiptPhotoId === first.id);
 
   const second = await uploadFor("the replace", await gpsJpeg("#69c"));
+  await rememberKey(second.id);
   await call(`/api/transactions/${txId}`, { method: "PUT", ...json({ ...base, receiptPhotoId: second.id }) });
   const replaced = await prisma.transaction.findUnique({ where: { id: txId }, select: { receiptPhotoId: true } });
   check("replace links the new photo", replaced?.receiptPhotoId === second.id);
@@ -337,6 +351,7 @@ async function routeChecks(userId: string, categoryId: string, storage: PhotoSto
   check("remove deletes the now unreferenced photo", await gone(second.id));
 
   const third = await uploadFor("the delete", await gpsJpeg("#9c6"));
+  await rememberKey(third.id);
   const doomed = await call("/api/transactions", { method: "POST", ...json({ ...base, receiptPhotoId: third.id }) });
   const doomedId = ((await doomed.json()) as { id?: string }).id ?? "";
   await call(`/api/transactions/${doomedId}`, { method: "DELETE" });

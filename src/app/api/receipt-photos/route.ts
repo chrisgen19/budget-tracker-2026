@@ -67,6 +67,9 @@ export async function POST(request: Request) {
       console.warn("[receipt-photos] upload failed in storage:", error.message);
       return fail("Photo storage failed.", 502);
     }
+    // Anything else is the server's own fault, such as a sharp build that cannot encode AVIF.
+    // Logged, or a broken encoder would fail every upload with nothing pointing at it.
+    console.error("[receipt-photos] upload failed:", error);
     return fail("Failed to save the photo.", 500);
   }
 }

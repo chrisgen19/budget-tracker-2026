@@ -1,7 +1,8 @@
 // @vitest-environment node
 import sharp from "sharp";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { STORED_PHOTO_MAX_DIMENSION } from "./receipt-limits";
+import { STORED_PHOTO_EFFORT, STORED_PHOTO_QUALITY } from "./receipt-photo-format";
 import { UnreadableImageError, normaliseReceiptPhoto } from "./receipt-photo-image";
 
 /** A JPEG with EXIF (including a GPS IFD) and an orientation tag, built in-test. */
@@ -58,6 +59,32 @@ describe("normaliseReceiptPhoto", () => {
     expect(outMeta.compression).toBe("av1");
     expect(outMeta.width).toBe(800);
     expect(outMeta.height).toBe(600);
+  });
+
+  it("lets an encode failure through as itself, not as UnreadableImageError", async () => {
+    const proto = Object.getPrototypeOf(sharp()) as { avif: (...args: unknown[]) => unknown };
+    const avif = vi.spyOn(proto, "avif").mockImplementation(() => {
+      throw new Error("heif: No codec for AV1");
+    });
+    try {
+      const input = await makePhotoJpeg();
+      const result = normaliseReceiptPhoto(input);
+      await expect(result).rejects.toThrow("No codec for AV1");
+      await expect(result).rejects.not.toBeInstanceOf(UnreadableImageError);
+    } finally {
+      avif.mockRestore();
+    }
+  });
+
+  it("encodes at the stored effort and quality", async () => {
+    const proto = Object.getPrototypeOf(sharp()) as { avif: (...args: unknown[]) => unknown };
+    const avif = vi.spyOn(proto, "avif");
+    try {
+      await normaliseReceiptPhoto(await makePhotoJpeg());
+      expect(avif).toHaveBeenCalledWith({ quality: STORED_PHOTO_QUALITY, effort: STORED_PHOTO_EFFORT });
+    } finally {
+      avif.mockRestore();
+    }
   });
 
   it("rejects bytes that are not an image with UnreadableImageError", async () => {

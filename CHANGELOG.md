@@ -13,6 +13,11 @@ All notable development history for the Budget Tracker app.
   `content_type` rather than a fixed `image/jpeg`, object keys take the extension of the stored
   format, and the viewer names a download `.avif` or `.jpg` to match. No migration: the type, size
   and dimensions were already stored per row.
+- **Encoded at AVIF effort 2**, not sharp's default 4: the same size and legibility at about a fifth
+  of the CPU (155 ms against 1,170 ms per photo on one thread).
+- **A failed encode is a server error, not an unreadable photo.** Decode and encode are separate
+  steps, so a sharp build that cannot write AVIF answers 500 and logs the cause, instead of telling
+  the user their photo is unreadable (422) with nothing in the log.
 
 ## 2026-11-27 - Receipt photo uploads work in production (R2 answered 411)
 
