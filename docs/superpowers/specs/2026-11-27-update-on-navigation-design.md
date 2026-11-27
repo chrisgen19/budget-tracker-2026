@@ -67,6 +67,13 @@ against the new API, which is the client/server skew #306 exists to close.
 `busy = scan.items.length > 0 || scan.isScanning || scan.isSavingAll` from the `useMultiScan()` it
 already owns (`src/components/app-shell.tsx:100`).
 
+The gate is read **once, when the tap is handled**, and deliberately not re-checked by
+`controllerchange` or the 3s fallback. A scan started inside that window is therefore not protected
+by it. That is not a hole in the anti-goal above: the user has already chosen to leave the page, and
+an ordinary client navigation would unmount the scan sheet just the same. Deferring the load until
+the queue drains would strand the tab on a page it was told to leave, with nothing on screen saying
+why -- a worse failure than the one it avoids.
+
 **Wiring** (new `src/components/pwa/update-navigation-provider.tsx`):
 - `AppShell` calls the hook once and passes `status` and `applyUpdate` down to `UpdatePromptBanner`
   as props, so the hook is not mounted twice.
