@@ -117,4 +117,22 @@ describe("build scripts", () => {
     // command reinstates the non-migrating path just as well.
     expect(raw).not.toMatch(/pnpm build(?!:deploy)/);
   });
+
+  /**
+   * The apt arrays are the opposite case from the build commands: an array without `"..."` REPLACES
+   * the packages Railpack generates rather than adding to them. Coolify's Railpack wrapper also
+   * appends `curl` and `wget` to the runtime list, and both Coolify Scheduled Tasks (bill reminders,
+   * the Telegram evening prompt) run `curl` inside the container, so a replaced list breaks them
+   * with `curl: command not found` and nothing in the deploy fails. Railpack does not document
+   * whether this file or Coolify's `RAILPACK_DEPLOY_APT_PACKAGES` wins, so the list names `curl`
+   * and `wget` itself as well as spreading the defaults.
+   */
+  it("extends railpack's apt packages rather than replacing them", () => {
+    const railpack = JSON.parse(readFileSync(join(__dirname, "..", "railpack.json"), "utf8"));
+    expect(railpack.buildAptPackages).toContain("...");
+    expect(railpack.buildAptPackages).toContain("openssl");
+    for (const pkg of ["...", "openssl", "curl", "wget"]) {
+      expect(railpack.deploy?.aptPackages).toContain(pkg);
+    }
+  });
 });

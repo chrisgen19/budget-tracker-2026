@@ -49,6 +49,22 @@ alongside the drop migration. `check-migration-drift.ts` diffs the two (`prisma 
 Write the contract migration as a **forward** migration. Never edit or delete an applied one: the
 drift check fails any deploy whose checkout lacks a migration the database has applied.
 
+## A `railpack.json` apt list replaces, it does not add
+
+`steps.*.commands` and `aptPackages` read the same but behave in opposite directions. In both,
+`"..."` stands for what Railpack generated. In the **commands** it must be absent: spreading the
+Node provider's defaults back in reinstates plain `pnpm build`, the non-migrating path (#192). In
+the **apt lists** it must be present, because an array without it replaces Railpack's runtime
+packages rather than extending them.
+
+The runtime list also names `curl` and `wget` itself. Coolify's Railpack wrapper appends those two
+to `RAILPACK_DEPLOY_APT_PACKAGES`, and both Coolify Scheduled Tasks - bill reminders and the
+Telegram evening prompt - shell out to `curl` inside the running container. Railpack does not
+document whether this file or that environment variable wins when both set the list, so the file
+names every package it needs rather than relying on the answer. The failure is silent either way:
+the deploy succeeds and the crons stop, with `curl: command not found` in a task log nothing
+watches. `scripts/build-scripts.test.ts` pins both halves.
+
 ## An API response shape change needs one release of backward compatibility
 
 `src/app/sw.ts` precaches the JS bundles. `skipWaiting` and `clientsClaim` swap the *worker*, not

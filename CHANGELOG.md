@@ -11,6 +11,12 @@ All notable development history for the Budget Tracker app.
   `node .next/standalone/server.js` on `0.0.0.0:3000`.
 - **`openssl` is installed in both the build and the runtime image**, so `prisma generate` picks
   the engine for the OpenSSL the container actually runs with.
+- **Both apt lists start with `"..."`**, which is how Railpack extends its generated package list
+  instead of replacing it. The runtime list also names `curl` and `wget`: Coolify appends those two
+  itself, both Coolify Scheduled Tasks (bill reminders, the Telegram evening prompt) call `curl`
+  inside the container, and Railpack does not document whether this file or Coolify's
+  `RAILPACK_DEPLOY_APT_PACKAGES` wins when both set the list. A replaced list would not fail the
+  deploy - the crons would just stop running.
 - **Node stays on 20**, the version `nixpacks.toml` and CI already run, so switching builders
   changes only the builder. Moving to Node 24 is a separate step that has to move CI with it.
 - **Nothing changes until the Build Pack is switched in Coolify.** `nixpacks.toml` stays until a

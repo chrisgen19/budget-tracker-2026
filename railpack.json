@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.railpack.com",
-  "buildAptPackages": ["openssl"],
+  "buildAptPackages": ["...", "openssl"],
   "packages": {
     "node": "20"
   },
@@ -15,7 +15,7 @@
   },
   "deploy": {
     "startCommand": "node .next/standalone/server.js",
-    "aptPackages": ["openssl"],
+    "aptPackages": ["...", "openssl", "curl", "wget"],
     "variables": {
       "HOSTNAME": "0.0.0.0",
       "PORT": "3000"
