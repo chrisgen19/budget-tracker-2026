@@ -47,7 +47,7 @@ describe("build scripts", () => {
     }
   });
 
-  // The whole point of the split: the migrating build has to exist, or `nixpacks.toml` calls a
+  // The whole point of the split: the migrating build has to exist, or `railpack.json` calls a
   // script that is not there and Coolify ships code ahead of its schema.
   it("migrates in `build:deploy`", () => {
     expect(scripts["build:deploy"]).toContain("prisma migrate deploy");
@@ -87,23 +87,11 @@ describe("build scripts", () => {
     expect(scripts["build:deploy"].endsWith("next build")).toBe(true);
   });
 
-  // nixpacks and railpack are the only builders that should reach the production database, and they
-  // reach it by calling the migrating script by name. Comment lines are stripped first: this file explains the
-  // history in prose that names `pnpm build`, and matching that would assert the opposite of what
-  // it says.
-  it("is wired to nixpacks", () => {
-    const nixpacks = readFileSync(join(__dirname, "..", "nixpacks.toml"), "utf8")
-      .split("\n")
-      .filter((line) => !line.trimStart().startsWith("#"))
-      .join("\n");
-    expect(nixpacks).toContain("pnpm build:deploy");
-    expect(nixpacks).not.toMatch(/pnpm build(?!:deploy)/);
-  });
-
   /**
-   * Railpack is the successor builder Coolify recommends. Its Node provider runs the `build` script
-   * by default, which deploys code without its migrations, and an array in `railpack.json` keeps
-   * the provider's own commands wherever it contains `"..."`. So the build step has to call
+   * Railpack is the only builder left, and the only one that should reach the production database.
+   * It reaches it by calling the migrating script by name: its Node provider runs the `build`
+   * script by default, which deploys code without its migrations, and an array in `railpack.json`
+   * keeps the provider's own commands wherever it contains `"..."`. So the build step has to call
    * `build:deploy` by name and must not spread the defaults back in.
    */
   it("is wired to railpack", () => {
@@ -134,5 +122,24 @@ describe("build scripts", () => {
     for (const pkg of ["...", "openssl", "curl", "wget"]) {
       expect(railpack.deploy?.aptPackages).toContain(pkg);
     }
+  });
+
+  /**
+   * Production's Node version has to be one CI actually runs. These two numbers lived in different
+   * files with nothing tying them together, and the gap is silent in the direction that matters: a
+   * green pipeline on one version while the image ships another, so a behaviour change in a
+   * dependency path -- deprecations, OpenSSL defaults, undici -- surfaces only in production.
+   *
+   * The matrix is read out of the workflow rather than hardcoded here, so adding a version to CI
+   * is enough and this test never has to be the second place to edit.
+   */
+  it("deploys a Node version the CI matrix covers", () => {
+    const railpack = JSON.parse(readFileSync(join(__dirname, "..", "railpack.json"), "utf8"));
+    const workflow = readFileSync(join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8");
+    const matrix = workflow.match(/^\s*node:\s*\[([^\]]*)\]/m);
+    expect(matrix).not.toBeNull();
+    const versions = matrix![1].split(",").map((v) => v.trim().replace(/["']/g, ""));
+    expect(versions.length).toBeGreaterThan(0);
+    expect(versions).toContain(String(railpack.packages?.node));
   });
 });

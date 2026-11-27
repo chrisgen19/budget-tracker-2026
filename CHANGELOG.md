@@ -2,6 +2,24 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-27 - Node 24 in production, Nixpacks removed
+
+- **`railpack.json` pins Node 24** and **`nixpacks.toml` is deleted.** Railpack is the only build
+  pack left, so there is no second file to keep in step and no way to deploy the old one by
+  flipping a setting in Coolify. Node 20 reached end of life in April 2026.
+- **CI runs Node 20 and Node 24.** The matrix legs report as `checks (20)` and `checks (24)`, and a
+  separate `ci` job aggregates them. That job exists only to keep the required check's name stable:
+  "Protect main" requires a status check named exactly `ci`, and putting the matrix on a job called
+  `ci` would rename it to `ci (20)` / `ci (24)`, leaving the required name reporting nothing and
+  every PR unmergeable. The aggregator runs with `if: always()` and asserts the matrix result, since
+  a skipped required check reports neutral and would let a red matrix merge.
+- **`scripts/build-scripts.test.ts` now asserts the Node version `railpack.json` deploys is one the
+  CI matrix lists**, reading the matrix out of the workflow rather than hardcoding it. The two
+  numbers previously sat in different files with nothing tying them together, which is how a
+  builder switch could have moved production to a Node version CI never ran.
+- **Node 20 stays in the matrix** until `package.json` engines moves off `>=20.19.0`. Dropping it
+  from CI and leaving the floor declared would mean shipping a version nothing tests.
+
 ## 2026-11-27 - Railpack build config alongside Nixpacks
 
 - **`railpack.json` added** so the Coolify app can move off Nixpacks, which is deprecated upstream

@@ -2,7 +2,7 @@
   "$schema": "https://schema.railpack.com",
   "buildAptPackages": ["...", "openssl"],
   "packages": {
-    "node": "20"
+    "node": "24"
   },
   "steps": {
     "build": {
