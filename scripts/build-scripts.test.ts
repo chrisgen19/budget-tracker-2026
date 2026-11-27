@@ -87,8 +87,8 @@ describe("build scripts", () => {
     expect(scripts["build:deploy"].endsWith("next build")).toBe(true);
   });
 
-  // nixpacks is the only builder that should reach the production database, and it reaches it by
-  // calling the migrating script by name. Comment lines are stripped first: this file explains the
+  // nixpacks and railpack are the only builders that should reach the production database, and they
+  // reach it by calling the migrating script by name. Comment lines are stripped first: this file explains the
   // history in prose that names `pnpm build`, and matching that would assert the opposite of what
   // it says.
   it("is wired to nixpacks", () => {
@@ -107,10 +107,14 @@ describe("build scripts", () => {
    * `build:deploy` by name and must not spread the defaults back in.
    */
   it("is wired to railpack", () => {
-    const railpack = JSON.parse(readFileSync(join(__dirname, "..", "railpack.json"), "utf8"));
-    const commands: string[] = railpack.steps.build.commands;
+    const raw = readFileSync(join(__dirname, "..", "railpack.json"), "utf8");
+    const railpack = JSON.parse(raw);
+    const commands: unknown = railpack.steps?.build?.commands;
+    expect(Array.isArray(commands)).toBe(true);
     expect(commands).toContain("pnpm build:deploy");
     expect(commands).not.toContain("...");
-    expect(commands.join("\n")).not.toMatch(/pnpm build(?!:deploy)/);
+    // Over the whole file, not just the build step: a `pnpm build` in another step or in the start
+    // command reinstates the non-migrating path just as well.
+    expect(raw).not.toMatch(/pnpm build(?!:deploy)/);
   });
 });

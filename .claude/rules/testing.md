@@ -8,13 +8,14 @@ paths:
   - vitest.setup.ts
   - package.json
   - pnpm-lock.yaml
+  - railpack.json
 ---
 
 # Testing
 
 ## Testing
 - **Vitest + React Testing Library**, jsdom environment. Config in `vitest.config.mts`, global setup in `vitest.setup.ts` (RTL cleanup, and the `matchMedia`/`scrollTo` stubs jsdom lacks)
-- **Node floor**: CI runs Node 20 (`.github/workflows/ci.yml`), and so does production while Coolify builds with `nixpacks.toml`; `railpack.json` pins Node 24. Test dependencies have to admit 20. `jsdom` stays on 29.x and `@testing-library/jest-dom` is not installed at all — both 30.x and 7.x floor at Node 22. CI installs with `--engine-strict` so a dependency that excludes the Node version fails at install with a named cause, rather than crashing later inside a test worker
+- **Node floor**: CI runs Node 20 (`.github/workflows/ci.yml`), and so does production, which pins Node 20 in both `nixpacks.toml` and `railpack.json`. Moving production to a newer Node means moving CI with it. Test dependencies have to admit 20. `jsdom` stays on 29.x and `@testing-library/jest-dom` is not installed at all — both 30.x and 7.x floor at Node 22. CI installs with `--engine-strict` so a dependency that excludes the Node version fails at install with a named cause, rather than crashing later inside a test worker
 - Tests are colocated: `src/**/*.test.ts(x)`, plus `scripts/**/*.test.ts` for the pure helpers there (the `.env` parser, the connection-string host check, the Prisma error classifier). Nothing imports them, so they stay out of the Next.js bundle. The `scripts/` tests declare `@vitest-environment node`, since they run under `tsx` in Node; `vitest.setup.ts` is DOM-only and guards on `typeof window` so it is a no-op for them
 - Import test globals explicitly (`import { describe, it, expect } from "vitest"`) rather than enabling `globals`
 - A test should fail if you revert the fix it covers. When adding one for a bug, confirm that before committing
