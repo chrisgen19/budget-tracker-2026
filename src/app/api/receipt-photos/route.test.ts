@@ -129,6 +129,24 @@ describe("POST /api/receipt-photos", () => {
     }
   });
 
+  // A sharp build that cannot encode AVIF throws a plain Error after a good decode. It used to be
+  // folded into UnreadableImageError and answered 422, blaming the user's photo with no log line.
+  it("500 for an unexpected failure, logged, never reported as an unreadable photo", async () => {
+    const sharp = (await import("sharp")).default;
+    const real = await sharp({ create: { width: 4, height: 4, channels: 3, background: "#fff" } }).jpeg().toBuffer();
+    mocks.put.mockRejectedValue(new Error("heif: Unsupported feature: No codec for AV1"));
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const res = await post(jpeg(new Uint8Array(real)));
+
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({ error: "Failed to save the photo." });
+      expect(error).toHaveBeenCalledWith("[receipt-photos] upload failed:", expect.any(Error));
+    } finally {
+      error.mockRestore();
+    }
+  });
+
   it("200 on a replay of the same photoKey without storing again", async () => {
     mocks.findUnique.mockResolvedValue({
       id: "p1", width: 1, height: 1, byteSize: 1, createdAt: new Date("2026-01-01T00:00:00Z"),

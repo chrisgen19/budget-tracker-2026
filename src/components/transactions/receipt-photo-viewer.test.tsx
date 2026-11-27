@@ -22,7 +22,7 @@ vi.mock("@/hooks/use-receipt-photos", () => ({
 
 /** The split SM receipt from the mockup: one photo, two rows. */
 const SPLIT_INFO = {
-  photo: { id: "photo_1", width: 900, height: 1500, byteSize: 120000, createdAt: "2026-11-26T03:59:00.000Z" },
+  photo: { id: "photo_1", width: 900, height: 1500, byteSize: 120000, contentType: "image/avif", createdAt: "2026-11-26T03:59:00.000Z" },
   transactions: [
     { id: "t1", description: "SM Groceries", amount: 190.95, type: "EXPENSE", categoryName: "Groceries", localDate: "2026-11-26" },
     { id: "t2", description: "SM Home", amount: 205, type: "EXPENSE", categoryName: "Home Supplies", localDate: "2026-11-26" },
@@ -50,6 +50,23 @@ describe("ReceiptPhotoViewer", () => {
     const link = screen.getByRole("link", { name: /download/i });
     expect(link.getAttribute("href")).toBe("/api/receipt-photos/photo_1");
     expect(link.hasAttribute("download")).toBe(true);
+  });
+
+  it("names the download after the stored format", () => {
+    render(<ReceiptPhotoViewer open photoId="photo_1" onClose={() => {}} />);
+    expect(screen.getByRole("link", { name: /download/i }).getAttribute("download")).toBe("receipt-2026-11-26.avif");
+  });
+
+  it("keeps .jpg for a photo stored before the AVIF switch", () => {
+    mocks.info = { data: { ...SPLIT_INFO, photo: { ...SPLIT_INFO.photo, contentType: "image/jpeg" } }, isLoading: false, isError: false };
+    render(<ReceiptPhotoViewer open photoId="photo_1" onClose={() => {}} />);
+    expect(screen.getByRole("link", { name: /download/i }).getAttribute("download")).toBe("receipt-2026-11-26.jpg");
+  });
+
+  it("leaves the extension off until the photo's type is known", () => {
+    mocks.info = { isLoading: true, isError: false };
+    render(<ReceiptPhotoViewer open photoId="photo_1" onClose={() => {}} />);
+    expect(screen.getByRole("link", { name: /download/i }).getAttribute("download")).toBe("receipt-photo_1");
   });
 
   it("is a named dialog that closes on Escape", () => {

@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { Download, RefreshCw, X } from "lucide-react";
 import { receiptPhotoUrl, useReceiptPhotoInfo } from "@/hooks/use-receipt-photos";
+import { photoFileExtension } from "@/lib/receipt-photo-format";
 import { useDialogLifecycle } from "@/components/ui/use-dialog-lifecycle";
 import { usePhotoReveal } from "@/components/transactions/receipt-photo-reveal";
 import { ReceiptPhotoZoomFrame } from "@/components/transactions/receipt-photo-zoom-frame";
@@ -44,6 +45,10 @@ function ViewerDialog({ photoId, onClose, onReplace }: Omit<ReceiptPhotoViewerPr
   const info = useReceiptPhotoInfo(photoId);
   const { blurred, reveal } = usePhotoReveal();
   const day = info.data?.transactions[0]?.localDate;
+  // Until the info loads the type is unknown, so the name carries no extension rather than a
+  // wrong one; the browser then names the file from the response's content-type.
+  const contentType = info.data?.photo.contentType;
+  const extension = contentType ? `.${photoFileExtension(contentType)}` : "";
 
   return (
     <motion.div
@@ -77,7 +82,7 @@ function ViewerDialog({ photoId, onClose, onReplace }: Omit<ReceiptPhotoViewerPr
       <div className="shrink-0 rounded-t-[20px] bg-cream-50/[.97] px-4 pt-3.5 pb-[max(1rem,env(safe-area-inset-bottom))] sm:mx-auto sm:mb-4 sm:w-full sm:max-w-md sm:rounded-[20px]">
         <ReceiptPhotoLinkedRows data={info.data} isLoading={info.isLoading} isError={info.isError} />
         <div className="mt-3 flex gap-2">
-          <a href={receiptPhotoUrl(photoId)} download={`receipt-${day ?? photoId}.jpg`} className={actionClass}>
+          <a href={receiptPhotoUrl(photoId)} download={`receipt-${day ?? photoId}${extension}`} className={actionClass}>
             <Download className="h-4 w-4" aria-hidden="true" />
             Download
           </a>

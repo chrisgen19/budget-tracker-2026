@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/receipt-photo-image", () => ({
-  normaliseReceiptPhoto: vi.fn(async () => ({ bytes: new Uint8Array([1, 2, 3]), width: 10, height: 20 })),
+  normaliseReceiptPhoto: vi.fn(async () => ({
+    bytes: new Uint8Array([1, 2, 3]),
+    width: 10,
+    height: 20,
+    contentType: "image/avif",
+  })),
 }));
 
 const storageMocks = vi.hoisted(() => ({
@@ -33,6 +38,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   width: 10,
   height: 20,
   byteSize: 3,
+  contentType: "image/avif",
   createdAt: new Date("2026-01-01T00:00:00Z"),
   ...over,
 });
@@ -64,14 +70,14 @@ describe("storeReceiptPhoto", () => {
     );
     expect(result.replayed).toBe(false);
     const id = result.photo.id;
-    expect(storage.put).toHaveBeenCalledWith(`receipts/u1/${id}.jpg`, expect.any(Uint8Array), "image/jpeg");
+    expect(storage.put).toHaveBeenCalledWith(`receipts/u1/${id}.avif`, expect.any(Uint8Array), "image/avif");
     expect(prisma.receiptPhoto.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         id,
         userId: "u1",
         photoKey: "k1",
-        objectKey: `receipts/u1/${id}.jpg`,
-        contentType: "image/jpeg",
+        objectKey: `receipts/u1/${id}.avif`,
+        contentType: "image/avif",
         byteSize: 3,
         width: 10,
         height: 20,
@@ -112,7 +118,7 @@ describe("storeReceiptPhoto", () => {
       ),
     ).rejects.toBe(boom);
     expect(storage.delete).toHaveBeenCalledTimes(1);
-    expect(storage.delete.mock.calls[0][0]).toMatch(/^receipts\/u1\/.+\.jpg$/);
+    expect(storage.delete.mock.calls[0][0]).toMatch(/^receipts\/u1\/.+\.avif$/);
   });
 
   // A connection lost after the commit reports an error for a row that exists. Deleting the

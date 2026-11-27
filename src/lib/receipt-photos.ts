@@ -23,6 +23,8 @@ export type ReceiptPhotoView = {
   width: number;
   height: number;
   byteSize: number;
+  /** `image/avif` for photos stored since the AVIF switch, `image/jpeg` before it. */
+  contentType: string;
   createdAt: string;
 };
 
@@ -49,12 +51,14 @@ const toView = (row: {
   width: number;
   height: number;
   byteSize: number;
+  contentType: string;
   createdAt: Date;
 }): ReceiptPhotoView => ({
   id: row.id,
   width: row.width,
   height: row.height,
   byteSize: row.byteSize,
+  contentType: row.contentType,
   createdAt: row.createdAt.toISOString(),
 });
 
@@ -83,8 +87,9 @@ export const storeReceiptPhoto = async (
 
   const normalised = await normaliseReceiptPhoto(params.bytes);
   const id = crypto.randomUUID();
-  const objectKey = photoObjectKey(userId, id);
-  await storage.put(objectKey, normalised.bytes, "image/jpeg");
+  const { contentType } = normalised;
+  const objectKey = photoObjectKey(userId, id, contentType);
+  await storage.put(objectKey, normalised.bytes, contentType);
 
   try {
     const created = await prisma.receiptPhoto.create({
@@ -92,7 +97,7 @@ export const storeReceiptPhoto = async (
         id,
         userId,
         objectKey,
-        contentType: "image/jpeg",
+        contentType,
         byteSize: normalised.bytes.byteLength,
         width: normalised.width,
         height: normalised.height,

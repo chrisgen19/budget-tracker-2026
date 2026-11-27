@@ -10,8 +10,18 @@
 /** The largest image the scan pipeline accepts, decoded. */
 export const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB
 
-/** Longest side, in pixels, an image is scaled down to before upload or storage. Never enlarged. */
+/**
+ * Longest side, in pixels, an image is scaled down to in the browser before it is scanned or
+ * uploaded. Never enlarged. This is what Gemini reads, so lowering it costs OCR accuracy.
+ */
 export const MAX_IMAGE_DIMENSION = 1500;
+
+/**
+ * Longest side, in pixels, of a receipt photo as stored in R2. Never enlarged. Smaller than
+ * `MAX_IMAGE_DIMENSION` because a stored photo is only ever looked at, not scanned: at 1200px
+ * the smallest receipt print stayed legible in the zoom viewer.
+ */
+export const STORED_PHOTO_MAX_DIMENSION = 1200;
 
 /**
  * Ceiling on the line items a single breakdown group may carry.

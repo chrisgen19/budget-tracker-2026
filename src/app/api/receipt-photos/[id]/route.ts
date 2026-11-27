@@ -26,7 +26,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
   const { id } = await params;
   const photo = await prisma.receiptPhoto.findFirst({
     where: { id, userId },
-    select: { objectKey: true },
+    select: { objectKey: true, contentType: true },
   });
   if (!photo) return fail("Photo not found.", 404);
 
@@ -34,7 +34,8 @@ export async function GET(_request: Request, { params }: RouteParams) {
     const res = await createPhotoStorage().get(photo.objectKey);
     return new NextResponse(res.body, {
       status: 200,
-      headers: { "content-type": "image/jpeg", "cache-control": "private, no-store" },
+      // The row's own type: photos stored before the AVIF switch are still JPEG.
+      headers: { "content-type": photo.contentType, "cache-control": "private, no-store" },
     });
   } catch (error) {
     if (error instanceof PhotoNotFoundError) return fail("Photo not found.", 404);
