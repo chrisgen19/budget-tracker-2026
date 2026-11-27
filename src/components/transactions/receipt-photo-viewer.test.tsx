@@ -118,6 +118,18 @@ describe("ReceiptPhotoViewer", () => {
     expect(within(dialog).getByText("The photo couldn't load.")).toBeDefined();
   });
 
+  it("pulses while the photo loads full screen, then fades it in", () => {
+    render(<ReceiptPhotoViewer open photoId="photo_1" onClose={() => {}} />);
+    const dialog = screen.getByRole("dialog");
+    const image = screen.getByAltText("Receipt photo");
+    expect(dialog.querySelector(".animate-pulse")).not.toBeNull();
+    expect(image.className).toContain("opacity-0");
+
+    fireEvent.load(image);
+    expect(dialog.querySelector(".animate-pulse")).toBeNull();
+    expect(image.className).toContain("opacity-100");
+  });
+
   it("renders nothing while closed", () => {
     render(<ReceiptPhotoViewer open={false} photoId="photo_1" onClose={() => {}} />);
     expect(screen.queryByRole("dialog")).toBeNull();

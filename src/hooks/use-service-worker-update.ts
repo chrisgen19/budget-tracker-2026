@@ -6,6 +6,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 const UPDATE_POLL_MS = 60 * 60 * 1000;
 
 /**
+ * How long a navigation waits for the new worker to take over before loading the target anyway, so
+ * a tap never goes dead if `controllerchange` is slow or never comes.
+ */
+export const NAVIGATION_UPDATE_TIMEOUT_MS = 3000;
+
+/**
+ * - `none`: nothing to take.
+ * - `waiting`: a new worker is installed and waiting for this tab to accept it.
+ * - `stale`: another tab accepted it, so this tab's worker is new but its bundle is old. There is no
+ *   waiting worker left to message; a full load is all it needs.
+ */
+export type UpdateStatus = "none" | "waiting" | "stale";
+
+/** What this tab asked for, which decides what its next `controllerchange` does. */
+type Intent = { kind: "none" } | { kind: "reload" } | { kind: "navigate"; href: string };
+
+/**
  * Whether a new build is installed and waiting, and how to take it.
  *
  * A deploy swaps the server while an open tab keeps running the bundle it loaded. `/api/*` is
@@ -22,10 +39,23 @@ const UPDATE_POLL_MS = 60 * 60 * 1000;
  * the tab is open (`updatefound`), and one that appears in another tab of the same origin, which
  * reaches this registration without an `updatefound` of its own -- so an explicit `update()` poll
  * covers the tab left open overnight.
+ *
+ * The update is taken either from the banner (`applyUpdate`) or on the next safe in-app navigation
+ * (`applyOnNavigation`, called by `UpdateNavigationProvider`), which full-loads the target instead of
+ * reloading the page the user is leaving.
  */
 export function useServiceWorkerUpdate() {
-  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [status, setStatus] = useState<UpdateStatus>("none");
+  const statusRef = useRef<UpdateStatus>("none");
   const waitingRef = useRef<ServiceWorker | null>(null);
+  const intentRef = useRef<Intent>({ kind: "none" });
+  const reloadingRef = useRef(false);
+  const fallbackRef = useRef<number | null>(null);
+
+  const changeStatus = useCallback((next: UpdateStatus) => {
+    statusRef.current = next;
+    setStatus(next);
+  }, []);
 
   useEffect(() => {
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
@@ -35,7 +65,8 @@ export function useServiceWorkerUpdate() {
       // `controller` is null on a first install, and only then.
       if (cancelled || !worker || !navigator.serviceWorker.controller) return;
       waitingRef.current = worker;
-      setUpdateAvailable(true);
+      // Wins over `stale` too: a newer build is waiting, and Reload should hand over to it.
+      changeStatus("waiting");
     };
 
     let registration: ServiceWorkerRegistration | null = null;
@@ -75,19 +106,25 @@ export function useServiceWorkerUpdate() {
     // so when a deploy later landed the banner appeared and its button did nothing. An installed
     // PWA left open after its first launch is exactly that tab.
     //
-    // Gated on this rather than on the tab having called `applyUpdate`, deliberately: when another
-    // tab accepts, every sibling tab's controller changes too, and those siblings are the ones left
-    // running the old bundle.
+    // A real swap this tab did not ask for comes from a sibling tab accepting the update. That tab
+    // is left running the old bundle, but it may be mid-scan or mid-form, so it is marked stale and
+    // offered the banner instead of being reloaded out from under the user.
     let controlled = navigator.serviceWorker.controller !== null;
-    let reloading = false;
     const onControllerChange = () => {
       if (!controlled) {
         controlled = true;
         return;
       }
-      if (reloading) return;
-      reloading = true;
-      window.location.reload();
+      if (reloadingRef.current) return;
+      const intent = intentRef.current;
+      if (intent.kind === "none") {
+        waitingRef.current = null;
+        changeStatus("stale");
+        return;
+      }
+      reloadingRef.current = true;
+      if (intent.kind === "navigate") window.location.assign(intent.href);
+      else window.location.reload();
     };
 
     // `ready`, not `getRegistration()`. `@serwist/window` defers `register()` until the window's
@@ -106,7 +143,28 @@ export function useServiceWorkerUpdate() {
       })
       .catch(() => {});
 
+    // A full-load hand-off leaves this page in the back/forward cache. Restored by Back, it is the
+    // old bundle again and nothing is in flight, so the hand-off state is cleared; otherwise every
+    // later tap would be swallowed as "already pending" and do nothing.
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      if (fallbackRef.current !== null) window.clearTimeout(fallbackRef.current);
+      fallbackRef.current = null;
+      intentRef.current = { kind: "none" };
+      reloadingRef.current = false;
+      // A navigate hand-off leaves `waiting` in place -- the page is replaced, so there is nothing
+      // to re-render -- and this restores it anyway. The worker it points at took over while the
+      // page sat in the cache, and `skipWaiting` on an *active* worker is a no-op that fires no
+      // `controllerchange`: Reload would do nothing and every tap would sit out the full fallback.
+      // The bundle here really is old with a newer worker in charge, which is exactly `stale`.
+      if (statusRef.current === "waiting" && waitingRef.current?.state !== "installed") {
+        waitingRef.current = null;
+        changeStatus("stale");
+      }
+    };
+
     const poll = window.setInterval(check, UPDATE_POLL_MS);
+    window.addEventListener("pageshow", onPageShow);
     document.addEventListener("visibilitychange", onVisible);
     navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
 
@@ -116,19 +174,74 @@ export function useServiceWorkerUpdate() {
       document.removeEventListener("visibilitychange", onVisible);
       registration?.removeEventListener("updatefound", onUpdateFound);
       navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
+      window.removeEventListener("pageshow", onPageShow);
+      if (fallbackRef.current !== null) window.clearTimeout(fallbackRef.current);
     };
-  }, []);
+  }, [changeStatus]);
 
   /**
-   * Tell the waiting worker to take over. The reload follows from `controllerchange`, not from here,
-   * so the page is replaced only once the new worker is actually in charge.
+   * The banner's Reload. A waiting worker is told to take over and the reload follows from
+   * `controllerchange`, so the page is replaced only once the new worker is in charge. A stale tab
+   * has nothing to message and just refreshes.
    */
   const applyUpdate = useCallback(() => {
+    // A link tap is already handing over to this worker and will load its own target. The banner is
+    // still up during that wait, and overwriting the intent here would reload the page the user is
+    // leaving and drop the destination on the floor.
+    if (intentRef.current.kind === "navigate") return;
+    if (statusRef.current === "stale") {
+      window.location.reload();
+      return;
+    }
     const waiting = waitingRef.current;
     if (!waiting) return;
-    setUpdateAvailable(false);
+    intentRef.current = { kind: "reload" };
+    changeStatus("none");
     waiting.postMessage({ type: "SKIP_WAITING" });
-  }, []);
+  }, [changeStatus]);
 
-  return { updateAvailable, applyUpdate };
+  /**
+   * Take the update on the way to `href`, as a full load of the target. Returns `true` when this hook
+   * has taken over the navigation, so the caller must not also navigate; `false` lets the normal
+   * client navigation happen (no update, or offline, where a full load could land on the offline
+   * fallback). A second tap while one is pending is swallowed rather than navigated twice.
+   */
+  const applyOnNavigation = useCallback(
+    (href: string): boolean => {
+      if (reloadingRef.current) return true;
+      // A hand-off of our own is in flight and the fallback covers it, so a repeat tap is swallowed.
+      if (intentRef.current.kind === "navigate") return true;
+      // A `reload` intent has no fallback behind it: if `controllerchange` never came, swallowing
+      // taps on the strength of it would cancel every link and menu pick in the tab until the user
+      // reloaded by hand. Drop it instead and handle this tap normally -- re-arming the banner's
+      // worker if it is still waiting, so the navigation takes the update under the 3s fallback,
+      // and forgetting it otherwise rather than leaving a stale reload armed for the next swap.
+      if (intentRef.current.kind === "reload") {
+        intentRef.current = { kind: "none" };
+        if (waitingRef.current?.state === "installed") changeStatus("waiting");
+        else waitingRef.current = null;
+      }
+      if (statusRef.current === "none" || !navigator.onLine) return false;
+
+      if (statusRef.current === "stale") {
+        reloadingRef.current = true;
+        window.location.assign(href);
+        return true;
+      }
+
+      const waiting = waitingRef.current;
+      if (!waiting) return false;
+      intentRef.current = { kind: "navigate", href };
+      waiting.postMessage({ type: "SKIP_WAITING" });
+      fallbackRef.current = window.setTimeout(() => {
+        if (reloadingRef.current) return;
+        reloadingRef.current = true;
+        window.location.assign(href);
+      }, NAVIGATION_UPDATE_TIMEOUT_MS);
+      return true;
+    },
+    [changeStatus],
+  );
+
+  return { status, updateAvailable: status !== "none", applyUpdate, applyOnNavigation };
 }
