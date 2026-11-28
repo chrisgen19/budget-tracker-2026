@@ -40,6 +40,51 @@ const DATABASE_TOUCHING = [
   "check-migration-drift",
 ];
 
+/**
+ * The Node majors the `checks` job of the CI workflow runs.
+ *
+ * Read out of the `checks` job specifically: a first-match `node: [...]` over the whole file would
+ * silently bind to a second matrix job added above it. Majors are returned, so a patch pin
+ * (`"24.5.0"`) still satisfies a `node: [24]` leg.
+ */
+function ciNodeMajors(): string[] {
+  const major = (version: string) => version.trim().replace(/^[^0-9]*/, "").split(".")[0];
+
+  const workflow = readFileSync(join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8");
+  const jobStart = workflow.search(/^  checks:$/m);
+  expect(jobStart).toBeGreaterThan(-1);
+  const rest = workflow.slice(jobStart + 1);
+  const jobEnd = rest.search(/^  \S/m);
+  const checksJob = jobEnd === -1 ? rest : rest.slice(0, jobEnd);
+
+  const matrix = checksJob.match(/^\s*node:\s*\[([^\]]*)\]/m);
+  expect(matrix).not.toBeNull();
+  const versions = matrix![1].split(",").map((v) => major(v.replace(/["']/g, "")));
+  expect(versions.length).toBeGreaterThan(0);
+  return versions;
+}
+
+/**
+ * Splits `Dockerfile` into its stages. `name` is the lowercased `AS <name>`, `from` the image or
+ * parent stage, and `lines` the stage's instruction lines with comments dropped and `\`
+ * continuations joined into one line.
+ */
+function dockerStages(): { name: string; from: string; lines: string[] }[] {
+  const raw = readFileSync(join(__dirname, "..", "Dockerfile"), "utf8");
+  const joined = raw.replace(/\\[ \t]*\r?\n/g, " ");
+  const stages: { name: string; from: string; lines: string[] }[] = [];
+  for (const line of joined.split(/\r?\n/).map((l) => l.trim())) {
+    if (line === "" || line.startsWith("#")) continue;
+    const from = line.match(/^FROM\s+(\S+)(?:\s+AS\s+(\S+))?/i);
+    if (from) {
+      stages.push({ name: (from[2] ?? "").toLowerCase(), from: from[1], lines: [] });
+    } else if (stages.length > 0) {
+      stages[stages.length - 1].lines.push(line.replace(/\s+/g, " "));
+    }
+  }
+  return stages;
+}
+
 describe("build scripts", () => {
   it("keeps every database-touching command out of `pnpm build`", () => {
     for (const command of DATABASE_TOUCHING) {
@@ -140,20 +185,79 @@ describe("build scripts", () => {
    */
   it("pins railpack to a Node version the CI matrix covers", () => {
     const major = (version: string) => version.trim().replace(/^[^0-9]*/, "").split(".")[0];
-
-    const workflow = readFileSync(join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8");
-    const jobStart = workflow.search(/^  checks:$/m);
-    expect(jobStart).toBeGreaterThan(-1);
-    const rest = workflow.slice(jobStart + 1);
-    const jobEnd = rest.search(/^  \S/m);
-    const checksJob = jobEnd === -1 ? rest : rest.slice(0, jobEnd);
-
-    const matrix = checksJob.match(/^\s*node:\s*\[([^\]]*)\]/m);
-    expect(matrix).not.toBeNull();
-    const versions = matrix![1].split(",").map((v) => major(v.replace(/["']/g, "")));
-    expect(versions.length).toBeGreaterThan(0);
-
     const railpack = JSON.parse(readFileSync(join(__dirname, "..", "railpack.json"), "utf8"));
-    expect(versions).toContain(major(String(railpack.packages?.node)));
+    expect(ciNodeMajors()).toContain(major(String(railpack.packages?.node)));
+  });
+
+  /**
+   * The Dockerfile is the second way to build production, so the properties Railpack needed are
+   * pinned for it too, each for its own reason.
+   *
+   * `build:deploy` by name: a plain `pnpm build` deploys code without its migrations, the gap
+   * behind #192, and the Dockerfile has no provider default to fall back on, only what it says.
+   * The Node base must be a major CI runs, for the same silent-gap reason as the Railpack pin.
+   *
+   * `DATABASE_URL` is the only ARG, and only in the build stage: Coolify injects every environment
+   * variable as a build ARG unless "Inject Build Args to Dockerfile" is off, and an ARG declared
+   * in a stage that ships ends up in `docker history` of the runtime image.
+   *
+   * The deps stage copies only the lockfile, `.npmrc` and the Prisma schema before installing so
+   * the layer is cached until dependencies change; `COPY . .` there would rebuild it on every
+   * commit, and every deploy would then write a fresh multi-GB layer (4 GB per deploy on this host).
+   *
+   * The runtime image needs `curl` and `wget` because both Coolify Scheduled Tasks (bill
+   * reminders, the Telegram evening prompt) run `curl` inside the container, and `openssl` for
+   * Prisma's engine; slim images ship none of them, and nothing in the deploy fails when missing.
+   */
+  it("builds the Docker image with build:deploy", () => {
+    const raw = readFileSync(join(__dirname, "..", "Dockerfile"), "utf8");
+    expect(raw).toMatch(/^RUN pnpm build:deploy$/m);
+    expect(raw).not.toMatch(/pnpm build(?!:deploy)/);
+  });
+
+  it("bases every Dockerfile stage on a Node major the CI matrix covers", () => {
+    const images = dockerStages().map((s) => s.from).filter((f) => f.startsWith("node:"));
+    expect(images.length).toBeGreaterThan(0);
+    for (const image of images) {
+      expect(image).toMatch(/^node:\d+-bookworm-slim$/);
+      expect(ciNodeMajors()).toContain(image.slice(5).split("-")[0]);
+    }
+  });
+
+  it("declares DATABASE_URL only in the stage that runs build:deploy, and no other ARG", () => {
+    const withArgs = dockerStages().filter((s) => s.lines.some((l) => l.startsWith("ARG ")));
+    expect(withArgs.map((s) => s.name)).toEqual(["build"]);
+    const build = withArgs[0];
+    expect(build.lines.filter((l) => l.startsWith("ARG "))).toEqual(["ARG DATABASE_URL"]);
+    expect(build.lines).toContain("RUN pnpm build:deploy");
+  });
+
+  it("installs dependencies from the lockfile, .npmrc and schema only", () => {
+    const deps = dockerStages().find((s) => s.name === "deps")!;
+    const install = deps.lines.findIndex((l) => l.includes("pnpm install --frozen-lockfile"));
+    expect(install).toBeGreaterThan(-1);
+    const copied = deps.lines.slice(0, install).filter((l) => l.startsWith("COPY ")).join(" ");
+    for (const file of ["package.json", "pnpm-lock.yaml", ".npmrc", "prisma/schema.prisma"]) {
+      expect(copied).toContain(file);
+    }
+    expect(copied).not.toMatch(/COPY \. /);
+  });
+
+  it("gives the runtime image openssl, curl and wget, and starts the standalone server", () => {
+    const stages = dockerStages();
+    const runtime = stages.find((s) => s.name === "runtime")!;
+    const chain = [stages.find((s) => s.name === runtime.from)!, runtime];
+    const apt = chain.flatMap((s) => s.lines).filter((l) => l.includes("apt-get install")).join(" ");
+    for (const pkg of ["openssl", "ca-certificates", "curl", "wget"]) {
+      expect(apt).toMatch(new RegExp(`\\b${pkg}\\b`));
+    }
+    const body = runtime.lines.join("\n");
+    expect(body).toMatch(/COPY --from=build .*\/app\/\.next\/standalone \.\//);
+    expect(body).toMatch(/COPY --from=build .*\/app\/\.next\/static \.\/\.next\/static/);
+    expect(body).toMatch(/COPY --from=build .*\/app\/public \.\/public/);
+    expect(body).toMatch(/PORT=3000/);
+    expect(body).toMatch(/HOSTNAME=0\.0\.0\.0/);
+    expect(body).toContain('CMD ["node", "server.js"]');
+    expect(body).toMatch(/^USER nextjs$/m);
   });
 });
