@@ -101,8 +101,10 @@ export function CashFlowChart({ data, currency, hideAmounts }: CashFlowChartProp
               axisLine={false}
               tickLine={false}
               tick={AXIS_TICK_MUTED}
-              tickFormatter={formatAbbreviated}
-              width={42}
+              // The ticks are amounts too, rounded to the thousand. The width shrinks with them so
+              // a hidden axis does not leave an empty gutter beside the plot.
+              tickFormatter={hideAmounts ? () => "" : formatAbbreviated}
+              width={hideAmounts ? 8 : 42}
             />
             <ReferenceLine y={0} stroke={REFERENCE_STROKE} strokeDasharray="3 3" />
             <Tooltip
