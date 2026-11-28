@@ -1,7 +1,7 @@
 import { cloneElement, type ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { MonthlyTrendChart } from "@/components/dashboard/monthly-trend-chart";
+import { MonthlyTrendChart, resolveSelectedMonth } from "@/components/dashboard/monthly-trend-chart";
 import { formatCurrency, getCurrencySymbol } from "@/lib/utils";
 import { formatAbbreviated } from "@/components/analytics/chart-theme";
 import type { MonthlyTrendItem } from "@/types";
@@ -82,5 +82,32 @@ describe("MonthlyTrendChart", () => {
     const hidden = render(<MonthlyTrendChart data={makeData()} currency="PHP" hideAmounts />);
     const hiddenTicks = Array.from(hidden.container.querySelectorAll(".recharts-yAxis text")).map((t) => t.textContent);
     expect(hiddenTicks).not.toContain(tick);
+  });
+});
+
+describe("resolveSelectedMonth", () => {
+  // The window the dashboard shows for October: May to October.
+  const octoberWindow = makeData().map((m, i) => ({ ...m, monthKey: `2026-${String(i + 5).padStart(2, "0")}` }));
+  const novemberWindow = makeData();
+
+  it("defaults to the newest month when nothing is selected", () => {
+    expect(resolveSelectedMonth(null, novemberWindow).monthKey).toBe("2026-11");
+  });
+
+  it("keeps a month picked within the same window", () => {
+    const picked = { anchorKey: "2026-11", monthKey: "2026-07" };
+    expect(resolveSelectedMonth(picked, novemberWindow).monthKey).toBe("2026-07");
+  });
+
+  it("drops a pick made in another window, even when that window still contains the month", () => {
+    // July was picked while the dashboard showed October; stepping to November keeps the
+    // chart mounted when November is cached, and July is still one of its six months.
+    const picked = { anchorKey: octoberWindow[octoberWindow.length - 1].monthKey, monthKey: "2026-07" };
+    expect(resolveSelectedMonth(picked, novemberWindow).monthKey).toBe("2026-11");
+  });
+
+  it("falls back to the newest month when the picked one is no longer in the data", () => {
+    const picked = { anchorKey: "2026-11", monthKey: "2026-01" };
+    expect(resolveSelectedMonth(picked, novemberWindow).monthKey).toBe("2026-11");
   });
 });

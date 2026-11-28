@@ -36,6 +36,30 @@ interface MonthlyTrendChartProps {
 
 const UNSELECTED_OPACITY = 0.35;
 
+/** A month the user picked, and the newest month of the window it was picked in. */
+export interface TrendSelection {
+  anchorKey: string;
+  monthKey: string;
+}
+
+/**
+ * The month the footer describes: the user's pick, or the newest month of the window.
+ *
+ * A pick belongs to the window it was made in. The chart stays mounted when the dashboard steps
+ * to a month React Query already has cached, so component state alone would carry a July picked
+ * under October into November, whose six months still include July, and the footer would offer
+ * July while the header says November. Tying the pick to its window's newest month drops it the
+ * moment the window moves, however the dashboard got there.
+ */
+export const resolveSelectedMonth = (
+  selection: TrendSelection | null,
+  data: MonthlyTrendItem[],
+): MonthlyTrendItem => {
+  const latest = data[data.length - 1];
+  if (!selection || selection.anchorKey !== latest.monthKey) return latest;
+  return data.find((m) => m.monthKey === selection.monthKey) ?? latest;
+};
+
 const longMonthFormat = new Intl.DateTimeFormat("en-US", {
   month: "long",
   year: "numeric",
@@ -109,7 +133,7 @@ function MonthFooter({ item, fmt }: MonthFooterProps) {
 }
 
 export function MonthlyTrendChart({ data, currency, hideAmounts }: MonthlyTrendChartProps) {
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [selection, setSelection] = useState<TrendSelection | null>(null);
 
   if (!data.some((m) => m.income > 0 || m.expenses > 0)) {
     return <ChartEmptyState message="No data yet" hint="Add a transaction to see your monthly trend" />;
@@ -117,8 +141,9 @@ export function MonthlyTrendChart({ data, currency, hideAmounts }: MonthlyTrendC
 
   const sym = getCurrencySymbol(currency);
   const fmt = (v: number) => (hideAmounts ? `${sym} ••••••` : formatCurrency(v, currency));
-  const activeKey = selectedKey ?? data[data.length - 1].monthKey;
-  const selected = data.find((m) => m.monthKey === activeKey) ?? data[data.length - 1];
+  const selected = resolveSelectedMonth(selection, data);
+  const select = (monthKey: string) =>
+    setSelection({ anchorKey: data[data.length - 1].monthKey, monthKey });
 
   const chartData = data.map((item) => ({
     ...item,
@@ -137,7 +162,7 @@ export function MonthlyTrendChart({ data, currency, hideAmounts }: MonthlyTrendC
             style={{ cursor: "pointer" }}
             onClick={(state) => {
               const index = state?.activeTooltipIndex;
-              if (typeof index === "number" && data[index]) setSelectedKey(data[index].monthKey);
+              if (typeof index === "number" && data[index]) select(data[index].monthKey);
             }}
           >
             <CartesianGrid horizontal vertical={false} strokeDasharray="4 4" stroke={GRID_STROKE} />
