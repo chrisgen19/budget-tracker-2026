@@ -68,6 +68,14 @@ Two rollout checks on a built image: `docker history --no-trunc <image>` shows n
 standalone step copies `.env` and `.env.production` from the build context into `.next/standalone`,
 so an env file that slips past `.dockerignore` would ship at `/app/.env`.
 
+**After restoring the database or repairing schema drift, redeploy with Force rebuild.** A normal
+redeploy of the same commit either skips the build entirely (Coolify reuses the commit's image) or
+serves `RUN pnpm build:deploy` from Docker's layer cache, since its key is only the source tree and
+the `DATABASE_URL` value. Either way, neither `prisma migrate deploy` nor the drift check runs
+against the database as it now is. Force rebuild runs `docker build --no-cache`, so both run. Do not
+turn on Coolify's "Disable build cache" instead: it throws away the cached `pnpm install` layer on
+every deploy.
+
 ## A `railpack.json` apt list replaces, it does not add
 
 This section applies only to the fallback build pack: production builds from the Dockerfile, and
