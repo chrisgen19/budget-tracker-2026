@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { TransactionLabelPills } from "@/components/transactions/transaction-label-pills";
 import type { Label, TransactionLabel } from "@/types";
 
@@ -64,5 +64,17 @@ describe("TransactionLabelPills", () => {
     );
     expect(screen.getByText("+3").className).toContain("sm:hidden");
     expect(screen.getByText("+1").className).toContain("hidden sm:inline");
+  });
+
+  it("names each remove button after its label, so a screen reader says what it removes", () => {
+    // The button holds only an X icon. Without a name it was announced as just "button", and
+    // with two labels on a row there was no way to tell which one it would remove.
+    const onRemove = vi.fn();
+    render(
+      <TransactionLabelPills labels={makeLabels(["Work", "Personal"])} maxVisible={3} onRemove={onRemove} />,
+    );
+    expect(screen.getByRole("button", { name: "Remove Work label" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Remove Personal label" }));
+    expect(onRemove).toHaveBeenCalledWith("tl_1", "l_1");
   });
 });

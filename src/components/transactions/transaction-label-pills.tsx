@@ -83,6 +83,7 @@ export function TransactionLabelPills({
               ) : (
                 <button
                   type="button"
+                  aria-label={`Remove ${tl.label.name} label`}
                   disabled={removeDisabled}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -95,7 +96,7 @@ export function TransactionLabelPills({
                       : "hidden sm:group-hover/pill:inline-flex shrink-0 items-center justify-center w-3 h-3 -mr-0.5 rounded-full hover:bg-black/10 transition-colors disabled:opacity-30 disabled:pointer-events-none"
                   }
                 >
-                  <X className="w-2.5 h-2.5" />
+                  <X aria-hidden="true" className="w-2.5 h-2.5" />
                 </button>
               )
             )}
