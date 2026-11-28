@@ -3,8 +3,35 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 const email = process.env.E2E_EMAIL;
 const password = process.env.E2E_PASSWORD;
 
+/**
+ * Resolve once React has hydrated the login form.
+ *
+ * Until then the browser owns the form, and a click submits it natively instead of through
+ * next-auth: the page reloads onto /login and `waitForURL` below times out. On a cold dev server
+ * the first compile of /login can take longer than the click, which is how this spec timed out.
+ *
+ * React DOM sets a `__reactProps$<random>` key on each element as it hydrates it
+ * (`prepareToHydrateHostInstance` in react-dom), holding that element's props. An `onSubmit`
+ * there means React's handler is attached. This reads a React internal: if a future React
+ * renames the key, this wait times out with its own message rather than letting the click
+ * race ahead and the test pass or fail for the wrong reason.
+ */
+const waitForHydratedLoginForm = (page: Page) =>
+  page.waitForFunction(
+    () => {
+      const form = document.querySelector("form");
+      if (!form) return false;
+      const key = Object.keys(form).find((k) => k.startsWith("__reactProps$"));
+      const props = key ? (form as unknown as Record<string, { onSubmit?: unknown }>)[key] : undefined;
+      return typeof props?.onSubmit === "function";
+    },
+    undefined,
+    { timeout: 90_000 },
+  );
+
 const login = async (page: Page) => {
   await page.goto("/login", { waitUntil: "domcontentloaded" });
+  await waitForHydratedLoginForm(page);
   await page.getByPlaceholder("you@example.com").fill(email!);
   await page.getByPlaceholder("Enter your password").fill(password!);
   await page.getByRole("button", { name: /Sign In/ }).click();
