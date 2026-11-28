@@ -13,6 +13,11 @@ All notable development history for the Budget Tracker app.
 - **Monthly Trend respects hide-amounts and the theme.** Tooltips, axis, footer and totals are
   masked when amounts are hidden. Selecting a month and opening the footer link drills down to
   that month's transactions.
+- **Dashboard rows show up to 3 labels** instead of 2.
+- **Spending by Category lists every category** in a scrolling list instead of the top 5 with
+  "+N more".
+- **The Monthly Trend ends at the selected month** rather than at today, so stepping back to an
+  earlier month shows the six months up to it.
 - **The dashboard shows a retry state when it fails to load**, with a "Try again" button, instead
   of a blank page.
 - **`/api/dashboard` gains additive fields:** `recentTransactions[].creditAccount`,

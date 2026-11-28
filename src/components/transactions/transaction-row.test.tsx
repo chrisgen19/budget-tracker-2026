@@ -85,4 +85,17 @@ describe("TransactionRow", () => {
     expect(onRemoveLabel).toHaveBeenCalledWith("l1");
     expect(onSelect).not.toHaveBeenCalled();
   });
+
+  it("applies the highlighted and selected tints", () => {
+    const root = (c: HTMLElement) => c.querySelector("[data-transaction-id]") as HTMLElement;
+    const plain = render(<TransactionRow {...baseProps} tx={makeTx()} />);
+    expect(root(plain.container).className).not.toContain("ring-1");
+    expect(root(plain.container).className).not.toContain("bg-amber-light/20");
+    plain.unmount();
+    const hi = render(<TransactionRow {...baseProps} tx={makeTx()} highlighted />);
+    expect(root(hi.container).className).toContain("ring-1");
+    hi.unmount();
+    const sel = render(<TransactionRow {...baseProps} tx={makeTx()} selected />);
+    expect(root(sel.container).className).toContain("bg-amber-light/20");
+  });
 });

@@ -43,9 +43,6 @@ export async function GET(request: Request) {
     return `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, "0")}`;
   };
 
-  // Determine the local "now" for 6-month trend calculation
-  const localNowForTrend = new Date(now.getTime() - tzMs);
-
   // Fetch all data in parallel
   const [
     transactions,
@@ -78,12 +75,12 @@ export async function GET(request: Request) {
       take: 5,
     }),
 
-    // Last 6 months for trend chart (using timezone-adjusted boundaries)
+    // Six months ending at the selected month, for the trend chart (timezone-adjusted boundaries)
     prisma.transaction.findMany({
       where: {
         userId,
         date: {
-          gte: new Date(Date.UTC(localNowForTrend.getUTCFullYear(), localNowForTrend.getUTCMonth() - 5, 1) + tzMs),
+          gte: new Date(Date.UTC(selectedLocal.getUTCFullYear(), selectedLocal.getUTCMonth() - 5, 1) + tzMs),
           lte: endDate,
         },
       },
@@ -133,7 +130,7 @@ export async function GET(request: Request) {
     (runningIncome._sum.amount ?? 0) - (runningExpenses._sum.amount ?? 0);
 
   const categoryBreakdown = buildCategoryBreakdown(transactions, totalExpenses);
-  const monthlyTrend = buildMonthlyTrend(monthlyData, localNowForTrend, toLocalMonthKey);
+  const monthlyTrend = buildMonthlyTrend(monthlyData, selectedLocal, toLocalMonthKey);
 
   const balanceMonths = buildBalanceMonths({
     month: toLocalMonthKey(startDate),

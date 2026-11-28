@@ -74,4 +74,22 @@ describe("buildMonthlyTrend", () => {
     );
     expect(result[5]).toMatchObject({ income: 500, expenses: 150, transactionCount: 3 });
   });
+
+  it("anchors to a past month", () => {
+    const august = new Date(Date.UTC(2026, 7, 1));
+    const result = buildMonthlyTrend(
+      [{ type: "EXPENSE", amount: 80, date: new Date(Date.UTC(2026, 7, 9)) }],
+      august,
+      toKey
+    );
+    expect(result.map((r) => r.monthKey)).toEqual([
+      "2026-03",
+      "2026-04",
+      "2026-05",
+      "2026-06",
+      "2026-07",
+      "2026-08",
+    ]);
+    expect(result[5]).toMatchObject({ expenses: 80, transactionCount: 1 });
+  });
 });

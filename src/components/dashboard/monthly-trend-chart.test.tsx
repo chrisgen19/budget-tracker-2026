@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MonthlyTrendChart } from "@/components/dashboard/monthly-trend-chart";
 import { formatCurrency, getCurrencySymbol } from "@/lib/utils";
+import { formatAbbreviated } from "@/components/analytics/chart-theme";
 import type { MonthlyTrendItem } from "@/types";
 
 // ResponsiveContainer measures its parent, which is 0x0 in jsdom, and then draws nothing.
@@ -68,5 +69,18 @@ describe("MonthlyTrendChart", () => {
     render(<MonthlyTrendChart data={data} currency="PHP" hideAmounts={false} />);
     expect(screen.getByText("No data yet")).toBeTruthy();
     expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it("hides Y-axis tick labels when hideAmounts", () => {
+    const tick = formatAbbreviated(6000);
+    const { container, unmount } = render(
+      <MonthlyTrendChart data={makeData()} currency="PHP" hideAmounts={false} />,
+    );
+    const ticks = () => Array.from(container.querySelectorAll(".recharts-yAxis text")).map((t) => t.textContent);
+    expect(ticks()).toContain(tick);
+    unmount();
+    const hidden = render(<MonthlyTrendChart data={makeData()} currency="PHP" hideAmounts />);
+    const hiddenTicks = Array.from(hidden.container.querySelectorAll(".recharts-yAxis text")).map((t) => t.textContent);
+    expect(hiddenTicks).not.toContain(tick);
   });
 });
