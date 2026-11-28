@@ -89,7 +89,9 @@ export default function ForgotPasswordPage() {
           </div>
         ) : (
           <>
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+            {/* POST before hydration keeps the email out of the URL, and so out of
+                history and the referrer; see the login form. */}
+            <form method="post" onSubmit={handleSubmit(onSubmit)} className="space-y-5">
               {error && (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
