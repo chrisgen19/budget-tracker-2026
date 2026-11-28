@@ -4,7 +4,6 @@ paths:
   - "prisma/migrations/**"
   - scripts/check-migration-drift.ts
   - Dockerfile
-  - railpack.json
   - src/app/sw.ts
 ---
 
@@ -81,24 +80,15 @@ now is. Force rebuild runs `docker build --no-cache`, so both run. Do not
 turn on Coolify's "Disable build cache" instead: it throws away the cached `pnpm install` layer on
 every deploy.
 
-## A `railpack.json` apt list replaces, it does not add
+## The Build Pack stays Dockerfile
 
-This section applies only to the fallback build pack: production builds from the Dockerfile, and
-`railpack.json` stays so that switching Build Pack back to Railpack still works.
-
-`steps.*.commands` and `aptPackages` read the same but behave in opposite directions. In both,
-`"..."` stands for what Railpack generated. In the **commands** it must be absent: spreading the
-Node provider's defaults back in reinstates plain `pnpm build`, the non-migrating path (#192). In
-the **apt lists** it must be present, because an array without it replaces Railpack's runtime
-packages rather than extending them.
-
-The runtime list also names `curl` and `wget` itself. Coolify's Railpack wrapper appends those two
-to `RAILPACK_DEPLOY_APT_PACKAGES`, and both Coolify Scheduled Tasks - bill reminders and the
-Telegram evening prompt - shell out to `curl` inside the running container. Railpack does not
-document whether this file or that environment variable wins when both set the list, so the file
-names every package it needs rather than relying on the answer. The failure is silent either way:
-the deploy succeeds and the crons stop, with `curl: command not found` in a task log nothing
-watches. `scripts/build-scripts.test.ts` pins both halves.
+`Dockerfile` is the only build configuration in the repo. `railpack.json` was deleted once
+production had built from the Dockerfile, as `nixpacks.toml` was before it. So setting Coolify's
+Build Pack to Railpack or Nixpacks does not fall back to an older working setup: either one
+auto-detects a Node app and runs plain `pnpm build`, which ships code without its migrations and
+skips the drift check (#192), and starts a server the `output: "standalone"` build does not
+provide. To back out a bad deploy, use Coolify's rollback to a previous image (it keeps two)
+or revert the commit; never switch the Build Pack.
 
 ## An API response shape change needs one release of backward compatibility
 
