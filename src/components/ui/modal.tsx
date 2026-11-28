@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, useCallback } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useDialogLifecycle } from "@/components/ui/use-dialog-lifecycle";
+import { ModalKeyboardContext } from "@/components/ui/modal-keyboard-context";
 
 /** Returns true when viewport width < 640px (Tailwind `sm` breakpoint) */
 const useIsMobile = () => {
@@ -280,6 +281,9 @@ export function Modal({ open, onClose, title, children, size = "default" }: Moda
   const contentRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
   const viewport = useVisualViewport(isMobile && open);
+  const [footerSlot, setFooterSlot] = useState<HTMLElement | null>(null);
+  const keyboardOpen = isMobile && !!viewport?.keyboardOpen;
+  const keyboardState = useMemo(() => ({ keyboardOpen, footerSlot }), [keyboardOpen, footerSlot]);
 
   useDialogLifecycle(open, dialogRef, contentRef, onClose);
 
@@ -392,7 +396,12 @@ export function Modal({ open, onClose, title, children, size = "default" }: Moda
             </div>
 
             {/* Scrollable Content */}
-            <div ref={contentRef} tabIndex={-1} className="p-6 overflow-y-auto flex-1 outline-none">{children}</div>
+            <div ref={contentRef} tabIndex={-1} className="p-6 overflow-y-auto flex-1 outline-none">
+              <ModalKeyboardContext.Provider value={keyboardState}>{children}</ModalKeyboardContext.Provider>
+            </div>
+
+            {/* Footer slot: flush with the sheet's bottom edge; empty (zero height) unless content portals into it */}
+            <div ref={setFooterSlot} data-modal-footer-slot className="shrink-0" />
           </motion.div>
         </div>
       )}

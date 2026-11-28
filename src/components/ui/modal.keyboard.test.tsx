@@ -1,6 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Modal } from "@/components/ui/modal";
+import { useModalKeyboard } from "@/components/ui/modal-keyboard-context";
 
 /**
  * The virtual keyboard half of `Modal`, which only runs at mobile width.
@@ -327,5 +328,84 @@ describe("Modal keeps the focused field visible as the keyboard opens", () => {
     viewport.shrinkTo(320);
 
     expect(dialog.style.maxHeight).toBe("288px"); // 320 * 0.9: no keyboard
+  });
+});
+
+function Probe() {
+  const { keyboardOpen, footerSlot } = useModalKeyboard();
+  return <p data-testid="probe">{`${keyboardOpen}:${footerSlot ? "slot" : "none"}`}</p>;
+}
+
+describe("Modal keyboard context", () => {
+  let viewport: FakeVisualViewport;
+  const originalMatchMedia = window.matchMedia;
+  const originalInnerHeight = window.innerHeight;
+
+  beforeEach(() => {
+    setLayoutHeight(originalInnerHeight);
+    window.matchMedia = ((query: string) =>
+      ({
+        matches: true,
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false,
+      }) as MediaQueryList) as typeof window.matchMedia;
+
+    viewport = new FakeVisualViewport();
+    Object.defineProperty(window, "visualViewport", {
+      value: viewport,
+      configurable: true,
+      writable: true,
+    });
+  });
+
+  afterEach(() => {
+    setLayoutHeight(originalInnerHeight);
+    window.matchMedia = originalMatchMedia;
+    Object.defineProperty(window, "visualViewport", {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+  });
+
+  it("reports the keyboard closed, with a slot, when the sheet opens", () => {
+    render(
+      <Modal open title="T" onClose={() => {}}>
+        <Probe />
+      </Modal>,
+    );
+    expect(screen.getByTestId("probe").textContent).toBe("false:slot");
+  });
+
+  it("reports the keyboard open once the visual viewport shrinks", () => {
+    render(
+      <Modal open title="T" onClose={() => {}}>
+        <Probe />
+      </Modal>,
+    );
+    viewport.shrinkTo(360);
+    expect(screen.getByTestId("probe").textContent).toBe("true:slot");
+  });
+
+  it("reports closed outside a Modal", () => {
+    render(<Probe />);
+    expect(screen.getByTestId("probe").textContent).toBe("false:none");
+  });
+
+  it("places the slot after the scroll area", () => {
+    render(
+      <Modal open title="T" onClose={() => {}}>
+        <Probe />
+      </Modal>,
+    );
+    const dialog = screen.getByRole("dialog");
+    const slot = dialog.lastElementChild as HTMLElement;
+    expect(slot.hasAttribute("data-modal-footer-slot")).toBe(true);
+    expect(slot.previousElementSibling?.contains(screen.getByTestId("probe"))).toBe(true);
   });
 });
