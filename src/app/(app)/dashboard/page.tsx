@@ -12,7 +12,6 @@ import {
   Plus,
   ScanLine,
   CalendarClock,
-  Receipt,
   Zap,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -38,6 +37,7 @@ import { UpcomingBillRow } from "@/components/dashboard/upcoming-bill-row";
 import { QuickLogStrip } from "@/components/dashboard/quick-log-strip";
 import { useQuickTilesQuery } from "@/hooks/use-quick-tiles";
 import { TransactionLabelPills } from "@/components/transactions/transaction-label-pills";
+import { TransactionRowBadges } from "@/components/transactions/transaction-row-badges";
 import { ActionFab } from "@/components/ui/action-fab";
 import type { TransactionInput } from "@/lib/validations";
 import type { TransactionWithCategory } from "@/types";
@@ -453,27 +453,31 @@ export default function DashboardPage() {
                               <p className="text-sm font-medium text-warm-600 truncate">
                                 {tx.description}
                               </p>
-                              {tx.receiptGroupId && (
-                                <span className="shrink-0 inline-flex items-center gap-0.5 bg-amber-light/60 text-amber-dark text-[10px] font-medium px-1.5 py-0.5 rounded">
-                                  <Receipt className="w-2.5 h-2.5" />
-                                  Itemized
-                                </span>
-                              )}
-                              {tx.billId && (
-                                <span className="shrink-0 inline-flex items-center gap-0.5 bg-income-light text-income text-[10px] font-medium px-1.5 py-0.5 rounded">
-                                  <CalendarClock className="w-2.5 h-2.5" />
-                                  Bill
-                                </span>
-                              )}
+                              {/* Same two markers as before, now shared with the ledger: chips
+                                  beside the title from `sm`, icons on the category line below. */}
+                              <span className="hidden sm:contents">
+                                <TransactionRowBadges
+                                  receiptGroupId={tx.receiptGroupId}
+                                  billId={tx.billId}
+                                />
+                              </span>
                             </div>
                             <div className="flex items-center gap-1 min-w-0 overflow-hidden">
-                              <p className="text-xs text-warm-300 truncate">
+                              <span className="contents sm:hidden">
+                                <TransactionRowBadges
+                                  receiptGroupId={tx.receiptGroupId}
+                                  billId={tx.billId}
+                                  variant="icon"
+                                />
+                              </span>
+                              <p className="min-w-0 text-xs text-warm-300 truncate">
                                 {tx.category.name}
                               </p>
                               {tx.labels && tx.labels.length > 0 && (
                                 <TransactionLabelPills
                                   labels={tx.labels}
                                   maxVisible={2}
+                                  collapseOnPhone
                                   onRemove={(_tlId, labelId) =>
                                     removeLabelMutation.mutate({ transactionId: tx.id, labelId })
                                   }
