@@ -13,18 +13,19 @@ import {
   ScanLine,
   CalendarClock,
   Zap,
+  AlertTriangle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatCurrency, getCurrencySymbol, cn } from "@/lib/utils";
-import { groupByDate, formatTime } from "@/lib/transaction-helpers";
-import { CategoryIcon } from "@/components/ui/icon-map";
+import { groupByDate } from "@/lib/transaction-helpers";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { TransactionForm } from "@/components/transactions/transaction-form";
-import { SpendingChart, TrendChart } from "@/components/dashboard/charts";
+import { MonthlyTrendChart } from "@/components/dashboard/monthly-trend-chart";
+import { CategoryBreakdownChart } from "@/components/analytics/category-breakdown-chart";
 import { BalanceTrendChart } from "@/components/dashboard/balance-trend-chart";
 import { DropdownButton, type DropdownItem } from "@/components/ui/dropdown-button";
 import { PageHeader } from "@/components/ui/page-header";
@@ -36,11 +37,11 @@ import { useUpcomingBillsQuery } from "@/hooks/use-bills";
 import { UpcomingBillRow } from "@/components/dashboard/upcoming-bill-row";
 import { QuickLogStrip } from "@/components/dashboard/quick-log-strip";
 import { useQuickTilesQuery } from "@/hooks/use-quick-tiles";
-import { TransactionLabelPills } from "@/components/transactions/transaction-label-pills";
-import { TransactionRowBadges } from "@/components/transactions/transaction-row-badges";
+import { TransactionListRow } from "@/components/transactions/transaction-list-row";
 import { ActionFab } from "@/components/ui/action-fab";
 import type { TransactionInput } from "@/lib/validations";
 import type { TransactionWithCategory } from "@/types";
+import { monthKeyRange } from "@/lib/analytics-period";
 import { accountMonthKey } from "@/lib/account-time";
 
 export default function DashboardPage() {
@@ -63,7 +64,7 @@ export default function DashboardPage() {
   const [deletingTransaction, setDeletingTransaction] = useState<TransactionWithCategory | null>(null);
   const [expandedBillId, setExpandedBillId] = useState<string | null>(null);
 
-  const { data: stats, isLoading: loading } = useDashboardQuery(currentMonth, user.timezoneOffset);
+  const { data: stats, isLoading: loading, isError, refetch } = useDashboardQuery(currentMonth, user.timezoneOffset);
   // Started here, and the result deliberately unused: `QuickLogStrip` mounts inside the `stats`
   // branch below, so left to itself its query could not begin until the dashboard read had already
   // finished, and the strip would drop in afterwards shoving Upcoming Bills down the page. React
@@ -365,26 +366,21 @@ export default function DashboardPage() {
               <h2 className="font-serif text-lg text-warm-700 mb-4">
                 Monthly Trend
               </h2>
-              {stats.monthlyTrend.some((m) => m.income > 0 || m.expenses > 0) ? (
-                <TrendChart data={stats.monthlyTrend} currency={currency} />
-              ) : (
-                <div className="h-[220px] flex items-center justify-center">
-                  <p className="text-warm-300 text-sm">No data yet</p>
-                </div>
-              )}
+              <MonthlyTrendChart data={stats.monthlyTrend} currency={currency} hideAmounts={hideAmounts} />
             </motion.div>
 
             <motion.div variants={fadeUp} className="card p-5">
               <h2 className="font-serif text-lg text-warm-700 mb-4">
                 Spending by Category
               </h2>
-              {stats.categoryBreakdown.length > 0 ? (
-                <SpendingChart data={stats.categoryBreakdown} currency={currency} />
-              ) : (
-                <div className="h-[220px] flex items-center justify-center">
-                  <p className="text-warm-300 text-sm">No expenses this month</p>
-                </div>
-              )}
+              <CategoryBreakdownChart
+                data={stats.categoryBreakdown}
+                currency={currency}
+                hideAmounts={hideAmounts}
+                range={monthKeyRange(currentMonth)}
+                emptyMessage="No expenses this month"
+                emptyHint="Add an expense to see where it goes"
+              />
             </motion.div>
           </div>
 
@@ -433,81 +429,29 @@ export default function DashboardPage() {
                     {/* Transaction rows */}
                     <div className="divide-y divide-cream-100">
                       {group.transactions.map((tx) => (
-                        <div
+                        // The ledger's row with nothing to select: no checkbox, no long-press,
+                        // and a tap opens the transaction.
+                        <TransactionListRow
                           key={tx.id}
-                          className="flex items-center gap-3 px-5 py-3 hover:bg-cream-50/80 transition-colors cursor-pointer"
-                          onClick={() => setEditingTransaction(tx)}
-                        >
-                          <div
-                            className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-                            style={{ backgroundColor: tx.category.color + "18" }}
-                          >
-                            <CategoryIcon
-                              name={tx.category.icon}
-                              className="w-4 h-4"
-                              style={{ color: tx.category.color }}
-                            />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <p className="text-sm font-medium text-warm-600 truncate">
-                                {tx.description}
-                              </p>
-                              {/* Same two markers as before, now shared with the ledger: chips
-                                  beside the title from `sm`, icons on the category line below. */}
-                              <span className="hidden sm:contents">
-                                <TransactionRowBadges
-                                  receiptGroupId={tx.receiptGroupId}
-                                  billId={tx.billId}
-                                />
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-1 min-w-0 overflow-hidden">
-                              <span className="contents sm:hidden">
-                                <TransactionRowBadges
-                                  receiptGroupId={tx.receiptGroupId}
-                                  billId={tx.billId}
-                                  variant="icon"
-                                />
-                              </span>
-                              <p className="min-w-0 text-xs text-warm-300 truncate">
-                                {tx.category.name}
-                              </p>
-                              {tx.labels && tx.labels.length > 0 && (
-                                <TransactionLabelPills
-                                  labels={tx.labels}
-                                  maxVisible={2}
-                                  collapseOnPhone
-                                  onRemove={(_tlId, labelId) =>
-                                    removeLabelMutation.mutate({ transactionId: tx.id, labelId })
-                                  }
-                                  removingLabelId={
-                                    removeLabelMutation.isPending &&
-                                    removeLabelMutation.variables?.transactionId === tx.id
-                                      ? removeLabelMutation.variables.labelId
-                                      : null
-                                  }
-                                  removeDisabled={removeLabelMutation.isPending}
-                                />
-                              )}
-                            </div>
-                          </div>
-                          <div className="text-right shrink-0">
-                            <p
-                              className={cn(
-                                "text-sm font-display font-semibold tabular-nums",
-                                tx.type === "INCOME" ? "text-income" : "text-expense"
-                              )}
-                            >
-                              {hideAmounts
-                                ? "••••"
-                                : `${tx.type === "INCOME" ? "+" : "-"}${formatCurrency(tx.amount, currency)}`}
-                            </p>
-                            <p className="text-[11px] text-warm-300 tabular-nums">
-                              {formatTime(tx.date, user.timezoneOffset)}
-                            </p>
-                          </div>
-                        </div>
+                          tx={tx}
+                          highlighted={false}
+                          currency={currency}
+                          hideAmounts={hideAmounts}
+                          timezoneOffset={user.timezoneOffset}
+                          creditCardsEnabled={user.creditCardsEnabled}
+                          receiptPhotosEnabled={user.receiptPhotosEnabled}
+                          onOpen={() => setEditingTransaction(tx)}
+                          labelRemoval={{
+                            onRemove: (_tlId, labelId) =>
+                              removeLabelMutation.mutate({ transactionId: tx.id, labelId }),
+                            removingLabelId:
+                              removeLabelMutation.isPending &&
+                              removeLabelMutation.variables?.transactionId === tx.id
+                                ? removeLabelMutation.variables.labelId
+                                : null,
+                            disabled: removeLabelMutation.isPending,
+                          }}
+                        />
                       ))}
                     </div>
                   </div>
@@ -531,6 +475,21 @@ export default function DashboardPage() {
             )}
           </motion.div>
         </motion.div>
+      ) : isError ? (
+        <EmptyState
+          icon={AlertTriangle}
+          title="Couldn’t load the dashboard"
+          description="Check your connection and try again."
+          action={
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              className="inline-flex min-h-11 items-center rounded-xl bg-amber px-4 py-2.5 text-sm font-medium text-white shadow-soft transition-colors hover:bg-amber-dark"
+            >
+              Try again
+            </button>
+          }
+        />
       ) : null}
 
       {/* Floating create button. Above `sm` it carries the same menu as the

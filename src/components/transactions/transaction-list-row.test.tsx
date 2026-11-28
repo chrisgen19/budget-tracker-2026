@@ -114,3 +114,98 @@ describe("TransactionListRow", () => {
     });
   });
 });
+
+describe("TransactionListRow without selection", () => {
+  // The dashboard's recent rows: the same row, with nothing to select.
+  const renderPlain = () => {
+    const onOpen = vi.fn();
+    const view = render(
+      <TransactionListRow
+        tx={tx}
+        highlighted={false}
+        hideAmounts={false}
+        currency="PHP"
+        timezoneOffset={-480}
+        creditCardsEnabled
+        receiptPhotosEnabled
+        onOpen={onOpen}
+        labelRemoval={{ onRemove: vi.fn(), removingLabelId: null, disabled: false }}
+      />,
+    );
+    return { ...view, onOpen };
+  };
+
+  afterEach(() => vi.useRealTimers());
+
+  it("renders no checkbox at any width", () => {
+    const { container } = renderPlain();
+    expect(container.querySelector("[data-row-checkbox]")).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("opens the row on tap", () => {
+    const { container, onOpen } = renderPlain();
+    fireEvent.click(row(container));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a long press as nothing special, so the following tap still opens the row", () => {
+    vi.useFakeTimers();
+    const { container, onOpen } = renderPlain();
+    fireEvent.pointerDown(row(container), { pointerType: "touch" });
+    vi.advanceTimersByTime(450);
+    fireEvent.pointerUp(row(container), { pointerType: "touch" });
+    fireEvent.click(row(container));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the text selectable, since holding a row selects nothing here", () => {
+    const { container } = renderPlain();
+    expect(row(container).className).not.toContain("select-none");
+  });
+});
+
+describe("TransactionListRow feature flags, label removal and tints", () => {
+  it("shows the card only when credit cards are enabled", () => {
+    const carded = {
+      ...tx,
+      creditAccount: { id: "a1", name: "BPI Gold", color: "#123456" },
+    } as unknown as TransactionWithCategory;
+    const { unmount } = renderRow({ tx: carded, creditCardsEnabled: true });
+    expect(screen.getAllByText("BPI Gold").length).toBeGreaterThan(0);
+    unmount();
+    renderRow({ tx: carded, creditCardsEnabled: false });
+    expect(screen.queryAllByText("BPI Gold")).toHaveLength(0);
+    expect(screen.queryAllByLabelText("Paid with BPI Gold")).toHaveLength(0);
+  });
+
+  it("hides the photo marker when receipt photos are disabled", () => {
+    renderRow({ receiptPhotosEnabled: false });
+    expect(screen.queryByText("Photo")).toBeNull();
+    expect(screen.queryAllByLabelText(/photo/i)).toHaveLength(0);
+  });
+
+  it("removes a label without opening the row", () => {
+    const labelled = {
+      ...tx,
+      labels: [{ id: "tl_1", labelId: "l_1", label: { id: "l_1", name: "Work Budget", color: "#D9643A" } }],
+    } as unknown as TransactionWithCategory;
+    const { props } = renderRow({ tx: labelled });
+    fireEvent.click(screen.getByText("Work Budget")); // reveals the X
+    fireEvent.click(screen.getByRole("button"));
+    expect(props.labelRemoval.onRemove).toHaveBeenCalledWith("tl_1", "l_1");
+    expect(props.onOpen).not.toHaveBeenCalled();
+  });
+
+  it("applies the highlighted and selected tints", () => {
+    const plain = renderRow();
+    expect(row(plain.container).className).not.toContain("ring-1");
+    expect(row(plain.container).className).not.toContain("bg-amber-light/20");
+    plain.unmount();
+    const highlighted = renderRow({ highlighted: true });
+    expect(row(highlighted.container).className).toContain("ring-1");
+    highlighted.unmount();
+    const selected = renderRow({ isSelected: true });
+    expect(row(selected.container).className).toContain("bg-amber-light/20");
+  });
+});

@@ -78,7 +78,7 @@ export interface DashboardStats {
   owedOnCards: number | null;
   transactionCount: number;
   recentTransactions: TransactionWithCategory[];
-  categoryBreakdown: CategoryBreakdownItem[];
+  categoryBreakdown: AnalyticsCategoryItem[];
   monthlyTrend: MonthlyTrendItem[];
   /**
    * @deprecated The 30 days ending on the selected month's last day, kept with that meaning for one
@@ -90,18 +90,12 @@ export interface DashboardStats {
   balanceMonths: { current: BalanceMonth; previous: BalanceMonth };
 }
 
-export interface CategoryBreakdownItem {
-  name: string;
-  color: string;
-  icon: string;
-  amount: number;
-  percentage: number;
-}
-
 export interface MonthlyTrendItem {
   month: string;
+  monthKey: string;   // YYYY-MM, for drill-down links
   income: number;
   expenses: number;
+  transactionCount: number;
 }
 
 export interface BalanceTrendItem {

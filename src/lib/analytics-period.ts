@@ -49,6 +49,12 @@ export const monthRange = (year: number, monthIndex: number): DateRange => ({
   to: fmtUTC(new Date(Date.UTC(year, monthIndex + 1, 0))),
 });
 
+/** The calendar month a `YYYY-MM` key names. */
+export const monthKeyRange = (monthKey: string): DateRange => {
+  const [year, month] = monthKey.split("-").map(Number);
+  return monthRange(year, month - 1);
+};
+
 /** The whole calendar year. */
 export const yearRange = (year: number): DateRange => ({
   from: `${year}-01-01`,
