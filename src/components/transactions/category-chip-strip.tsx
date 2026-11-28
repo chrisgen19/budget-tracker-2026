@@ -23,7 +23,7 @@ const CHIP_CLASS =
   "min-h-11 shrink-0 rounded-full border border-cream-200 px-3 text-sm text-warm-600 inline-flex items-center gap-1.5";
 
 /** Keeps the focused amount input focused until the click handler runs. */
-const keepFocus = (e: React.PointerEvent<HTMLButtonElement>) => e.preventDefault();
+const keepFocus = (e: React.SyntheticEvent) => e.preventDefault();
 
 export function CategoryChipStrip({ categories, selectedId, showMore, onPick, onMore }: CategoryChipStripProps) {
   return (
@@ -40,6 +40,7 @@ export function CategoryChipStrip({ categories, selectedId, showMore, onPick, on
             type="button"
             aria-pressed={selected}
             onPointerDown={keepFocus}
+            onMouseDown={keepFocus}
             onClick={() => onPick(cat.id)}
             className={cn(CHIP_CLASS, selected ? "bg-amber-light ring-2 ring-amber/40" : "bg-white")}
           >
@@ -49,7 +50,13 @@ export function CategoryChipStrip({ categories, selectedId, showMore, onPick, on
         );
       })}
       {showMore && (
-        <button type="button" onPointerDown={keepFocus} onClick={onMore} className={cn(CHIP_CLASS, "bg-white")}>
+        <button
+          type="button"
+          onPointerDown={keepFocus}
+          onMouseDown={keepFocus}
+          onClick={onMore}
+          className={cn(CHIP_CLASS, "bg-white")}
+        >
           More…
         </button>
       )}

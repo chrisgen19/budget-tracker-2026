@@ -43,8 +43,8 @@ describe("CategoryChipStrip", () => {
     setup({ selectedId: "c2" });
 
     expect(screen.getByRole("button", { name: "Transport" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "Food" }).getAttribute("aria-pressed")).not.toBe("true");
-    expect(screen.getByRole("button", { name: "Bills" }).getAttribute("aria-pressed")).not.toBe("true");
+    expect(screen.getByRole("button", { name: "Food" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button", { name: "Bills" }).getAttribute("aria-pressed")).toBe("false");
   });
 
   it("calls onPick with the id", () => {
@@ -66,5 +66,12 @@ describe("CategoryChipStrip", () => {
 
     expect(fireEvent.pointerDown(screen.getByRole("button", { name: "Food" }))).toBe(false);
     expect(fireEvent.pointerDown(screen.getByRole("button", { name: "More…" }))).toBe(false);
+  });
+
+  it("keeps focus on mousedown", () => {
+    setup();
+
+    expect(fireEvent.mouseDown(screen.getByRole("button", { name: "Food" }))).toBe(false);
+    expect(fireEvent.mouseDown(screen.getByRole("button", { name: "More…" }))).toBe(false);
   });
 });
