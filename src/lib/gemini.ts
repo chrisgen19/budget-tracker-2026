@@ -5,10 +5,20 @@ const globalForGemini = globalThis as unknown as {
   gemini: GoogleGenAI | undefined;
 };
 
-export const gemini =
-  globalForGemini.gemini ?? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+/**
+ * The client, created on first use rather than on load. `new GoogleGenAI` throws without an
+ * API key, and `next build` imports every route to collect page data with none set, so an
+ * eager client made the build need a secret it has no use for.
+ */
+let _gemini: GoogleGenAI | undefined;
 
-if (process.env.NODE_ENV !== "production") globalForGemini.gemini = gemini;
+const getGemini = (): GoogleGenAI => {
+  // The module-level copy is the one-per-process guarantee in production; the globalThis
+  // copy exists so dev reloads reuse the client.
+  _gemini ??= globalForGemini.gemini ?? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+  if (process.env.NODE_ENV !== "production") globalForGemini.gemini = _gemini;
+  return _gemini;
+};
 
 /**
  * The model every Gemini call in this app uses.
@@ -174,7 +184,7 @@ const attemptWithRetries = async (
 ) => {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await gemini.models.generateContent(params);
+      return await getGemini().models.generateContent(params);
     } catch (error) {
       if (!isGeminiUnavailable(error) || attempt >= maxAttempts) throw error;
       await sleep(attempt * 1000);

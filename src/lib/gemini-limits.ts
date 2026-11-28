@@ -1,10 +1,9 @@
 /**
  * Timeout and retry policy for Gemini calls.
  *
- * Kept separate from `gemini.ts` because that module instantiates the `GoogleGenAI`
- * client at import time. Consumers that only need to reason about how long a call can
- * take — the scan quota's reservation TTL, for one — must not drag the SDK and an API
- * key requirement in with it.
+ * Kept separate from `gemini.ts` so that consumers that only need to reason about how long
+ * a call can take — the scan quota's reservation TTL, for one — do not drag the SDK in
+ * with it.
  */
 
 /** Per-attempt request timeout. Configured via GEMINI_TIMEOUT_MS; 0 disables it entirely. */

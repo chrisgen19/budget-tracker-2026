@@ -68,9 +68,9 @@ opposite case and keeps the configured level. It also passes `minimalThinkingFor
 `generateContentWithRetry`'s `thinkingFor`, since the fallback path rebuilds `thinkingConfig`
 for whichever model it switches to and would otherwise restore `medium` mid-retry.
 `classify.ts` imports `@/lib/gemini` *dynamically*, and exports `GEMINI_ENABLED` read from the
-environment rather than from a client: `gemini.ts` constructs `GoogleGenAI` at module scope and
-throws without `GEMINI_API_KEY`, so a static import would take the bot down at boot on a
-deployment with no key, where it should degrade to shorthand-only logging. It is an **MCP
+environment rather than from a client: `gemini.ts` creates its `GoogleGenAI` on first use and
+throws then, without `GEMINI_API_KEY`, so with the dynamic import a deployment with no key
+degrades to shorthand-only logging instead of failing on the first message it classifies. It is an **MCP
 client**, not a database client: it calls `/api/mcp` with a scoped token,
 so it inherits the scope, the write lease, the rate limit and the audit trail rather than going
 around them, and it holds no database credentials.
