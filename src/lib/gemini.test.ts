@@ -14,13 +14,15 @@ import { ThinkingLevel } from "@google/genai";
  * for, silently restoring `medium` to a call that had deliberately chosen `minimal`.
  */
 
-// Built at module scope and throws without a key, so this has to land before the import.
-vi.hoisted(() => {
-  process.env.GEMINI_API_KEY = "test-key";
+// The client is created on first use and cached on globalThis, so a stub seeded there is the
+// one `generateContentWithRetry` calls.
+const generateContentStub = vi.hoisted(() => {
+  const stub = vi.fn();
+  (globalThis as { gemini?: unknown }).gemini = { models: { generateContent: stub } };
+  return stub;
 });
 
 const {
-  gemini,
   classifyConfig,
   receiptScanConfig,
   minimalThinkingFor,
@@ -33,10 +35,10 @@ const {
  *  and this needs no knowledge of the SDK's error constructor. */
 const transient = () => Object.assign(new Error("aborted"), { name: "AbortError" });
 
-let generateContent: ReturnType<typeof vi.spyOn>;
+const generateContent = generateContentStub;
 
 beforeEach(() => {
-  generateContent = vi.spyOn(gemini.models, "generateContent");
+  generateContent.mockReset();
 });
 
 describe("thinking config per call site", () => {
@@ -148,5 +150,24 @@ describe("generateContentWithRetry fallback", () => {
 
     const fallback = generateContent.mock.calls[1][0] as { config: { thinkingConfig: unknown } };
     expect(fallback.config.thinkingConfig).toEqual({ thinkingLevel: GEMINI_THINKING_LEVEL });
+  });
+});
+
+describe("client construction", () => {
+  it("importing the module without GEMINI_API_KEY does not throw", async () => {
+    // `next build` imports every route to collect page data and has no API key, so the client
+    // has to be created on first use rather than on load.
+    const g = globalThis as { gemini?: unknown };
+    const savedKey = process.env.GEMINI_API_KEY;
+    const savedClient = g.gemini;
+    delete process.env.GEMINI_API_KEY;
+    delete g.gemini;
+    vi.resetModules();
+    try {
+      await expect(import("@/lib/gemini")).resolves.toBeDefined();
+    } finally {
+      if (savedKey !== undefined) process.env.GEMINI_API_KEY = savedKey;
+      g.gemini = savedClient;
+    }
   });
 });

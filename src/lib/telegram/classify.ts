@@ -33,10 +33,10 @@ export async function classifyMessage(
 ): Promise<any> {
   if (!GEMINI_ENABLED) return null;
 
-  // Imported here rather than at module scope. `@/lib/gemini` builds its `GoogleGenAI` client
-  // on load and throws without GEMINI_API_KEY, so a static import would take the whole bot
-  // down at boot on a deployment that has no key, where today it degrades to shorthand-only
-  // logging. Same reason `receipt-scan.ts` is imported inside the MCP tool handler.
+  // Imported here rather than at module scope to keep the SDK out of the bot's boot path on a
+  // deployment that has no GEMINI_API_KEY, where it degrades to shorthand-only logging. The
+  // client itself is created on first call. Same reason `receipt-scan.ts` is imported inside
+  // the MCP tool handler.
   const { GEMINI_MODEL, classifyConfig, generateContentWithRetry, minimalThinkingFor } =
     await import("@/lib/gemini");
 
