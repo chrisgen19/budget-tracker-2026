@@ -9,24 +9,30 @@ import { formatTime } from "@/lib/transaction-helpers";
 import { cn, formatCurrency } from "@/lib/utils";
 import type { TransactionWithCategory } from "@/types";
 
+const noop = () => {};
+
 interface TransactionListRowProps {
   tx: TransactionWithCategory;
-  isSelected: boolean;
+  isSelected?: boolean;
   /**
    * True while the list is selecting. Below `sm` this is what reveals the checkbox and turns a
    * tap into a toggle; at `sm` and up the checkbox is always shown.
    */
-  selectMode: boolean;
+  selectMode?: boolean;
   highlighted: boolean;
   hideAmounts: boolean;
   currency: string;
   timezoneOffset: number;
   creditCardsEnabled: boolean;
   receiptPhotosEnabled: boolean;
-  onToggle: () => void;
+  /**
+   * Selects or deselects this row. Leave it out for a list with nothing to select, such as the
+   * dashboard's recent rows: the row then has no checkbox and no long-press, and a tap opens it.
+   */
+  onToggle?: () => void;
   onOpen: () => void;
   /** Touch-and-hold: the page enters select mode and selects this row. */
-  onLongPress: () => void;
+  onLongPress?: () => void;
   labelRemoval: {
     onRemove: (transactionLabelId: string, labelId: string) => void;
     removingLabelId: string | null;
@@ -44,8 +50,8 @@ interface TransactionListRowProps {
  */
 export function TransactionListRow({
   tx,
-  isSelected,
-  selectMode,
+  isSelected = false,
+  selectMode = false,
   highlighted,
   hideAmounts,
   currency,
@@ -57,7 +63,9 @@ export function TransactionListRow({
   onLongPress,
   labelRemoval,
 }: TransactionListRowProps) {
-  const { handlers, consumeClick } = useLongPress(onLongPress);
+  const selectable = onToggle !== undefined;
+  // Called unconditionally, as a hook must be; its handlers are only attached when selectable.
+  const { handlers, consumeClick } = useLongPress(onLongPress ?? noop);
   const badgeProps = {
     receiptGroupId: tx.receiptGroupId,
     billId: tx.billId,
@@ -69,17 +77,17 @@ export function TransactionListRow({
   return (
     <div
       data-transaction-id={tx.id}
-      {...handlers}
+      {...(selectable ? handlers : {})}
       className={cn(
         "flex items-center gap-3 px-4 py-3 transition-colors group cursor-pointer sm:px-5",
         // A held finger must read as "select this", not as the start of a text selection.
-        "select-none [-webkit-touch-callout:none] sm:select-auto",
+        selectable && "select-none [-webkit-touch-callout:none] sm:select-auto",
         highlighted && "bg-amber-light/40 ring-1 ring-amber/40",
         isSelected ? "bg-amber-light/20" : "hover:bg-cream-50/80",
       )}
       onClick={() => {
-        if (consumeClick()) return;
-        if (selectMode) onToggle();
+        if (selectable && consumeClick()) return;
+        if (selectable && selectMode) onToggle();
         else onOpen();
       }}
     >
@@ -87,18 +95,20 @@ export function TransactionListRow({
           its own `inline-flex` would be decided by stylesheet order, not by intent. */}
       {/* Stops pointerdown here so holding the checkbox never starts the row's long-press: the
           label already stops the click, so the release would toggle the row straight back. */}
-      <span
-        data-row-checkbox
-        className={selectMode ? "contents" : "hidden sm:contents"}
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        <TransactionSelectionCheckbox
-          label={`Select ${tx.description || tx.category.name} transaction`}
-          state={isSelected ? "all" : "none"}
-          onChange={onToggle}
-          className="-my-2 -ml-3"
-        />
-      </span>
+      {selectable && (
+        <span
+          data-row-checkbox
+          className={selectMode ? "contents" : "hidden sm:contents"}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <TransactionSelectionCheckbox
+            label={`Select ${tx.description || tx.category.name} transaction`}
+            state={isSelected ? "all" : "none"}
+            onChange={onToggle}
+            className="-my-2 -ml-3"
+          />
+        </span>
+      )}
 
       <div
         className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"

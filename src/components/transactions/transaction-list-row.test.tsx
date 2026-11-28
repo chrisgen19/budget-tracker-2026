@@ -114,3 +114,53 @@ describe("TransactionListRow", () => {
     });
   });
 });
+
+describe("TransactionListRow without selection", () => {
+  // The dashboard's recent rows: the same row, with nothing to select.
+  const renderPlain = () => {
+    const onOpen = vi.fn();
+    const view = render(
+      <TransactionListRow
+        tx={tx}
+        highlighted={false}
+        hideAmounts={false}
+        currency="PHP"
+        timezoneOffset={-480}
+        creditCardsEnabled
+        receiptPhotosEnabled
+        onOpen={onOpen}
+        labelRemoval={{ onRemove: vi.fn(), removingLabelId: null, disabled: false }}
+      />,
+    );
+    return { ...view, onOpen };
+  };
+
+  afterEach(() => vi.useRealTimers());
+
+  it("renders no checkbox at any width", () => {
+    const { container } = renderPlain();
+    expect(container.querySelector("[data-row-checkbox]")).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("opens the row on tap", () => {
+    const { container, onOpen } = renderPlain();
+    fireEvent.click(row(container));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a long press as nothing special, so the following tap still opens the row", () => {
+    vi.useFakeTimers();
+    const { container, onOpen } = renderPlain();
+    fireEvent.pointerDown(row(container), { pointerType: "touch" });
+    vi.advanceTimersByTime(450);
+    fireEvent.pointerUp(row(container), { pointerType: "touch" });
+    fireEvent.click(row(container));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the text selectable, since holding a row selects nothing here", () => {
+    const { container } = renderPlain();
+    expect(row(container).className).not.toContain("select-none");
+  });
+});
