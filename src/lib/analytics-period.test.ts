@@ -4,6 +4,7 @@ import {
   chartGranularity,
   formatPeriodLabel,
   getCurrentMonth,
+  monthKeyRange,
   monthRange,
   navigatePeriod,
   weekRange,
@@ -32,6 +33,13 @@ describe("monthRange", () => {
   it("rolls the year for a month index outside 0-11", () => {
     expect(monthRange(2026, 12)).toEqual({ from: "2027-01-01", to: "2027-01-31" });
     expect(monthRange(2026, -1)).toEqual({ from: "2025-12-01", to: "2025-12-31" });
+  });
+});
+
+describe("monthKeyRange", () => {
+  it("covers the whole month", () => {
+    expect(monthKeyRange("2026-11")).toEqual({ from: "2026-11-01", to: "2026-11-30" });
+    expect(monthKeyRange("2028-02")).toEqual({ from: "2028-02-01", to: "2028-02-29" });
   });
 });
 

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUserId } from "@/lib/session";
 import { getOwedOnCards } from "@/lib/credit-account-queries";
 import { userCanUseCreditCards } from "@/lib/credit-card-access";
+import { buildCategoryBreakdown, buildMonthlyTrend } from "@/lib/dashboard-aggregates";
 import { buildBalanceMonths, legacyBalanceTrend } from "@/lib/balance-trend";
 
 export async function GET(request: Request) {
@@ -67,7 +68,12 @@ export async function GET(request: Request) {
     // Recent 5 transactions (any month) — ordered by date then creation time
     prisma.transaction.findMany({
       where: { userId },
-      include: { category: true, bill: true, labels: { include: { label: true } } },
+      include: {
+        category: true,
+        bill: true,
+        labels: { include: { label: true } },
+        creditAccount: { select: { id: true, name: true, color: true } },
+      },
       orderBy: [{ date: "desc" }, { createdAt: "desc" }, { id: "asc" }],
       take: 5,
     }),
@@ -126,53 +132,8 @@ export async function GET(request: Request) {
   const runningBalance =
     (runningIncome._sum.amount ?? 0) - (runningExpenses._sum.amount ?? 0);
 
-  // Category breakdown (expenses only)
-  const categoryMap = new Map<string, { name: string; color: string; icon: string; amount: number }>();
-
-  for (const t of transactions.filter((t) => t.type === "EXPENSE")) {
-    const existing = categoryMap.get(t.categoryId);
-    if (existing) {
-      existing.amount += t.amount;
-    } else {
-      categoryMap.set(t.categoryId, {
-        name: t.category.name,
-        color: t.category.color,
-        icon: t.category.icon,
-        amount: t.amount,
-      });
-    }
-  }
-
-  const categoryBreakdown = Array.from(categoryMap.values())
-    .sort((a, b) => b.amount - a.amount)
-    .map((item) => ({
-      ...item,
-      percentage: totalExpenses > 0 ? Math.round((item.amount / totalExpenses) * 100) : 0,
-    }));
-
-  // Monthly trend (last 6 months)
-  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const monthlyTrend = [];
-
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(Date.UTC(localNowForTrend.getUTCFullYear(), localNowForTrend.getUTCMonth() - i, 1));
-    const monthKey = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-    const monthLabel = `${monthNames[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
-
-    const monthTransactions = monthlyData.filter((t) => {
-      return toLocalMonthKey(new Date(t.date)) === monthKey;
-    });
-
-    monthlyTrend.push({
-      month: monthLabel,
-      income: monthTransactions
-        .filter((t) => t.type === "INCOME")
-        .reduce((sum, t) => sum + t.amount, 0),
-      expenses: monthTransactions
-        .filter((t) => t.type === "EXPENSE")
-        .reduce((sum, t) => sum + t.amount, 0),
-    });
-  }
+  const categoryBreakdown = buildCategoryBreakdown(transactions, totalExpenses);
+  const monthlyTrend = buildMonthlyTrend(monthlyData, localNowForTrend, toLocalMonthKey);
 
   const balanceMonths = buildBalanceMonths({
     month: toLocalMonthKey(startDate),
