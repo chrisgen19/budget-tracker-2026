@@ -396,6 +396,13 @@ export function PeriodPicker({
   const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const resolvedLabel = label ?? formatPeriodLabel(value.periodType, value.from, value.to);
+  // Dense shows "Nov 2026": the full month name decided whether the type toggle beside it
+  // fit a 390px phone. The accessible name below keeps the full label.
+  const visibleLabel =
+    label ??
+    (dense
+      ? formatPeriodLabel(value.periodType, value.from, value.to, { monthStyle: "short" })
+      : resolvedLabel);
 
   // The popover has no Modal to restore focus for it, so a keyboard user who
   // closes it does not get dropped back at the top of the document.
@@ -508,7 +515,7 @@ export function PeriodPicker({
           {!dense && (
             <CalendarDays aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-warm-400" />
           )}
-          <span className="min-w-0 select-none truncate text-center">{resolvedLabel}</span>
+          <span className="min-w-0 select-none truncate text-center">{visibleLabel}</span>
         </button>
         <button
           type="button"

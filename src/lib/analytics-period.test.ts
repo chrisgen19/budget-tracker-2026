@@ -108,6 +108,13 @@ describe("formatPeriodLabel", () => {
     expect(formatPeriodLabel("weekly", "2026-09-07", "2026-09-13")).toBe("Sep 7 – Sep 13, 2026");
   });
 
+  it("abbreviates the month on request, for the dense filter rail", () => {
+    const short = { monthStyle: "short" } as const;
+    expect(formatPeriodLabel("monthly", "2026-11-01", "2026-11-30", short)).toBe("Nov 2026");
+    expect(formatPeriodLabel("custom", "2026-11-01", "2026-11-30", short)).toBe("Nov 2026");
+    expect(formatPeriodLabel("monthly", "2026-11-01", "2026-11-30")).toBe("November 2026");
+  });
+
   it("labels a week that crosses a year boundary with both years", () => {
     expect(formatPeriodLabel("weekly", "2026-12-28", "2027-01-03")).toBe(
       "Dec 28, 2026 – Jan 3, 2027",

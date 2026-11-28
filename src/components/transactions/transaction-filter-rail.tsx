@@ -1,10 +1,13 @@
 "use client";
 
+import { useState } from "react";
+import { Check, ChevronDown } from "lucide-react";
 import {
   TransactionFilterChips,
   type FilterChip,
 } from "@/components/transactions/transaction-filter-chips";
 import type { TransactionFilters } from "@/components/transactions/transaction-filters";
+import { Modal } from "@/components/ui/modal";
 import { PeriodPicker } from "@/components/ui/period-picker";
 import type { PeriodSelection } from "@/lib/analytics-period";
 import { cn, TOUCH_HIT_AREA } from "@/lib/utils";
@@ -31,6 +34,32 @@ const TYPE_NAMES: Record<TransactionType, string> = {
   EXPENSE: "Expenses",
 };
 
+const TYPE_ORDER = ["ALL", "INCOME", "EXPENSE"] as const;
+
+/**
+ * Pressing the type already showing returns without calling `onChange` at all.
+ * Passing the same value is not the same as doing nothing: the update builds a
+ * fresh filters object, and the page watches that object by identity to reset the
+ * page number, drop the selection and announce "cleared because the filters
+ * changed" — all of it untrue here.
+ *
+ * Shared by the segmented toggle and the phone menu rather than written twice:
+ * the two are the same control at different widths, and a rule only one of them
+ * follows is the kind of drift that put three diverging copies of the toggle in
+ * here before.
+ */
+const selectType = (
+  next: TransactionType,
+  current: TransactionType,
+  onChange: (type: TransactionType) => void,
+) => {
+  if (next !== current) onChange(next);
+};
+
+/** The colour cue alone, for the menu trigger, which has no fill to carry it. */
+const typeTextClass = (type: TransactionType) =>
+  type === "INCOME" ? "text-income" : type === "EXPENSE" ? "text-expense" : "text-warm-700";
+
 const activeTypeClass = (type: TransactionType) =>
   type === "INCOME"
     ? "bg-white text-income shadow-warm"
@@ -54,12 +83,14 @@ export function TransactionTypeToggle({
     <div
       aria-label="Transaction type"
       className={cn(
-        "shrink-0 items-center gap-0.5 rounded-xl bg-cream-100",
-        dense ? "rounded-lg p-0.5" : "p-1",
+        "shrink-0 items-center rounded-xl bg-cream-100",
+        // Dense drops the 2px gaps between segments (the active one is marked by its fill
+        // anyway): with the short month label it is what lets the rail fit a 360px phone.
+        dense ? "gap-0 rounded-lg p-0.5" : "gap-0.5 p-1",
         className,
       )}
     >
-      {(["ALL", "INCOME", "EXPENSE"] as const).map((type) => (
+      {TYPE_ORDER.map((type) => (
         // Dropping the category belongs here, on the control the user actually
         // pressed, rather than in an effect watching `filters.type`. An effect
         // cannot tell a press apart from the same field arriving with a restored
@@ -67,19 +98,11 @@ export function TransactionTypeToggle({
         // back to. The category list is scoped to the type, so a category chosen
         // under one type either matches nothing under another or shows a chip
         // that cannot resolve to a name — but only an actual *switch* invalidates
-        // it.
-        //
-        // Re-pressing the type already showing returns without calling onChange
-        // at all. Passing the same value is not the same as doing nothing: the
-        // update builds a fresh filters object, and the page watches that object
-        // by identity to reset the page number, drop the selection and announce
-        // "cleared because the filters changed" — all of it untrue here.
+        // it. `selectType` above is what makes "only a switch" true.
         <button
           key={type}
           type="button"
-          onClick={() => {
-            if (type !== value) onChange(type);
-          }}
+          onClick={() => selectType(type, value, onChange)}
           aria-label={TYPE_NAMES[type]}
           aria-pressed={value === type}
           className={cn(
@@ -93,6 +116,84 @@ export function TransactionTypeToggle({
         </button>
       ))}
     </div>
+  );
+}
+
+/**
+ * The same control as `TransactionTypeToggle`, collapsed to one button for the
+ * narrowest phones.
+ *
+ * The segmented toggle cannot be made to fit 320px. Its three segments are
+ * `min-w-11` because 44px is the touch floor, so the control is 136px wide and
+ * cannot shrink without breaking that rule; with the dense period picker beside
+ * it the rail needs 305px of the 266px a 320px screen leaves, and scrolls by 39px
+ * (measured). One button costs about 58px, which is what puts the rail back
+ * inside the screen with room to spare.
+ *
+ * It opens a `Modal` rather than the `DropdownMenu` the rest of the app uses for
+ * this shape, and not by preference: the toolbar is `overflow-hidden` and becomes
+ * a transformed, `sticky` containing block while the page scrolls, which clips an
+ * absolutely positioned panel away entirely. That is the same clipping the dense
+ * `PeriodPicker` beside it answers with `presentation="dialog"`, and `e2e/modal-
+ * clipping.spec.ts` pins the toolbar as still being such an ancestor.
+ */
+export function TransactionTypeMenuButton({
+  value,
+  onChange,
+  className,
+}: {
+  value: TransactionType;
+  onChange: (type: TransactionType) => void;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        // The name is the control plus its state, not the state alone: "Expenses"
+        // on its own is indistinguishable from the segment of the same name one
+        // breakpoint up, and says nothing about what pressing it does.
+        aria-label={`Transaction type, currently ${TYPE_NAMES[value]}`}
+        className={cn(
+          "relative flex h-9 shrink-0 items-center gap-1 rounded-lg bg-cream-100 px-2.5 text-xs font-semibold transition-colors",
+          TOUCH_HIT_AREA,
+          typeTextClass(value),
+          className,
+        )}
+      >
+        <span>{TYPE_LABELS[value].full}</span>
+        <ChevronDown aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-warm-400" />
+      </button>
+
+      <Modal open={open} onClose={() => setOpen(false)} title="Transaction type">
+        <div className="flex flex-col gap-1 p-2">
+          {TYPE_ORDER.map((type) => (
+            <button
+              key={type}
+              type="button"
+              onClick={() => {
+                selectType(type, value, onChange);
+                setOpen(false);
+              }}
+              aria-pressed={value === type}
+              className={cn(
+                "flex min-h-11 items-center justify-between gap-3 rounded-xl px-4 text-sm font-semibold transition-colors",
+                value === type ? "bg-cream-100" : "hover:bg-cream-50",
+                typeTextClass(type),
+              )}
+            >
+              <span>{TYPE_NAMES[type]}</span>
+              {value === type && <Check aria-hidden="true" className="h-4 w-4 shrink-0" />}
+            </button>
+          ))}
+        </div>
+      </Modal>
+    </>
   );
 }
 
@@ -145,7 +246,7 @@ export function TransactionFilterRail({
         chips.length === 0 && !onClearAll && "lg:hidden",
       )}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5 sm:gap-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <PeriodPicker
           value={period}
           onChange={onPeriodChange}
@@ -156,11 +257,16 @@ export function TransactionFilterRail({
           // label is never truncated by a guess about how long a month name is.
           className="shrink-0 sm:hidden"
         />
+        {/* One control, two shapes, and only ever one of them mounted as far as
+            the user is concerned. Below `sm` the segmented toggle does not fit,
+            so the menu button stands in; from `sm` to `lg` the toggle is back;
+            at `lg` both go, because the search row carries the toggle itself. */}
+        <TransactionTypeMenuButton value={type} onChange={onTypeChange} className="sm:hidden" />
         <TransactionTypeToggle
           value={type}
           onChange={onTypeChange}
           dense
-          className="flex lg:hidden"
+          className="hidden sm:flex lg:hidden"
         />
         <TransactionFilterChips chips={chips} />
       </div>
