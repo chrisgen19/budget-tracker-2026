@@ -8,7 +8,7 @@ All notable development history for the Budget Tracker app.
   the transaction sheet on a phone. It replaces the Cancel / Add Transaction footer for as long as
   the keyboard is open, and follows the Expense / Income switch.
 - **Tapping a chip sets the category and blurs the amount**, so the keyboard closes and the footer
-  returns. `More...` opens the full category picker. `Modal` now publishes `useModalKeyboard()`
+  returns. `More…` opens the full category picker. `Modal` now publishes `useModalKeyboard()`
   (`keyboardOpen`, `footerSlot`) from `modal-keyboard-context.ts` for content that needs that edge.
 - **Nothing changes on desktop or in any other state**: the footer, the picker and the form
   behave exactly as before whenever the amount is not focused with the keyboard open.

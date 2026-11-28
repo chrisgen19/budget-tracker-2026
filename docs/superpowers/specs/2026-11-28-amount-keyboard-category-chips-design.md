@@ -52,7 +52,7 @@ The user picked **C** after comparing browser mockups of all three.
 - **Shown when:** mobile, keyboard open, and the amount input is the focused element. Footer
   hidden in exactly that state; otherwise everything is as today.
 - **Chips:** the type's quick categories first (same `resolveQuickCategories` order as the tiles),
-  then a "More..." chip that opens the existing category picker. The row scrolls sideways. The
+  then a "More…" chip that opens the existing category picker. The row scrolls sideways. The
   selected category's chip is highlighted (matters when editing). Chips are at least 44px tall in
   hit area (house touch-target rule).
 - **Tap handling:** the chip keeps the input focused on `pointerdown` (`preventDefault`), sets
