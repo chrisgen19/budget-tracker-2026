@@ -121,7 +121,11 @@ export function CategoryBreakdownChart({
                 <Cell key={entry.id} fill={entry.color} />
               ))}
             </Pie>
+            {/* The centred total below is an absolute sibling that comes later in
+                the DOM, and Recharts gives its tooltip wrapper no z-index, so
+                without this the total paints over the tooltip card. */}
             <Tooltip
+              wrapperStyle={{ zIndex: 10 }}
               content={({ active, payload }) => {
                 if (!active || !payload?.length) return null;
                 const item = payload[0].payload as AnalyticsCategoryItem;
