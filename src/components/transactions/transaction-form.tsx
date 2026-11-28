@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useState, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion, AnimatePresence } from "framer-motion";
@@ -17,6 +18,8 @@ import {
 } from "@/lib/account-time";
 import { MAX_QUICK_CATEGORIES, resolveQuickCategories } from "@/lib/quick-categories";
 import { CategoryIcon } from "@/components/ui/icon-map";
+import { useModalKeyboard } from "@/components/ui/modal-keyboard-context";
+import { CategoryChipStrip } from "@/components/transactions/category-chip-strip";
 import { ReceiptBreakdown, toReceiptBreakdownMeta } from "@/components/transactions/receipt-breakdown";
 import { useUser } from "@/components/user-provider";
 import { useCategoriesQuery, useQuickPreferencesQuery } from "@/hooks/use-categories";
@@ -108,6 +111,9 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     };
   }, []);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const amountInputRef = useRef<HTMLInputElement>(null);
+  const [amountFocused, setAmountFocused] = useState(false);
+  const { keyboardOpen, footerSlot } = useModalKeyboard();
   const [displayAmount, setDisplayAmount] = useState<string>(() => {
     if (transaction?.amount != null) return formatAmountDisplay(transaction.amount);
     if (initialData?.amount != null) return formatAmountDisplay(initialData.amount);
@@ -183,6 +189,9 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
       : quickPrefs?.quickIncomeCategories;
   const quickCategories = resolveQuickCategories(prefIds ?? [], categories).display;
 
+  // The strip renders only in the form view, so the category picker view already excludes it.
+  const showChips =
+    keyboardOpen && amountFocused && !!footerSlot && !loadingCategories && quickCategories.length > 0;
   const isSelectedInQuick = quickCategories.some((c) => c.id === watchedCategoryId);
 
   // Apply initialData categoryId once after categories load
@@ -467,7 +476,10 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                       { shouldValidate: true }
                     );
                   }}
+                  ref={amountInputRef}
+                  onFocus={() => setAmountFocused(true)}
                   onBlur={() => {
+                    setAmountFocused(false);
                     if (!displayAmount) return;
                     const numeric = parseFloat(displayAmount.replace(/,/g, ""));
                     if (!isNaN(numeric)) {
@@ -648,7 +660,13 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
             </div>
 
             {/* Action Buttons — sticky footer */}
-            <div className="sticky bottom-0 -mx-6 -mb-6 px-6 py-4 bg-white border-t border-cream-200/60">
+            <div
+              data-testid="form-footer"
+              className={cn(
+                "sticky bottom-0 -mx-6 -mb-6 px-6 py-4 bg-white border-t border-cream-200/60",
+                showChips && "hidden"
+              )}
+            >
               <div className="flex gap-3">
                 <button
                   type="button"
@@ -690,6 +708,24 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                 </button>
               </div>
             </div>
+            {showChips &&
+              footerSlot &&
+              createPortal(
+                <CategoryChipStrip
+                  categories={quickCategories}
+                  selectedId={watchedCategoryId}
+                  showMore={categories.length > MAX_QUICK_CATEGORIES}
+                  onPick={(id) => {
+                    setValue("categoryId", id, { shouldValidate: true });
+                    amountInputRef.current?.blur();
+                  }}
+                  onMore={() => {
+                    amountInputRef.current?.blur();
+                    setShowCategoryPicker(true);
+                  }}
+                />,
+                footerSlot
+              )}
           </form>
         </motion.div>
       )}
