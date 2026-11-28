@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -113,7 +114,11 @@ const useScrollEdges = (
   onShown: () => void,
 ): Edges => {
   const onShownRef = useRef(onShown);
-  onShownRef.current = onShown;
+  // Assigned in the commit rather than during render, so a render React throws away
+  // cannot leave a closure over its own `activeTab` behind for the observer to call.
+  useLayoutEffect(() => {
+    onShownRef.current = onShown;
+  });
   const [edges, setEdges] = useState<Edges>({ start: false, end: false });
 
   useEffect(() => {
@@ -213,6 +218,11 @@ export function AnalyticsTabBar({
   showCards?: boolean;
 }) {
   const tabs = ANALYTICS_TABS.filter((tab) => showCards || !tab.requiresCards);
+  const activeIndex = tabs.findIndex((tab) => tab.id === activeTab);
+  // The page turns an excluded user's `?tab=debt` into Reports, but the bar should not rely
+  // on that: with the active tab filtered out, nothing would carry tabIndex 0 and the whole
+  // row would drop out of the Tab order. The first tab stands in as the way in.
+  const focusableId = activeIndex >= 0 ? activeTab : tabs[0].id;
   const reduceMotion = useReducedMotion();
   const rowRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef(new Map<AnalyticsTab, HTMLButtonElement>());
@@ -246,8 +256,9 @@ export function AnalyticsTabBar({
     const step = KEY_STEPS[e.key];
     if (!step) return;
     e.preventDefault();
-    const index = tabs.findIndex((tab) => tab.id === activeTab);
-    const next = tabs[step(Math.max(index, 0), tabs.length)];
+    // From an active tab that is not in the row, any arrow lands on the stand-in rather
+    // than stepping from a position that does not exist.
+    const next = activeIndex < 0 ? tabs[0] : tabs[step(activeIndex, tabs.length)];
     onSelect(next.id);
     tabRefs.current.get(next.id)?.focus({ preventScroll: true });
   };
@@ -283,7 +294,7 @@ export function AnalyticsTabBar({
               type="button"
               role="tab"
               aria-selected={isActive}
-              tabIndex={isActive ? 0 : -1}
+              tabIndex={tab.id === focusableId ? 0 : -1}
               onClick={() => onSelect(tab.id)}
               className={cn(
                 // min-h-11 is the 44px touch target, same as the type filter's buttons

@@ -100,6 +100,23 @@ describe("AnalyticsTabBar", () => {
     expect(onSelect).toHaveBeenLastCalledWith("reports");
   });
 
+  /**
+   * The page rewrites an excluded user's `?tab=debt` to Reports, but the bar must survive
+   * without that: with the active tab filtered out, no tab had tabIndex 0, so the row could
+   * not be reached with Tab at all, and ArrowRight stepped from index 0 to the second tab.
+   */
+  it("keeps the row reachable when the active tab is filtered out", () => {
+    const onSelect = vi.fn();
+    render(<AnalyticsTabBar activeTab="debt" onSelect={onSelect} layoutId="t9" />);
+
+    const focusable = screen.getAllByRole("tab").filter((tab) => tab.tabIndex === 0);
+    expect(focusable).toHaveLength(1);
+    expect(focusable[0].textContent).toMatch(/reports/i);
+
+    fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
+    expect(onSelect).toHaveBeenLastCalledWith("reports");
+  });
+
   /** Arrowing must skip a tab the user cannot see, not land on it. */
   it("skips the hidden Debt tab when arrowing", () => {
     const onSelect = vi.fn();
