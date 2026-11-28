@@ -10,7 +10,7 @@ import {
   ScanLine,
 } from "lucide-react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { formatCurrency, cn } from "@/lib/utils";
+import { formatCurrency, cn, TOUCH_HIT_AREA } from "@/lib/utils";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -25,8 +25,7 @@ import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import { useScan } from "@/components/scan-provider";
 import { ActionFab } from "@/components/ui/action-fab";
-import { TransactionRow } from "@/components/transactions/transaction-row";
-import { TransactionSelectionCheckbox } from "@/components/transactions/transaction-selection-checkbox";
+import { TransactionListRow } from "@/components/transactions/transaction-list-row";
 import { TransactionBulkActionBar } from "@/components/transactions/transaction-bulk-action-bar";
 import {
   TransactionBulkCategoryDialog,
@@ -144,6 +143,10 @@ export default function TransactionsPage() {
     dispatchSelection(action);
   }, []);
   const selectedItems = useMemo(() => selectionItems(selection), [selection]);
+  // Phones hide the checkbox column until the user asks to select, by long-pressing a row or
+  // tapping "Select". Any selection at all also counts, which is what desktop relies on.
+  const [selectMode, setSelectMode] = useState(false);
+  const inSelectMode = selectMode || selectedItems.length > 0;
   const selectedIds = useMemo(
     () => new Set(selectedItems.map((item) => item.id)),
     [selectedItems],
@@ -199,6 +202,7 @@ export default function TransactionsPage() {
     if (selectedCountRef.current > 0) {
       setSelectionAnnouncement("Transaction selection cleared because the filters changed");
     }
+    setSelectMode(false);
     dispatchSelectionChange({ type: "clear" });
   }, [dispatchSelectionChange, filters]);
 
@@ -211,13 +215,14 @@ export default function TransactionsPage() {
   }, [selectedItems.length]);
 
   useEffect(() => {
-    if (selectedItems.length === 0) return;
+    if (!inSelectMode) return;
     const clearOnEscape = (event: KeyboardEvent) => {
       if (
         event.key === "Escape" &&
         !document.querySelector('[role="dialog"]') &&
         !document.querySelector('[role="menu"]')
       ) {
+        setSelectMode(false);
         dispatchSelectionChange({ type: "clear" });
         setSelectionAnnouncement("Transaction selection cleared");
         requestAnimationFrame(() => pageHeadingRef.current?.focus());
@@ -225,7 +230,7 @@ export default function TransactionsPage() {
     };
     document.addEventListener("keydown", clearOnEscape);
     return () => document.removeEventListener("keydown", clearOnEscape);
-  }, [dispatchSelectionChange, selectedItems.length]);
+  }, [dispatchSelectionChange, inSelectMode]);
 
   // Destructure for stable references in useEffect deps
   const {
@@ -486,8 +491,10 @@ export default function TransactionsPage() {
   };
 
   const clearSelection = (restoreFocus = false) => {
+    setSelectMode(false);
     dispatchSelectionChange({ type: "clear" });
-    setSelectionAnnouncement("Transaction selection cleared");
+    // "Done" after "Select" with nothing ticked clears nothing, so it announces nothing.
+    if (selectedItems.length > 0) setSelectionAnnouncement("Transaction selection cleared");
     if (restoreFocus) requestAnimationFrame(() => pageHeadingRef.current?.focus());
   };
 
@@ -576,7 +583,9 @@ export default function TransactionsPage() {
     try {
       const result = await bulkDeleteMutation.mutateAsync(Array.from(selectedIds));
       setShowBulkDelete(false);
-      dispatchSelectionChange({ type: "clear" });
+      // Through clearSelection, not a bare dispatch: it also leaves phone select mode, or the
+      // checkboxes stay up and the next tap ticks a row instead of opening it.
+      clearSelection();
       const label = `${result.deleted} transaction${result.deleted === 1 ? "" : "s"} deleted`;
       setSelectionAnnouncement(label);
       showToast(label);
@@ -787,20 +796,39 @@ export default function TransactionsPage() {
                 {/* Date header */}
                 <div
                   data-transaction-date-heading
-                  className="flex items-center justify-between px-5 py-2.5 bg-cream-50 border-b border-cream-200"
+                  className="flex items-center justify-between px-4 py-2.5 bg-cream-50 border-b border-cream-200 sm:px-5"
                 >
-                  <span className="text-xs font-semibold text-warm-500 uppercase tracking-wide">
-                    {group.dateLabel}
-                    {user.showDayName && (
-                      <span className="text-warm-300 font-normal normal-case tracking-normal ml-1.5">
-                        · {user.dayNameFormat === "FULL" ? group.dayNameFull : group.dayNameShort}
-                      </span>
-                    )}
+                  <span className="flex min-w-0 items-center">
+                    <span className="min-w-0 truncate text-xs font-semibold text-warm-500 uppercase tracking-wide">
+                      {group.dateLabel}
+                      {user.showDayName && (
+                        <span className="text-warm-300 font-normal normal-case tracking-normal ml-1.5">
+                          · {user.dayNameFormat === "FULL" ? group.dayNameFull : group.dayNameShort}
+                        </span>
+                      )}
+                    </span>
+                    {/* Phones: the checkbox column is hidden there until select mode, and
+                        long-press is not discoverable on its own. At `sm` and up it only shows
+                        as "Done" while select mode was entered explicitly: a long-press on a
+                        tablet would otherwise leave rows toggling with no way out once the
+                        last one is unticked and the bulk bar goes away. */}
+                    <button
+                      type="button"
+                      onClick={() => (inSelectMode ? clearSelection() : setSelectMode(true))}
+                      aria-pressed={inSelectMode}
+                      className={cn(
+                        "relative ml-2 h-6 min-w-11 shrink-0 rounded-md px-1.5 text-xs font-medium text-amber-dark hover:bg-amber-light/40",
+                        !selectMode && "sm:hidden",
+                        TOUCH_HIT_AREA,
+                      )}
+                    >
+                      {inSelectMode ? "Done" : "Select"}
+                    </button>
                   </span>
                   {!hideAmounts && (
                     <span
                       className={cn(
-                        "text-xs font-display font-semibold tabular-nums",
+                        "ml-2 shrink-0 text-xs font-display font-semibold tabular-nums",
                         group.subtotal >= 0 ? "text-income" : "text-expense"
                       )}
                     >
@@ -812,45 +840,36 @@ export default function TransactionsPage() {
 
                 {/* Transaction rows */}
                 <div className="divide-y divide-cream-100">
-                  {group.transactions.map((tx) => {
-                    const isSelected = selectedIds.has(tx.id);
-                    return (
-                      <TransactionRow
-                        key={tx.id}
-                        tx={tx}
-                        currency={currency}
-                        hideAmounts={hideAmounts}
-                        timezoneOffset={user.timezoneOffset}
-                        showCreditAccount={user.creditCardsEnabled}
-                        showReceiptPhoto={user.receiptPhotosEnabled}
-                        selected={isSelected}
-                        highlighted={highlightedRowId === tx.id}
-                        onSelect={() =>
-                          selectedItems.length > 0 ? toggleSelection(tx) : setEditingTransaction(tx)
-                        }
-                        leading={
-                          <TransactionSelectionCheckbox
-                            label={`Select ${tx.description || tx.category.name} transaction`}
-                            state={isSelected ? "all" : "none"}
-                            onChange={() => toggleSelection(tx)}
-                            className="-my-2 -ml-3"
-                          />
-                        }
-                        onRemoveLabel={(labelId) =>
-                          removeLabelMutation.mutate({ transactionId: tx.id, labelId })
-                        }
-                        removingLabelId={
+                  {group.transactions.map((tx) => (
+                    <TransactionListRow
+                      key={tx.id}
+                      tx={tx}
+                      isSelected={selectedIds.has(tx.id)}
+                      selectMode={inSelectMode}
+                      highlighted={highlightedRowId === tx.id}
+                      hideAmounts={hideAmounts}
+                      currency={currency}
+                      timezoneOffset={user.timezoneOffset}
+                      creditCardsEnabled={user.creditCardsEnabled}
+                      receiptPhotosEnabled={user.receiptPhotosEnabled}
+                      onToggle={() => toggleSelection(tx)}
+                      onOpen={() => setEditingTransaction(tx)}
+                      onLongPress={() => {
+                        setSelectMode(true);
+                        if (!selectedIds.has(tx.id)) toggleSelection(tx);
+                      }}
+                      labelRemoval={{
+                        onRemove: (_tlId, labelId) =>
+                          removeLabelMutation.mutate({ transactionId: tx.id, labelId }),
+                        removingLabelId:
                           removeLabelMutation.isPending &&
                           removeLabelMutation.variables?.transactionId === tx.id
                             ? removeLabelMutation.variables.labelId
-                            : null
-                        }
-                        removeLabelDisabled={
-                          removeLabelMutation.isPending || selectedItems.length > 0
-                        }
-                      />
-                    );
-                  })}
+                            : null,
+                        disabled: removeLabelMutation.isPending || inSelectMode,
+                      }}
+                    />
+                  ))}
                 </div>
               </div>
             ))}

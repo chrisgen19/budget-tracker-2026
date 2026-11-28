@@ -36,6 +36,11 @@ const setLayoutWidth = (width: number) => {
   });
 };
 
+/** jsdom lays nothing out, so every rect is zero: a case about geometry has to force one. */
+const stubTop = (el: Element, top: number) => {
+  el.getBoundingClientRect = (() => ({ top }) as DOMRect) as Element["getBoundingClientRect"];
+};
+
 /** jsdom implements neither, and both are load-bearing here. */
 class FakeVisualViewport extends EventTarget {
   height = 800;
@@ -327,5 +332,81 @@ describe("Modal keeps the focused field visible as the keyboard opens", () => {
     viewport.shrinkTo(320);
 
     expect(dialog.style.maxHeight).toBe("288px"); // 320 * 0.9: no keyboard
+  });
+  /**
+   * Centring the focused field is right for a lone text input and wrong when what matters
+   * sits below it: on the transaction sheet, centring the amount leaves the category tiles
+   * under the keyboard. A field may therefore name an element to bring into view instead.
+   */
+  it("reveals the named element instead of centring the field", () => {
+    render(
+      <Modal open onClose={() => {}} title="New Transaction">
+        <input aria-label="Amount" autoFocus data-keyboard-reveal-until="tiles" />
+        <div id="tiles">Tiles</div>
+      </Modal>,
+    );
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "end", behavior: "auto" });
+    expect(scrollIntoView.mock.instances[0]).toBe(document.getElementById("tiles"));
+  });
+
+  // An id naming nothing must not cost the field its own reveal.
+  it("centres the field when the named element is not there", () => {
+    render(
+      <Modal open onClose={() => {}} title="New Transaction">
+        <input aria-label="Amount" autoFocus data-keyboard-reveal-until="gone" />
+      </Modal>,
+    );
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "auto" });
+    expect(scrollIntoView.mock.instances[0]).toBe(document.querySelector("input"));
+  });
+
+  /**
+   * The reveal spans from the field down to the named element. When that span is taller than
+   * what the keyboard leaves -- a smaller phone, or a validation message under the field --
+   * scrolling its bottom edge into view pushes the field itself above the scroll port, so the
+   * digits being typed go invisible. jsdom lays nothing out, so both rects are forced.
+   */
+  it("falls back to the field when the reveal would push it out of view", () => {
+    render(
+      <Modal open onClose={() => {}} title="New Transaction">
+        <input aria-label="Amount" autoFocus data-keyboard-reveal-until="tiles" />
+        <div id="tiles">Tiles</div>
+      </Modal>,
+    );
+
+    const input = document.querySelector("input") as HTMLInputElement;
+    const content = input.parentElement as HTMLElement;
+    stubTop(content, 100);
+    stubTop(input, 40); // above the scroll port's top edge
+    scrollIntoView.mockClear();
+
+    viewport.shrinkTo(400);
+
+    expect(scrollIntoView).toHaveBeenNthCalledWith(1, { block: "end", behavior: "auto" });
+    expect(scrollIntoView.mock.instances[0]).toBe(document.getElementById("tiles"));
+    expect(scrollIntoView).toHaveBeenNthCalledWith(2, { block: "start", behavior: "auto" });
+    expect(scrollIntoView.mock.instances[1]).toBe(input);
+  });
+
+  it("leaves the reveal alone when the field is still in view after it", () => {
+    render(
+      <Modal open onClose={() => {}} title="New Transaction">
+        <input aria-label="Amount" autoFocus data-keyboard-reveal-until="tiles" />
+        <div id="tiles">Tiles</div>
+      </Modal>,
+    );
+
+    const input = document.querySelector("input") as HTMLInputElement;
+    const content = input.parentElement as HTMLElement;
+    stubTop(content, 100);
+    stubTop(input, 120); // comfortably inside the scroll port
+    scrollIntoView.mockClear();
+
+    viewport.shrinkTo(400);
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView.mock.instances[0]).toBe(document.getElementById("tiles"));
   });
 });
