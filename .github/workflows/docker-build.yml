@@ -1,0 +1,130 @@
+name: Docker image
+
+# Builds the production Dockerfile the way Coolify does, against a real Postgres, and smoke-tests
+# the result. The Dockerfile guards in scripts/build-scripts.test.ts read the file as text; none of
+# them proves it builds. A wrong `COPY --from=` stage, a file missing from the deps COPY or a base
+# tag that does not exist passes them, and on Coolify it would only fail after
+# `prisma migrate deploy` has already run against production (migrations precede `next build` by
+# design, see .claude/rules/deploys.md).
+#
+# Path-filtered to what decides the image, so it stays off ordinary PRs: source changes are already
+# built by the `ci` workflow's `pnpm build`. This job is not a required check. The "Protect main"
+# ruleset requires `ci` only, and a full image build there would slow every PR.
+
+on:
+  # The two path lists must match. pull_request has no branch filter on purpose, so a PR stacked
+  # on another feature branch is built too.
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - .npmrc
+      - package.json
+      - pnpm-lock.yaml
+      - next.config.ts
+      - prisma/**
+      - scripts/check-migration-drift.ts
+      - .github/workflows/docker-build.yml
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - .npmrc
+      - package.json
+      - pnpm-lock.yaml
+      - next.config.ts
+      - prisma/**
+      - scripts/check-migration-drift.ts
+      - .github/workflows/docker-build.yml
+  workflow_dispatch:
+
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    # Read-only token: this job builds and runs repository code.
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      # Same major as production (postgres:17-alpine on the Coolify host). Empty, so the build
+      # applies every migration from scratch and the drift check compares against all of them.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: build
+          POSTGRES_DB: bt
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # The sentinel rides in the URL so the history check below can prove no build-arg value
+      # reached the image metadata. Postgres ignores an unknown application_name.
+      DATABASE_URL: postgresql://postgres:build@127.0.0.1:5432/bt?application_name=CI_SENTINEL_7d2e
+      IMAGE: budgettracker-ci:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # `--network host` as Coolify builds, so the build stage reaches the service on 127.0.0.1.
+      # COOLIFY_BUILD_SECRETS_HASH stands in for the value Coolify passes; any string works here.
+      - name: Build the runtime image
+        run: >-
+          docker build --network host --progress plain
+          --build-arg DATABASE_URL --build-arg COOLIFY_BUILD_SECRETS_HASH=ci
+          -t "$IMAGE" .
+
+      - name: Report the image size
+        run: docker images "$IMAGE" --format 'Image size: {{.Size}}' | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep secrets and env files out of the image
+        run: |
+          if docker history --no-trunc "$IMAGE" | grep -q CI_SENTINEL_7d2e; then
+            echo "::error::A build-arg value is recorded in the image history"; exit 1
+          fi
+          if docker inspect "$IMAGE" | grep -q CI_SENTINEL_7d2e; then
+            echo "::error::A build-arg value is in the image config"; exit 1
+          fi
+          if docker run --rm --entrypoint sh "$IMAGE" -c 'ls -a /app | grep -i env'; then
+            echo "::error::The image carries an env file in /app"; exit 1
+          fi
+
+      - name: Start the container
+        run: >-
+          docker run -d --name app --network host
+          -e DATABASE_URL
+          -e NEXTAUTH_SECRET=ci-only
+          -e NEXTAUTH_URL=http://localhost:3000
+          -e TELEGRAM_BOT_ENABLED=false
+          "$IMAGE"
+
+      - name: Wait for /api/health
+        run: |
+          for _ in $(seq 1 30); do
+            if docker exec app curl -fsS http://localhost:3000/api/health; then exit 0; fi
+            sleep 2
+          done
+          echo "::error::/api/health did not answer within 60s"; exit 1
+
+      # /api/health deliberately touches no database, so these cover what it cannot: the Prisma
+      # engine and sharp being traced into .next/standalone, the non-root user owning the image
+      # cache, and the tools the Coolify Scheduled Tasks and Prisma need at runtime.
+      - name: Smoke-test the runtime
+        run: |
+          docker exec app node -e "new (require('@prisma/client').PrismaClient)().\$queryRawUnsafe('select 1').then(() => { console.log('db ok'); process.exit(0); })"
+          docker exec app node -e "require('sharp'); console.log('sharp ok')"
+          test "$(docker exec app sh -c 'touch .next/cache/ci-write && whoami')" = nextjs
+          docker exec app curl --version
+          docker exec app wget --version
+          docker exec app openssl version
+
+      - name: Container logs
+        if: always()
+        run: docker logs app || true

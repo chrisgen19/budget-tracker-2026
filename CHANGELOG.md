@@ -2,6 +2,18 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-28 - CI builds the Docker image
+
+- **A new `Docker image` workflow builds the production `Dockerfile` in CI** against an empty
+  Postgres 17 service, so every migration and the drift check run inside the build as they do on
+  Coolify. It then checks that no build-arg value reached the image metadata and that `/app` holds
+  no env file, waits for `/api/health`, and smoke-tests a Prisma query, `sharp`, the `nextjs` user
+  writing `.next/cache`, and `curl`, `wget` and `openssl`. Until now every Dockerfile guard was a
+  text check, so a broken build surfaced only on Coolify, after the migrations had already run.
+- **It runs only when a file that decides the image changes** (`Dockerfile`, `.dockerignore`,
+  `.npmrc`, `package.json`, the lockfile, `next.config.ts`, `prisma/**`, the drift check script or
+  the workflow itself), and it is not a required check.
+
 ## 2026-11-28 - Production builds from a Dockerfile
 
 - **Production now builds from a multi-stage `Dockerfile` instead of Railpack.** Railpack kept
