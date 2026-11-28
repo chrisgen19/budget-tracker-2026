@@ -7,11 +7,12 @@ import type { TransactionInput } from "@/lib/validations";
 const categoryMocks = vi.hoisted(() => ({
   useCategoriesQuery: vi.fn(),
   defaultImpl: (_type?: "INCOME" | "EXPENSE") => ({ data: [] as unknown[], isLoading: false }),
+  autofocus: false,
 }));
 
 vi.mock("@/components/user-provider", () => ({
   useUser: () => ({
-    user: { currency: "PHP", timezoneOffset: -480, transactionAmountAutofocus: false },
+    user: { currency: "PHP", timezoneOffset: -480, transactionAmountAutofocus: categoryMocks.autofocus },
   }),
 }));
 
@@ -65,6 +66,7 @@ vi.mock("next/link", () => ({
 let slotEl: HTMLDivElement;
 
 beforeEach(() => {
+  categoryMocks.autofocus = false;
   categoryMocks.useCategoriesQuery.mockImplementation(categoryMocks.defaultImpl);
   slotEl = document.createElement("div");
   document.body.appendChild(slotEl);
@@ -97,7 +99,7 @@ describe("TransactionForm category chips above the keyboard", () => {
     renderForm();
     focusAmount();
 
-    expect(within(slotEl).getByRole("toolbar", { name: "Pick a category" })).toBeTruthy();
+    expect(within(slotEl).getByRole("group", { name: "Pick a category" })).toBeTruthy();
     expect(footer().classList.contains("hidden")).toBe(true);
   });
 
@@ -109,7 +111,7 @@ describe("TransactionForm category chips above the keyboard", () => {
     fireEvent.click(within(slotEl).getByRole("button", { name: /Food/ }));
 
     expect(document.activeElement).not.toBe(amountInput());
-    expect(within(slotEl).queryByRole("toolbar")).toBeNull();
+    expect(within(slotEl).queryByRole("group")).toBeNull();
     expect(footer().classList.contains("hidden")).toBe(false);
 
     fireEvent.click(document.querySelector('button[type="submit"]') as HTMLButtonElement);
@@ -125,14 +127,14 @@ describe("TransactionForm category chips above the keyboard", () => {
 
     // The form view animates out first, so the picker and the strip's removal both land async.
     await waitFor(() => expect(screen.getByText("Bills")).toBeTruthy());
-    expect(within(slotEl).queryByRole("toolbar")).toBeNull();
+    expect(within(slotEl).queryByRole("group")).toBeNull();
   });
 
   it("follows the transaction type", () => {
     renderForm({ initialData: { type: "INCOME" } });
     focusAmount();
 
-    const strip = within(slotEl).getByRole("toolbar");
+    const strip = within(slotEl).getByRole("group");
     expect(within(strip).getByRole("button", { name: /Salary/ })).toBeTruthy();
     expect(within(strip).queryByRole("button", { name: /Food/ })).toBeNull();
   });
@@ -141,7 +143,7 @@ describe("TransactionForm category chips above the keyboard", () => {
     renderForm({ keyboardOpen: false });
     focusAmount();
 
-    expect(within(slotEl).queryByRole("toolbar")).toBeNull();
+    expect(within(slotEl).queryByRole("group")).toBeNull();
     expect(footer().classList.contains("hidden")).toBe(false);
   });
 
@@ -149,7 +151,7 @@ describe("TransactionForm category chips above the keyboard", () => {
     renderForm({ withSlot: false });
     focusAmount();
 
-    expect(screen.queryByRole("toolbar")).toBeNull();
+    expect(within(slotEl).queryByRole("group")).toBeNull();
     expect(footer().classList.contains("hidden")).toBe(false);
   });
 
@@ -158,7 +160,46 @@ describe("TransactionForm category chips above the keyboard", () => {
     renderForm();
     focusAmount();
 
-    expect(screen.queryByRole("toolbar")).toBeNull();
+    expect(within(slotEl).queryByRole("group")).toBeNull();
+    expect(footer().classList.contains("hidden")).toBe(false);
+  });
+
+  it("keeps a chip tap whose pointer moved focus to the chip before the click", async () => {
+    const onSubmit = renderForm();
+    focusAmount();
+    fireEvent.change(amountInput(), { target: { value: "50" } });
+
+    const chip = within(slotEl).getByRole("button", { name: /Food/ });
+    act(() => chip.focus());
+    fireEvent.click(chip);
+
+    expect(within(slotEl).queryByRole("group")).toBeNull();
+    expect(footer().classList.contains("hidden")).toBe(false);
+    fireEvent.click(document.querySelector('button[type="submit"]') as HTMLButtonElement);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ categoryId: "food", amount: 50 });
+  });
+
+  it("shows the chips on mount when the amount autofocuses with the keyboard open", () => {
+    categoryMocks.autofocus = true;
+    renderForm();
+
+    expect(document.activeElement).toBe(amountInput());
+    expect(within(slotEl).getByRole("group", { name: "Pick a category" })).toBeTruthy();
+    expect(footer().classList.contains("hidden")).toBe(true);
+  });
+
+  it("does not refocus the amount when returning from the category picker", async () => {
+    categoryMocks.autofocus = true;
+    renderForm();
+
+    fireEvent.click(within(slotEl).getByRole("button", { name: /More…/ }));
+    await waitFor(() => expect(screen.getByText("Bills")).toBeTruthy());
+    fireEvent.click(screen.getByText("Bills"));
+    await waitFor(() => expect(screen.queryByPlaceholderText("0.00")).toBeTruthy());
+
+    expect(document.activeElement).not.toBe(amountInput());
+    expect(within(slotEl).queryByRole("group")).toBeNull();
     expect(footer().classList.contains("hidden")).toBe(false);
   });
 });

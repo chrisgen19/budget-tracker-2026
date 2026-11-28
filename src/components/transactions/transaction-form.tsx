@@ -113,6 +113,12 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const amountInputRef = useRef<HTMLInputElement>(null);
   const [amountFocused, setAmountFocused] = useState(false);
+  // Set once the category picker has been opened, so returning from it does not re-autofocus the amount.
+  const pickerOpenedRef = useRef(false);
+  const openPicker = () => {
+    pickerOpenedRef.current = true;
+    setShowCategoryPicker(true);
+  };
   const { keyboardOpen, footerSlot } = useModalKeyboard();
   const [displayAmount, setDisplayAmount] = useState<string>(() => {
     if (transaction?.amount != null) return formatAmountDisplay(transaction.amount);
@@ -478,8 +484,11 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                   }}
                   ref={amountInputRef}
                   onFocus={() => setAmountFocused(true)}
-                  onBlur={() => {
-                    setAmountFocused(false);
+                  onBlur={(e) => {
+                    // A chip that took focus first is still part of the strip: let its click land.
+                    if (!(footerSlot && e.relatedTarget instanceof Node && footerSlot.contains(e.relatedTarget))) {
+                      setAmountFocused(false);
+                    }
                     if (!displayAmount) return;
                     const numeric = parseFloat(displayAmount.replace(/,/g, ""));
                     if (!isNaN(numeric)) {
@@ -495,7 +504,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                       : "text-expense caret-expense"
                   )}
                   placeholder="0.00"
-                  autoFocus={!transaction && user.transactionAmountAutofocus}
+                  autoFocus={!transaction && user.transactionAmountAutofocus && !pickerOpenedRef.current}
                 />
               </div>
               {errors.amount && (
@@ -568,7 +577,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                   {categories.length > MAX_QUICK_CATEGORIES && (
                     <button
                       type="button"
-                      onClick={() => setShowCategoryPicker(true)}
+                      onClick={openPicker}
                       className="w-full flex items-center justify-between px-4 py-3 mt-2.5 rounded-xl border border-cream-200 text-sm text-warm-400 hover:text-warm-600 hover:border-cream-300 transition-colors"
                     >
                       More categories...
@@ -718,10 +727,12 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                   onPick={(id) => {
                     setValue("categoryId", id, { shouldValidate: true });
                     amountInputRef.current?.blur();
+                    setAmountFocused(false);
                   }}
                   onMore={() => {
                     amountInputRef.current?.blur();
-                    setShowCategoryPicker(true);
+                    setAmountFocused(false);
+                    openPicker();
                   }}
                 />,
                 footerSlot
