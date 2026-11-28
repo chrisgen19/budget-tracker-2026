@@ -23,10 +23,11 @@ head="${2:?head ref required}"
 # accept: a form tweak there changes the contract for every client, not only this one.
 # `.github/` is listed so a redesign PR that edits CI is reported for it.
 #
-# `Dockerfile` and `.dockerignore` are the production build; `railpack.json` is the fallback build
-# pack and `nixpacks.toml` stays listed for history. They hold the production build command, the
-# production Node version and the runtime apt list, and a redesign branch that changed one of them
-# would otherwise be reported as "none of them backend" and reviewed as visual work.
+# `Dockerfile` and `.dockerignore` are the production build. They hold the production build
+# command, the production Node version and the runtime apt list, and a redesign branch that changed
+# one of them would otherwise be reported as "none of them backend" and reviewed as visual work.
+# `nixpacks.toml` and `railpack.json` are deleted but stay listed: adding either back brings a build
+# pack config back into the repo, which is a backend change however small the diff.
 STATIC_PATTERN='^(src/app/api/|prisma/|mcp-server/|src/lib/(mcp|telegram)/|\.github/)|^src/(middleware|instrumentation)\.ts$|^src/lib/validations\.ts$|^(nixpacks\.toml|railpack\.json|Dockerfile|\.dockerignore)$'
 
 # Backend by content, for `src/lib` modules. A fixed list of file names would go stale the first

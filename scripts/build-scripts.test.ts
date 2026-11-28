@@ -158,70 +158,15 @@ describe("build scripts", () => {
   });
 
   /**
-   * Railpack is the fallback build pack: production switched to it from Nixpacks on 2026-11-27,
-   * `nixpacks.toml` was deleted once that deploy succeeded, and the Dockerfile now builds
-   * production. Its Node provider runs the `build`
-   * script by default, which deploys code without its migrations, and an array in `railpack.json`
-   * keeps the provider's own commands wherever it contains `"..."`. So the build step has to call
-   * `build:deploy` by name and must not spread the defaults back in.
-   */
-  it("is wired to railpack", () => {
-    const raw = readFileSync(join(__dirname, "..", "railpack.json"), "utf8");
-    const railpack = JSON.parse(raw);
-    const commands: unknown = railpack.steps?.build?.commands;
-    expect(Array.isArray(commands)).toBe(true);
-    expect(commands).toContain("pnpm build:deploy");
-    expect(commands).not.toContain("...");
-    // Over the whole file, not just the build step: a `pnpm build` in another step or in the start
-    // command reinstates the non-migrating path just as well.
-    expect(raw).not.toMatch(/pnpm build(?!:deploy)/);
-  });
-
-  /**
-   * The apt arrays are the opposite case from the build commands: an array without `"..."` REPLACES
-   * the packages Railpack generates rather than adding to them. Coolify's Railpack wrapper also
-   * appends `curl` and `wget` to the runtime list, and both Coolify Scheduled Tasks (bill reminders,
-   * the Telegram evening prompt) run `curl` inside the container, so a replaced list breaks them
-   * with `curl: command not found` and nothing in the deploy fails. Railpack does not document
-   * whether this file or Coolify's `RAILPACK_DEPLOY_APT_PACKAGES` wins, so the list names `curl`
-   * and `wget` itself as well as spreading the defaults.
-   */
-  it("extends railpack's apt packages rather than replacing them", () => {
-    const railpack = JSON.parse(readFileSync(join(__dirname, "..", "railpack.json"), "utf8"));
-    expect(railpack.buildAptPackages).toContain("...");
-    expect(railpack.buildAptPackages).toContain("openssl");
-    for (const pkg of ["...", "openssl", "curl", "wget"]) {
-      expect(railpack.deploy?.aptPackages).toContain(pkg);
-    }
-  });
-
-  /**
-   * The Railpack Node pin has to be a version CI actually runs. The two numbers live in different
-   * files with nothing tying them together, and the gap is silent in the direction that matters: a
-   * green pipeline on one version while the image ships another, so a behaviour change in a
-   * dependency path -- deprecations, OpenSSL defaults, undici -- surfaces only in production.
-   *
-   * The matrix is read out of the workflow rather than hardcoded, so adding a version to CI is
-   * enough and this test never has to be the second place to edit. It is read out of the `checks`
-   * job specifically: a first-match `node: [...]` over the whole file would silently bind to a
-   * second matrix job added above it, and pass while the leg that actually runs lint, type-check,
-   * build and test covered something else.
-   *
-   * Majors are compared, so a legitimate patch pin (`"24.5.0"`) still satisfies a `node: [24]` leg.
-   */
-  it("pins railpack to a Node version the CI matrix covers", () => {
-    const major = (version: string) => version.trim().replace(/^[^0-9]*/, "").split(".")[0];
-    const railpack = JSON.parse(readFileSync(join(__dirname, "..", "railpack.json"), "utf8"));
-    expect(ciNodeMajors()).toContain(major(String(railpack.packages?.node)));
-  });
-
-  /**
-   * The Dockerfile is the second way to build production, so the properties Railpack needed are
-   * pinned for it too, each for its own reason.
+   * The Dockerfile is the only way production builds (Railpack, and Nixpacks before it, were
+   * removed once it was live), so the properties a build pack needs are pinned here, each for
+   * its own reason. Setting Coolify's Build Pack to anything else auto-detects and runs plain
+   * `pnpm build`, with no migrations.
    *
    * `build:deploy` by name: a plain `pnpm build` deploys code without its migrations, the gap
    * behind #192, and the Dockerfile has no provider default to fall back on, only what it says.
-   * The Node base must be a major CI runs, for the same silent-gap reason as the Railpack pin.
+   * The Node base must be a major CI runs: the image and CI pin it in different files with
+   * nothing tying them together, and a gap surfaces only in production.
    *
    * `DATABASE_URL` is the only secret ARG, and only in the build stage: Coolify always passes
    * `--build-arg KEY` for every build-time variable, secrets included, and any ARG the Dockerfile
@@ -232,7 +177,7 @@ describe("build scripts", () => {
    * `COOLIFY_BUILD_SECRETS_HASH`, a hash of the build-time variables keyed with Coolify's
    * `APP_KEY` (not a secret), declared right before `RUN pnpm build:deploy` so that changing a
    * variable and redeploying runs the migrations and the drift check again rather than serving
-   * that layer from cache. Railpack got the same hash as `secrets-hash`.
+   * that layer from cache.
    *
    * The deps stage copies only the lockfile, `.npmrc` and the Prisma schema before installing so
    * the layer is cached until dependencies change; copying the source tree there, by any spelling

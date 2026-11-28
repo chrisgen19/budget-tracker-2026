@@ -2,6 +2,16 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-28 - Railpack config removed
+
+- **`railpack.json` is deleted, with the three tests that guarded it.** Production builds from the
+  `Dockerfile`: the first Coolify deploy from it (`806a8f5`) is live and healthy, so the Railpack
+  fallback kept by #444 is no longer needed, as `nixpacks.toml` was dropped once Railpack was live.
+- **Switching Coolify's Build Pack is no longer a way back.** With no build pack config in the
+  repo, Railpack or Nixpacks would auto-detect and run plain `pnpm build`, with no migrations and
+  no drift check (#192). Back out a bad deploy with Coolify's rollback or a revert instead.
+  `.claude/rules/deploys.md` says so in place of its Railpack apt-list section.
+
 ## 2026-11-28 - CI builds the Docker image
 
 - **A new `Docker image` workflow builds the production `Dockerfile` in CI** against an empty
