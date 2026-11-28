@@ -23,7 +23,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { TransactionForm } from "@/components/transactions/transaction-form";
-import { TrendChart } from "@/components/dashboard/charts";
+import { MonthlyTrendChart } from "@/components/dashboard/monthly-trend-chart";
 import { CategoryBreakdownChart } from "@/components/analytics/category-breakdown-chart";
 import { BalanceTrendChart } from "@/components/dashboard/balance-trend-chart";
 import { DropdownButton, type DropdownItem } from "@/components/ui/dropdown-button";
@@ -365,13 +365,7 @@ export default function DashboardPage() {
               <h2 className="font-serif text-lg text-warm-700 mb-4">
                 Monthly Trend
               </h2>
-              {stats.monthlyTrend.some((m) => m.income > 0 || m.expenses > 0) ? (
-                <TrendChart data={stats.monthlyTrend} currency={currency} />
-              ) : (
-                <div className="h-[220px] flex items-center justify-center">
-                  <p className="text-warm-300 text-sm">No data yet</p>
-                </div>
-              )}
+              <MonthlyTrendChart data={stats.monthlyTrend} currency={currency} hideAmounts={hideAmounts} />
             </motion.div>
 
             <motion.div variants={fadeUp} className="card p-5">
