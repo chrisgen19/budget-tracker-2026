@@ -49,17 +49,21 @@ alongside the drop migration. `check-migration-drift.ts` diffs the two (`prisma 
 Write the contract migration as a **forward** migration. Never edit or delete an applied one: the
 drift check fails any deploy whose checkout lacks a migration the database has applied.
 
-## The Dockerfile takes no build ARG but DATABASE_URL
+## The Dockerfile takes no build ARG but DATABASE_URL and the secrets hash
 
 Production builds from `Dockerfile` (Coolify Build Pack: Dockerfile). `build:deploy` runs inside
 the build stage, so that stage declares `ARG DATABASE_URL` for the migration and the drift check,
-and **no other ARG** may be added. Coolify passes every build-time variable to `docker build` as
+and `ARG COOLIFY_BUILD_SECRETS_HASH` right before `RUN pnpm build:deploy`. That one is Coolify's
+hash of every build-time variable, keyed with its `APP_KEY`, so it is not a secret; it puts the
+variables into that layer's cache key, and a variable changed in Coolify then re-runs the
+migrations and the drift check on the next deploy instead of reusing the cached layer (Railpack got
+the same hash as `secrets-hash`). **No other ARG** may be added. Coolify passes every build-time variable to `docker build` as
 `--build-arg KEY` whether or not the Dockerfile declares it, which is harmless: an undeclared one
 is dropped. What the "Inject Build Args to Dockerfile" toggle controls is whether Coolify inserts
 an `ARG` line after every `FROM`. With it **on**, each later `RUN` in a stage records every
 build-time value in the image history, secrets included. So the toggle stays **off** for this app,
 and `DATABASE_URL` reaches the build as a plain build-time variable that is not baked into the
-runtime image. `scripts/build-scripts.test.ts` pins the single ARG (and that none sits above the
+runtime image. `scripts/build-scripts.test.ts` pins the two ARGs (and that none sits above the
 first `FROM`) and that `.dockerignore` excludes `.env` and `.env.*`; it cannot see the Coolify
 toggle, so that one is a setting to check by hand after any Coolify change.
 
@@ -69,10 +73,11 @@ standalone step copies `.env` and `.env.production` from the build context into 
 so an env file that slips past `.dockerignore` would ship at `/app/.env`.
 
 **After restoring the database or repairing schema drift, redeploy with Force rebuild.** A normal
-redeploy of the same commit either skips the build entirely (Coolify reuses the commit's image) or
-serves `RUN pnpm build:deploy` from Docker's layer cache, since its key is only the source tree and
-the `DATABASE_URL` value. Either way, neither `prisma migrate deploy` nor the drift check runs
-against the database as it now is. Force rebuild runs `docker build --no-cache`, so both run. Do not
+redeploy of the same commit with unchanged variables either skips the build entirely (Coolify
+reuses the commit's image) or serves `RUN pnpm build:deploy` from Docker's layer cache, since its
+key is only the source tree and the build-time variables. A change to the database is in neither.
+Either way, neither `prisma migrate deploy` nor the drift check runs against the database as it
+now is. Force rebuild runs `docker build --no-cache`, so both run. Do not
 turn on Coolify's "Disable build cache" instead: it throws away the cached `pnpm install` layer on
 every deploy.
 

@@ -93,6 +93,23 @@ function dockerStages(): { name: string; from: string; lines: string[] }[] {
   return stages;
 }
 
+/**
+ * The named stage and every stage it is built `FROM`, root first. A guard that looks one hop up
+ * with `find(...)!` crashes with a `TypeError` naming nothing when a stage is rebased straight onto
+ * an image, which is exactly the edit those guards exist to catch, so each hop is asserted instead.
+ */
+const stageChain = (stages: ReturnType<typeof dockerStages>, name: string) => {
+  const chain: ReturnType<typeof dockerStages> = [];
+  let current = stages.find((s) => s.name === name);
+  expect(current, `Dockerfile has no stage named "${name}"`).toBeDefined();
+  while (current) {
+    chain.unshift(current);
+    const parent = current.from.toLowerCase();
+    current = stages.find((s) => s.name === parent && s.name !== "");
+  }
+  return chain;
+};
+
 describe("build scripts", () => {
   it("keeps every database-touching command out of `pnpm build`", () => {
     for (const command of DATABASE_TOUCHING) {
@@ -206,16 +223,22 @@ describe("build scripts", () => {
    * behind #192, and the Dockerfile has no provider default to fall back on, only what it says.
    * The Node base must be a major CI runs, for the same silent-gap reason as the Railpack pin.
    *
-   * `DATABASE_URL` is the only ARG, and only in the build stage: Coolify always passes
+   * `DATABASE_URL` is the only secret ARG, and only in the build stage: Coolify always passes
    * `--build-arg KEY` for every build-time variable, secrets included, and any ARG the Dockerfile
    * declares with a matching name receives the real value, which every later `RUN` in that stage
    * records in the image history. The "Inject Build Args to Dockerfile" setting only decides
    * whether Coolify inserts an ARG for each variable after every `FROM`, so it stays off. An ARG
-   * above the first `FROM` is global and counts too.
+   * above the first `FROM` is global and counts too. The one other ARG allowed is
+   * `COOLIFY_BUILD_SECRETS_HASH`, a hash of the build-time variables keyed with Coolify's
+   * `APP_KEY` (not a secret), declared right before `RUN pnpm build:deploy` so that changing a
+   * variable and redeploying runs the migrations and the drift check again rather than serving
+   * that layer from cache. Railpack got the same hash as `secrets-hash`.
    *
    * The deps stage copies only the lockfile, `.npmrc` and the Prisma schema before installing so
-   * the layer is cached until dependencies change; `COPY . .` there would rebuild it on every
-   * commit, and every deploy would then write a fresh multi-GB layer (4 GB per deploy on this host).
+   * the layer is cached until dependencies change; copying the source tree there, by any spelling
+   * (`COPY . .`, `COPY --chown=... ./ .`, `ADD . .`), would rebuild it on every commit, and every
+   * deploy would then write a fresh multi-GB layer (4 GB per deploy on this host). So the sources
+   * copied before the install are matched against an allowlist, not one bad spelling.
    *
    * The runtime image needs `curl` and `wget` because both Coolify Scheduled Tasks (bill
    * reminders, the Telegram evening prompt) run `curl` inside the container, and `openssl` for
@@ -236,12 +259,17 @@ describe("build scripts", () => {
     }
   });
 
-  it("declares DATABASE_URL only in the stage that runs build:deploy, and no other ARG", () => {
+  it("declares only DATABASE_URL and the secrets hash, in the stage that runs build:deploy", () => {
     const withArgs = dockerStages().filter((s) => s.lines.some((l) => l.startsWith("ARG ")));
     expect(withArgs.map((s) => s.name)).toEqual(["build"]);
     const build = withArgs[0];
-    expect(build.lines.filter((l) => l.startsWith("ARG "))).toEqual(["ARG DATABASE_URL"]);
-    expect(build.lines).toContain("RUN pnpm build:deploy");
+    expect(build.lines.filter((l) => l.startsWith("ARG "))).toEqual([
+      "ARG DATABASE_URL",
+      "ARG COOLIFY_BUILD_SECRETS_HASH",
+    ]);
+    const run = build.lines.indexOf("RUN pnpm build:deploy");
+    expect(run).toBeGreaterThan(-1);
+    expect(build.lines.indexOf("ARG COOLIFY_BUILD_SECRETS_HASH")).toBeLessThan(run);
   });
 
   /**
@@ -265,20 +293,22 @@ describe("build scripts", () => {
   });
 
   it("installs dependencies from the lockfile, .npmrc and schema only", () => {
-    const deps = dockerStages().find((s) => s.name === "deps")!;
-    const install = deps.lines.findIndex((l) => l.includes("pnpm install --frozen-lockfile"));
+    const lines = stageChain(dockerStages(), "deps").flatMap((s) => s.lines);
+    const install = lines.findIndex((l) => l.includes("pnpm install --frozen-lockfile"));
     expect(install).toBeGreaterThan(-1);
-    const copied = deps.lines.slice(0, install).filter((l) => l.startsWith("COPY ")).join(" ");
-    for (const file of ["package.json", "pnpm-lock.yaml", ".npmrc", "prisma/schema.prisma"]) {
-      expect(copied).toContain(file);
-    }
-    expect(copied).not.toMatch(/COPY \. /);
+    // Every source of every COPY or ADD before the install, flags dropped, destination dropped.
+    const sources = lines
+      .slice(0, install)
+      .filter((l) => /^(COPY|ADD) /.test(l))
+      .flatMap((l) => l.split(" ").slice(1).filter((t) => !t.startsWith("--")).slice(0, -1));
+    expect(sources.sort()).toEqual(
+      [".npmrc", "package.json", "pnpm-lock.yaml", "prisma/schema.prisma"].sort()
+    );
   });
 
   it("gives the runtime image openssl, curl and wget, and starts the standalone server", () => {
-    const stages = dockerStages();
-    const runtime = stages.find((s) => s.name === "runtime")!;
-    const chain = [stages.find((s) => s.name === runtime.from)!, runtime];
+    const chain = stageChain(dockerStages(), "runtime");
+    const runtime = chain[chain.length - 1];
     const apt = chain.flatMap((s) => s.lines).filter((l) => l.includes("apt-get install")).join(" ");
     for (const pkg of ["openssl", "ca-certificates", "curl", "wget"]) {
       expect(apt).toMatch(new RegExp(`\\b${pkg}\\b`));

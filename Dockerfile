@@ -4,8 +4,9 @@
 # Here the install layer is cached by the lockfile and the runtime image carries only the
 # standalone server (`output: "standalone"` in next.config.ts).
 #
-# Secrets: the only build ARG is DATABASE_URL, in the build stage, because the build command
-# migrates and checks drift against the database. No other ARG may be added: Coolify always
+# Secrets: the build stage declares DATABASE_URL, because the build command migrates and checks
+# drift against the database, and COOLIFY_BUILD_SECRETS_HASH (see the build stage). No other ARG
+# may be added: Coolify always
 # passes `--build-arg KEY` for every build-time variable (secrets included), and any ARG declared
 # here with a matching name would receive the real value and record it in the image history.
 # "Inject Build Args to Dockerfile" only decides whether Coolify inserts an ARG for each of them
@@ -31,6 +32,12 @@ RUN pnpm install --frozen-lockfile
 FROM deps AS build
 ARG DATABASE_URL
 COPY . .
+# Coolify's hash of every build-time variable, keyed with its APP_KEY, so not a secret. It is part
+# of the cache key of the RUN below: change any Coolify variable and redeploy, and build:deploy
+# runs again (migrations and the drift check) instead of coming from the layer cache. Railpack
+# got the same hash as `secrets-hash`. Declared here, after the deps stage, so the install layer
+# stays cached.
+ARG COOLIFY_BUILD_SECRETS_HASH
 RUN pnpm build:deploy
 
 # Runtime: curl and wget are needed by the Coolify Scheduled Tasks and health check,
