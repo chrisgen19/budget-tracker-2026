@@ -82,7 +82,8 @@ jobs:
           -t "$IMAGE" .
 
       - name: Report the image size
-        run: docker images "$IMAGE" --format 'Image size: {{.Size}}' | tee -a "$GITHUB_STEP_SUMMARY"
+        run: |
+          docker images "$IMAGE" --format 'Image size: {{.Size}}' | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Keep secrets and env files out of the image
         run: |
