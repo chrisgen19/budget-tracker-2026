@@ -64,7 +64,8 @@ export default function RegisterPage() {
 
       {/* Form Card */}
       <div className="card p-8 grain-overlay">
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+        {/* POST before hydration keeps the password out of the URL; see the login form. */}
+        <form method="post" onSubmit={handleSubmit(onSubmit)} className="space-y-5">
           {error && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
