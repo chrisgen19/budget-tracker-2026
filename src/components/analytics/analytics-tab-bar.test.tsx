@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AnalyticsTabBar } from "@/components/analytics/analytics-tab-bar";
 
@@ -58,5 +58,53 @@ describe("AnalyticsTabBar", () => {
     render(<AnalyticsTabBar activeTab="reports" onSelect={vi.fn()} layoutId="t4" showCards />);
     expect(screen.getAllByRole("tab").length).toBe(without + 1);
   });
-});
 
+  /**
+   * The bar is one scrolling row now, so tabs past the edge are off screen. Arrow keys
+   * are how a keyboard user reaches them, and only the active tab sits in the Tab order
+   * so the row is one stop rather than eight.
+   */
+  it("keeps only the active tab in the Tab order", () => {
+    render(<AnalyticsTabBar activeTab="forecast" onSelect={vi.fn()} layoutId="t5" />);
+    const focusable = screen.getAllByRole("tab").filter((tab) => tab.tabIndex === 0);
+    expect(focusable).toHaveLength(1);
+    expect(focusable[0].getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("moves to the next and previous tab with the arrow keys, wrapping at the ends", () => {
+    const onSelect = vi.fn();
+    const { rerender } = render(
+      <AnalyticsTabBar activeTab="reports" onSelect={onSelect} layoutId="t6" />,
+    );
+    const tablist = screen.getByRole("tablist");
+
+    fireEvent.keyDown(tablist, { key: "ArrowRight" });
+    expect(onSelect).toHaveBeenLastCalledWith("budget");
+
+    fireEvent.keyDown(tablist, { key: "ArrowLeft" });
+    expect(onSelect).toHaveBeenLastCalledWith("ai-assessment");
+
+    rerender(<AnalyticsTabBar activeTab="ai-assessment" onSelect={onSelect} layoutId="t6" />);
+    fireEvent.keyDown(tablist, { key: "ArrowRight" });
+    expect(onSelect).toHaveBeenLastCalledWith("reports");
+  });
+
+  it("jumps to the first and last tab with Home and End", () => {
+    const onSelect = vi.fn();
+    render(<AnalyticsTabBar activeTab="watchlist" onSelect={onSelect} layoutId="t7" />);
+    const tablist = screen.getByRole("tablist");
+
+    fireEvent.keyDown(tablist, { key: "End" });
+    expect(onSelect).toHaveBeenLastCalledWith("ai-assessment");
+    fireEvent.keyDown(tablist, { key: "Home" });
+    expect(onSelect).toHaveBeenLastCalledWith("reports");
+  });
+
+  /** Arrowing must skip a tab the user cannot see, not land on it. */
+  it("skips the hidden Debt tab when arrowing", () => {
+    const onSelect = vi.fn();
+    render(<AnalyticsTabBar activeTab="forecast" onSelect={onSelect} layoutId="t8" />);
+    fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
+    expect(onSelect).toHaveBeenLastCalledWith("watchlist");
+  });
+});
