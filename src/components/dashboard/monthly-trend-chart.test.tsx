@@ -1,6 +1,6 @@
 import { cloneElement, type ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MonthlyTrendChart, resolveSelectedMonth } from "@/components/dashboard/monthly-trend-chart";
 import { formatCurrency, getCurrencySymbol } from "@/lib/utils";
 import { formatAbbreviated } from "@/components/analytics/chart-theme";
@@ -82,6 +82,41 @@ describe("MonthlyTrendChart", () => {
     const hidden = render(<MonthlyTrendChart data={makeData()} currency="PHP" hideAmounts />);
     const hiddenTicks = Array.from(hidden.container.querySelectorAll(".recharts-yAxis text")).map((t) => t.textContent);
     expect(hiddenTicks).not.toContain(tick);
+  });
+});
+
+describe("MonthlyTrendChart keyboard selection", () => {
+  const chart = () => screen.getByRole("group", { name: /monthly trend/i });
+  const footerLink = () => screen.getByRole("link", { name: /^View \d+ transactions? for / });
+
+  it("is a focusable group that says how to choose a month", () => {
+    render(<MonthlyTrendChart data={makeData()} currency="PHP" hideAmounts={false} />);
+    expect(chart().tabIndex).toBe(0);
+    expect(chart().getAttribute("aria-label")).toMatch(/arrow keys/i);
+  });
+
+  it("moves the selected month with the arrow keys and stops at either end", () => {
+    render(<MonthlyTrendChart data={makeData()} currency="PHP" hideAmounts={false} />);
+    fireEvent.keyDown(chart(), { key: "ArrowLeft" });
+    expect(footerLink().getAttribute("aria-label")).toBe("View 2 transactions for October 2026");
+    fireEvent.keyDown(chart(), { key: "Home" });
+    expect(footerLink().getAttribute("aria-label")).toBe("View 2 transactions for June 2026");
+    fireEvent.keyDown(chart(), { key: "ArrowLeft" });
+    expect(footerLink().getAttribute("aria-label")).toBe("View 2 transactions for June 2026");
+    fireEvent.keyDown(chart(), { key: "End" });
+    fireEvent.keyDown(chart(), { key: "ArrowRight" });
+    expect(footerLink().getAttribute("aria-label")).toBe("View 2 transactions for November 2026");
+  });
+
+  it("returns to the newest month when the dashboard window moves under a kept-mounted chart", () => {
+    const octoberWindow = makeData().map((m, i) => ({ ...m, monthKey: `2026-${String(i + 5).padStart(2, "0")}` }));
+    const { rerender } = render(<MonthlyTrendChart data={octoberWindow} currency="PHP" hideAmounts={false} />);
+    fireEvent.keyDown(chart(), { key: "Home" }); // May
+    fireEvent.keyDown(chart(), { key: "ArrowRight" });
+    fireEvent.keyDown(chart(), { key: "ArrowRight" }); // July
+    expect(footerLink().getAttribute("aria-label")).toBe("View 2 transactions for July 2026");
+    rerender(<MonthlyTrendChart data={makeData()} currency="PHP" hideAmounts={false} />);
+    expect(footerLink().getAttribute("aria-label")).toBe("View 2 transactions for November 2026");
   });
 });
 

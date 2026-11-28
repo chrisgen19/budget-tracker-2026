@@ -145,6 +145,22 @@ export function MonthlyTrendChart({ data, currency, hideAmounts }: MonthlyTrendC
   const select = (monthKey: string) =>
     setSelection({ anchorKey: data[data.length - 1].monthKey, monthKey });
 
+  // The bars take no focus, so without this only a pointer could reach the other five months.
+  // The footer is `aria-live`, so each move is read out as the month and its totals.
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const index = data.findIndex((m) => m.monthKey === selected.monthKey);
+    const next =
+      event.key === "ArrowLeft" ? index - 1
+      : event.key === "ArrowRight" ? index + 1
+      : event.key === "Home" ? 0
+      : event.key === "End" ? data.length - 1
+      : null;
+    if (next === null) return;
+    event.preventDefault();
+    const clamped = Math.min(Math.max(next, 0), data.length - 1);
+    select(data[clamped].monthKey);
+  };
+
   const chartData = data.map((item) => ({
     ...item,
     label: item.month.split(" ")[0], // "Nov 2026" -> "Nov"
@@ -154,7 +170,13 @@ export function MonthlyTrendChart({ data, currency, hideAmounts }: MonthlyTrendC
   return (
     <div>
       <LegendChips />
-      <div className="h-[220px]">
+      <div
+        role="group"
+        tabIndex={0}
+        aria-label="Monthly trend. Use the left and right arrow keys to choose a month."
+        onKeyDown={handleKeyDown}
+        className="h-[220px] rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/40"
+      >
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={chartData}
