@@ -12,15 +12,13 @@ import {
   Plus,
   ScanLine,
   CalendarClock,
-  Receipt,
   Zap,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatCurrency, getCurrencySymbol, cn } from "@/lib/utils";
-import { groupByDate, formatTime } from "@/lib/transaction-helpers";
-import { CategoryIcon } from "@/components/ui/icon-map";
+import { groupByDate } from "@/lib/transaction-helpers";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
@@ -37,7 +35,7 @@ import { useUpcomingBillsQuery } from "@/hooks/use-bills";
 import { UpcomingBillRow } from "@/components/dashboard/upcoming-bill-row";
 import { QuickLogStrip } from "@/components/dashboard/quick-log-strip";
 import { useQuickTilesQuery } from "@/hooks/use-quick-tiles";
-import { TransactionLabelPills } from "@/components/transactions/transaction-label-pills";
+import { TransactionRow } from "@/components/transactions/transaction-row";
 import { ActionFab } from "@/components/ui/action-fab";
 import type { TransactionInput } from "@/lib/validations";
 import type { TransactionWithCategory } from "@/types";
@@ -433,77 +431,26 @@ export default function DashboardPage() {
                     {/* Transaction rows */}
                     <div className="divide-y divide-cream-100">
                       {group.transactions.map((tx) => (
-                        <div
+                        <TransactionRow
                           key={tx.id}
-                          className="flex items-center gap-3 px-5 py-3 hover:bg-cream-50/80 transition-colors cursor-pointer"
-                          onClick={() => setEditingTransaction(tx)}
-                        >
-                          <div
-                            className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-                            style={{ backgroundColor: tx.category.color + "18" }}
-                          >
-                            <CategoryIcon
-                              name={tx.category.icon}
-                              className="w-4 h-4"
-                              style={{ color: tx.category.color }}
-                            />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <p className="text-sm font-medium text-warm-600 truncate">
-                                {tx.description}
-                              </p>
-                              {tx.receiptGroupId && (
-                                <span className="shrink-0 inline-flex items-center gap-0.5 bg-amber-light/60 text-amber-dark text-[10px] font-medium px-1.5 py-0.5 rounded">
-                                  <Receipt className="w-2.5 h-2.5" />
-                                  Itemized
-                                </span>
-                              )}
-                              {tx.billId && (
-                                <span className="shrink-0 inline-flex items-center gap-0.5 bg-income-light text-income text-[10px] font-medium px-1.5 py-0.5 rounded">
-                                  <CalendarClock className="w-2.5 h-2.5" />
-                                  Bill
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-1 min-w-0 overflow-hidden">
-                              <p className="text-xs text-warm-300 truncate">
-                                {tx.category.name}
-                              </p>
-                              {tx.labels && tx.labels.length > 0 && (
-                                <TransactionLabelPills
-                                  labels={tx.labels}
-                                  maxVisible={2}
-                                  onRemove={(_tlId, labelId) =>
-                                    removeLabelMutation.mutate({ transactionId: tx.id, labelId })
-                                  }
-                                  removingLabelId={
-                                    removeLabelMutation.isPending &&
-                                    removeLabelMutation.variables?.transactionId === tx.id
-                                      ? removeLabelMutation.variables.labelId
-                                      : null
-                                  }
-                                  removeDisabled={removeLabelMutation.isPending}
-                                />
-                              )}
-                            </div>
-                          </div>
-                          <div className="text-right shrink-0">
-                            <p
-                              className={cn(
-                                "text-sm font-display font-semibold tabular-nums",
-                                tx.type === "INCOME" ? "text-income" : "text-expense"
-                              )}
-                            >
-                              {hideAmounts
-                                ? "••••"
-                                : `${tx.type === "INCOME" ? "+" : "-"}${formatCurrency(tx.amount, currency)}`}
-                            </p>
-                            <p className="text-[11px] text-warm-300 tabular-nums">
-                              {formatTime(tx.date, user.timezoneOffset)}
-                            </p>
-                          </div>
-                        </div>
+                          tx={tx}
+                          currency={currency}
+                          hideAmounts={hideAmounts}
+                          timezoneOffset={user.timezoneOffset}
+                          showCreditAccount={user.creditCardsEnabled}
+                          showReceiptPhoto={user.receiptPhotosEnabled}
+                          onSelect={() => setEditingTransaction(tx)}
+                          onRemoveLabel={(labelId) =>
+                            removeLabelMutation.mutate({ transactionId: tx.id, labelId })
+                          }
+                          removingLabelId={
+                            removeLabelMutation.isPending &&
+                            removeLabelMutation.variables?.transactionId === tx.id
+                              ? removeLabelMutation.variables.labelId
+                              : null
+                          }
+                          removeLabelDisabled={removeLabelMutation.isPending}
+                        />
                       ))}
                     </div>
                   </div>
