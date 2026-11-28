@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { formatCurrency, cn } from "@/lib/utils";
-import { CategoryIcon } from "@/components/ui/icon-map";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -26,8 +25,7 @@ import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import { useScan } from "@/components/scan-provider";
 import { ActionFab } from "@/components/ui/action-fab";
-import { TransactionLabelPills } from "@/components/transactions/transaction-label-pills";
-import { TransactionRowBadges } from "@/components/transactions/transaction-row-badges";
+import { TransactionRow } from "@/components/transactions/transaction-row";
 import { TransactionSelectionCheckbox } from "@/components/transactions/transaction-selection-checkbox";
 import { TransactionBulkActionBar } from "@/components/transactions/transaction-bulk-action-bar";
 import {
@@ -52,7 +50,7 @@ import {
 import { useBulkTransactionEdit } from "@/hooks/use-bulk-transaction-edit";
 import { useHighlightedTransaction } from "@/hooks/use-highlighted-transaction";
 import type { TransactionInput } from "@/lib/validations";
-import { groupByDate, formatTime } from "@/lib/transaction-helpers";
+import { groupByDate } from "@/lib/transaction-helpers";
 import { accountDateKey } from "@/lib/account-time";
 import { getCurrentMonth, monthRange } from "@/lib/analytics-period";
 import { filterSearchParams, parseFilterParams } from "@/lib/transaction-period-url";
@@ -817,95 +815,40 @@ export default function TransactionsPage() {
                   {group.transactions.map((tx) => {
                     const isSelected = selectedIds.has(tx.id);
                     return (
-                      <div
+                      <TransactionRow
                         key={tx.id}
-                        data-transaction-id={tx.id}
-                        className={cn(
-                          "flex items-center gap-3 px-5 py-3 transition-colors group cursor-pointer",
-                          highlightedRowId === tx.id && "bg-amber-light/40 ring-1 ring-amber/40",
-                          isSelected ? "bg-amber-light/20" : "hover:bg-cream-50/80"
-                        )}
-                        onClick={() =>
+                        tx={tx}
+                        currency={currency}
+                        hideAmounts={hideAmounts}
+                        timezoneOffset={user.timezoneOffset}
+                        showCreditAccount={user.creditCardsEnabled}
+                        showReceiptPhoto={user.receiptPhotosEnabled}
+                        selected={isSelected}
+                        highlighted={highlightedRowId === tx.id}
+                        onSelect={() =>
                           selectedItems.length > 0 ? toggleSelection(tx) : setEditingTransaction(tx)
                         }
-                      >
-                        {/* Checkbox */}
-                        <TransactionSelectionCheckbox
-                          label={`Select ${tx.description || tx.category.name} transaction`}
-                          state={isSelected ? "all" : "none"}
-                          onChange={() => toggleSelection(tx)}
-                          className="-my-2 -ml-3"
-                        />
-
-                        {/* Category icon */}
-                        <div
-                          className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-                          style={{ backgroundColor: tx.category.color + "18" }}
-                        >
-                          <CategoryIcon
-                            name={tx.category.icon}
-                            className="w-4 h-4"
-                            style={{ color: tx.category.color }}
+                        leading={
+                          <TransactionSelectionCheckbox
+                            label={`Select ${tx.description || tx.category.name} transaction`}
+                            state={isSelected ? "all" : "none"}
+                            onChange={() => toggleSelection(tx)}
+                            className="-my-2 -ml-3"
                           />
-                        </div>
-
-                        {/* Description + category */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <p className="text-sm font-medium text-warm-600 truncate">
-                              {tx.description}
-                            </p>
-                            <TransactionRowBadges
-                              receiptGroupId={tx.receiptGroupId}
-                              billId={tx.billId}
-                              createdVia={tx.createdVia}
-                              creditAccount={user.creditCardsEnabled ? tx.creditAccount : null}
-                              receiptPhotoId={user.receiptPhotosEnabled ? tx.receiptPhotoId : null}
-                            />
-                          </div>
-                          <div className="flex items-center gap-1 min-w-0 overflow-hidden">
-                            <p className="text-xs text-warm-300 truncate">
-                              {tx.category.name}
-                            </p>
-                            {tx.labels && tx.labels.length > 0 && (
-                              <TransactionLabelPills
-                                labels={tx.labels}
-                                maxVisible={3}
-                                onRemove={(_tlId, labelId) =>
-                                  removeLabelMutation.mutate({ transactionId: tx.id, labelId })
-                                }
-                                removingLabelId={
-                                  removeLabelMutation.isPending &&
-                                  removeLabelMutation.variables?.transactionId === tx.id
-                                    ? removeLabelMutation.variables.labelId
-                                    : null
-                                }
-                                removeDisabled={
-                                  removeLabelMutation.isPending || selectedItems.length > 0
-                                }
-                              />
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Amount + time */}
-                        <div className="text-right shrink-0">
-                          <p
-                            className={cn(
-                              "text-sm font-display font-semibold tabular-nums",
-                              tx.type === "INCOME" ? "text-income" : "text-expense"
-                            )}
-                          >
-                            {hideAmounts
-                              ? "••••"
-                              : `${tx.type === "INCOME" ? "+" : "-"}${formatCurrency(tx.amount, currency)}`}
-                          </p>
-                          <p className="text-[11px] text-warm-300 tabular-nums">
-                            {formatTime(tx.date, user.timezoneOffset)}
-                          </p>
-                        </div>
-
-                      </div>
+                        }
+                        onRemoveLabel={(labelId) =>
+                          removeLabelMutation.mutate({ transactionId: tx.id, labelId })
+                        }
+                        removingLabelId={
+                          removeLabelMutation.isPending &&
+                          removeLabelMutation.variables?.transactionId === tx.id
+                            ? removeLabelMutation.variables.labelId
+                            : null
+                        }
+                        removeLabelDisabled={
+                          removeLabelMutation.isPending || selectedItems.length > 0
+                        }
+                      />
                     );
                   })}
                 </div>
