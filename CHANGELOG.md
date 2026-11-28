@@ -11,7 +11,8 @@ All notable development history for the Budget Tracker app.
   user, and keeps `curl` and `wget` for the Scheduled Tasks and the health check.
 - **Migrations and the drift check still run inside the build.** The build stage calls
   `pnpm build:deploy` (55 migrations applied in the local proof). Its only ARG is `DATABASE_URL`,
-  and no build-arg value shows in `docker history` or `docker inspect`. The `pnpm install` layer
+  and no build-arg value shows in `docker history` or `docker inspect`, and `.dockerignore` keeps
+  `.env` and `.env.*` out so the image carries no env file. The `pnpm install` layer
   stays cached after a source-only change.
 - **`next build` no longer needs `GEMINI_API_KEY`.** `src/lib/gemini.ts` creates its client on
   first use instead of when the module loads, so the build can import every route without

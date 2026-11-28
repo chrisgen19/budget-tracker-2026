@@ -66,20 +66,28 @@ function ciNodeMajors(): string[] {
 
 /**
  * Splits `Dockerfile` into its stages. `name` is the lowercased `AS <name>`, `from` the image or
- * parent stage, and `lines` the stage's instruction lines with comments dropped and `\`
- * continuations joined into one line.
+ * parent stage, and `lines` the stage's instruction lines with comments dropped, `\`
+ * continuations joined into one line and the instruction keyword upper-cased (Docker accepts
+ * `arg` and `Arg`, so a guard matching only `ARG` would be walked around by a lowercase one).
+ *
+ * Instructions above the first `FROM` (a global `ARG`, say) are kept as a leading stage named
+ * `<preamble>` instead of being dropped, so a guard over every stage cannot miss them. `FROM`
+ * flags such as `--platform=linux/amd64` are skipped when reading the image.
  */
 function dockerStages(): { name: string; from: string; lines: string[] }[] {
   const raw = readFileSync(join(__dirname, "..", "Dockerfile"), "utf8");
   const joined = raw.replace(/\\[ \t]*\r?\n/g, " ");
-  const stages: { name: string; from: string; lines: string[] }[] = [];
+  const stages: { name: string; from: string; lines: string[] }[] = [
+    { name: "<preamble>", from: "", lines: [] },
+  ];
   for (const line of joined.split(/\r?\n/).map((l) => l.trim())) {
     if (line === "" || line.startsWith("#")) continue;
-    const from = line.match(/^FROM\s+(\S+)(?:\s+AS\s+(\S+))?/i);
+    const from = line.match(/^FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?/i);
     if (from) {
       stages.push({ name: (from[2] ?? "").toLowerCase(), from: from[1], lines: [] });
-    } else if (stages.length > 0) {
-      stages[stages.length - 1].lines.push(line.replace(/\s+/g, " "));
+    } else {
+      const normalised = line.replace(/\s+/g, " ").replace(/^\S+/, (k) => k.toUpperCase());
+      stages[stages.length - 1].lines.push(normalised);
     }
   }
   return stages;
@@ -198,9 +206,12 @@ describe("build scripts", () => {
    * behind #192, and the Dockerfile has no provider default to fall back on, only what it says.
    * The Node base must be a major CI runs, for the same silent-gap reason as the Railpack pin.
    *
-   * `DATABASE_URL` is the only ARG, and only in the build stage: Coolify injects every environment
-   * variable as a build ARG unless "Inject Build Args to Dockerfile" is off, and an ARG declared
-   * in a stage that ships ends up in `docker history` of the runtime image.
+   * `DATABASE_URL` is the only ARG, and only in the build stage: Coolify always passes
+   * `--build-arg KEY` for every build-time variable, secrets included, and any ARG the Dockerfile
+   * declares with a matching name receives the real value, which every later `RUN` in that stage
+   * records in the image history. The "Inject Build Args to Dockerfile" setting only decides
+   * whether Coolify inserts an ARG for each variable after every `FROM`, so it stays off. An ARG
+   * above the first `FROM` is global and counts too.
    *
    * The deps stage copies only the lockfile, `.npmrc` and the Prisma schema before installing so
    * the layer is cached until dependencies change; `COPY . .` there would rebuild it on every
@@ -231,6 +242,26 @@ describe("build scripts", () => {
     const build = withArgs[0];
     expect(build.lines.filter((l) => l.startsWith("ARG "))).toEqual(["ARG DATABASE_URL"]);
     expect(build.lines).toContain("RUN pnpm build:deploy");
+  });
+
+  /**
+   * Next's standalone step copies `.env` and `.env.production` from the app directory into
+   * `.next/standalone`, and the runtime stage copies that directory whole, so an env file that
+   * reaches the build context ends up at `/app/.env` in the image that ships. Coolify also writes
+   * the app's runtime variables to `.env` in the build directory, which is the build context, and
+   * a local `docker build` would send the developer's own. Inside the build the Prisma CLI reads
+   * `.env` too, so a missing `--build-arg DATABASE_URL` would silently fall back to it.
+   *
+   * `.dockerignore` mirrors `.gitignore`: `.env` and `.env.*` out, `.env.example` back in.
+   */
+  it("keeps .env files out of the Docker build context", () => {
+    const rules = readFileSync(join(__dirname, "..", ".dockerignore"), "utf8")
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l !== "" && !l.startsWith("#"));
+    expect(rules).toContain(".env");
+    expect(rules).toContain(".env.*");
+    expect(rules.indexOf("!.env.example")).toBeGreaterThan(rules.indexOf(".env.*"));
   });
 
   it("installs dependencies from the lockfile, .npmrc and schema only", () => {

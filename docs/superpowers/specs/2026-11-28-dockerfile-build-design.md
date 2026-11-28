@@ -138,7 +138,8 @@ Dockerfile as the production build, with Railpack as the fallback until the foll
 3. Deploy. The log should show `prisma migrate deploy`, then `check-migration-drift`, then
    `next build`.
 4. Checks after the deploy: health check green, image size (`docker images`), no secret in
-   `docker history --no-trunc`, CSS, JS and icons load, a login works, and both scheduled tasks
+   `docker history --no-trunc`, no env file in the image (`ls -a /app | grep -i env` prints
+   nothing), CSS, JS and icons load, a login works, and both scheduled tasks
    run with `curl` (trigger one by hand).
 5. **Revert:** set Build Pack back to Railpack, turn injection back on, redeploy.
 6. Follow-up PR: delete `railpack.json` and its tests.

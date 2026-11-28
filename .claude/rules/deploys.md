@@ -59,8 +59,14 @@ is dropped. What the "Inject Build Args to Dockerfile" toggle controls is whethe
 an `ARG` line after every `FROM`. With it **on**, each later `RUN` in a stage records every
 build-time value in the image history, secrets included. So the toggle stays **off** for this app,
 and `DATABASE_URL` reaches the build as a plain build-time variable that is not baked into the
-runtime image. `scripts/build-scripts.test.ts` pins the single ARG; it cannot see the Coolify
+runtime image. `scripts/build-scripts.test.ts` pins the single ARG (and that none sits above the
+first `FROM`) and that `.dockerignore` excludes `.env` and `.env.*`; it cannot see the Coolify
 toggle, so that one is a setting to check by hand after any Coolify change.
+
+Two rollout checks on a built image: `docker history --no-trunc <image>` shows no secret value, and
+`docker run --rm --entrypoint sh <image> -c 'ls -a /app | grep -i env'` prints nothing. Next's
+standalone step copies `.env` and `.env.production` from the build context into `.next/standalone`,
+so an env file that slips past `.dockerignore` would ship at `/app/.env`.
 
 ## A `railpack.json` apt list replaces, it does not add
 
