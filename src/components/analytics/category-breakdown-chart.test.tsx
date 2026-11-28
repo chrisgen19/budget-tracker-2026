@@ -1,7 +1,7 @@
 import { cloneElement, type ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { CategoryBreakdownChart } from "@/components/analytics/category-breakdown-chart";
+import { CategoryBreakdownChart, CategorySliceTooltip } from "@/components/analytics/category-breakdown-chart";
 import type { AnalyticsCategoryItem } from "@/types";
 
 // ResponsiveContainer measures its parent, which is 0x0 in jsdom, and then draws nothing.
@@ -57,5 +57,24 @@ describe("CategoryBreakdownChart", () => {
     );
     expect(container.textContent).not.toContain("1,234");
     expect(container.textContent).toContain("••••");
+  });
+});
+
+describe("CategorySliceTooltip", () => {
+  it("uses the singular for a category with one transaction", () => {
+    render(<CategorySliceTooltip item={{ ...item, transactionCount: 1 }} currency="PHP" hideAmounts={false} />);
+    expect(screen.getByText("1 transaction")).toBeTruthy();
+    expect(screen.queryByText("1 transactions")).toBeNull();
+  });
+
+  it("uses the plural otherwise", () => {
+    render(<CategorySliceTooltip item={{ ...item, transactionCount: 2 }} currency="PHP" hideAmounts={false} />);
+    expect(screen.getByText("2 transactions")).toBeTruthy();
+  });
+
+  it("masks the amount but keeps the share when hideAmounts", () => {
+    render(<CategorySliceTooltip item={item} currency="PHP" hideAmounts />);
+    expect(screen.getByText(/•••••• \(100%\)/)).toBeTruthy();
+    expect(screen.queryByText(/1,234/)).toBeNull();
   });
 });

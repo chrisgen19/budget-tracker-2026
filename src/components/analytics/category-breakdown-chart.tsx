@@ -28,6 +28,28 @@ export function parseCategoryItemId(id: string): { categoryId: string; type?: "I
   return { categoryId: id.slice(0, separator), type: suffix };
 }
 
+interface CategorySliceTooltipProps {
+  item: AnalyticsCategoryItem;
+  currency: string;
+  hideAmounts: boolean;
+}
+
+/** What hovering or tapping a donut slice shows. Exported so it can be rendered without Recharts. */
+export function CategorySliceTooltip({ item, currency, hideAmounts }: CategorySliceTooltipProps) {
+  const sym = getCurrencySymbol(currency);
+  return (
+    <ChartTooltipCard>
+      <p className="text-sm font-medium text-warm-600">{item.name}</p>
+      <p className="text-xs text-warm-400">
+        {hideAmounts ? `${sym} ••••••` : formatCurrency(item.amount, currency)} ({item.percentage}%)
+      </p>
+      <p className="text-xs text-warm-300">
+        {item.transactionCount} {item.transactionCount === 1 ? "transaction" : "transactions"}
+      </p>
+    </ChartTooltipCard>
+  );
+}
+
 interface CategoryBreakdownChartProps {
   data: AnalyticsCategoryItem[];
   currency: string;
@@ -103,15 +125,7 @@ export function CategoryBreakdownChart({
               content={({ active, payload }) => {
                 if (!active || !payload?.length) return null;
                 const item = payload[0].payload as AnalyticsCategoryItem;
-                return (
-                  <ChartTooltipCard>
-                    <p className="text-sm font-medium text-warm-600">{item.name}</p>
-                    <p className="text-xs text-warm-400">
-                      {hideAmounts ? `${sym} ••••••` : formatCurrency(item.amount, currency)} ({item.percentage}%)
-                    </p>
-                    <p className="text-xs text-warm-300">{item.transactionCount} transactions</p>
-                  </ChartTooltipCard>
-                );
+                return <CategorySliceTooltip item={item} currency={currency} hideAmounts={hideAmounts} />;
               }}
             />
           </PieChart>
