@@ -5,10 +5,11 @@
 # standalone server (`output: "standalone"` in next.config.ts).
 #
 # Secrets: the only build ARG is DATABASE_URL, in the build stage, because the build command
-# migrates and checks drift against the database. No other ARG may be added: Coolify turns every
-# environment variable into a build ARG when "Inject Build Args to Dockerfile" is on, so that
-# toggle MUST be off for this app. DATABASE_URL then arrives as a plain build-time variable and
-# is not baked into the runtime image. scripts/build-scripts.test.ts guards these rules.
+# migrates and checks drift against the database. No other ARG may be added: Coolify always
+# passes `--build-arg KEY` for every build-time variable (secrets included), and any ARG declared
+# here with a matching name would receive the real value and record it in the image history.
+# "Inject Build Args to Dockerfile" only decides whether Coolify inserts an ARG for each of them
+# after every FROM, so that toggle MUST be off. scripts/build-scripts.test.ts guards the ARG rule.
 #
 # Base is Debian slim, not alpine: Prisma's engines want glibc and openssl.
 
