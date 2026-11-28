@@ -1,4 +1,5 @@
 import { CalendarClock, Camera, CreditCard, Receipt, Send, Sparkles, Terminal } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import type { TransactionSource } from "@prisma/client";
 
 interface TransactionRowBadgesProps {
@@ -12,6 +13,48 @@ interface TransactionRowBadgesProps {
   creditAccount?: { name: string; color: string } | null;
   /** Set when a receipt photo is attached to the row. */
   receiptPhotoId?: string | null;
+  /**
+   * `"chip"` (default) prints each marker as a labelled chip beside the title. `"icon"` prints
+   * glyphs only, for the meta line on phones, where a "Photo" chip cost the title most of its
+   * width on a 390px screen. The name moves into the accessible label either way.
+   */
+  variant?: "chip" | "icon";
+}
+
+/** A glyph-only marker: the meaning lives in `aria-label` and `title`, not in the shape. */
+function IconMarker({
+  icon: Icon,
+  label,
+  className = "text-warm-400",
+  color,
+}: {
+  icon: LucideIcon;
+  label: string;
+  className?: string;
+  color?: string;
+}) {
+  return (
+    <span
+      title={label}
+      aria-label={label}
+      role="img"
+      className={`shrink-0 inline-flex items-center ${className}`}
+    >
+      <Icon className="w-3 h-3" style={color ? { color } : undefined} />
+    </span>
+  );
+}
+
+/** Provenance markers, identical in both variants since they were already icon-only. */
+function ProvenanceMarker({ createdVia }: { createdVia?: TransactionSource }) {
+  if (createdVia === "MCP") {
+    return <IconMarker icon={Sparkles} label="Added by Claude" className="text-amber-dark" />;
+  }
+  if (createdVia === "TELEGRAM") return <IconMarker icon={Send} label="Added via Telegram" />;
+  if (createdVia === "DENSE") {
+    return <IconMarker icon={Terminal} label="Added from the desktop review app" />;
+  }
+  return null;
 }
 
 /**
@@ -33,7 +76,28 @@ export function TransactionRowBadges({
   createdVia,
   creditAccount,
   receiptPhotoId,
+  variant = "chip",
 }: TransactionRowBadgesProps) {
+  if (variant === "icon") {
+    return (
+      <>
+        {receiptPhotoId && <IconMarker icon={Camera} label="Photo attached" />}
+        {receiptGroupId && (
+          <IconMarker icon={Receipt} label="Itemized receipt" className="text-amber-dark" />
+        )}
+        {billId && <IconMarker icon={CalendarClock} label="Bill payment" className="text-income" />}
+        {creditAccount && (
+          <IconMarker
+            icon={CreditCard}
+            label={`Paid with ${creditAccount.name}`}
+            color={creditAccount.color}
+          />
+        )}
+        <ProvenanceMarker createdVia={createdVia} />
+      </>
+    );
+  }
+
   return (
     <>
       {receiptGroupId && (
@@ -64,36 +128,7 @@ export function TransactionRowBadges({
           <span className="truncate">{creditAccount.name}</span>
         </span>
       )}
-      {createdVia === "MCP" && (
-        <span
-          title="Added by Claude"
-          aria-label="Added by Claude"
-          role="img"
-          className="shrink-0 inline-flex items-center text-amber-dark"
-        >
-          <Sparkles className="w-3 h-3" />
-        </span>
-      )}
-      {createdVia === "TELEGRAM" && (
-        <span
-          title="Added via Telegram"
-          aria-label="Added via Telegram"
-          role="img"
-          className="shrink-0 inline-flex items-center text-warm-400"
-        >
-          <Send className="w-3 h-3" />
-        </span>
-      )}
-      {createdVia === "DENSE" && (
-        <span
-          title="Added from the desktop review app"
-          aria-label="Added from the desktop review app"
-          role="img"
-          className="shrink-0 inline-flex items-center text-warm-400"
-        >
-          <Terminal className="w-3 h-3" />
-        </span>
-      )}
+      <ProvenanceMarker createdVia={createdVia} />
     </>
   );
 }

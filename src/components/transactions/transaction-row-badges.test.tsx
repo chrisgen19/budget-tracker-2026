@@ -100,4 +100,29 @@ describe("TransactionRowBadges", () => {
     expect(screen.getByText("Itemized")).toBeDefined();
     expect(screen.queryByText("Photo")).toBeNull();
   });
+
+  describe("icon variant, for the phone meta line", () => {
+    it("names each marker without printing its text", () => {
+      render(
+        <TransactionRowBadges
+          variant="icon"
+          receiptPhotoId="photo_1"
+          receiptGroupId="grp_1"
+          billId="bill_1"
+          creditAccount={{ name: "BPI Gold", color: "#5B6B8C" }}
+        />,
+      );
+      expect(screen.getByRole("img", { name: "Photo attached" })).toBeDefined();
+      expect(screen.getByRole("img", { name: "Itemized receipt" })).toBeDefined();
+      expect(screen.getByRole("img", { name: "Bill payment" })).toBeDefined();
+      expect(screen.getByRole("img", { name: "Paid with BPI Gold" })).toBeDefined();
+      expect(screen.queryByText("Photo")).toBeNull();
+      expect(screen.queryByText("BPI Gold")).toBeNull();
+    });
+
+    it("keeps the provenance marker", () => {
+      render(<TransactionRowBadges variant="icon" createdVia="TELEGRAM" />);
+      expect(screen.getByLabelText("Added via Telegram")).toBeDefined();
+    });
+  });
 });

@@ -108,15 +108,27 @@ const coversWholeYear = (from: string, to: string): boolean => {
   return from === year.from && to === year.to;
 };
 
-/** Format period label from from/to strings. */
-export const formatPeriodLabel = (periodType: PeriodType, from: string, to: string): string => {
+/**
+ * Format period label from from/to strings.
+ *
+ * `monthStyle: "short"` abbreviates a whole-month label ("Nov 2026") for the transactions
+ * filter rail, where "November 2026" pushed the type toggle off a 390px screen. Callers that
+ * pass nothing get the full name, which the API routes rely on.
+ */
+export const formatPeriodLabel = (
+  periodType: PeriodType,
+  from: string,
+  to: string,
+  options: { monthStyle?: "full" | "short" } = {},
+): string => {
   if (periodType === "all") return ALL_TIME_LABEL;
 
   const [fY, fM, fD] = from.split("-").map(Number);
   const [tY, tM, tD] = to.split("-").map(Number);
+  const monthNames = options.monthStyle === "short" ? MONTH_NAMES : MONTH_FULL;
 
   if (periodType === "monthly") {
-    return `${MONTH_FULL[fM - 1]} ${fY}`;
+    return `${monthNames[fM - 1]} ${fY}`;
   }
   if (periodType === "yearly") {
     return `${fY}`;
@@ -129,7 +141,7 @@ export const formatPeriodLabel = (periodType: PeriodType, from: string, to: stri
   }
   // Custom — only show a month or year label if the range covers the whole of one
   if (coversWholeMonth(from, to)) {
-    return `${MONTH_FULL[fM - 1]} ${fY}`;
+    return `${monthNames[fM - 1]} ${fY}`;
   }
   if (coversWholeYear(from, to)) {
     return `${fY}`;

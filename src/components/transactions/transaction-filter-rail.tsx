@@ -54,8 +54,10 @@ export function TransactionTypeToggle({
     <div
       aria-label="Transaction type"
       className={cn(
-        "shrink-0 items-center gap-0.5 rounded-xl bg-cream-100",
-        dense ? "rounded-lg p-0.5" : "p-1",
+        "shrink-0 items-center rounded-xl bg-cream-100",
+        // Dense drops the 2px gaps between segments (the active one is marked by its fill
+        // anyway): with the short month label it is what lets the rail fit a 360px phone.
+        dense ? "gap-0 rounded-lg p-0.5" : "gap-0.5 p-1",
         className,
       )}
     >
@@ -145,7 +147,7 @@ export function TransactionFilterRail({
         chips.length === 0 && !onClearAll && "lg:hidden",
       )}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5 sm:gap-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <PeriodPicker
           value={period}
           onChange={onPeriodChange}

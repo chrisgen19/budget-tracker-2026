@@ -10,8 +10,7 @@ import {
   ScanLine,
 } from "lucide-react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { formatCurrency, cn } from "@/lib/utils";
-import { CategoryIcon } from "@/components/ui/icon-map";
+import { formatCurrency, cn, TOUCH_HIT_AREA } from "@/lib/utils";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -26,9 +25,7 @@ import { usePrivacy } from "@/components/privacy-provider";
 import { useUser } from "@/components/user-provider";
 import { useScan } from "@/components/scan-provider";
 import { ActionFab } from "@/components/ui/action-fab";
-import { TransactionLabelPills } from "@/components/transactions/transaction-label-pills";
-import { TransactionRowBadges } from "@/components/transactions/transaction-row-badges";
-import { TransactionSelectionCheckbox } from "@/components/transactions/transaction-selection-checkbox";
+import { TransactionListRow } from "@/components/transactions/transaction-list-row";
 import { TransactionBulkActionBar } from "@/components/transactions/transaction-bulk-action-bar";
 import {
   TransactionBulkCategoryDialog,
@@ -52,7 +49,7 @@ import {
 import { useBulkTransactionEdit } from "@/hooks/use-bulk-transaction-edit";
 import { useHighlightedTransaction } from "@/hooks/use-highlighted-transaction";
 import type { TransactionInput } from "@/lib/validations";
-import { groupByDate, formatTime } from "@/lib/transaction-helpers";
+import { groupByDate } from "@/lib/transaction-helpers";
 import { accountDateKey } from "@/lib/account-time";
 import { getCurrentMonth, monthRange } from "@/lib/analytics-period";
 import { filterSearchParams, parseFilterParams } from "@/lib/transaction-period-url";
@@ -146,6 +143,10 @@ export default function TransactionsPage() {
     dispatchSelection(action);
   }, []);
   const selectedItems = useMemo(() => selectionItems(selection), [selection]);
+  // Phones hide the checkbox column until the user asks to select, by long-pressing a row or
+  // tapping "Select". Any selection at all also counts, which is what desktop relies on.
+  const [selectMode, setSelectMode] = useState(false);
+  const inSelectMode = selectMode || selectedItems.length > 0;
   const selectedIds = useMemo(
     () => new Set(selectedItems.map((item) => item.id)),
     [selectedItems],
@@ -201,6 +202,7 @@ export default function TransactionsPage() {
     if (selectedCountRef.current > 0) {
       setSelectionAnnouncement("Transaction selection cleared because the filters changed");
     }
+    setSelectMode(false);
     dispatchSelectionChange({ type: "clear" });
   }, [dispatchSelectionChange, filters]);
 
@@ -213,13 +215,14 @@ export default function TransactionsPage() {
   }, [selectedItems.length]);
 
   useEffect(() => {
-    if (selectedItems.length === 0) return;
+    if (!inSelectMode) return;
     const clearOnEscape = (event: KeyboardEvent) => {
       if (
         event.key === "Escape" &&
         !document.querySelector('[role="dialog"]') &&
         !document.querySelector('[role="menu"]')
       ) {
+        setSelectMode(false);
         dispatchSelectionChange({ type: "clear" });
         setSelectionAnnouncement("Transaction selection cleared");
         requestAnimationFrame(() => pageHeadingRef.current?.focus());
@@ -227,7 +230,7 @@ export default function TransactionsPage() {
     };
     document.addEventListener("keydown", clearOnEscape);
     return () => document.removeEventListener("keydown", clearOnEscape);
-  }, [dispatchSelectionChange, selectedItems.length]);
+  }, [dispatchSelectionChange, inSelectMode]);
 
   // Destructure for stable references in useEffect deps
   const {
@@ -488,6 +491,7 @@ export default function TransactionsPage() {
   };
 
   const clearSelection = (restoreFocus = false) => {
+    setSelectMode(false);
     dispatchSelectionChange({ type: "clear" });
     setSelectionAnnouncement("Transaction selection cleared");
     if (restoreFocus) requestAnimationFrame(() => pageHeadingRef.current?.focus());
@@ -789,15 +793,30 @@ export default function TransactionsPage() {
                 {/* Date header */}
                 <div
                   data-transaction-date-heading
-                  className="flex items-center justify-between px-5 py-2.5 bg-cream-50 border-b border-cream-200"
+                  className="flex items-center justify-between px-4 py-2.5 bg-cream-50 border-b border-cream-200 sm:px-5"
                 >
-                  <span className="text-xs font-semibold text-warm-500 uppercase tracking-wide">
-                    {group.dateLabel}
-                    {user.showDayName && (
-                      <span className="text-warm-300 font-normal normal-case tracking-normal ml-1.5">
-                        · {user.dayNameFormat === "FULL" ? group.dayNameFull : group.dayNameShort}
-                      </span>
-                    )}
+                  <span className="flex items-center">
+                    <span className="text-xs font-semibold text-warm-500 uppercase tracking-wide">
+                      {group.dateLabel}
+                      {user.showDayName && (
+                        <span className="text-warm-300 font-normal normal-case tracking-normal ml-1.5">
+                          · {user.dayNameFormat === "FULL" ? group.dayNameFull : group.dayNameShort}
+                        </span>
+                      )}
+                    </span>
+                    {/* Phones only: the checkbox column is hidden there until select mode, and
+                        long-press is not discoverable on its own. */}
+                    <button
+                      type="button"
+                      onClick={() => (inSelectMode ? clearSelection() : setSelectMode(true))}
+                      aria-pressed={inSelectMode}
+                      className={cn(
+                        "relative ml-2 h-6 rounded-md px-1.5 text-xs font-medium text-amber-dark hover:bg-amber-light/40 sm:hidden",
+                        TOUCH_HIT_AREA,
+                      )}
+                    >
+                      {inSelectMode ? "Done" : "Select"}
+                    </button>
                   </span>
                   {!hideAmounts && (
                     <span
@@ -814,100 +833,36 @@ export default function TransactionsPage() {
 
                 {/* Transaction rows */}
                 <div className="divide-y divide-cream-100">
-                  {group.transactions.map((tx) => {
-                    const isSelected = selectedIds.has(tx.id);
-                    return (
-                      <div
-                        key={tx.id}
-                        data-transaction-id={tx.id}
-                        className={cn(
-                          "flex items-center gap-3 px-5 py-3 transition-colors group cursor-pointer",
-                          highlightedRowId === tx.id && "bg-amber-light/40 ring-1 ring-amber/40",
-                          isSelected ? "bg-amber-light/20" : "hover:bg-cream-50/80"
-                        )}
-                        onClick={() =>
-                          selectedItems.length > 0 ? toggleSelection(tx) : setEditingTransaction(tx)
-                        }
-                      >
-                        {/* Checkbox */}
-                        <TransactionSelectionCheckbox
-                          label={`Select ${tx.description || tx.category.name} transaction`}
-                          state={isSelected ? "all" : "none"}
-                          onChange={() => toggleSelection(tx)}
-                          className="-my-2 -ml-3"
-                        />
-
-                        {/* Category icon */}
-                        <div
-                          className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-                          style={{ backgroundColor: tx.category.color + "18" }}
-                        >
-                          <CategoryIcon
-                            name={tx.category.icon}
-                            className="w-4 h-4"
-                            style={{ color: tx.category.color }}
-                          />
-                        </div>
-
-                        {/* Description + category */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <p className="text-sm font-medium text-warm-600 truncate">
-                              {tx.description}
-                            </p>
-                            <TransactionRowBadges
-                              receiptGroupId={tx.receiptGroupId}
-                              billId={tx.billId}
-                              createdVia={tx.createdVia}
-                              creditAccount={user.creditCardsEnabled ? tx.creditAccount : null}
-                              receiptPhotoId={user.receiptPhotosEnabled ? tx.receiptPhotoId : null}
-                            />
-                          </div>
-                          <div className="flex items-center gap-1 min-w-0 overflow-hidden">
-                            <p className="text-xs text-warm-300 truncate">
-                              {tx.category.name}
-                            </p>
-                            {tx.labels && tx.labels.length > 0 && (
-                              <TransactionLabelPills
-                                labels={tx.labels}
-                                maxVisible={3}
-                                onRemove={(_tlId, labelId) =>
-                                  removeLabelMutation.mutate({ transactionId: tx.id, labelId })
-                                }
-                                removingLabelId={
-                                  removeLabelMutation.isPending &&
-                                  removeLabelMutation.variables?.transactionId === tx.id
-                                    ? removeLabelMutation.variables.labelId
-                                    : null
-                                }
-                                removeDisabled={
-                                  removeLabelMutation.isPending || selectedItems.length > 0
-                                }
-                              />
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Amount + time */}
-                        <div className="text-right shrink-0">
-                          <p
-                            className={cn(
-                              "text-sm font-display font-semibold tabular-nums",
-                              tx.type === "INCOME" ? "text-income" : "text-expense"
-                            )}
-                          >
-                            {hideAmounts
-                              ? "••••"
-                              : `${tx.type === "INCOME" ? "+" : "-"}${formatCurrency(tx.amount, currency)}`}
-                          </p>
-                          <p className="text-[11px] text-warm-300 tabular-nums">
-                            {formatTime(tx.date, user.timezoneOffset)}
-                          </p>
-                        </div>
-
-                      </div>
-                    );
-                  })}
+                  {group.transactions.map((tx) => (
+                    <TransactionListRow
+                      key={tx.id}
+                      tx={tx}
+                      isSelected={selectedIds.has(tx.id)}
+                      selectMode={inSelectMode}
+                      highlighted={highlightedRowId === tx.id}
+                      hideAmounts={hideAmounts}
+                      currency={currency}
+                      timezoneOffset={user.timezoneOffset}
+                      creditCardsEnabled={user.creditCardsEnabled}
+                      receiptPhotosEnabled={user.receiptPhotosEnabled}
+                      onToggle={() => toggleSelection(tx)}
+                      onOpen={() => setEditingTransaction(tx)}
+                      onLongPress={() => {
+                        setSelectMode(true);
+                        if (!selectedIds.has(tx.id)) toggleSelection(tx);
+                      }}
+                      labelRemoval={{
+                        onRemove: (_tlId, labelId) =>
+                          removeLabelMutation.mutate({ transactionId: tx.id, labelId }),
+                        removingLabelId:
+                          removeLabelMutation.isPending &&
+                          removeLabelMutation.variables?.transactionId === tx.id
+                            ? removeLabelMutation.variables.labelId
+                            : null,
+                        disabled: removeLabelMutation.isPending || selectedItems.length > 0,
+                      }}
+                    />
+                  ))}
                 </div>
               </div>
             ))}

@@ -14,7 +14,25 @@ interface TransactionLabelPillsProps {
   removingLabelId?: string | null;
   /** Disable all remove buttons (e.g. while another remove is in flight) */
   removeDisabled?: boolean;
+  /**
+   * Below `sm`, show only the first pill, let it shrink to at most 55% of the line with its
+   * name truncated, and count the rest as "+N". Without this the pills were `shrink-0`, so on a
+   * 390px phone they squeezed the category beside them to nothing and were then cut mid-word.
+   */
+  collapseOnPhone?: boolean;
 }
+
+// No display utility here: `cn`-style joins do not merge, so each layout below owns it.
+const PILL_BASE =
+  "group/pill items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full transition-opacity";
+const COUNT_BASE = "text-[10px] text-warm-300 shrink-0";
+
+/** Responsive classes for the pill at `index`; see `collapseOnPhone`. */
+const pillLayoutClass = (index: number, collapseOnPhone: boolean) => {
+  if (!collapseOnPhone) return "inline-flex shrink-0";
+  if (index === 0) return "inline-flex min-w-10 max-w-[55%] shrink sm:max-w-none sm:shrink-0";
+  return "hidden sm:inline-flex shrink-0";
+};
 
 export function TransactionLabelPills({
   labels,
@@ -22,6 +40,7 @@ export function TransactionLabelPills({
   onRemove,
   removingLabelId,
   removeDisabled,
+  collapseOnPhone = false,
 }: TransactionLabelPillsProps) {
   // On mobile, tap a pill to reveal X; tap again or tap elsewhere to dismiss
   const [activePillId, setActivePillId] = useState<string | null>(null);
@@ -30,17 +49,18 @@ export function TransactionLabelPills({
 
   const visible = labels.slice(0, maxVisible);
   const overflow = labels.length - maxVisible;
+  const phoneOverflow = collapseOnPhone ? labels.length - 1 : overflow;
 
   return (
     <>
       <span className="text-warm-200">&middot;</span>
-      {visible.map((tl) => {
+      {visible.map((tl, index) => {
         const isRemoving = removingLabelId === tl.labelId;
         const isActive = activePillId === tl.id;
         return (
           <span
             key={tl.id}
-            className="group/pill inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0 transition-opacity"
+            className={`${PILL_BASE} ${pillLayoutClass(index, collapseOnPhone)}`}
             style={{
               backgroundColor: tl.label.color + "18",
               color: tl.label.color,
@@ -53,7 +73,7 @@ export function TransactionLabelPills({
               setActivePillId(isActive ? null : tl.id);
             }}
           >
-            {tl.label.name}
+            <span className={collapseOnPhone ? "truncate" : undefined}>{tl.label.name}</span>
             {onRemove && (
               isRemoving ? (
                 <Loader2 className="w-2.5 h-2.5 -mr-0.5 animate-spin" />
@@ -79,10 +99,17 @@ export function TransactionLabelPills({
           </span>
         );
       })}
-      {overflow > 0 && (
-        <span className="text-[10px] text-warm-300 shrink-0">
-          +{overflow}
-        </span>
+      {phoneOverflow === overflow ? (
+        overflow > 0 && <span className={COUNT_BASE}>{`+${overflow}`}</span>
+      ) : (
+        <>
+          {phoneOverflow > 0 && (
+            <span className={`${COUNT_BASE} sm:hidden`}>{`+${phoneOverflow}`}</span>
+          )}
+          {overflow > 0 && (
+            <span className={`${COUNT_BASE} hidden sm:inline`}>{`+${overflow}`}</span>
+          )}
+        </>
       )}
     </>
   );
