@@ -154,6 +154,37 @@ describe("generateContentWithRetry fallback", () => {
 });
 
 describe("client construction", () => {
+  it("builds one client per process in production, not one per call", async () => {
+    const g = globalThis as { gemini?: unknown };
+    const savedClient = g.gemini;
+    const constructed = vi.fn();
+    delete g.gemini;
+    vi.resetModules();
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    vi.doMock("@google/genai", async (importActual) => ({
+      ...(await importActual<typeof import("@google/genai")>()),
+      GoogleGenAI: class {
+        models = { generateContent: vi.fn().mockResolvedValue({ text: "{}" }) };
+        constructor() {
+          constructed();
+        }
+      },
+    }));
+    try {
+      const mod = await import("@/lib/gemini");
+      const params = { model: "gemini-3.6-flash", contents: "hi" };
+      await mod.generateContentWithRetry(params);
+      await mod.generateContentWithRetry(params);
+      expect(constructed).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.doUnmock("@google/genai");
+      vi.unstubAllEnvs();
+      vi.resetModules();
+      g.gemini = savedClient;
+    }
+  });
+
   it("importing the module without GEMINI_API_KEY does not throw", async () => {
     // `next build` imports every route to collect page data and has no API key, so the client
     // has to be created on first use rather than on load.

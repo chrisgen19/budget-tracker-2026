@@ -10,11 +10,14 @@ const globalForGemini = globalThis as unknown as {
  * API key, and `next build` imports every route to collect page data with none set, so an
  * eager client made the build need a secret it has no use for.
  */
+let _gemini: GoogleGenAI | undefined;
+
 const getGemini = (): GoogleGenAI => {
-  const client =
-    globalForGemini.gemini ?? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-  if (process.env.NODE_ENV !== "production") globalForGemini.gemini = client;
-  return client;
+  // The module-level copy is the one-per-process guarantee in production; the globalThis
+  // copy exists so dev reloads reuse the client.
+  _gemini ??= globalForGemini.gemini ?? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+  if (process.env.NODE_ENV !== "production") globalForGemini.gemini = _gemini;
+  return _gemini;
 };
 
 /**
