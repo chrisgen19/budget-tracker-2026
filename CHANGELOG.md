@@ -2,6 +2,58 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-28 - The transaction sheet makes room for the category tiles while you type
+
+- **On a phone, with the keyboard up, typing the amount and no category picked yet, the sticky
+  footer steps aside.** Add cannot succeed without a category, so the height it costs is height
+  the tiles need: on the Android screenshot this change came from there are about 210px between
+  the sheet header and the keyboard, and the amount block plus the Category heading plus the
+  tiles needed about 245px, so the tiles were cut off. The amount block also compacts (`py-1`,
+  the "Amount" caption `sr-only`), and the form drops from `space-y-6` to `space-y-3` while
+  compact, which is what makes them fit. The gap belongs on the **parent**: a `-mt-3` on the
+  Category block loses to `.space-y-6 > :not([hidden]) ~ :not([hidden])` (0,3,0 against 0,1,0)
+  and silently did nothing -- measured at 24px in Chromium, and 12px once the parent switched.
+  Note `cn` is a plain join rather than tailwind-merge, so the two `space-y-*` classes have to
+  be a ternary; emitting both would leave stylesheet order to decide.
+- **The sheet now scrolls the tiles into view rather than centring the field.** A text field may
+  carry `data-keyboard-reveal-until="<id>"`, and `Modal`'s keyboard handler scrolls that element
+  to the bottom of the visible area instead. An id naming nothing falls back to centring the
+  field, so a stale id costs no reveal. `ModalKeyboardContext` (new) is how the sheet tells its
+  children the keyboard is up; it is `false` on desktop and outside a `Modal`, so nothing outside
+  the sheet changes.
+- **Tapping a tile sets the category and closes the keyboard**, on both platforms: iOS does not
+  close it on a button press, so the tile does it. The footer is back immediately, because Add
+  now works.
+- **Enter on the amount with no category closes the keyboard** instead of submitting into
+  "Category is required", and `enterKeyHint="done"` labels the key accordingly. Both halves are
+  gated on the keyboard actually being up: off a phone there is nothing to close, and
+  intercepting Enter there swallowed the error message the form was relying on.
+- **The category section cancels the focus change a press would make** (`onPointerDown` /
+  `onMouseDown` `preventDefault`) while compact, and a blur whose `relatedTarget` is inside that
+  section keeps the compact layout. Otherwise the keyboard closes and the layout expands between
+  the press and the click, moving the tile out from under the finger.
+- **`More categories...` releases the amount before opening the picker**, and coming back from
+  the picker no longer re-autofocuses the amount, so the keyboard does not pop up a second time.
+- **The compact state follows focus rather than a click.** The amount hands the category section
+  that state when focus moves in without a click, and at first only a tile or `More...` click took
+  it back -- so focus leaving another way (a screen reader stepping through the form) left the
+  footer hidden and the Amount caption `sr-only` while typing the note. The section now clears it
+  on any focus-out that lands outside itself.
+- **The reveal never costs the field its own visibility.** The span from the amount down to the
+  tiles can be taller than what the keyboard leaves -- a smaller phone, landscape, or a validation
+  message under the amount -- and bringing the tiles' bottom edge into view would then push the
+  amount off the top. `Modal` now re-reveals the focused field when that happens, so the digits
+  being typed always win.
+- **Known limitation:** `More categories...` sits below the tiles and so below the reveal target,
+  which means reaching a category that is not a quick tile still means closing the keyboard first.
+  Including it in the reveal would add about 44px to a budget of about 210px and risk pushing the
+  amount off the top, which is the worse trade.
+- **Unchanged:** editing a transaction, a prefilled scan or a bill's Pay & Edit all arrive with a
+  category, so the footer never hides for them. Desktop and the Note field are untouched -- on
+  desktop Enter still submits and still surfaces "Category is required".
+- Covered by `transaction-form.keyboard.test.tsx` (new, 12 cases) and four new cases in
+  `modal.keyboard.test.tsx`; each was confirmed to fail without its fix.
+
 ## 2026-11-27 - Production builds with Railpack; nixpacks.toml removed
 
 - **Coolify's Build Pack is now Railpack**, on Node 24.22.3. The first Railpack deploy (`eb0a12a`)
