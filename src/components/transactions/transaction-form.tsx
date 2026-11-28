@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useId, useLayoutEffect, useState, useRef, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion, AnimatePresence } from "framer-motion";
@@ -17,6 +17,7 @@ import {
 } from "@/lib/account-time";
 import { MAX_QUICK_CATEGORIES, resolveQuickCategories } from "@/lib/quick-categories";
 import { CategoryIcon } from "@/components/ui/icon-map";
+import { KEYBOARD_REVEAL_UNTIL_ATTR, useModalKeyboardOpen } from "@/components/ui/modal-keyboard-context";
 import { ReceiptBreakdown, toReceiptBreakdownMeta } from "@/components/transactions/receipt-breakdown";
 import { useUser } from "@/components/user-provider";
 import { useCategoriesQuery, useQuickPreferencesQuery } from "@/hooks/use-categories";
@@ -63,6 +64,9 @@ interface TransactionFormProps {
 
 const PHOTO_UPLOAD_FAILED = "Saved. The photo didn't upload: attach it from the transaction.";
 
+/** Cancels the focus change a press would make, so the focused amount keeps the keyboard up. */
+const keepFocus = (e: React.SyntheticEvent) => e.preventDefault();
+
 const formatAmountDisplay = (value: number) =>
   new Intl.NumberFormat("en-US", {
     minimumFractionDigits: 2,
@@ -108,6 +112,18 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
     };
   }, []);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const keyboardOpen = useModalKeyboardOpen();
+  const amountInputRef = useRef<HTMLInputElement>(null);
+  const categorySectionRef = useRef<HTMLDivElement>(null);
+  const quickTilesId = useId();
+  const [amountFocused, setAmountFocused] = useState(false);
+  // Set once the category picker opens, so coming back from it does not autofocus the amount
+  // (and raise the keyboard) a second time.
+  const pickerOpenedRef = useRef(false);
+  const openPicker = () => {
+    pickerOpenedRef.current = true;
+    setShowCategoryPicker(true);
+  };
   const [displayAmount, setDisplayAmount] = useState<string>(() => {
     if (transaction?.amount != null) return formatAmountDisplay(transaction.amount);
     if (initialData?.amount != null) return formatAmountDisplay(initialData.amount);
@@ -184,6 +200,15 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
   const quickCategories = resolveQuickCategories(prefIds ?? [], categories).display;
 
   const isSelectedInQuick = quickCategories.some((c) => c.id === watchedCategoryId);
+  // Typing the amount on a phone with no category yet: Add cannot succeed, so the footer steps
+  // aside and the amount compacts to make room for the tiles above the keyboard. Once a category
+  // is set (picked, editing, prefilled) Add works and everything is as before.
+  const typingWithoutCategory = keyboardOpen && amountFocused && !watchedCategoryId;
+  /** Closes the keyboard by blurring the amount, if it is the field holding it open. */
+  const releaseAmount = () => {
+    if (document.activeElement === amountInputRef.current) amountInputRef.current?.blur();
+    setAmountFocused(false);
+  };
 
   // Apply initialData categoryId once after categories load
   useEffect(() => {
@@ -433,8 +458,13 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
             )}
 
             {/* Amount — hero centerpiece */}
-            <div className="text-center py-4">
-              <p className="text-[10px] font-semibold tracking-[0.2em] text-warm-300 uppercase mb-3">
+            <div className={cn("text-center", typingWithoutCategory ? "py-1" : "py-4")}>
+              <p
+                className={cn(
+                  "text-[10px] font-semibold tracking-[0.2em] text-warm-300 uppercase mb-3",
+                  typingWithoutCategory && "sr-only"
+                )}
+              >
                 Amount
               </p>
               <div className="flex items-baseline justify-center gap-2">
@@ -467,7 +497,25 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                       { shouldValidate: true }
                     );
                   }}
-                  onBlur={() => {
+                  ref={amountInputRef}
+                  enterKeyHint={watchedCategoryId ? undefined : "done"}
+                  {...(!watchedCategoryId && { [KEYBOARD_REVEAL_UNTIL_ATTR]: quickTilesId })}
+                  onFocus={() => setAmountFocused(true)}
+                  onKeyDown={(e) => {
+                    // With no category, Enter could only fail validation: close the keyboard
+                    // and show the whole form instead.
+                    if (e.key === "Enter" && !watchedCategoryId) {
+                      e.preventDefault();
+                      releaseAmount();
+                    }
+                  }}
+                  onBlur={(e) => {
+                    // A tile that took focus on its way to a click is part of this step: stay
+                    // compact so the layout does not move under the finger before the click.
+                    const into = e.relatedTarget;
+                    if (!(into instanceof Node && categorySectionRef.current?.contains(into))) {
+                      setAmountFocused(false);
+                    }
                     if (!displayAmount) return;
                     const numeric = parseFloat(displayAmount.replace(/,/g, ""));
                     if (!isNaN(numeric)) {
@@ -483,7 +531,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                       : "text-expense caret-expense"
                   )}
                   placeholder="0.00"
-                  autoFocus={!transaction && user.transactionAmountAutofocus}
+                  autoFocus={!transaction && user.transactionAmountAutofocus && !pickerOpenedRef.current}
                 />
               </div>
               {errors.amount && (
@@ -492,11 +540,20 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
             </div>
 
             {/* Category — quick picks */}
-            <div>
-              <p className="text-sm font-semibold text-warm-600 mb-3">Category</p>
+            <div
+              ref={categorySectionRef}
+              className={cn(typingWithoutCategory && "-mt-3")}
+              // While typing, a tap must not move focus off the amount: that would close the
+              // keyboard and expand the layout before the click lands, so it could miss.
+              onPointerDown={typingWithoutCategory ? keepFocus : undefined}
+              onMouseDown={typingWithoutCategory ? keepFocus : undefined}
+            >
+              <p className={cn("text-sm font-semibold text-warm-600", typingWithoutCategory ? "mb-2" : "mb-3")}>
+                Category
+              </p>
 
               {loadingCategories ? (
-                <div className="grid grid-cols-4 gap-2.5">
+                <div id={quickTilesId} className="grid grid-cols-4 gap-2.5">
                   {[1, 2, 3, 4].map((i) => (
                     <div key={i} className="h-[88px] rounded-2xl animate-shimmer" />
                   ))}
@@ -504,14 +561,15 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               ) : (
                 <>
                   {/* Quick category tiles */}
-                  <div className="grid grid-cols-4 gap-2.5">
+                  <div id={quickTilesId} className="grid grid-cols-4 gap-2.5">
                     {quickCategories.map((cat) => (
                       <button
                         key={cat.id}
                         type="button"
-                        onClick={() =>
-                          setValue("categoryId", cat.id, { shouldValidate: true })
-                        }
+                        onClick={() => {
+                          setValue("categoryId", cat.id, { shouldValidate: true });
+                          if (amountFocused) releaseAmount();
+                        }}
                         className={cn(
                           "flex flex-col items-center gap-2 p-3 rounded-2xl transition-all duration-150",
                           watchedCategoryId === cat.id
@@ -556,7 +614,10 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                   {categories.length > MAX_QUICK_CATEGORIES && (
                     <button
                       type="button"
-                      onClick={() => setShowCategoryPicker(true)}
+                      onClick={() => {
+                        releaseAmount();
+                        openPicker();
+                      }}
                       className="w-full flex items-center justify-between px-4 py-3 mt-2.5 rounded-xl border border-cream-200 text-sm text-warm-400 hover:text-warm-600 hover:border-cream-300 transition-colors"
                     >
                       More categories...
@@ -648,7 +709,13 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
             </div>
 
             {/* Action Buttons — sticky footer */}
-            <div className="sticky bottom-0 -mx-6 -mb-6 px-6 py-4 bg-white border-t border-cream-200/60">
+            <div
+              data-testid="form-footer"
+              className={cn(
+                "sticky bottom-0 -mx-6 -mb-6 px-6 py-4 bg-white border-t border-cream-200/60",
+                typingWithoutCategory && "hidden"
+              )}
+            >
               <div className="flex gap-3">
                 <button
                   type="button"

@@ -328,4 +328,32 @@ describe("Modal keeps the focused field visible as the keyboard opens", () => {
 
     expect(dialog.style.maxHeight).toBe("288px"); // 320 * 0.9: no keyboard
   });
+  /**
+   * Centring the focused field is right for a lone text input and wrong when what matters
+   * sits below it: on the transaction sheet, centring the amount leaves the category tiles
+   * under the keyboard. A field may therefore name an element to bring into view instead.
+   */
+  it("reveals the named element instead of centring the field", () => {
+    render(
+      <Modal open onClose={() => {}} title="New Transaction">
+        <input aria-label="Amount" autoFocus data-keyboard-reveal-until="tiles" />
+        <div id="tiles">Tiles</div>
+      </Modal>,
+    );
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "end", behavior: "auto" });
+    expect(scrollIntoView.mock.instances[0]).toBe(document.getElementById("tiles"));
+  });
+
+  // An id naming nothing must not cost the field its own reveal.
+  it("centres the field when the named element is not there", () => {
+    render(
+      <Modal open onClose={() => {}} title="New Transaction">
+        <input aria-label="Amount" autoFocus data-keyboard-reveal-until="gone" />
+      </Modal>,
+    );
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "auto" });
+    expect(scrollIntoView.mock.instances[0]).toBe(document.querySelector("input"));
+  });
 });

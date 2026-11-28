@@ -2,6 +2,37 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-28 - The transaction sheet makes room for the category tiles while you type
+
+- **On a phone, with the keyboard up, typing the amount and no category picked yet, the sticky
+  footer steps aside.** Add cannot succeed without a category, so the height it costs is height
+  the tiles need: on the Android screenshot this change came from there are about 210px between
+  the sheet header and the keyboard, and the amount block plus the Category heading plus the
+  tiles needed about 245px, so the tiles were cut off. The amount block also compacts (`py-1`,
+  the "Amount" caption `sr-only`, tighter spacing above Category), which is what makes them fit.
+- **The sheet now scrolls the tiles into view rather than centring the field.** A text field may
+  carry `data-keyboard-reveal-until="<id>"`, and `Modal`'s keyboard handler scrolls that element
+  to the bottom of the visible area instead. An id naming nothing falls back to centring the
+  field, so a stale id costs no reveal. `ModalKeyboardContext` (new) is how the sheet tells its
+  children the keyboard is up; it is `false` on desktop and outside a `Modal`, so nothing outside
+  the sheet changes.
+- **Tapping a tile sets the category and closes the keyboard**, on both platforms: iOS does not
+  close it on a button press, so the tile does it. The footer is back immediately, because Add
+  now works.
+- **Enter on the amount with no category closes the keyboard** instead of submitting into
+  "Category is required". `enterKeyHint="done"` labels the key accordingly, and only while there
+  is no category.
+- **The category section cancels the focus change a press would make** (`onPointerDown` /
+  `onMouseDown` `preventDefault`) while compact, and a blur whose `relatedTarget` is inside that
+  section keeps the compact layout. Otherwise the keyboard closes and the layout expands between
+  the press and the click, moving the tile out from under the finger.
+- **`More categories...` releases the amount before opening the picker**, and coming back from
+  the picker no longer re-autofocuses the amount, so the keyboard does not pop up a second time.
+- **Unchanged:** editing a transaction, a prefilled scan or a bill's Pay & Edit all arrive with a
+  category, so the footer never hides for them. Desktop and the Note field are untouched.
+- Covered by `transaction-form.keyboard.test.tsx` (new, 9 cases) and two new cases in
+  `modal.keyboard.test.tsx`; each was confirmed to fail without its fix.
+
 ## 2026-11-27 - Production builds with Railpack; nixpacks.toml removed
 
 - **Coolify's Build Pack is now Railpack**, on Node 24.22.3. The first Railpack deploy (`eb0a12a`)

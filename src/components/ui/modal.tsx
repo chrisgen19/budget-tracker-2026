@@ -6,6 +6,7 @@ import { X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useDialogLifecycle } from "@/components/ui/use-dialog-lifecycle";
+import { KEYBOARD_REVEAL_UNTIL_ATTR, ModalKeyboardContext } from "@/components/ui/modal-keyboard-context";
 
 /** Returns true when viewport width < 640px (Tailwind `sm` breakpoint) */
 const useIsMobile = () => {
@@ -201,6 +202,12 @@ const useKeepFocusedFieldVisible = (
       // `content` itself is the dialog's fallback focus target, taken with `preventScroll`.
       if (!focused || focused === content || !content.contains(focused)) return;
       if (!isTextEntry(focused)) return;
+      const untilId = focused.getAttribute(KEYBOARD_REVEAL_UNTIL_ATTR);
+      const until = untilId ? document.getElementById(untilId) : null;
+      if (until && content.contains(until)) {
+        until.scrollIntoView({ block: "end", behavior });
+        return;
+      }
       focused.scrollIntoView({ block: "center", behavior });
     };
 
@@ -392,7 +399,11 @@ export function Modal({ open, onClose, title, children, size = "default" }: Moda
             </div>
 
             {/* Scrollable Content */}
-            <div ref={contentRef} tabIndex={-1} className="p-6 overflow-y-auto flex-1 outline-none">{children}</div>
+            <div ref={contentRef} tabIndex={-1} className="p-6 overflow-y-auto flex-1 outline-none">
+              <ModalKeyboardContext.Provider value={isMobile && !!viewport?.keyboardOpen}>
+                {children}
+              </ModalKeyboardContext.Provider>
+            </div>
           </motion.div>
         </div>
       )}
