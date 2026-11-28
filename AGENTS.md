@@ -157,12 +157,11 @@ Active tasks:
 - `pnpm db:seed` is **not** part of a deploy. The `Dockerfile` runs `pnpm build:deploy` (so does the fallback `railpack.json`), which is
   `prisma generate && prisma migrate deploy && tsx scripts/check-migration-drift.ts && next build`
   and nothing else, so merging a change to the seed list ships the new prompts while the categories
-  they route to do not exist yet. Run the seed by hand from a
-  Coolify terminal after deploying one. Do not add it to the build command: it would run on every
-  deploy, and the merge script below must never run unattended. `tsx` is a devDependency and may be
-  absent from the standalone image, so run `merge-custom-category-into-default.ts` locally against
-  the production `DATABASE_URL` if the container cannot; inside the container drop `--env-file`,
-  since the variables are already set
+  they route to do not exist yet. Run the seed by hand after deploying one, from a local checkout
+  against the production `DATABASE_URL`: the standalone image has no `tsx`, pnpm or `prisma/seed.ts`,
+  so it cannot run in a Coolify terminal. Do not add it to the build command: it would run on every
+  deploy, and the merge script below must never run unattended. Run
+  `merge-custom-category-into-default.ts` the same way, locally
 - Removing a name from `DEFAULT_CATEGORIES` does not delete the row it already created. The leftover
   keeps `isDefault: true`, and `DELETE /api/categories/[id]` filters on `isDefault: false`, so it
   cannot be removed through the app. The seed reports these (`findOrphanedDefaults`) rather than
