@@ -3,6 +3,7 @@ paths:
   - prisma/schema.prisma
   - "prisma/migrations/**"
   - scripts/check-migration-drift.ts
+  - Dockerfile
   - railpack.json
   - src/app/sw.ts
 ---
@@ -48,7 +49,23 @@ alongside the drop migration. `check-migration-drift.ts` diffs the two (`prisma 
 Write the contract migration as a **forward** migration. Never edit or delete an applied one: the
 drift check fails any deploy whose checkout lacks a migration the database has applied.
 
+## The Dockerfile takes no build ARG but DATABASE_URL
+
+Production builds from `Dockerfile` (Coolify Build Pack: Dockerfile). `build:deploy` runs inside
+the build stage, so that stage declares `ARG DATABASE_URL` for the migration and the drift check,
+and **no other ARG** may be added. Coolify passes every build-time variable to `docker build` as
+`--build-arg KEY` whether or not the Dockerfile declares it, which is harmless: an undeclared one
+is dropped. What the "Inject Build Args to Dockerfile" toggle controls is whether Coolify inserts
+an `ARG` line after every `FROM`. With it **on**, each later `RUN` in a stage records every
+build-time value in the image history, secrets included. So the toggle stays **off** for this app,
+and `DATABASE_URL` reaches the build as a plain build-time variable that is not baked into the
+runtime image. `scripts/build-scripts.test.ts` pins the single ARG; it cannot see the Coolify
+toggle, so that one is a setting to check by hand after any Coolify change.
+
 ## A `railpack.json` apt list replaces, it does not add
+
+This section applies only to the fallback build pack: production builds from the Dockerfile, and
+`railpack.json` stays so that switching Build Pack back to Railpack still works.
 
 `steps.*.commands` and `aptPackages` read the same but behave in opposite directions. In both,
 `"..."` stands for what Railpack generated. In the **commands** it must be absent: spreading the

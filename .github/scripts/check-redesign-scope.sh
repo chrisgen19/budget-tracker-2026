@@ -27,7 +27,7 @@ head="${2:?head ref required}"
 # production build command, the production Node version and the runtime apt list, and a redesign
 # branch that changed one of them would otherwise be reported as "none of them backend" and
 # reviewed as visual work.
-STATIC_PATTERN='^(src/app/api/|prisma/|mcp-server/|src/lib/(mcp|telegram)/|\.github/)|^src/(middleware|instrumentation)\.ts$|^src/lib/validations\.ts$|^(nixpacks\.toml|railpack\.json)$'
+STATIC_PATTERN='^(src/app/api/|prisma/|mcp-server/|src/lib/(mcp|telegram)/|\.github/)|^src/(middleware|instrumentation)\.ts$|^src/lib/validations\.ts$|^(nixpacks\.toml|railpack\.json|Dockerfile|\.dockerignore)$'
 
 # Backend by content, for `src/lib` modules. A fixed list of file names would go stale the first
 # time a new `*-writes.ts` or query module was added; these rules follow the code instead.

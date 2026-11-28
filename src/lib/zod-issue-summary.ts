@@ -3,7 +3,7 @@
  *
  * A module of its own, with no imports, because both receipt paths need it and the alternative
  * routes were both bad: `/api/receipts/breakdown` importing it from `receipt-scan.ts` would drag
- * in `gemini.ts`, which builds its client on load and throws without `GEMINI_API_KEY`, and a
+ * in `gemini.ts` and the Gemini SDK with it, and a
  * second inline copy — which is what existed before this file — drifts the moment either the cap
  * or the format is touched.
  */

@@ -1201,9 +1201,9 @@ export const createBudgetMcpServer = ({
           : null;
 
       // Imported here rather than at module scope on purpose: `receipt-scan` pulls in
-      // `gemini.ts`, which builds its client on load and throws without GEMINI_API_KEY. At the
-      // top of this file that would make the stdio entry point refuse to start on a machine that
-      // has no Gemini key and never intended to scan anything.
+      // `gemini.ts`, whose client throws on first use without GEMINI_API_KEY. Kept lazy so the
+      // stdio entry point does not load the Gemini SDK on a machine that has no Gemini key and
+      // never intended to scan anything.
       const { scanReceipt } = await import("@/lib/receipt-scan");
 
       const outcome = await scanReceipt({

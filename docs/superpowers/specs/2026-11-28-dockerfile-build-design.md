@@ -1,6 +1,6 @@
 # Build production from a Dockerfile instead of Railpack
 
-Status: draft, awaiting approval (2026-11-28)
+Status: approved 2026-11-28
 
 ## Intent
 

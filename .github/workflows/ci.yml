@@ -29,7 +29,7 @@ jobs:
       fail-fast: false
       matrix:
         # 20 is the floor `package.json` engines declares and what the previous production
-        # image ran. 24 is what `railpack.json` now deploys, so it is the one that has to be
+        # image ran. 24 is what the Dockerfile deploys, so it is the one that has to be
         # green for a release to be trustworthy; 20 stays until the engines floor moves.
         node: [20, 24]
     name: checks (${{ matrix.node }})

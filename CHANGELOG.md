@@ -2,6 +2,28 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-28 - Production builds from a Dockerfile
+
+- **Production now builds from a multi-stage `Dockerfile` instead of Railpack.** Railpack kept
+  every layer and cost about 4 GB of disk per deploy, which took the VPS to 84% and set off
+  Coolify's 80% alert. The image is 497 MB (uncompressed, `docker images`) against 1.51 GB for the
+  Railpack one. It builds on `node:24-bookworm-slim`, runs the standalone server as a non-root
+  user, and keeps `curl` and `wget` for the Scheduled Tasks and the health check.
+- **Migrations and the drift check still run inside the build.** The build stage calls
+  `pnpm build:deploy` (55 migrations applied in the local proof). Its only ARG is `DATABASE_URL`,
+  and no build-arg value shows in `docker history` or `docker inspect`. The `pnpm install` layer
+  stays cached after a source-only change.
+- **`next build` no longer needs `GEMINI_API_KEY`.** `src/lib/gemini.ts` creates its client on
+  first use instead of when the module loads, so the build can import every route without
+  secrets. A missing key now fails on the first Gemini call, not at import.
+- **Coolify settings to change:** Build Pack to **Dockerfile**, and **Inject Build Args to
+  Dockerfile** off. Coolify passes every build-time variable as `--build-arg` either way; the
+  toggle only decides whether it inserts an `ARG` after every `FROM`, and with it on every later
+  `RUN` records all build-time values in the image history.
+- **To revert,** set Build Pack back to Railpack, turn injection back on and redeploy.
+  `railpack.json` stays as the fallback build pack and is removed in a follow-up.
+- **The redesign-scope check counts `Dockerfile` and `.dockerignore` as backend files.**
+
 ## 2026-11-28 - Dashboard widgets match Transactions and Analytics
 
 - **Recent transactions show the same badges as the Transactions page.** Each row now shows the

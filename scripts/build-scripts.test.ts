@@ -133,8 +133,9 @@ describe("build scripts", () => {
   });
 
   /**
-   * Railpack is the only build pack: production switched to it from Nixpacks on 2026-11-27 and
-   * `nixpacks.toml` was deleted once that deploy succeeded. Its Node provider runs the `build`
+   * Railpack is the fallback build pack: production switched to it from Nixpacks on 2026-11-27,
+   * `nixpacks.toml` was deleted once that deploy succeeded, and the Dockerfile now builds
+   * production. Its Node provider runs the `build`
    * script by default, which deploys code without its migrations, and an array in `railpack.json`
    * keeps the provider's own commands wherever it contains `"..."`. So the build step has to call
    * `build:deploy` by name and must not spread the defaults back in.
