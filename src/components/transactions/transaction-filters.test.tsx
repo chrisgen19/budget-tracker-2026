@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   TransactionFiltersBar,
@@ -732,6 +732,97 @@ describe("the filter rail", () => {
     // vertically and the hit areas overhang their 36px chips by 4px each side.
     const { container } = renderFilters();
     expect(rail(container).firstElementChild!.className).toContain("py-0.5");
+  });
+});
+
+describe("the type control below sm", () => {
+  const railOf = (container: HTMLElement) =>
+    container.querySelector<HTMLElement>("[data-filter-rail]")!;
+  const trigger = () => screen.getByRole("button", { name: /^Transaction type, currently/ });
+  const menu = () => within(screen.getByRole("dialog", { name: "Transaction type" }));
+
+  it("collapses the toggle to one button, which is what fits 320px", () => {
+    // The segmented toggle is 136px and cannot shrink: each of its three segments
+    // is min-w-11 because 44px is the touch floor. With the dense period picker
+    // beside it the rail needed 305px of the 266px a 320px screen leaves.
+    const { container } = renderFilters();
+    const scroller = railOf(container).firstElementChild!;
+
+    expect(scroller.contains(trigger())).toBe(true);
+    expect(trigger().className).toContain("sm:hidden");
+  });
+
+  it("hands the segmented toggle back from sm up, so only one shows at a time", () => {
+    const { container } = renderFilters();
+    const toggle = within(railOf(container)).getByRole("button", {
+      name: "All transactions",
+    }).parentElement!;
+
+    expect(toggle.className).toContain("hidden");
+    expect(toggle.className).toContain("sm:flex");
+    expect(toggle.className).toContain("lg:hidden");
+  });
+
+  it("names the control and its state, not the state alone", () => {
+    // "Expenses" on its own is the name of a segment one breakpoint up, and says
+    // nothing about what pressing this does.
+    renderFilters({ ...baseFilters, type: "EXPENSE" });
+
+    expect(trigger().getAttribute("aria-label")).toBe("Transaction type, currently Expenses");
+    expect(trigger().getAttribute("aria-haspopup")).toBe("dialog");
+    expect(trigger().getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("opens a dialog rather than an absolute panel the toolbar would clip", () => {
+    // The toolbar is overflow-hidden and becomes a transformed sticky containing
+    // block while the page scrolls, which clips an absolute panel away entirely.
+    renderFilters();
+
+    fireEvent.click(trigger());
+
+    expect(screen.getByRole("dialog", { name: "Transaction type" })).toBeTruthy();
+    expect(trigger().getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("changes the type from the menu and drops a category chosen under the old one", () => {
+    filterOptionState.value.categories = [{ id: "c1", name: "Groceries" }];
+    renderFilters({ ...baseFilters, type: "EXPENSE", categoryId: "c1" });
+
+    fireEvent.click(trigger());
+    fireEvent.click(menu().getByRole("button", { name: "Income" }));
+
+    expect(currentFilters).toMatchObject({ type: "INCOME", categoryId: null });
+    // The dialog is closing, not closed: AnimatePresence keeps the node mounted
+    // through its exit, so the state is what says so.
+    expect(trigger().getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("does nothing at all when the type already showing is picked", () => {
+    // Passing the same value is not the same as doing nothing: a fresh filters
+    // object resets the page, drops the selection and announces a clear that did
+    // not happen. The menu follows the same rule the segmented toggle does.
+    filterOptionState.value.categories = [{ id: "c1", name: "Groceries" }];
+    renderFilters({ ...baseFilters, type: "EXPENSE", categoryId: "c1" });
+    const before = currentFilters;
+
+    fireEvent.click(trigger());
+    fireEvent.click(menu().getByRole("button", { name: "Expenses" }));
+
+    expect(currentFilters).toBe(before);
+    expect(trigger().getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("marks which type is on, since the trigger has no fill to carry it", () => {
+    renderFilters({ ...baseFilters, type: "INCOME" });
+
+    fireEvent.click(trigger());
+
+    expect(menu().getByRole("button", { name: "Income" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    expect(menu().getByRole("button", { name: "Expenses" }).getAttribute("aria-pressed")).toBe(
+      "false",
+    );
   });
 });
 
