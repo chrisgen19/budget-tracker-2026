@@ -104,7 +104,9 @@ function ResetPasswordForm() {
 
       {/* Card */}
       <div className="card p-8 grain-overlay">
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+        {/* POST before hydration keeps the new password and the reset token out of the URL;
+            see the login form. */}
+        <form method="post" onSubmit={handleSubmit(onSubmit)} className="space-y-5">
           <input type="hidden" {...register("token")} />
 
           {error && (

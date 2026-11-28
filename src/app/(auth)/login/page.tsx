@@ -83,7 +83,10 @@ function LoginForm() {
 
       {/* Form Card */}
       <div className="card p-8 grain-overlay">
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+        {/* method="post" only matters before hydration, when the browser submits the form itself.
+            Its default is GET, which would put the password in the URL, and from there in history
+            and the server's access log. Once hydrated, handleSubmit prevents the native submit. */}
+        <form method="post" onSubmit={handleSubmit(onSubmit)} className="space-y-5">
           {/* Success banners */}
           {verified && (
             <motion.div
