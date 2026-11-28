@@ -93,4 +93,24 @@ describe("TransactionListRow", () => {
       expect(props.onLongPress).not.toHaveBeenCalled();
     });
   });
+
+  describe("label pills in select mode", () => {
+    const labelled = {
+      ...tx,
+      labels: [{ id: "tl_1", labelId: "l_1", label: { id: "l_1", name: "Work Budget", color: "#D9643A" } }],
+    } as unknown as TransactionWithCategory;
+
+    it("lets a pill tap reach the row, so it selects instead of revealing a remove button", () => {
+      const { props } = renderRow({ tx: labelled, selectMode: true });
+      fireEvent.click(screen.getByText("Work Budget"));
+      expect(props.onToggle).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("button")).toBeNull();
+    });
+
+    it("keeps the remove affordance outside select mode", () => {
+      const { props } = renderRow({ tx: labelled });
+      fireEvent.click(screen.getByText("Work Budget"));
+      expect(props.onOpen).not.toHaveBeenCalled();
+    });
+  });
 });

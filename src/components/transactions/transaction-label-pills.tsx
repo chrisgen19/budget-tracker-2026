@@ -27,10 +27,13 @@ const PILL_BASE =
   "group/pill items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full transition-opacity";
 const COUNT_BASE = "text-[10px] text-warm-300 shrink-0";
 
-/** Responsive classes for the pill at `index`; see `collapseOnPhone`. */
+/**
+ * Responsive classes for the pill at `index`; see `collapseOnPhone`. The first pill shrinks four
+ * times as fast as the category beside it, so a long label gives way before the category does.
+ */
 const pillLayoutClass = (index: number, collapseOnPhone: boolean) => {
   if (!collapseOnPhone) return "inline-flex shrink-0";
-  if (index === 0) return "inline-flex min-w-10 max-w-[55%] shrink sm:max-w-none sm:shrink-0";
+  if (index === 0) return "inline-flex min-w-10 max-w-[55%] shrink-[4] sm:max-w-none sm:shrink-0";
   return "hidden sm:inline-flex shrink-0";
 };
 

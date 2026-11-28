@@ -493,7 +493,8 @@ export default function TransactionsPage() {
   const clearSelection = (restoreFocus = false) => {
     setSelectMode(false);
     dispatchSelectionChange({ type: "clear" });
-    setSelectionAnnouncement("Transaction selection cleared");
+    // "Done" after "Select" with nothing ticked clears nothing, so it announces nothing.
+    if (selectedItems.length > 0) setSelectionAnnouncement("Transaction selection cleared");
     if (restoreFocus) requestAnimationFrame(() => pageHeadingRef.current?.focus());
   };
 
@@ -797,8 +798,8 @@ export default function TransactionsPage() {
                   data-transaction-date-heading
                   className="flex items-center justify-between px-4 py-2.5 bg-cream-50 border-b border-cream-200 sm:px-5"
                 >
-                  <span className="flex items-center">
-                    <span className="text-xs font-semibold text-warm-500 uppercase tracking-wide">
+                  <span className="flex min-w-0 items-center">
+                    <span className="min-w-0 truncate text-xs font-semibold text-warm-500 uppercase tracking-wide">
                       {group.dateLabel}
                       {user.showDayName && (
                         <span className="text-warm-300 font-normal normal-case tracking-normal ml-1.5">
@@ -806,14 +807,18 @@ export default function TransactionsPage() {
                         </span>
                       )}
                     </span>
-                    {/* Phones only: the checkbox column is hidden there until select mode, and
-                        long-press is not discoverable on its own. */}
+                    {/* Phones: the checkbox column is hidden there until select mode, and
+                        long-press is not discoverable on its own. At `sm` and up it only shows
+                        as "Done" while select mode was entered explicitly: a long-press on a
+                        tablet would otherwise leave rows toggling with no way out once the
+                        last one is unticked and the bulk bar goes away. */}
                     <button
                       type="button"
                       onClick={() => (inSelectMode ? clearSelection() : setSelectMode(true))}
                       aria-pressed={inSelectMode}
                       className={cn(
-                        "relative ml-2 h-6 min-w-11 rounded-md px-1.5 text-xs font-medium text-amber-dark hover:bg-amber-light/40 sm:hidden",
+                        "relative ml-2 h-6 min-w-11 shrink-0 rounded-md px-1.5 text-xs font-medium text-amber-dark hover:bg-amber-light/40",
+                        !selectMode && "sm:hidden",
                         TOUCH_HIT_AREA,
                       )}
                     >
@@ -823,7 +828,7 @@ export default function TransactionsPage() {
                   {!hideAmounts && (
                     <span
                       className={cn(
-                        "text-xs font-display font-semibold tabular-nums",
+                        "ml-2 shrink-0 text-xs font-display font-semibold tabular-nums",
                         group.subtotal >= 0 ? "text-income" : "text-expense"
                       )}
                     >
@@ -861,7 +866,7 @@ export default function TransactionsPage() {
                           removeLabelMutation.variables?.transactionId === tx.id
                             ? removeLabelMutation.variables.labelId
                             : null,
-                        disabled: removeLabelMutation.isPending || selectedItems.length > 0,
+                        disabled: removeLabelMutation.isPending || inSelectMode,
                       }}
                     />
                   ))}

@@ -27,7 +27,6 @@ export function useLongPress(
   const timerRef = useRef<number | undefined>(undefined);
   const startRef = useRef<{ x: number; y: number } | null>(null);
   const firedRef = useRef(false);
-  const lastPointerTypeRef = useRef<string>("mouse");
   const callbackRef = useRef(onLongPress);
 
   useEffect(() => {
@@ -44,12 +43,11 @@ export function useLongPress(
 
   const onPointerDown = useCallback(
     (event: PointerEvent) => {
-      lastPointerTypeRef.current = event.pointerType;
       // Reset on every press: a long-press that ended in a pointercancel never got its click,
       // and the flag must not swallow the next, unrelated tap.
       firedRef.current = false;
-      if (event.pointerType === "mouse") return;
       cancel();
+      if (event.pointerType === "mouse") return;
       startRef.current = { x: event.clientX, y: event.clientY };
       timerRef.current = window.setTimeout(() => {
         timerRef.current = undefined;
@@ -72,9 +70,11 @@ export function useLongPress(
   );
 
   // Android Chrome answers a held finger with its own context menu or a text selection, which
-  // would land on top of the row being selected. A right-click on desktop keeps its menu.
+  // would land on top of the row being selected. Only a menu raised by a touch press that is
+  // still down, or that just became a long-press, is blocked: a right-click or the keyboard
+  // Menu key has no press in flight and keeps its menu.
   const onContextMenu = useCallback((event: { preventDefault: () => void }) => {
-    if (lastPointerTypeRef.current !== "mouse") event.preventDefault();
+    if (startRef.current || firedRef.current) event.preventDefault();
   }, []);
 
   const consumeClick = useCallback(() => {

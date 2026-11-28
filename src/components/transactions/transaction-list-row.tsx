@@ -128,7 +128,9 @@ export function TransactionListRow({
               labels={tx.labels}
               maxVisible={3}
               collapseOnPhone
-              onRemove={labelRemoval.onRemove}
+              // In select mode a pill tap must reach the row and toggle it: with a remove
+              // handler the pill stops the click to reveal its X instead.
+              onRemove={selectMode ? undefined : labelRemoval.onRemove}
               removingLabelId={labelRemoval.removingLabelId}
               removeDisabled={labelRemoval.disabled}
             />

@@ -77,4 +77,15 @@ describe("useLongPress", () => {
     act(() => result.current.handlers.onContextMenu(mouseMenu));
     expect(mouseMenu.preventDefault).not.toHaveBeenCalled();
   });
+
+  it("keeps a keyboard context menu that arrives after a finished tap", () => {
+    // The Menu key raises contextmenu with no press in flight. An earlier touch on the same row
+    // must not leave it blocked.
+    const { result } = renderHook(() => useLongPress(vi.fn()));
+    act(() => result.current.handlers.onPointerDown(pointer({})));
+    act(() => result.current.handlers.onPointerUp());
+    const keyboardMenu = { preventDefault: vi.fn() };
+    act(() => result.current.handlers.onContextMenu(keyboardMenu));
+    expect(keyboardMenu.preventDefault).not.toHaveBeenCalled();
+  });
 });
