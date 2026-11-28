@@ -23,7 +23,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { TransactionForm } from "@/components/transactions/transaction-form";
-import { SpendingChart, TrendChart } from "@/components/dashboard/charts";
+import { TrendChart } from "@/components/dashboard/charts";
+import { CategoryBreakdownChart } from "@/components/analytics/category-breakdown-chart";
 import { BalanceTrendChart } from "@/components/dashboard/balance-trend-chart";
 import { DropdownButton, type DropdownItem } from "@/components/ui/dropdown-button";
 import { PageHeader } from "@/components/ui/page-header";
@@ -39,6 +40,7 @@ import { TransactionRow } from "@/components/transactions/transaction-row";
 import { ActionFab } from "@/components/ui/action-fab";
 import type { TransactionInput } from "@/lib/validations";
 import type { TransactionWithCategory } from "@/types";
+import { monthKeyRange } from "@/lib/analytics-period";
 import { accountMonthKey } from "@/lib/account-time";
 
 export default function DashboardPage() {
@@ -376,13 +378,14 @@ export default function DashboardPage() {
               <h2 className="font-serif text-lg text-warm-700 mb-4">
                 Spending by Category
               </h2>
-              {stats.categoryBreakdown.length > 0 ? (
-                <SpendingChart data={stats.categoryBreakdown} currency={currency} />
-              ) : (
-                <div className="h-[220px] flex items-center justify-center">
-                  <p className="text-warm-300 text-sm">No expenses this month</p>
-                </div>
-              )}
+              <CategoryBreakdownChart
+                data={stats.categoryBreakdown}
+                currency={currency}
+                hideAmounts={hideAmounts}
+                range={monthKeyRange(currentMonth)}
+                emptyMessage="No expenses this month"
+                emptyHint="Add an expense to see where it goes"
+              />
             </motion.div>
           </div>
 

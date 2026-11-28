@@ -7,11 +7,8 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
-  Cell,
-  PieChart,
-  Pie,
 } from "recharts";
-import type { CategoryBreakdownItem, MonthlyTrendItem } from "@/types";
+import type { MonthlyTrendItem } from "@/types";
 import { formatCurrency } from "@/lib/utils";
 
 /** Abbreviate large numbers for Y-axis: 193400 → "193.4K" */
@@ -82,80 +79,5 @@ export function TrendChart({ data, currency = "PHP" }: TrendChartProps) {
         />
       </BarChart>
     </ResponsiveContainer>
-  );
-}
-
-interface SpendingChartProps {
-  data: CategoryBreakdownItem[];
-  currency?: string;
-}
-
-export function SpendingChart({ data, currency = "PHP" }: SpendingChartProps) {
-  if (data.length === 0) return null;
-
-  return (
-    <div className="flex items-center gap-4">
-      <div className="w-[160px] h-[160px] shrink-0">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={data}
-              dataKey="amount"
-              nameKey="name"
-              cx="50%"
-              cy="50%"
-              innerRadius={45}
-              outerRadius={75}
-              paddingAngle={2}
-              strokeWidth={0}
-            >
-              {data.map((entry, index) => (
-                <Cell key={index} fill={entry.color} />
-              ))}
-            </Pie>
-            <Tooltip
-              content={({ active, payload }) => {
-                if (!active || !payload?.length) return null;
-                const item = payload[0].payload as CategoryBreakdownItem;
-                return (
-                  <div className="bg-white rounded-xl shadow-soft-md border border-cream-200 px-3 py-2">
-                    <p className="text-sm font-medium text-warm-600">{item.name}</p>
-                    <p className="text-xs text-warm-400">
-                      {formatCurrency(item.amount, currency)} ({item.percentage}%)
-                    </p>
-                  </div>
-                );
-              }}
-            />
-          </PieChart>
-        </ResponsiveContainer>
-      </div>
-      <div className="flex-1 space-y-2 min-w-0">
-        {data.slice(0, 5).map((item) => (
-          <div key={item.name} className="flex items-center gap-2">
-            <div
-              className="w-2.5 h-2.5 rounded-full shrink-0"
-              style={{ backgroundColor: item.color }}
-            />
-            <div className="flex-1 min-w-0">
-              <span className="text-xs text-warm-500 truncate block">
-                {item.name}
-              </span>
-              <span className="text-[10px] text-warm-400 tabular-nums">
-                {formatCurrency(item.amount, currency)}
-              </span>
-            </div>
-            <span className="text-xs font-medium text-warm-600 tabular-nums shrink-0">
-              {item.percentage}%
-            </span>
-          </div>
-        ))}
-        {data.length > 5 && (
-          <p className="text-xs text-warm-300 pl-4">
-            +{data.length - 5} more
-          </p>
-        )}
-      </div>
-    </div>
   );
 }

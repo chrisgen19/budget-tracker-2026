@@ -90,14 +90,6 @@ export interface DashboardStats {
   balanceMonths: { current: BalanceMonth; previous: BalanceMonth };
 }
 
-export interface CategoryBreakdownItem {
-  name: string;
-  color: string;
-  icon: string;
-  amount: number;
-  percentage: number;
-}
-
 export interface MonthlyTrendItem {
   month: string;
   monthKey: string;   // YYYY-MM, for drill-down links

@@ -34,11 +34,20 @@ interface CategoryBreakdownChartProps {
   hideAmounts: boolean;
   /** The analytics period, carried into the list so a drill-down shows this number's rows. */
   range: { from: string; to: string };
-  /** The analytics view to offer as a way back, as a query string for /analytics. */
-  returnTo: string;
+  /** The analytics view to offer as a way back, as a query string for /analytics. Omitted, the drill-down carries no way back. */
+  returnTo?: string;
+  /** Empty-state headline. Defaults to the analytics copy. */
+  emptyMessage?: string;
+  /** Empty-state hint. Defaults to the analytics copy. */
+  emptyHint?: string;
 }
 
-export function CategoryBreakdownChart({ data, currency, hideAmounts, range, returnTo }: CategoryBreakdownChartProps) {
+export function CategoryBreakdownChart({
+  data, currency, hideAmounts, range,
+  returnTo,
+  emptyMessage = "No data for this period",
+  emptyHint = "Try a wider date range or add transactions",
+}: CategoryBreakdownChartProps) {
   // The type travels with the category: in ALL mode the same category can appear
   // as two rows, one income and one expense, and a drill-down that dropped the
   // type would merge them back together and contradict the number just tapped.
@@ -57,7 +66,7 @@ export function CategoryBreakdownChart({ data, currency, hideAmounts, range, ret
   };
 
   if (data.length === 0) {
-    return <ChartEmptyState icon={PieChartIcon} message="No data for this period" hint="Try a wider date range or add transactions" />;
+    return <ChartEmptyState icon={PieChartIcon} message={emptyMessage} hint={emptyHint} />;
   }
 
   const sym = getCurrencySymbol(currency);
