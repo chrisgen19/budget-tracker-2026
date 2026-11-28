@@ -13,6 +13,7 @@ import {
   ScanLine,
   CalendarClock,
   Zap,
+  AlertTriangle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -63,7 +64,7 @@ export default function DashboardPage() {
   const [deletingTransaction, setDeletingTransaction] = useState<TransactionWithCategory | null>(null);
   const [expandedBillId, setExpandedBillId] = useState<string | null>(null);
 
-  const { data: stats, isLoading: loading } = useDashboardQuery(currentMonth, user.timezoneOffset);
+  const { data: stats, isLoading: loading, isError, refetch } = useDashboardQuery(currentMonth, user.timezoneOffset);
   // Started here, and the result deliberately unused: `QuickLogStrip` mounts inside the `stats`
   // branch below, so left to itself its query could not begin until the dashboard read had already
   // finished, and the strip would drop in afterwards shoving Upcoming Bills down the page. React
@@ -471,6 +472,21 @@ export default function DashboardPage() {
             )}
           </motion.div>
         </motion.div>
+      ) : isError ? (
+        <EmptyState
+          icon={AlertTriangle}
+          title="Couldn’t load the dashboard"
+          description="Check your connection and try again."
+          action={
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              className="inline-flex min-h-11 items-center rounded-xl bg-amber px-4 py-2.5 text-sm font-medium text-white shadow-soft transition-colors hover:bg-amber-dark"
+            >
+              Try again
+            </button>
+          }
+        />
       ) : null}
 
       {/* Floating create button. Above `sm` it carries the same menu as the

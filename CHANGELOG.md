@@ -2,6 +2,23 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-28 - Dashboard widgets match Transactions and Analytics
+
+- **Recent transactions show the same badges as the Transactions page.** Each row now shows the
+  Photo badge, the card the expense was paid with, and the source badge (Claude, Telegram or the
+  desktop app), through the shared `TransactionRow`.
+- **Spending by Category is the Analytics chart.** Rows carry category icons and transaction counts,
+  the donut shows the total, every category is listed, and each row links to `/transactions`
+  filtered to the selected month.
+- **Monthly Trend respects hide-amounts and the theme.** Tooltips, axis, footer and totals are
+  masked when amounts are hidden. Selecting a month and opening the footer link drills down to
+  that month's transactions.
+- **The dashboard shows a retry state when it fails to load**, with a "Try again" button, instead
+  of a blank page.
+- **`/api/dashboard` gains additive fields:** `recentTransactions[].creditAccount`,
+  `categoryBreakdown[].id`, `categoryBreakdown[].type`, `categoryBreakdown[].transactionCount`,
+  `monthlyTrend[].monthKey` and `monthlyTrend[].transactionCount`. Nothing was renamed or removed.
+
 ## 2026-11-27 - Production builds with Railpack; nixpacks.toml removed
 
 - **Coolify's Build Pack is now Railpack**, on Node 24.22.3. The first Railpack deploy (`eb0a12a`)
