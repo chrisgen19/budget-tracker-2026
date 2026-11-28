@@ -6,14 +6,15 @@ All notable development history for the Budget Tracker app.
 
 - **Recent transactions show the same badges as the Transactions page.** Each row now shows the
   Photo badge, the card the expense was paid with, and the source badge (Claude, Telegram or the
-  desktop app), through the shared `TransactionRow`.
+  desktop app). They are the ledger's own `TransactionListRow`, now usable without selection, so
+  the dashboard also gets its phone layout: badges shrink to icons and only the first label shows.
 - **Spending by Category is the Analytics chart.** Rows carry category icons and transaction counts,
   the donut shows the total, every category is listed, and each row links to `/transactions`
   filtered to the selected month.
 - **Monthly Trend respects hide-amounts and the theme.** Tooltips, axis, footer and totals are
   masked when amounts are hidden. Selecting a month and opening the footer link drills down to
   that month's transactions.
-- **Dashboard rows show up to 3 labels** instead of 2.
+- **Dashboard rows show up to 3 labels from `sm` up** (it was 2), and only the first on phones.
 - **Spending by Category lists every category** in a scrolling list instead of the top 5 with
   "+N more".
 - **The Monthly Trend ends at the selected month** rather than at today, so stepping back to an

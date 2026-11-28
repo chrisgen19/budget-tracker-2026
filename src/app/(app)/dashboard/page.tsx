@@ -37,7 +37,7 @@ import { useUpcomingBillsQuery } from "@/hooks/use-bills";
 import { UpcomingBillRow } from "@/components/dashboard/upcoming-bill-row";
 import { QuickLogStrip } from "@/components/dashboard/quick-log-strip";
 import { useQuickTilesQuery } from "@/hooks/use-quick-tiles";
-import { TransactionRow } from "@/components/transactions/transaction-row";
+import { TransactionListRow } from "@/components/transactions/transaction-list-row";
 import { ActionFab } from "@/components/ui/action-fab";
 import type { TransactionInput } from "@/lib/validations";
 import type { TransactionWithCategory } from "@/types";
@@ -429,25 +429,28 @@ export default function DashboardPage() {
                     {/* Transaction rows */}
                     <div className="divide-y divide-cream-100">
                       {group.transactions.map((tx) => (
-                        <TransactionRow
+                        // The ledger's row with nothing to select: no checkbox, no long-press,
+                        // and a tap opens the transaction.
+                        <TransactionListRow
                           key={tx.id}
                           tx={tx}
+                          highlighted={false}
                           currency={currency}
                           hideAmounts={hideAmounts}
                           timezoneOffset={user.timezoneOffset}
-                          showCreditAccount={user.creditCardsEnabled}
-                          showReceiptPhoto={user.receiptPhotosEnabled}
-                          onSelect={() => setEditingTransaction(tx)}
-                          onRemoveLabel={(labelId) =>
-                            removeLabelMutation.mutate({ transactionId: tx.id, labelId })
-                          }
-                          removingLabelId={
-                            removeLabelMutation.isPending &&
-                            removeLabelMutation.variables?.transactionId === tx.id
-                              ? removeLabelMutation.variables.labelId
-                              : null
-                          }
-                          removeLabelDisabled={removeLabelMutation.isPending}
+                          creditCardsEnabled={user.creditCardsEnabled}
+                          receiptPhotosEnabled={user.receiptPhotosEnabled}
+                          onOpen={() => setEditingTransaction(tx)}
+                          labelRemoval={{
+                            onRemove: (_tlId, labelId) =>
+                              removeLabelMutation.mutate({ transactionId: tx.id, labelId }),
+                            removingLabelId:
+                              removeLabelMutation.isPending &&
+                              removeLabelMutation.variables?.transactionId === tx.id
+                                ? removeLabelMutation.variables.labelId
+                                : null,
+                            disabled: removeLabelMutation.isPending,
+                          }}
                         />
                       ))}
                     </div>
