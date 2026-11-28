@@ -421,7 +421,7 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
               });
               if (photoResult?.uploadFailed) showToast(PHOTO_UPLOAD_FAILED, "error");
             })}
-            className="space-y-6"
+            className={typingWithoutCategory ? "space-y-3" : "space-y-6"}
           >
             {/* Type Toggle */}
             <div className="flex gap-1 p-1 bg-cream-100 rounded-xl">
@@ -498,13 +498,14 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
                     );
                   }}
                   ref={amountInputRef}
-                  enterKeyHint={watchedCategoryId ? undefined : "done"}
+                  enterKeyHint={keyboardOpen && !watchedCategoryId ? "done" : undefined}
                   {...(!watchedCategoryId && { [KEYBOARD_REVEAL_UNTIL_ATTR]: quickTilesId })}
                   onFocus={() => setAmountFocused(true)}
                   onKeyDown={(e) => {
                     // With no category, Enter could only fail validation: close the keyboard
-                    // and show the whole form instead.
-                    if (e.key === "Enter" && !watchedCategoryId) {
+                    // and show the whole form instead. Only with a keyboard to close -- on
+                    // desktop Enter still submits, so the error message still appears.
+                    if (e.key === "Enter" && keyboardOpen && !watchedCategoryId) {
                       e.preventDefault();
                       releaseAmount();
                     }
@@ -542,11 +543,20 @@ export function TransactionForm({ transaction, initialData, dateWarning, hideLab
             {/* Category — quick picks */}
             <div
               ref={categorySectionRef}
-              className={cn(typingWithoutCategory && "-mt-3")}
               // While typing, a tap must not move focus off the amount: that would close the
               // keyboard and expand the layout before the click lands, so it could miss.
               onPointerDown={typingWithoutCategory ? keepFocus : undefined}
               onMouseDown={typingWithoutCategory ? keepFocus : undefined}
+              // The amount hands this section the compact state when focus moves in without a
+              // click, and only a click took it back. Nothing cleared it when focus then left
+              // another way (a screen reader moving through the form), which left the footer
+              // hidden while typing the note. Clearing it here makes the state follow focus.
+              onBlur={(e) => {
+                const into = e.relatedTarget;
+                if (!(into instanceof Node && categorySectionRef.current?.contains(into))) {
+                  setAmountFocused(false);
+                }
+              }}
             >
               <p className={cn("text-sm font-semibold text-warm-600", typingWithoutCategory ? "mb-2" : "mb-3")}>
                 Category

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import {
@@ -62,6 +62,8 @@ const renderForm = (
     amount: screen.getByPlaceholderText("0.00") as HTMLInputElement,
     footer: () => screen.getByTestId("form-footer"),
     tile: () => screen.getByRole("button", { name: /Food/ }),
+    note: () => screen.getByPlaceholderText("What was this for?"),
+    form: () => screen.getByPlaceholderText("0.00").closest("form") as HTMLFormElement,
     onSubmit,
   };
 };
@@ -142,12 +144,59 @@ describe("TransactionForm while the keyboard is up", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("submits on Enter once a category is set", () => {
-    const { amount } = renderForm({ categoryId: "food" });
-    const prevented = fireEvent.keyDown(amount, { key: "Enter" });
+  it("leaves Enter alone and submits once a category is set", async () => {
+    const { amount, form, onSubmit } = renderForm({ categoryId: "food" });
+    fireEvent.change(amount, { target: { value: "250" } });
 
-    // `fireEvent` returns false when a handler called preventDefault.
-    expect(prevented).toBe(true);
+    // `fireEvent` returns false when a handler called preventDefault, so this is the
+    // assertion that Enter was *not* intercepted. Named for what the value means.
+    expect(fireEvent.keyDown(amount, { key: "Enter" })).toBe(true);
+
+    // jsdom performs no implicit submission, so the submit the browser would do next is
+    // driven here: the point is that the form still reaches `onSubmit` rather than an error.
+    fireEvent.submit(form());
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+  });
+
+  // Both halves of the Enter handling are mobile-only. Off a phone there is no keyboard to
+  // close, and intercepting Enter swallowed the "Category is required" message instead.
+  it("still submits on Enter on desktop, so the error can appear", () => {
+    const { amount } = renderForm({ keyboardOpen: false });
+
+    act(() => amount.focus());
+
+    expect(fireEvent.keyDown(amount, { key: "Enter" })).toBe(true);
+    expect(amount.getAttribute("enterkeyhint")).toBeNull();
+    expect(document.activeElement).toBe(amount);
+  });
+
+  // The amount hands the section the compact state when focus moves in without a click.
+  // Only a click took it back, so focus leaving another way (a screen reader moving through
+  // the form) left the footer hidden while typing the note.
+  it("expands again when focus leaves the category section without a click", () => {
+    const { amount, tile, note } = renderForm();
+
+    act(() => amount.focus());
+    act(() => tile().focus());
+    expect(footerHidden()).toBe(true);
+
+    act(() => note().focus());
+    expect(footerHidden()).toBe(false);
+  });
+
+  // The gap belongs on the parent: `space-y-6` sets the child's margin-top through
+  // `.space-y-6 > :not([hidden]) ~ :not([hidden])`, which outranks a `-mt-3` on the child
+  // (0,3,0 against 0,1,0) and silently kept the full 24px. Measured at 24px in Chromium
+  // before this fix and 12px after.
+  it("tightens the form's own spacing while compact", () => {
+    const { amount, form } = renderForm();
+
+    expect(form().className).toContain("space-y-6");
+
+    act(() => amount.focus());
+
+    expect(form().className).toContain("space-y-3");
+    expect(form().className).not.toContain("space-y-6");
   });
 
   // Centring the amount would leave the tiles under the keyboard. The sheet reads this

@@ -206,6 +206,13 @@ const useKeepFocusedFieldVisible = (
       const until = untilId ? document.getElementById(untilId) : null;
       if (until && content.contains(until)) {
         until.scrollIntoView({ block: "end", behavior });
+        // The reveal spans from the field down to `until`. When that span is taller than what
+        // the keyboard leaves -- a smaller phone, landscape, or a validation message under the
+        // field -- bringing the bottom edge into view pushes the field itself off the top, and
+        // the digits being typed go invisible. The focused field wins that tie.
+        if (focused.getBoundingClientRect().top < content.getBoundingClientRect().top) {
+          focused.scrollIntoView({ block: "start", behavior });
+        }
         return;
       }
       focused.scrollIntoView({ block: "center", behavior });
