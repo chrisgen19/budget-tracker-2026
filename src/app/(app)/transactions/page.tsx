@@ -582,7 +582,9 @@ export default function TransactionsPage() {
     try {
       const result = await bulkDeleteMutation.mutateAsync(Array.from(selectedIds));
       setShowBulkDelete(false);
-      dispatchSelectionChange({ type: "clear" });
+      // Through clearSelection, not a bare dispatch: it also leaves phone select mode, or the
+      // checkboxes stay up and the next tap ticks a row instead of opening it.
+      clearSelection();
       const label = `${result.deleted} transaction${result.deleted === 1 ? "" : "s"} deleted`;
       setSelectionAnnouncement(label);
       showToast(label);
@@ -811,7 +813,7 @@ export default function TransactionsPage() {
                       onClick={() => (inSelectMode ? clearSelection() : setSelectMode(true))}
                       aria-pressed={inSelectMode}
                       className={cn(
-                        "relative ml-2 h-6 rounded-md px-1.5 text-xs font-medium text-amber-dark hover:bg-amber-light/40 sm:hidden",
+                        "relative ml-2 h-6 min-w-11 rounded-md px-1.5 text-xs font-medium text-amber-dark hover:bg-amber-light/40 sm:hidden",
                         TOUCH_HIT_AREA,
                       )}
                     >

@@ -85,7 +85,13 @@ export function TransactionListRow({
     >
       {/* A wrapper rather than a class on the checkbox: `cn` does not merge, so `hidden` beside
           its own `inline-flex` would be decided by stylesheet order, not by intent. */}
-      <span data-row-checkbox className={selectMode ? "contents" : "hidden sm:contents"}>
+      {/* Stops pointerdown here so holding the checkbox never starts the row's long-press: the
+          label already stops the click, so the release would toggle the row straight back. */}
+      <span
+        data-row-checkbox
+        className={selectMode ? "contents" : "hidden sm:contents"}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
         <TransactionSelectionCheckbox
           label={`Select ${tx.description || tx.category.name} transaction`}
           state={isSelected ? "all" : "none"}

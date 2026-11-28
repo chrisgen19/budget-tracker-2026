@@ -88,8 +88,8 @@ export function TransactionLabelPills({
                   }}
                   className={
                     isActive
-                      ? "inline-flex items-center justify-center w-3 h-3 -mr-0.5 rounded-full hover:bg-black/10 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-                      : "hidden sm:group-hover/pill:inline-flex items-center justify-center w-3 h-3 -mr-0.5 rounded-full hover:bg-black/10 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                      ? "inline-flex shrink-0 items-center justify-center w-3 h-3 -mr-0.5 rounded-full hover:bg-black/10 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                      : "hidden sm:group-hover/pill:inline-flex shrink-0 items-center justify-center w-3 h-3 -mr-0.5 rounded-full hover:bg-black/10 transition-colors disabled:opacity-30 disabled:pointer-events-none"
                   }
                 >
                   <X className="w-2.5 h-2.5" />

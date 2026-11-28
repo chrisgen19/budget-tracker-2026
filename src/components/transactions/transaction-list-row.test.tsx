@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { TransactionListRow } from "@/components/transactions/transaction-list-row";
 import type { TransactionWithCategory } from "@/types";
 
@@ -72,5 +72,25 @@ describe("TransactionListRow", () => {
     const icon = screen.getByRole("img", { name: "Photo attached" });
     expect(icon.closest(".contents.sm\\:hidden")).not.toBeNull();
     expect(container.textContent).toContain("Food & Dining");
+  });
+
+  describe("long-press", () => {
+    afterEach(() => vi.useRealTimers());
+
+    it("fires from the row body", () => {
+      vi.useFakeTimers();
+      const { container, props } = renderRow();
+      fireEvent.pointerDown(row(container), { pointerType: "touch" });
+      vi.advanceTimersByTime(450);
+      expect(props.onLongPress).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not fire while holding the checkbox, which would select then deselect the row", () => {
+      vi.useFakeTimers();
+      const { props } = renderRow({ selectMode: true });
+      fireEvent.pointerDown(screen.getByRole("checkbox"), { pointerType: "touch" });
+      vi.advanceTimersByTime(450);
+      expect(props.onLongPress).not.toHaveBeenCalled();
+    });
   });
 });
