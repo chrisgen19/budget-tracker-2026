@@ -1,6 +1,6 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { MotionConfig, motion } from "framer-motion";
 import Link from "next/link";
 import {
   Wallet,
@@ -160,7 +160,21 @@ const steps = [
 /*  Landing Page                                                       */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The landing page renders outside `Providers` (see `src/app/page.tsx`), so the
+ * `MotionConfig` there never reaches it and it needs its own. `reducedMotion="user"`
+ * makes the slide-ins jump to place under the OS "reduce motion" setting while the
+ * fades still play, so nothing is left invisible.
+ */
 export function LandingPage() {
+  return (
+    <MotionConfig reducedMotion="user">
+      <LandingPageContent />
+    </MotionConfig>
+  );
+}
+
+function LandingPageContent() {
   return (
     <div className="min-h-screen bg-cream-100 overflow-x-hidden">
       {/* Decorative background */}
