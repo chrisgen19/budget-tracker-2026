@@ -268,7 +268,7 @@ export function AnalyticsTabBar({
   return (
     <div
       className={cn(
-        "relative w-full min-w-0 max-w-full p-1 bg-cream-100 rounded-xl sm:w-fit",
+        "relative w-full min-w-0 max-w-full p-1 bg-cream-200 rounded-xl sm:w-fit",
         className,
       )}
     >
