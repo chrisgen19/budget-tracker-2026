@@ -28,7 +28,7 @@ const keepFocus = (e: React.SyntheticEvent) => e.preventDefault();
 export function CategoryChipStrip({ categories, selectedId, showMore, onPick, onMore }: CategoryChipStripProps) {
   return (
     <div
-      role="toolbar"
+      role="group"
       aria-label="Pick a category"
       className="flex gap-2 overflow-x-auto px-3 py-2 bg-cream-50 border-t border-cream-200"
     >
