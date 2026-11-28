@@ -2,6 +2,17 @@
 
 All notable development history for the Budget Tracker app.
 
+## 2026-11-28 - Category chips above the keyboard
+
+- **A row of category chips now sits flush on the keyboard** while the amount field is focused in
+  the transaction sheet on a phone. It replaces the Cancel / Add Transaction footer for as long as
+  the keyboard is open, and follows the Expense / Income switch.
+- **Tapping a chip sets the category and blurs the amount**, so the keyboard closes and the footer
+  returns. `More...` opens the full category picker. `Modal` now publishes `useModalKeyboard()`
+  (`keyboardOpen`, `footerSlot`) from `modal-keyboard-context.ts` for content that needs that edge.
+- **Nothing changes on desktop or in any other state**: the footer, the picker and the form
+  behave exactly as before whenever the amount is not focused with the keyboard open.
+
 ## 2026-11-27 - Production builds with Railpack; nixpacks.toml removed
 
 - **Coolify's Build Pack is now Railpack**, on Node 24.22.3. The first Railpack deploy (`eb0a12a`)
